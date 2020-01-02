@@ -1,0 +1,183 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Interfaces">
+      <UniqueIdentifier>{c20a6431-8d33-4c87-a57a-7e26c7b77766}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{9a66e0e4-b91c-4fc2-a4f4-485adad7f2c8}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;</Extensions>
+    </Filter>
+    <Filter Include="Header Files\emulator">
+      <UniqueIdentifier>{f11c4d9a-a203-493e-b311-d750b6595132}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\memory">
+      <UniqueIdentifier>{9df1ea7e-dc3a-444a-bad1-2b2bd9dc726d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\ports">
+      <UniqueIdentifier>{60a6c712-9fd4-4587-9c1e-380ca0e23524}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\cpu">
+      <UniqueIdentifier>{be9251d4-69cc-4c52-bebf-a70995ca43f2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\base">
+      <UniqueIdentifier>{80673710-8e23-428e-a6c2-03ee8049c277}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\common">
+      <UniqueIdentifier>{78e5e817-5e44-4304-80df-6ebfc0890e6a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\video">
+      <UniqueIdentifier>{936ae5a1-4105-4992-abd2-40fecb3729c8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\base">
+      <UniqueIdentifier>{a8aca070-63d6-4783-91e8-bfb290cf0d18}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\common">
+      <UniqueIdentifier>{25bad667-baa8-4ed2-ba46-4067ee6f2485}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\debugger">
+      <UniqueIdentifier>{9f98924d-4340-4a3c-ac00-b52465d55818}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator">
+      <UniqueIdentifier>{f8279d48-2323-4968-9474-ac14f3b7b61a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\memory">
+      <UniqueIdentifier>{2eabd08c-ea4b-42f1-bf26-ede7886b65ec}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\ports">
+      <UniqueIdentifier>{4c610a3b-f2e5-40cf-9e61-48e7df3e88b0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\cpu">
+      <UniqueIdentifier>{9d5606f7-3dc6-478c-ab80-20fd6a6adc3f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\video">
+      <UniqueIdentifier>{4ebaf64f-92b3-4e11-8bde-b429dc45f4af}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stdafx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="targetver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="IRenderer.h">
+      <Filter>Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="Interfaces.h">
+      <Filter>Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="Base\BaseRenderer.h">
+      <Filter>Header Files\base</Filter>
+    </ClInclude>
+    <ClInclude Include="MessageManager.h">
+      <Filter>Header Files\base</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\memory\memory.h">
+      <Filter>Header Files\emulator\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="mods.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\memory\nvram.h">
+      <Filter>Header Files\emulator\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="Video\videorenderer.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="sysdefs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\platform_defs.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\emulator.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="Common\stringhelper.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\platform.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\ports.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\memory\ram.h">
+      <Filter>Header Files\emulator\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\ports\ports.h">
+      <Filter>Header Files\emulator\ports</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\cpu\cpu.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="Emulator\cpu\cputables.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="common\counterhelper.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\autoresetevent.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\utf8util.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Base\BaseRenderer.cpp">
+      <Filter>Source Files\base</Filter>
+    </ClCompile>
+    <ClCompile Include="MessageManager.cpp">
+      <Filter>Source Files\base</Filter>
+    </ClCompile>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\memory\memory.cpp">
+      <Filter>Source Files\emulator\memory</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\memory\nvram.cpp">
+      <Filter>Source Files\emulator\memory</Filter>
+    </ClCompile>
+    <ClCompile Include="Video\videorenderer.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\emulator.cpp">
+      <Filter>Source Files\emulator</Filter>
+    </ClCompile>
+    <ClCompile Include="Common\stringhelper.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\memory\ram.cpp">
+      <Filter>Source Files\emulator\memory</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\ports\ports.cpp">
+      <Filter>Source Files\emulator\ports</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\cpu\cpu.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="Emulator\cpu\cputables.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="common\autoresetevent.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="common\counterhelper.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="common\utf8util.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>

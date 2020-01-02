@@ -1,0 +1,16 @@
+
+
+**/.vs
+**/obj
+**/bin
+**/build
+**/output
+**/x64
+**/Debug
+
+*.user
+*.tmp
+*.bak
+*.pdb
+*.obj
+*.log
