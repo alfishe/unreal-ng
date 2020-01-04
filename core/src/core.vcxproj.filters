@@ -61,6 +61,24 @@
     <Filter Include="Source Files\video">
       <UniqueIdentifier>{4ebaf64f-92b3-4e11-8bde-b429dc45f4af}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\emulator\io">
+      <UniqueIdentifier>{d5080b1a-349e-47c6-85f3-b775b66ac00b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\io\hdd">
+      <UniqueIdentifier>{4f5c3db5-02e1-4d89-8f5e-76a1869d76aa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\io\fdc">
+      <UniqueIdentifier>{9606ec4b-d08f-4553-ad86-5b34fcb8ca44}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\io">
+      <UniqueIdentifier>{3467f5ef-c78a-49b2-a90c-192cf6c38679}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\io\hdd">
+      <UniqueIdentifier>{fdabf05c-08fe-42f2-a1b9-217841befc9e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\io\fdc">
+      <UniqueIdentifier>{b60bcc2b-ac7e-41eb-9b55-91eba2d83991}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -96,9 +114,6 @@
     <ClInclude Include="sysdefs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Emulator\platform_defs.h">
-      <Filter>Header Files\emulator</Filter>
-    </ClInclude>
     <ClInclude Include="Emulator\emulator.h">
       <Filter>Header Files\emulator</Filter>
     </ClInclude>
@@ -130,6 +145,36 @@
       <Filter>Header Files\common</Filter>
     </ClInclude>
     <ClInclude Include="common\utf8util.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\mainloop.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\op_dd.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\op_ed.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\op_fd.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\op_noprefix.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\op_system.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\z80.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\z80_main.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\emulatorcontext.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="common\logger.h">
       <Filter>Header Files\common</Filter>
     </ClInclude>
   </ItemGroup>
@@ -177,6 +222,15 @@
       <Filter>Source Files\common</Filter>
     </ClCompile>
     <ClCompile Include="common\utf8util.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\mainloop.cpp">
+      <Filter>Source Files\emulator</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\emulatorcontext.cpp">
+      <Filter>Source Files\emulator</Filter>
+    </ClCompile>
+    <ClCompile Include="common\logger.cpp">
       <Filter>Source Files\common</Filter>
     </ClCompile>
   </ItemGroup>

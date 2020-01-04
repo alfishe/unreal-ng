@@ -1,5 +1,4 @@
-
-
+# Visual Studio temporary folders
 **/.vs
 **/obj
 **/bin
@@ -8,6 +7,10 @@
 **/x64
 **/Debug
 
+# CMake temporary folders
+**/CMakeFiles
+
+# Temporary files
 *.user
 *.tmp
 *.bak

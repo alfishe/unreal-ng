@@ -31,6 +31,8 @@ void TestClient::Start()
 	}
 
 	_emulator = new Emulator();
+	_emulator->Init();
+	_emulator->Run();
 }
 
 void TestClient::Stop()

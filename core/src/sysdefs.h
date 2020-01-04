@@ -1,9 +1,32 @@
 #pragma once
 #include "stdafx.h"
 
-//#define inline __inline
-#define forceinline __forceinline	// Enforce function inlining
-#define fastcall					// parameters in registers
+// Cross-compiler version of force inline
+#if defined(__clang__)
+	#define __forceinline __attribute__((always_inline))
+#elif defined(__GNUC__) || defined(__GNUG__)
+	#define __forceinline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+	#if _MSC_VER < 1900
+		#ifndef __forceinline
+			#define __forceinline inline
+		#endif
+	#endif
+#elif defined(__MINGW32__)
+	#define __forceinline __attribute__((always_inline))
+#else
+	#define __forceinline inline
+#endif
+
+// Cross-compiler version for fastcall (Parameters in registers)
+// See more: https://en.wikipedia.org/wiki/X86_calling_conventions
+#if defined(_MSC_VER)
+	#ifndef __fastcall
+		#define __fastcall fastcall
+	#endif
+#elif
+	#define __fastcall
+#endif
 
 #define countof(a)  (sizeof(a) / sizeof(a[0]))
 

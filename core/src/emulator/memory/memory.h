@@ -8,6 +8,7 @@ void cmos_write(uint8_t val);
 uint8_t cmos_read();
 void rand_ram();
 
+/*
 Z80INLINE uint8_t *am_r(unsigned addr)
 {
 #ifdef MOD_VID_VD
@@ -18,6 +19,7 @@ Z80INLINE uint8_t *am_r(unsigned addr)
 //u8 rmdbg(u32 addr);
 //void wmdbg(u32 addr, u8 val);
 //u8 *MemDbg(u32 addr);
+*/
 
 enum BANKM
 {

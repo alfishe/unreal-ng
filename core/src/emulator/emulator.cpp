@@ -16,13 +16,55 @@ bool Emulator::Init()
 {
 	bool result = false;
 
-	_cpu = new CPU();
-	if (_cpu != nullptr)
+	// Create and initialize emulator context
+	_context = new EmulatorContext();
+	if (_context != nullptr)
 	{
-		//_cpu->
+		DEBUG("Emulator::Init - context created");
 
 		result = true;
 	}
+	else
+	{
+		ERROR("Emulator::Init - context creation failed");
+	}
+
+	// Create and initialize Z80 main CPU instance
+	if (result)
+	{
+		_cpu = new CPU();
+		if (_cpu != nullptr)
+		{
+			//_cpu->
+
+			DEBUG("Emulator::Init - cpu created");
+
+			result = true;
+		}
+		else
+		{
+			ERROR("Emulator::Init - cpu creation failed");
+		}
+	}
+
+	// Create and initialize main emulator loop
+	if (result)
+	{
+		result = false;
+
+		_mainloop = new MainLoop(_cpu);
+		if (_mainloop != nullptr)
+		{
+			DEBUG("Emulator::Init - mainloop created");
+
+			result = true;
+		}
+		else
+		{
+			ERROR("Emulator::Init - mainloop creation failed");
+		}
+	}
+
 
 	return result;
 }

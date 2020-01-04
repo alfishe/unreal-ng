@@ -1,12 +1,17 @@
 #pragma once
 #include "stdafx.h"
+#include "common/logger.h"
 
+#include "emulatorcontext.h"
+#include "mainloop.h"
 #include "cpu/cpu.h"
 
 class Emulator
 {
 protected:
+	EmulatorContext* _context = nullptr;
 	CPU* _cpu = nullptr;
+	MainLoop* _mainloop = nullptr;
 
 	bool _isPaused = false;
 	bool _isRunning = false;

@@ -2,7 +2,6 @@
 #include "stdafx.h"
 
 #include "sysdefs.h"
-#include "platform_defs.h"
 #include "sound/sndrender.h"
 
 #define EMUL_DEBUG
@@ -14,17 +13,20 @@
 #define MAX_MISC_PAGES 1        // trash page
 #define MAX_ROM_PAGES 64        // 1Mb
 
+// TS-conf specific settings
+#define TS_CACHE_SIZE 512
+
 #define GS4MB //0.37.0
 #ifdef MOD_GSZ80
-#define MAX_GSROM_PAGES  32U      // 512Kb
-#ifdef GS4MB
-#define MAX_GSRAM_PAGES 256U     // for gs4mb
+	#define MAX_GSROM_PAGES  32U      // 512Kb
+	#ifdef GS4MB
+		#define MAX_GSRAM_PAGES 256U     // for gs4mb
+	#else
+		#define MAX_GSRAM_PAGES 30U      // for gs512 (last 32k unusable)
+	#endif
 #else
-#define MAX_GSRAM_PAGES 30U      // for gs512 (last 32k unusable)
-#endif
-#else
-#define MAX_GSROM_PAGES 0
-#define MAX_GSRAM_PAGES 0
+	#define MAX_GSROM_PAGES 0
+	#define MAX_GSRAM_PAGES 0
 #endif
 
 #define MAX_PAGES (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES + MAX_GSROM_PAGES + MAX_GSRAM_PAGES)
@@ -152,12 +154,12 @@ struct zxkeymap;
 
 struct CONFIG
 {
-	unsigned t_line; // t-states per line
-	unsigned frame;  // t-states per frame
-	unsigned intfq;  // usually 50Hz
+	unsigned t_line;	// t-states per line
+	unsigned frame;		// t-states per frame
+	unsigned intfq;		// usually 50Hz
 	unsigned intstart;	// int start
-	unsigned intlen; // length of INT signal (for Z80)
-	unsigned nopaper;// hide paper
+	unsigned intlen;	// length of INT signal (for Z80)
+	unsigned nopaper;	// hide paper
 
 	unsigned render, driver, fontsize;
 
@@ -385,11 +387,6 @@ struct TEMP
 	uint8_t profrom_mask;
 	uint8_t comp_pal_changed;
 
-	// CPU features
-	uint8_t mmx, sse, sse2;
-	uint64_t cpufq;		     // x86 t-states per second
-	unsigned ticks_frame;	 // x86 t-states in frame
-
 	uint8_t vidblock, sndblock, inputblock, frameskip;
 	bool Gdiplus;
 	unsigned gsdmaaddr;
@@ -406,7 +403,14 @@ struct TEMP
 	char HddDir[FILENAME_MAX];
 };
 
-extern TEMP temp;
+struct HOST
+{
+	// Host CPU features
+	uint8_t mmx, sse, sse2;
+	uint64_t cpufq;		     // x86 t-states per second
+	unsigned ticks_frame;	 // x86 t-states in frame
+};
+
 extern unsigned sb_start_frame;
 
 enum AY_SCHEME
@@ -546,7 +550,8 @@ struct COMPUTER
 		//      SNDRENDER sound; //Alone Coder
 	} tape;
 	
-	SNDRENDER tape_sound; //Alone Coder
+	//SNDRENDER tape_sound; //Alone Coder
+
 	uint8_t comp_pal[0x10];
 	uint8_t ulaplus_cram[64];
 	uint8_t ulaplus_mode;
@@ -642,6 +647,32 @@ struct action
 };
 
 // video overlay 
+typedef union
+{
+	uint32_t p;
+	struct
+	{
+		uint8_t b;
+		uint8_t g;
+		uint8_t r;
+		uint8_t a;
+	};
+} RGB32;
+
+#define CF 0x01
+#define NF 0x02
+#define PV 0x04
+#define F3 0x08
+#define HF 0x10
+#define F5 0x20
+#define ZF 0x40
+#define SF 0x80
+
+#define cputact(a)	cpu->tt += ((a) * cpu->rate)
+// #define cputact(a) cpu->t += (a)
+
+#define turbo(a)	cpu.rate = (256/(a))
+
 
 // flags for video filters
 								// misc options
