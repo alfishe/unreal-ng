@@ -2,14 +2,16 @@
 
 #include "mainloop.h"
 
-MainLoop::MainLoop(CPU* cpu)
+MainLoop::MainLoop(CPU* cpu, EmulatorContext* context)
 {
 	_cpu = cpu;
+	_context = context;
 }
 
 MainLoop::~MainLoop()
 {
 	_cpu = nullptr;
+	_context = nullptr;
 }
 
 //
@@ -19,8 +21,13 @@ void MainLoop::Run(const bool& exit)
 {
 	while (!exit)
 	{
-
+		RunFrame();
 	}
+}
+
+void MainLoop::Stop()
+{
+
 }
 
 void MainLoop::RunFrame()
@@ -35,6 +42,10 @@ void MainLoop::RunFrame()
 	// Process external periphery devices
 
 	// Flush all generated data and buffers
+
+	// Render Video and Audio using host platform capabilities
+	// RenderVideo();
+	// RenderAudio();
 
 	// Queue new frame data to Video/Audio encoding
 }

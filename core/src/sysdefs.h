@@ -34,6 +34,12 @@
 	#define ATTR_ALIGN(x) __declspec(align(x))
 #endif
 
+// Compatibility between MSVC and GCC function name macros
+#ifdef _MSC_VER
+	#define __PRETTY_FUNCTION__ __FUNCSIG__
+#endif
+
+
 #if __ICL >= 1000 || defined(__GNUC__)
 	static inline u8 rol8(u8 val, u8 shift)
 	{

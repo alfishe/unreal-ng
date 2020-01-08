@@ -12,4 +12,7 @@ class CPU
 public:
 	CPU();
 	virtual ~CPU();
+
+public:
+	void CPUCycle();
 };

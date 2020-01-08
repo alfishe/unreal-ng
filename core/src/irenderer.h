@@ -10,4 +10,6 @@ public:
 	virtual void Render() = 0;
 	virtual void Reset() = 0;
 	virtual void SetFullscreenMode(bool fullscreen, void* windowHandle, uint32_t monitorWidth, uint32_t monitorHeight) = 0;
+
+	virtual void Flip() = 0;
 };

@@ -174,10 +174,14 @@
   <ItemGroup>
     <ClInclude Include="base\baserenderer.h" />
     <ClInclude Include="common\autoresetevent.h" />
+    <ClInclude Include="common\callbackcollection.h" />
+    <ClInclude Include="common\collectionhelper.h" />
     <ClInclude Include="common\counterhelper.h" />
     <ClInclude Include="common\logger.h" />
     <ClInclude Include="common\stringhelper.h" />
+    <ClInclude Include="common\timehelper.h" />
     <ClInclude Include="common\utf8util.h" />
+    <ClInclude Include="emulator\config.h" />
     <ClInclude Include="emulator\cpu\cpu.h" />
     <ClInclude Include="emulator\cpu\cputables.h" />
     <ClInclude Include="emulator\cpu\op_dd.h" />
@@ -186,6 +190,7 @@
     <ClInclude Include="emulator\cpu\op_noprefix.h" />
     <ClInclude Include="emulator\cpu\op_system.h" />
     <ClInclude Include="emulator\cpu\z80.h" />
+    <ClInclude Include="emulator\cpu\z80_old.h" />
     <ClInclude Include="emulator\cpu\z80_main.h" />
     <ClInclude Include="emulator\emulator.h" />
     <ClInclude Include="emulator\emulatorcontext.h" />
@@ -194,6 +199,7 @@
     <ClInclude Include="emulator\memory\nvram.h" />
     <ClInclude Include="emulator\memory\ram.h" />
     <ClInclude Include="emulator\platform.h" />
+    <ClInclude Include="emulator\platforms\tsconf\tsconf.h" />
     <ClInclude Include="emulator\ports.h" />
     <ClInclude Include="emulator\ports\ports.h" />
     <ClInclude Include="interfaces.h" />
@@ -208,12 +214,15 @@
   <ItemGroup>
     <ClCompile Include="base\baserenderer.cpp" />
     <ClCompile Include="common\autoresetevent.cpp" />
+    <ClCompile Include="common\callbackcollection.cpp" />
     <ClCompile Include="common\counterhelper.cpp" />
     <ClCompile Include="common\logger.cpp" />
     <ClCompile Include="common\stringhelper.cpp" />
     <ClCompile Include="common\utf8util.cpp" />
+    <ClCompile Include="emulator\config.cpp" />
     <ClCompile Include="emulator\cpu\cpu.cpp" />
     <ClCompile Include="emulator\cpu\cputables.cpp" />
+    <ClCompile Include="emulator\cpu\z80.cpp" />
     <ClCompile Include="emulator\emulator.cpp" />
     <ClCompile Include="emulator\emulatorcontext.cpp" />
     <ClCompile Include="emulator\mainloop.cpp" />

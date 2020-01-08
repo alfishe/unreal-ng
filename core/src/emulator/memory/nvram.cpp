@@ -1,6 +1,112 @@
 #include "stdafx.h"
 
 #include "nvram.h"
+#include "common/timehelper.h"
+
+//
+// Constructor for CMOS NVRAM
+//
+NVRAM::NVRAM()
+{
+}
+
+void NVRAM::SetNVRAMAddress(uint32_t addr)
+{
+	_address = addr;
+}
+
+void NVRAM::WriteNVRAM(uint8_t val)
+{
+
+}
+
+uint8_t NVRAM::ReadNVRAM()
+{
+	uint8_t result = 0;
+
+	return result;
+}
+
+void NVRAM::SetCMOSType(CMOSTypeEnum type)
+{
+	_cmos_type = type;
+}
+
+void NVRAM::SetCMOSAddress(uint8_t addr)
+{
+	_cmos_addr = addr;
+}
+
+void NVRAM::WriteCMOS(uint8_t val)
+{
+	uint8_t cur_addr = _cmos_addr;
+
+	if (_cmos_type == Rus512)
+		cur_addr = cur_addr & 0x3F;
+		
+	_cmos[cur_addr] = val;
+}
+
+uint8_t NVRAM::ReadCMOS()
+{
+	static tm time;
+	static bool UF = false;
+
+	uint8_t result = 0;
+	uint8_t cur_addr = _cmos_addr;
+
+	if (_cmos_type == Rus512)
+		cur_addr = cur_addr & 0x3F;
+
+	// If Time/Date values requested from CMOS - provide current Host system values
+	if ((1 << cur_addr) & ((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 12)))
+	{
+		time = make_utc_tm(system_clock::now());
+	}
+
+	switch (cur_addr)
+	{
+		case CMOSMemoryEnum::Second:
+			result = DecodeFromBCD((uint8_t)time.tm_sec);
+			break;
+		case CMOSMemoryEnum::Minute:
+			result = DecodeFromBCD((uint8_t)time.tm_min);
+			break;
+		case CMOSMemoryEnum::Hour:
+			result = DecodeFromBCD((uint8_t)time.tm_hour);
+			break;
+		case CMOSMemoryEnum::DayOfWeek:
+			result = 1 + (time.tm_wday + 8 % 7);
+			break;
+		case CMOSMemoryEnum::Day:
+			result = DecodeFromBCD((uint8_t)time.tm_mday);
+			break;
+		case CMOSMemoryEnum::Month:
+			result = DecodeFromBCD((uint8_t)time.tm_mon);
+			break;
+		case CMOSMemoryEnum::Year:
+			result = DecodeFromBCD(time.tm_year % 100);
+			break;
+		case CMOSMemoryEnum::Unknown_10:
+			result = 0x20 | (_cmos[10] & 0xF); // molodcov_alex
+			break;
+		case CMOSMemoryEnum::BitFlags:
+			result = (_cmos[11] & 4) | 2;
+			break;
+		case CMOSMemoryEnum::UF:  // [vv] UF
+			result = UF ? 0x10 : 0;
+			UF = false;
+			break;
+		case CMOSMemoryEnum::Unknown_13:
+			result = 0x80;
+			break;
+		default:
+			result = _cmos[_cmos_addr];
+			break;
+	}
+
+	return result;
+}
 
 /*
 void NVRAM::Write(uint8_t val)
@@ -112,3 +218,12 @@ exit:
 }
 
 */
+
+// Helper methods
+uint8_t NVRAM::DecodeFromBCD(uint8_t binary)
+{
+	if (!(_cmos[11] & 0x04))
+		binary = (binary % 10) + 0x10 * ((binary / 10) % 10);
+
+	return binary;
+}

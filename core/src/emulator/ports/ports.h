@@ -1,6 +1,9 @@
 #pragma once
 #include "stdafx.h"
 
+#include "common/callbackcollection.h"
+#include "emulator/cpu/cpu.h"
+
 #define FLAG_DOSPORTS     0x01    // TR-DOS ports are accessible
 #define FLAG_TRDOS        0x02    // DOSEN trigger
 #define FLAG_SETDOSROM    0x04    // TR-DOS ROM become active at #3Dxx
@@ -10,7 +13,7 @@
 #define FLAG_Z80FBUS      0x40    // Unstable data bus
 #define FLAG_PROFROM      0x80    // PROF-ROM active
 
-enum : uint8_t
+enum PortFlagsEnum : uint8_t
 {
 	DOSPorts	= 0x01,
 	TRDOS		= 0x02,
@@ -24,6 +27,10 @@ enum : uint8_t
 
 class Ports
 {
+protected:
+	CPU* _cpu = nullptr;
+	CallbackCollection _resetHandlers;
+
 public:
 	// Latched port values
 	uint8_t _p7FFD, _pFE, _pEFF7, _pXXXX;
@@ -32,5 +39,14 @@ public:
 	uint8_t _p00, _p80FD; // quorum
 
 public:
+	Ports(CPU* cpu);
+	virtual ~Ports();
+
+	// Module support methods
+	void RegisterModule();
+	void UnregisterModule();
+	void Reset();				// Global /RST signal handling for all modules registered
+
+	// Ports specific methods
 	void SetBanks();
 };

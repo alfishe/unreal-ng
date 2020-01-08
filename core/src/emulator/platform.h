@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "sysdefs.h"
+#include "emulator/platforms/tsconf/tsconf.h"
 #include "sound/sndrender.h"
 
 #define EMUL_DEBUG
@@ -61,24 +62,22 @@ enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMP
 
 enum MEM_MODEL
 {
-	MM_PENTAGON = 0,
-	MM_TSL,
-	MM_ATM3,
-	MM_ATM710,
-	MM_ATM450,
-	MM_PROFI,
-	MM_PLUS3,
-	MM_SCORP,
-	MM_PROFSCORP,
-	MM_GMX,
-	MM_KAY,
-	MM_QUORUM,
-	MM_LSY256,
-	MM_PHOENIX,
+	MM_PENTAGON = 0,	// Pentagon 128/256/512/1024K
+	MM_TSL,				// TSConf
+	MM_ATM3,			// ATM Turbo 3.0
+	MM_ATM710,			// ATM Turbo 7.1.0
+	MM_ATM450,			// ATM Turbo 4.5.0 (512/1024)
+	MM_PROFI,			// Profi 1024K
+	MM_PLUS3,			// ZX Spectrum +3
+	MM_SCORP,			// Scorpion ZS256
+	MM_PROFSCORP,		// Scorpion ZS256 + ProfROM
+	MM_GMX,				// GMX
+	MM_KAY,				// Kay 1024
+	MM_QUORUM,			// Quorum
+	MM_LSY256,			// 
+	MM_PHOENIX,			// Phoenix
 	N_MM_MODELS
 };
-
-enum ROM_MODE { RM_NOCHANGE = 0, RM_SOS, RM_DOS, RM_SYS, RM_128, RM_CACHE };
 
 const int RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
 
@@ -403,12 +402,25 @@ struct TEMP
 	char HddDir[FILENAME_MAX];
 };
 
+typedef struct tagRECT
+{
+	uint16_t left;
+	uint16_t top;
+	uint16_t right;
+	uint16_t bottom;
+} RECT;
+
 struct HOST
 {
 	// Host CPU features
 	uint8_t mmx, sse, sse2;
 	uint64_t cpufq;		     // x86 t-states per second
 	unsigned ticks_frame;	 // x86 t-states in frame
+
+	// Video render / window parameters
+	unsigned gx, gy, gdx, gdy; // updating rectangle (used by GDI renderer)
+	RECT client;               // updating rectangle (used by DD_blt renderer)
+	bool minimized;            // window is minimized
 };
 
 extern unsigned sb_start_frame;
@@ -493,10 +505,12 @@ struct COMPUTER
 {
 	uint8_t p7FFD, pFE, pEFF7, pXXXX;
 	uint8_t pDFFD, pFDFD, p1FFD, pFF77;
-	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // gmx
-	uint8_t p00, p80FD; // quorum
+	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // GMX specific
+	uint8_t p00, p80FD; // Quorum specific
+
+	bool nmi_in_progress = false;
 	
-	//TSPORTS_t ts;
+	TSPORTS_t ts;
 	
 	uint8_t pLSY256;
 	uint16_t cram[256];

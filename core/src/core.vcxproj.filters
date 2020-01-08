@@ -79,6 +79,12 @@
     <Filter Include="Source Files\emulator\io\fdc">
       <UniqueIdentifier>{b60bcc2b-ac7e-41eb-9b55-91eba2d83991}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\emulator\platforms">
+      <UniqueIdentifier>{3345347b-e074-442f-ab62-66c1ed63839c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\platforms\tsconf">
+      <UniqueIdentifier>{e38cdcc2-bbe0-4e52-8854-f30c5fc644cf}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -165,9 +171,6 @@
     <ClInclude Include="emulator\cpu\op_system.h">
       <Filter>Header Files\emulator\cpu</Filter>
     </ClInclude>
-    <ClInclude Include="emulator\cpu\z80.h">
-      <Filter>Header Files\emulator\cpu</Filter>
-    </ClInclude>
     <ClInclude Include="emulator\cpu\z80_main.h">
       <Filter>Header Files\emulator\cpu</Filter>
     </ClInclude>
@@ -176,6 +179,27 @@
     </ClInclude>
     <ClInclude Include="common\logger.h">
       <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\z80_old.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\z80.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="common\callbackcollection.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\collectionhelper.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\timehelper.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\config.h">
+      <Filter>Header Files\emulator</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\platforms\tsconf\tsconf.h">
+      <Filter>Header Files\emulator\platforms\tsconf</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -232,6 +256,15 @@
     </ClCompile>
     <ClCompile Include="common\logger.cpp">
       <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\z80.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="common\callbackcollection.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\config.cpp">
+      <Filter>Source Files\emulator</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

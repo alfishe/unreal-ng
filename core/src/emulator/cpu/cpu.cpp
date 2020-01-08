@@ -14,3 +14,8 @@ CPU::~CPU()
 {
 
 }
+
+void CPU::CPUCycle()
+{
+
+}

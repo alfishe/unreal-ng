@@ -6,10 +6,10 @@
 
 using namespace std;
 
-#define DEBUG(format, ...) Logger::Debug(format, ##__VA_ARGS__)
-#define INFO(format, ...) Logger::Info(format, ##__VA_ARGS__)
-#define WARNING(format, ...) Logger::Warning(format, ##__VA_ARGS__)
-#define ERROR(format, ...) Logger::Error(format, ##__VA_ARGS__)
+#define LOGDEBUG(format, ...) Logger::Debug(format, ##__VA_ARGS__)
+#define LOGINFO(format, ...) Logger::Info(format, ##__VA_ARGS__)
+#define LOGWARNING(format, ...) Logger::Warning(format, ##__VA_ARGS__)
+#define LOGERROR(format, ...) Logger::Error(format, ##__VA_ARGS__)
 
 class Logger
 {
