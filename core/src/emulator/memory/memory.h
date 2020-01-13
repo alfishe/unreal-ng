@@ -31,6 +31,18 @@ enum MemoryBitsEnum : uint8_t
 	MEMBITS_BPC = 0x80
 };
 
+
+// Memory interface descriptor
+//  Read callback to access memory cell (byte)
+//  Write callback - to write data into memory cell (byte)
+typedef uint8_t (* MemoryReadCallback)(uint16_t addr);
+typedef void (* MemoryWriteCallback)(uint16_t addr, uint8_t val);
+struct MemoryInterface
+{
+	MemoryReadCallback read;
+	MemoryWriteCallback write;
+};
+
 class Memory
 {
 protected:
@@ -56,6 +68,8 @@ public:
 
 	void SetMode(ROMModeEnum mode);
 	void SetBanks();
+
+	uint8_t* RemapAddressToCurrentBank(unsigned addr);
 };
 
 
@@ -70,7 +84,4 @@ Z80INLINE uint8_t *am_r(unsigned addr)
 #endif
    // return bankr[(addr >> 14) & 3] + (addr & (PAGE-1));
 }
-//u8 rmdbg(u32 addr);
-//void wmdbg(u32 addr, u8 val);
-//u8 *MemDbg(u32 addr);
 */

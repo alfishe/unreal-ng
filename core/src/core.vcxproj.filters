@@ -171,9 +171,6 @@
     <ClInclude Include="emulator\cpu\op_system.h">
       <Filter>Header Files\emulator\cpu</Filter>
     </ClInclude>
-    <ClInclude Include="emulator\cpu\z80_main.h">
-      <Filter>Header Files\emulator\cpu</Filter>
-    </ClInclude>
     <ClInclude Include="emulator\emulatorcontext.h">
       <Filter>Header Files\emulator</Filter>
     </ClInclude>
@@ -200,6 +197,9 @@
     </ClInclude>
     <ClInclude Include="emulator\platforms\tsconf\tsconf.h">
       <Filter>Header Files\emulator\platforms\tsconf</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\video\screen.h">
+      <Filter>Header Files\video</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -265,6 +265,9 @@
     </ClCompile>
     <ClCompile Include="emulator\config.cpp">
       <Filter>Source Files\emulator</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\video\screen.cpp">
+      <Filter>Source Files\video</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

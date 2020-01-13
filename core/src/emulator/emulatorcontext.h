@@ -1,7 +1,11 @@
 #pragma once
 #include "stdafx.h"
 
-#include "platform.h"
+#include "emulator/platform.h"
+//#include "emulator/video/screen.h"
+
+class Memory;
+class Screen;
 
 class EmulatorContext
 {
@@ -18,4 +22,10 @@ public:
 
 	// Host system properties / context
 	HOST host;
+
+	// Memory controller instance
+	Memory* pMemory;
+
+	// Video controller parameters and logic
+	Screen* pScreen;
 };

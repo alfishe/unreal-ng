@@ -1,5 +1,6 @@
 #pragma once
-#include "stdafx.h"
+
+#include <intrin.h>
 
 // Cross-compiler version of force inline
 #if defined(__clang__)
@@ -39,6 +40,27 @@
 	#define __PRETTY_FUNCTION__ __FUNCSIG__
 #endif
 
+// High precision time counter (CPU HW based)
+// TODO: find similar functionality for ARM CPUs. Only Intel 32/64 bits supported for now
+#if  defined(__GNUC__)
+#if defined(__i386__)
+	static __inline__ unsigned long long rdtsc(void)
+	{
+		unsigned long long int x;
+		__asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
+		return x;
+	}
+#elif defined(__x86_64__)
+	static __inline__ unsigned long long rdtsc(void)
+	{
+		unsigned hi, lo;
+		__asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+		return ((unsigned long long)lo) | (((unsigned long long)hi) << 32);
+	}
+#endif
+#elif defined(_MSC_VER)
+	#define rdtsc __rdtsc
+#endif
 
 #if __ICL >= 1000 || defined(__GNUC__)
 	static inline u8 rol8(u8 val, u8 shift)

@@ -23,6 +23,9 @@
 
 #include "common/utf8util.h"
 
+// Host OS/Compiler overrides / customizations
+#include "sysdefs.h"
+
 // All emulator customizations defined here
 #include "mods.h"
 
@@ -42,17 +45,18 @@ using std::string;
 using std::atomic_flag;
 using std::atomic;
 
+// Z80 assistand types
+struct Z80State;					// Z80 CPU state. Defined in /emulator/cpu/z80.h
 
-#ifdef __clang__
-	#define __forceinline __attribute__((always_inline))
-#else
-	#ifdef __GNUC__
-		#define __forceinline 
-	#endif
-#endif
+#define fastcall
+#define Z80FAST fastcall
+typedef void (Z80FAST *STEPFUNC)(Z80State*);
+#define Z80OPCODE void Z80FAST
+typedef uint8_t(Z80FAST *LOGICFUNC)(Z80State*, uint8_t byte);
+#define Z80LOGIC uint8_t Z80FAST
 
 #ifdef _WIN32
-	#define WIN32_LEAN_AND_MEAN             // Exclude rarely-used stuff from Windows headers
+	#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
 	#include <stdio.h>
 	#include <ctype.h>
 	#include <string.h>
@@ -78,4 +82,5 @@ using std::atomic;
 
 
 // Shut down "LNK4221: The object file does not define any previously undefined public symbols, so it will not be used by any link operation that consumes that library" linker error
+// Error happens with MSVC linker if precompiled header (stdafx.h/.cpp) doesn't bring any symbols into any namespace
 namespace { char dummy; };

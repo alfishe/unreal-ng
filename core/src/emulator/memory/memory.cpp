@@ -3,6 +3,18 @@
 #include "../platform.h"
 #include "memory.h"
 
+/*
+uint8_t MemoryInterface::read(uint16_t address)
+{
+}
+
+void MemoryInterface::write(uint16_t address, uint8_t val)
+{
+
+}
+*/
+
+
 Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
@@ -503,6 +515,18 @@ void Memory::SetBanks()
 		}
 	}
 	*/
+}
+
+uint8_t* Memory::RemapAddressToCurrentBank(unsigned addr)
+{
+	COMPUTER& state = *(&_context->state);
+	CONFIG& config = *(&_context->config);
+	TEMP& temp = *(&_context->temporary);
+
+	#ifdef MOD_VID_VD
+		if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800) return comp.vdbase + (addr & 0x1FFF);
+	#endif
+		return _bank_read[(addr >> 14) & 3] + (addr & (PAGE - 1));
 }
 
 /*

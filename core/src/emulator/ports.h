@@ -1,9 +1,6 @@
 #pragma once
 #include "stdafx.h"
 
-#include "../std.h"
-
-
 // All ZX-Spectrum models
 #define PORT_FE					0xFE
 #define PORT_FF					0xFF

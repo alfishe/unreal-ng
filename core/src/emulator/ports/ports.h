@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "common/callbackcollection.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/cpu/cpu.h"
 
 #define FLAG_DOSPORTS     0x01    // TR-DOS ports are accessible
@@ -29,7 +30,15 @@ class Ports
 {
 protected:
 	CPU* _cpu = nullptr;
+	EmulatorContext* _context = nullptr;
 	CallbackCollection _resetHandlers;
+
+	uint16_t _brk_port_in;
+	uint16_t _brk_port_out;
+	uint8_t _brk_port_val;
+	uint16_t _brk_mem_rd;
+	uint16_t _brk_mem_wr;
+	uint8_t _brk_mem_val;
 
 public:
 	// Latched port values
@@ -39,7 +48,7 @@ public:
 	uint8_t _p00, _p80FD; // quorum
 
 public:
-	Ports(CPU* cpu);
+	Ports(CPU* cpu, EmulatorContext* context);
 	virtual ~Ports();
 
 	// Module support methods
@@ -49,4 +58,8 @@ public:
 
 	// Ports specific methods
 	void SetBanks();
+
+
+	void Out(uint16_t port, uint8_t val);
+	uint8_t In(uint16_t port);
 };

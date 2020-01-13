@@ -191,7 +191,6 @@
     <ClInclude Include="emulator\cpu\op_system.h" />
     <ClInclude Include="emulator\cpu\z80.h" />
     <ClInclude Include="emulator\cpu\z80_old.h" />
-    <ClInclude Include="emulator\cpu\z80_main.h" />
     <ClInclude Include="emulator\emulator.h" />
     <ClInclude Include="emulator\emulatorcontext.h" />
     <ClInclude Include="emulator\mainloop.h" />
@@ -202,6 +201,7 @@
     <ClInclude Include="emulator\platforms\tsconf\tsconf.h" />
     <ClInclude Include="emulator\ports.h" />
     <ClInclude Include="emulator\ports\ports.h" />
+    <ClInclude Include="emulator\video\screen.h" />
     <ClInclude Include="interfaces.h" />
     <ClInclude Include="irenderer.h" />
     <ClInclude Include="messagemanager.h" />
@@ -230,6 +230,7 @@
     <ClCompile Include="emulator\memory\nvram.cpp" />
     <ClCompile Include="emulator\memory\ram.cpp" />
     <ClCompile Include="emulator\ports\ports.cpp" />
+    <ClCompile Include="emulator\video\screen.cpp" />
     <ClCompile Include="messagemanager.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
