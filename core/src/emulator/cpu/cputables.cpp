@@ -32,7 +32,7 @@ void CPUTables::MakeADC()
 				if (ri >= 0x80 || ri <= -0x81)
 					flag |= PV;
 
-				adcf[c * 0x10000 + x * 0x100 + y] = flag;
+				add_flags[c * 0x10000 + x * 0x100 + y] = flag;
 			}
 		}
 	}
@@ -65,18 +65,17 @@ void CPUTables::MakeSBC()
 
 				fl |= NF;
 
-				sbcf[c * 0x10000 + x * 0x100 + y] = fl;
+				sub_flags[c * 0x10000 + x * 0x100 + y] = fl;
 			}
 		}
 	}
 
 	for (int i = 0; i < 0x10000; i++)
 	{
-		cpf[i] = (sbcf[i] & ~(F3 | F5)) | (i & (F3 | F5));
+		cp_flags[i] = (sub_flags[i] & ~(F3 | F5)) | (i & (F3 | F5));
 
-		uint8_t tempbyte = (i >> 8) - (i & 0xFF) - ((sbcf[i] & HF) >> 4);
-
-		cpf8b[i] = (sbcf[i] & ~(F3 | F5 | PV | CF)) + (tempbyte & F3) + ((tempbyte << 4) & F5);
+		uint8_t tempbyte = (i >> 8) - (i & 0xFF) - ((sub_flags[i] & HF) >> 4);
+		cpf8b[i] = (sub_flags[i] & ~(F3 | F5 | PV | CF)) + (tempbyte & F3) + ((tempbyte << 4) & F5);
 	}
 }
 
@@ -88,12 +87,15 @@ void CPUTables::MakeLog()
 		uint8_t p = PV;
 
 		for (int i = 0x80; i; i /= 2)
-			if (x & i) p ^= PV;
+		{
+			if (x & i)
+				p ^= PV;
+		}
 
-		log_f[x] = fl | p;
+		logic_flags[x] = fl | p;
 	}
 
-	log_f[0] |= ZF;
+	logic_flags[0] |= ZF;
 }
 
 void CPUTables::MakeRot()
@@ -101,10 +103,11 @@ void CPUTables::MakeRot()
 	for (int i = 0; i < 0x100; i++)
 	{
 		// rra,rla uses same tables
-		rlcaf[i] = rlcf[i] & 0x3B;
-		rrcaf[i] = rrcf[i] & 0x3B;
+		rlca_flags[i] = rlc_flags[i] & 0x3B;
+		rrca_flags[i] = rrc_flags [i] & 0x3B;
 
-		rol[i] = (i << 1) + (i >> 7), ror[i] = (i >> 1) + (i << 7);
+		rol_table[i] = (i << 1) + (i >> 7);
+		ror_table[i] = (i >> 1) + (i << 7);
 	}
 }
 

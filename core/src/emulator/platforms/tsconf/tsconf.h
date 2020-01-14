@@ -1,8 +1,8 @@
 #pragma once
 #include "stdafx.h"
 
-typedef void (*INITIAL_FUNCTION)();
-typedef uint32_t (*TASK_FUNCTION)(uint32_t);
+typedef void (* INITIAL_FUNCTION)();
+typedef uint32_t (* TASK_FUNCTION)(uint32_t);
 
 // TS ext port #AF registers
 enum TSREGS

@@ -5,10 +5,6 @@
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
-    <Filter Include="Resource Files">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
-    </Filter>
     <Filter Include="Interfaces">
       <UniqueIdentifier>{c20a6431-8d33-4c87-a57a-7e26c7b77766}</UniqueIdentifier>
     </Filter>
@@ -84,6 +80,10 @@
     </Filter>
     <Filter Include="Header Files\emulator\platforms\tsconf">
       <UniqueIdentifier>{e38cdcc2-bbe0-4e52-8854-f30c5fc644cf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Interfaces\Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -168,9 +168,6 @@
     <ClInclude Include="emulator\cpu\op_noprefix.h">
       <Filter>Header Files\emulator\cpu</Filter>
     </ClInclude>
-    <ClInclude Include="emulator\cpu\op_system.h">
-      <Filter>Header Files\emulator\cpu</Filter>
-    </ClInclude>
     <ClInclude Include="emulator\emulatorcontext.h">
       <Filter>Header Files\emulator</Filter>
     </ClInclude>
@@ -200,6 +197,12 @@
     </ClInclude>
     <ClInclude Include="emulator\video\screen.h">
       <Filter>Header Files\video</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\daa_tabs.h">
+      <Filter>Header Files\emulator\cpu</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\cpu\cpulogic.h">
+      <Filter>Header Files\emulator\cpu</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -268,6 +271,30 @@
     </ClCompile>
     <ClCompile Include="emulator\video\screen.cpp">
       <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\op_cb.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\op_dd.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\op_ddcb.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\op_ed.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\op_fd.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\op_noprefix.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\daa_tabs.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\cpu\cpulogic.cpp">
+      <Filter>Source Files\emulator\cpu</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

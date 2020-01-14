@@ -10,6 +10,7 @@ Z80::Z80(EmulatorContext* context)
 
 uint8_t Z80::m1_cycle()
 {
+	Z80& _cpu_state = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 	TEMP& temporary = _context->temporary;
@@ -32,7 +33,7 @@ uint8_t Z80::m1_cycle()
 	// End of TODO: move to Ports class
 
 	// Z80 CPU M1 cycle logic
-	_cpu_state.r_low++;
+	r_low++;
 	uint8_t opcode = _cpu_state.MemIf->read(_cpu_state.pc++);
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
@@ -49,6 +50,7 @@ uint8_t Z80::m1_cycle()
 // Note: Only TSConf supports interrupt vectors
 uint8_t Z80::InterruptVector()
 {
+	Z80& _cpu_state = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 
@@ -86,8 +88,27 @@ uint8_t Z80::InterruptVector()
 	return result;
 }
 
+// TODO: Obsolete method - refactor
+uint8_t Z80::rd(unsigned addr)
+{
+	Z80& _cpu_state = *this;
+
+	_cpu_state.tt += rate * 3;
+	return MemIf->read(addr);
+}
+
+// TODO: Obsolete method - refactor
+void Z80::wd(unsigned addr, uint8_t val)
+{
+	Z80& _cpu_state = *this;
+
+	tt += rate * 3;
+	MemIf->write(addr, val);
+}
+
 uint8_t Z80::Read(uint16_t addr)
 {
+	Z80& _cpu_state = *this;
 	COMPUTER& state = _context->state;
 
 	uint8_t result = _cpu_state.MemIf->read(addr);
@@ -115,6 +136,7 @@ uint8_t Z80::DirectRead(unsigned addr)
 
 void Z80::DirectWrite(unsigned addr, uint8_t val)
 {
+	Z80& _cpu_state = *this;
 	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
 	*remap_addr = val;
 
@@ -126,6 +148,7 @@ void Z80::DirectWrite(unsigned addr, uint8_t val)
 
 void Z80::z80loop()
 {
+	Z80& _cpu_state = *this;
 	COMPUTER& state = _context->state;
 	CONFIG& config = _context->config;
 	VideoControl& video = _context->pScreen->_vid;
@@ -252,6 +275,7 @@ void Z80::z80loop()
 
 void Z80::Step()
 {
+	Z80& _cpu_state = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 	TEMP& temporary = _context->temporary;
@@ -348,21 +372,22 @@ void Z80::Step()
 
 void Z80::SetBanks()
 {
-
+	Z80& _cpu_state = *this;
 }
 
 void Z80::UpdateScreen()
 {
-
+	Z80& _cpu_state = *this;
 }
 
 void Z80::HandleNMI(ROMModeEnum mode)
 {
-
+	Z80& _cpu_state = *this;
 }
 
 void Z80::HandleINT(uint8_t vector)
 {
+	Z80& _cpu_state = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 
@@ -404,6 +429,8 @@ void Z80::HandleINT(uint8_t vector)
 
 void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 {
+	Z80& _cpu_state = *this;
+
 	_cpu_state.tt += cycles * _cpu_state.rate;
 }
 
@@ -411,6 +438,7 @@ void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 // TODO: Move to adapter
 void Z80::ts_frame_int(bool vdos)
 {
+	Z80& _cpu_state = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 
@@ -439,6 +467,7 @@ void Z80::ts_frame_int(bool vdos)
 
 void Z80::ts_line_int(bool vdos)
 {
+	Z80& _cpu_state = *this;
 	COMPUTER& state = _context->state;
 
 	if (_cpu_state.t >= state.ts.intctrl.line_t)

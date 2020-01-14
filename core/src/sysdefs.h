@@ -22,11 +22,11 @@
 // Cross-compiler version for fastcall (Parameters in registers)
 // See more: https://en.wikipedia.org/wiki/X86_calling_conventions
 #if defined(_MSC_VER)
-	#ifndef __fastcall
-		#define __fastcall fastcall
+	#ifndef fastcall
+		#define fastcall __fastcall
 	#endif
 #elif
-	#define __fastcall
+	#define fastcall
 #endif
 
 #define countof(a)  (sizeof(a) / sizeof(a[0]))

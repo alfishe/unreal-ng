@@ -4,10 +4,6 @@
 
 #include "emulator/platform.h"
 
-#define Z80FAST __fastcall		// Try to keep function parameters in x86/x64 CPU registers. Not guaranteed for all compilers
-#define Z80INLINE __forceinline // Time-critical inlines. Uses cross-compiler __forceinline macro from stdafx.h
-#define Z80LOGIC uint8_t Z80FAST
-#define Z80OPCODE void Z80FAST
 
 
 #ifdef MOD_FASTCORE

@@ -673,21 +673,6 @@ typedef union
 	};
 } RGB32;
 
-#define CF 0x01
-#define NF 0x02
-#define PV 0x04
-#define F3 0x08
-#define HF 0x10
-#define F5 0x20
-#define ZF 0x40
-#define SF 0x80
-
-#define cputact(a)	cpu->tt += ((a) * cpu->rate)
-// #define cputact(a) cpu->t += (a)
-
-#define turbo(a)	cpu.rate = (256/(a))
-
-
 // flags for video filters
 								// misc options
 #define RF_BORDER   0x00000002   // no multicolor painter, read directly from spectrum memory
@@ -699,7 +684,7 @@ typedef union
 #define RF_CLIP     0x00000040   // use DirectDraw clipper for windowed mode
 #define RF_OVR      0x00000080   // output to overlay
 
-								// main area size
+								 // main area size
 #define RF_1X       0x00000000   // 256x192,320x240 with border (default)
 #define RF_2X       0x00000100   // default x2
 #define RF_3X       0x00000001   // default x3

@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 #include "emulator/video/screen.h"
@@ -184,8 +185,7 @@ struct Z80Registers
 	uint8_t  tscache_data[TS_CACHE_SIZE];
 };
 
-
-struct Z80State : Z80Registers
+struct Z80State : public Z80Registers
 {
 	uint8_t tmp0, tmp1, tmp3;
 	unsigned rate;
@@ -229,13 +229,13 @@ struct Z80State : Z80Registers
 	const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
 };
 
-class Z80
+class Z80 : public Z80State
 {
 protected:
 	EmulatorContext* _context;
 
 protected:
-	Z80State _cpu_state;
+	//Z80State _cpu_state;
 	int _nmi_pending_count = 0;
 
 public:
@@ -244,13 +244,17 @@ public:
 
 
 public:
-	uint8_t rd(uint32_t addr);
 	uint8_t m1_cycle();
 	uint8_t in(uint16_t port);
 	void out(uint16_t port, uint8_t val);
 	uint8_t InterruptVector();
 	void CheckNextFrame();
 	void retn();
+
+	// TODO: convert obsolete naming
+	uint8_t rd(unsigned addr);
+	void wd(unsigned addr, uint8_t val);
+	// End of TODO: convert obsolete naming
 
 	uint8_t Read(uint16_t addr);
 	void Write(uint16_t addr, uint8_t val);
@@ -281,3 +285,4 @@ protected:
 	void ts_line_int(bool vdos);
 	void ts_dma_int(bool vdos);
 };
+

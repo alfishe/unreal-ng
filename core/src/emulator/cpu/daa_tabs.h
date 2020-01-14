@@ -1,4 +1,4 @@
 #pragma once
 #include "stdafx.h"
 
-extern STEPFUNC const ix_opcode[];
+extern const uint8_t daatab[];

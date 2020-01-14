@@ -45,16 +45,6 @@ using std::string;
 using std::atomic_flag;
 using std::atomic;
 
-// Z80 assistand types
-struct Z80State;					// Z80 CPU state. Defined in /emulator/cpu/z80.h
-
-#define fastcall
-#define Z80FAST fastcall
-typedef void (Z80FAST *STEPFUNC)(Z80State*);
-#define Z80OPCODE void Z80FAST
-typedef uint8_t(Z80FAST *LOGICFUNC)(Z80State*, uint8_t byte);
-#define Z80LOGIC uint8_t Z80FAST
-
 #ifdef _WIN32
 	#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
 	#include <stdio.h>
