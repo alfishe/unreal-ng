@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "mainloop.h"
+#include "common/timehelper.h"
 
 MainLoop::MainLoop(CPU* cpu, EmulatorContext* context)
 {
@@ -19,6 +20,12 @@ MainLoop::~MainLoop()
 //
 void MainLoop::Run(const bool& exit)
 {
+	if (_cpu == nullptr || _context == nullptr)
+	{
+		LOGERROR("MainLoop::Run - _cpu and _context shouldn't be nullptr");
+		return;
+	}
+
 	while (!exit)
 	{
 		RunFrame();
@@ -37,7 +44,7 @@ void MainLoop::RunFrame()
 	InitVideoFrame();
 
 	// Execute CPU cycle
-	ExecuteCPUFrame();
+	ExecuteCPUCycle();
 
 	// Process external periphery devices
 
@@ -67,7 +74,43 @@ void MainLoop::InitVideoFrame()
 //
 // Proceed with single frame CPU operations
 //
-void MainLoop::ExecuteCPUFrame()
+void MainLoop::ExecuteCPUCycle()
 {
+	//Z80& cpu = *(_cpu->GetZ80Instance());
 
+	_cpu->CPUFrameCycle();
+}
+
+//
+// Holds execution of current thread until next frame
+// Note: uses SSE2 pause CPU instruction (_mm_pause instrinc) to achieve ultimate time resolution at the cost of CPU core utilization (although with low power consumption)
+//
+void MainLoop::DoIdle()
+{
+	CONFIG& config = _context->config;
+	HOST& host = _context->host;
+
+	static volatile uint64_t prev_time = rdtsc();
+
+	for (;;)
+	{
+		_mm_pause();
+
+		volatile uint64_t cur_time = rdtsc();
+		if ((cur_time - prev_time) >= host.ticks_frame)
+			break;
+
+		if (config.sleepidle)
+		{
+			uint32_t delay = uint32_t(((host.ticks_frame - (cur_time - prev_time)) * 1000ULL) / host.cpufq);
+
+			if (delay > 0)
+			{
+				sleep(delay);
+				break;
+			}
+		}
+	}
+
+	prev_time = rdtsc();
 }

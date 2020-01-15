@@ -5,25 +5,25 @@
 #include "emulator/cpu/z80.h"
 
 // Aliases to access CPU tables
-uint8_t(&log_f)[0x100]			= CPU::_cpuTables.logic_flags;
+uint8_t (&log_f)[0x100]			= CPU::_cpuTables.logic_flags;
 uint8_t const (&inc_f)[0x100]	= CPU::_cpuTables.increment_flags;
 uint8_t const (&dec_f)[0x100]	= CPU::_cpuTables.decrement_flags;
-uint8_t(&adc_f)[0x20000]		= CPU::_cpuTables.add_flags;
-uint8_t(&sbc_f)[0x20000]		= CPU::_cpuTables.sub_flags;
-uint8_t(&cp_f)[0x10000]			= CPU::_cpuTables.cp_flags;
+uint8_t (&adc_f)[0x20000]		= CPU::_cpuTables.add_flags;
+uint8_t (&sbc_f)[0x20000]		= CPU::_cpuTables.sub_flags;
+uint8_t (&cp_f)[0x10000]		= CPU::_cpuTables.cp_flags;
 uint8_t const (&rlc_f)[0x100]	= CPU::_cpuTables.rlc_flags;
 uint8_t const (&rrc_f)[0x100]	= CPU::_cpuTables.rrc_flags;
-uint8_t(&rlca_f)[0x100]			= CPU::_cpuTables.rlca_flags;
-uint8_t(&rrca_f)[0x100]			= CPU::_cpuTables.rrca_flags;
+uint8_t (&rlca_f)[0x100]		= CPU::_cpuTables.rlca_flags;
+uint8_t (&rrca_f)[0x100]		= CPU::_cpuTables.rrca_flags;
 uint8_t const (&sra_f)[0x100]	= CPU::_cpuTables.sra_flags;
 
-uint8_t(&rol)[0x100]			= CPU::_cpuTables.rol_table;
-uint8_t(&ror)[0x100]			= CPU::_cpuTables.ror_table;
+uint8_t (&rol)[0x100]			= CPU::_cpuTables.rol_table;
+uint8_t (&ror)[0x100]			= CPU::_cpuTables.ror_table;
 uint8_t const (&rl0)[0x100]		= CPU::_cpuTables.rl0_table;
 uint8_t const (&rl1)[0x100]		= CPU::_cpuTables.rl1_table;
 uint8_t const (&rr0)[0x100]		= CPU::_cpuTables.rr0_table;
 uint8_t const (&rr1)[0x100]		= CPU::_cpuTables.rr1_table;
-uint8_t(&cpf8b)[0x10000]		= CPU::_cpuTables.cpf8b;
+uint8_t (&cpf8b)[0x10000]		= CPU::_cpuTables.cpf8b;
 
 // Aliases from static class methods to globally available functions
 // For compatibility with obsolete Z80 opcode execution logic

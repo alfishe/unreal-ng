@@ -52,7 +52,7 @@ void Memory::SetMode(ROMModeEnum mode)
 			state.flags &= ~CF_TRDOS;
 			state.p7FFD |= 0x10;
 
-			if (config.mem_model == MM_PLUS3) // disable paging
+			if (config.mem_model == MM_PLUS3) // Disable paging
 				state.p7FFD |= 0x20;
 			break;
 		case RM_SYS:
@@ -62,6 +62,7 @@ void Memory::SetMode(ROMModeEnum mode)
 		case RM_DOS:
 			state.flags |= CF_TRDOS;
 			state.p7FFD |= 0x10;
+
 			if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
 				state.p7FFD &= ~0x10;
 			break;
@@ -517,16 +518,50 @@ void Memory::SetBanks()
 	*/
 }
 
-uint8_t* Memory::RemapAddressToCurrentBank(unsigned addr)
+//
+// Get starting address for RAM
+//
+const uint8_t* Memory::GetRAM() const
+{
+	// RAM starts at 0x00000 in global memory buffer
+	return RAM_BASE_M;
+}
+
+
+//
+// Get starting address for ROM
+//
+const uint8_t* Memory::GetROM() const
+{
+	return ROM_BASE_M;
+}
+
+uint8_t* Memory::GetRAMPageAddress(uint16_t page)
+{
+	return RAM_BASE_M + (PAGE * page);
+}
+
+uint8_t* Memory::GetROMPageAddress(uint8_t page)
+{
+	return ROM_BASE_M + (PAGE * page);
+}
+
+uint8_t* Memory::RemapAddressToCurrentBank(uint32_t addr)
 {
 	COMPUTER& state = *(&_context->state);
 	CONFIG& config = *(&_context->config);
 	TEMP& temp = *(&_context->temporary);
 
-	#ifdef MOD_VID_VD
-		if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800) return comp.vdbase + (addr & 0x1FFF);
+	uint8_t* result = nullptr;
+
+	#if defined MOD_VID_VD
+		if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800)
+			result = comp.vdbase + (addr & 0x1FFF);
+	#else
+		result = _bank_read[(addr >> 14) & 3] + (addr & (PAGE - 1));
 	#endif
-		return _bank_read[(addr >> 14) & 3] + (addr & (PAGE - 1));
+
+	return result;
 }
 
 /*

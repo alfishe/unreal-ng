@@ -204,6 +204,12 @@
     <ClInclude Include="emulator\cpu\cpulogic.h">
       <Filter>Header Files\emulator\cpu</Filter>
     </ClInclude>
+    <ClInclude Include="emulator\memory\rom.h">
+      <Filter>Header Files\emulator\memory</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\video\renderers.h">
+      <Filter>Header Files\video</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Base\BaseRenderer.cpp">
@@ -295,6 +301,18 @@
     </ClCompile>
     <ClCompile Include="emulator\cpu\cpulogic.cpp">
       <Filter>Source Files\emulator\cpu</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\memory\rom.cpp">
+      <Filter>Source Files\emulator\memory</Filter>
+    </ClCompile>
+    <ClCompile Include="common\timehelper.cpp">
+      <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\video\videocontroller.cpp">
+      <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\video\renderers.cpp">
+      <Filter>Source Files\video</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

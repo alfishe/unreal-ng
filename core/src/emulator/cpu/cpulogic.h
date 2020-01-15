@@ -21,6 +21,7 @@ typedef uint8_t(Z80FAST * LOGICFUNC)(Z80*, uint8_t byte);
 
 
 // Aliases to access CPU tables
+// Definitions done in cpulogic.cpp
 extern uint8_t (&log_f)[0x100];
 extern uint8_t const (&inc_f)[0x100];
 extern uint8_t const (&dec_f)[0x100];
@@ -89,31 +90,34 @@ extern uint8_t (&cpf8b)[0x10000];
 #define SF 0x80			// Bit 7 - Sign flag
 
 
+//
+// Inlined microcode operations to be used from opcode handlers
+//
 class CPULogic
 {
 public:
-	static /* Z80INLINE */ void and8(Z80 *cpu, uint8_t src);
-	static /* Z80INLINE */ void or8(Z80* cpu, uint8_t src);
-	static /* Z80INLINE */ void xor8(Z80* cpu, uint8_t src);
-	static /* Z80INLINE */ void bitmem(Z80 *cpu, uint8_t src, uint8_t bit);
-	static /* Z80INLINE */ void set(uint8_t& src, uint8_t bit);
-	static /* Z80INLINE */ void res(uint8_t& src, uint8_t bit);
-	static /* Z80INLINE */ void bit(Z80 *cpu, uint8_t src, uint8_t bit);
-	static /* Z80INLINE */ uint8_t resbyte(uint8_t src, uint8_t bit);
-	static /* Z80INLINE */ uint8_t setbyte(uint8_t src, uint8_t bit);
-	static /* Z80INLINE */ void inc8(Z80 *cpu, uint8_t &x);
-	static /* Z80INLINE */ void dec8(Z80 *cpu, uint8_t &x);
-	static /* Z80INLINE */ void add8(Z80 *cpu, uint8_t src);
-	static /* Z80INLINE */ void sub8(Z80 *cpu, uint8_t src);
-	static /* Z80INLINE */ void adc8(Z80 *cpu, uint8_t src);
-	static /* Z80INLINE */ void sbc8(Z80 *cpu, uint8_t src);
-	static /* Z80INLINE */ void  cp8(Z80 *cpu, uint8_t src);
+	static Z80INLINE void and8(Z80 *cpu, uint8_t src);
+	static Z80INLINE void or8(Z80* cpu, uint8_t src);
+	static Z80INLINE void xor8(Z80* cpu, uint8_t src);
+	static Z80INLINE void bitmem(Z80 *cpu, uint8_t src, uint8_t bit);
+	static Z80INLINE void set(uint8_t& src, uint8_t bit);
+	static Z80INLINE void res(uint8_t& src, uint8_t bit);
+	static Z80INLINE void bit(Z80 *cpu, uint8_t src, uint8_t bit);
+	static Z80INLINE uint8_t resbyte(uint8_t src, uint8_t bit);
+	static Z80INLINE uint8_t setbyte(uint8_t src, uint8_t bit);
+	static Z80INLINE void inc8(Z80 *cpu, uint8_t &x);
+	static Z80INLINE void dec8(Z80 *cpu, uint8_t &x);
+	static Z80INLINE void add8(Z80 *cpu, uint8_t src);
+	static Z80INLINE void sub8(Z80 *cpu, uint8_t src);
+	static Z80INLINE void adc8(Z80 *cpu, uint8_t src);
+	static Z80INLINE void sbc8(Z80 *cpu, uint8_t src);
+	static Z80INLINE void  cp8(Z80 *cpu, uint8_t src);
 };
 
 // Aliases from static class methods to globally available functions
 // For compatibility with obsolete Z80 opcode execution logic
 // Requires C++ 11 compiler
-// Definition done in cpulogic.cpp
+// Definitions done in cpulogic.cpp
 extern void (&and8)(Z80* cpu, uint8_t src);
 extern void (&or8)(Z80* cpu, uint8_t src);
 extern void (&xor8)(Z80* cpu, uint8_t src);

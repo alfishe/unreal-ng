@@ -2,9 +2,16 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 
-#define MAX_WIDTH_P (64*2)
+#include <algorithm>
+
+using namespace std;
+
+// Video framebuffer and rendering related
+#define MAX_WIDTH_P (64 * 2)
 #define MAX_WIDTH 512
 #define MAX_HEIGHT 320
 #define MAX_BUFFERS 8
@@ -14,7 +21,7 @@
 #define VID_WIDTH	448		// Full screen width for standard ZX-Spectrum
 #define VID_HEIGHT	320		// Full screen height in pixels (same as in scan lines)
 
-#define MEM_CYCLES VID_TACTS*2
+#define MEM_CYCLES (VID_TACTS * 2)
 
 enum VideoModeEnum
 {
@@ -71,8 +78,9 @@ struct VideoControl
 	uint32_t 		buf;			// active video buffer
 	uint32_t 		flash;			// flash counter
 	uint16_t		line;			// current rendered line
-	uint16_t		line_pos;	// current rendered position in line
-	uint16_t		ts_pos;		// current rendered position in tsline
+	uint16_t		line_pos;		// current rendered position in line
+
+	uint16_t		ts_pos;			// current rendered position in tsline
 	uint8_t			tsline[2][512];	// TS buffers (indexed colors)
 	uint16_t		memvidcyc[320];	// number of memory cycles used in every video line by video
 	uint16_t		memcpucyc[320];	// number of memory cycles used in every video line by CPU
@@ -82,16 +90,158 @@ struct VideoControl
 	uint16_t		memcyc_lcmd;	// number of memory cycles used in last command
 };
 
+class Z80;
+class Renderers;
+
+// ULA+ color models:
+//
+// val  red/grn     blue1       blue2
+// 0    00000000    00000000    00000000
+// 1    00100100
+// 2    01001001
+// 3    01101101    01101101    01101101
+// 4    10010010                10010010
+// 5    10110110    10110110
+// 6    11011011
+// 7    11111111    11111111    11111111
+
+// ULA+ palette cell select:
+// bit5 - FLASH
+// bit4 - BRIGHT
+// bit3 - 0 - INK / 1 - PAPER
+// bits0..2 - INK / PAPER
+
+// Extract colors
+#define col_def(a) (((a) << 5) | ((a) << 2) |  ((a) >> 1))
+#define col_r(a) (col_def(a) << 16)
+#define col_g(a) (col_def(a) << 8)
+#define col_b(a) (col_def(a))
+
 class Screen
 {
+public:
+	static constexpr uint32_t rb2_offs = MAX_HEIGHT * MAX_WIDTH_P;
+	static constexpr uint32_t sizeof_rbuf = rb2_offs * (MAX_BUFFERS + 2);
+	static constexpr uint32_t sizeof_vbuf = VID_HEIGHT * VID_WIDTH * 2;
+
+#ifdef CACHE_ALIGNED
+	CACHE_ALIGNED uint8_t rbuf[sizeof_rbuf];
+	CACHE_ALIGNED uint32_t vbuf[2][sizeof_vbuf];
+#else
+	uint8_t rbuf[sizeof_rbuf];
+	uint32_t vbuf[2][sizeof_vbuf];
+#endif
+
+	const RASTER raster[R_MAX] =
+	{
+		{ R_256_192, 80, 272, 70, 70 + 128, 198 },
+		//{ R_256_192, 80, 272, 58, 186, 198 },
+		{ R_320_200, 76, 276, 54, 214, 214 },
+		{ R_320_240, 56, 296, 54, 214, 214 },
+		{ R_360_288, 32, 320, 44, 224, 0 },
+		{ R_384_304, 16, 320, 32, 224, 0 },
+		{ R_512_240, 56, 296, 70, 198, 0 },
+	};
+
+	// Default color table: 0RRrrrGG gggBBbbb
+	uint16_t spec_colors[16] =
+	{
+		0x0000,
+		0x0010,
+		0x4000,
+		0x4010,
+		0x0200,
+		0x0210,
+		0x4200,
+		0x4210,
+		0x0000,
+		0x0018,
+		0x6000,
+		0x6018,
+		0x0300,
+		0x0318,
+		0x6300,
+		0x6318
+	};
+
+	const uint32_t cr[8] =
+	{
+		col_r(0),
+		col_r(1),
+		col_r(2),
+		col_r(3),
+		col_r(4),
+		col_r(5),
+		col_r(6),
+		col_r(7)
+	};
+
+	const uint32_t cg[8] =
+	{
+		col_g(0),
+		col_g(1),
+		col_g(2),
+		col_g(3),
+		col_g(4),
+		col_g(5),
+		col_g(6),
+		col_g(7)
+	};
+
+	const uint32_t cb[2][4] =
+	{
+		col_b(0),
+		col_b(3),
+		col_b(5),
+		col_b(7),
+
+		col_b(0),
+		col_b(3),
+		col_b(4),
+		col_b(7)
+	};
+
 protected:
-	EmulatorContext* _context;
+	CPU* _system = nullptr;
+	Z80* _cpu = nullptr;
+	EmulatorContext* _context = nullptr;
 
 public:
 	VideoControl _vid;
 
 public:
-	Screen(EmulatorContext* context);
+	Screen(CPU* system, Z80* cpu, EmulatorContext* context);
 	void InitFrame();
 	void UpdateScreen();
+
+	void InitRaster();
+	void DrawScreenBorder(uint32_t n);
+
+public:
+	// TSConf specific
+	// TODO: move to TSConf plugin
+	uint32_t TSConf_GetAvailableFrameMemcycles(uint32_t dram_t);
+	void TSConf_Draw(uint32_t vptr);
+	uint32_t TSConf_Render(uint32_t t);
+	void TSConf_DMA(uint32_t tacts);
+
+public:
+	void Draw(VideoModeEnum mode, uint32_t n);
+
+	void DrawBorder(uint32_t n);	// Border only
+	void DrawNull(uint32_t n);		// Non-existing mode (skip draw)
+	void DrawZX(uint32_t n);		// Authentic Sinclair ZX Spectrum
+	void DrawPMC(uint32_t n);		// Pentagon Multicolor
+	void DrawP16(uint32_t n);		// Pentagon 16c
+	void DrawP384(uint32_t n);		// Pentagon 384x304
+	void DrawPHR(uint32_t n);		// Pentagon HiRes
+	void DrawTS16(uint32_t n);		// TS 16c
+	void DrawTS256(uint32_t n);		// TS 256c
+	void DrawTSText(uint32_t n);	// TS Text
+	void DrawATM16(uint32_t n);		// ATM 16c
+	void DrawATMHiRes(uint32_t n);	// ATM HiRes
+	void DrawATM2Text(uint32_t n);	// ATM Text
+	void DrawATM3Text(uint32_t n);	// ATM Text linear
+	void DrawProfi(uint32_t n);		// Profi
+	void DrawGMX(uint32_t n);		// GMX
 };

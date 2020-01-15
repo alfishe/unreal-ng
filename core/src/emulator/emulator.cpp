@@ -32,18 +32,18 @@ bool Emulator::Init()
 	// Create and initialize Z80 main CPU instance
 	if (result)
 	{
-		_cpu = new CPU();
+		_cpu = new CPU(_context);
 		if (_cpu != nullptr)
 		{
 			//_cpu->
 
-			LOGDEBUG("Emulator::Init - cpu created");
+			LOGDEBUG("Emulator::Init - main cpu created");
 
 			result = true;
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - cpu creation failed");
+			LOGERROR("Emulator::Init - main cpu creation failed");
 		}
 	}
 

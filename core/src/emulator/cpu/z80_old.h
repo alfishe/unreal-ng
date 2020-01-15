@@ -268,7 +268,7 @@ struct Z80 : public TZ80State
 
 	// Callbacks to time critical functions
 	CallbackBankNames BankNames;
-	CallbackStep Step;
+	CallbackStep Z80Step;
 	CallbackDelta Delta;
 	CallbackSetLastT SetLastT;
 	
@@ -283,7 +283,7 @@ struct Z80 : public TZ80State
 	Z80(
 		uint32_t Idx,
 		CallbackBankNames BankNames,
-		CallbackStep Step,
+		CallbackStep Z80Step,
 		CallbackDelta Delta,
 		CallbackSetLastT SetLastT,
 		uint8_t* membits,
@@ -292,7 +292,7 @@ struct Z80 : public TZ80State
 		) :
 		Idx(Idx),
 		BankNames(BankNames),
-		Step(Step),
+		Z80Step(Z80Step),
 		Delta(Delta),
 		SetLastT(SetLastT),
 		membits(membits),
@@ -366,14 +366,14 @@ public:
 	TMainZ80(
 		uint32_t Idx,
 		CallbackBankNames BankNames,
-		CallbackStep Step,
+		CallbackStep Z80Step,
 		CallbackDelta Delta,
 		CallbackSetLastT SetLastT,
 		uint8_t *membits,
 		const TMemIf *FastMemIf,
 		const TMemIf *DbgMemIf
 		) :
-		Z80(Idx, BankNames, Step, Delta, SetLastT, membits, FastMemIf, DbgMemIf) { }
+		Z80(Idx, BankNames, Z80Step, Delta, SetLastT, membits, FastMemIf, DbgMemIf) { }
 	/*
 	   virtual u8 rm(unsigned addr) override;
 	   virtual u8 dbgrm(unsigned addr) override;

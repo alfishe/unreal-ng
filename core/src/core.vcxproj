@@ -198,10 +198,12 @@
     <ClInclude Include="emulator\memory\memory.h" />
     <ClInclude Include="emulator\memory\nvram.h" />
     <ClInclude Include="emulator\memory\ram.h" />
+    <ClInclude Include="emulator\memory\rom.h" />
     <ClInclude Include="emulator\platform.h" />
     <ClInclude Include="emulator\platforms\tsconf\tsconf.h" />
     <ClInclude Include="emulator\ports.h" />
     <ClInclude Include="emulator\ports\ports.h" />
+    <ClInclude Include="emulator\video\renderers.h" />
     <ClInclude Include="emulator\video\screen.h" />
     <ClInclude Include="interfaces.h" />
     <ClInclude Include="irenderer.h" />
@@ -219,6 +221,7 @@
     <ClCompile Include="common\counterhelper.cpp" />
     <ClCompile Include="common\logger.cpp" />
     <ClCompile Include="common\stringhelper.cpp" />
+    <ClCompile Include="common\timehelper.cpp" />
     <ClCompile Include="common\utf8util.cpp" />
     <ClCompile Include="emulator\config.cpp" />
     <ClCompile Include="emulator\cpu\cpu.cpp" />
@@ -238,8 +241,11 @@
     <ClCompile Include="emulator\memory\memory.cpp" />
     <ClCompile Include="emulator\memory\nvram.cpp" />
     <ClCompile Include="emulator\memory\ram.cpp" />
+    <ClCompile Include="emulator\memory\rom.cpp" />
     <ClCompile Include="emulator\ports\ports.cpp" />
+    <ClCompile Include="emulator\video\renderers.cpp" />
     <ClCompile Include="emulator\video\screen.cpp" />
+    <ClCompile Include="emulator\video\videocontroller.cpp" />
     <ClCompile Include="messagemanager.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

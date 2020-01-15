@@ -5,7 +5,7 @@
 //
 // Generate table with all ADD/ADC operation flags
 //
-void CPUTables::MakeADC()
+constexpr void CPUTables::MakeADC()
 {
 	for (int c = 0; c < 2; c++)
 	{
@@ -38,7 +38,7 @@ void CPUTables::MakeADC()
 	}
 }
 
-void CPUTables::MakeSBC()
+constexpr void CPUTables::MakeSBC()
 {
 	for (int c = 0; c < 2; c++)
 	{
@@ -79,7 +79,7 @@ void CPUTables::MakeSBC()
 	}
 }
 
-void CPUTables::MakeLog()
+constexpr void CPUTables::MakeLog()
 {
 	for (int x = 0; x < 0x100; x++)
 	{
@@ -98,7 +98,7 @@ void CPUTables::MakeLog()
 	logic_flags[0] |= ZF;
 }
 
-void CPUTables::MakeRot()
+constexpr void CPUTables::MakeRot()
 {
 	for (int i = 0; i < 0x100; i++)
 	{

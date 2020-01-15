@@ -62,28 +62,31 @@
 	#define rdtsc __rdtsc
 #endif
 
+// Optimized bit rotation
 #if __ICL >= 1000 || defined(__GNUC__)
-	static inline u8 rol8(u8 val, u8 shift)
+	static inline uint8_t rol8(uint8_t val, uint8_t shift)
 	{
 		__asm__ volatile ("rolb %1,%0" : "=r"(val) : "cI"(shift), "0"(val));
 		return val;
 	}
 
-	static inline u8 ror8(u8 val, u8 shift)
+	static inline uint8_t ror8(uint8_t val, uint8_t shift)
 	{
 		__asm__ volatile ("rorb %1,%0" : "=r"(val) : "cI"(shift), "0"(val));
 		return val;
 	}
-	static inline void asm_pause() { __asm__("pause"); }
-#else
+
+	static inline void _mm_pause() { __asm__("pause"); }
+#elif defined(_MSC_VER)
 	extern "C" unsigned char __cdecl _rotr8(unsigned char value, unsigned char shift);
 	extern "C" unsigned char __cdecl _rotl8(unsigned char value, unsigned char shift);
 	#pragma intrinsic(_rotr8)
 	#pragma intrinsic(_rotl8)
 	static inline uint8_t rol8(uint8_t val, uint8_t shift) { return _rotl8(val, shift); }
 	static inline uint8_t ror8(uint8_t val, uint8_t shift) { return _rotr8(val, shift); }
-	
-	//static inline void asm_pause() { __asm {rep nop} }
+
+	extern "C" void	_mm_pause(void);
+	#pragma intrinsic(_mm_pause)
 #endif
 
 #if defined(_MSC_VER) && _MSC_VER < 1300

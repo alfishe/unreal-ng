@@ -2,10 +2,33 @@
 
 #include "z80.h"
 #include "emulator/cpu/op_noprefix.h"
+#include "emulator/video/screen.h"
 
 Z80::Z80(EmulatorContext* context)
 {
 	_context = context;
+
+	MemIf = FastMemIf;
+	tpi = 0;
+	rate = (1 << 8);
+	dbgbreak = 0;
+	dbgchk = 0;
+	debug_last_t = 0;
+	trace_curs = trace_top = (unsigned)-1;
+	trace_mode = 0;
+	mem_curs = mem_top = 0;
+	pc_trflags = nextpc = 0;
+	dbg_stophere = dbg_stopsp = (unsigned)-1;
+	dbg_loop_r1 = 0;
+	dbg_loop_r2 = 0xFFFF;
+	int_pend = false;
+	int_gate = true;
+	nmi_in_progress = false;
+}
+
+Z80::~Z80()
+{
+	_context = nullptr;
 }
 
 uint8_t Z80::m1_cycle()
@@ -106,6 +129,21 @@ void Z80::wd(unsigned addr, uint8_t val)
 	MemIf->write(addr, val);
 }
 
+uint8_t Z80::in(uint16_t port)
+{
+	uint8_t result = 0xFF;
+
+	return result;
+}
+
+void Z80::out(uint16_t port, uint8_t val)
+{
+}
+
+void Z80::retn()
+{
+}
+
 uint8_t Z80::Read(uint16_t addr)
 {
 	Z80& _cpu_state = *this;
@@ -128,13 +166,14 @@ void Z80::Write(uint16_t addr, uint8_t val)
 
 }
 
-uint8_t Z80::DirectRead(unsigned addr)
+uint8_t Z80::DirectRead(uint32_t addr)
 {
 	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
+	
 	return *remap_addr;
 }
 
-void Z80::DirectWrite(unsigned addr, uint8_t val)
+void Z80::DirectWrite(uint32_t addr, uint8_t val)
 {
 	Z80& _cpu_state = *this;
 	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
@@ -146,7 +185,7 @@ void Z80::DirectWrite(unsigned addr, uint8_t val)
 	_cpu_state.tscache_addr[cache_pointer] = -1; // write invalidates flag
 }
 
-void Z80::z80loop()
+void Z80::Z80FrameCycle()
 {
 	Z80& _cpu_state = *this;
 	COMPUTER& state = _context->state;
@@ -183,13 +222,14 @@ void Z80::z80loop()
 				HandleINT(InterruptVector());
 			}
 
-			Step();
+			Z80Step();
 			UpdateScreen(); // update screen, TSU, DMA
 		}
 
 		return;
 	}
 
+	// All non-TSConf platforms behavior
 
 	// Video Interrupt position calculation
 	bool int_occurred = false;
@@ -198,6 +238,7 @@ void Z80::z80loop()
 
 	_cpu_state.haltpos = 0;
 
+	// INT interrupt handling lasts for more than 1 frame
 	if (int_end >= config.frame)
 	{
 		int_end -= config.frame;
@@ -267,24 +308,27 @@ void Z80::z80loop()
 			HandleINT(InterruptVector());
 		}
 
-		Step();
-;
+		Z80Step();
+
 		UpdateScreen(); // update screen, TSU, DMA
 	} // end while (cpu.t < conf.intlen)
 }
 
-void Z80::Step()
+void Z80::Z80Step()
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 	TEMP& temporary = _context->temporary;
+
+	// Let debugger process step event
+	ProcessDebuggerEvents();
 
 	// Ports logic
 	// TODO: move to Ports class
 	if (state.flags & CF_SETDOSROM)
 	{
-		if (_cpu_state.pch == 0x3D)
+		if (cpu.pch == 0x3D)
 		{
 			state.flags |= CF_TRDOS;  // !!! add here TS memconf behaviour !!!
 			SetBanks();
@@ -292,7 +336,7 @@ void Z80::Step()
 	}
 	else if (state.flags & CF_LEAVEDOSADR)
 	{
-		if (_cpu_state.pch & 0xC0) // PC > 3FFF closes TR-DOS
+		if (cpu.pch & 0xC0) // PC > 3FFF closes TR-DOS
 		{
 			state.flags &= ~CF_TRDOS;
 			SetBanks();
@@ -305,7 +349,7 @@ void Z80::Step()
 	{
 		// Executing code from RAM address - disables TR-DOS ROM
 		/*
-		if (bankr[(_cpu_state.pc >> 14) & 3] < RAM_BASE_M + PAGE * MAX_RAM_PAGES)
+		if (bankr[(cpu.pc >> 14) & 3] < RAM_BASE_M + PAGE * MAX_RAM_PAGES)
 		{
 			state.flags &= ~CF_TRDOS;
 			SetBanks();
@@ -319,33 +363,33 @@ void Z80::Step()
 	// Tape related IO
 	// TODO: Move to io/tape
 	/*
-	if (state.tape.play_pointer && config.tape_traps && (_cpu_state.pc & 0xFFFF) == 0x056B)
+	if (state.tape.play_pointer && config.tape_traps && (cpu.pc & 0xFFFF) == 0x056B)
 		tape_traps();
 
 	if (state.tape.play_pointer && !config.sound.enabled)
 		fast_tape();
 	*/
 
-	if (_cpu_state.vm1 && _cpu_state.halted)
+	if (cpu.vm1 && cpu.halted)
 	{
-		// Z80 in HALT state. No processing will be done until INT or NMI arrives
-		_cpu_state.tt += _cpu_state.rate * 1;
-		if (++_cpu_state.halt_cycle == 4)
+		// Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
+		cpu.tt += cpu.rate * 1;
+		if (++cpu.halt_cycle == 4)
 		{
-			_cpu_state.r_low += 1;
-			_cpu_state.halt_cycle = 0;
+			cpu.r_low += 1;
+			cpu.halt_cycle = 0;
 		}
 	}
 	else
 	{
-		if (_cpu_state.pch & temporary.evenM1_C0)
-			_cpu_state.tt += (_cpu_state.tt & _cpu_state.rate);
+		if (cpu.pch & temporary.evenM1_C0)
+			cpu.tt += (cpu.tt & cpu.rate);
 
 		// 1. Fetch opcode (Z80 M1 bus cycle)
 		uint8_t opcode = m1_cycle();
 
 		// 2. Emulate fetched Z80 opcode
-		(normal_opcode[opcode])(&_cpu_state);
+		(normal_opcode[opcode])(&cpu);
 	}
 
 	/* [vv]
@@ -372,49 +416,51 @@ void Z80::Step()
 
 void Z80::SetBanks()
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 }
 
 void Z80::UpdateScreen()
 {
-	Z80& _cpu_state = *this;
+
 }
 
 void Z80::HandleNMI(ROMModeEnum mode)
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 }
 
 void Z80::HandleINT(uint8_t vector)
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 
 	unsigned interrupt_handler_address;
-	if (_cpu_state.im < 2)
+	if (cpu.im < 2)
 	{
 		interrupt_handler_address = 0x38;
 	}
 	else
 	{
 		// im2
-		unsigned vec = vector + _cpu_state.i * 0x100;
-		interrupt_handler_address = _cpu_state.MemIf->read(vec) + 0x100 * _cpu_state.MemIf->read(vec + 1);
+		unsigned vec = vector + cpu.i * 0x100;
+		interrupt_handler_address = cpu.MemIf->read(vec) + 0x100 * cpu.MemIf->read(vec + 1);
 	}
 
-	if (DirectRead(_cpu_state.pc) == 0x76) // If interrupt occurs on HALT command (opcode 0x76)
-		_cpu_state.pc++;
+	if (DirectRead(cpu.pc) == 0x76) // If interrupt occurs on HALT command (opcode 0x76)
+		cpu.pc++;
 
-	IncrementCPUCyclesCounter(((_cpu_state.im < 2) ? 13 : 19) - 3);
+	IncrementCPUCyclesCounter(((cpu.im < 2) ? 13 : 19) - 3);
 
-	_cpu_state.MemIf->write(--_cpu_state.sp, _cpu_state.pch);
-	_cpu_state.MemIf->write(--_cpu_state.sp, _cpu_state.pcl);
-	_cpu_state.pc = interrupt_handler_address;
-	_cpu_state.memptr = interrupt_handler_address;
-	_cpu_state.halted = 0;
-	_cpu_state.iff1 = _cpu_state.iff2 = 0;
-	_cpu_state.int_pend = false;
+	cpu.MemIf->write(--cpu.sp, cpu.pch);
+	cpu.MemIf->write(--cpu.sp, cpu.pcl);
+	cpu.pc = interrupt_handler_address;
+	cpu.memptr = interrupt_handler_address;
+	cpu.halted = 0;
+	cpu.iff1 = cpu.iff2 = 0;
+	cpu.int_pend = false;
+
+	// TODO: move to TSConf plugin
 	if (config.mem_model == MM_TSL)
 	{
 		if (state.ts.intctrl.frame_pend) state.ts.intctrl.frame_pend = 0;
@@ -427,11 +473,21 @@ void Z80::HandleINT(uint8_t vector)
 	}
 }
 
+// Debugger trigger updates
+void Z80::ProcessDebuggerEvents()
+{
+	// TODO: integrate with CPUDebugger class
+	// If in debug session - call it's callback. Debugger should handle all events / breakpoints by itself
+}
+
+//
+// Increment CPU cycles counter by specified number of cycles.
+// Required to keep exact timings for Z80 commands
+// Note: same as '#define cputact(a)	cpu->tt += ((a) * cpu->rate)' macro defined in cpulogic.h
+//
 void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 {
-	Z80& _cpu_state = *this;
-
-	_cpu_state.tt += cycles * _cpu_state.rate;
+	tt += cycles * rate;
 }
 
 // TSConf specific

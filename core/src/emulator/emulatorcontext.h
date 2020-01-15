@@ -2,7 +2,6 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
-//#include "emulator/video/screen.h"
 
 class Memory;
 class Screen;

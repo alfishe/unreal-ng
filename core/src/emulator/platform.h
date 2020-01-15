@@ -47,7 +47,6 @@
 
 #define TRASH_M     (MISC_BASE_M+0*PAGE)
 
-
 enum IDE_SCHEME
 {
 	IDE_NONE = 0,
@@ -83,7 +82,8 @@ const int RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048
 
 struct TMemModel
 {
-	const char *fullname, *shortname;
+	const char *fullname;
+	const char *shortname;
 	MEM_MODEL Model;
 	unsigned defaultRAM;
 	unsigned availRAMs;
@@ -371,7 +371,9 @@ struct TEMP
 	unsigned ataricolors[0x100];
 	unsigned shift_mask; // for 16/32 bit modes masks low bits of color components
 
-	struct { // led coords
+	struct
+	{
+		// led coords
 		uint32_t *ay;
 		uint32_t *perf;
 		uint32_t *load;
@@ -381,8 +383,9 @@ struct TEMP
 		uint32_t *memband;
 		uint32_t *fdd;
 
-		__int64 tape_started;
+		int64_t tape_started;
 	} led;
+
 	uint8_t profrom_mask;
 	uint8_t comp_pal_changed;
 

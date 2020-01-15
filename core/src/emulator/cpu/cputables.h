@@ -371,10 +371,10 @@ public:
 	uint8_t ror_table[0x100];
 
 protected:
-	void MakeADC();
-	void MakeSBC();
-	void MakeLog();
-	void MakeRot();
+	constexpr void MakeADC();
+	constexpr void MakeSBC();
+	constexpr void MakeLog();
+	constexpr void MakeRot();
 
 public:
 	CPUTables();

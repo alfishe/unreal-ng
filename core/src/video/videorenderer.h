@@ -3,7 +3,7 @@
 
 #include <thread>
 #include "../interfaces.h"
-#include "../common/autoresetevent.h"
+#include "common/autoresetevent.h"
 
 using namespace std;
 

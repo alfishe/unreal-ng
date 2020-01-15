@@ -1,8 +1,9 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulatorcontext.h"
+#include "common/logger.h"
 #include "cpu/cpu.h"
+#include "emulator/emulatorcontext.h"
 
 class MainLoop
 {
@@ -24,5 +25,6 @@ protected:
 	void InitSoundFrame();
 	void InitVideoFrame();
 
-	void ExecuteCPUFrame();
+	void ExecuteCPUCycle();
+	void DoIdle();
 };
