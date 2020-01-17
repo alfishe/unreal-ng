@@ -194,6 +194,7 @@
     <ClInclude Include="emulator\cpu\z80_old.h" />
     <ClInclude Include="emulator\emulator.h" />
     <ClInclude Include="emulator\emulatorcontext.h" />
+    <ClInclude Include="emulator\io\hdd\hdd.h" />
     <ClInclude Include="emulator\mainloop.h" />
     <ClInclude Include="emulator\memory\memory.h" />
     <ClInclude Include="emulator\memory\nvram.h" />
@@ -203,6 +204,7 @@
     <ClInclude Include="emulator\platforms\tsconf\tsconf.h" />
     <ClInclude Include="emulator\ports.h" />
     <ClInclude Include="emulator\ports\ports.h" />
+    <ClInclude Include="emulator\sound\sound.h" />
     <ClInclude Include="emulator\video\renderers.h" />
     <ClInclude Include="emulator\video\screen.h" />
     <ClInclude Include="interfaces.h" />
@@ -237,12 +239,14 @@
     <ClCompile Include="emulator\cpu\z80.cpp" />
     <ClCompile Include="emulator\emulator.cpp" />
     <ClCompile Include="emulator\emulatorcontext.cpp" />
+    <ClCompile Include="emulator\io\hdd\hdd.cpp" />
     <ClCompile Include="emulator\mainloop.cpp" />
     <ClCompile Include="emulator\memory\memory.cpp" />
     <ClCompile Include="emulator\memory\nvram.cpp" />
     <ClCompile Include="emulator\memory\ram.cpp" />
     <ClCompile Include="emulator\memory\rom.cpp" />
     <ClCompile Include="emulator\ports\ports.cpp" />
+    <ClCompile Include="emulator\sound\sound.cpp" />
     <ClCompile Include="emulator\video\renderers.cpp" />
     <ClCompile Include="emulator\video\screen.cpp" />
     <ClCompile Include="emulator\video\videocontroller.cpp" />

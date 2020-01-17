@@ -261,8 +261,8 @@ struct Z80 : public TZ80State
 	//   typedef u8 *(* TMemDbg)(u32 addr);
 	//   typedef void (* TWmDbg)(u32 addr, u8 val);
 
-	//   TRmDbg DirectRm; // direct read memory in debuger
-	//   TWmDbg DirectWm; // direct write memory in debuger
+	//   TRmDbg DirectRm; // direct MemoryRead memory in debuger
+	//   TWmDbg DirectWm; // direct MemoryWrite memory in debuger
 	//   TMemDbg DirectMem; // get direct memory pointer in debuger
 	uint32_t Idx; // Индекс в массиве процессоров
 
@@ -272,7 +272,7 @@ struct Z80 : public TZ80State
 	CallbackDelta Delta;
 	CallbackSetLastT SetLastT;
 	
-	uint8_t *membits;
+	uint8_t *_membits;
 	uint8_t dbgbreak;
 	const TMemIf *FastMemIf; // Быстрый интерфес памяти
 	const TMemIf *DbgMemIf; // Интерфейс памяти для поддержки отладчика (брекпоинты на доступ к памяти)
@@ -286,7 +286,7 @@ struct Z80 : public TZ80State
 		CallbackStep Z80Step,
 		CallbackDelta Delta,
 		CallbackSetLastT SetLastT,
-		uint8_t* membits,
+		uint8_t* _membits,
 		const TMemIf* FastMemIf,
 		const TMemIf* DbgMemIf
 		) :
@@ -295,7 +295,7 @@ struct Z80 : public TZ80State
 		Z80Step(Z80Step),
 		Delta(Delta),
 		SetLastT(SetLastT),
-		membits(membits),
+		_membits(_membits),
 		FastMemIf(FastMemIf),
 		DbgMemIf(DbgMemIf)
 	{
@@ -324,15 +324,15 @@ struct Z80 : public TZ80State
 	void SetFastMemIf() { MemIf = FastMemIf; }
 	void SetDbgMemIf() { MemIf = DbgMemIf; }
 
-	// Direct read memory in debugger
+	// Direct MemoryRead memory in debugger
 	uint8_t DirectRm(unsigned addr) const { return *DirectMem(addr); }
 
-	// Direct write memory in debuger
+	// Direct MemoryWrite memory in debuger
 	void DirectWm(unsigned addr, uint8_t val)
 	{
 		*DirectMem(addr) = val;
 		uint16_t cache_pointer = addr & 0x1FF;
-		tscache_addr[cache_pointer] = -1; // write invalidates flag
+		tscache_addr[cache_pointer] = -1; // MemoryWrite invalidates flag
 	}
 	/*
 	   virtual u8 rm(unsigned addr) = 0;
@@ -369,11 +369,11 @@ public:
 		CallbackStep Z80Step,
 		CallbackDelta Delta,
 		CallbackSetLastT SetLastT,
-		uint8_t *membits,
+		uint8_t *_membits,
 		const TMemIf *FastMemIf,
 		const TMemIf *DbgMemIf
 		) :
-		Z80(Idx, BankNames, Z80Step, Delta, SetLastT, membits, FastMemIf, DbgMemIf) { }
+		Z80(Idx, BankNames, Z80Step, Delta, SetLastT, _membits, FastMemIf, DbgMemIf) { }
 	/*
 	   virtual u8 rm(unsigned addr) override;
 	   virtual u8 dbgrm(unsigned addr) override;

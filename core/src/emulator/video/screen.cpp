@@ -323,7 +323,7 @@ uint32_t Screen::TSConf_Render(uint32_t tacts)
 	{
 		if (comp.ts.tsu.state == TSS_INIT) // Start of new line
 		{
-			comp.ts.tsu.tmap_read = ((((u32)vid.line + 17) >= vid.raster.u_brd) && (((u32)vid.line + 9) <= vid.raster.d_brd)); // need to read TileMap in this line ?
+			comp.ts.tsu.tmap_read = ((((u32)vid.line + 17) >= vid.raster.u_brd) && (((u32)vid.line + 9) <= vid.raster.d_brd)); // need to MemoryRead TileMap in this line ?
 			comp.ts.tsu.render = ((((u32)vid.line + 1) >= vid.raster.u_brd) && (((u32)vid.line + 1) <= vid.raster.d_brd)); // need render graphic in this line ?
 
 			// Set first state at this line

@@ -534,14 +534,14 @@ typedef struct
 		SPRITE_t spr;         // Sprite data for render
 
 		TILE_t *tmap[2];      // TileMap pointers for layers
-		uint8_t tmsize;            // Number of elements which need read from TileMap for current layer
+		uint8_t tmsize;            // Number of elements which need MemoryRead from TileMap for current layer
 		uint16_t tmbpos[2];        // Position in TileMap buffer for each layer
 		TMAP_t tmbuf[512];    // TileMap buffer
 
 		uint8_t state;             // TSU state
 		uint8_t prev_state;        // Previous TSU state
 		uint8_t layer;             // Active layer (0, 1, 2, etc)
-		bool tmap_read;       // Flag for read TileMap in current line
+		bool tmap_read;       // Flag for MemoryRead TileMap in current line
 		bool render;          // Flag for render graphic in current line
 
 		struct

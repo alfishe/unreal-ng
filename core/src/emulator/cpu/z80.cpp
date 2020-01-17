@@ -24,16 +24,32 @@ Z80::Z80(EmulatorContext* context)
 	int_pend = false;
 	int_gate = true;
 	nmi_in_progress = false;
+
+	// Initialize memory access interfaces
+	FastMemIf = new MemoryInterface(&Z80::MemoryReadFast, &Z80::MemoryWriteFast);
+	DbgMemIf = new MemoryInterface(&Z80::MemoryReadDebug, &Z80::MemoryWriteDebug);
 }
 
 Z80::~Z80()
 {
+	if (FastMemIf)
+	{
+		delete FastMemIf;
+		FastMemIf = nullptr;
+	}
+
+	if (DbgMemIf)
+	{
+		delete DbgMemIf;
+		DbgMemIf = nullptr;
+	}
+
 	_context = nullptr;
 }
 
 uint8_t Z80::m1_cycle()
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 	TEMP& temporary = _context->temporary;
@@ -57,16 +73,16 @@ uint8_t Z80::m1_cycle()
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
-	uint8_t opcode = _cpu_state.MemIf->read(_cpu_state.pc++);
+	uint8_t opcode = rd(cpu.pc++);
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
-	if (state.ts.cache_miss && _cpu_state.rate == 0x40)
-		_cpu_state.tt = (_cpu_state.tt + 0x40 * 7) & 0xFFFFFF80;
+	if (state.ts.cache_miss && cpu.rate == 0x40)
+		cpu.tt = (cpu.tt + 0x40 * 7) & 0xFFFFFF80;
 	else
-		_cpu_state.tt += _cpu_state.rate * 4;
+		cpu.tt += cpu.rate * 4;
 
-	_cpu_state.opcode = opcode;
+	cpu.opcode = opcode;
 	return opcode;
 }
 
@@ -112,21 +128,27 @@ uint8_t Z80::InterruptVector()
 }
 
 // TODO: Obsolete method - refactor
+//
+// Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)
+//
 uint8_t Z80::rd(unsigned addr)
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 
-	_cpu_state.tt += rate * 3;
-	return MemIf->read(addr);
+	cpu.tt += rate * 3;
+	return (cpu.*MemIf->MemoryRead)(addr);
 }
 
 // TODO: Obsolete method - refactor
+//
+// Duspatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
+//
 void Z80::wd(unsigned addr, uint8_t val)
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 
 	tt += rate * 3;
-	MemIf->write(addr, val);
+	(cpu.*MemIf->MemoryWrite)(addr, val);
 }
 
 uint8_t Z80::in(uint16_t port)
@@ -144,12 +166,192 @@ void Z80::retn()
 {
 }
 
+//
+// Implementation memory read method. Used from FastMemIf.
+//
+uint8_t Z80::MemoryReadFast(uint16_t addr)
+{
+	CONFIG& config = _context->config;
+	COMPUTER& state = _context->state;
+	VideoControl& video = _context->pScreen->_vid;
+	Memory& mem = *_context->pMemory;
+
+	uint8_t result = 0xFF;
+
+	// Determine CPU bank (from address bits 14 and 15)
+	uint8_t bank = (addr >> 14) & 0x03;
+
+	// TSConf caching logic
+	// TODO: move to TSConf plugin
+	if (config.mem_model == MM_TSL)
+	{
+		if (mem._bank_mode[bank] == MemoryBankModeEnum::RAM)
+		{
+			// Pentevo version for 16 bit DRAM/cache
+			unsigned cached_address = (state.ts.page[bank] << 5) | ((addr >> 9) & 0x1F);  // {page[7:0], addr[13:9]}
+			uint16_t cache_pointer = addr & 0x1FF;  // addr[8:0]
+			state.ts.cache_miss = !(state.ts.cacheconf & (1 << bank)) || (tscache_addr[cache_pointer] != cached_address);
+
+			if (state.ts.cache_miss)
+			{
+				// Read two sequential bytes with address bits xxxxxx00 and xxxxxx01 and cache them
+				uint16_t cache_addr = addr & 0xFFFE;
+				tscache_data[cache_pointer & 0xFFFE] = *(mem._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
+
+				cache_addr = addr | 0x0001;
+				tscache_data[cache_pointer | 0x0001] = *(mem._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
+
+				tscache_addr[cache_pointer & 0xFFFE] = tscache_addr[cache_pointer | 0x0001] = cached_address;     // Set cache tags for two subsequent 8-bit addresses
+
+				// Update counters
+				video.memcpucyc[t / 224]++;
+				video.memcyc_lcmd++;
+			}
+
+			result = tscache_data[cache_pointer];
+		}
+		else
+		{
+			state.ts.cache_miss = false;
+		}
+	}
+	else
+	{
+		// Read byte from correspondent memory bank mapped to global memory buffer
+		result = *(mem._bank_read[bank] + (unsigned)(addr & (PAGE - 1)));
+
+		// Update RAM access counters
+		if (mem._bank_mode[bank] == MemoryBankModeEnum::RAM)
+		{
+			video.memcpucyc[t / 224]++;
+		}
+	}
+
+	return result;
+}
+
+//
+// Implementation memory read method. Used from DbgMemIf.
+//
+uint8_t Z80::MemoryReadDebug(uint16_t addr)
+{
+	// Mark memory cell as accessed on read
+	uint8_t* membit = _membits + (unsigned)addr;
+	*membit |= MEMBITS_R;
+	dbgbreak |= (*membit & MEMBITS_BPR);
+
+	// Fetch data from memory
+	uint8_t result = MemoryReadFast(addr);
+
+	// Check for breakpoint conditions
+	//brk_mem_rd = addr;
+	//brk_mem_val = result;
+	//debug_cond_check(&cpu);		// Debug conditions check is very slow
+
+	return result;
+}
+
+//
+// Implementation memory write method. Used from FastMemIf.
+//
+void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
+{
+	CONFIG& config = _context->config;
+	COMPUTER& state = _context->state;
+	TEMP& temporary = _context->temporary;
+	VideoControl& video = _context->pScreen->_vid;
+	Memory& mem = *_context->pMemory;
+
+	// Determine CPU bank (from address bits 14 and 15)
+	uint8_t bank = (addr >> 14) & 0x03;
+
+	// TSConf caching logic
+	// TODO: move to TSConf plugin
+	if (config.mem_model == MM_TSL)
+	{
+		if (state.ts.fm_en && (((addr >> 12) & 0x0F) == state.ts.fm_addr))
+		{
+			// 256 byte arrays
+			// if (((addr >> 8) & 0x0F) == TSF_REGS)
+			//		ts_ext_port_wr(addr & 0xFF, val);
+		}
+		else
+		{
+			// 512 byte arrays
+			if (addr & 1)
+			{
+				switch ((addr >> 9) & 0x07)
+				{
+					case TSF_CRAM:
+					{
+						state.cram[(addr >> 1) & 0xFF] = ((val << 8) | temporary.fm_tmp);
+						//update_clut((addr >> 1) & 0xFF);
+						break;
+					}
+
+					// 
+					case TSF_SFILE:
+					{
+						state.sfile[(addr >> 1) & 0xFF] = (val << 8) | temporary.fm_tmp;
+						break;
+					}
+				}
+			}
+			else
+				// remember temp value
+				temporary.fm_tmp = val;
+		}
+
+		// Pentevo version for 16 bit DRAM/cache
+		uint16_t cache_pointer = addr & 0x1FE;
+		tscache_addr[cache_pointer] = tscache_addr[cache_pointer + 1] = -1;    // invalidate two 8-bit addresses
+
+		// Update RAM access counters
+		video.memcpucyc[t / 224]++;
+	}
+	else
+	{
+		// ATM3 specific
+		// Intercept writing to font area
+		// TODO: Move to ATM3 plugin
+		if ((config.mem_model == MM_ATM3) && (state.pBF & 0x04) /*&& ((addr & 0xF800) == 0)*/) // Font loading enabled for ATM3 // lvd: any addr is possible in ZXEVO
+		{
+			unsigned idx = ((addr & 0x07F8) >> 3) | ((addr & 7) << 8);
+			//fontatm2[idx] = val;
+			return;
+		}
+	}
+
+	// Write byte to correspondent memory bank cell
+	uint8_t* bank_addr = mem._bank_write[bank];
+	*(bank_addr + (unsigned)addr) = val;
+}
+
+//
+// Implementation memory write method. Used from DbgMemIf.
+//
+void Z80::MemoryWriteDebug(uint16_t addr, uint8_t val)
+{
+	// Mark memory cell as accessed on write
+	uint8_t* membit = _membits + (addr & 0xFFFF);
+	*membit |= MEMBITS_W;
+	dbgbreak |= (*membit & MEMBITS_BPW);
+
+	// Write data to memory
+	MemoryWriteFast(addr, val);
+
+	// Check for breakpoint conditions
+	//brk_mem_wr = addr;
+	//brk_mem_val = val;
+	//debug_cond_check(&cpu);		// Debug conditions check is very slow
+}
+
 uint8_t Z80::Read(uint16_t addr)
 {
 	Z80& _cpu_state = *this;
 	COMPUTER& state = _context->state;
 
-	uint8_t result = _cpu_state.MemIf->read(addr);
+	uint8_t result = rd(addr);
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
@@ -182,7 +384,7 @@ void Z80::DirectWrite(uint32_t addr, uint8_t val)
 	// Update TSConf cache data
 	// TODO: move to plugin
 	uint16_t cache_pointer = addr & 0x1FF;
-	_cpu_state.tscache_addr[cache_pointer] = -1; // write invalidates flag
+	_cpu_state.tscache_addr[cache_pointer] = -1; // MemoryWrite invalidates flag
 }
 
 void Z80::Z80FrameCycle()
@@ -314,6 +516,23 @@ void Z80::Z80FrameCycle()
 	} // end while (cpu.t < conf.intlen)
 }
 
+//
+// Handle Z80 reset signal
+//
+void Z80::Reset()
+{
+	int_flags = 0;
+	ir_ = 0;
+	pc = 0;
+	im = 0;
+	last_branch = 0;
+	int_pend = false;
+	int_gate = true;
+}
+
+//
+// Single CPU cycle
+//
 void Z80::Z80Step()
 {
 	Z80& cpu = *this;
@@ -416,7 +635,8 @@ void Z80::Z80Step()
 
 void Z80::SetBanks()
 {
-	Z80& cpu = *this;
+	// Let memory manager set it up
+	_context->pMemory->SetBanks();
 }
 
 void Z80::UpdateScreen()
@@ -444,7 +664,7 @@ void Z80::HandleINT(uint8_t vector)
 	{
 		// im2
 		unsigned vec = vector + cpu.i * 0x100;
-		interrupt_handler_address = cpu.MemIf->read(vec) + 0x100 * cpu.MemIf->read(vec + 1);
+		interrupt_handler_address = rd(vec) + 0x100 * rd(vec + 1);
 	}
 
 	if (DirectRead(cpu.pc) == 0x76) // If interrupt occurs on HALT command (opcode 0x76)
@@ -452,8 +672,10 @@ void Z80::HandleINT(uint8_t vector)
 
 	IncrementCPUCyclesCounter(((cpu.im < 2) ? 13 : 19) - 3);
 
-	cpu.MemIf->write(--cpu.sp, cpu.pch);
-	cpu.MemIf->write(--cpu.sp, cpu.pcl);
+	// Push return address to stack
+	wd(--cpu.sp, cpu.pch);
+	wd(--cpu.sp, cpu.pcl);
+
 	cpu.pc = interrupt_handler_address;
 	cpu.memptr = interrupt_handler_address;
 	cpu.halted = 0;

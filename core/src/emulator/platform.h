@@ -35,7 +35,7 @@
 #define page_ram(a) RAM_BASE_M + PAGE * (a)
 #define page_rom(a) ROM_BASE_M + PAGE * (a)
 
-#define RAM_BASE_M  memory
+#define RAM_BASE_M  _memory
 #define CACHE_M     (RAM_BASE_M + MAX_RAM_PAGES*PAGE)
 #define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES*PAGE)
 #define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES*PAGE)
@@ -501,7 +501,7 @@ struct NVRAM
 	uint8_t out;
 	uint8_t out_z;
 
-	void write(uint8_t val);
+	void MemoryWrite(uint8_t val);
 };
 
 struct COMPUTER
@@ -678,7 +678,7 @@ typedef union
 
 // flags for video filters
 								// misc options
-#define RF_BORDER   0x00000002   // no multicolor painter, read directly from spectrum memory
+#define RF_BORDER   0x00000002   // no multicolor painter, MemoryRead directly from spectrum memory
 #define RF_MON      0x00000004   // not-flippable surface, show mouse cursor
 #define RF_DRIVER   0x00000008   // use options from driver
 //#define RF_VSYNC    0x00000010   // force VSYNC

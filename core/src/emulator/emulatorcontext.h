@@ -9,7 +9,7 @@ class Screen;
 class EmulatorContext
 {
 public:
-	// Global emulator configuration (read from ini file)
+	// Global emulator configuration (MemoryRead from ini file)
 	CONFIG config;
 
 	// Emulated system state (ports, flags including peripheral devices)

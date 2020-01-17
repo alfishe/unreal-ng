@@ -146,7 +146,7 @@ void NVRAM::Write(uint8_t val)
 				{
 					if ((datain & 0xF0) != 0xA0) goto idle;
 					address = (address & 0xFF) + ((datain << 7) & 0x700);
-					if (datain & 1) { // read from current address
+					if (datain & 1) { // MemoryRead from current address
 						dataout = nvram[address];
 						address = (address + 1) & 0x7FF;
 						bitsout = 0;

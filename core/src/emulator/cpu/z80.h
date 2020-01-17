@@ -227,7 +227,7 @@ struct Z80State : public Z80Registers
 	//CallbackSetLastT SetLastT;
 
 	// Memory interfacing
-	uint8_t* membits;
+	uint8_t* _membits;
 	const MemoryInterface* FastMemIf;				// Fast memory interface (max performance
 	const MemoryInterface* DbgMemIf;				// Debug memory interface (supports memory access breakpoints)
 	const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
@@ -254,19 +254,28 @@ public:
 	// TODO: convert obsolete naming
 	void Z80FrameCycle();
 	uint8_t m1_cycle();
-	uint8_t rd(unsigned addr);
-	void wd(unsigned addr, uint8_t val);
-
 	uint8_t in(uint16_t port);
 	void out(uint16_t port, uint8_t val);
 	void retn();
+
+	// Memory access dispatching methods
+	uint8_t rd(unsigned addr);
+	void wd(unsigned addr, uint8_t val);
 	// End of TODO: convert obsolete naming
+
+
+	// Memory access implementation methods
+	uint8_t MemoryReadFast(uint16_t addr);
+	uint8_t MemoryReadDebug(uint16_t addr);
+	void MemoryWriteFast(uint16_t addr, uint8_t val);
+	void MemoryWriteDebug(uint16_t addr, uint8_t val);
 
 	uint8_t Read(uint16_t addr);
 	void Write(uint16_t addr, uint8_t val);
-	/*__forceinline*/ uint8_t DirectRead(uint32_t addr);				// Direct emulated memory read (For debugger use)
-	__forceinline void DirectWrite(uint32_t addr, uint8_t val);	// Direct emulated memory write (For debugger use)
+	uint8_t DirectRead(uint32_t addr);				// Direct emulated memory MemoryRead (For debugger use)
+	void DirectWrite(uint32_t addr, uint8_t val);	// Direct emulated memory MemoryWrite (For debugger use)
 
+	void Reset();
 	void Z80Step();
 
 	// Trigger updates

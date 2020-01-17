@@ -4,11 +4,11 @@
 #include "memory.h"
 
 /*
-uint8_t MemoryInterface::read(uint16_t address)
+uint8_t MemoryInterface::MemoryRead(uint16_t address)
 {
 }
 
-void MemoryInterface::write(uint16_t address, uint8_t val)
+void MemoryInterface::MemoryWrite(uint16_t address, uint8_t val)
 {
 
 }
@@ -74,9 +74,9 @@ void Memory::SetMode(ROMModeEnum mode)
 // input: ports 7FFD, 1FFD, DFFD, FFF7, FF77, EFF7, flags CF_TRDOS,CF_CACHEON
 void Memory::SetBanks()
 {
-	COMPUTER& state = *(&_context->state);
-	CONFIG& config = *(&_context->config);
-	TEMP& temp = *(&_context->temporary);
+	COMPUTER& state = _context->state;
+	CONFIG& config = _context->config;
+	TEMP& temp = _context->temporary;
 
 	// Initialize according Spectrum 128K standard address space settings
 	_bank_write[1] = _bank_read[1] = page_ram(5);	// Set Screen 1 (page 5) as default to [0x4000 - 0x7FFF]
@@ -127,10 +127,10 @@ void Memory::SetBanks()
 				bank0 = page_ram(0); // Alone Coder 0.36.4
 			break;
 		case MM_PROFSCORP:
-			membits[0x0100] &= ~MemoryBitsEnum::MEMBITS_R;
-			membits[0x0104] &= ~MemoryBitsEnum::MEMBITS_R;
-			membits[0x0108] &= ~MemoryBitsEnum::MEMBITS_R;
-			membits[0x010C] &= ~MemoryBitsEnum::MEMBITS_R;
+			_membits[0x0100] &= ~MemoryBitsEnum::MEMBITS_R;
+			_membits[0x0104] &= ~MemoryBitsEnum::MEMBITS_R;
+			_membits[0x0108] &= ~MemoryBitsEnum::MEMBITS_R;
+			_membits[0x010C] &= ~MemoryBitsEnum::MEMBITS_R;
 		case MM_SCORP:
 			sel_bank += ((state.p1FFD & 0x10) >> 1) + ((state.p1FFD & 0xC0) >> 2);
 			bank3 = page_ram(sel_bank & temp.ram_mask);
@@ -465,7 +465,7 @@ void Memory::SetBanks()
 		_bank_write[0] = TRASH_M;
 	}
 
-	// Disable write for banks that marked as ROM
+	// Disable MemoryWrite for banks that marked as ROM
 	if (_bank_read[1] >= ROM_BASE_M) _bank_write[1] = TRASH_M;
 	if (_bank_read[2] >= ROM_BASE_M) _bank_write[2] = TRASH_M;
 	if (_bank_read[3] >= ROM_BASE_M) _bank_write[3] = TRASH_M;

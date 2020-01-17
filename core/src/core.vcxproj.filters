@@ -85,6 +85,18 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Source Files\emulator\io\tape">
+      <UniqueIdentifier>{47468fa0-737b-4944-a06c-9bb8ae9f4222}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\io\tape">
+      <UniqueIdentifier>{2d992d4e-f2b5-4399-94f4-0d0e6e2a333f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\emulator\sound">
+      <UniqueIdentifier>{a259f1e2-55c8-49b7-abe5-a550006be525}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\emulator\sound">
+      <UniqueIdentifier>{233ded97-8ffc-4c89-9bd7-e4591415c894}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -210,6 +222,12 @@
     <ClInclude Include="emulator\video\renderers.h">
       <Filter>Header Files\video</Filter>
     </ClInclude>
+    <ClInclude Include="emulator\io\hdd\hdd.h">
+      <Filter>Header Files\emulator\io\hdd</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\sound\sound.h">
+      <Filter>Header Files\emulator\sound</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Base\BaseRenderer.cpp">
@@ -313,6 +331,12 @@
     </ClCompile>
     <ClCompile Include="emulator\video\renderers.cpp">
       <Filter>Source Files\video</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\io\hdd\hdd.cpp">
+      <Filter>Source Files\emulator\io\hdd</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\sound\sound.cpp">
+      <Filter>Source Files\emulator\sound</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

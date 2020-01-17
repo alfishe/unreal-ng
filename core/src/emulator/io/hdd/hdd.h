@@ -1,57 +1,63 @@
 #pragma once
+#include "stdafx.h"
+
+#include "emulator/EmulatorContext.h"
+
+class EmulatorContext;
+
 struct ATA_DEVICE
 {
    unsigned c,h,s,lba;
    union
    {
-      u8 regs[12];
+      uint8_t regs[12];
       struct
       {
-         u8 data;
-         u8 err;             // for write, features
+		  uint8_t data;
+		  uint8_t err;             // for write, features
+			union
+			{
+				uint8_t count;
+				uint8_t intreason;
+			};
+		 uint8_t sec;
          union
          {
-            u8 count;
-            u8 intreason;
-         };
-         u8 sec;
-         union
-         {
-            u16 cyl;
-            u16 atapi_count;
+            uint16_t cyl;
+            uint16_t atapi_count;
             struct
             {
-               u8 cyl_l;
-               u8 cyl_h;
+				uint8_t cyl_l;
+				uint8_t cyl_h;
             };
          };
-         u8 devhead;
-         u8 status;          // for write, cmd
+		 uint8_t devhead;
+		 uint8_t status;          // for write, cmd
          /*                  */
-         u8 control;         // reg8 - control (CS1,DA=6)
-         u8 feat;
-         u8 cmd;
-         u8 reserved;        // reserved
+		 uint8_t control;         // reg8 - control (CS1,DA=6)
+		 uint8_t feat;
+		 uint8_t cmd;
+		 uint8_t reserved;        // reserved
       } reg;
    };
-   u8 intrq;
-   u8 readonly;
-   u8 device_id;             // 0x00 - master, 0x10 - slave
-   u8 atapi;                 // flag for CD-ROM device
+   uint8_t intrq;
+   uint8_t readonly;
+   uint8_t device_id;             // 0x00 - master, 0x10 - slave
+   uint8_t atapi;                 // flag for CD-ROM device
 
-   u8 read(unsigned n_reg);
-   void write(unsigned n_reg, u8 data);
+   uint8_t read(unsigned n_reg);
+   void write(unsigned n_reg, uint8_t data);
    unsigned read_data();
    void write_data(unsigned data);
-   u8 read_intrq();
+   uint8_t read_intrq();
 
-   char exec_ata_cmd(u8 cmd);
-   char exec_atapi_cmd(u8 cmd);
+   char exec_ata_cmd(uint8_t cmd);
+   char exec_atapi_cmd(uint8_t cmd);
 
    enum RESET_TYPE { RESET_HARD, RESET_SOFT, RESET_SRST };
    void reset_signature(RESET_TYPE mode = RESET_SOFT);
 
-   void reset(RESET_TYPE mode);
+   void Reset(RESET_TYPE mode);
    char seek();
    void recalibrate();
    void configure(IDE_CONFIG *cfg);
@@ -111,35 +117,48 @@ struct ATA_DEVICE
    HD_STATE state;
    unsigned transptr, transcount;
    unsigned phys_dev;
-   u8 transbf[0xFFFF]; // ATAPI is able to tranfer 0xFFFF bytes. passing more leads to error
+   uint8_t transbf[0xFFFF]; // ATAPI is able to tranfer 0xFFFF bytes. passing more leads to error
 
    void handle_atapi_packet();
    void handle_atapi_packet_emulate();
    void exec_mode_select();
 
-   ATA_PASSER ata_p;
-   ATAPI_PASSER atapi_p;
-   bool loaded() { return ata_p.loaded() || atapi_p.loaded(); } //was crashed at atapi_p.loaded() if no master or slave device!!! see fix in ATAPI_PASSER //Alone Coder
+   //ATA_PASSER ata_p;
+   //ATAPI_PASSER atapi_p;
+   //bool loaded() { return ata_p.loaded() || atapi_p.loaded(); } //was crashed at atapi_p.loaded() if no master or slave device!!! see fix in ATAPI_PASSER //Alone Coder
 };
 
 struct ATA_PORT
 {
    ATA_DEVICE dev[2];
-   u8 read_high, write_high;
+   uint8_t read_high, write_high;
 
    ATA_PORT() { dev[0].device_id = 0, dev[1].device_id = 0x10; reset(); }
 
-   u8 read(unsigned n_reg);
-   void write(unsigned n_reg, u8 data);
+   uint8_t read(unsigned n_reg);
+   void write(unsigned n_reg, uint8_t data);
    unsigned read_data();
    void write_data(unsigned data);
-   u8 read_intrq();
+   uint8_t read_intrq();
 
    void reset();
 };
 
-extern PHYS_DEVICE phys[];
-extern int n_phys;
+//extern PHYS_DEVICE phys[];
+//extern int n_phys;
 
 unsigned find_hdd_device(char *name);
 void init_hdd_cd();
+
+
+class HDD
+{
+protected:
+	EmulatorContext* _context = nullptr;
+
+public:
+	HDD() = delete;		// Disable default constructor. C++ 11 feature
+	HDD(EmulatorContext* context);
+
+	void Reset();
+};

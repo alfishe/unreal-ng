@@ -225,6 +225,7 @@ public:
 	uint32_t TSConf_Render(uint32_t t);
 	void TSConf_DMA(uint32_t tacts);
 
+	// Draw helpers
 public:
 	void Draw(VideoModeEnum mode, uint32_t n);
 

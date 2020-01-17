@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include "common/logger.h"
+
 #include "cpu.h"
 #include <algorithm>
 
@@ -18,10 +20,28 @@ CPU::CPU(EmulatorContext* context)
 	// Create memory subsystem (allocates all RAM/ROM regions)
 	_memory = new Memory(context);
 	_context->pMemory = _memory;
+
+	// Instantiate sound manager
+	_sound = new Sound(context);
+
+	// Create HDD controller
+	_hdd = new HDD(context);
 }
 
 CPU::~CPU()
 {
+	if (_hdd != nullptr)
+	{
+		delete _hdd;
+		_hdd = nullptr;
+	}
+
+	if (_sound != nullptr)
+	{
+		delete _sound;
+		_sound = nullptr;
+	}
+
 	if (_cpu != nullptr)
 	{
 		delete _cpu;
@@ -50,14 +70,167 @@ Memory* CPU::GetMemory()
 
 
 // Configuration methods
-void CPU::SetFastMemoryInterface()
+void CPU::UseFastMemoryInterface()
 {
 	_cpu->MemIf = _cpu->FastMemIf;
 }
 
-void CPU::SetDebugMemoryInterface()
+void CPU::UseDebugMemoryInterface()
 {
 	_cpu->MemIf = _cpu->DbgMemIf;
+}
+
+
+void CPU::Reset()
+{
+	COMPUTER& state = _context->state;
+	CONFIG& config = _context->config;
+
+	state.pEFF7 &= config.EFF7_mask;
+	state.pEFF7 |= EFF7_GIGASCREEN; // [vv] disable turbo
+	{
+		//config.frame = frametime;
+		//_cpu.SetTpi(config.frame);
+		//                if ((conf.mem_model == MM_PENTAGON)&&(comp.pEFF7 & EFF7_GIGASCREEN))conf.frame = 71680; //removed 0.37
+		//apply_sound();
+	} //Alone Coder 0.36.4
+	
+	state.p7FFD = state.pDFFD = state.pFDFD = state.p1FFD = 0;
+	state.p7EFD = state.p78FD = state.p7AFD = state.p7CFD = state.gmx_config = state.gmx_magic_shift = 0;
+	state.pLSY256 = 0;
+
+	state.ulaplus_mode = 0;
+	state.ulaplus_reg = 0;
+
+	state.p00 = 0;		// Quorum
+	state.p80FD = 0; 	// Quorum
+	state.pBF = 0;		// ATM3
+	state.pBE = 0;		// ATM3
+
+	// TSConf specific
+	// TODO: Move to TSConf plugin
+	if (config.mem_model == MM_TSL)
+	{
+		// tsinit();
+
+		switch (_mode)
+		{
+			case RM_SYS: {state.ts.memconf = 4; break; }
+			case RM_DOS: {state.ts.memconf = 0; break; }
+			case RM_128: {state.ts.memconf = 0; break; }
+			case RM_SOS: {state.ts.memconf = 0; break; }
+		}
+
+		#ifdef MOD_VID_VD
+				comp.vdbase = 0; comp.pVD = 0;
+		#endif
+
+		// load_spec_colors();
+	}
+
+	// LSY256 specific
+	if (config.mem_model == MM_LSY256)
+		_mode = RM_SYS;
+
+	// ATM specific
+	if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+	{
+		switch (_mode)
+		{
+			case RM_DOS:
+				// Disable custom palette, Disable CP/M
+				// Enable memory dispatcher
+				// Enable default keyboard
+				// Enable frame interrupts
+				//set_atm_FF77(0x4000 | 0x200 | 0x100, 0x80 | 0x40 | 0x20 | 3);
+				state.pFFF7[0] = 0x100 | 1; // trdos
+				state.pFFF7[1] = 0x200 | 5; // ram 5
+				state.pFFF7[2] = 0x200 | 2; // ram 2
+				state.pFFF7[3] = 0x200;     // ram 0
+
+				state.pFFF7[4] = 0x100 | 1; // trdos
+				state.pFFF7[5] = 0x200 | 5; // ram 5
+				state.pFFF7[6] = 0x200 | 2; // ram 2
+				state.pFFF7[7] = 0x200;     // ram 0
+				break;
+			default:
+				;
+				//set_atm_FF77(0, 0);
+		}
+	}
+
+	if (config.mem_model == MM_ATM450)
+	{
+		switch (_mode)
+		{
+			case RM_DOS:
+				//set_atm_aFE(0x80 | 0x60);
+				state.aFB = 0;
+				break;
+			default:
+				//set_atm_aFE(0x80);
+				state.aFB = 0x80;
+		}
+	}
+
+	state.flags = 0;
+	state.active_ay = 0;
+
+	// Set base CPU clock frequency
+	if (config.mem_model == MM_TSL)
+	{
+		// Set TSConf clock speed based on settings
+		switch (state.ts.zclk)
+		{
+			case 0: SetCPUClockSpeed(1); break;
+			case 1: SetCPUClockSpeed(2); break;
+			case 2: SetCPUClockSpeed(4); break;
+			case 3: SetCPUClockSpeed(4); break;
+		}
+
+		state.ts.intctrl.frame_len = (config.intlen * _cpu->rate) >> 8;
+	}
+	else
+		SetCPUClockSpeed(1);		// turbo 1x (3.5MHz) for all other clones
+
+	// Reset main Z80 CPU and all peripherals
+	_cpu->Reset();					// Main Z80
+	_sound->Reset();				// All sound devices (AY(s), COVOX, MoonSound, GS)
+
+	//reset_tape();					// Reset tape loader state
+
+	_hdd->Reset();					// Reset IDE controller
+
+	// Input controllers reset
+	//input.atm51.reset();
+	// input.buffer.Enable(false);
+
+	// Turn off TRDOS ROM by default
+	if ((!config.trdos_present && _mode == RM_DOS) ||
+		(!config.cache && _mode == RM_CACHE))
+		_mode = RM_SOS;
+
+	// Set ROM mode
+	_memory->SetMode(_mode);
+
+	// Reset counters
+	state.t_states = 0;
+	state.frame_counter = 0;
+}
+
+//
+// Set main Z80 CPU clock speed
+// Multplier from 3.5MHz
+//
+void CPU::SetCPUClockSpeed(uint8_t multiplier)
+{
+	if (multiplier == 0)
+	{
+		LOGERROR("CPU::SetCPUClockSpeed - Z80 clock frequency multiplier cannot be 0");
+		assert(false);
+	}
+
+	_cpu->rate = (256 / multiplier);
 }
 
 void CPU::CPUFrameCycle()
@@ -69,13 +242,13 @@ void CPU::CPUFrameCycle()
 	if (_cpu->dbgchk)
 	{
 		// Use advanced (but slow) memory access interface when Debugger is on
-		SetDebugMemoryInterface();
+		UseDebugMemoryInterface();
 		_cpu->Z80FrameCycle();
 	}
 	else
 	{
 		// Use fast memory access when no Debugger used
-		SetFastMemoryInterface();
+		UseFastMemoryInterface();
 		_cpu->Z80FrameCycle();
 	}
 

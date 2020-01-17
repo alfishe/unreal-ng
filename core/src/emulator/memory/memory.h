@@ -4,6 +4,8 @@
 #include "emulator/platform.h"
 #include "emulator/emulatorcontext.h"
 
+class Z80;
+
 enum MemoryBankModeEnum : uint8_t
 {
 	ROM = 0,
@@ -34,17 +36,26 @@ enum MemoryBitsEnum : uint8_t
 
 // Memory interface descriptor
 //  Read callback to access memory cell (byte)
-//  Write callback - to write data into memory cell (byte)
-typedef uint8_t (* MemoryReadCallback)(uint16_t addr);
-typedef void (* MemoryWriteCallback)(uint16_t addr, uint8_t val);
+//  Write callback - to MemoryWrite data into memory cell (byte)
+typedef uint8_t (Z80::* MemoryReadCallback)(uint16_t addr);
+typedef void (Z80::* MemoryWriteCallback)(uint16_t addr, uint8_t val);
 struct MemoryInterface
 {
-	MemoryReadCallback read;
-	MemoryWriteCallback write;
+	MemoryInterface() = delete;			// Disable default constructor. C++ 11 feature
+	MemoryInterface(MemoryReadCallback read, MemoryWriteCallback write)
+	{
+		MemoryRead = read;
+		MemoryWrite = write;
+	};
+
+	MemoryReadCallback MemoryRead;
+	MemoryWriteCallback MemoryWrite;
 };
 
 class Memory
 {
+	friend class Z80;
+
 protected:
 	// Context passed during initialization
 	EmulatorContext* _context = nullptr;
@@ -68,8 +79,8 @@ protected:
 	};
 
 protected:
-	uint8_t memory[PAGE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
-	uint8_t membits[0x10000];			// Access counters for CPU memory address space (64KiB)
+	uint8_t _memory[PAGE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
+	uint8_t _membits[0x10000];			// Access counters for CPU memory address space (64KiB)
 
 	MemoryBankModeEnum _bank_mode[4];	// Mode for each of four banks. 
 	uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
