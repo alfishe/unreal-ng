@@ -228,6 +228,9 @@
     <ClInclude Include="emulator\sound\sound.h">
       <Filter>Header Files\emulator\sound</Filter>
     </ClInclude>
+    <ClInclude Include="common\systemhelper.h">
+      <Filter>Header Files\common</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Base\BaseRenderer.cpp">
@@ -337,6 +340,9 @@
     </ClCompile>
     <ClCompile Include="emulator\sound\sound.cpp">
       <Filter>Source Files\emulator\sound</Filter>
+    </ClCompile>
+    <ClCompile Include="common\systemhelper.cpp">
+      <Filter>Source Files\common</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

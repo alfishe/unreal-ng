@@ -6,7 +6,11 @@
 class Z80;
 
 // Aliases for Z80 logic functions
-#define Z80FAST fastcall		// Try to keep function parameters in x86/x64 CPU registers. Not guaranteed for all compilers
+#if defined (_MSC_VER)
+	#define Z80FAST __fastcall		// Try to keep function parameters in x86/x64 CPU registers. Not guaranteed for all compilers
+#else
+	#define Z80FAST
+#endif
 #define Z80INLINE __forceinline // Time-critical inlines. Uses cross-compiler __forceinline macro from stdafx.h
 #define Z80LOGIC uint8_t Z80FAST
 #define Z80OPCODE void Z80FAST

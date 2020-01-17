@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
-#include "Emulator.h"
+#include "emulator.h"
+#include "common/systemhelper.h"
 
 Emulator::Emulator()
 {
@@ -28,6 +29,12 @@ bool Emulator::Init()
 	{
 		LOGERROR("Emulator::Init - context creation failed");
 	}
+
+	// Get system info
+	GetSystemInfo();
+
+	// Load configuration and ROMs
+	//config.LoadConfig();
 
 	// Create and initialize Z80 main CPU instance
 	if (result)
@@ -89,6 +96,15 @@ void Emulator::Release()
 		delete _context;
 		_context = nullptr;
 	}
+}
+
+void Emulator::GetSystemInfo()
+{
+	char cpuString[49];
+	cpuString[0] = '\0';
+
+	SystemHelper::GetCPUString(cpuString);
+	LOGINFO("CPU ID: %s", cpuString);
 }
 
 void Emulator::Reset()

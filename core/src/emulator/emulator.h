@@ -2,13 +2,15 @@
 #include "stdafx.h"
 #include "common/logger.h"
 
-#include "emulatorcontext.h"
-#include "mainloop.h"
+#include "emulator/config.h"
+#include "emulator/mainloop.h"
 #include "cpu/cpu.h"
+#include "emulatorcontext.h"
 
 class Emulator
 {
 protected:
+	Config config;
 	EmulatorContext* _context = nullptr;
 	CPU* _cpu = nullptr;
 	MainLoop* _mainloop = nullptr;
@@ -25,6 +27,7 @@ public:
 	// Initialization operations
 	bool Init();
 	void Release();
+	void GetSystemInfo();
 
 	// Emulator control cycle
 	void Reset();
