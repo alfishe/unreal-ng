@@ -100,11 +100,23 @@ void Emulator::Release()
 
 void Emulator::GetSystemInfo()
 {
+	HOST& host = _context->host;
+
 	char cpuString[49];
 	cpuString[0] = '\0';
 
 	SystemHelper::GetCPUString(cpuString);
 	LOGINFO("CPU ID: %s", cpuString);
+
+	unsigned cpuver = SystemHelper::GetCPUID(1, 0);
+	unsigned features = SystemHelper::GetCPUID(1, 1);
+	host.mmx = (features >> 23) & 1;
+	host.sse = (features >> 25) & 1;
+	host.sse2 = (features >> 26) & 1;
+	LOGINFO("MMX:%s, SSE:%s, SSE2:%s", host.mmx ? "YES" : "NO", host.sse ? "YES" : "NO", host.sse2 ? "YES" : "NO");
+
+	host.cpufq = SystemHelper::GetCPUFrequency();
+	LOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
 }
 
 void Emulator::Reset()

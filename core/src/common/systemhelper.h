@@ -15,6 +15,15 @@ public:
 		#endif
 	}
 
+	static unsigned GetCPUID(unsigned _eax, int ext)
+	{
+		unsigned cpuInfo[4];
+
+		GetCPUID(cpuInfo, _eax);
+
+		return ext ? cpuInfo[3] : cpuInfo[0];
+	}
+
 	static void GetCPUString(char dst[49])
 	{
 		dst[0] = dst[12] = dst[48] = 0;
@@ -53,6 +62,31 @@ public:
 	static uint64_t GetCPUFrequency()
 	{
 		uint64_t result = 0;
+
+		#ifdef _WIN32
+
+		LARGE_INTEGER Frequency;
+		LARGE_INTEGER Start;
+		LARGE_INTEGER Stop;
+		uint64_t c1, c2, c3, c4, c;
+		timeBeginPeriod(1);
+		QueryPerformanceFrequency(&Frequency);
+		Sleep(20);
+
+		c1 = rdtsc();
+		QueryPerformanceCounter(&Start);
+		c2 = rdtsc();
+		Sleep(500);
+		c3 = rdtsc();
+		QueryPerformanceCounter(&Stop);
+		c4 = rdtsc();
+		timeEndPeriod(1);
+		c = c3 - c2 + (c4 - c3) / 2 + (c2 - c1) / 2;
+		Start.QuadPart = Stop.QuadPart - Start.QuadPart;
+
+		return ((c * Frequency.QuadPart) / Start.QuadPart);
+
+		#endif
 
 		return result;
 	}

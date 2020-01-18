@@ -46,7 +46,10 @@ using std::atomic_flag;
 using std::atomic;
 
 #ifdef _WIN32
-	#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
+	#define WIN32_LEAN_AND_MEAN			// Exclude rarely-used stuff from Windows headers
+	#include <windows.h>
+	#include <timeapi.h>				// Used in SystemHelper for time period measurements (timeBeginperiod / timeEndPeriod)
+
 	#include <stdio.h>
 	#include <ctype.h>
 	#include <string.h>
@@ -59,6 +62,8 @@ using std::atomic;
 	#include <fcntl.h>
 	#include <assert.h>
 	#include <sys/stat.h>
+
+	#pragma comment(lib, "winmm.lib")	// Contains TimeAPI functions
 
 	#define CACHE_LINE 64
 

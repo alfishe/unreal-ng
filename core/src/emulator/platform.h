@@ -405,6 +405,7 @@ struct TEMP
 	char HddDir[FILENAME_MAX];
 };
 
+#ifndef _WIN32
 typedef struct tagRECT
 {
 	uint16_t left;
@@ -412,6 +413,7 @@ typedef struct tagRECT
 	uint16_t right;
 	uint16_t bottom;
 } RECT;
+#endif
 
 struct HOST
 {
@@ -422,7 +424,7 @@ struct HOST
 
 	// Video render / window parameters
 	unsigned gx, gy, gdx, gdy; // updating rectangle (used by GDI renderer)
-	RECT client;               // updating rectangle (used by DD_blt renderer)
+	//RECT client;               // updating rectangle (used by DD_blt renderer)
 	bool minimized;            // window is minimized
 };
 
