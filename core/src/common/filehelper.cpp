@@ -76,3 +76,10 @@ bool FileHelper::FolderExists(wstring& path)
 
 	return result;
 }
+
+string FileHelper::NormalizeFilePath(wstring wpath)
+{
+	string result = StringHelper::WideStringToString(wpath);
+
+	return result;
+}

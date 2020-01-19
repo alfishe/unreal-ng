@@ -62,7 +62,7 @@ bool Config::LoadConfig(wstring& filename)
 
 	if (!FileHelper::FileExists(filename))
 	{
-		LOGERROR("Config::LoadConfig - File '%s' does not exist", filename.c_str());
+		LOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::NormalizeFilePath(filename).c_str());	// FileHelper::NormalizeFilePath is mandatory since Logger works only with 'string' type and formatters
 		return result;
 	}
 

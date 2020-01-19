@@ -14,7 +14,7 @@ bool StringHelper::IsHex(uint8_t val)
 	return (isdigit(val) || (tolower(val) >= 'a' && tolower(val) <= 'f'));
 }
 
-wstring StringHelper::StringToWideString(string& str)
+wstring StringHelper::StringToWideString(const string& str)
 {
 	size_t len = str.length() + 1;
 	wstring result = wstring(len, 0);
@@ -36,7 +36,7 @@ wstring StringHelper::StringToWideString(string& str)
 	return result;
 }
 
-string StringHelper::WideStringToString(wstring& wstr)
+string StringHelper::WideStringToString(const wstring& wstr)
 {
 	string result;
 
@@ -55,6 +55,40 @@ string StringHelper::WideStringToString(wstring& wstr)
 	_free_locale(lc);
 	result.resize(size - 1);
 #endif
+
+	return result;
+}
+
+string StringHelper::ReplaceAll(string& str, string from, string to)
+{
+	string result = str;
+
+	if (!from.empty())
+	{
+		size_t start_pos = 0;
+		while ((start_pos = str.find(from, start_pos)) != string::npos)
+		{
+			str.replace(start_pos, from.length(), to);
+			start_pos += to.length();
+		}
+	}
+
+	return result;
+}
+
+wstring StringHelper::ReplaceAll(wstring& wstr, wstring wfrom, wstring wto)
+{
+	wstring result = wstr;
+
+	if (!wfrom.empty())
+	{
+		size_t start_pos = 0;
+		while ((start_pos = wstr.find(wfrom, start_pos)) != string::npos)
+		{
+			wstr.replace(start_pos, wfrom.length(), wto);
+			start_pos += wto.length();
+		}
+	}
 
 	return result;
 }

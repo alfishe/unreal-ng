@@ -19,6 +19,8 @@ public:
 	static bool FileExists(wstring& path);
 	static bool FolderExists(wstring& path);
 
+	static string NormalizeFilePath(wstring wpath);
+
 private:
 	FileHelper();	// Disable direct object creation by making constructor private. Only static method calls allowed.
 };
