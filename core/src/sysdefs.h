@@ -1,6 +1,7 @@
 #pragma once
 
-#include <intrin.h>
+#include <intrin.h>			// CPUID capability
+#include <immintrin.h>		// AVX intrinsics
 
 // Cross-compiler version of force inline
 #if defined(__clang__)

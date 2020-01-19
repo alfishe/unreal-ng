@@ -30,29 +30,58 @@ bool Emulator::Init()
 		LOGERROR("Emulator::Init - context creation failed");
 	}
 
-	// Get system info
+	// Get host system info
 	GetSystemInfo();
 
-	// Load configuration and ROMs
-	//config.LoadConfig();
+	// Load configuration
+	if (result)
+	{
+		result = config.LoadConfig();
 
-	// Create and initialize Z80 main CPU instance
+		if (result)
+		{
+			LOGDEBUG("Emulator::Init - Config file successfully loaded");
+		}
+		else
+		{
+			LOGERROR("Emulator::Init - Config load failed");
+		}
+	}
+
+	// Load ROMs
+	if (result)
+	{
+
+	}
+
+	// Create and initialize CPU system instance (including most peripheral devices)
 	if (result)
 	{
 		_cpu = new CPU(_context);
 		if (_cpu != nullptr)
 		{
-			//_cpu->
-
-			LOGDEBUG("Emulator::Init - main cpu created");
+			LOGDEBUG("Emulator::Init - CPU system created");
 
 			result = true;
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - main cpu creation failed");
+			LOGERROR("Emulator::Init - CPU system (or main peripheral devices) creation failed");
 		}
 	}
+
+	// Create and initialize additional peripheral devices
+	;	// Tape
+	;	// HDD/CD
+	;	// ZiFi
+	;	// GS / NGS
+
+	// Create and initialize Debugger and related components
+	;	// Debugger
+
+	// Create and initialize Scripting support
+	;	// Scripting host (Python or Lua?)
+
 
 	// Create and initialize main emulator loop
 	if (result)
@@ -72,25 +101,35 @@ bool Emulator::Init()
 		}
 	}
 
-
 	return result;
 }
 
 void Emulator::Release()
 {
+	// Stop and release main loop
+	if (_mainloop != nullptr)
+	{
+		_mainloop->Stop();
+
+		delete _mainloop;
+		_mainloop = nullptr;
+	}
+
+	// Release additional peripheral devices
+	// GS / NGS
+	// ZiFi
+	// HDD/CD
+	// Tape
+
+
+	// Release CPU subsystem (it will release all main peripherals)
 	if (_cpu != nullptr)
 	{
 		delete _cpu;
 		_cpu = nullptr;
 	}
 
-	if (_mainloop != nullptr)
-	{
-		_mainloop->Stop();
-		delete _mainloop;
-		_mainloop = nullptr;
-	}
-
+	// Release EmulatorContext as last step
 	if (_context != nullptr)
 	{
 		delete _context;
@@ -98,6 +137,10 @@ void Emulator::Release()
 	}
 }
 
+//
+// Read CPU ID string and analyze MMX/SSE/SSE2 feature flags
+// See: https://en.wikipedia.org/wiki/CPUID
+//
 void Emulator::GetSystemInfo()
 {
 	HOST& host = _context->host;
@@ -108,8 +151,8 @@ void Emulator::GetSystemInfo()
 	SystemHelper::GetCPUString(cpuString);
 	LOGINFO("CPU ID: %s", cpuString);
 
-	unsigned cpuver = SystemHelper::GetCPUID(1, 0);
-	unsigned features = SystemHelper::GetCPUID(1, 1);
+	unsigned cpuver = SystemHelper::GetCPUID(1, 0);		// Read Highest Function Parameter and ManufacturerID
+	unsigned features = SystemHelper::GetCPUID(1, 1);	// Read Processor Info and Feature Bits
 	host.mmx = (features >> 23) & 1;
 	host.sse = (features >> 25) & 1;
 	host.sse2 = (features >> 26) & 1;
@@ -123,6 +166,8 @@ void Emulator::Reset()
 {
 	_isPaused = false;
 	_isRunning = false;
+
+	_cpu->Reset();
 }
 
 void Emulator::Run()
