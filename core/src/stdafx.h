@@ -1,4 +1,6 @@
-#pragma once
+#if defined(_MSC_VER) && (_MSC_VER >= 1020)
+	#pragma once
+#endif
 
 #include "targetver.h"
 
@@ -45,8 +47,16 @@ using std::string;
 using std::atomic_flag;
 using std::atomic;
 
+#ifdef _MSC_VER
+	#if defined (_HAS_STD_BYTE)
+		#undef _HAS_STD_BYTE
+	#endif
+	#define _HAS_STD_BYTE 0	// Has to be so, otherwise MSVC gives weird errors for C++ 17 projects related to "C2872 'byte': ambiguous symbol" in 'rpcndr.h' file. See: https://developercommunity.visualstudio.com/content/problem/93889/error-c2872-byte-ambiguous-symbol.html
+#endif
+
 #ifdef _WIN32
 	#define WIN32_LEAN_AND_MEAN			// Exclude rarely-used stuff from Windows headers
+
 	#include <windows.h>
 	#include <timeapi.h>				// Used in SystemHelper for time period measurements (timeBeginperiod / timeEndPeriod)
 

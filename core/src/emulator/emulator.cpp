@@ -51,7 +51,15 @@ bool Emulator::Init()
 	// Load ROMs
 	if (result)
 	{
+		//result = config.LoadROM();
+		if (result)
+		{
 
+		}
+		else
+		{
+
+		}
 	}
 
 	// Create and initialize CPU system instance (including most peripheral devices)

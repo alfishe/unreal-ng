@@ -176,6 +176,8 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="3rdparty\simpleini\ConvertUTF.h" />
+    <ClInclude Include="3rdparty\simpleini\SimpleIni.h" />
     <ClInclude Include="base\baserenderer.h" />
     <ClInclude Include="common\autoresetevent.h" />
     <ClInclude Include="common\callbackcollection.h" />
@@ -223,6 +225,7 @@
     <ClInclude Include="video\videorenderer.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="3rdparty\simpleini\ConvertUTF.c" />
     <ClCompile Include="base\baserenderer.cpp" />
     <ClCompile Include="common\autoresetevent.cpp" />
     <ClCompile Include="common\callbackcollection.cpp" />

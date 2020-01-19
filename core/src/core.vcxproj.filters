@@ -97,6 +97,18 @@
     <Filter Include="Header Files\emulator\sound">
       <UniqueIdentifier>{233ded97-8ffc-4c89-9bd7-e4591415c894}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\3rdparty">
+      <UniqueIdentifier>{bbad5df7-962a-4142-9989-f482fdb798c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\3rdparty\simpleini">
+      <UniqueIdentifier>{8a8676e2-19e4-4add-a762-b2e652a95b46}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\3rdparty">
+      <UniqueIdentifier>{e4ed65ae-086b-4c8f-8bb5-f5729acf8db2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\3rdparty\simpleini">
+      <UniqueIdentifier>{81174bd2-bdca-4ace-a949-4a636b053f69}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -234,6 +246,12 @@
     <ClInclude Include="common\filehelper.h">
       <Filter>Header Files\common</Filter>
     </ClInclude>
+    <ClInclude Include="3rdparty\simpleini\ConvertUTF.h">
+      <Filter>Header Files\3rdparty\simpleini</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\simpleini\SimpleIni.h">
+      <Filter>Header Files\3rdparty\simpleini</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Base\BaseRenderer.cpp">
@@ -349,6 +367,9 @@
     </ClCompile>
     <ClCompile Include="common\filehelper.cpp">
       <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="3rdparty\simpleini\ConvertUTF.c">
+      <Filter>Source Files\3rdparty\simpleini</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>
