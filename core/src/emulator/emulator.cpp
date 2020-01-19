@@ -28,6 +28,7 @@ bool Emulator::Init()
 	else
 	{
 		LOGERROR("Emulator::Init - context creation failed");
+		result = false;
 	}
 
 	// Get host system info
@@ -36,15 +37,24 @@ bool Emulator::Init()
 	// Load configuration
 	if (result)
 	{
-		result = config.LoadConfig();
-
-		if (result)
+		_config = new Config(_context);
+		if (_config != nullptr)
 		{
-			LOGDEBUG("Emulator::Init - Config file successfully loaded");
+			result = _config->LoadConfig();
+
+			if (result)
+			{
+				LOGDEBUG("Emulator::Init - Config file successfully loaded");
+			}
+			else
+			{
+				LOGERROR("Emulator::Init - Config load failed");
+			}
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - Config load failed");
+			LOGERROR("Emulator::Init - config manager creation failed");
+			result = false;
 		}
 	}
 

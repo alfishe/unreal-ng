@@ -15,8 +15,11 @@ wstring FileHelper::GetExecutablePath()
 	#else
 		char result[PATH_MAX];
 		ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-		result = string(result, (count > 0) ? count : 0);
+		result = wstring(result, (count > 0) ? count : 0);
 	#endif
+
+	filesystem::path basePath = result;
+	result = basePath.parent_path().wstring();
 
 	return result;
 }

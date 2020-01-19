@@ -10,8 +10,8 @@
 class Emulator
 {
 protected:
-	Config config;
 	EmulatorContext* _context = nullptr;
+	Config* _config = nullptr;
 	CPU* _cpu = nullptr;
 	MainLoop* _mainloop = nullptr;
 
