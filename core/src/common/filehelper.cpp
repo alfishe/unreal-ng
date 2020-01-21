@@ -18,7 +18,7 @@ wstring FileHelper::GetExecutablePath()
 		result = wstring(result, (count > 0) ? count : 0);
 	#endif
 
-	filesystem::path basePath = result;
+	filesystem::path basePath = filesystem::canonical(result);
 	result = basePath.parent_path().wstring();
 
 	return result;

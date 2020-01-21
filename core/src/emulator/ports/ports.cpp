@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include "common/logger.h"
+
 #include "ports.h"
 
 Ports::Ports(EmulatorContext* context)
@@ -10,6 +12,8 @@ Ports::Ports(EmulatorContext* context)
 Ports::~Ports()
 {
 	_context = nullptr;
+
+	LOGDEBUG("Ports::~Ports()");
 }
 
 // Input: ports 7FFD,1FFD,DFFD,FFF7,FF77,EFF7, flags CF_TRDOS,CF_CACHEON

@@ -93,7 +93,9 @@ public:
 	uint8_t* base_sys_rom;
 
 public:
+	Memory() = delete;	// Disable default constructor. C++ 11 feature
 	Memory(EmulatorContext* context);
+	virtual ~Memory();
 
 	void SetMode(ROMModeEnum mode);
 	void SetBanks();

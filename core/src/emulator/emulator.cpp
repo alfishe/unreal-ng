@@ -10,7 +10,7 @@ Emulator::Emulator()
 
 Emulator::~Emulator()
 {
-
+	LOGDEBUG("Emulator::~Emulator()");
 }
 
 bool Emulator::Init()

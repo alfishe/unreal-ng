@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include "common/logger.h"
+
 #include "z80.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/video/screen.h"
@@ -45,6 +47,8 @@ Z80::~Z80()
 	}
 
 	_context = nullptr;
+
+	LOGDEBUG("Z80::~Z80()");
 }
 
 uint8_t Z80::m1_cycle()

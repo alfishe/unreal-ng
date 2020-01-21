@@ -17,6 +17,8 @@ ROM::ROM(EmulatorContext* context)
 ROM::~ROM()
 {
 	_context = nullptr;
+
+	LOGDEBUG("ROM::~ROM()");
 }
 
 bool ROM::LoadROM()
@@ -132,7 +134,7 @@ bool ROM::LoadROM()
 	{
 		// Load model specific ROM bundles (single file)
 		wstring wromname = StringHelper::StringToWideString(romname.c_str());
-		if (!romname.empty() && FileHelper::FileExists(wromname))
+		if (!romname.empty())
 		{
 			// Try to load ROM up to 1024KB in size
 			uint16_t loadedBanks = LoadROM(wromname, memory.ROMBase(), 64);
@@ -170,6 +172,14 @@ bool ROM::LoadROM()
 				if (loadedBanks != 32)
 				{
 					LOGERROR("Incorrect ROM size for GMX. Should be 512 KB. Found %d", loadedBanks * PAGE);
+					result = false;
+				}
+			}
+			else if (config.mem_model == MM_TSL)
+			{
+				if (loadedBanks != 32)
+				{
+					LOGERROR("Incorrect ROM size for TS-Conf. Should be 512 KB. Found %d", loadedBanks * PAGE);
 					result = false;
 				}
 			}
@@ -248,20 +258,35 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 {
 	uint16_t result = 0;
 
+	// Clear whole ROM area before loading
+	memset(bank, 0xFF, max_banks * PAGE);
+
 	if (path.empty())
 	{
 		LOGERROR("Config::LoadROM - Empty ROM path supplied");
-
-		memset(bank, 0xFF, max_banks * PAGE);
 		return result;
 	}
 
-	string normalizedPath = StringHelper::WideStringToString(path);
+	wstring resolvedPath = path;
+	if (!FileHelper::FileExists(path))
+	{
+		// Try to use as relative path if not found using original path
+		wstring executablePath = FileHelper::GetExecutablePath();
+		resolvedPath = FileHelper::PathCombine(executablePath, path);
+
+		if (!FileHelper::FileExists(resolvedPath))
+		{
+			LOGERROR("Config::LoadROM - file %s not found", path);
+			return result;
+		}
+	}
+
+	string normalizedPath = StringHelper::WideStringToString(resolvedPath);
 	FILE* romfile = fopen(normalizedPath.c_str(), "rb");
 	if (romfile)
 	{
 		size_t size = fread(bank, 1, max_banks * PAGE, romfile);
-		if (size && (size & (PAGE - 1)))
+		if (size && !(size & (PAGE - 1)))
 		{
 
 			result = static_cast<uint16_t>(size / PAGE);
@@ -275,7 +300,7 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 	}
 	else
 	{
-		LOGERROR("Config::LoadROM - file %s not found", path);
+		LOGERROR("Config::LoadROM - unable to read from file %s", path);
 	}
 
 

@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include "common/logger.h"
+
 #include "mainloop.h"
 #include "common/timehelper.h"
 
@@ -13,6 +15,8 @@ MainLoop::~MainLoop()
 {
 	_cpu = nullptr;
 	_context = nullptr;
+
+	LOGDEBUG("MainLoop::~MainLoop()");
 }
 
 //

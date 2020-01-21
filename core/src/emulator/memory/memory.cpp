@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#include "common/logger.h"
+
 #include "memory.h"
 
 #include "emulator/platform.h"
@@ -7,6 +9,13 @@
 Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
+}
+
+Memory::~Memory()
+{
+	_context = nullptr;
+
+	LOGDEBUG("Memory::~Memory()");
 }
 
 void Memory::SetMode(ROMModeEnum mode)
