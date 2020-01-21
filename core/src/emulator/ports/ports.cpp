@@ -2,15 +2,13 @@
 
 #include "ports.h"
 
-Ports::Ports(CPU* cpu, EmulatorContext* context)
+Ports::Ports(EmulatorContext* context)
 {
-	_cpu = cpu;
 	_context = context;
 }
 
 Ports::~Ports()
 {
-	_cpu = nullptr;
 	_context = nullptr;
 }
 

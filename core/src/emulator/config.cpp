@@ -51,11 +51,11 @@ bool Config::LoadConfig()
 
 		if (LoadConfig(configPath))
 		{
-
+			result = true;
 		}
 		else
 		{
-
+			LOGERROR("Config::LoadConfig() - unable to process config file");
 		}
 	}
 	else
@@ -88,6 +88,8 @@ bool Config::LoadConfig(wstring& filename)
 	// Use SimpleINI config file manager
 	CSimpleIniA inimanager;
 	inimanager.SetUnicode();
+
+	// Load and parse config file (internally within SimpleINI)
 	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
 	if (rc == SI_OK)
 	{
@@ -100,6 +102,7 @@ bool Config::LoadConfig(wstring& filename)
 		LOGERROR("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::NormalizeFilePath(_configFilePath).c_str());	// FileHelper::NormalizeFilePath is mandatory since Logger works only with 'string' type and formatters
 	}
 
+	// Populate configuration fields from config file data
 	result = ParseConfig(inimanager);
 
 	return result;
@@ -110,6 +113,8 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	bool result = false;
 
 	CONFIG& config = _context->config;
+
+	char line[FILENAME_MAX];
 
 	// Global settings
 	char configVersion[50];
@@ -143,70 +148,82 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// INPUT section
 
-	return result;
-}
+	// HDD section
 
-bool Config::DetermineModel()
-{
-	bool result = false;
-
-	return result;
-}
-
-unsigned Config::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
-{
-	unsigned result = 0;
-
-	if (path.empty())
+	// Emulated model
+	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", false), line, sizeof line);
+	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, false);
+	
+	// Make sure we're emulating write config
+	if (DetermineModel(line, config.ramsize))
 	{
-		LOGERROR("Config::LoadROM - Empty ROM path supplied");
-
-		memset(bank, 0xFF, max_banks * PAGE);
-		return result;
-	}
-
-	string normalizedPath = StringHelper::WideStringToString(path);
-	FILE* romfile = fopen(normalizedPath.c_str(), "rb");
-	if (romfile)
-	{
-		size_t size = fread(bank, 1, max_banks * PAGE, romfile);
-		if (size && (size & (PAGE - 1)))
-		{
-
-			result = static_cast<unsigned>(size / 1024);
-		}
-		else
-		{
-			LOGERROR("Config::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE, size);
-		}
-
-		fclose(romfile);
+		result = true;
 	}
 	else
 	{
-		LOGERROR("Config::LoadROM - file %s not found", path);
+
 	}
 
-	
 	return result;
 }
 
-void Config::LoadROMSet(CONFIG* config, const char* romeset)
+bool Config::DetermineModel(const char* model, uint32_t ramsize)
 {
+	bool result = false;
+	uint32_t maxMemory = 0;
+	const char* fullModelName = nullptr;
 
+	CONFIG& config = _context->config;
+
+	// Search for model in lookup dictionary
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (_strnicmp(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+		{
+			config.mem_model = mem_model[i].Model;
+			maxMemory = mem_model[i].AvailRAMs;
+			fullModelName = mem_model[i].FullName;
+
+			result = true;
+			break;
+		}
+	}
+
+	// Check if config requested RAM size allowed for the selected model
+	if (result)
+	{
+		if (ramsize & maxMemory) // Bit in mem_model.AvailRAMs will be set if available. All possible RAM size combinations [128:4096] are correspondent to bits. If 16Kb or 48Kb are planned - extended check logic required
+		{
+			LOGINFO("Model '%s' (HIMEM=%s) with RAM Size: %dKb selected", fullModelName, model, ramsize);
+			result = true;
+		}
+		else
+		{
+			result = false;
+
+			string availableRAM;
+			LOGERROR("Requested RAM size: %dKb is not available for the model with HIMEM='%s' selected. Available size(s): %s", ramsize, model, availableRAM.c_str());
+		}
+	}
+	else
+	{
+		LOGERROR("Unknown model specified in config with HIMEM=%s", model);
+	}
+
+	return result;
 }
 
 void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)
 {
 	if (src != nullptr && dst != nullptr && dst_len > 0)
 	{
-		string value = stripComment(src);
+		string value = StripComment(src);
 
 		strncpy(dst, value.c_str(), dst_len);
 	}
 }
 
-string Config::stripComment(const char* src)
+string Config::StripComment(const char* src)
 {
 	string result;
 
@@ -220,6 +237,10 @@ string Config::stripComment(const char* src)
 		{
 			result = strSource.substr(0, pos);
 		}
+		else
+		{
+			result = strSource;
+		}
 
 		// Trim right
 		pos = result.find_last_not_of(' ');
@@ -232,4 +253,20 @@ string Config::stripComment(const char* src)
 	}
 
 	return result;
+}
+
+string Config::PrintModelAvailableRAM(uint32_t availRAM)
+{
+	stringstream ss;
+
+	// 128Kb to 4096Kb (Bits 7 to 12)
+	for (int i = 7; i <= 12; i++)
+	{
+		if (availRAM & (1 << i))
+		{
+			ss << (1 << i) << "KB; ";
+		}
+	}
+
+	return ss.str();
 }

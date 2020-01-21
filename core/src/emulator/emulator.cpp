@@ -58,20 +58,6 @@ bool Emulator::Init()
 		}
 	}
 
-	// Load ROMs
-	if (result)
-	{
-		//result = config.LoadROM();
-		if (result)
-		{
-
-		}
-		else
-		{
-
-		}
-	}
-
 	// Create and initialize CPU system instance (including most peripheral devices)
 	if (result)
 	{
@@ -85,6 +71,25 @@ bool Emulator::Init()
 		else
 		{
 			LOGERROR("Emulator::Init - CPU system (or main peripheral devices) creation failed");
+			result = false;
+		}
+	}
+
+	// Load ROMs
+	if (result)
+	{
+		ROM& rom = *_cpu->GetROM();
+
+		result = rom.LoadROM();
+		if (result)
+		{
+			LOGDEBUG("Emulator::Init - ROM data successfully loaded");
+			result = true;
+		}
+		else
+		{
+			LOGERROR("Emulator::Init - ROM load failed");
+			result = false;
 		}
 	}
 

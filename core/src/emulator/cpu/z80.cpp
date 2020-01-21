@@ -185,7 +185,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 	// TODO: move to TSConf plugin
 	if (config.mem_model == MM_TSL)
 	{
-		if (mem._bank_mode[bank] == MemoryBankModeEnum::RAM)
+		if (mem._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
 		{
 			// Pentevo version for 16 bit DRAM/cache
 			unsigned cached_address = (state.ts.page[bank] << 5) | ((addr >> 9) & 0x1F);  // {page[7:0], addr[13:9]}
@@ -221,7 +221,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 		result = *(mem._bank_read[bank] + (unsigned)(addr & (PAGE - 1)));
 
 		// Update RAM access counters
-		if (mem._bank_mode[bank] == MemoryBankModeEnum::RAM)
+		if (mem._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
 		{
 			video.memcpucyc[t / 224]++;
 		}

@@ -82,11 +82,11 @@ const int RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048
 
 struct TMemModel
 {
-	const char *fullname;
-	const char *shortname;
+	const char *FullName;
+	const char *ShortName;
 	MEM_MODEL Model;
 	unsigned defaultRAM;
-	unsigned availRAMs;
+	unsigned AvailRAMs;
 };
 
 typedef void(*VOID_FUNC)(void);
@@ -215,7 +215,8 @@ struct CONFIG
 	uint8_t videoscale;
 
 	MEM_MODEL mem_model;
-	unsigned ramsize, romsize;
+	uint32_t ramsize;
+	uint32_t romsize;
 
 	IDE_SCHEME ide_scheme;
 	IDE_CONFIG ide[2];

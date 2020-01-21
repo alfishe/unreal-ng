@@ -482,7 +482,7 @@ void Screen::DrawZX(uint32_t n)
 
 	uint32_t g = ((video.ygctr & 0x07) << 8) + ((video.ygctr & 0x38) << 2) + ((video.ygctr & 0xC0) << 5) + (video.xctr & 0x1F);
 	uint32_t a = ((video.ygctr & 0xF8) << 2) + (video.xctr & 0x1F) + 0x1800;
-	uint8_t* zx_screen_mem = _system->GetMemory()->GetRAMPageAddress(state.ts.vpage);
+	uint8_t* zx_screen_mem = _system->GetMemory()->RAMPageAddress(state.ts.vpage);
 	uint32_t vptr = video.vptr;
 	uint16_t vcyc = video.memvidcyc[video.line];
 	uint8_t upmod = config.ulaplus;

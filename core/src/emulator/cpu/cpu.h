@@ -4,12 +4,16 @@
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/ports.h"
+#include "emulator/memory/rom.h"
 #include "emulator/sound/sound.h"
 #include "emulator/io/hdd/hdd.h"
 #include "emulator/emulatorcontext.h"
 
 class Z80;
 class Memory;
+class Ports;
+class ROM;
 class Sound;
 class HDD;
 
@@ -17,6 +21,8 @@ class CPU
 {
 	friend class Z80;
 	friend class Memory;
+	friend class Ports;
+	friend class ROM;
 	friend class Sound;
 	friend class HDD;
 
@@ -28,6 +34,8 @@ protected:
 	EmulatorContext* _context = nullptr;
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;
+	Ports* _ports = nullptr;
+	ROM* _rom = nullptr;
 	Sound* _sound = nullptr;
 	HDD* _hdd = nullptr;
 
@@ -38,8 +46,10 @@ public:
 	CPU(EmulatorContext* context);	// Only constructor with context param is allowed
 	virtual ~CPU();
 
-	Z80* GetZ80Instance();
-	Memory* GetMemory();
+	inline Z80* GetZ80Instance() { return _cpu; }
+	inline Memory* GetMemory() { return _memory; }
+	inline Ports* GetPorts() { return _ports; }
+	inline ROM* GetROM() { return _rom; }
 
 	// Configuration methods
 public:

@@ -3,6 +3,7 @@
 
 #include "emulator/platform.h"
 
+class CPU;
 class Memory;
 class Screen;
 
@@ -21,6 +22,9 @@ public:
 
 	// Host system properties / context
 	HOST host;
+
+	// Computer system instance
+	CPU* pCPU;
 
 	// Memory controller instance
 	Memory* pMemory;

@@ -1,19 +1,8 @@
 #include "stdafx.h"
 
-#include "../platform.h"
 #include "memory.h"
 
-/*
-uint8_t MemoryInterface::MemoryRead(uint16_t address)
-{
-}
-
-void MemoryInterface::MemoryWrite(uint16_t address, uint8_t val)
-{
-
-}
-*/
-
+#include "emulator/platform.h"
 
 Memory::Memory(EmulatorContext* context)
 {
@@ -82,10 +71,10 @@ void Memory::SetBanks()
 	_bank_write[1] = _bank_read[1] = page_ram(5);	// Set Screen 1 (page 5) as default to [0x4000 - 0x7FFF]
 	_bank_write[2] = _bank_read[2] = page_ram(2);	// Set page 2 as default to [0x8000 - 0xBFFF]
 	
-	_bank_mode[0] = MemoryBankModeEnum::ROM;		// Bank 0 is ROM [0x0000 - 0x3FFF]
-	_bank_mode[1] = MemoryBankModeEnum::RAM;		// Bank 1 is RAM [0x4000 - 0x7FFF]
-	_bank_mode[2] = MemoryBankModeEnum::RAM;		// Bank 2 is RAM [0x8000 - 0xBFFF]
-	_bank_mode[3] = MemoryBankModeEnum::RAM;		// Bank 3 is RAM [0xC000 - 0xFFFF]
+	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		// Bank 0 is ROM [0x0000 - 0x3FFF]
+	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		// Bank 1 is RAM [0x4000 - 0x7FFF]
+	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		// Bank 2 is RAM [0x8000 - 0xBFFF]
+	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		// Bank 3 is RAM [0xC000 - 0xFFFF]
 
 	// Reset all address defining flags/signals (they'll be recalculated later in logic)
 	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
@@ -247,13 +236,13 @@ void Memory::SetBanks()
 				if (state.ts.w0_ram || state.ts.vdos)
 				{
 					// RAM at [0x0000-0x3FFF]
-					_bank_mode[0] = state.ts.w0_we ? MemoryBankModeEnum::RAM : MemoryBankModeEnum::ROM;
+					_bank_mode[0] = state.ts.w0_we ? MemoryBankModeEnum::BANK_RAM : MemoryBankModeEnum::BANK_ROM;
 					bank0 = page_ram(state.ts.vdos ? 0xFF : tmp);
 				}
 				else
 				{
 					// ROM at[0x0000-0x3FFF]
-					_bank_mode[0] = MemoryBankModeEnum::ROM;
+					_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;
 					bank0 = page_rom(tmp & 0x1F);
 				}
 
@@ -402,7 +391,7 @@ void Memory::SetBanks()
 						// #0000: RAM 12/13 (DV0 - selector), r/w
 					case PF_BLKROM:
 						bank0 = page_ram((state.pLSY256 & PF_DV0) ? 13 : 12);
-						_bank_mode[0] = MemoryBankModeEnum::RAM;
+						_bank_mode[0] = MemoryBankModeEnum::BANK_RAM;
 						break;
 
 					// #0000: RAM 8-11, r/o
@@ -519,33 +508,8 @@ void Memory::SetBanks()
 }
 
 //
-// Get starting address for RAM
 //
-const uint8_t* Memory::GetRAM() const
-{
-	// RAM starts at 0x00000 in global memory buffer
-	return RAM_BASE_M;
-}
-
-
 //
-// Get starting address for ROM
-//
-const uint8_t* Memory::GetROM() const
-{
-	return ROM_BASE_M;
-}
-
-uint8_t* Memory::GetRAMPageAddress(uint16_t page)
-{
-	return RAM_BASE_M + (PAGE * page);
-}
-
-uint8_t* Memory::GetROMPageAddress(uint8_t page)
-{
-	return ROM_BASE_M + (PAGE * page);
-}
-
 uint8_t* Memory::RemapAddressToCurrentBank(uint32_t addr)
 {
 	COMPUTER& state = *(&_context->state);

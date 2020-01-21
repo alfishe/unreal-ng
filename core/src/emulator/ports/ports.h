@@ -3,7 +3,6 @@
 
 #include "common/callbackcollection.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/cpu/cpu.h"
 
 #define FLAG_DOSPORTS     0x01    // TR-DOS ports are accessible
 #define FLAG_TRDOS        0x02    // DOSEN trigger
@@ -24,12 +23,12 @@ enum PortFlagsEnum : uint8_t
 	CacheOn		= 0x20,
 	Z80FaultBus	= 0x40,
 	ProfROM		= 0x80
-} flags;
+};
+
 
 class Ports
 {
 protected:
-	CPU* _cpu = nullptr;
 	EmulatorContext* _context = nullptr;
 	CallbackCollection _resetHandlers;
 
@@ -48,7 +47,7 @@ public:
 	uint8_t _p00, _p80FD; // quorum
 
 public:
-	Ports(CPU* cpu, EmulatorContext* context);
+	Ports(EmulatorContext* context);
 	virtual ~Ports();
 
 	// Module support methods

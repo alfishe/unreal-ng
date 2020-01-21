@@ -21,6 +21,12 @@ CPU::CPU(EmulatorContext* context)
 	_memory = new Memory(context);
 	_context->pMemory = _memory;
 
+	// Instantiate ports decoder
+	_ports = new Ports(context);
+
+	// Instantiate ROM implementation
+	_rom = new ROM(context);
+
 	// Instantiate sound manager
 	_sound = new Sound(context);
 
@@ -42,10 +48,16 @@ CPU::~CPU()
 		_sound = nullptr;
 	}
 
-	if (_cpu != nullptr)
+	if (_rom != nullptr)
 	{
-		delete _cpu;
-		_cpu = nullptr;
+		delete _rom;
+		_rom = nullptr;
+	}
+
+	if (_ports != nullptr)
+	{
+		delete _ports;
+		_ports = nullptr;
 	}
 
 	_context->pMemory = nullptr;
@@ -55,19 +67,14 @@ CPU::~CPU()
 		_memory = nullptr;
 	}
 
+	if (_cpu != nullptr)
+	{
+		delete _cpu;
+		_cpu = nullptr;
+	}
+
 	_context = nullptr;
 }
-
-Z80* CPU::GetZ80Instance()
-{
-	return _cpu;
-}
-
-Memory* CPU::GetMemory()
-{
-	return _memory;
-}
-
 
 // Configuration methods
 void CPU::UseFastMemoryInterface()
