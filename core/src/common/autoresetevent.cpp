@@ -1,5 +1,6 @@
 #include "stdafx.h"
-#include "AutoResetEvent.h"
+
+#include "autoresetevent.h"
 
 using std::unique_lock;
 

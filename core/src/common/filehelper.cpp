@@ -9,13 +9,13 @@ wstring FileHelper::GetExecutablePath()
 	wstring result = filesystem::current_path().wstring();
 
 	#ifdef _WIN32
-		wchar_t path[MAX_PATH] = { 0 };
-		GetModuleFileNameW(NULL, path, MAX_PATH);
-		result = path;
+		wchar_t buffer[MAX_PATH] = { L'\0' };
+		GetModuleFileNameW(NULL, buffer, MAX_PATH);
+		result = buffer;
 	#else
-		char result[PATH_MAX];
-		ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-		result = wstring(result, (count > 0) ? count : 0);
+		char buffer[PATH_MAX];
+		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
+		result = StringHelper::StringToWideString(buffer);
 	#endif
 
 	filesystem::path basePath = filesystem::canonical(result);

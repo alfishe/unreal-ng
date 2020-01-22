@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "MessageManager.h"
+#include "messagemanager.h"
 
 MessageManager::MessageManager()
 {

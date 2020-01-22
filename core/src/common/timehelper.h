@@ -9,7 +9,7 @@
 //
 // stl::thread powered cross-platform sleep()
 //
-void sleep(uint32_t ms);
+void sleep_ms(uint32_t ms);
 
 
 // Original algorithm source: https://howardhinnant.github.io/date_algorithms.html#days_from_civil

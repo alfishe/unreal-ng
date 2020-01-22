@@ -10,6 +10,7 @@ class StringHelper
 public:
 	static uint8_t Hex(uint8_t val);
 	static bool IsHex(uint8_t val);
+	static int CompareCaseInsensitive(const char* str1, const char* str2, size_t len);
 
 	static wstring StringToWideString(const string& str);
 	static string WideStringToString(const wstring& wideString);

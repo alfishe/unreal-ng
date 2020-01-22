@@ -1,4 +1,8 @@
 #pragma once
+
+#ifndef _INCLUDED_EMULATOR_H_
+#define _INCLUDED_EMULATOR_H_
+
 #include "stdafx.h"
 #include "common/logger.h"
 
@@ -45,4 +49,6 @@ public:
 	void ResetCountersAll();
 	void ResetCounter();
 };
+
+#endif
 

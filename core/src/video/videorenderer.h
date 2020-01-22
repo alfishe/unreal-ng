@@ -1,9 +1,10 @@
 #pragma once
 #include "stdafx.h"
 
-#include <thread>
-#include "../interfaces.h"
+
 #include "common/autoresetevent.h"
+#include "interfaces/interfaces.h"
+#include <thread>
 
 using namespace std;
 

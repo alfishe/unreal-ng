@@ -14,6 +14,30 @@ bool StringHelper::IsHex(uint8_t val)
 	return (isdigit(val) || (tolower(val) >= 'a' && tolower(val) <= 'f'));
 }
 
+int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, size_t len)
+{
+	int result = -1;
+
+	if (str1 != nullptr && str2 != nullptr && len > 0)
+	{
+		char* ptr1 = (char*)str1;
+		char* ptr2 = (char*)str2;
+
+		do
+		{
+			if (!(*ptr1 && *ptr2))
+				break;
+
+
+		}
+		while (len-- && *ptr1++ && *ptr2++);
+
+		result = *ptr1 - *ptr2;
+	}
+
+	return result;
+}
+
 wstring StringHelper::StringToWideString(const string& str)
 {
 	size_t len = str.length() + 1;
@@ -26,11 +50,8 @@ wstring StringHelper::StringToWideString(const string& str)
 		MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), (LPWSTR)result.c_str(), size_needed);
 	#else
 		// Generic cross-platform conversion
-		size_t size = 0;
-		_locale_t lc = _create_locale(LC_ALL, "en_US.UTF-8");
-		errno_t retval = _mbstowcs_s_l(&size, &result[0], len, &str[0], _TRUNCATE, lc);
-		_free_locale(lc);
-		result.resize(size - 1);
+		wstring_convert<codecvt_utf8_utf16<wchar_t>> converter;
+		result = converter.from_bytes(str);
 	#endif
 
 	return result;
@@ -47,13 +68,8 @@ string StringHelper::WideStringToString(const wstring& wstr)
 	WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, &wstr[0],(int) wstr.size(), (LPSTR)result.c_str(), size, NULL, NULL);
 #else
 	// Generic cross-platform conversion
-	size_t size = 0;
-	_locale_t lc = _create_locale(LC_ALL, "en_US.UTF-8");
-	errno_t err = _wcstombs_s_l(&size, NULL, 0, &wstr[0], _TRUNCATE, lc);
-	result = string(size, 0);
-	err = _wcstombs_s_l(&size, &result[0], size, &wstr[0], _TRUNCATE, lc);
-	_free_locale(lc);
-	result.resize(size - 1);
+	wstring_convert<codecvt_utf8<wchar_t>> converter;
+	result = converter.to_bytes(wstr);
 #endif
 
 	return result;

@@ -6,6 +6,12 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/platform.h"
+#include <cassert>
+
+#ifdef __linux__
+	// Use ICU library for path conversion in SimpleINI parser
+	#define SI_CONVERT_ICU
+#endif
 
 // Ini file section names
 const char* Config::misc = "MISC";
@@ -90,10 +96,11 @@ bool Config::LoadConfig(wstring& filename)
 	inimanager.SetUnicode();
 
 	// Load and parse config file (internally within SimpleINI)
-	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
+	SI_Error rc = inimanager.LoadFile(StringHelper::WideStringToString(_configFilePath).c_str());
 	if (rc == SI_OK)
 	{
 		LOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::NormalizeFilePath(_configFilePath).c_str());	// FileHelper::NormalizeFilePath is mandatory since Logger works only with 'string' type and formatters
+
 
 		result = true;
 	}
@@ -118,7 +125,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// Global settings
 	char configVersion[50];
-	CopyStringValue(inimanager.GetValue("*", "UNREAL", nullptr, false), configVersion, sizeof configVersion);	// Section with name "*" corresponds to global .ini file values (no group)
+	CopyStringValue(inimanager.GetValue("*", "UNREAL", nullptr, nullptr), configVersion, sizeof configVersion);	// Section with name "*" corresponds to global .ini file values (no group)
 
 	// MISC section
 	config.ConfirmExit = (uint8_t)inimanager.GetLongValue(misc, "ConfirmExit", 0);
@@ -131,28 +138,28 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// MISC::TSConf sub-section
 
 	// ROM section
-	CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr, false), config.pent_rom_path, sizeof config.pent_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr, false), config.atm1_rom_path, sizeof config.atm1_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr, false), config.atm2_rom_path, sizeof config.atm2_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr, false), config.atm3_rom_path, sizeof config.atm3_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr, false), config.scorp_rom_path, sizeof config.scorp_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr, false), config.prof_rom_path, sizeof config.prof_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr, false), config.gmx_rom_path, sizeof config.gmx_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr, false), config.profi_rom_path, sizeof config.profi_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr, false), config.kay_rom_path, sizeof config.kay_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr, false), config.plus3_rom_path, sizeof config.plus3_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr, false), config.quorum_rom_path, sizeof config.quorum_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr, false), config.tsl_rom_path, sizeof config.tsl_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr, false), config.lsy_rom_path, sizeof config.lsy_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr, false), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr, nullptr), config.pent_rom_path, sizeof config.pent_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr, nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr, nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr, nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr, nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr, nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr, nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr, nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr, nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr, nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr, nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr, nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr, nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
+	CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr, nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
 
 	// INPUT section
 
 	// HDD section
 
 	// Emulated model
-	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", false), line, sizeof line);
-	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, false);
+	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
+	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);
 	
 	// Make sure we're emulating write config
 	if (DetermineModel(line, config.ramsize))
@@ -178,7 +185,7 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	// Search for model in lookup dictionary
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
 	{
-		if (_strnicmp(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+		if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
 		{
 			config.mem_model = mem_model[i].Model;
 			maxMemory = mem_model[i].AvailRAMs;

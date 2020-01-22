@@ -11,7 +11,7 @@ const uint32_t RAM::MaxRAMSize()
 
 void RAM::FillRandom()
 {
-	uint8_t *ptrMemory = page_ram(0);
-	for (uint32_t i = 0; i < (4096 * 1024); i++)
-		ptrMemory[i] = rand();
+	//uint8_t *ptrMemory = page_ram(0);
+	//for (uint32_t i = 0; i < (4096 * 1024); i++)
+	//	ptrMemory[i] = rand();
 }

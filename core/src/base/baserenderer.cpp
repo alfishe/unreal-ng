@@ -1,7 +1,7 @@
 #include "stdafx.h"
 
 #include <cmath>
-#include "BaseRenderer.h"
+#include "baserenderer.h"
 
 BaseRenderer::BaseRenderer()
 {

@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "UTF8Util.h"
+#include "utf8util.h"
 
 #include "common/stringhelper.h"
 

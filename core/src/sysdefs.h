@@ -1,15 +1,24 @@
-#if defined(_MSC_VER) && (_MSC_VER >= 1020)
-	#pragma once
-#endif
+#pragma once
 
-#include <intrin.h>			// CPUID capability
-#include <immintrin.h>		// AVX intrinsics
+#ifndef _INCLUDE_SYSDEFS_H_
+#define _INCLUDE_SYSDEFS_H_
+
+#ifdef _MSC_VER
+	// Microsoft Visual Studio
+	#include <intrin.h>			// CPUID capability
+	#include <immintrin.h>		// AVX intrinsics
+#else
+	// GCC/CLang
+	#include <cpuid.h>			// _cpuid()
+	#include <x86intrin.h>		// _mm_pause()
+	#include <immintrin.h>		// AVX intrinsics
+#endif
 
 // Cross-compiler version of force inline
 #if defined(__clang__)
-	#define __forceinline __attribute__((always_inline))
+	#define __forceinline __attribute__((always_inline)) inline
 #elif defined(__GNUC__) || defined(__GNUG__)
-	#define __forceinline __attribute__((always_inline))
+	#define __forceinline __attribute__((always_inline)) inline
 #elif defined(_MSC_VER)
 	#if _MSC_VER < 1900
 		#ifndef __forceinline
@@ -28,7 +37,7 @@
 	#ifndef fastcall
 		#define fastcall __fastcall
 	#endif
-#elif
+#else
 	#define fastcall
 #endif
 
@@ -79,7 +88,7 @@
 		return val;
 	}
 
-	static inline void _mm_pause() { __asm__("pause"); }
+	//static inline void _mm_pause() { __asm__("pause"); }
 #elif defined(_MSC_VER)
 	extern "C" unsigned char __cdecl _rotr8(unsigned char value, unsigned char shift);
 	extern "C" unsigned char __cdecl _rotl8(unsigned char value, unsigned char shift);
@@ -123,3 +132,5 @@
 	#define _countof(x) (sizeof(x)/sizeof((x)[0]))
 	#define __assume(x)
 #endif // __GNUC__
+
+#endif // _INCLUDE_SYSDEFS_H_

@@ -1,6 +1,7 @@
-#if defined(_MSC_VER) && (_MSC_VER >= 1020)
-	#pragma once
-#endif
+#pragma once
+
+#ifndef _INCLUDED_STDAFX_H_
+#define _INCLUDED_STDAFX_H_
 
 #include "targetver.h"
 
@@ -79,13 +80,33 @@ using std::atomic;
 
 	#if _MSC_VER >= 1300
 		#define CACHE_ALIGNED __declspec(align(CACHE_LINE))
-	#else
-		#define CACHE_ALIGNED
 	#endif
-
-#endif // _WIN32
-
 
 // Shut down "LNK4221: The object file does not define any previously undefined public symbols, so it will not be used by any link operation that consumes that library" linker error
 // Error happens with MSVC linker if precompiled header (stdafx.h/.cpp) doesn't bring any symbols into any namespace
 namespace { char dummy; };
+
+#endif // _WIN32
+
+#ifdef __linux__
+	#include <unistd.h>			// readlink()
+	#include <locale>
+	#include <codecvt>
+	#include <linux/limits.h>	// PATH_MAX constant defined here
+
+	#define CACHE_LINE 64
+	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
+#endif // __linux__
+
+#ifdef __APPLE__
+	#include <unistd.h>			// readlink()
+	#include <locale>
+	#include <codecvt>
+	#include <sys/syslimits.h>	// PATH_MAX constant defined here
+
+	#define CACHE_LINE 64
+	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
+#endif
+
+
+#endif // _INCLUDED_STDAFX_H_

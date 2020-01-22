@@ -110,7 +110,7 @@ void MainLoop::DoIdle()
 
 			if (delay > 0)
 			{
-				sleep(delay);
+				sleep_ms(delay);
 				break;
 			}
 		}

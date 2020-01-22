@@ -1,6 +1,7 @@
-#if defined(_MSC_VER) && (_MSC_VER >= 1020)
-	#pragma once
-#endif
+#pragma once
+#ifndef _INCLUDED_FILEHELPER_H_
+#define _INCLUDED_FILEHELPER_H_
+
 #include "stdafx.h"
 
 #include <filesystem>
@@ -26,3 +27,5 @@ public:
 private:
 	FileHelper();	// Disable direct object creation by making constructor private. Only static method calls allowed.
 };
+
+#endif // _INCLUDED_FILEHELPER_H_

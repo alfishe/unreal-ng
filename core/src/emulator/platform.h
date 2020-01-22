@@ -41,8 +41,8 @@
 #define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES*PAGE)
 
 #ifdef MOD_GSZ80
-#define ROM_GS_M    (ROM_BASE_M + MAX_ROM_PAGES*PAGE)
-#define GSRAM_M     (ROM_GS_M + MAX_GSROM_PAGES*PAGE)
+	#define ROM_GS_M    (ROM_BASE_M + MAX_ROM_PAGES*PAGE)
+	#define GSRAM_M     (ROM_GS_M + MAX_GSROM_PAGES*PAGE)
 #endif
 
 #define TRASH_M     (MISC_BASE_M+0*PAGE)
@@ -521,7 +521,7 @@ struct COMPUTER
 	uint8_t pLSY256;
 	uint16_t cram[256];
 	uint16_t sfile[256];
-	__int64 t_states; // inc with conf.frame by each frame
+	uint64_t t_states; // inc with conf.frame by each frame
 	unsigned frame_counter; // inc each frame
 	uint8_t aFE, aFB; // ATM 4.50 system ports
 	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
@@ -562,7 +562,7 @@ struct COMPUTER
 	struct NVRAM nvram;
 	struct
 	{
-		__int64 edge_change;
+		uint64_t edge_change;
 		uint8_t *play_pointer; // or NULL if tape stopped
 		uint8_t *end_of_tape;  // where to stop tape
 		unsigned index;    // current tape block

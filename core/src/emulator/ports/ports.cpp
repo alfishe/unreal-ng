@@ -3,6 +3,9 @@
 #include "common/logger.h"
 
 #include "ports.h"
+#include <algorithm>
+
+using namespace std;
 
 Ports::Ports(EmulatorContext* context)
 {

@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulator/EmulatorContext.h"
+#include "emulator/emulatorcontext.h"
 
 class EmulatorContext;
 
