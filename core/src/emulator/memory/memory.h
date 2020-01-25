@@ -78,10 +78,10 @@ protected:
 	uint8_t _membits[0x10000];			// Access counters for CPU memory address space (64KiB)
 
 	// Derived addresses
-	 uint8_t* _ramBase = _memory;
-	 uint8_t* _cacheBase = _memory + MAX_RAM_PAGES * PAGE;
-	 uint8_t* _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE;
-	 uint8_t* _romBase = _miscBase + MAX_MISC_PAGES * PAGE;
+	uint8_t* _ramBase = _memory;
+	uint8_t* _cacheBase = _memory + MAX_RAM_PAGES * PAGE;
+	uint8_t* _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE;
+	uint8_t* _romBase = _miscBase + MAX_MISC_PAGES * PAGE;
 
 	MemoryBankModeEnum _bank_mode[4];	// Mode for each of four banks. 
 	uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
@@ -90,9 +90,9 @@ protected:
 public:
 	// Base addresses for memory classes
 	inline uint8_t* RAMBase() { return _memory; };			// Get starting address for RAM
-	inline uint8_t* CacheBase() { return _cacheBase; };		// Get starting address for ROM
+	inline uint8_t* CacheBase() { return _cacheBase; };		// Get starting address for Cache
 	inline uint8_t* MiscBase() { return _miscBase; };
-	inline uint8_t* ROMBase() { return _romBase; };
+	inline uint8_t* ROMBase() { return _romBase; };			// Get starting address for ROM
 
 	// Shortcuts to ROM pages
 	uint8_t* base_sos_rom;
@@ -111,7 +111,7 @@ public:
 	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE * page); }	// Up to MAX_RAM_PAGES 256 pages
 	inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE * page); }	// Up to MAX_ROM_PAGES 64 pages
 
-	uint8_t* RemapAddressToCurrentBank(uint32_t addr);				// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
+	uint8_t* RemapAddressToCurrentBank(uint16_t addr);				// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
 
 	MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 };

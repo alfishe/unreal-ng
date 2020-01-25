@@ -48,7 +48,7 @@ void MainLoop::RunFrame()
 	InitVideoFrame();
 
 	// Execute CPU cycle
-	ExecuteCPUCycle();
+	ExecuteCPUFrameCycle();
 
 	// Process external periphery devices
 
@@ -78,10 +78,8 @@ void MainLoop::InitVideoFrame()
 //
 // Proceed with single frame CPU operations
 //
-void MainLoop::ExecuteCPUCycle()
+void MainLoop::ExecuteCPUFrameCycle()
 {
-	//Z80& cpu = *(_cpu->GetZ80());
-
 	_cpu->CPUFrameCycle();
 }
 

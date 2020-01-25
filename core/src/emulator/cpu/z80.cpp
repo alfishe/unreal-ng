@@ -139,7 +139,7 @@ uint8_t Z80::InterruptVector()
 // Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)
 // Read access to memory takes 3 clock cycles
 //
-uint8_t Z80::rd(unsigned addr)
+uint8_t Z80::rd(uint16_t addr)
 {
 	Z80& cpu = *this;
 
@@ -153,7 +153,7 @@ uint8_t Z80::rd(unsigned addr)
 // Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
 // Write access to memory takes 3 clock cycles
 //
-void Z80::wd(unsigned addr, uint8_t val)
+void Z80::wd(uint16_t addr, uint8_t val)
 {
 	Z80& cpu = *this;
 
@@ -357,6 +357,7 @@ void Z80::MemoryWriteDebug(uint16_t addr, uint8_t val)
 	//debug_cond_check(&cpu);		// Debug conditions check is very slow
 }
 
+/*
 uint8_t Z80::Read(uint16_t addr)
 {
 	Z80& _cpu_state = *this;
@@ -378,15 +379,24 @@ void Z80::Write(uint16_t addr, uint8_t val)
 {
 
 }
+*/
 
-uint8_t Z80::DirectRead(uint32_t addr)
+//
+// Read byte directly from RAM memory buffer
+// No cycle counters will be incremented
+//
+uint8_t Z80::DirectRead(uint16_t addr)
 {
 	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
 	
 	return *remap_addr;
 }
 
-void Z80::DirectWrite(uint32_t addr, uint8_t val)
+//
+// Write byte directly to RAM memory buffer
+// No cycle counters will be incremented
+//
+void Z80::DirectWrite(uint16_t addr, uint8_t val)
 {
 	Z80& _cpu_state = *this;
 	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
@@ -688,7 +698,7 @@ void Z80::HandleINT(uint8_t vector)
 	}
 	else
 	{
-		// im2
+		// IM2
 		unsigned vec = vector + cpu.i * 0x100;
 		interrupt_handler_address = rd(vec) + 0x100 * rd(vec + 1);
 	}

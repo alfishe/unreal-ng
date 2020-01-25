@@ -519,7 +519,7 @@ void Memory::SetBanks()
 //
 //
 //
-uint8_t* Memory::RemapAddressToCurrentBank(uint32_t addr)
+uint8_t* Memory::RemapAddressToCurrentBank(uint16_t addr)
 {
 	COMPUTER& state = *(&_context->state);
 	CONFIG& config = *(&_context->config);

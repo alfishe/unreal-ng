@@ -25,6 +25,6 @@ protected:
 	void InitSoundFrame();
 	void InitVideoFrame();
 
-	void ExecuteCPUCycle();
+	void ExecuteCPUFrameCycle();
 	void DoIdle();
 };

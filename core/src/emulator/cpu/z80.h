@@ -193,7 +193,7 @@ struct Z80State : public Z80Registers
 	uint32_t Idx;									// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
 	uint8_t tmp0, tmp1, tmp3;
-	unsigned rate;
+	unsigned rate;									// Rate for Z80 speed recalculatins. 3.5MHz -> 256, 7MHz -> 128
 	bool vm1;										// Halt handling type (True - ...; False - ...)
 	uint8_t outc0;
 	uint16_t last_branch;
@@ -263,8 +263,8 @@ public:
 	void retn();
 
 	// Memory access dispatching methods
-	uint8_t rd(unsigned addr);
-	void wd(unsigned addr, uint8_t val);
+	uint8_t rd(uint16_t addr);
+	void wd(uint16_t addr, uint8_t val);
 	// End of TODO: convert obsolete naming
 
 
@@ -274,13 +274,16 @@ public:
 	void MemoryWriteFast(uint16_t addr, uint8_t val);
 	void MemoryWriteDebug(uint16_t addr, uint8_t val);
 
+	/*
 	uint8_t Read(uint16_t addr);
 	void Write(uint16_t addr, uint8_t val);
-	uint8_t DirectRead(uint32_t addr);				// Direct emulated memory MemoryRead (For debugger use)
-	void DirectWrite(uint32_t addr, uint8_t val);	// Direct emulated memory MemoryWrite (For debugger use)
+	*/
 
-	void Reset();
-	void Z80Step();
+	uint8_t DirectRead(uint16_t addr);				// Direct emulated memory MemoryRead (For debugger use)
+	void DirectWrite(uint16_t addr, uint8_t val);	// Direct emulated memory MemoryWrite (For debugger use)
+
+	void Reset();		// Z80 chip reset
+	void Z80Step();		// Single opcode execution
 
 	// Trigger updates
 public:
@@ -297,7 +300,7 @@ public:
 	void ProcessDebuggerEvents();
 
 protected:
-	__forceinline void IncrementCPUCyclesCounter(uint8_t cycles);
+	__forceinline void IncrementCPUCyclesCounter(uint8_t cycles);	// Increment cycle counters
 
 	// Debug and trace methods
 public:
