@@ -22,7 +22,7 @@ MainLoop::~MainLoop()
 //
 // Main emulator loop. Processes all events and executes CPU and video cycles
 //
-void MainLoop::Run(const bool& exit)
+void MainLoop::Run(volatile bool& stopRequested)
 {
 	if (_cpu == nullptr || _context == nullptr)
 	{
@@ -30,7 +30,7 @@ void MainLoop::Run(const bool& exit)
 		return;
 	}
 
-	while (!exit)
+	while (!stopRequested)
 	{
 		RunFrame();
 	}
@@ -80,7 +80,7 @@ void MainLoop::InitVideoFrame()
 //
 void MainLoop::ExecuteCPUCycle()
 {
-	//Z80& cpu = *(_cpu->GetZ80Instance());
+	//Z80& cpu = *(_cpu->GetZ80());
 
 	_cpu->CPUFrameCycle();
 }

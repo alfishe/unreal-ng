@@ -3,6 +3,7 @@
 #include "common/logger.h"
 
 #include "z80.h"
+#include "common/stringhelper.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/video/screen.h"
 
@@ -77,16 +78,18 @@ uint8_t Z80::m1_cycle()
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
-	uint8_t opcode = rd(cpu.pc++);
+	opcode = rd(cpu.pc++);
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
-	if (state.ts.cache_miss && cpu.rate == 0x40)
+	if (config.mem_model == MM_TSL && state.ts.cache_miss && cpu.rate == 0x40)
+	{
 		cpu.tt = (cpu.tt + 0x40 * 7) & 0xFFFFFF80;
+		cycle_count += 8; // TODO: verify
+	}
 	else
-		cpu.tt += cpu.rate * 4;
+		IncrementCPUCyclesCounter(4);	// M1 cycle is always 4 CPU clocks
 
-	cpu.opcode = opcode;
 	return opcode;
 }
 
@@ -134,24 +137,28 @@ uint8_t Z80::InterruptVector()
 // TODO: Obsolete method - refactor
 //
 // Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)
+// Read access to memory takes 3 clock cycles
 //
 uint8_t Z80::rd(unsigned addr)
 {
 	Z80& cpu = *this;
 
-	cpu.tt += rate * 3;
+	IncrementCPUCyclesCounter(3);
+
 	return (cpu.*MemIf->MemoryRead)(addr);
 }
 
 // TODO: Obsolete method - refactor
 //
-// Duspatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
+// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
+// Write access to memory takes 3 clock cycles
 //
 void Z80::wd(unsigned addr, uint8_t val)
 {
 	Z80& cpu = *this;
 
-	tt += rate * 3;
+	IncrementCPUCyclesCounter(3);
+
 	(cpu.*MemIf->MemoryWrite)(addr, val);
 }
 
@@ -178,7 +185,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 	VideoControl& video = _context->pScreen->_vid;
-	Memory& mem = *_context->pMemory;
+	Memory& memory = *_context->pMemory;
 
 	uint8_t result = 0xFF;
 
@@ -189,7 +196,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 	// TODO: move to TSConf plugin
 	if (config.mem_model == MM_TSL)
 	{
-		if (mem._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
+		if (memory._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
 		{
 			// Pentevo version for 16 bit DRAM/cache
 			unsigned cached_address = (state.ts.page[bank] << 5) | ((addr >> 9) & 0x1F);  // {page[7:0], addr[13:9]}
@@ -200,10 +207,10 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 			{
 				// Read two sequential bytes with address bits xxxxxx00 and xxxxxx01 and cache them
 				uint16_t cache_addr = addr & 0xFFFE;
-				tscache_data[cache_pointer & 0xFFFE] = *(mem._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
+				tscache_data[cache_pointer & 0xFFFE] = *(memory._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
 
 				cache_addr = addr | 0x0001;
-				tscache_data[cache_pointer | 0x0001] = *(mem._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
+				tscache_data[cache_pointer | 0x0001] = *(memory._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
 
 				tscache_addr[cache_pointer & 0xFFFE] = tscache_addr[cache_pointer | 0x0001] = cached_address;     // Set cache tags for two subsequent 8-bit addresses
 
@@ -222,10 +229,10 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 	else
 	{
 		// Read byte from correspondent memory bank mapped to global memory buffer
-		result = *(mem._bank_read[bank] + (unsigned)(addr & (PAGE - 1)));
+		result = *(memory._bank_read[bank] + (unsigned)(addr & (PAGE - 1)));
 
 		// Update RAM access counters
-		if (mem._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
+		if (memory._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
 		{
 			video.memcpucyc[t / 224]++;
 		}
@@ -525,13 +532,22 @@ void Z80::Z80FrameCycle()
 //
 void Z80::Reset()
 {
-	int_flags = 0;
-	ir_ = 0;
-	pc = 0;
-	im = 0;
-	last_branch = 0;
-	int_pend = false;
-	int_gate = true;
+	Z80* cpu = this;
+
+	// Emulation state
+	last_branch = 0;	//
+	int_pend = false;	// No interrupts pending
+	int_gate = true;	//
+	cycle_count = 0;	// Cycle counter
+
+	// Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
+	int_flags = 0;					// Set interrupt mode 0
+	ir_ = 0;						// Reset IR (Instruction Register)
+	pc = 0x0000;					// Reset PC (Program Counter)
+	im = 0;							// IM0 mode is set by defaule
+	sp = 0xFFFF;					// Stack pointer set to the end of memory address space
+	af = 0xFFFF;					// Real chip behavior
+	IncrementCPUCyclesCounter(3);	// All that takes 3 clock cycles
 }
 
 //
@@ -543,6 +559,7 @@ void Z80::Z80Step()
 	CONFIG& config = _context->config;
 	COMPUTER& state = _context->state;
 	TEMP& temporary = _context->temporary;
+	Memory& memory = *_context->pMemory;
 
 	// Let debugger process step event
 	ProcessDebuggerEvents();
@@ -570,17 +587,17 @@ void Z80::Z80Step()
 	}
 	else if (state.flags & CF_LEAVEDOSRAM)
 	{
-		// Executing code from RAM address - disables TR-DOS ROM
-		/*
-		if (bankr[(cpu.pc >> 14) & 3] < RAM_BASE_M + PAGE * MAX_RAM_PAGES)
+		// Execution code from RAM address - disables TR-DOS ROM
+		uint8_t bank = (cpu.pc >> 14) & 3;
+		if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
 		{
 			state.flags &= ~CF_TRDOS;
 			SetBanks();
 		}
 
-		if (config.trdos_traps)
-			state.wd.trdos_traps();
-		*/
+		// WD93 logic
+		//if (config.trdos_traps)
+		//	state.wd.trdos_traps();
 	}
 
 	// Tape related IO
@@ -605,11 +622,16 @@ void Z80::Z80Step()
 	}
 	else
 	{
+		// Some counter correction for <???>
 		if (cpu.pch & temporary.evenM1_C0)
 			cpu.tt += (cpu.tt & cpu.rate);
 
+		// Regular Z80 bus cycle
 		// 1. Fetch opcode (Z80 M1 bus cycle)
 		uint8_t opcode = m1_cycle();
+
+		// Debug
+		DumpCurrentState();
 
 		// 2. Emulate fetched Z80 opcode
 		(normal_opcode[opcode])(&cpu);
@@ -629,7 +651,7 @@ void Z80::Z80Step()
 			set_scorp_profrom(0);
 		if (membits[0x104] & MEMBITS_R)
 			set_scorp_profrom(1);
-		if (membits[0x108] & MEMBITS_R)
+		if (membits[0x108] & MEMBITS_R) 
 			set_scorp_profrom(2);
 		if (membits[0x10C] & MEMBITS_R)
 			set_scorp_profrom(3);
@@ -709,11 +731,33 @@ void Z80::ProcessDebuggerEvents()
 //
 // Increment CPU cycles counter by specified number of cycles.
 // Required to keep exact timings for Z80 commands
-// Note: same as '#define cputact(a)	cpu->tt += ((a) * cpu->rate)' macro defined in cpulogic.h
+// Note: same as '#define cputact(a)	cpu->tt += ((a) * cpu->rate); cpu->cycle_count += (a)' macro defined in cpulogic.h
 //
 void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 {
 	tt += cycles * rate;
+	cycle_count += cycles;
+}
+
+void Z80::DumpCurrentState()
+{
+	static char dumpBuffer[512];
+
+	int pos = 0;
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "Cycle:%d\r\n", cycle_count);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "Op:%02X    IR:%04X\r\n", opcode, ir_);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "PC:%04X  SP:%04X\r\n", pc, sp);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "AF:%04X 'AF:%04X\r\n", af, alt.af);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "BC:%04X 'BC:%04X\r\n", bc, alt.bc);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "DE:%04X 'DE:%04X\r\n", de, alt.de);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "HL:%04X 'HL:%04X\r\n", hl, alt.hl);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "IX:%04X  IY:%04X\r\n", ix, iy);
+	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "\r\n");
+
+	wstring message = StringHelper::StringToWideString(dumpBuffer);
+#ifdef _WIN32
+	OutputDebugString(message.c_str());
+#endif
 }
 
 // TSConf specific

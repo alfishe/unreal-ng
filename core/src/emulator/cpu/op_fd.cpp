@@ -10,9 +10,9 @@
 // FD prefix opcodes
 
 Z80OPCODE opy_09(Z80 *cpu) { // add iy,bc
-   cpu->memptr = cpu->iy+1;
+   cpu->memptr = cpu->iy + 1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->bc & 0x0FFF)) >> 8) & 0x10; /* HF */
+   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->bc & 0x0FFF)) >> 8) & 0x10; // HF
    cpu->iy = (cpu->iy & 0xFFFF) + (cpu->bc & 0xFFFF);
 
    if (cpu->iy & 0x10000)
@@ -21,9 +21,9 @@ Z80OPCODE opy_09(Z80 *cpu) { // add iy,bc
    cputact(7);
 }
 Z80OPCODE opy_19(Z80 *cpu) { // add iy,de
-   cpu->memptr = cpu->iy+1;
+   cpu->memptr = cpu->iy + 1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->de & 0x0FFF)) >> 8) & 0x10; /* HF */
+   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->de & 0x0FFF)) >> 8) & 0x10; // HF
    cpu->iy = (cpu->iy & 0xFFFF) + (cpu->de & 0xFFFF);
 
    if (cpu->iy & 0x10000)
@@ -38,8 +38,8 @@ Z80OPCODE opy_21(Z80 *cpu) { // ld iy,nnnn
 }
 Z80OPCODE opy_22(Z80 *cpu) { // ld (nnnn),iy
    unsigned adr = cpu->rd(cpu->pc++);
-   adr += cpu->rd(cpu->pc++)*0x100;
-   cpu->memptr = adr+1;
+   adr += cpu->rd(cpu->pc++) * 0x100;
+   cpu->memptr = adr + 1;
    cpu->wd(adr, cpu->yl);
    cpu->wd(adr+1, cpu->yh);
 }
@@ -57,10 +57,10 @@ Z80OPCODE opy_26(Z80 *cpu) { // ld yh,nn
    cpu->yh = cpu->rd(cpu->pc++);
 }
 Z80OPCODE opy_29(Z80 *cpu) { // add iy,iy
-   cpu->memptr = cpu->iy+1;
+   cpu->memptr = cpu->iy + 1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
    cpu->f |= ((cpu->iy >> 7) & 0x10); /* HF */
-   cpu->iy = (cpu->iy & 0xFFFF)*2;
+   cpu->iy = (cpu->iy & 0xFFFF) * 2;
 
    if (cpu->iy & 0x10000)
 	   cpu->f |= CF;
@@ -70,8 +70,8 @@ Z80OPCODE opy_29(Z80 *cpu) { // add iy,iy
 }
 Z80OPCODE opy_2A(Z80 *cpu) { // ld iy,(nnnn)
    unsigned adr = cpu->rd(cpu->pc++);
-   adr += cpu->rd(cpu->pc++)*0x100;
-   cpu->memptr = adr+1;
+   adr += cpu->rd(cpu->pc++) * 0x100;
+   cpu->memptr = adr + 1;
    cpu->yl = cpu->rd(adr);
    cpu->yh = cpu->rd(adr+1);
 }
@@ -113,7 +113,7 @@ Z80OPCODE opy_36(Z80 *cpu) { // ld (iy+nn),nn
 Z80OPCODE opy_39(Z80 *cpu) { // add iy,sp
    cpu->memptr = cpu->iy+1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->sp & 0x0FFF)) >> 8) & 0x10; /* HF */
+   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->sp & 0x0FFF)) >> 8) & 0x10; // HF
    cpu->iy = (cpu->iy & 0xFFFF) + (cpu->sp & 0xFFFF);
    if (cpu->iy & 0x10000) cpu->f |= CF;
    cpu->f |= (cpu->yh & (F5 | F3));

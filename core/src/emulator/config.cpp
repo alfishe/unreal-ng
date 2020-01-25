@@ -6,6 +6,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/platform.h"
+#include "emulator/memory/memory.h"
 #include <cassert>
 
 #ifdef __linux__
@@ -131,6 +132,21 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.ConfirmExit = (uint8_t)inimanager.GetLongValue(misc, "ConfirmExit", 0);
 	config.sleepidle = (uint8_t)inimanager.GetLongValue(misc, "ShareCPU", 0);
 
+	config.reset_rom = RM_SOS;
+	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr, nullptr), line, sizeof line); // What ROM bank to set active during reset
+	if (StringHelper::CompareCaseInsensitive(line, "DOS", 3))
+	{
+		config.reset_rom = RM_DOS;
+	}
+	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4))
+	{
+		config.reset_rom = RM_128;
+	}
+	else if (StringHelper::CompareCaseInsensitive(line, "SYS", 3))
+	{
+		config.reset_rom = RM_SYS;
+	}
+
 	// MISC::CMOS sub-section
 
 	// MISC::ULA+ sub-section
@@ -153,6 +169,29 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr, nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
 	CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr, nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
 
+	// ULA section (video signal timings)
+	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);
+	config.intstart = (unsigned)inimanager.GetLongValue(ula, "instart", 0);
+	config.intlen = (unsigned)inimanager.GetLongValue(ula, "intlen", 32);
+	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
+	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888; 
+
+	config.border_4T = (unsigned)inimanager.GetLongValue(ula, "4TBorder", 0);
+	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);
+	config.floatbus = (unsigned)inimanager.GetLongValue(ula, "FloatBus", 0);
+	config.floatdos = (unsigned)inimanager.GetLongValue(ula, "FloatDOS", 0);
+	config.portff = (unsigned)inimanager.GetLongValue(ula, "PortFF", 0) != 0;	// Enable port FF (reflects current screen color attributes when ULA renders the frame, 0xFF otherwise)
+
+	// Beta128 section
+	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
+	config.trdos_traps = inimanager.GetLongValue(beta128, "Traps", 1) ? true : false;
+	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 1) ? true : false;
+	config.trdos_interleave = (uint8_t)inimanager.GetLongValue(beta128, "IL", 1) - 1;
+	if (config.trdos_interleave > 2)
+		config.trdos_interleave = 0;
+	config.fdd_noise = inimanager.GetLongValue(beta128, "Noise", 0) ? true : false;
+	CopyStringValue(inimanager.GetValue(beta128, "BOOT", nullptr, nullptr), config.appendboot, sizeof config.appendboot);
+
 	// INPUT section
 
 	// HDD section
@@ -168,7 +207,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	}
 	else
 	{
-
+		LOGERROR("Unable to recognize ZX-Spectrum model selected in config");
 	}
 
 	return result;

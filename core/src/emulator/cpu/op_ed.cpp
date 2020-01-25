@@ -484,8 +484,17 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
    cputact(4);
    cpu->wd(cpu->hl++, cpu->in(cpu->bc));
    dec8(cpu, cpu->b);
-   if (cpu->b) cpu->f |= PV, cpu->pc -= 2, cputact(6);
-   else cpu->f &= ~PV, cputact(1);
+   if (cpu->b)
+   {
+	   cpu->f |= PV;
+	   cpu->pc -= 2;
+	   cputact(6);
+   }
+   else
+   {
+	   cpu->f &= ~PV;
+	   cputact(1);
+   }
 }
 Z80OPCODE ope_B3(Z80 *cpu) { // otir
    cputact(1);

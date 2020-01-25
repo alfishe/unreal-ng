@@ -1,11 +1,16 @@
 #include "stdafx.h"
 
+#include "common/logger.h"
+
 #include "screen.h"
 
-Screen::Screen(CPU* system, Z80* cpu, EmulatorContext* context)
+#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/z80.h"
+
+Screen::Screen(EmulatorContext* context)
 {
-	_system = system;
-	_cpu = cpu;
+	_system = context->pCPU;
+	_cpu = _system->GetZ80();
 	_context = context;
 }
 

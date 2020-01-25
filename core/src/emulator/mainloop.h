@@ -16,7 +16,7 @@ public:
 	MainLoop(CPU* cpu, EmulatorContext* context);
 	virtual ~MainLoop();
 
-	void Run(const bool& exit);
+	void Run(volatile bool& exit);
 	void Stop();
 
 protected:

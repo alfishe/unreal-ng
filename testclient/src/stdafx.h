@@ -11,15 +11,18 @@
 	#endif
 #endif
 
+#define CACHE_LINE 64
+
 #ifdef _WIN32
+	#if _MSC_VER >= 1300
+		#define CACHE_ALIGNED __declspec(align(CACHE_LINE))
+	#endif
 #endif
 
 #ifdef __linux__
-	#define CACHE_LINE 64
 	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
 #endif
 
 #ifdef __APPLE__
-	#define CACHE_LINE 64
 	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
 #endif

@@ -19,8 +19,13 @@ protected:
 	CPU* _cpu = nullptr;
 	MainLoop* _mainloop = nullptr;
 
+	// Control flow
+	volatile bool _stopRequested = false;
+
+	// Emulator state
 	bool _isPaused = false;
 	bool _isRunning = false;
+	bool _isDebug = false;
 
 	// Constructors / destructors
 public:
@@ -35,8 +40,10 @@ public:
 
 	// Emulator control cycle
 	void Reset();
-	void Run();
+	void Start();
 	void Pause();
+	void Resume();
+	void Stop();
 
 	// Status methods
 	bool IsRunning();

@@ -38,6 +38,7 @@ struct Z80Registers
 		};
 	};
 
+	// IR - Instruction register
 	union
 	{
 		unsigned ir_;
@@ -54,9 +55,9 @@ struct Z80Registers
 		struct
 		{
 			uint8_t r_hi;
-			uint8_t iff1;
-			uint8_t iff2;
-			uint8_t halted;
+			uint8_t iff1;	// Interrupt flip-flop 1
+			uint8_t iff2;	// Interrupt flip-flop 2
+			uint8_t halted;	// CPU halted
 		};
 	};
 
@@ -174,11 +175,14 @@ struct Z80Registers
 		};
 	};
 
-	uint8_t opcode;
-	unsigned eipos, haltpos;
+	uint32_t cycle_count;	// Counter to track cycle accuracy
+
+	uint8_t opcode;			// Opcode fetched during m1 cycle
+	unsigned eipos;
+	unsigned haltpos;
 
 	/*------------------------------*/
-	uint8_t im;
+	uint8_t im;				// Interrupt mode [IM0|IM1|IM2]
 	bool nmi_in_progress;
 	uint32_t tscache_addr[TS_CACHE_SIZE];
 	uint8_t  tscache_data[TS_CACHE_SIZE];
@@ -295,6 +299,9 @@ public:
 protected:
 	__forceinline void IncrementCPUCyclesCounter(uint8_t cycles);
 
+	// Debug and trace methods
+public:
+	void DumpCurrentState();
 
 	// TSConf specific
 	// TODO: Move to plugin

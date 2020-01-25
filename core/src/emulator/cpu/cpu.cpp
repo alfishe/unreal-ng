@@ -15,6 +15,9 @@ CPU::CPU(EmulatorContext* context)
 {
 	_context = context;
 
+	// Register itself in context
+	_context->pCPU = this;
+
 	// Create main CPU core instance (Z80)
 	_cpu = new Z80(context);
 
@@ -33,6 +36,10 @@ CPU::CPU(EmulatorContext* context)
 
 	// Create HDD controller
 	_hdd = new HDD(context);
+
+	// Create videocontroller
+	_screen = new Screen(_context);
+	_context->pScreen = _screen;
 }
 
 CPU::~CPU()
@@ -93,6 +100,9 @@ void CPU::Reset()
 {
 	COMPUTER& state = _context->state;
 	CONFIG& config = _context->config;
+
+	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
+	_mode = static_cast<ROMModeEnum>(config.reset_rom);
 
 	state.pEFF7 &= config.EFF7_mask;
 	state.pEFF7 |= EFF7_GIGASCREEN; // [vv] disable turbo
@@ -219,7 +229,7 @@ void CPU::Reset()
 		_mode = RM_SOS;
 
 	// Set ROM mode
-	_memory->SetMode(_mode);
+	_memory->SetROMMode(_mode);
 
 	// Reset counters
 	state.t_states = 0;

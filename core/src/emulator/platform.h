@@ -155,10 +155,10 @@ struct CONFIG
 {
 	unsigned t_line;	// t-states per line
 	unsigned frame;		// t-states per frame
-	unsigned intfq;		// usually 50Hz
-	unsigned intstart;	// int start
-	unsigned intlen;	// length of INT signal (for Z80)
-	unsigned nopaper;	// hide paper
+	uint8_t intfq;		// INT interrupt frequency (in Hz). Typically 50Hz
+	unsigned intstart;	// INT pulse start position (delay in clock cycles)
+	unsigned intlen;	// Duration of INT signal (for Z80) in clock cycles. Should be no less than 23, since some IX/IY instructions take so long to execute and interrupt is handled only at the end of such instruction execution
+	unsigned nopaper;	// Hide paper
 
 	unsigned render, driver, fontsize;
 
@@ -194,10 +194,12 @@ struct CONFIG
 
 	int modem_port; //, modem_scheme;
 	int zifi_port;
-	uint8_t fdd_noise;
+	bool fdd_noise;				// Mix FDD disk rotation and positioning noise to sound channel(s)
 
-	uint8_t trdos_present, trdos_interleave;
-	uint8_t trdos_traps, wd93_nodelay;
+	bool trdos_present;			// Enable Beta128 disk interface (TR-DOS)
+	uint8_t trdos_interleave;
+	bool trdos_traps;			// Use TR-DOS traps
+	bool wd93_nodelay;			// Don't emulate WD1793 / VG93 controller delays
 	uint8_t trdos_wp[4];
 
 	uint8_t cache;

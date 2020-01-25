@@ -5,7 +5,7 @@
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
 
-// CB opcodes
+// FDCB opcodes (FD CB <xx> <opN>)
 
 Z80OPCODE opl_00(Z80 *cpu) { // rlc b
    cpu->f = rlc_f[cpu->b];

@@ -1,6 +1,8 @@
 #pragma once
 #include "stdafx.h"
 
+#include <cassert>
+
 class SystemHelper
 {
 public:
@@ -84,7 +86,13 @@ public:
 		c = c3 - c2 + (c4 - c3) / 2 + (c2 - c1) / 2;
 		Start.QuadPart = Stop.QuadPart - Start.QuadPart;
 
-		return ((c * Frequency.QuadPart) / Start.QuadPart);
+		result = ((c * Frequency.QuadPart) / Start.QuadPart);
+
+		#endif
+
+		#ifdef __linux__
+
+		assert("GetCPUFrequency() not implemented for Linux");
 
 		#endif
 

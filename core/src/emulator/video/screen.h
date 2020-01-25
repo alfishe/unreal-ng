@@ -2,8 +2,6 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
-#include "emulator/cpu/cpu.h"
-#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 
 #include <algorithm>
@@ -210,7 +208,8 @@ public:
 	VideoControl _vid;
 
 public:
-	Screen(CPU* system, Z80* cpu, EmulatorContext* context);
+	Screen() = delete;		// Disable default contructor; C++ 11 feature
+	Screen(EmulatorContext* context);
 	void InitFrame();
 	void UpdateScreen();
 

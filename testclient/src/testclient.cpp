@@ -32,7 +32,7 @@ void TestClient::Start()
 
 	_emulator = new Emulator();
 	_emulator->Init();
-	_emulator->Run();
+	_emulator->Start();
 }
 
 void TestClient::Stop()
@@ -43,7 +43,7 @@ void TestClient::Stop()
 		{
 			if (_emulator->IsRunning() && !_emulator->IsPaused())
 			{
-				_emulator->Pause();
+				_emulator->Stop();
 			}
 
 			_emulator->Release();

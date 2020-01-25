@@ -105,12 +105,14 @@ public:
 	Memory(EmulatorContext* context);
 	virtual ~Memory();
 
-	void SetMode(ROMModeEnum mode);
+	void SetROMMode(ROMModeEnum mode);
 	void SetBanks();
 
 	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE * page); }	// Up to MAX_RAM_PAGES 256 pages
 	inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE * page); }	// Up to MAX_ROM_PAGES 64 pages
 
 	uint8_t* RemapAddressToCurrentBank(uint32_t addr);				// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
+
+	MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 };
 

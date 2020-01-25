@@ -7,7 +7,8 @@
 #include "daa_tabs.h"
 #include <stdio.h>
 
-/*  not prefixed opcodes */
+//  Non-prefixed opcodes
+// Important note: M1 cycle lasts 4 clocks. This is the bare minimum for any opcode. So only additional deltas added here with cputact(n) macro
 
 Z80OPCODE op_00(Z80 *cpu) { // nop
 	// No increment for CPU cycles counter (t) is required
@@ -118,11 +119,11 @@ Z80OPCODE op_17(Z80 *cpu) { // rla
    cpu->a = new_a;
 }
 Z80OPCODE op_18(Z80 *cpu) { // jr rr
-   char offs = (char)cpu->rd(cpu->pc);
-   cpu->last_branch = cpu->pc-1;
-   cpu->pc += offs+1;
-   cpu->memptr = cpu->pc;
-   cputact(5);
+	uint8_t offs = cpu->rd(cpu->pc);
+	cpu->last_branch = cpu->pc - 1;
+	cpu->pc += offs + 1;
+	cpu->memptr = cpu->pc;
+	cputact(5);
 }
 Z80OPCODE op_19(Z80 *cpu) { // add hl,de
    cpu->memptr = cpu->hl+1;
@@ -902,13 +903,14 @@ Z80OPCODE op_D8(Z80 *cpu) { // ret c
   };
 }
 Z80OPCODE op_D9(Z80 *cpu) { // exx
+	// Exchange data between main and shadow register sets
    unsigned tmp = cpu->bc; cpu->bc = cpu->alt.bc; cpu->alt.bc = tmp;
    tmp = cpu->de; cpu->de = cpu->alt.de; cpu->alt.de = tmp;
    tmp = cpu->hl; cpu->hl = cpu->alt.hl; cpu->alt.hl = tmp;
 }
 Z80OPCODE op_DA(Z80 *cpu) { // jp c,nnnn
    unsigned addr = cpu->rd(cpu->pc);
-   addr += 0x100*cpu->rd(cpu->pc+1);
+   addr += 0x100 * cpu->rd(cpu->pc + 1);
    cpu->memptr = addr;
 
    if (cpu->f & CF)
@@ -921,14 +923,14 @@ Z80OPCODE op_DA(Z80 *cpu) { // jp c,nnnn
 }
 Z80OPCODE op_DB(Z80 *cpu) { // in a,(nn)
    unsigned port = cpu->rd(cpu->pc++) + (cpu->a << 8);
-   cpu->memptr = (cpu->a << 8) + port+1;
+   cpu->memptr = (cpu->a << 8) + port + 1;
    cputact(4);
    cpu->a = cpu->in(port);
 }
 Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
   cpu->pc += 2;
-  unsigned addr = cpu->rd(cpu->pc-2);
-  addr += 0x100*cpu->rd(cpu->pc-1);
+  unsigned addr = cpu->rd(cpu->pc - 2);
+  addr += 0x100 * cpu->rd(cpu->pc - 1);
   cpu->memptr = addr;
 
   if (cpu->f & CF)
@@ -1009,7 +1011,7 @@ Z80OPCODE op_E7(Z80 *cpu) { // rst 20
   cputact(1);
   cpu->wd(--cpu->sp, cpu->pch);
   cpu->wd(--cpu->sp, cpu->pcl);
-  cpu->last_branch = cpu->pc-1;
+  cpu->last_branch = cpu->pc - 1;
   cpu->pc = 0x20;
   cpu->memptr = 0x20;
 }
@@ -1018,7 +1020,7 @@ Z80OPCODE op_E8(Z80 *cpu) { // ret pe
   if (cpu->f & PV)
   {
     unsigned addr = cpu->rd(cpu->sp++);
-    addr += 0x100*cpu->rd(cpu->sp++);
+    addr += 0x100 * cpu->rd(cpu->sp++);
     cpu->last_branch = cpu->pc-1;
     cpu->pc = addr;
     cpu->memptr = addr;
@@ -1030,11 +1032,11 @@ Z80OPCODE op_E9(Z80 *cpu) { // jp (hl)
 }
 Z80OPCODE op_EA(Z80 *cpu) { // jp pe,nnnn
    unsigned addr = cpu->rd(cpu->pc);
-   addr += 0x100*cpu->rd(cpu->pc+1);
+   addr += 0x100 * cpu->rd(cpu->pc + 1);
    cpu->memptr = addr;
    if (cpu->f & PV)
    {
-      cpu->last_branch = cpu->pc-1;
+      cpu->last_branch = cpu->pc - 1;
       cpu->pc = addr;
    }
    else
@@ -1047,8 +1049,8 @@ Z80OPCODE op_EB(Z80 *cpu) { // ex de,hl
 }
 Z80OPCODE op_EC(Z80 *cpu) { // call pe,nnnn
   cpu->pc += 2;
-  unsigned addr = cpu->rd(cpu->pc-2);
-  addr += 0x100*cpu->rd(cpu->pc-1);
+  unsigned addr = cpu->rd(cpu->pc - 2);
+  addr += 0x100 * cpu->rd(cpu->pc - 1);
   cpu->memptr = addr;
 
   if (cpu->f & PV)
@@ -1056,7 +1058,7 @@ Z80OPCODE op_EC(Z80 *cpu) { // call pe,nnnn
     cputact(1);
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
-    cpu->last_branch = cpu->pc-1;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
   };
 }
@@ -1067,7 +1069,7 @@ Z80OPCODE op_EF(Z80 *cpu) { // rst 28
   cputact(1);
   cpu->wd(--cpu->sp, cpu->pch);
   cpu->wd(--cpu->sp, cpu->pcl);
-  cpu->last_branch = cpu->pc-1;
+  cpu->last_branch = cpu->pc - 1;
   cpu->pc = 0x28;
   cpu->memptr = 0x28;
 }
@@ -1078,7 +1080,7 @@ Z80OPCODE op_F0(Z80 *cpu) { // ret p
   {
     unsigned addr = cpu->rd(cpu->sp++);
     addr += 0x100*cpu->rd(cpu->sp++);
-    cpu->last_branch = cpu->pc-1;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
     cpu->memptr = addr;
   };
@@ -1089,12 +1091,12 @@ Z80OPCODE op_F1(Z80 *cpu) { // pop af
 }
 Z80OPCODE op_F2(Z80 *cpu) { // jp p,nnnn
    unsigned addr = cpu->rd(cpu->pc);
-   addr += 0x100*cpu->rd(cpu->pc+1);
+   addr += 0x100 * cpu->rd(cpu->pc + 1);
    cpu->memptr = addr;
 
    if (!(cpu->f & SF))
    {
-      cpu->last_branch = cpu->pc-1;
+      cpu->last_branch = cpu->pc - 1;
       cpu->pc = addr;
    }
    else
@@ -1105,8 +1107,8 @@ Z80OPCODE op_F3(Z80 *cpu) { // di
 }
 Z80OPCODE op_F4(Z80 *cpu) { // call p,nnnn
   cpu->pc += 2;
-  unsigned addr = cpu->rd(cpu->pc-2);
-  addr += 0x100*cpu->rd(cpu->pc-1);
+  unsigned addr = cpu->rd(cpu->pc - 2);
+  addr += 0x100*cpu->rd(cpu->pc - 1);
   cpu->memptr = addr;
 
   if (!(cpu->f & SF))
@@ -1114,7 +1116,7 @@ Z80OPCODE op_F4(Z80 *cpu) { // call p,nnnn
     cputact(1);
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
-    cpu->last_branch = cpu->pc-1;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
   };
 }
@@ -1130,7 +1132,7 @@ Z80OPCODE op_F7(Z80 *cpu) { // rst 30
   cputact(1);
   cpu->wd(--cpu->sp, cpu->pch);
   cpu->wd(--cpu->sp, cpu->pcl);
-  cpu->last_branch = cpu->pc-1;
+  cpu->last_branch = cpu->pc - 1;
   cpu->pc = 0x30;
   cpu->memptr = 0x30;
 }
@@ -1140,7 +1142,7 @@ Z80OPCODE op_F8(Z80 *cpu) { // ret m
   {
     unsigned addr = cpu->rd(cpu->sp++);
     addr += 0x100*cpu->rd(cpu->sp++);
-    cpu->last_branch = cpu->pc-1;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
     cpu->memptr = addr;
   };
@@ -1151,13 +1153,15 @@ Z80OPCODE op_F9(Z80 *cpu) { // ld sp,hl
 }
 Z80OPCODE op_FA(Z80 *cpu) { // jp m,nnnn
    unsigned addr = cpu->rd(cpu->pc);
-   addr += 0x100*cpu->rd(cpu->pc+1);
+   addr += 0x100 * cpu->rd(cpu->pc + 1);
    cpu->memptr = addr;
    if (cpu->f & SF)
    {
-      cpu->last_branch = cpu->pc-1;
+      cpu->last_branch = cpu->pc - 1;
       cpu->pc = addr;
-   } else cpu->pc += 2;
+   }
+   else
+	   cpu->pc += 2;
 }
 Z80OPCODE op_FB(Z80 *cpu) { // ei
    cpu->iff1 = cpu->iff2 = 1;
@@ -1165,15 +1169,16 @@ Z80OPCODE op_FB(Z80 *cpu) { // ei
 }
 Z80OPCODE op_FC(Z80 *cpu) { // call m,nnnn
   cpu->pc += 2;
-  unsigned addr = cpu->rd(cpu->pc-2);
-  addr += 0x100*cpu->rd(cpu->pc-1);
+  unsigned addr = cpu->rd(cpu->pc - 2);
+  addr += 0x100 * cpu->rd(cpu->pc - 1);
   cpu->memptr = addr;
+
   if (cpu->f & SF)
   {
     cputact(1);
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
-    cpu->last_branch = cpu->pc-1;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
   };
 }
@@ -1184,7 +1189,7 @@ Z80OPCODE op_FF(Z80 *cpu) { // rst 38
   cputact(1);
   cpu->wd(--cpu->sp, cpu->pch);
   cpu->wd(--cpu->sp, cpu->pcl);
-  cpu->last_branch = cpu->pc-1;
+  cpu->last_branch = cpu->pc - 1;
   cpu->pc = 0x38;
   cpu->memptr = 0x38;
 }

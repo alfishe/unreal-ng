@@ -18,52 +18,52 @@ Memory::~Memory()
 	LOGDEBUG("Memory::~Memory()");
 }
 
-void Memory::SetMode(ROMModeEnum mode)
+void Memory::SetROMMode(ROMModeEnum mode)
 {
 	if (mode == RM_NOCHANGE)
 		return;
 
-	COMPUTER& state = *(&_context->state);
-	CONFIG& config = *(&_context->config);
+	COMPUTER& state = _context->state;
+	CONFIG& config = _context->config;
 
 	if (mode == RM_CACHE)
 	{
 		state.flags |= CF_CACHEON;
-		SetBanks();
-		return;
 	}
-
-	// no RAM/cache/SERVICE
-	state.p1FFD &= ~7;
-	state.pDFFD &= ~0x10;
-	state.flags &= ~CF_CACHEON;
-
-	// comp.aFF77 |= 0x100; // enable ATM memory
-
-	switch (mode)
+	else
 	{
-		case RM_128:
-			state.flags &= ~CF_TRDOS;
-			state.p7FFD &= ~0x10;
-			break;
-		case RM_SOS:
-			state.flags &= ~CF_TRDOS;
-			state.p7FFD |= 0x10;
+		// No RAM/cache/SERVICE
+		state.p1FFD &= ~7;
+		state.pDFFD &= ~0x10;
+		state.flags &= ~CF_CACHEON;
 
-			if (config.mem_model == MM_PLUS3) // Disable paging
-				state.p7FFD |= 0x20;
-			break;
-		case RM_SYS:
-			state.flags |= CF_TRDOS;
-			state.p7FFD &= ~0x10;
-			break;
-		case RM_DOS:
-			state.flags |= CF_TRDOS;
-			state.p7FFD |= 0x10;
+		// comp.aFF77 |= 0x100; // enable ATM memory
 
-			if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+		switch (mode)
+		{
+			case RM_128:
+				state.flags &= ~CF_TRDOS;
 				state.p7FFD &= ~0x10;
-			break;
+				break;
+			case RM_SOS:
+				state.flags &= ~CF_TRDOS;
+				state.p7FFD |= 0x10;
+
+				if (config.mem_model == MM_PLUS3) // Disable paging
+					state.p7FFD |= 0x20;
+				break;
+			case RM_SYS:
+				state.flags |= CF_TRDOS;
+				state.p7FFD &= ~0x10;
+				break;
+			case RM_DOS:
+				state.flags |= CF_TRDOS;
+				state.p7FFD |= 0x10;
+
+				if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
+					state.p7FFD &= ~0x10;
+				break;
+		}
 	}
 
 	SetBanks();
@@ -77,8 +77,8 @@ void Memory::SetBanks()
 	TEMP& temp = _context->temporary;
 
 	// Initialize according Spectrum 128K standard address space settings
-	_bank_write[1] = _bank_read[1] = page_ram(5);	// Set Screen 1 (page 5) as default to [0x4000 - 0x7FFF]
-	_bank_write[2] = _bank_read[2] = page_ram(2);	// Set page 2 as default to [0x8000 - 0xBFFF]
+	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default to [0x4000 - 0x7FFF]
+	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default to [0x8000 - 0xBFFF]
 	
 	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		// Bank 0 is ROM [0x0000 - 0x3FFF]
 	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		// Bank 1 is RAM [0x4000 - 0x7FFF]
@@ -119,10 +119,10 @@ void Memory::SetBanks()
 			if (!(state.pEFF7 & EFF7_LOCKMEM))
 				sel_bank |= (state.p7FFD & 0x20) | (state.p7FFD & 0xC0) >> 3; // 7FFD bits 657..210
 
-			bank3 = page_ram(sel_bank & temp.ram_mask);
+			bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 
 			if (state.pEFF7 & EFF7_ROCACHE)
-				bank0 = page_ram(0); // Alone Coder 0.36.4
+				bank0 = RAMPageAddress(0); // Alone Coder 0.36.4
 			break;
 		case MM_PROFSCORP:
 			_membits[0x0100] &= ~MemoryBitsEnum::MEMBITS_R;
@@ -131,7 +131,7 @@ void Memory::SetBanks()
 			_membits[0x010C] &= ~MemoryBitsEnum::MEMBITS_R;
 		case MM_SCORP:
 			sel_bank += ((state.p1FFD & 0x10) >> 1) + ((state.p1FFD & 0xC0) >> 2);
-			bank3 = page_ram(sel_bank & temp.ram_mask);
+			bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 
 			if (state.p1FFD & 4)
 				state.flags |= CF_TRDOS;
@@ -140,7 +140,7 @@ void Memory::SetBanks()
 				bank0 = base_sys_rom;
 
 			if (state.p1FFD & 1)
-				bank0 = page_ram(0);
+				bank0 = RAMPageAddress(0);
 
 			if (config.mem_model == MM_PROFSCORP)
 			{
@@ -153,7 +153,7 @@ void Memory::SetBanks()
 		case MM_KAY:
 			{
 				sel_bank += ((state.p1FFD & 0x10) >> 1) + ((state.p1FFD & 0x80) >> 3) + ((state.p7FFD & 0x80) >> 2);
-				bank3 = page_ram(sel_bank & temp.ram_mask);
+				bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 				uint8_t rom1 = (state.p1FFD >> 2) & 2;
 
 				if (state.flags & CF_TRDOS)
@@ -169,21 +169,21 @@ void Memory::SetBanks()
 				}
 
 				if (state.p1FFD & 1)
-					bank0 = page_ram(0);
+					bank0 = RAMPageAddress(0);
 			}
 			break;
 		case MM_PROFI:
 			sel_bank += ((state.pDFFD & 0x07) << 3);
-			bank3 = page_ram(sel_bank & temp.ram_mask);
+			bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 
 			if (state.pDFFD & 0x08)
 			{
 				_bank_read[1] = _bank_write[1] = bank3;
-				bank3 = page_ram(7);
+				bank3 = RAMPageAddress(7);
 			}
 
 			if (state.pDFFD & 0x10)
-				bank0 = page_ram(0);
+				bank0 = RAMPageAddress(0);
 
 			if (state.pDFFD & 0x20)
 				state.flags |= CF_DOSPORTS;
@@ -196,12 +196,12 @@ void Memory::SetBanks()
 				// RAM
 				// original ATM uses D2 as ROM address extension, not RAM
 				sel_bank += ((state.pFDFD & 0x07) << 3);
-				bank3 = page_ram(sel_bank & temp.ram_mask);
+				bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 
 				if (!(state.aFE & 0x80))
 				{
 					_bank_write[1] = _bank_read[1] = page_ram(4);
-					bank0 = page_ram(0);
+					bank0 = RAMPageAddress(0);
 					break;
 				}
 
@@ -246,18 +246,18 @@ void Memory::SetBanks()
 				{
 					// RAM at [0x0000-0x3FFF]
 					_bank_mode[0] = state.ts.w0_we ? MemoryBankModeEnum::BANK_RAM : MemoryBankModeEnum::BANK_ROM;
-					bank0 = page_ram(state.ts.vdos ? 0xFF : tmp);
+					bank0 = RAMPageAddress(state.ts.vdos ? 0xFF : tmp);
 				}
 				else
 				{
 					// ROM at[0x0000-0x3FFF]
 					_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;
-					bank0 = page_rom(tmp & 0x1F);
+					bank0 = ROMPageAddress(tmp & 0x1F);
 				}
 
-				_bank_read[1] = _bank_write[1] = page_ram(state.ts.page[1]);
-				_bank_read[2] = _bank_write[2] = page_ram(state.ts.page[2]);
-				bank3 = page_ram(state.ts.page[3]);
+				_bank_read[1] = _bank_write[1] = RAMPageAddress(state.ts.page[1]);
+				_bank_read[2] = _bank_write[2] = RAMPageAddress(state.ts.page[2]);
+				bank3 = RAMPageAddress(state.ts.page[3]);
 			}
 			break;
 		case MM_ATM3:
@@ -291,13 +291,13 @@ void Memory::SetBanks()
 							_bank_read[bank] = _bank_write[bank] = page_ram((mem7ffd & mask7ffd) | (state.pFFF7[i + bank] & (~mask7ffd) & temp.ram_mask));
 							break;
 						case 0x100: // ROM from 7FFD
-							_bank_read[bank] = page_rom((state.pFFF7[i + bank] & 0xFE & temp.rom_mask) + ((state.flags & CF_TRDOS) ? 1 : 0));
+							_bank_read[bank] = ROMPageAddress((state.pFFF7[i + bank] & 0xFE & temp.rom_mask) + ((state.flags & CF_TRDOS) ? 1 : 0));
 							break;
 						case 0x200: // RAM from FFF7
 							_bank_read[bank] = _bank_write[bank] = page_ram(state.pFFF7[i + bank] & 0xFF & temp.ram_mask);
 							break;
 						case 0x300: // ROM from FFF7
-							_bank_read[bank] = page_rom(state.pFFF7[i + bank] & 0xFF & temp.rom_mask);
+							_bank_read[bank] = ROMPageAddress(state.pFFF7[i + bank] & 0xFF & temp.rom_mask);
 							break;
 					}
 				}
@@ -310,9 +310,9 @@ void Memory::SetBanks()
 				if (config.mem_model == MM_ATM3) // lvd added pentevo RAM0 to bank0 feature if EFF7_ROCACHE is set
 				{
 					if (state.nmi_in_progress)
-						bank0 = page_ram(0xFF);
+						bank0 = RAMPageAddress(0xFF);
 					else if (state.pEFF7 & EFF7_ROCACHE)
-						bank0 = page_ram(0x00);
+						bank0 = RAMPageAddress(0x00);
 				}
 
 			}
@@ -321,7 +321,7 @@ void Memory::SetBanks()
 			{
 				if (state.p7FFD & 0x20) // paging disabled (48k mode)
 				{
-					bank3 = page_ram(sel_bank & temp.ram_mask);
+					bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 					break;
 				}
 
@@ -335,7 +335,7 @@ void Memory::SetBanks()
 						case 2: bank0 = base_dos_rom; break;
 						case 3: bank0 = base_sos_rom; break;
 					}
-					bank3 = page_ram(sel_bank & temp.ram_mask);
+					bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 				}
 				else
 				{
@@ -349,7 +349,7 @@ void Memory::SetBanks()
 					};
 
 					for (unsigned i = 0; i < 4; i++)
-						_bank_write[i] = _bank_read[i] = page_ram(RamDecoder[RamPage][i]);
+						_bank_write[i] = _bank_read[i] = RAMPageAddress(RamDecoder[RamPage][i]);
 
 					bank0 = _bank_read[0];
 					bank3 = _bank_read[3];
@@ -376,11 +376,11 @@ void Memory::SetBanks()
 				if (state.p00 & Q_F_RAM)
 				{
 					unsigned bnk0 = (state.p00 & Q_RAM_8) ? 8 : 0;
-					bank0 = page_ram(bnk0 & temp.ram_mask);
+					bank0 = RAMPageAddress(bnk0 & temp.ram_mask);
 				}
 
 				sel_bank |= ((state.p7FFD & 0xC0) >> 3) | (state.p7FFD & 0x20);
-				bank3 = page_ram(sel_bank & temp.ram_mask);
+				bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 			}
 			break;
 		case MM_LSY256:
@@ -399,7 +399,7 @@ void Memory::SetBanks()
 
 						// #0000: RAM 12/13 (DV0 - selector), r/w
 					case PF_BLKROM:
-						bank0 = page_ram((state.pLSY256 & PF_DV0) ? 13 : 12);
+						bank0 = RAMPageAddress((state.pLSY256 & PF_DV0) ? 13 : 12);
 						_bank_mode[0] = MemoryBankModeEnum::BANK_RAM;
 						break;
 
@@ -407,14 +407,14 @@ void Memory::SetBanks()
 					case PF_EMUL | PF_BLKROM:
 					{
 						if (state.flags & CF_TRDOS)
-							bank0 = page_ram((state.p7FFD & 0x10) ? 11 : 10);
+							bank0 = RAMPageAddress((state.p7FFD & 0x10) ? 11 : 10);
 						else
-							bank0 = page_ram((state.p7FFD & 0x10) ? 9 : 8);
+							bank0 = RAMPageAddress((state.p7FFD & 0x10) ? 9 : 8);
 					}
 					break;
 				}
 
-				bank3 = page_ram((state.p7FFD & 0x07) | (state.pLSY256 & PF_PA3));
+				bank3 = RAMPageAddress((state.p7FFD & 0x07) | (state.pLSY256 & PF_PA3));
 			}
 			break;
 		case MM_PHOENIX:
@@ -422,7 +422,7 @@ void Memory::SetBanks()
 				((state.p7FFD & 0x80) >> 4) |
 				(state.p1FFD & 0x50) |
 				((state.p1FFD & 0x80) >> 2);
-			bank3 = RAM_BASE_M + (sel_bank & temp.ram_mask) * PAGE;
+			bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 
 			if (state.p1FFD & 2)
 			{
@@ -449,7 +449,7 @@ void Memory::SetBanks()
 				state.flags |= CF_DOSPORTS;
 			break;
 		default:
-			bank3 = page_ram(sel_bank & temp.ram_mask);
+			bank3 = RAMPageAddress(sel_bank & temp.ram_mask);
 			break;
 	}
 
@@ -458,15 +458,15 @@ void Memory::SetBanks()
 	_bank_write[0] = _bank_read[0] = bank0;
 	_bank_write[3] = _bank_read[3] = bank3;
 
-	if (_bank_read[0] >= ROM_BASE_M /*|| (config.mem_model == MM_TSL && !state.ts.w0_we && !state.ts.vdos)*/)
+	if (_bank_read[0] >= _romBase || (config.mem_model == MM_TSL && !state.ts.w0_we && !state.ts.vdos))
 	{
 		_bank_write[0] = TRASH_M;
 	}
 
 	// Disable MemoryWrite for banks that marked as ROM
-	if (_bank_read[1] >= ROM_BASE_M) _bank_write[1] = TRASH_M;
-	if (_bank_read[2] >= ROM_BASE_M) _bank_write[2] = TRASH_M;
-	if (_bank_read[3] >= ROM_BASE_M) _bank_write[3] = TRASH_M;
+	if (_bank_read[1] >= _romBase) _bank_write[1] = TRASH_M;
+	if (_bank_read[2] >= _romBase) _bank_write[2] = TRASH_M;
+	if (_bank_read[3] >= _romBase) _bank_write[3] = TRASH_M;
 
 	uint8_t dosflags = CF_LEAVEDOSRAM;
 
@@ -535,6 +535,17 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint32_t addr)
 	#endif
 
 	return result;
+}
+
+MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
+{
+	if (bank >= 4)
+	{
+		LOGERROR("Memory::GetMemoryBankMode() - Z80 memory bank can only be [0:3]. Found: %d", bank);
+		assert("Invalid Z80 bank");
+	}
+
+	return _bank_mode[bank];
 }
 
 /*
