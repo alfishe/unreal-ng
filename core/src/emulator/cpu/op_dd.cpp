@@ -350,7 +350,7 @@ Z80OPCODE opx_E1(Z80 *cpu) { // pop ix
    cpu->xh = cpu->rd(cpu->sp++);
 }
 Z80OPCODE opx_E3(Z80 *cpu) { // ex (sp),ix
-   unsigned tmp = cpu->rd(cpu->sp) + 0x100*cpu->rd(cpu->sp + 1);
+   unsigned tmp = cpu->rd(cpu->sp) + 0x100 * cpu->rd(cpu->sp + 1);
    cputact(1);
    cpu->wd(cpu->sp, cpu->xl);
    cpu->wd(cpu->sp+1, cpu->xh);
@@ -364,7 +364,7 @@ Z80OPCODE opx_E5(Z80 *cpu) { // push ix
    cpu->wd(--cpu->sp, cpu->xl);
 }
 Z80OPCODE opx_E9(Z80 *cpu) { // jp (ix)
-   cpu->last_branch = cpu->pc-2;
+   cpu->last_branch = cpu->pc - 2;
    cpu->pc = cpu->ix;
 }
 Z80OPCODE opx_F9(Z80 *cpu) { // ld sp,ix
