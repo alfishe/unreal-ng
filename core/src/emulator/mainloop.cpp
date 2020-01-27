@@ -73,6 +73,9 @@ void MainLoop::InitSoundFrame()
 //
 void MainLoop::InitVideoFrame()
 {
+	Screen& screen = *_context->pScreen;
+
+	screen.InitFrame();
 }
 
 //

@@ -80,12 +80,12 @@ struct VideoControl
 
 	uint16_t		ts_pos;			// current rendered position in tsline
 	uint8_t			tsline[2][512];	// TS buffers (indexed colors)
-	uint16_t		memvidcyc[320];	// number of memory cycles used in every video line by video
-	uint16_t		memcpucyc[320];	// number of memory cycles used in every video line by CPU
-	uint16_t		memtsscyc[320];	// number of memory cycles used in every video line by TS sprites
-	uint16_t		memtstcyc[320];	// number of memory cycles used in every video line by TS tiles
-	uint16_t		memdmacyc[320]; // number of memory cycles used in every video line by DMA
-	uint16_t		memcyc_lcmd;	// number of memory cycles used in last command
+	uint16_t		memvidcyc[320];	// Memory cycles used in every video line by video
+	uint16_t		memcpucyc[320];	// Memory cycles used in every video line by CPU
+	uint16_t		memtsscyc[320];	// Memory cycles used in every video line by TS sprites
+	uint16_t		memtstcyc[320];	// Memory cycles used in every video line by TS tiles
+	uint16_t		memdmacyc[320]; // Memory cycles used in every video line by DMA
+	uint16_t		memcyc_lcmd;	// Memory cycles used in last command
 };
 
 class Z80;
@@ -200,9 +200,9 @@ public:
 	};
 
 protected:
+	EmulatorContext* _context = nullptr;
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
-	EmulatorContext* _context = nullptr;
 
 public:
 	VideoControl _vid;
@@ -211,6 +211,8 @@ public:
 	Screen() = delete;		// Disable default contructor; C++ 11 feature
 	Screen(EmulatorContext* context);
 	void InitFrame();
+	void InitMemoryCounters();
+
 	void UpdateScreen();
 
 	void InitRaster();

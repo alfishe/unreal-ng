@@ -521,7 +521,7 @@ void Z80::Z80FrameCycle()
 		if (_cpu_state.int_pend && (_cpu_state.t >= int_end))
 			_cpu_state.int_pend = false;
 
-		video.memcyc_lcmd = 0; // new command, start accumulate number of busy memcycles
+		video.memcyc_lcmd = 0;							// new command, start accumulate number of busy memcycles
 
 		// INT
 		if (_cpu_state.int_pend && _cpu_state.iff1 &&	// INT enabled in CPU
@@ -545,10 +545,10 @@ void Z80::Reset()
 	Z80* cpu = this;
 
 	// Emulation state
-	last_branch = 0;	//
-	int_pend = false;	// No interrupts pending
-	int_gate = true;	//
-	cycle_count = 0;	// Cycle counter
+	last_branch = 0x0000;	// Address of last branch (in Z80 address space)
+	int_pend = false;		// No interrupts pending
+	int_gate = true;		// Allow external interrupts
+	cycle_count = 0;		// Cycle counter
 
 	// Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
 	int_flags = 0;					// Set interrupt mode 0
@@ -641,7 +641,7 @@ void Z80::Z80Step()
 		uint8_t opcode = m1_cycle();
 
 		// Debug
-		DumpCurrentState();
+		//DumpCurrentState();
 
 		// 2. Emulate fetched Z80 opcode
 		(normal_opcode[opcode])(&cpu);
@@ -677,7 +677,7 @@ void Z80::SetBanks()
 
 void Z80::UpdateScreen()
 {
-
+	_context->pScreen->UpdateScreen();
 }
 
 void Z80::HandleNMI(ROMModeEnum mode)

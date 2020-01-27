@@ -31,7 +31,16 @@ void Screen::InitFrame()
 	_vid.flash = state.frame_counter & 0x10;
 
 	InitRaster();
-	//init_memcycles();
+	InitMemoryCounters();
+}
+
+void Screen::InitMemoryCounters()
+{
+	memset(_vid.memcpucyc, 0, 320 * sizeof(_vid.memcpucyc[0]));
+	memset(_vid.memvidcyc, 0, 320 * sizeof(_vid.memvidcyc[0]));
+	memset(_vid.memtsscyc, 0, 320 * sizeof(_vid.memtsscyc[0]));
+	memset(_vid.memtstcyc, 0, 320 * sizeof(_vid.memtstcyc[0]));
+	memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
 }
 
 void Screen::UpdateScreen()

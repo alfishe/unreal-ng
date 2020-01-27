@@ -288,7 +288,7 @@ public:
 	// Trigger updates
 public:
 	void SetBanks();
-	void UpdateScreen();
+	inline void UpdateScreen();	// Trigger screen update after each command cycle
 
 	// Event handlers
 public:
