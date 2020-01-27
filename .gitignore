@@ -1,14 +1,23 @@
 # Visual Studio temporary folders
 **/.vs
 **/obj
-**/bin
+**/[Bb]in
 **/build
 **/output
 **/x64
-**/Debug
+**/x86
+**/[Dd]ebug
+**/[Rr]elease
 
 # CMake temporary folders
 **/CMakeFiles
+
+# MSTest test Results
+**/[Tt]est[Rr]esult*
+**/[Bb]uild[Ll]og.*
+
+# Visual Studio 2017 auto generated files
+**/Generated\ Files/
 
 # Temporary files
 *.user
@@ -17,3 +26,16 @@
 *.pdb
 *.obj
 *.log
+
+# NuGet Packages
+*.nupkg
+# NuGet Symbol Packages
+*.snupkg
+# The packages folder can be ignored because of Package Restore
+**/[Pp]ackages/*
+# except build/, which is used as an MSBuild target.
+!**/[Pp]ackages/build/
+
+# Local History for Visual Studio
+.localhistory/
+
