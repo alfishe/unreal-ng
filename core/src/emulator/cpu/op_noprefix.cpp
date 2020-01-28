@@ -48,7 +48,7 @@ Z80OPCODE op_08(Z80 *cpu) { // ex af,af'
 Z80OPCODE op_09(Z80 *cpu) { // add hl,bc
    cpu->memptr = cpu->hl+1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->hl & 0x0FFF) + (cpu->bc & 0x0FFF)) >> 8) & 0x10; /* HF */
+   cpu->f |= (((cpu->hl & 0x0FFF) + (cpu->bc & 0x0FFF)) >> 8) & 0x10; // HF
    cpu->hl = (cpu->hl & 0xFFFF) + (cpu->bc & 0xFFFF);
 
    if (cpu->hl & 0x10000)
@@ -128,7 +128,7 @@ Z80OPCODE op_18(Z80 *cpu) { // jr rr
 Z80OPCODE op_19(Z80 *cpu) { // add hl,de
    cpu->memptr = cpu->hl+1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->hl & 0x0FFF) + (cpu->de & 0x0FFF)) >> 8) & 0x10; /* HF */
+   cpu->f |= (((cpu->hl & 0x0FFF) + (cpu->de & 0x0FFF)) >> 8) & 0x10; // HF
    cpu->hl = (cpu->hl & 0xFFFF) + (cpu->de & 0xFFFF);
    if (cpu->hl & 0x10000) cpu->f |= CF;
    cpu->f |= (cpu->h & (F5 | F3));
@@ -172,10 +172,10 @@ Z80OPCODE op_21(Z80 *cpu) { // ld hl,nnnn
 }
 Z80OPCODE op_22(Z80 *cpu) { // ld (nnnn),hl
    unsigned adr = cpu->rd(cpu->pc++);
-   adr += cpu->rd(cpu->pc++)*0x100;
+   adr += cpu->rd(cpu->pc++) * 0x100;
    cpu->memptr = adr+1;
    cpu->wd(adr, cpu->l);
-   cpu->wd(adr+1, cpu->h);
+   cpu->wd(adr + 1, cpu->h);
 }
 Z80OPCODE op_23(Z80 *cpu) { // inc hl
    cpu->hl++;
@@ -198,7 +198,8 @@ Z80OPCODE op_28(Z80 *cpu) { // jr z,rr
   if ((cpu->f & ZF))
   {
     cpu->last_branch = cpu->pc-1;
-    cpu->memptr = cpu->pc += offs+1, cputact(5);
+	cpu->memptr = cpu->pc += offs + 1;
+	cputact(5);
   }
   else
 	  cpu->pc++;
@@ -206,7 +207,7 @@ Z80OPCODE op_28(Z80 *cpu) { // jr z,rr
 Z80OPCODE op_29(Z80 *cpu) { // add hl,hl
    cpu->memptr = cpu->hl+1;
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= ((cpu->hl >> 7) & 0x10); /* HF */
+   cpu->f |= ((cpu->hl >> 7) & 0x10); // HF
    cpu->hl = (cpu->hl & 0xFFFF)*2;
    if (cpu->hl & 0x10000)
 	   cpu->f |= CF;

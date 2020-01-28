@@ -88,7 +88,7 @@ uint8_t Z80::m1_cycle()
 		cycle_count += 8; // TODO: verify
 	}
 	else
-		IncrementCPUCyclesCounter(4);	// M1 cycle is always 4 CPU clocks
+		IncrementCPUCyclesCounter(1);	// M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
 
 	return opcode;
 }
@@ -382,7 +382,7 @@ void Z80::Write(uint16_t addr, uint8_t val)
 */
 
 //
-// Read byte directly from RAM memory buffer
+// Read byte directly from ZX-Spectrum memory (current memory bank setup used)
 // No cycle counters will be incremented
 //
 uint8_t Z80::DirectRead(uint16_t addr)
@@ -394,6 +394,7 @@ uint8_t Z80::DirectRead(uint16_t addr)
 
 //
 // Write byte directly to RAM memory buffer
+// No checks for ROM write access flags
 // No cycle counters will be incremented
 //
 void Z80::DirectWrite(uint16_t addr, uint8_t val)
@@ -561,7 +562,7 @@ void Z80::Reset()
 }
 
 //
-// Single CPU cycle
+// Single CPU command cycle (non-interruptable)
 //
 void Z80::Z80Step()
 {

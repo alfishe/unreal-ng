@@ -11,7 +11,7 @@
 #define ZF 0x40
 #define SF 0x80
 
-enum : uint8_t
+enum Z80Flags : uint8_t
 {
 	FLAG_CF = 0x01,
 	FLAG_NF = 0x02,

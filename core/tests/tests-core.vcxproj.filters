@@ -6,10 +6,16 @@
     <ClCompile Include="z80\z80_test.cpp">
       <Filter>z80</Filter>
     </ClCompile>
+    <ClCompile Include="z80\opcode_test.cpp">
+      <Filter>z80</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
     <ClInclude Include="z80\z80_test.h">
+      <Filter>z80</Filter>
+    </ClInclude>
+    <ClInclude Include="z80\opcode_test.h">
       <Filter>z80</Filter>
     </ClInclude>
   </ItemGroup>

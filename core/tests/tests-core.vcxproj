@@ -58,6 +58,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
+    <ClInclude Include="z80\opcode_test.h" />
     <ClInclude Include="z80\z80_test.h" />
   </ItemGroup>
   <ItemGroup>
@@ -68,6 +69,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="z80\opcode_test.cpp" />
     <ClCompile Include="z80\z80_test.cpp" />
   </ItemGroup>
   <ItemGroup>

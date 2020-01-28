@@ -1,11 +1,19 @@
 #include "pch.h"
 
 #include "z80_test.h"
+#include <string>
 
 void Z80_Test::SetUp()
 {
+	// Instantiate emulator with all peripherals, but no configuration loaded
 	_context = new EmulatorContext();
 	_cpu = new CPU(_context);
+
+	// Use Spectrum48K / Pentagon memory layout
+	_cpu->GetMemory()->InternalSetBanks();
+
+	// Instantiate opcode test helper
+	_opcode = new OpcodeTest();
 }
 
 void Z80_Test::TearDown()
@@ -20,6 +28,12 @@ void Z80_Test::TearDown()
 	{
 		delete _context;
 		_context = nullptr;
+	}
+
+	if (_opcode != nullptr)
+	{
+		delete _opcode;
+		_opcode = nullptr;
 	}
 }
 
@@ -37,5 +51,58 @@ TEST_F(Z80_Test, Z80Reset)
 	EXPECT_EQ(cpu->int_pend, false);
 	EXPECT_EQ(cpu->int_gate, true);
 	EXPECT_EQ(cpu->last_branch, 0x0000);
+
+	// Reset procedure should take 3 clock cycles
 	EXPECT_EQ(cpu->cycle_count, 3);
+}
+
+TEST_F(Z80_Test, Z80OpcodeTimings)
+{
+	Z80& z80 = *_cpu->GetZ80();
+	uint32_t start_cycles = 0;
+	uint32_t finish_cycles = 0;
+	uint32_t delta_cycles = 0;
+	char message[16];
+
+	// Use 48k (SOS) ROM for testing purposes
+	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+	if (memory == nullptr)
+	{
+		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+	}
+
+	// Test no-prefix opcode instructions
+	for (uint8_t i = 0; i <= 0xFF; i++)
+	{
+		if (i == 0xCB || i == 0xDD || i == 0xED || i == 0xFD)
+			break;
+
+		// Perform reset to get clean results for each instruction
+		z80.Reset();
+
+		// Prepare instruction in ROM (0x0000 address)
+		OpDescriptor& descriptor = _opcode->_noprefix[i];
+		uint8_t len = _opcode->PrepareInstruction(0x00, i, memory);
+
+		// Capture clock cycle counter before instruction execution
+		start_cycles = z80.cycle_count;
+
+		// Execute single instruction
+		z80.Z80Step();
+
+		// Measure instruction execution in clock cycles
+		finish_cycles = z80.cycle_count;
+		delta_cycles = finish_cycles - start_cycles;
+
+		snprintf(message, sizeof message, "Opcode: 0x%02X\0", i);
+		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+	}
+
+	// Test 0xCB prefixed opcodes
+
+	// Test 0xDD prefixed opcodes
+
+	// Test 0xED prefixed opcodes
+
+	// Test 0xFD prefixed opcodes
 }

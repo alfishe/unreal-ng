@@ -26,15 +26,16 @@ enum ROMModeEnum : uint8_t
 	RM_CACHE			// Turn on ZX-Evo / TSConf cache into ROM page space
 };
 
+// Indicators for memory access (registered in membits array)
 enum MemoryBitsEnum : uint8_t
 {
-	MEMBITS_R = 0x01,
-	MEMBITS_W = 0x02,
-	MEMBITS_X = 0x04,
-	MEMBITS_BPR = 0x10,
-	MEMBITS_BPW = 0x20,
-	MEMBITS_BPX = 0x40,
-	MEMBITS_BPC = 0x80
+	MEMBITS_R = 0x01,		// Read
+	MEMBITS_W = 0x02,		// Write
+	MEMBITS_X = 0x04,		// Execute
+	MEMBITS_BPR = 0x10,		// Breakpoint Read
+	MEMBITS_BPW = 0x20,		// Breakpoint Write
+	MEMBITS_BPX = 0x40,		// Breakpoint Execute
+	MEMBITS_BPC = 0x80		// Breakpoint Conditional
 };
 
 
@@ -114,5 +115,9 @@ public:
 	uint8_t* RemapAddressToCurrentBank(uint16_t addr);				// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
 
 	MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
+
+	// Atomic internal methods (but accessible for testing purposes
+public:
+	void InternalSetBanks();
 };
 

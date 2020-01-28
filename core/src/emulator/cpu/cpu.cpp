@@ -21,6 +21,9 @@ CPU::CPU(EmulatorContext* context)
 	// Create main CPU core instance (Z80)
 	_cpu = new Z80(context);
 
+	// Use fast memory interface by default
+	UseFastMemoryInterface();
+
 	// Create memory subsystem (allocates all RAM/ROM regions)
 	_memory = new Memory(context);
 	_context->pMemory = _memory;

@@ -9,6 +9,13 @@
 Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
+
+	// Initialize with default (non-platform specific)
+	// base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
+	base_sos_rom = ROMPageAddress(0);
+	base_dos_rom = ROMPageAddress(1);
+	base_128_rom = ROMPageAddress(2);
+	base_sys_rom = ROMPageAddress(3);
 }
 
 Memory::~Memory()
@@ -18,6 +25,9 @@ Memory::~Memory()
 	LOGDEBUG("Memory::~Memory()");
 }
 
+//
+// Switch to certain ROM section RM_SOS | RM_128 | RM_DOS | RM_SYS
+//
 void Memory::SetROMMode(ROMModeEnum mode)
 {
 	if (mode == RM_NOCHANGE)
@@ -77,17 +87,7 @@ void Memory::SetBanks()
 	TEMP& temp = _context->temporary;
 
 	// Initialize according Spectrum 128K standard address space settings
-	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default to [0x4000 - 0x7FFF]
-	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default to [0x8000 - 0xBFFF]
-	
-	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		// Bank 0 is ROM [0x0000 - 0x3FFF]
-	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		// Bank 1 is RAM [0x4000 - 0x7FFF]
-	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		// Bank 2 is RAM [0x8000 - 0xBFFF]
-	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		// Bank 3 is RAM [0xC000 - 0xFFFF]
-
-	// Reset all address defining flags/signals (they'll be recalculated later in logic)
-	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
-
+	InternalSetBanks();
 
 	uint8_t* bank0;
 	uint8_t* bank3;
@@ -125,6 +125,7 @@ void Memory::SetBanks()
 				bank0 = RAMPageAddress(0); // Alone Coder 0.36.4
 			break;
 		case MM_PROFSCORP:
+			// Reset read access flags from ProfROM pages
 			_membits[0x0100] &= ~MemoryBitsEnum::MEMBITS_R;
 			_membits[0x0104] &= ~MemoryBitsEnum::MEMBITS_R;
 			_membits[0x0108] &= ~MemoryBitsEnum::MEMBITS_R;
@@ -537,6 +538,9 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint16_t addr)
 	return result;
 }
 
+//
+//
+//
 MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
 {
 	if (bank >= 4)
@@ -548,9 +552,30 @@ MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
 	return _bank_mode[bank];
 }
 
+//
+// Initialize according Spectrum 48K standard address space settings
+//
+void Memory::InternalSetBanks()
+{
+	COMPUTER& state = _context->state;
+	CONFIG& config = _context->config;
+
+	// Initialize according Spectrum 128K standard address space settings
+	_bank_write[0] = _bank_read[0] = base_sos_rom;		// 48K (SOS) ROM					for [0x0000 - 0x3FFF]
+	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
+	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default			for [0x8000 - 0xBFFF]
+	_bank_write[3] = _bank_read[3] = RAMPageAddress(0);	// Set page 0 as default			for [0xC000 - 0xFFFF]
+
+	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		// Bank 0 is ROM [0x0000 - 0x3FFF]
+	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		// Bank 1 is RAM [0x4000 - 0x7FFF]
+	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		// Bank 2 is RAM [0x8000 - 0xBFFF]
+	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		// Bank 3 is RAM [0xC000 - 0xFFFF]
+
+	// Reset all address defining flags/signals (they'll be recalculated later in logic)
+	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
+}
+
 /*
-
-
 void set_banks()
 {
    // set default values for memory windows
