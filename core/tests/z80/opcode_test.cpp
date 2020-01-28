@@ -13,6 +13,7 @@ OpcodeTest::OpcodeTest()
 uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* memory)
 {
 	uint8_t result = 0;
+	static char message[256];
 
 	if (memory == nullptr)
 	{
@@ -49,6 +50,15 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 	// Transfer instruction into memory
 	for (uint8_t i = 0; i < result; i++)
 	{
+		// Check instructions table correctness (if instruction has length 2-4 bytes, they have to be filled by correspondent parameter markers
+		if (operation.instruction[i] == 0x00 && i > 0)
+		{
+			snprintf(message, sizeof message, "Test table invalid. Opcode:0x%02X. Instruction[%d] shouldn't be 0x00\0", opcode, i);
+			std::cout << message << std::endl;
+			throw("Invalid instruction content");
+			break;
+		}
+
 		memory[i] = operation.instruction[i];
 	}
 
