@@ -810,9 +810,9 @@ Z80OPCODE op_CC(Z80 *cpu) { // call z,nnnn
   };
 }
 Z80OPCODE op_CD(Z80 *cpu) { // call
-  cpu->last_branch = cpu->pc-1;
+  cpu->last_branch = cpu->pc - 1;
   unsigned addr = cpu->rd(cpu->pc++);
-  addr += 0x100*cpu->rd(cpu->pc++);
+  addr += 0x100 * cpu->rd(cpu->pc++);
   cputact(1);
   cpu->wd(--cpu->sp, cpu->pch);
   cpu->wd(--cpu->sp, cpu->pcl);

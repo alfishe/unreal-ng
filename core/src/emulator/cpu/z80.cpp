@@ -234,7 +234,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 		// Update RAM access counters
 		if (memory._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
 		{
-			video.memcpucyc[t / 224]++;
+			video.memcpucyc[t % 224]++;
 		}
 	}
 
@@ -550,6 +550,7 @@ void Z80::Reset()
 	int_pend = false;		// No interrupts pending
 	int_gate = true;		// Allow external interrupts
 	cycle_count = 0;		// Cycle counter
+	tt = 0;					// Scaled to CPU frequency multiplier cycle count
 
 	// Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
 	int_flags = 0;					// Set interrupt mode 0

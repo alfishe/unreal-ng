@@ -72,17 +72,17 @@ TEST_F(Z80_Test, Z80OpcodeTimings)
 	}
 
 	// Test no-prefix opcode instructions
-	for (uint8_t i = 0; i <= 0xFF; i++)
+	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t is used since MSVC and GCC compilers are going crazy for 1 byte type and type overflow condition wnen comparing with 0xFF after increment to 0x00 and loosing overflow flag
 	{
 		if (i == 0xCB || i == 0xDD || i == 0xED || i == 0xFD)
-			break;
+			continue;
 
 		// Perform reset to get clean results for each instruction
 		z80.Reset();
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_noprefix[i];
-		uint8_t len = _opcode->PrepareInstruction(0x00, i, memory);
+		uint8_t len = _opcode->PrepareInstruction(0x00, (uint8_t)i, memory);
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
