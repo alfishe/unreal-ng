@@ -451,18 +451,22 @@ Z80OPCODE ope_AB(Z80 *cpu) { // outd
 }
 Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 	uint8_t tempbyte = cpu->rd(cpu->hl++);
-   cpu->wd(cpu->de++, tempbyte);
-   tempbyte += cpu->a; tempbyte = (tempbyte & F3) + ((tempbyte << 4) & F5);
-   cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + tempbyte;
-   if (--cpu->bc16)
-   {
-	   cpu->f |= PV;
-	   cpu->pc -= 2;
-	   cputact(7);
-	   cpu->memptr = cpu->pc + 1;
-   }
-   else
-	   cputact(2);
+	cpu->wd(cpu->de++, tempbyte);
+	tempbyte += cpu->a;
+	tempbyte = (tempbyte & F3) + ((tempbyte << 4) & F5);
+	cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + tempbyte;
+
+	if (--cpu->bc16)
+	{
+		cpu->f |= PV;
+		cpu->pc -= 2;
+		cputact(7);
+		cpu->memptr = cpu->pc + 1;
+	}
+	else
+	{
+		cputact(2);
+	}
 }
 Z80OPCODE ope_B1(Z80 *cpu) { // cpir
    cpu->memptr++;
