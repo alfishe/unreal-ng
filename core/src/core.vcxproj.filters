@@ -105,6 +105,15 @@
     <Filter Include="Source Files\3rdparty\simpleini">
       <UniqueIdentifier>{81174bd2-bdca-4ace-a949-4a636b053f69}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\3rdparty\digestpp">
+      <UniqueIdentifier>{d2b76bd3-9b15-410f-b6e0-c37bb6e32d36}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\3rdparty\digestpp\algorithm">
+      <UniqueIdentifier>{25f66852-0112-4689-a92a-79dcf49373cb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\3rdparty\digestpp\detail">
+      <UniqueIdentifier>{d94b473c-486c-4527-b93e-eb84336255f7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -244,6 +253,75 @@
     </ClInclude>
     <ClInclude Include="interfaces\irenderer.h">
       <Filter>Interfaces</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\digestpp.hpp">
+      <Filter>Header Files\3rdparty\digestpp</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\hasher.hpp">
+      <Filter>Header Files\3rdparty\digestpp</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\blake.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\blake2.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\groestl.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\jh.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\k12m14.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\kmac.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\kupyna.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\md5.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\sha1.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\sha2.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\sha3.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\shake.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\skein.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\sm3.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\streebog.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\algorithm\whirlpool.hpp">
+      <Filter>Header Files\3rdparty\digestpp\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\detail\absorb_data.hpp">
+      <Filter>Header Files\3rdparty\digestpp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\detail\functions.hpp">
+      <Filter>Header Files\3rdparty\digestpp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\detail\stream_width_fixer.hpp">
+      <Filter>Header Files\3rdparty\digestpp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\detail\traits.hpp">
+      <Filter>Header Files\3rdparty\digestpp\detail</Filter>
+    </ClInclude>
+    <ClInclude Include="3rdparty\digestpp\detail\validate_hash_size.hpp">
+      <Filter>Header Files\3rdparty\digestpp\detail</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

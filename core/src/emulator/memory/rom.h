@@ -3,12 +3,24 @@
 
 #include "emulator/emulatorcontext.h"
 #include <string>
+#include <map>
+
+struct KnownROM
+{
+	const char* FullName;
+	const char* Hash_SHA256;
+};
+
+typedef map<string, string> ROMSMap;
+typedef pair<string, string> ROMSignature;
 
 class ROM
 {
 protected:
 	EmulatorContext* _context = nullptr;
 	string _activeROMFile;
+
+	ROMSMap _signatures;
 
 public:
 	ROM() = delete;		// Disable default constructor. C++ 11 feature
@@ -19,5 +31,10 @@ public:
 
 	[[nodiscard]] bool LoadROMSet();
 	[[nodiscard]] uint16_t LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks = 1);
+
+	// Signature-related methods
+public:
+	void CalculateSignatures();
+	string CalculateSignature(uint8_t* buffer, size_t length);
 };
 

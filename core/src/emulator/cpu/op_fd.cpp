@@ -17,6 +17,7 @@ Z80OPCODE opy_09(Z80 *cpu) { // add iy,bc
 
    if (cpu->iy & 0x10000)
 	   cpu->f |= CF;
+
    cpu->f |= (cpu->yh & (F5 | F3));
    cputact(7);
 }
@@ -115,7 +116,10 @@ Z80OPCODE opy_39(Z80 *cpu) { // add iy,sp
    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
    cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->sp & 0x0FFF)) >> 8) & 0x10; // HF
    cpu->iy = (cpu->iy & 0xFFFF) + (cpu->sp & 0xFFFF);
-   if (cpu->iy & 0x10000) cpu->f |= CF;
+
+   if (cpu->iy & 0x10000)
+	   cpu->f |= CF;
+
    cpu->f |= (cpu->yh & (F5 | F3));
    cputact(7);
 }

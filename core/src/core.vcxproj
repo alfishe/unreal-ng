@@ -176,6 +176,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="3rdparty\digestpp\algorithm\blake.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\blake2.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\groestl.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\jh.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\k12m14.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\kmac.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\kupyna.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\md5.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\sha1.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\sha2.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\sha3.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\shake.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\skein.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\sm3.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\streebog.hpp" />
+    <ClInclude Include="3rdparty\digestpp\algorithm\whirlpool.hpp" />
+    <ClInclude Include="3rdparty\digestpp\detail\absorb_data.hpp" />
+    <ClInclude Include="3rdparty\digestpp\detail\functions.hpp" />
+    <ClInclude Include="3rdparty\digestpp\detail\stream_width_fixer.hpp" />
+    <ClInclude Include="3rdparty\digestpp\detail\traits.hpp" />
+    <ClInclude Include="3rdparty\digestpp\detail\validate_hash_size.hpp" />
+    <ClInclude Include="3rdparty\digestpp\digestpp.hpp" />
+    <ClInclude Include="3rdparty\digestpp\hasher.hpp" />
     <ClInclude Include="3rdparty\simpleini\convertutf.h" />
     <ClInclude Include="3rdparty\simpleini\simpleini.h" />
     <ClInclude Include="base\baserenderer.h" />

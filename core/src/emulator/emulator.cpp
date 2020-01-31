@@ -83,6 +83,9 @@ bool Emulator::Init()
 		result = rom.LoadROM();
 		if (result)
 		{
+			// Calculate ROM segment signatures
+			rom.CalculateSignatures();
+
 			LOGDEBUG("Emulator::Init - ROM data successfully loaded");
 			result = true;
 		}

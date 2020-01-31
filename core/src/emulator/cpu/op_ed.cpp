@@ -517,7 +517,9 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
 	   cputact(5);
    }
    else
+   {
 	   cpu->f &= ~PV;
+   }
 
    cpu->f &= ~CF; if (!cpu->l) cpu->f |= CF;
    cpu->memptr = cpu->bc+1;
@@ -533,8 +535,10 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
 	   cpu->pc -= 2;
 	   cputact(7);
    }
-   else 
-	   (2);
+   else
+   {
+	   cputact(2);
+   }
 }
 Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
    cpu->memptr--;

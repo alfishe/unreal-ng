@@ -43,6 +43,7 @@ using std::stringstream;
 using utf8::ifstream;
 using utf8::ofstream;
 using std::list;
+using std::min;
 using std::max;
 using std::string;
 using std::atomic_flag;
@@ -50,6 +51,7 @@ using std::atomic;
 
 #ifdef _WIN32
 	#define WIN32_LEAN_AND_MEAN			// Exclude rarely-used stuff from Windows headers
+	#define NOMINMAX					// No min/max macroses defined in <windows.h> - they're conflicting with STL std::min / std::max
 
 	#include <windows.h>
 	#include <timeapi.h>				// Used in SystemHelper for time period measurements (timeBeginperiod / timeEndPeriod)

@@ -8,10 +8,21 @@
 #include "common/stringhelper.h"
 #include "emulator/cpu/cpu.h"
 #include "emulator/memory/memory.h"
+#include "3rdparty/digestpp/digestpp.hpp"
+
+using digestpp::md5;
+using digestpp::sha256;
 
 ROM::ROM(EmulatorContext* context)
 {
 	_context = context;
+
+	// TODO: load known ROM signatures from file
+	_signatures.insert({ "8d93c3342321e9d1e51d60afcd7d15f6a7afd978c231b43435a7c0757c60b9a3", "128k ROM 1 (48k BASIC)" });
+	_signatures.insert({ "3ba308f23b9471d13d9ba30c23030059a9ce5d4b317b85b86274b132651d1425", "128k ROM 0 (128k editor & menu)" });
+	_signatures.insert({ "1ef928538972ed8f0425c4469f3f471267393f7635b813f000de0fec4ea39fa3", "TR-DOS v5.04TM ROM" });
+	_signatures.insert({ "9d4bf28f2d1a9acac9907c918be3c3070f7250bc677919cface5e253a199fc7a", "HRom boot" });
+	//_signatures.insert({ "", "" });
 }
 
 ROM::~ROM()
@@ -303,6 +314,51 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 		LOGERROR("Config::LoadROM - unable to read from file %s", path);
 	}
 
+
+	return result;
+}
+
+void ROM::CalculateSignatures()
+{
+	CONFIG& config = _context->config;
+	Memory& memory = *_context->pMemory;
+
+	if (!memory.base_sos_rom || !memory.base_128_rom || !memory.base_dos_rom || !memory.base_sys_rom)
+	{
+		LOGERROR("ROM::CalculateSignature - no data about base_sos_rom, base_128_rom, base_dos_rom, base_sys_rom available. Unable to calculate ROM signatures");
+		return;
+	}
+
+	string signatures[4];
+
+	signatures[0] = CalculateSignature(memory.base_sos_rom, 16384);
+	signatures[1] = CalculateSignature(memory.base_128_rom, 16384);
+	signatures[2] = CalculateSignature(memory.base_dos_rom, 16384);
+	signatures[3] = CalculateSignature(memory.base_sys_rom, 16384);
+
+	if (_signatures.find(signatures[0]) != _signatures.end())
+	{
+		int i = 0;
+	}
+
+	LOGINFO("base_sos_rom: %s", _signatures.find(signatures[0]) != _signatures.end() ? _signatures[signatures[0]].c_str() : "Unknown ROM");
+	LOGINFO("base_128_rom: %s", _signatures.find(signatures[1]) != _signatures.end() ? _signatures[signatures[1]].c_str() : "Unknown ROM");
+	LOGINFO("base_dos_rom: %s", _signatures.find(signatures[2]) != _signatures.end() ? _signatures[signatures[2]].c_str() : "Unknown ROM");
+	LOGINFO("base_sys_rom: %s", _signatures.find(signatures[3]) != _signatures.end() ? _signatures[signatures[3]].c_str() : "Unknown ROM");
+}
+
+string ROM::CalculateSignature(uint8_t* buffer, size_t length)
+{
+	string result;
+
+
+	if (buffer == nullptr || length == 0)
+	{
+		LOGERROR("ROM::CalculateSignature - buffer shouldn't be nullptr and length needs to be > 0");
+		return result;
+	}
+
+	result = sha256().absorb(buffer, length).hexdigest();
 
 	return result;
 }

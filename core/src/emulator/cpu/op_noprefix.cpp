@@ -729,23 +729,28 @@ Z80OPCODE op_C2(Z80 *cpu) { // jp nz,nnnn
 		cpu->pc += 2;
 }
 Z80OPCODE op_C3(Z80 *cpu) { // jp nnnn
-   cpu->last_branch = cpu->pc-1;
-   unsigned lo = cpu->rd(cpu->pc++);
-   cpu->pc = lo + 0x100*cpu->rd(cpu->pc);
+   cpu->last_branch = cpu->pc - 1;
+
+   unsigned lo = cpu->rd(cpu->pc);
+   unsigned hi = cpu->rd(cpu->pc + 1) << 8;
+   cpu->pc = hi | lo;
    cpu->memptr = cpu->pc;
 }
 Z80OPCODE op_C4(Z80 *cpu) { // call nz,nnnn
+  unsigned lo = cpu->rd(cpu->pc);
+  unsigned hi = cpu->rd(cpu->pc + 1) << 8;
+  unsigned addr = hi | lo;
+  cpu->memptr = hi | lo;
+
   cpu->pc += 2;
-  unsigned addr = cpu->rd(cpu->pc-2);
-  addr += 0x100*cpu->rd(cpu->pc-1);
-  cpu->memptr = addr;
 
   if (!(cpu->f & ZF))
   {
     cputact(1);
+
     cpu->wd(--cpu->sp, cpu->pch);
     cpu->wd(--cpu->sp, cpu->pcl);
-    cpu->last_branch = cpu->pc-1;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
   };
 }
@@ -761,34 +766,35 @@ Z80OPCODE op_C7(Z80 *cpu) { // rst 00
   cputact(1);
   cpu->wd(--cpu->sp, cpu->pch);
   cpu->wd(--cpu->sp, cpu->pcl);
-  cpu->last_branch = cpu->pc-1;
+  cpu->last_branch = cpu->pc - 1;
   cpu->pc = 0x00;
   cpu->memptr = 0x00;
 }
 Z80OPCODE op_C8(Z80 *cpu) { // ret z
   cputact(1);
   if (cpu->f & ZF) {
-    unsigned addr = cpu->rd(cpu->sp++);
-    addr += 0x100*cpu->rd(cpu->sp++);
-    cpu->last_branch = cpu->pc-1;
+    unsigned lo = cpu->rd(cpu->sp++);
+	unsigned hi = cpu->rd(cpu->sp++) << 8;
+	unsigned addr = hi | lo;
+    cpu->last_branch = cpu->pc - 1;
     cpu->pc = addr;
     cpu->memptr = addr;
   };
 }
 Z80OPCODE op_C9(Z80 *cpu) { // ret
    unsigned addr = cpu->rd(cpu->sp++);
-   addr += 0x100*cpu->rd(cpu->sp++);
-   cpu->last_branch = cpu->pc-1;
+   addr += 0x100 * cpu->rd(cpu->sp++);
+   cpu->last_branch = cpu->pc - 1;
    cpu->pc = addr;
    cpu->memptr = addr;
 }
 Z80OPCODE op_CA(Z80 *cpu) { // jp z,nnnn
    unsigned addr = cpu->rd(cpu->pc);
-   addr += 0x100*cpu->rd(cpu->pc+1);
+   addr += 0x100 * cpu->rd(cpu->pc + 1);
    cpu->memptr = addr;
    if (cpu->f & ZF)
    {
-      cpu->last_branch = cpu->pc-1;
+      cpu->last_branch = cpu->pc - 1;
       cpu->pc = addr;
    }
    else
