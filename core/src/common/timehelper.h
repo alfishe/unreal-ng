@@ -6,11 +6,49 @@
 #include <thread>
 #include <tuple>
 
+typedef std::chrono::steady_clock::time_point chrono_time_t;
+typedef std::chrono::high_resolution_clock hiresclock;
+
+class TimeHelper
+{
+public:
+	static chrono_time_t GetPrecisionTime();
+	static unsigned GetTimeIntervalNs(chrono_time_t t1, chrono_time_t t2);
+	static unsigned GetTimeIntervalUs(chrono_time_t t1, chrono_time_t t2);
+	static unsigned GetTimeIntervalMs(chrono_time_t t1, chrono_time_t t2);
+};
+
 //
 // stl::thread powered cross-platform sleep()
 //
 void sleep_ms(uint32_t ms);
+void sleep_us(uint32_t us);
 
+// Examples:
+// auto t1 = measure_ms(normalFunction);
+// auto t2 = measure_ms(&X::memberFunction, obj, 4);
+// auto t3 = measure_ms(lambda, 2, 3);
+template<typename Function, typename... Args>
+unsigned measure_ms(Function&& toTime, Args&&... a)
+{
+	auto t1{std::chrono::steady_clock::now()};
+	std::invoke(std::forward<Function>(toTime), std::forward<Args>(a)...);
+	auto t2{std::chrono::steady_clock::now()};
+	return static_cast<unsigned>(std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+}
+
+// Examples:
+// auto t1 = measure_us(normalFunction);
+// auto t2 = measure_us(&X::memberFunction, obj, 4);
+// auto t3 = measure_us(lambda, 2, 3);
+template<typename Function, typename... Args>
+unsigned measure_us(Function&& toTime, Args&&... a)
+{
+	auto t1{ std::chrono::steady_clock::now() };
+	std::invoke(std::forward<Function>(toTime), std::forward<Args>(a)...);
+	auto t2{ std::chrono::steady_clock::now() };
+	return static_cast<unsigned>(std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count());
+}
 
 // Original algorithm source: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
 // Returns number of days since civil 1970-01-01.  Negative values indicate
