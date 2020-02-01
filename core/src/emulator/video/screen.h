@@ -115,6 +115,9 @@ class Renderers;
 #define col_g(a) (col_def(a) << 8)
 #define col_b(a) (col_def(a))
 
+
+typedef void(Screen::* DrawCallback)(uint32_t n);
+
 class Screen
 {
 public:
@@ -204,18 +207,41 @@ protected:
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
 
+	DrawCallback _drawCallbacks[16] =
+	{
+		&Screen::DrawBorder,
+		&Screen::DrawNull,
+		&Screen::DrawZX,
+		&Screen::DrawPMC,
+		&Screen::DrawP16,
+		&Screen::DrawP384,
+		&Screen::DrawPHR,
+		&Screen::DrawTS16,
+		&Screen::DrawTS256,
+		&Screen::DrawTSText,
+		&Screen::DrawATM16,
+		&Screen::DrawATMHiRes,
+		&Screen::DrawATM2Text,
+		&Screen::DrawATM3Text,
+		&Screen::DrawProfi,
+		&Screen::DrawGMX
+	};
+
 public:
 	VideoControl _vid;
 
 public:
 	Screen() = delete;		// Disable default contructor; C++ 11 feature
 	Screen(EmulatorContext* context);
+
+	void Init();
+
 	void InitFrame();
+	void InitRaster();
 	void InitMemoryCounters();
 
 	void UpdateScreen();
 
-	void InitRaster();
 	void DrawScreenBorder(uint32_t n);
 
 public:

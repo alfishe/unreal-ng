@@ -325,7 +325,7 @@ void ROM::CalculateSignatures()
 
 	if (!memory.base_sos_rom || !memory.base_128_rom || !memory.base_dos_rom || !memory.base_sys_rom)
 	{
-		LOGERROR("ROM::CalculateSignature - no data about base_sos_rom, base_128_rom, base_dos_rom, base_sys_rom available. Unable to calculate ROM signatures");
+		LOGERROR("ROM::CalculateSignatures - no data about base_sos_rom, base_128_rom, base_dos_rom, base_sys_rom available. Unable to calculate ROM signatures");
 		return;
 	}
 
@@ -336,11 +336,6 @@ void ROM::CalculateSignatures()
 	signatures[2] = CalculateSignature(memory.base_dos_rom, 16384);
 	signatures[3] = CalculateSignature(memory.base_sys_rom, 16384);
 
-	if (_signatures.find(signatures[0]) != _signatures.end())
-	{
-		int i = 0;
-	}
-
 	LOGINFO("base_sos_rom: %s", _signatures.find(signatures[0]) != _signatures.end() ? _signatures[signatures[0]].c_str() : "Unknown ROM");
 	LOGINFO("base_128_rom: %s", _signatures.find(signatures[1]) != _signatures.end() ? _signatures[signatures[1]].c_str() : "Unknown ROM");
 	LOGINFO("base_dos_rom: %s", _signatures.find(signatures[2]) != _signatures.end() ? _signatures[signatures[2]].c_str() : "Unknown ROM");
@@ -350,7 +345,6 @@ void ROM::CalculateSignatures()
 string ROM::CalculateSignature(uint8_t* buffer, size_t length)
 {
 	string result;
-
 
 	if (buffer == nullptr || length == 0)
 	{

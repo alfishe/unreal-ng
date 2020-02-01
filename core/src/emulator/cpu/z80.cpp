@@ -360,17 +360,17 @@ void Z80::MemoryWriteDebug(uint16_t addr, uint8_t val)
 /*
 uint8_t Z80::Read(uint16_t addr)
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 	COMPUTER& state = _context->state;
 
 	uint8_t result = rd(addr);
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
-	if (state.ts.cache_miss && _cpu_state.rate == 0x40)
-		_cpu_state.tt += (_cpu_state.tt & 0x40) ? 0x40 * 6 : 0x40 * 5;
+	if (state.ts.cache_miss && cpu.rate == 0x40)
+		cpu.tt += (cpu.tt & 0x40) ? 0x40 * 6 : 0x40 * 5;
 	else
-		_cpu_state.tt += _cpu_state.rate * 3;
+		cpu.tt += cpu.rate * 3;
 
 	return result;
 }
@@ -411,7 +411,7 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 
 void Z80::Z80FrameCycle()
 {
-	Z80& _cpu_state = *this;
+	Z80& cpu = *this;
 	COMPUTER& state = _context->state;
 	CONFIG& config = _context->config;
 	VideoControl& video = _context->pScreen->_vid;
@@ -427,11 +427,11 @@ void Z80::Z80FrameCycle()
 	// }
 	if (config.mem_model == MM_TSL)
 	{
-		_cpu_state.haltpos = 0;
+		cpu.haltpos = 0;
 		// comp.ts.intctrl.line_t = comp.ts.intline ? 0 : VID_TACTS;
 		state.ts.intctrl.line_t = 0;
 
-		while (_cpu_state.t < config.frame)
+		while (cpu.t < config.frame)
 		{
 			bool vdos = state.ts.vdos || state.ts.vdos_m1;
 
@@ -441,7 +441,7 @@ void Z80::Z80FrameCycle()
 
 			video.memcyc_lcmd = 0; // new command, start accumulate number of busy memcycles
 
-			if (state.ts.intctrl.pend && _cpu_state.iff1 && (_cpu_state.t != _cpu_state.eipos) && !vdos) // int disabled in vdos after r/w vg ports
+			if (state.ts.intctrl.pend && cpu.iff1 && (cpu.t != cpu.eipos) && !vdos) // int disabled in vdos after r/w vg ports
 			{
 				HandleINT(InterruptVector());
 			}
@@ -460,82 +460,29 @@ void Z80::Z80FrameCycle()
 	unsigned int_start = config.intstart;
 	unsigned int_end = config.intstart + config.intlen;
 
-	_cpu_state.haltpos = 0;
+	cpu.haltpos = 0;
 
 	// INT interrupt handling lasts for more than 1 frame
 	if (int_end >= config.frame)
 	{
 		int_end -= config.frame;
-		_cpu_state.int_pend = true;
+		cpu.int_pend = true;
 		int_occurred = true;
 	}
 
-	while (_cpu_state.t < config.frame)
+	// Cover whole frame (control by clock cycles)
+	while (cpu.t < config.frame)
 	{
-		// Baseconf NMI trap
-		if (config.mem_model == MM_ATM3 && (state.pBF & 0x10) && (_cpu_state.pc == state.pBD))
-			_nmi_pending_count = 1;
+		// Handle interrupts if arrived
+		ProcessInterrupts(int_occurred, int_start, int_end);
 
-		// NMI processing
-		if (_nmi_pending_count > 0)
-		{
-			if (config.mem_model == MM_ATM3)
-			{
-				_nmi_pending_count = 0;
-				_cpu_state.nmi_in_progress = true;
-
-				SetBanks();
-				HandleNMI(RM_NOCHANGE);
-				continue;
-			}
-			else if (config.mem_model == MM_PROFSCORP || config.mem_model == MM_SCORP)
-			{
-				_nmi_pending_count--;
-				if (_cpu_state.pc > 0x4000)
-				{
-					HandleNMI(RM_DOS);
-					_nmi_pending_count = 0;
-				}
-			}
-			else
-				_nmi_pending_count = 0;
-		} // end if (nmi_pending)
-
-		// Baseconf NMI
-		if (state.pBE)
-		{
-			if (config.mem_model == MM_ATM3 && state.pBE == 1)
-			{
-				_cpu_state.nmi_in_progress = false;
-				SetBanks();
-			}
-			state.pBE--;
-		}
-
-		// Reset INT
-		if (!int_occurred && _cpu_state.t >= int_start)
-		{
-			int_occurred = true;
-			_cpu_state.int_pend = true;
-		}
-
-		if (_cpu_state.int_pend && (_cpu_state.t >= int_end))
-			_cpu_state.int_pend = false;
-
-		video.memcyc_lcmd = 0;							// new command, start accumulate number of busy memcycles
-
-		// INT
-		if (_cpu_state.int_pend && _cpu_state.iff1 &&	// INT enabled in CPU
-			(_cpu_state.t != _cpu_state.eipos) &&		// INT disabled after EI
-			_cpu_state.int_gate)						// INT enabled by ATM hardware (no INT disabling in PentEvo)
-		{
-			HandleINT(InterruptVector());
-		}
-
+		// Perform single Z80 command cycle
 		Z80Step();
 
-		UpdateScreen(); // update screen, TSU, DMA
-	} // end while (cpu.t < conf.intlen)
+		// Update screen buffer
+		// TSConf - TSU, DMA
+		UpdateScreen();
+	}
 }
 
 //
@@ -675,6 +622,74 @@ void Z80::SetBanks()
 {
 	// Let memory manager set it up
 	_context->pMemory->SetBanks();
+}
+
+void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
+{
+	Z80& cpu = *this;
+	CONFIG& config = _context->config;
+	COMPUTER& state = _context->state;
+	VideoControl& video = _context->pScreen->_vid;
+
+	// Baseconf NMI trap
+	if (config.mem_model == MM_ATM3 && (state.pBF & 0x10) && (cpu.pc == state.pBD))
+		_nmi_pending_count = 1;
+
+	// NMI processing
+	if (_nmi_pending_count > 0)
+	{
+		if (config.mem_model == MM_ATM3)
+		{
+			_nmi_pending_count = 0;
+			cpu.nmi_in_progress = true;
+
+			SetBanks();
+			HandleNMI(RM_NOCHANGE);
+			return;
+		}
+		else if (config.mem_model == MM_PROFSCORP || config.mem_model == MM_SCORP)
+		{
+			_nmi_pending_count--;
+			if (cpu.pc > 0x4000)
+			{
+				HandleNMI(RM_DOS);
+				_nmi_pending_count = 0;
+			}
+		}
+		else
+			_nmi_pending_count = 0;
+	} // end if (nmi_pending)
+
+	// Baseconf NMI
+	if (state.pBE)
+	{
+		if (config.mem_model == MM_ATM3 && state.pBE == 1)
+		{
+			cpu.nmi_in_progress = false;
+			SetBanks();
+		}
+		state.pBE--;
+	}
+
+	// Reset INT
+	if (!int_occurred && cpu.t >= int_start)
+	{
+		int_occurred = true;
+		cpu.int_pend = true;
+	}
+
+	if (cpu.int_pend && (cpu.t >= int_end))
+		cpu.int_pend = false;
+
+	video.memcyc_lcmd = 0;							// new command, start accumulate number of busy memcycles
+
+	// INT
+	if (cpu.int_pend && cpu.iff1 &&	// INT enabled in CPU
+		(cpu.t != cpu.eipos) &&		// INT disabled after EI
+		cpu.int_gate)						// INT enabled by ATM hardware (no INT disabling in PentEvo)
+	{
+		HandleINT(InterruptVector());
+	}
 }
 
 void Z80::UpdateScreen()

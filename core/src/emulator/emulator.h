@@ -23,9 +23,9 @@ protected:
 	volatile bool _stopRequested = false;
 
 	// Emulator state
-	bool _isPaused = false;
-	bool _isRunning = false;
-	bool _isDebug = false;
+	volatile bool _isPaused = false;
+	volatile bool _isRunning = false;
+	volatile bool _isDebug = false;
 
 	// Constructors / destructors
 public:
