@@ -5,6 +5,7 @@
 #include "memory.h"
 
 #include "emulator/platform.h"
+#include <cassert>
 
 Memory::Memory(EmulatorContext* context)
 {

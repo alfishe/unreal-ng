@@ -4,6 +4,7 @@
 
 #include "wd93.h"
 #include "wd93crc.h"
+#include <cassert>
 
 
 void TRKCACHE::seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs)
