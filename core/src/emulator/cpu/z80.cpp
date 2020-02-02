@@ -783,7 +783,7 @@ void Z80::DumpCurrentState()
 
 	wstring message = StringHelper::StringToWideString(dumpBuffer);
 #ifdef _WIN32
-	OutputDebugString(message.c_str());
+	OutputDebugString((LPCSTR)message.c_str());
 #endif
 }
 

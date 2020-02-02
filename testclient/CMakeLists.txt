@@ -43,7 +43,9 @@ message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
 target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
 
 # All standard libraries required
-set(common_libraries stdc++ pthread stdc++fs)
+if (UNIX)
+	set(common_libraries stdc++ pthread stdc++fs)
+endif (UNIX)
 
 # Link with core library
 target_link_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/build)

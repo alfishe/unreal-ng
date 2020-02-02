@@ -15,6 +15,7 @@ wstring FileHelper::GetExecutablePath()
 	#else
 		char buffer[PATH_MAX];
 		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
+		buffer[count] = '\0';
 		result = StringHelper::StringToWideString(buffer);
 	#endif
 
