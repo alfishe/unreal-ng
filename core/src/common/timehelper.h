@@ -3,10 +3,11 @@
 
 #include <chrono>
 #include <ctime>
+#include <functional>
 #include <thread>
 #include <tuple>
 
-typedef std::chrono::steady_clock::time_point chrono_time_t;
+typedef std::chrono::high_resolution_clock::time_point chrono_time_t;
 typedef std::chrono::high_resolution_clock hiresclock;
 
 class TimeHelper
