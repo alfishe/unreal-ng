@@ -91,10 +91,11 @@ using std::atomic;
 #endif // _WIN32
 
 #ifdef __linux__
-	#include <unistd.h>			// readlink()
+	#include <unistd.h>		// readlink()
 	#include <locale>
 	#include <codecvt>
 	#include <linux/limits.h>	// PATH_MAX constant defined here
+	#include <climits>		// LLONG_MAX constant defined here
 
 	#define CACHE_LINE 64
 	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
@@ -105,6 +106,7 @@ using std::atomic;
 	#include <locale>
 	#include <codecvt>
 	#include <sys/syslimits.h>	// PATH_MAX constant defined here
+	#include <climits>		// LLONG_MAX constant defined here
 
 	#define CACHE_LINE 64
 	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
