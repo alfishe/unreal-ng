@@ -4,6 +4,7 @@
 
 #include "mainloop.h"
 #include "common/timehelper.h"
+#include <algorithm>
 
 MainLoop::MainLoop(CPU* cpu, EmulatorContext* context)
 {
@@ -32,7 +33,10 @@ void MainLoop::Run(volatile bool& stopRequested)
 
 	while (!stopRequested)
 	{
-		RunFrame();
+		unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+
+		LOGINFO("Frame recalculation time: %d us", duration1);
+		sleep_us(15000U - std::min(duration1, 15000U));
 	}
 }
 

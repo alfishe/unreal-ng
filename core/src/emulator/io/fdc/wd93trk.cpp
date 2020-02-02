@@ -1,8 +1,10 @@
-#include "std.h"
-#include "emul.h"
-#include "vars.h"
+#include "stdafx.h"
+
+#include "common/logger.h"
+
+#include "wd93.h"
 #include "wd93crc.h"
-#include "util.h"
+
 
 void TRKCACHE::seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs)
 {
@@ -21,6 +23,7 @@ void TRKCACHE::seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs)
    trkd = d->trkd[cyl][side];
    trki = d->trki[cyl][side];
    trklen = d->trklen[cyl][side];
+
    if (!trklen)
    {
        trkd = 0;
@@ -37,7 +40,7 @@ void TRKCACHE::seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs)
           continue;
 
       if (s == MAX_SEC)
-          errexit("too many sectors");
+          LOGERROR("too many sectors");
 
       SECHDR *h = &hdr[s++]; // Заполнение заголовка
       h->id = trkd + i + 2; // Указатель на заголовок сектора
@@ -45,7 +48,7 @@ void TRKCACHE::seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs)
       h->s = h->id[1];
       h->n = h->id[2];
       h->l = h->id[3];
-      h->crc = *(u16*)(trkd+i+6);
+      h->crc = *(uint16_t*)(trkd+i+6);
       h->c1 = (wd93_crc(trkd+i+1, 5) == h->crc);
       h->data = 0;
       h->datlen = 0;
@@ -63,7 +66,7 @@ void TRKCACHE::seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs)
          {
             h->datlen = 128 << (h->l & 3); // [vv] FD1793 use only 2 lsb of sector size code
             h->data = trkd + j + 2;
-            h->c2 = (wd93_crc(h->data-1, h->datlen+1) == *(u16*)(h->data+h->datlen));
+            h->c2 = (wd93_crc(h->data-1, h->datlen+1) == *(uint16_t*)(h->data+h->datlen));
          }
          break;
       }
@@ -75,14 +78,14 @@ void TRKCACHE::format()
    memset(trkd, 0, trklen);
    memset(trki, 0, trklen/8 + ((trklen&7) ? 1:0));
 
-   u8 *dst = trkd;
+   uint8_t *dst = trkd;
 
    unsigned i;
    memset(dst, 0x4E, 80); dst += 80; // gap4a
    memset(dst, 0, 12); dst += 12; //sync
 
    for (i = 0; i < 3; i++) // iam
-       write(dst++ - trkd, 0xC2, 1);
+       write((unsigned int)(dst++ - trkd), 0xC2, 1);
    *dst++ = 0xFC;
 
    for (unsigned is = 0; is < s; is++)
@@ -90,7 +93,7 @@ void TRKCACHE::format()
       memset(dst, 0x4E, 40); dst += 40; // gap1 // 50 [vv] // fixme: recalculate gap1 only for non standard formats
       memset(dst, 0, 12); dst += 12; //sync
       for (i = 0; i < 3; i++) // idam
-          write(dst++ - trkd, 0xA1, 1);
+          write((unsigned int)(dst++ - trkd), 0xA1, 1);
       *dst++ = 0xFE;
 
       SECHDR *sechdr = hdr + is;
@@ -112,12 +115,12 @@ void TRKCACHE::format()
          memset(dst, 0x4E, 22); dst += 22; // gap2
          memset(dst, 0, 12); dst += 12; //sync
          for (i = 0; i < 3; i++) // data am
-             write(dst++ - trkd, 0xA1, 1);
+             write((unsigned int)(dst++ - trkd), 0xA1, 1);
          *dst++ = 0xFB;
 
 //         if (sechdr->l > 5) errexit("strange sector"); // [vv]
          unsigned len = 128 << (sechdr->l & 3); // data
-         if (sechdr->data != (u8*)1)
+         if (sechdr->data != (uint8_t*)1) // TODO: strange condition
              memcpy(dst, sechdr->data, len);
          else
              memset(dst, 0, len);
@@ -131,8 +134,10 @@ void TRKCACHE::format()
              dst += len+2;
       }
    }
+
    if (dst > trklen + trkd)
-       errmsg("track too long");
+       LOGERROR("track too long");
+
    while (dst < trkd + trklen)
        *dst++ = 0x4E;
 }
@@ -149,14 +154,16 @@ void TRKCACHE::dump()
 }
 #endif
 
-int TRKCACHE::write_sector(unsigned sec, u8 *data)
+int TRKCACHE::write_sector(unsigned sec, uint8_t *data)
 {
    const SECHDR *h = get_sector(sec);
    if (!h || !h->data)
        return 0;
+
    unsigned sz = h->datlen;
    memcpy(h->data, data, sz);
-   *(u16*)(h->data+sz) = (u16)wd93_crc(h->data-1, sz+1);
+   *(uint16_t*)(h->data+sz) = (uint16_t)wd93_crc(h->data-1, sz + 1);
+   
    return sz;
 }
 
@@ -168,6 +175,7 @@ const SECHDR *TRKCACHE::get_sector(unsigned sec) const
       if (hdr[i].n == sec)
           break;
    }
+
    if (i == s)
        return 0;
 

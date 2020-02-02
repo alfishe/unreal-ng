@@ -114,6 +114,12 @@
     <Filter Include="Header Files\3rdparty\digestpp\detail">
       <UniqueIdentifier>{d94b473c-486c-4527-b93e-eb84336255f7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\assembler">
+      <UniqueIdentifier>{d0c338c5-09e1-491e-9605-0a3ab0906254}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\assembler">
+      <UniqueIdentifier>{aa25f9bd-881c-4928-b84d-9d7acd5e683c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -323,6 +329,18 @@
     <ClInclude Include="3rdparty\digestpp\detail\validate_hash_size.hpp">
       <Filter>Header Files\3rdparty\digestpp\detail</Filter>
     </ClInclude>
+    <ClInclude Include="assembler\z80asm.h">
+      <Filter>Header Files\assembler</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\io\fdc\wd93.h">
+      <Filter>Header Files\emulator\io\fdc</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\io\fdc\wd93crc.h">
+      <Filter>Header Files\emulator\io\fdc</Filter>
+    </ClInclude>
+    <ClInclude Include="emulator\io\fdc\wd93dat.h">
+      <Filter>Header Files\emulator\io\fdc</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Base\BaseRenderer.cpp">
@@ -441,6 +459,18 @@
     </ClCompile>
     <ClCompile Include="common\messagemanager.cpp">
       <Filter>Source Files\common</Filter>
+    </ClCompile>
+    <ClCompile Include="assembler\z80asm.cpp">
+      <Filter>Source Files\assembler</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\io\fdc\wd93cmd.cpp">
+      <Filter>Source Files\emulator\io\fdc</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\io\fdc\wd93crc.cpp">
+      <Filter>Source Files\emulator\io\fdc</Filter>
+    </ClCompile>
+    <ClCompile Include="emulator\io\fdc\wd93trk.cpp">
+      <Filter>Source Files\emulator\io\fdc</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

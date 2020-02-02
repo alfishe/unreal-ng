@@ -1,5 +1,7 @@
 #pragma once
-#include "sysdefs.h"
+#include "stdafx.h"
+
+class EmulatorContext;
 
 const int Z80FQ = 3500000; // todo: #define as (conf.frame*conf.intfq)
 const int FDD_RPS = 5; // rotation speed
@@ -9,12 +11,14 @@ const int MAX_CYLS = 86;            // don't load images with so many tracks
 const int MAX_PHYS_CYL = 86;        // don't seek over it
 const int MAX_SEC = 256;
 
+const int ROMLED_TIME = 16;
+
 struct SECHDR
 {
-   u8 c,s,n,l;
-   u16 crc;
-   u8 c1, c2; // flags: correct CRCs in address and data
-   u8 *data, *id;
+   uint8_t c,s,n,l;
+   uint16_t crc;
+   uint8_t c1, c2; // flags: correct CRCs in address and data
+   uint8_t *data, *id;
    unsigned datlen;
    unsigned crcd;        // used to load specific CRC from FDI-file
 };
@@ -29,7 +33,7 @@ struct TRKCACHE
 
    // generic track data
    unsigned trklen;
-   u8 *trkd, *trki;       // pointer to data inside UDI
+   uint8_t *trkd, *trki;       // pointer to data inside UDI
    unsigned ts_byte;                 // cpu.t per byte
    SEEK_MODE sf;                     // flag: is sectors filled
    unsigned s;                       // no. of sectors
@@ -39,8 +43,8 @@ struct TRKCACHE
 
    void set_i(unsigned pos) { trki[pos/8] |= 1 << (pos&7); }
    void clr_i(unsigned pos) { trki[pos/8] &= ~(1 << (pos&7)); }
-   u8 test_i(unsigned pos) { return trki[pos/8] & (1 << (pos&7)); }
-   void write(unsigned pos, u8 byte, char index)
+   uint8_t test_i(unsigned pos) { return trki[pos/8] & (1 << (pos&7)); }
+   void write(unsigned pos, uint8_t byte, char index)
    {
        if (!trkd)
            return;
@@ -54,7 +58,7 @@ struct TRKCACHE
 
    void seek(FDD *d, unsigned cyl, unsigned side, SEEK_MODE fs);
    void format(); // before use, call seek(d,c,s,JUST_SEEK), set s and hdr[]
-   int write_sector(unsigned sec, u8 *data); // call seek(d,c,s,LOAD_SECTORS)
+   int write_sector(unsigned sec, uint8_t *data); // call seek(d,c,s,LOAD_SECTORS)
    const SECHDR *get_sector(unsigned sec) const; // before use, call fill(d,c,s,LOAD_SECTORS)
 
    void dump();
@@ -70,22 +74,22 @@ struct TRKCACHE
 
 struct FDD
 {
-   u8 Id;
+	uint8_t Id;
    // drive data
 
-   __int64 motor;       // 0 - not spinning, >0 - time when it'll stop
-   u8 track; // head position
+   int64_t motor;       // 0 - not spinning, >0 - time when it'll stop
+   uint8_t track; // head position
 
    // disk data
 
-   u8 *rawdata;              // used in VirtualAlloc/VirtualFree
+   uint8_t *rawdata;              // used in VirtualAlloc/VirtualFree
    unsigned rawsize;
    unsigned cyls, sides;
    unsigned trklen[MAX_CYLS][2];
-   u8 *trkd[MAX_CYLS][2];
-   u8 *trki[MAX_CYLS][2];
-   u8 optype; // bits: 0-not modified, 1-write sector, 2-format track
-   u8 snaptype;
+   uint8_t *trkd[MAX_CYLS][2];
+   uint8_t *trki[MAX_CYLS][2];
+   uint8_t optype; // bits: 0-not modified, 1-write sector, 2-format track
+   uint8_t snaptype;
 
    TRKCACHE t; // used in read/write image
    char name[0x200];
@@ -98,10 +102,10 @@ struct FDD
    void format_trd();
    void emptydisk();
    void newdisk(unsigned cyls, unsigned sides);
-   int addfile(u8 *hdr, u8 *data);
+   int addfile(uint8_t *hdr, uint8_t *data);
    void addboot();
 
-   int read(u8 snType);
+   int read(uint8_t snType);
 
    int read_scl();
    int read_hob();
@@ -152,23 +156,27 @@ struct WD1793
       S_RESET
    };
 
-   __int64 next, time;
-   __int64 idx_tmo;
+protected:
+	EmulatorContext* _context = nullptr;
+
+public:
+   int64_t next, time;
+   int64_t idx_tmo;
 
    FDD *seldrive;
    unsigned tshift;
 
-   WDSTATE state, state2;
+   WDSTATE wd_state, wd_state2;
 
-   u8 cmd;
-   u8 data, track, sector;
-   u8 rqs, status;
-   u8 idx_status;
+   uint8_t cmd;
+   uint8_t data, track, sector;
+   uint8_t rqs, status;
+   uint8_t idx_status;
 
    unsigned drive, side;                // update this with changing 'system'
 
    char stepdirection;
-   u8 system;                // beta128 system register
+   uint8_t system;                // beta128 system register
 
    unsigned idx_cnt; // idx counter
 
@@ -179,6 +187,8 @@ struct WD1793
 
    // format track data
    unsigned start_crc;
+
+   uint8_t trdos_load, trdos_save, trdos_format, trdos_seek; // for leds
 
    enum CMDBITS
    {
@@ -224,8 +234,8 @@ struct WD1793
       SYS_HLT       = 0x08
    };
 
-   u8 in(u8 port);
-   void out(u8 port, u8 val);
+   uint8_t in(uint8_t port);
+   void out(uint8_t port, uint8_t val);
 
    void process();
    void find_marker();

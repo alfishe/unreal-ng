@@ -73,7 +73,7 @@ protected:
 	uint8_t _memory[PAGE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
 #else // __declspec(align) not available, force u64 align with old method
 	uint64_t memory__[PAGE * MAX_PAGES / sizeof(uint64_t)];
-	uint8_t * const memory = (uint8_t*)memory__;
+	uint8_t* const memory = (uint8_t*)memory__;
 #endif
 	
 	uint8_t _membits[0x10000];			// Access counters for CPU memory address space (64KiB)
@@ -112,7 +112,7 @@ public:
 	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE * page); }	// Up to MAX_RAM_PAGES 256 pages
 	inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE * page); }	// Up to MAX_ROM_PAGES 64 pages
 
-	uint8_t* RemapAddressToCurrentBank(uint16_t addr);				// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
+	uint8_t* RemapAddressToCurrentBank(uint16_t addr);									// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
 
 	MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 

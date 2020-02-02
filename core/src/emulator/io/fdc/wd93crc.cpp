@@ -1,20 +1,26 @@
-#include "std.h"
-#include "emul.h"
+#include "stdafx.h"
+
+#include "common/logger.h"
+
 #include "wd93crc.h"
 
 // for WD1793 engine
-unsigned wd93_crc(u8 *ptr, unsigned size)
+unsigned wd93_crc(uint8_t *ptr, unsigned size)
 {
    unsigned crc = 0xCDB4;
-   while (size--) {
+   while (size--)
+   {
       crc ^= (*ptr++) << 8;
-      for (int j = 8; j; j--) // todo: rewrite with pre-calc'ed table
-         if ((crc *= 2) & 0x10000) crc ^= 0x1021; // bit representation of x^12+x^5+1
+	  for (int j = 8; j; j--) // todo: rewrite with pre-calc'ed table
+	  {
+		  if ((crc *= 2) & 0x10000)
+			  crc ^= 0x1021; // bit representation of x^12 + x^5 + 1
+	  }
    }
    return _byteswap_ushort(crc); // return crc & 0xFFFF;
 }
 
-static u16 crcTab[256] =
+static uint16_t crcTab[256] =
    { 0x0000, 0x97A0, 0xB9E1, 0x2E41, 0xE563, 0x72C3, 0x5C82, 0xCB22,
      0xCAC7, 0x5D67, 0x7326, 0xE486, 0x2FA4, 0xB804, 0x9645, 0x01E5,
      0x032F, 0x948F, 0xBACE, 0x2D6E, 0xE64C, 0x71EC, 0x5FAD, 0xC80D,
@@ -49,20 +55,31 @@ static u16 crcTab[256] =
      0x4CD2, 0xDB72, 0xF533, 0x6293, 0xA9B1, 0x3E11, 0x1050, 0x87F0 };
 
 // for TD0
-u16 crc16(u8 *buf, unsigned size)
+uint16_t crc16(uint8_t *buf, unsigned size)
 {
    unsigned crc = 0;
-   while (size--) crc = (crc>>8) ^ crcTab[(crc&0xff) ^ *buf++];
+   
+   while (size--)
+   {
+	   crc = (crc >> 8) ^ crcTab[(crc & 0xff) ^ *buf++];
+   }
+
    return _byteswap_ushort(crc);
 }
 
 // for UDI
-void crc32(int &crc, u8 *buf, unsigned len)
+void crc32(int &crc, uint8_t *buf, unsigned len)
 {
-   while (len--) {
+   while (len--)
+   {
       crc ^= -1 ^ *buf++;
       for (int k = 8; k--; )
-         { int temp = -(crc & 1); crc >>= 1, crc ^= 0xEDB88320 & temp; }
+      {
+		  int temp = -(crc & 1);
+		  crc >>= 1;
+		  crc ^= 0xEDB88320 & temp;
+	  }
+
       crc ^= -1;
    }
 }

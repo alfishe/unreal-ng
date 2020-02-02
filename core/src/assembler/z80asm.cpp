@@ -1,10 +1,12 @@
-#include "std.h"
-#include "sysdefs.h"
-#include "emul.h"
-#include "vars.h"
-#include "memory.h"
-#include "debugger/dbglabls.h"
-#include "util.h"
+#include "stdafx.h"
+
+#include "common/logger.h"
+
+#include "z80asm.h"
+#include <algorithm>
+
+using std::min;
+using std::max;
 
 char asmbuf[0x40];
 
@@ -24,7 +26,7 @@ char asmbuf[0x40];
 #define _zr8_ 0x9D
 #define _zr81_ 0x9E
 
-u8 asm_tab_z80[] =
+uint8_t asm_tab_z80[] =
 {
 #if 0
    2,0xED,0xFF,0xFF,0xFF, // call unreal api
@@ -264,6 +266,7 @@ char zop[] = "add a,\0\0adc a,\0\0sub \0\0\0\0sbc a,\0\0and \0\0\0\0xor \0\0\0\0
 char zf[] = "nz\0z\0\0nc\0c\0\0po\0pe\0p\0\0m";
 // =======================================================================
 
+/*
 void disasm_address(char *line, unsigned addr, char labels)
 {
    char *label = 0;
@@ -276,10 +279,11 @@ void disasm_address(char *line, unsigned addr, char labels)
    } //Alone Coder 0.36.6
    else sprintf(line, "%04X", addr & 0xFFFF);
 }
+*/
 
-u8 *disasm(u8 *cmd, unsigned current, char labels)
+uint8_t* Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
 {
-   u8 *st = cmd, z80p;
+	uint8_t *st = cmd, z80p;
    char *z80r16, *z80r8;
 
    z80r16 = z80r16_1, z80r8 = z80r8_1, z80p = 0;
@@ -290,16 +294,16 @@ u8 *disasm(u8 *cmd, unsigned current, char labels)
       cmd++;
    }
 
-   for (u8 *ptr = asm_tab_z80; *ptr; ) {
+   for (uint8_t *ptr = asm_tab_z80; *ptr; ) {
       // cmd - start of command, c1 - mod/rm, cm - current pointer
-      u8 *rcmd = cmd;
+      uint8_t *rcmd = cmd;
       if (*cmd == 0xED) rcmd++, z80r16 = z80r16_1, z80r8 = z80r8_1, z80p = 0;
-      u8 *cm = rcmd+1;
+      uint8_t *cm = rcmd+1;
 
       for (int j = 0; j < *ptr; j++) // match mask
          if ((cmd[j] & ptr[j+*ptr+1]) != ptr[j+1]) goto nextcmd;
       *asmbuf = 0;
-      u8 *pt;
+	  uint8_t *pt;
       for (pt = ptr + (2 * *ptr) + 1; *pt; pt++) { // scan all commands
          char ln[/*32*/64];
          const char *l1 = ln;
@@ -368,14 +372,14 @@ u8 *disasm(u8 *cmd, unsigned current, char labels)
             case _ld:
                l1 = "ld "; break;
             case _shrt: // short jump
-               disasm_address(ln, current+cm-st + *(char*)cm + 1, labels);
+               //disasm_address(ln, current+cm-st + *(char*)cm + 1, labels);
                cm++;
                break;
             case _ib: // immediate byte at cm
                sprintf(ln, "%02X", *cm++);
                break;
             case _iw: // immediate word at cm
-               disasm_address(ln, *(u16*)cm, labels); cm += 2;
+               //disasm_address(ln, *(uint16_t*)cm, labels); cm += 2;
                break;
             default:
                *(short*)ln = *pt;
@@ -396,7 +400,7 @@ u8 *disasm(u8 *cmd, unsigned current, char labels)
                                 *q = 0;
                                 strcpy(asmbuf, b1);
                         }
-         return max(cm, cmd+*ptr);
+         return max(cm, cmd + *ptr);
       }
 nextcmd:
       ptr += (2 * *ptr) + 1; while (*ptr++); // skip mask,code and instruction
@@ -404,20 +408,26 @@ nextcmd:
    strcpy(asmbuf, "???"); return cmd+1;
 }
 
-int getindex(u8 **ptr, char *table, unsigned width, int size) {
-   int max = 0, imax; // find max match - fdiv and fdivr must be found as fdivr
-   for (int i = 0; i < size; i++) {
-      int ln = strlen(table + i*width);
+int getindex(uint8_t **ptr, char *table, unsigned width, int size) {
+   size_t max = 0, imax; // find max match - fdiv and fdivr must be found as fdivr
+
+   for (int i = 0; i < size; i++)
+   {
+      size_t ln = strlen(table + i * width);
       if (!strncmp((char*)*ptr, table + i*width, ln))
-         if (ln > max) max = ln, imax = i;
+         if (ln > max)
+			 max = ln, imax = i;
    }
-   if (max) {
+
+   if (max)
+   {
       (*ptr) += strlen(table + imax*width);
-      return imax;
+      return (int)imax;
    }
    return -1;
 }
-int scanhex(u8 **ptr) {
+int scanhex(uint8_t **ptr)
+{
    int r = 0, s = 1;
    if (**ptr == '-') (*ptr)++, s = -1;
    if (**ptr == '+') (*ptr)++;
@@ -425,12 +435,12 @@ int scanhex(u8 **ptr) {
       r = 16*r + hexdigit(**ptr), (*ptr)++;
    return r*s;
 }
-u8 cmdb[16];
-u8 asmresult[24];
-u8 z80p;
-u8 a_command[0x40];
+uint8_t cmdb[16];
+uint8_t asmresult[24];
+uint8_t z80p;
+uint8_t a_command[0x40];
 
-int z80scanr8(u8 **ptr, u8 **cm) {
+int z80scanr8(uint8_t **ptr, uint8_t **cm) {
    int in = getindex(ptr, z80r8_1, 5, 8);
    if (in >= 0) return in;
    char *r8 = z80r8_1;
@@ -438,7 +448,7 @@ int z80scanr8(u8 **ptr, u8 **cm) {
    if (z80p == 0xFD) r8 = z80r8_3;
    in = getindex(ptr, r8, 5, 8);
    if (!z80p) return in;
-   if (*(u16*)(*ptr) != WORD2('(','i')) return in;
+   if (*(uint16_t*)(*ptr) != WORD2('(','i')) return in;
    (*ptr) += 3;
    char c = *(*ptr - 1);
    if ((z80p == 0xDD && c != 'x') || (z80p == 0xFD && c != 'y')) return -1;
@@ -449,23 +459,23 @@ int z80scanr8(u8 **ptr, u8 **cm) {
    return 6;
 }
 
-int assemble(unsigned addr)
+int Z80Assembler::assemble(unsigned addr)
 {
    char *z80r16 = z80r16_1;
    if (z80p == 0xDD) z80r16 = z80r16_2;
    if (z80p == 0xFD) z80r16 = z80r16_3;
 
-   for (u8 *p1 = asm_tab_z80; *p1; ) {
+   for (uint8_t *p1 = asm_tab_z80; *p1; ) {
       memset(cmdb, 0, sizeof(cmdb));
-      u8 *cc = a_command; memcpy(cmdb, p1+1, *p1);
-      u8 *cmd = cmdb;
-      u8 *rcmd = cmd;
-          u8 *cm; //Alone Coder
+	  uint8_t *cc = a_command; memcpy(cmdb, p1+1, *p1);
+	  uint8_t *cmd = cmdb;
+	  uint8_t *rcmd = cmd;
+	  uint8_t *cm; //Alone Coder
       if (*cmd == 0xED) { rcmd++; if (z80p) goto nextcmd; }
       /*u8 * */cm = rcmd+1;
 
       int in;
-          u8 *ptr; //Alone Coder
+	  uint8_t *ptr; //Alone Coder
       for (/*u8 * */ptr = p1+2 * *p1+1; *ptr; ptr++) {
          switch (*ptr) {
             case _zr16: // in rcmd & 0x30
@@ -473,7 +483,7 @@ int assemble(unsigned addr)
                *rcmd |= (in << 4);
                break;
             case _zr16a: // in rcmd & 0x30
-               if (*(u16*)cc == WORD2('a','f')) {
+               if (*(uint16_t*)cc == WORD2('a','f')) {
                   cc += 2;
                   in = 3;
                } else {
@@ -530,7 +540,7 @@ int assemble(unsigned addr)
             {
                if (!ishex(*cc)) goto nextcmd;
                in = scanhex(&cc);
-               i16 x = in-(int)addr+cmdb-cm-1;
+               int16_t x = (uint16_t)(in - (int)addr + cmdb - cm - 1);
                if (x > 0x7F || x < -0x80) goto nextcmd;
                *(char*)cm = (char)x; cm++;
                break;
@@ -547,23 +557,23 @@ imm:
                if (!ishex(*cc)) goto nextcmd;
                in = scanhex(&cc);
                if ((unsigned)in > 0xFFFF) goto nextcmd;
-               *(u16*)cm = (u16)in; cm += 2;
+               *(uint16_t*)cm = (uint16_t)in; cm += 2;
                break;
             default:
                if (*ptr != *cc++) goto nextcmd;
          }
       }
-      if (!*cc) return max(cm-cmdb, *p1);
+      if (!*cc) return max((uint8_t)(cm - cmdb), *p1);
 nextcmd:
       p1 += (2 * *p1) + 1; while (*p1++);
    }
    return 0;
 }
 
-int assemble_cmd(u8 *cmd, unsigned addr)
+int Z80Assembler::assemble_cmd(uint8_t *cmd, unsigned addr)
 {
-   u8 *res = a_command;
-   u8 bf[0x40]; strcpy((char*)bf, (char*)cmd);
+	uint8_t *res = a_command;
+	uint8_t bf[0x40]; strcpy((char*)bf, (char*)cmd);
    for (res = bf; *res; res++) { // don't allow to kill space befor (# - place 0x01
       if (*(short*)res == WORD2(' ','(')) *(short*)res = WORD2(1,'(');
       if (*(short*)res == WORD2(' ','#')) *(short*)res = WORD2(1,'#');
@@ -587,7 +597,7 @@ int assemble_cmd(u8 *cmd, unsigned addr)
    z80p = 0xFD; if ((r = assemble(addr))) goto inspref1;
    return 0;
 inspref1:
-   u8 *p = asmresult;
+   uint8_t *p = asmresult;
    if (z80p) *p++ = z80p;
    for (unsigned i=0; i < r; i++) *p++ = cmdb[i];
    return r + (z80p ? 1 : 0);

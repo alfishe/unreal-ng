@@ -201,6 +201,7 @@
     <ClInclude Include="3rdparty\digestpp\hasher.hpp" />
     <ClInclude Include="3rdparty\simpleini\convertutf.h" />
     <ClInclude Include="3rdparty\simpleini\simpleini.h" />
+    <ClInclude Include="assembler\z80asm.h" />
     <ClInclude Include="base\baserenderer.h" />
     <ClInclude Include="common\autoresetevent.h" />
     <ClInclude Include="common\callbackcollection.h" />
@@ -225,6 +226,9 @@
     <ClInclude Include="emulator\cpu\z80.h" />
     <ClInclude Include="emulator\emulator.h" />
     <ClInclude Include="emulator\emulatorcontext.h" />
+    <ClInclude Include="emulator\io\fdc\wd93.h" />
+    <ClInclude Include="emulator\io\fdc\wd93crc.h" />
+    <ClInclude Include="emulator\io\fdc\wd93dat.h" />
     <ClInclude Include="emulator\io\hdd\hdd.h" />
     <ClInclude Include="emulator\mainloop.h" />
     <ClInclude Include="emulator\memory\memory.h" />
@@ -248,6 +252,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="3rdparty\simpleini\convertutf.c" />
+    <ClCompile Include="assembler\z80asm.cpp" />
     <ClCompile Include="base\baserenderer.cpp" />
     <ClCompile Include="common\autoresetevent.cpp" />
     <ClCompile Include="common\callbackcollection.cpp" />
@@ -273,6 +278,9 @@
     <ClCompile Include="emulator\cpu\z80.cpp" />
     <ClCompile Include="emulator\emulator.cpp" />
     <ClCompile Include="emulator\emulatorcontext.cpp" />
+    <ClCompile Include="emulator\io\fdc\wd93cmd.cpp" />
+    <ClCompile Include="emulator\io\fdc\wd93crc.cpp" />
+    <ClCompile Include="emulator\io\fdc\wd93trk.cpp" />
     <ClCompile Include="emulator\io\hdd\hdd.cpp" />
     <ClCompile Include="emulator\mainloop.cpp" />
     <ClCompile Include="emulator\memory\memory.cpp" />

@@ -194,7 +194,7 @@ struct CONFIG
 
 	int modem_port; //, modem_scheme;
 	int zifi_port;
-	bool fdd_noise;				// Mix FDD disk rotation and positioning noise to sound channel(s)
+	uint8_t fdd_noise;				// Mix FDD disk rotation and positioning noise to sound channel(s)
 
 	bool trdos_present;			// Enable Beta128 disk interface (TR-DOS)
 	uint8_t trdos_interleave;
