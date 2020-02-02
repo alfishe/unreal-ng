@@ -295,8 +295,8 @@ void WD1793::process()
                   memcpy(sc, seldrive->t.trkd + seldrive->t.trklen - rwptr, rwptr), memcpy(sc + rwptr, seldrive->t.trkd, len - rwptr);
                else memcpy(sc, seldrive->t.trkd + rwptr - len, len);
                unsigned crc = wd93_crc(sc, len);
-               seldrive->t.write(rwptr++, (BYTE)crc, 0);
-               seldrive->t.write(rwptr++, (BYTE)(crc >> 8), 0);
+               seldrive->t.write(rwptr++, (uint8_t)crc, 0);
+               seldrive->t.write(rwptr++, (uint8_t)(crc >> 8), 0);
                seldrive->t.write(rwptr, 0xFF, 0);
                if (cmd & CMD_MULTIPLE)
 			   {
@@ -431,7 +431,7 @@ void WD1793::process()
 				next += steps[cmd & CMD_SEEK_RATE]*Z80FQ/1000;
 				if (config.fdd_noise == 1)
 				{
-					Beep((stepdirection > 0) ? 600 : 800, 2);
+					//Beep((stepdirection > 0) ? 600 : 800, 2);
 				}
 				else if (config.fdd_noise == 2)
 				{
