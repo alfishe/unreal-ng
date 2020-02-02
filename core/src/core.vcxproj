@@ -230,6 +230,7 @@
     <ClInclude Include="emulator\io\fdc\wd93crc.h" />
     <ClInclude Include="emulator\io\fdc\wd93dat.h" />
     <ClInclude Include="emulator\io\hdd\hdd.h" />
+    <ClInclude Include="emulator\io\hdd\hddio.h" />
     <ClInclude Include="emulator\mainloop.h" />
     <ClInclude Include="emulator\memory\memory.h" />
     <ClInclude Include="emulator\memory\nvram.h" />

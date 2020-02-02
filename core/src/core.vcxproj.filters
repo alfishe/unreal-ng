@@ -341,6 +341,9 @@
     <ClInclude Include="emulator\io\fdc\wd93dat.h">
       <Filter>Header Files\emulator\io\fdc</Filter>
     </ClInclude>
+    <ClInclude Include="emulator\io\hdd\hddio.h">
+      <Filter>Header Files\emulator\io\hdd</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Base\BaseRenderer.cpp">
