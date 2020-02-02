@@ -181,7 +181,7 @@ public:
    unsigned idx_cnt; // idx counter
 
    // read/write sector(s) data
-   __int64 end_waiting_am;
+   int64_t end_waiting_am;
    unsigned foundid;                    // index in trkcache.hdr for next encountered ID and bytes before this ID
    unsigned rwptr, rwlen;
 
