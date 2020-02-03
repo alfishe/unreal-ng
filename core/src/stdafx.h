@@ -59,6 +59,7 @@ using std::atomic;
 	#include <stdio.h>
 	#include <ctype.h>
 	#include <string.h>
+	#include <stddef.h>					// #include <algorithm> depends on size_t defined here
 	#include <stdlib.h>
 	#include <limits.h>
 	#include <malloc.h>

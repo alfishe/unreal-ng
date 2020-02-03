@@ -781,9 +781,14 @@ void Z80::DumpCurrentState()
 	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "IX:%04X  IY:%04X\r\n", ix, iy);
 	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "\r\n");
 
-	wstring message = StringHelper::StringToWideString(dumpBuffer);
 #ifdef _WIN32
-	OutputDebugString((LPCSTR)message.c_str());
+	#ifdef _UNICODE
+		wstring message = StringHelper::StringToWideString(dumpBuffer);
+		OutputDebugString(message.c_str());
+	#else
+		string message = dumpBuffer;
+		OutputDebugString(message.c_str());
+	#endif
 #endif
 }
 
