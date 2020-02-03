@@ -43,12 +43,19 @@ message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
 target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
 
 # All standard libraries required
-if (UNIX)
-	set(common_libraries stdc++ pthread stdc++fs)
-endif (UNIX)
+if (UNIX AND NOT APPLE)
+    set(CMAKE_CXX_FLAGS " -static-libstdc++")
+    set(common_libraries -static-libstdc++ stdc++fs pthread)
+endif (UNIX AND NOT APPLE)
+
+if (APPLE)
+    target_link_directories(${PROJECT_NAME} PRIVATE /usr/local/lib)
+    set(CMAKE_CXX_FLAGS " -static-libstdc++")
+    set(common_libraries -static-libstdc++ pthread)
+endif(APPLE)
 
 # Link with core library
-target_link_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/build)
+#target_link_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/build)
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
