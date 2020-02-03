@@ -104,10 +104,11 @@ using std::atomic;
 
 #ifdef __APPLE__
 	#include <unistd.h>			// readlink()
+    #include <mach-o/dyld.h>    // _NSGetExecutablePath()
 	#include <locale>
 	#include <codecvt>
 	#include <sys/syslimits.h>	// PATH_MAX constant defined here
-	#include <climits>		// LLONG_MAX constant defined here
+	#include <climits>		    // LLONG_MAX constant defined here
 
 	#define CACHE_LINE 64
 	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))

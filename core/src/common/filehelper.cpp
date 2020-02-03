@@ -13,12 +13,23 @@ wstring FileHelper::GetExecutablePath()
 		wchar_t buffer[MAX_PATH] = { L'\0' };
 		GetModuleFileNameW(NULL, buffer, MAX_PATH);
 		result = buffer;
-	#else
+    #endif
+
+    #ifdef __linux__
 		char buffer[PATH_MAX];
 		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
 		buffer[count] = '\0';
 		result = StringHelper::StringToWideString(buffer);
-	#endif
+    #endif
+
+    #ifdef __APPLE__
+        char buffer[PATH_MAX];
+        uint32_t size = sizeof(buffer);
+        if (_NSGetExecutablePath(buffer, &size) == 0)
+        {
+            result = StringHelper::StringToWideString(buffer);
+        }
+    #endif
 
 	filesystem::path basePath = filesystem::canonical(result);
 	result = basePath.parent_path().wstring();
