@@ -274,7 +274,7 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 
 	if (path.empty())
 	{
-		LOGERROR("Config::LoadROM - Empty ROM path supplied");
+		LOGERROR("ROM::LoadROM - Empty ROM path supplied");
 		return result;
 	}
 
@@ -287,7 +287,7 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 
 		if (!FileHelper::FileExists(resolvedPath))
 		{
-			LOGERROR("Config::LoadROM - file %s not found", path);
+			LOGERROR("ROM::LoadROM - file %s not found", StringHelper::WideStringToString(path).c_str());
 			return result;
 		}
 	}
@@ -304,14 +304,14 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 		}
 		else
 		{
-			LOGERROR("Config::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE, size);
+			LOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE, size);
 		}
 
 		fclose(romfile);
 	}
 	else
 	{
-		LOGERROR("Config::LoadROM - unable to read from file %s", path);
+		LOGERROR("ROM::LoadROM - unable to read from file %s", StringHelper::WideStringToString(path).c_str());
 	}
 
 
