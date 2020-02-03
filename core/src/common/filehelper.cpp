@@ -28,7 +28,7 @@ wstring FileHelper::GetExecutablePath()
 wstring FileHelper::NormalizePath(wstring& path)
 {
 	filesystem::path basePath = path;
-	basePath = filesystem::weakly_canonical(basePath);
+	basePath = filesystem::weakly_canonical(basePath).make_preferred();
 
 	wstring result = basePath.wstring();
 
@@ -40,6 +40,7 @@ wstring FileHelper::PathCombine(wstring& path1, wstring& path2)
 	filesystem::path basePath = path1;
 	basePath = filesystem::weakly_canonical(basePath);	// Remove trailing path separator if exists
 	basePath /= path2;									// Re-add trailing path separator
+	basePath = basePath.make_preferred();
 
 	wstring result = basePath.wstring();
 
