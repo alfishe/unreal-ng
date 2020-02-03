@@ -25,11 +25,21 @@ wstring FileHelper::GetExecutablePath()
 	return result;
 }
 
+wstring FileHelper::NormalizePath(wstring& path)
+{
+	filesystem::path basePath = path;
+	basePath = filesystem::weakly_canonical(basePath);
+
+	wstring result = basePath.wstring();
+
+	return result;
+}
+
 wstring FileHelper::PathCombine(wstring& path1, wstring& path2)
 {
 	filesystem::path basePath = path1;
-	basePath = filesystem::canonical(basePath);	// Remove trailing path separator if exists
-	basePath /= path2;							// Re-add trailing path separator
+	basePath = filesystem::weakly_canonical(basePath);	// Remove trailing path separator if exists
+	basePath /= path2;									// Re-add trailing path separator
 
 	wstring result = basePath.wstring();
 
@@ -81,7 +91,7 @@ bool FileHelper::FolderExists(wstring& path)
 	return result;
 }
 
-string FileHelper::NormalizeFilePath(wstring wpath)
+string FileHelper::PrintablePath(wstring wpath)
 {
 	string result = StringHelper::WideStringToString(wpath);
 

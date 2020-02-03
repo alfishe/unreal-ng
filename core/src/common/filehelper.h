@@ -14,6 +14,7 @@ class FileHelper
 {
 public:
 	static wstring GetExecutablePath();
+	static wstring NormalizePath(wstring& path);
 	static wstring PathCombine(wstring& path1, wstring& path2);
 	static wstring PathCombine(wstring& path1, const char* path2);
 
@@ -22,7 +23,7 @@ public:
 	static bool FileExists(wstring& path);
 	static bool FolderExists(wstring& path);
 
-	static string NormalizeFilePath(wstring wpath);
+	static string PrintablePath(wstring wpath);
 
 private:
 	FileHelper();	// Disable direct object creation by making constructor private. Only static method calls allowed.

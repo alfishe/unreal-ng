@@ -278,7 +278,7 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 		return result;
 	}
 
-	wstring resolvedPath = path;
+	wstring resolvedPath = FileHelper::NormalizePath(path);
 	if (!FileHelper::FileExists(path))
 	{
 		// Try to use as relative path if not found using original path
@@ -287,12 +287,12 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 
 		if (!FileHelper::FileExists(resolvedPath))
 		{
-			LOGERROR("ROM::LoadROM - file %s not found", StringHelper::WideStringToString(path).c_str());
+			LOGERROR("ROM::LoadROM - file %s not found", FileHelper::PrintablePath(resolvedPath).c_str());
 			return result;
 		}
 	}
 
-	string normalizedPath = StringHelper::WideStringToString(resolvedPath);
+	string normalizedPath = FileHelper::PrintablePath(resolvedPath);
 	FILE* romfile = fopen(normalizedPath.c_str(), "rb");
 	if (romfile)
 	{
@@ -311,7 +311,7 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 	}
 	else
 	{
-		LOGERROR("ROM::LoadROM - unable to read from file %s", StringHelper::WideStringToString(path).c_str());
+		LOGERROR("ROM::LoadROM - unable to read from file %s", FileHelper::PrintablePath(resolvedPath).c_str());
 	}
 
 

@@ -86,7 +86,7 @@ bool Config::LoadConfig(wstring& filename)
 
 	if (!FileHelper::FileExists(filename))
 	{
-		LOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::NormalizeFilePath(filename).c_str());	// FileHelper::NormalizeFilePath is mandatory since Logger works only with 'string' type and formatters
+		LOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 		return result;
 	}
 
@@ -100,14 +100,14 @@ bool Config::LoadConfig(wstring& filename)
 	SI_Error rc = inimanager.LoadFile(StringHelper::WideStringToString(_configFilePath).c_str());
 	if (rc == SI_OK)
 	{
-		LOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::NormalizeFilePath(_configFilePath).c_str());	// FileHelper::NormalizeFilePath is mandatory since Logger works only with 'string' type and formatters
+		LOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 
 
 		result = true;
 	}
 	else
 	{
-		LOGERROR("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::NormalizeFilePath(_configFilePath).c_str());	// FileHelper::NormalizeFilePath is mandatory since Logger works only with 'string' type and formatters
+		LOGERROR("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 	}
 
 	// Populate configuration fields from config file data
