@@ -109,9 +109,6 @@
 #ifdef __GNUC__
 	#include <stdint.h>
 	#define HANDLE_PRAGMA_PACK_PUSH_POP
-	#define __forceinline __attribute__((always_inline))
-	#undef forceinline
-	#define forceinline __forceinline
 	#define override
 
 	#define ATTR_ALIGN(x) __attribute__((aligned(x)))
