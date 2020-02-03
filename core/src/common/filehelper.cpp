@@ -27,6 +27,7 @@ wstring FileHelper::GetExecutablePath()
         uint32_t size = sizeof(buffer);
         if (_NSGetExecutablePath(buffer, &size) == 0)
         {
+			buffer[size] = '\0';
             result = StringHelper::StringToWideString(buffer);
         }
     #endif
@@ -43,7 +44,7 @@ wstring FileHelper::NormalizePath(wstring& path)
 
 	wstring result = path;
 
-	// Important note: std::filesystem::path::make_preferred() does not convert windows separators to linux preferred so we have to care about that (if configs are create with backslashes)
+	// Important note: std::filesystem::path::make_preferred() does not convert windows separators to linux preferred so we have to care about that (if configs are created with backslashes)
 	replace(result.begin(), result.end(), L'/', preferred_separator);
 	replace(result.begin(), result.end(), L'\\', preferred_separator);
 
