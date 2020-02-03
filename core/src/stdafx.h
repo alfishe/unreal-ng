@@ -107,6 +107,7 @@ using std::atomic;
     #include <mach-o/dyld.h>    // _NSGetExecutablePath()
 	#include <locale>
 	#include <codecvt>
+    #include <sys/sysctl.h>     // sysctlbyname() definition
 	#include <sys/syslimits.h>	// PATH_MAX constant defined here
 	#include <climits>		    // LLONG_MAX constant defined here
 

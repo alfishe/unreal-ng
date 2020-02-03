@@ -94,7 +94,14 @@ public:
 
 		assert("GetCPUFrequency() not implemented for Linux");
 
-		#endif
+        #endif
+
+        #ifdef __APPLE__
+
+        size_t size = sizeof(result);
+        sysctlbyname("hw.cpufrequency", &result, &size, nullptr, 0);
+
+        #endif
 
 		return result;
 	}
