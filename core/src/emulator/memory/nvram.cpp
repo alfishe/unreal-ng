@@ -10,6 +10,10 @@ NVRAM::NVRAM()
 {
 }
 
+NVRAM::~NVRAM()
+{
+}
+
 void NVRAM::SetNVRAMAddress(uint32_t addr)
 {
 	_address = addr;
