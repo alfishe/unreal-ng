@@ -82,7 +82,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_Noprefix)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_noprefix[i];
-		uint8_t len = _opcode->PrepareInstruction(0x00, (uint8_t)i, memory);
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0x00, (uint8_t)i, memory);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
@@ -130,7 +137,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_ED)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_prefixED[i];
-		uint8_t len = _opcode->PrepareInstruction(0xED, (uint8_t)i, memory);
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0xED, (uint8_t)i, memory);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
@@ -170,7 +184,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_CB)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_prefixCB[i];
-		uint8_t len = _opcode->PrepareInstruction(0xCB, (uint8_t)i, memory);
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0xCB, (uint8_t)i, memory);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
@@ -210,7 +231,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DD)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_prefixDD[i];
-		uint8_t len = _opcode->PrepareInstruction(0xDD, (uint8_t)i, memory);
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0xDD, (uint8_t)i, memory);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
@@ -250,7 +278,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DDCB)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_prefixDDCB[i];
-		uint8_t len = _opcode->PrepareInstruction(0xDD, (uint8_t)i, memory, 0xCB);
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0xDD, (uint8_t)i, memory, 0xCB);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
@@ -290,7 +325,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FD)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_prefixFD[i];
-		uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t)i, memory);
+		try
+		{
+            uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t) i, memory);
+        }
+		catch (const char* err)
+        {
+		    FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;
@@ -330,7 +372,14 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
 
 		// Prepare instruction in ROM (0x0000 address)
 		OpDescriptor& descriptor = _opcode->_prefixFDCB[i];
-		uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t)i, memory, 0xCB);
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t)i, memory, 0xCB);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
 
 		// Capture clock cycle counter before instruction execution
 		start_cycles = z80.cycle_count;

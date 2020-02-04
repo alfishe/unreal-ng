@@ -2,6 +2,7 @@
 
 #include "opcode_test.h"
 #include <iostream>
+#include <exception>
 
 using namespace z80_test;
 
@@ -17,7 +18,6 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 
 	if (memory == nullptr)
 	{
-		std::cout << "memory should not be null"  << std::endl;
 		throw("memory should not be null");
 	}
 
@@ -54,8 +54,7 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 	result = operation.bytes;
 	if (result == 0)
 	{
-		std::cout << "Z80 instruction cannot be 0 bytes in length. Something wrong with test table(s)" << std::endl;
-		throw("Z80 instruction cannot be 0 bytes in length. Something wrong with test table(s)");
+		throw "Z80 instruction cannot be 0 bytes in length. Something wrong with test table(s)";
 	}
 
 	// No-prefix instructions started from instruction[1] so we need to offset
@@ -76,8 +75,7 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 		if (operation.instruction[i] == 0x00 && prefix == 0x00 && i > 1)
 		{
 			snprintf(message, sizeof message, "Test table invalid. Opcode:0x%02X. Instruction[%d] shouldn't be 0x00\0", opcode, i);
-			std::cout << message << std::endl;
-			throw("Invalid instruction content");
+			throw message;
 			break;
 		}
 
