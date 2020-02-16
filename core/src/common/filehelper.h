@@ -14,6 +14,7 @@ class FileHelper
 {
 public:
 	static wstring GetExecutablePath();
+	static wstring NormalizePath(wstring& path, wchar_t separator);
 	static wstring NormalizePath(wstring& path);
 	static wstring PathCombine(wstring& path1, wstring& path2);
 	static wstring PathCombine(wstring& path1, const char* path2);

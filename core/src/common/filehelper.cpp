@@ -5,6 +5,9 @@
 #include "common/stringhelper.h"
 #include <algorithm>
 
+//
+// Returns path for executable file
+//
 wstring FileHelper::GetExecutablePath()
 {
 	wstring result = filesystem::current_path().wstring();
@@ -38,15 +41,25 @@ wstring FileHelper::GetExecutablePath()
 	return result;
 }
 
-wstring FileHelper::NormalizePath(wstring& path)
+wstring FileHelper::NormalizePath(wstring& path, wchar_t separator)
 {
-	static wchar_t preferred_separator = filesystem::path::preferred_separator;
+	if (separator == L'\0')
+		separator = filesystem::path::preferred_separator;
 
 	wstring result = path;
 
 	// Important note: std::filesystem::path::make_preferred() does not convert windows separators to linux preferred so we have to care about that (if configs are created with backslashes)
-	replace(result.begin(), result.end(), L'/', preferred_separator);
-	replace(result.begin(), result.end(), L'\\', preferred_separator);
+	replace(result.begin(), result.end(), L'/', separator);
+	replace(result.begin(), result.end(), L'\\', separator);
+
+	return result;
+}
+
+wstring FileHelper::NormalizePath(wstring& path)
+{
+	static wchar_t preferred_separator = filesystem::path::preferred_separator;
+
+	wstring result = NormalizePath(path, preferred_separator);
 
 	return result;
 }

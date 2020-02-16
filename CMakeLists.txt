@@ -10,11 +10,17 @@ endif (APPLE)
 
 project (unreal)
 
+option(BUILD_TESTS "Build the tests" OFF)
+
 # Disable modern SDK warnings about insecurity for POSIX functions
 if (MSVC)
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif(MSVC)
 
 add_subdirectory(core)
-add_subdirectory(core/tests)
 add_subdirectory(testclient)
+
+if (BUILD_TESTS)
+	enable_testing()
+	add_subdirectory(core/tests)
+endif (BUILD_TESTS)

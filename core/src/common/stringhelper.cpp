@@ -14,6 +14,38 @@ bool StringHelper::IsHex(uint8_t val)
 	return (isdigit(val) || (tolower(val) >= 'a' && tolower(val) <= 'f'));
 }
 
+int StringHelper::Compare(wstring& wstr1, wstring& wstr2)
+{
+	int result = -1;
+
+	size_t len1 = wstr1.length();
+	size_t len2 = wstr2.length();
+
+	if (len1 == len2)
+	{
+		wchar_t* ptr1 = (wchar_t*)wstr1.c_str();
+		wchar_t* ptr2 = (wchar_t*)wstr2.c_str();
+
+		do
+		{
+			if (!(*ptr1 && *ptr2))
+				break;
+
+			if (*ptr1 != *ptr2)
+				break;
+		}
+		while (len1-- && *ptr1++ && *ptr2++);
+
+		result = *ptr1 - *ptr2;
+	}
+	else
+	{
+		result = len1 - len2;
+	}
+
+	return result;
+}
+
 int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, size_t len)
 {
 	int result = -1;
@@ -28,7 +60,8 @@ int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, siz
 			if (!(*ptr1 && *ptr2))
 				break;
 
-
+			if (toupper(*ptr1) != toupper(*ptr2))
+				break;
 		}
 		while (len-- && *ptr1++ && *ptr2++);
 
