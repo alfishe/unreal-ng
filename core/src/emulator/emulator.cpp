@@ -2,6 +2,7 @@
 
 #include "emulator.h"
 #include "common/systemhelper.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 Emulator::Emulator()
 {
@@ -16,6 +17,9 @@ Emulator::~Emulator()
 bool Emulator::Init()
 {
 	bool result = false;
+
+	// Ensure that MessageCenter instance is up and running
+	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
 
 	// Create and initialize emulator context
 	_context = new EmulatorContext();

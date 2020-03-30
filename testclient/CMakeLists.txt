@@ -18,11 +18,12 @@ message("CMAKE_BUILD_TYPE: '${CMAKE_BUILD_TYPE}'")
 # Include CMake helper functions file
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/func.cmake)
 
+# Use /src as root for include files
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-
+# Use all .cpp files from /src (recursively)
 file (GLOB_RECURSE CPP_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 set (SOURCES ${CPP_FILES})
 
@@ -33,11 +34,15 @@ message("CPP_FILES:${CPP_FILES}")
 add_executable(${PROJECT_NAME} ${CPP_FILES})
 
 
-# Resolve core library path
+# Resolve base paths for Core library and Data
 get_filename_component(CORE_LIBRARY_PATH
                        "${CMAKE_CURRENT_LIST_DIR}/../core"
                        ABSOLUTE)
 message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
+get_filename_component(DATA_PATH
+        "${CMAKE_CURRENT_LIST_DIR}/../data"
+        ABSOLUTE)
+message("DATA_PATH: ${DATA_PATH}")
 
 # Add core library includes path for testclient
 target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
@@ -60,3 +65,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 
+
+# Copy default config file to binary folder after successfull compilation
+SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
+message("CONFIG_FILE: ${CONFIG_FILE}")
+message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
+add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy ${CONFIG_FILE} "${CMAKE_BINARY_DIR}/${PROJECT_NAME}/unreal.ini"
+)
+
+add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/rom ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/rom
+)
