@@ -48,6 +48,19 @@ void Logger::Error(string fmt, ...)
 
 void Logger::Out(string fmt, va_list args)
 {
+	//region Print timestanp
+	int time_len = 0;
+	struct tm *tm_info;
+	struct timeval tv;
+	static char buffer[100];
+
+	gettimeofday(&tv, NULL);
+	tm_info = localtime(&tv.tv_sec);
+	time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
+	time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03ld.%03ld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
+	printf(buffer);
+	//endregion
+
 	// Quick and dirty print to stdout
 	vprintf(fmt.c_str(), args);
 }

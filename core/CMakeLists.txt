@@ -31,6 +31,12 @@ message("CPP_FILES:${CPP_FILES}")
 # Produce static library
 add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
 
+# Declare _DEBUG symbol for compiler
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+    message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
+endif (CMAKE_BUILD_TYPE MATCHES Debug)
+
 # 'stdafx.h' is our precompiled header
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/stdafx.h)
 

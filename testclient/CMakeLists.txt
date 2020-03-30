@@ -33,6 +33,12 @@ message("CPP_FILES:${CPP_FILES}")
 # Produce executable
 add_executable(${PROJECT_NAME} ${CPP_FILES})
 
+# Declare _DEBUG symbol for compiler
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+    message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
+endif (CMAKE_BUILD_TYPE MATCHES Debug)
+
 
 # Resolve base paths for Core library and Data
 get_filename_component(CORE_LIBRARY_PATH
