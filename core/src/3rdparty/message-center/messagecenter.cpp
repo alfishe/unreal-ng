@@ -2,7 +2,9 @@
 
 #ifdef _WIN32
     // windows.h cannot be included from function => C2958 linking and many other errors
-    #define WIN32_LEAN_AND_MEAN 1
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN 1
+    #endif
     #define _CRT_SECURE_NO_WARNINGS 1
     #include <windows.h>
     #include <stdlib.h>
