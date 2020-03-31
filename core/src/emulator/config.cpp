@@ -134,15 +134,15 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	config.reset_rom = RM_SOS;
 	CopyStringValue(inimanager.GetValue(misc, "RESET", nullptr, nullptr), line, sizeof line); // What ROM bank to set active during reset
-	if (StringHelper::CompareCaseInsensitive(line, "DOS", 3))
+	if (StringHelper::CompareCaseInsensitive(line, "DOS", 3) == 0)
 	{
 		config.reset_rom = RM_DOS;
 	}
-	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4))
+	else if (StringHelper::CompareCaseInsensitive(line, "MENU", 4) == 0)
 	{
 		config.reset_rom = RM_128;
 	}
-	else if (StringHelper::CompareCaseInsensitive(line, "SYS", 3))
+	else if (StringHelper::CompareCaseInsensitive(line, "SYS", 3) == 0)
 	{
 		config.reset_rom = RM_SYS;
 	}
