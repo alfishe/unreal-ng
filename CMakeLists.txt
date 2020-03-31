@@ -53,5 +53,5 @@ endif (BUILD_TESTS)
 # Benchmarks
 if (BENCHMARK)
 	message("Building benchmarks")
-	#add_subdirectory(
+	add_subdirectory(core/benchmarks)
 endif (BENCHMARK)

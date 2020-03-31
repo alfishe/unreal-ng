@@ -18,8 +18,8 @@ if (APPLE)
 endif (APPLE)
 # THIS HAS TO COME BEFORE THE PROJECT LINE
 
-# Project named 'core' on C++
-project(core_tests LANGUAGES CXX)
+# Project named 'core-tests' on C++
+project(core-tests LANGUAGES CXX)
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
