@@ -5,6 +5,9 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 
+// Turn on padding to align members within each structure
+#pragma pack(push, 1)
+
 struct Z80Registers
 {
 	union
@@ -184,18 +187,23 @@ struct Z80Registers
 	/*------------------------------*/
 	uint8_t im;				// Interrupt mode [IM0|IM1|IM2]
 	bool nmi_in_progress;
+
+
 	uint32_t tscache_addr[TS_CACHE_SIZE];
 	uint8_t  tscache_data[TS_CACHE_SIZE];
 };
+
+#pragma pack(pop)
 
 struct Z80State : public Z80Registers
 {
 	uint32_t Idx;									// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
-	uint8_t tmp0, tmp1, tmp3;
 	unsigned rate;									// Rate for Z80 speed recalculatins. 3.5MHz -> 256, 7MHz -> 128
 	bool vm1;										// Halt handling type (True - ...; False - ...)
 	uint8_t outc0;
+
+	uint8_t tmp0, tmp1, tmp3;
 	uint16_t last_branch;
 	unsigned trace_curs, trace_top, trace_mode;
 	unsigned mem_curs, mem_top, mem_second;
@@ -315,5 +323,12 @@ protected:
 	void ts_frame_int(bool vdos);
 	void ts_line_int(bool vdos);
 	void ts_dma_int(bool vdos);
+
+	//region Debug methods
+#ifdef _DEBUG
+public:
+	void DumpZ80State(char* buffer, size_t len);
+#endif
+	//endregion
 };
 

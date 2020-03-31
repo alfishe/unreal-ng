@@ -51,7 +51,7 @@ void MainLoop::RunFrame()
 	InitSoundFrame();
 	InitVideoFrame();
 
-	// Execute CPU cycle
+	// Execute CPU cycles for single video frame
 	ExecuteCPUFrameCycle();
 
 	// Process external periphery devices

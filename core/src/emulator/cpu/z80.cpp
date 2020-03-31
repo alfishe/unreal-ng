@@ -11,7 +11,28 @@ Z80::Z80(EmulatorContext* context)
 {
 	_context = context;
 
+	// Use fast memory access interface by default
 	MemIf = FastMemIf;
+
+	// Ensure register memory and unions do not contain garbage
+	tt = 0;
+	pc = 0;
+	sp = 0;
+	ir_ = 0;
+	int_flags = 0;
+	af = 0;
+	bc = 0;
+	de = 0;
+	hl = 0;
+	ix = 0;
+	iy = 0;
+	alt.af = 0;
+	alt.bc = 0;
+	alt.de = 0;
+	alt.hl = 0;
+	memptr = 0;
+
+
 	tpi = 0;
 	rate = (1 << 8);
 	dbgbreak = 0;
@@ -854,3 +875,14 @@ void Z80::ts_dma_int(bool vdos)
 		state.ts.intctrl.dma_pend = state.ts.intdma;   // !!! possibly incorrect behaviour (VDOS)
 	}
 }
+
+//region Debug methods
+#ifdef _DEBUG
+#include <cstdio>
+
+void Z80::DumpZ80State(char* buffer, size_t len)
+{
+	snprintf(buffer, len, "PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X clock: %04X", pc, af, bc, de, hl, ix, iy, t);
+}
+#endif
+//endregion
