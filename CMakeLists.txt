@@ -17,7 +17,7 @@ if (MSVC)
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif(MSVC)
 
-add_subdirectory(core)
+add_subdirectory(core/src)
 add_subdirectory(testclient)
 
 if (BUILD_TESTS)

@@ -13,28 +13,38 @@ if (NOT CMAKE_BUILD_TYPE)
 endif ()
 
 # Set paths
-get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
 
 
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
+# Set include paths for compiler
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}
+        ${SOURCE_DIR}/
+        ${SOURCE_DIR}/common
+        ${SOURCE_DIR}/emulator
 )
 
 
 # All sources in /src and subfolders will be compiled
-file (GLOB_RECURSE CORE_CPP_FILES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${CORE_CPP_FILES}" "/build/" FALSE OUTVAR CORE_CPP_FILES) # Exclude /core/src/build folder
-set (SOURCES ${CORE_CPP_FILES})
+file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
+set (SOURCES ${CPP_FILES})
 
-message("SOURCES:${SOURCES}")
+message("CPP_FILES:${CPP_FILES}")
 
 # Produce static library
-add_library(${PROJECT_NAME} STATIC ${SOURCES})
+add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
+
+# Declare _DEBUG symbol for compiler
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+    message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
+endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
 # 'stdafx.h' is our precompiled header
-target_precompile_headers(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/stdafx.h)
+target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 
 
