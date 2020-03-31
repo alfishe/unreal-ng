@@ -104,7 +104,9 @@ public:
     int AddObserver(std::string& topic, ObserverCallbackFunc callback);
     int AddObserver(std::string& topic, ObserverDescriptor* observer);
 
+	int ResolveTopic(const char* topic);
     int ResolveTopic(std::string& topic);
+    int RegisterTopic(const char* topic);
     int RegisterTopic(std::string& topic);
     std::string GetTopicByID(int id);
     void ClearTopics();

@@ -131,6 +131,15 @@ int EventQueue::AddObserver(std::string& topic, ObserverDescriptor* observer)
     return result;
 }
 
+int EventQueue::ResolveTopic(const char* topic)
+{
+	std::string strTopic(topic);
+	int result = ResolveTopic(strTopic);
+
+	return result;
+}
+
+
 int EventQueue::ResolveTopic(std::string& topic)
 {
     int result = -1;
@@ -144,6 +153,14 @@ int EventQueue::ResolveTopic(std::string& topic)
     }
 
     return result;
+}
+
+int EventQueue::RegisterTopic(const char* topic)
+{
+	std::string strTopic(topic);
+	int result = RegisterTopic(strTopic);
+
+	return result;
 }
 
 int EventQueue::RegisterTopic(std::string& topic)
