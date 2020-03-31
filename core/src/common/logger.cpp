@@ -60,7 +60,7 @@ void Logger::Out(string fmt, va_list args)
 #ifdef _WIN32
     time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03lld.%03lld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
 #else
-	time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03ld.%03ld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
+	time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03d.%03d] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
 #endif
 	printf(buffer);
 	//endregion
