@@ -128,7 +128,7 @@ void MessageCenter::ThreadWorker()
 #endif
 #ifdef __linux__
     #include <pthread.h>
-	pthread_setname_np(threadName);
+	pthread_setname_np(pthread_self(), threadName);
 #endif
 #ifdef _WIN32
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
