@@ -197,7 +197,9 @@ struct Z80Registers
 
 struct Z80State : public Z80Registers
 {
-	uint32_t Idx;									// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
+	uint32_t m_z80_index;							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
+
+	uint8_t m_opcode;                               // Opcode fetched during Z80 M1 cycle
 
 	unsigned rate;									// Rate for Z80 speed recalculatins. 3.5MHz -> 256, 7MHz -> 128
 	bool vm1;										// Halt handling type (True - ...; False - ...)

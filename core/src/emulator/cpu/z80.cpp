@@ -100,6 +100,7 @@ uint8_t Z80::m1_cycle()
 	// Z80 CPU M1 cycle logic
 	r_low++;
 	opcode = rd(cpu.pc++);
+	m_opcode = opcode;                          // Keep opcode copy for trace / debug purposes
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
