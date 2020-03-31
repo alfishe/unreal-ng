@@ -40,7 +40,7 @@ int StringHelper::Compare(wstring& wstr1, wstring& wstr2)
 	}
 	else
 	{
-		result = len1 - len2;
+		result = (int)(len1 - len2);
 	}
 
 	return result;

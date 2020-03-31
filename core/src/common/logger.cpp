@@ -49,7 +49,7 @@ void Logger::Error(string fmt, ...)
 void Logger::Out(string fmt, va_list args)
 {
 	//region Print timestanp
-	int time_len = 0;
+    size_t time_len = 0;
 	struct tm *tm_info;
 	struct timeval tv;
 	static char buffer[100];
@@ -57,7 +57,11 @@ void Logger::Out(string fmt, va_list args)
 	gettimeofday(&tv, NULL);
 	tm_info = localtime(&tv.tv_sec);
 	time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
+#ifdef _WIN32
+    time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03lld.%03lld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
+#else
 	time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03ld.%03ld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
+#endif
 	printf(buffer);
 	//endregion
 

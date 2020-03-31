@@ -84,7 +84,21 @@ using std::atomic;
 
 	#if _MSC_VER >= 1300
 		#define CACHE_ALIGNED __declspec(align(CACHE_LINE))
-	#endif
+    #endif
+
+    struct timeval
+    {
+        time_t    tv_sec;         // seconds
+        time_t    tv_usec;        // and microseconds
+    };
+    struct timezone
+    {
+        int tz_minuteswest;
+        int tz_dsttime;
+    };
+
+    // Emulation for POSIX gettimeofday() using WinAPI
+    int gettimeofday(struct timeval *tv, struct timezone *tz);
 
 	// Shut down "LNK4221: The object file does not define any previously undefined public symbols, so it will not be used by any link operation that consumes that library" linker error
 	// Error happens with MSVC linker if precompiled header (stdafx.h/.cpp) doesn't bring any symbols into any namespace
