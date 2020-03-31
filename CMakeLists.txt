@@ -1,12 +1,21 @@
+# CMake entry point
 cmake_minimum_required(VERSION 3.16)
 
 message(">> Unreal CMakeLists.txt")
 
 # THIS HAS TO COME BEFORE THE PROJECT LINE
 if (APPLE)
-	# Only macOS 15 has std::filesystem libraries in CLang, so use brew installed GCC instead
-	set(CMAKE_C_COMPILER "/usr/local/bin/gcc")
-	set(CMAKE_CXX_COMPILER "/usr/local/bin/g++")
+	execute_process(COMMAND sw_vers OUTPUT_VARIABLE OSX_VERSION)
+	string(REGEX MATCH "([0-9]+.[0-9]+)" OSX_VERSION ${OSX_VERSION})
+	message("OSX_VERSION: ${OSX_VERSION}")
+	string(REGEX MATCH "[0-9]+$" OSX_FAMILY ${OSX_VERSION})
+
+	if (OSX_FAMILY LESS 15)
+		# Only macOS 15 has std::filesystem libraries in CLang, so use brew installed GCC instead
+		message(STATUS "Using GCC compiler on macOS")
+		set(CMAKE_C_COMPILER "/usr/local/bin/gcc")
+		set(CMAKE_CXX_COMPILER "/usr/local/bin/g++")
+	endif (OSX_FAMILY LESS 15)
 endif (APPLE)
 # THIS HAS TO COME BEFORE THE PROJECT LINE
 
