@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
@@ -11,6 +12,7 @@
 #include "emulator/video/screen.h"
 #include "emulator/emulatorcontext.h"
 
+class MessageCenter;
 class Z80;
 class Memory;
 class Ports;
@@ -33,6 +35,8 @@ public:
 	static CPUTables _cpuTables;
 
 protected:
+	MessageCenter* _messageCenter = nullptr;
+
 	EmulatorContext* _context = nullptr;
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;

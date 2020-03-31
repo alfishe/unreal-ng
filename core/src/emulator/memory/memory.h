@@ -19,7 +19,7 @@ enum MemoryBankModeEnum : uint8_t
 enum ROMModeEnum : uint8_t
 {
 	RM_NOCHANGE = 0,	// Do not make any changes comparing to previous memory pages state
-	RM_SOS,				// Turn on SOS ROM
+	RM_SOS,				// Turn on SOS ROM (48k)
 	RM_DOS,				// Turn on DOS ROM
 	RM_SYS,				// Turn on System / Shadow ROM
 	RM_128,				// Turn on SOS128 ROM

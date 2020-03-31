@@ -15,6 +15,8 @@ CPU::CPU(EmulatorContext* context)
 {
 	_context = context;
 
+	_messageCenter = &MessageCenter::DefaultMessageCenter();
+
 	// Register itself in context
 	_context->pCPU = this;
 
@@ -101,6 +103,10 @@ void CPU::UseDebugMemoryInterface()
 
 void CPU::Reset()
 {
+	static MessageCenter& messageCenter = *_messageCenter;
+	static int topicID = messageCenter.RegisterTopic("CPU_RESET");
+	messageCenter.Post(topicID, (void*)"CPU reset started");
+
 	COMPUTER& state = _context->state;
 	CONFIG& config = _context->config;
 
@@ -237,6 +243,8 @@ void CPU::Reset()
 	// Reset counters
 	state.t_states = 0;
 	state.frame_counter = 0;
+
+	messageCenter.Post(topicID, (void*)"CPU reset finished");
 }
 
 //

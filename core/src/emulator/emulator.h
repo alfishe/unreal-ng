@@ -45,6 +45,11 @@ public:
 	void Resume();
 	void Stop();
 
+	// Controlled emulator behavior
+	void RunSingleCPUCycle();
+	void RunNCPUCycles(unsigned cycles);
+
+
 	// Status methods
 	bool IsRunning();
 	bool IsPaused();

@@ -131,11 +131,21 @@ bool Emulator::Init()
 		}
 	}
 
+	// Reset CPU and set-up all ports / ROM and RAM pages
+	if (result)
+	{
+		_cpu->Reset();
+	}
+
 	return result;
 }
 
 void Emulator::Release()
 {
+	// Stop and release MessageCenter
+	// Assuming that only single Emulator instance exists
+	MessageCenter::DisposeDefaultMessageCenter();
+
 	// Stop and release main loop
 	if (_mainloop != nullptr)
 	{
@@ -192,6 +202,8 @@ void Emulator::GetSystemInfo()
 	LOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
 }
 
+//region Regular workflow
+
 void Emulator::Reset()
 {
 	_isPaused = false;
@@ -240,6 +252,35 @@ void Emulator::Stop()
 	// Fully shut down video / sound
 }
 
+//endregion
+
+//region Controlled flow
+
+void Emulator::RunSingleCPUCycle()
+{
+	// TODO: handle all timings within frame and I/O
+
+	_cpu->GetZ80()->Z80Step();
+
+#ifdef _DEBUG
+	static char buffer[1024];
+	_cpu->GetZ80()->DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+	LOGINFO(buffer);
+#endif
+}
+
+void Emulator::RunNCPUCycles(unsigned cycles)
+{
+	for (unsigned i = 0; i < cycles; i++)
+	{
+		RunSingleCPUCycle();
+	}
+}
+
+//endregion
+
+//region Status
+
 bool Emulator::IsRunning()
 {
 	return _isRunning;
@@ -254,3 +295,5 @@ bool Emulator::IsDebug()
 {
 	return _isDebug;
 }
+
+//endregion
