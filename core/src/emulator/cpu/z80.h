@@ -180,7 +180,6 @@ struct Z80Registers
 
 	uint32_t cycle_count;	// Counter to track cycle accuracy
 
-	uint8_t opcode;			// Opcode fetched during m1 cycle
 	unsigned eipos;
 	unsigned haltpos;
 
@@ -195,13 +194,29 @@ struct Z80Registers
 
 #pragma pack(pop)
 
-struct Z80State : public Z80Registers
+struct Z80DecodedOperation
+{
+	uint8_t prefix;                                 // Opcode prefix (if available)
+	uint8_t opcode;                                 // Opcode fetched during Z80 M1 cycle
+
+	union
+	{
+		uint16_t address;
+		struct
+		{
+			uint8_t operand1;
+			uint8_t operand2;
+		};
+	};
+};
+
+struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
 	uint32_t m_z80_index;							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
-	uint8_t m_opcode;                               // Opcode fetched during Z80 M1 cycle
 
-	unsigned rate;									// Rate for Z80 speed recalculatins. 3.5MHz -> 256, 7MHz -> 128
+
+	unsigned rate;									// Rate for Z80 speed recalculations. 3.5MHz -> 256, 7MHz -> 128
 	bool vm1;										// Halt handling type (True - ...; False - ...)
 	uint8_t outc0;
 

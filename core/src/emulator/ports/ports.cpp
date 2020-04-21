@@ -36,7 +36,7 @@ void Ports::Reset()
 
 void Ports::Out(uint16_t port, uint8_t val)
 {
-	CONFIG& config = _context->config;
+	static CONFIG& config = _context->config;
 
 	uint8_t p1 = (port & 0xFF);          // lower 8 bits of port address
 	uint8_t p2 = ((port >> 8) & 0xFF);   // higher 8 bits of port address
@@ -48,8 +48,8 @@ void Ports::Out(uint16_t port, uint8_t val)
 
 uint8_t Ports::In(uint16_t port)
 {
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
 
 	uint8_t result = 0xFF;
 

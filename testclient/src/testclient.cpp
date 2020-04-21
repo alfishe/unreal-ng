@@ -70,8 +70,8 @@ void TestClient::Start()
 	};
 	messageCenter.AddObserver(topic, callback);
 
-	_emulator->RunNCPUCycles(1000);
-	return;
+	//_emulator->RunNCPUCycles(100);
+	//return;
 	//endregion Test
 
 

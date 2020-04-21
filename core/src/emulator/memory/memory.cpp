@@ -34,8 +34,8 @@ void Memory::SetROMMode(ROMModeEnum mode)
 	if (mode == RM_NOCHANGE)
 		return;
 
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
 
 	if (mode == RM_CACHE)
 	{
@@ -636,7 +636,7 @@ void set_banks()
          bank += ((comp.p1FFD & 0x10) >> 1) + ((comp.p1FFD & 0xC0) >> 2);
          bank3 = page_ram(bank & temp.ram_mask);
 
-         // Доработка из книжки gmx (включение портов dos из ОЗУ, сделано немного не так как в реальной схеме)
+         // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ gmx (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ dos пїЅпїЅ пїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ)
          if (comp.p1FFD & 4)
              comp.flags |= CF_TRDOS;
          if (comp.p1FFD & 2)

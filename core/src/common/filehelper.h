@@ -9,6 +9,8 @@
 
 using namespace std;
 using namespace std::filesystem;
+using namespace std::string_literals; // Enables s-suffix for std::string literals
+
 
 class FileHelper
 {
@@ -18,6 +20,7 @@ public:
 	static wstring NormalizePath(wstring& path);
 	static wstring PathCombine(wstring& path1, wstring& path2);
 	static wstring PathCombine(wstring& path1, const char* path2);
+	static wstring PathCombine(wstring& path1, const wchar_t* path2);
 
 	static bool IsFile(wstring& path);
 	static bool IsFolder(wstring& path);

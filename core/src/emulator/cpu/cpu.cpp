@@ -42,7 +42,7 @@ CPU::CPU(EmulatorContext* context)
 	// Create HDD controller
 	_hdd = new HDD(context);
 
-	// Create videocontroller
+	// Create Video controller
 	_screen = new Screen(_context);
 	_context->pScreen = _screen;
 }
@@ -107,8 +107,8 @@ void CPU::Reset()
 	static int topicID = messageCenter.RegisterTopic("CPU_RESET");
 	messageCenter.Post(topicID, (void*)"CPU reset started");
 
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
 
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
 	_mode = static_cast<ROMModeEnum>(config.reset_rom);
@@ -264,8 +264,8 @@ void CPU::SetCPUClockSpeed(uint8_t multiplier)
 
 void CPU::CPUFrameCycle()
 {
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
 
 	// Execute Z80 cycle
 	if (_cpu->dbgchk)

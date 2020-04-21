@@ -83,6 +83,12 @@ wstring FileHelper::PathCombine(wstring& path1, const char* path2)
 	return PathCombine(path1, pathPart2);
 }
 
+wstring FileHelper::PathCombine(wstring& path1, const wchar_t* path2)
+{
+	wstring pathPart2 = path2;
+	return PathCombine(path1, pathPart2);
+}
+
 bool FileHelper::IsFile(wstring& path)
 {
 	bool result = FileExists(path);

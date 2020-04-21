@@ -59,6 +59,9 @@ public:
 	virtual ~Config();
 
 public:
+	wstring GetScreenshotsFolder();
+
+public:
 	[[nodiscard]] bool LoadConfig();
 	[[nodiscard]] bool LoadConfig(wstring& filename);
 	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);

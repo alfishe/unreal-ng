@@ -75,10 +75,10 @@ Z80::~Z80()
 
 uint8_t Z80::m1_cycle()
 {
-	Z80& cpu = *this;
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
-	TEMP& temporary = _context->temporary;
+	static Z80& cpu = *this;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static TEMP& temporary = _context->temporary;
 
 	// TODO: move to Ports class
 	if ((config.mem_model == MM_PENTAGON) &&
@@ -99,8 +99,7 @@ uint8_t Z80::m1_cycle()
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
-	opcode = rd(cpu.pc++);
-	m_opcode = opcode;                          // Keep opcode copy for trace / debug purposes
+	opcode = rd(cpu.pc++);                      // Keep opcode copy for trace / debug purposes
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
@@ -118,9 +117,9 @@ uint8_t Z80::m1_cycle()
 // Note: Only TSConf supports interrupt vectors
 uint8_t Z80::InterruptVector()
 {
-	Z80& _cpu_state = *this;
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
+	static Z80& _cpu_state = *this;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
 
 	uint8_t result = 0xFF;
 
@@ -204,10 +203,10 @@ void Z80::retn()
 //
 uint8_t Z80::MemoryReadFast(uint16_t addr)
 {
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
-	VideoControl& video = _context->pScreen->_vid;
-	Memory& memory = *_context->pMemory;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static VideoControl& video = _context->pScreen->_vid;
+	static Memory& memory = *_context->pMemory;
 
 	uint8_t result = 0xFF;
 
@@ -289,11 +288,11 @@ uint8_t Z80::MemoryReadDebug(uint16_t addr)
 //
 void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
 {
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
-	TEMP& temporary = _context->temporary;
-	VideoControl& video = _context->pScreen->_vid;
-	Memory& mem = *_context->pMemory;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static TEMP& temporary = _context->temporary;
+	static VideoControl& video = _context->pScreen->_vid;
+	static Memory& mem = *_context->pMemory;
 
 	// Determine CPU bank (from address bits 14 and 15)
 	uint8_t bank = (addr >> 14) & 0x03;
@@ -433,10 +432,10 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 
 void Z80::Z80FrameCycle()
 {
-	Z80& cpu = *this;
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
-	VideoControl& video = _context->pScreen->_vid;
+	static Z80& cpu = *this;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
+	static VideoControl& video = _context->pScreen->_vid;
 
 	// TODO: Move to platform plugin
 	// Was:
@@ -469,7 +468,7 @@ void Z80::Z80FrameCycle()
 			}
 
 			Z80Step();
-			UpdateScreen(); // update screen, TSU, DMA
+			UpdateScreen(); // Reflect state changes on screen, TSU, DMA
 		}
 
 		return;
@@ -536,11 +535,11 @@ void Z80::Reset()
 //
 void Z80::Z80Step()
 {
-	Z80& cpu = *this;
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
-	TEMP& temporary = _context->temporary;
-	Memory& memory = *_context->pMemory;
+	static Z80& cpu = *this;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static TEMP& temporary = _context->temporary;
+	static Memory& memory = *_context->pMemory;
 
 	// Let debugger process step event
 	ProcessDebuggerEvents();
@@ -648,10 +647,10 @@ void Z80::SetBanks()
 
 void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
-	Z80& cpu = *this;
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
-	VideoControl& video = _context->pScreen->_vid;
+	static Z80& cpu = *this;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
+	static VideoControl& video = _context->pScreen->_vid;
 
 	// Baseconf NMI trap
 	if (config.mem_model == MM_ATM3 && (state.pBF & 0x10) && (cpu.pc == state.pBD))
@@ -726,9 +725,9 @@ void Z80::HandleNMI(ROMModeEnum mode)
 
 void Z80::HandleINT(uint8_t vector)
 {
-	Z80& cpu = *this;
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
+	static Z80& cpu = *this;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
 
 	unsigned interrupt_handler_address;
 	if (cpu.im < 2)
@@ -818,9 +817,9 @@ void Z80::DumpCurrentState()
 // TODO: Move to adapter
 void Z80::ts_frame_int(bool vdos)
 {
-	Z80& _cpu_state = *this;
-	CONFIG& config = _context->config;
-	COMPUTER& state = _context->state;
+	static Z80& _cpu_state = *this;
+	static CONFIG& config = _context->config;
+	static COMPUTER& state = _context->state;
 
 	if (!state.ts.intctrl.frame_pend)
 	{
@@ -868,7 +867,7 @@ void Z80::ts_line_int(bool vdos)
 
 void Z80::ts_dma_int(bool vdos)
 {
-	COMPUTER& state = _context->state;
+	static COMPUTER& state = _context->state;
 
 	if (state.ts.intctrl.new_dma)
 	{
@@ -883,7 +882,7 @@ void Z80::ts_dma_int(bool vdos)
 
 void Z80::DumpZ80State(char* buffer, size_t len)
 {
-	snprintf(buffer, len, "PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X clock: %04X", pc, af, bc, de, hl, ix, iy, t);
+	snprintf(buffer, len, "Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X clock: %04X", opcode, pc, af, bc, de, hl, ix, iy, t);
 }
 #endif
 //endregion

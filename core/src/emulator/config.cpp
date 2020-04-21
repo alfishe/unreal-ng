@@ -46,6 +46,14 @@ const char* Config::GetDefaultConfig()
 	return "unreal.ini";
 }
 
+wstring Config::GetScreenshotsFolder()
+{
+	static wstring exePath = FileHelper::GetExecutablePath();
+	static wstring screenshotsPath = FileHelper::PathCombine(exePath, "/screenshots");
+
+	return screenshotsPath;
+}
+
 bool Config::LoadConfig()
 {
 	bool result = false;

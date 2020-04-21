@@ -36,8 +36,8 @@ bool ROM::LoadROM()
 {
 	bool result = false;
 
-	CONFIG& config = _context->config;
-	Memory& memory = *_context->pMemory;
+	static CONFIG& config = _context->config;
+	static Memory& memory = *_context->pMemory;
 	
 	string romname;
 

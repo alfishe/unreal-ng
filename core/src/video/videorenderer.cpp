@@ -44,8 +44,8 @@ void VideoRenderer::RenderThread()
 
 	while (!_stopFlag.load())
 	{
-		// Wait until a frame is ready, or until 16ms have passed (to allow UI to run at a minimum of 50fps)
-		_waitForRender.Wait(20);
+		// Wait until a frame is ready, or until 18ms have passed (to allow UI to run at a minimum of 50fps)
+		_waitForRender.Wait(18);
 
 		if (_renderer)
 		{

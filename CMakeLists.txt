@@ -44,6 +44,7 @@ add_subdirectory(core/src)
 add_subdirectory(testclient)
 
 # Unit tests
+add_subdirectory(core/tests)
 if (BUILD_TESTS)
 	message("Building tests")
 	enable_testing()

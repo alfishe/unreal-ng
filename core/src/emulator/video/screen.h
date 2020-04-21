@@ -133,9 +133,10 @@ public:
 	uint32_t vbuf[2][sizeof_vbuf];
 #endif
 
+	// Video raster mode descriptors
 	const RASTER raster[R_MAX] =
 	{
-		{ R_256_192, 80, 272, 70, 70 + 128, 198 },
+		{ R_256_192, 80, 272, 70, 70 + 128, 198 },  // Genuine ZX-Spectrum screen
 		//{ R_256_192, 80, 272, 58, 186, 198 },
 		{ R_320_200, 76, 276, 54, 214, 214 },
 		{ R_320_240, 56, 296, 54, 214, 214 },
@@ -236,21 +237,13 @@ public:
 
 	void Init();
 
-	void InitFrame();
-	void InitRaster();
-	void InitMemoryCounters();
+	virtual void InitFrame();
+	virtual void InitRaster();
+	virtual void InitMemoryCounters();
 
-	void UpdateScreen();
+	virtual void UpdateScreen();
 
 	void DrawScreenBorder(uint32_t n);
-
-public:
-	// TSConf specific
-	// TODO: move to TSConf plugin
-	uint32_t TSConf_GetAvailableFrameMemcycles(uint32_t dram_t);
-	void TSConf_Draw(uint32_t vptr);
-	uint32_t TSConf_Render(uint32_t t);
-	void TSConf_DMA(uint32_t tacts);
 
 	// Draw helpers
 public:
