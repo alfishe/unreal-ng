@@ -46,6 +46,11 @@ void Logger::Error(string fmt, ...)
 	va_end(args);
 }
 
+void Logger::EmptyLine()
+{
+    printf("\n");
+}
+
 void Logger::Out(string fmt, va_list args)
 {
 	//region Print timestanp

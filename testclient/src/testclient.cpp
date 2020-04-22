@@ -5,18 +5,69 @@
 #include "../../core/src/emulator/emulator.h"
 #include "../../core/src/3rdparty/message-center/messagecenter.h"
 
+#if __linux__
+#include <csignal>
+#endif
+
+#if __APPLE__
+    #include <csignal>
+#endif
+
+TestClient client;
+
+#if _WIN32
+BOOL WINAPI HandlerRoutine(DWORD dwCtrlType)
+{
+    LOGEMPTY();
+    LOGINFO("Stopping emulator...");
+    client.Stop();
+    exit(0);
+}
+#endif
+
+#if defined(__linux__) || defined(__APPLE__)
+void SignalHandler(int signal)
+{
+    LOGEMPTY();
+    LOGINFO("Stopping emulator...");
+    client.Stop();
+    exit(0);
+}
+#endif
 
 int main()
 {
     std::cout << "Hello World!\n";
 
-	TestClient client;
+#ifdef _WIN32
+    SetConsoleCtrlHandler(HandlerRoutine, TRUE);
+#endif
+
+#ifdef __linux__
+    struct sigaction sigIntHandler;
+
+    sigIntHandler.sa_handler = SignalHandler;
+    sigemptyset(&sigIntHandler.sa_mask);
+    sigIntHandler.sa_flags = 0;
+
+    sigaction(SIGINT, &sigIntHandler, NULL);
+#endif
+
+#if __APPLE__
+    struct sigaction sigIntHandler;
+
+    sigIntHandler.sa_handler = SignalHandler;
+    sigemptyset(&sigIntHandler.sa_mask);
+    sigIntHandler.sa_flags = 0;
+
+    sigaction(SIGINT, &sigIntHandler, NULL);
+#endif
+
 	client.Start();
 }
 
 TestClient::TestClient()
 {
-
 }
 
 TestClient::~TestClient()

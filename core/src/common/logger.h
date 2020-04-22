@@ -10,6 +10,8 @@ using namespace std;
 #define LOGINFO(format, ...) Logger::Info(format, ##__VA_ARGS__)
 #define LOGWARNING(format, ...) Logger::Warning(format, ##__VA_ARGS__)
 #define LOGERROR(format, ...) Logger::Error(format, ##__VA_ARGS__)
+#define LOGEMPTY(...) Logger::EmptyLine(##__VA_ARGS__)
+
 
 class Logger
 {
@@ -18,6 +20,7 @@ public:
 	static void Info(string fmt, ...);
 	static void Warning(string fmt, ...);
 	static void Error(string fmt, ...);
+	static void EmptyLine();
 
 protected:
 	static void Out(string fmt, va_list args);
