@@ -23,4 +23,14 @@ function (EXCLUDE_FILES_FROM_DIR_IN_LIST _InFileList _excludeDirName _verbose OU
   set(${outVar} ${_InFileList} PARENT_SCOPE)                          # Return the SOURCE_FILES variable to the calling parent
 endfunction (EXCLUDE_FILES_FROM_DIR_IN_LIST)
 
+# Function:                 GET_OSX_VERSION
+# Description:              Gets macOS major version (i.e. 14 eq. Mojave, 15 eq. Catalina)
+# Param outVar:             Integer number representing macOS major version
+function (GET_OSX_VERSION OUTVAR outVar)
+  execute_process(COMMAND sw_vers OUTPUT_VARIABLE OSX_VERSION)
+  string(REGEX MATCH "([0-9]+.[0-9]+)" OSX_VERSION ${OSX_VERSION})
+  message("OSX_VERSION: ${OSX_VERSION}")
+  string(REGEX MATCH "[0-9]+$" OSX_FAMILY ${OSX_VERSION})
 
+  set(${outVar} ${OSX_VERSION} PARENT_SCOPE)
+endfunction(GET_OSX_VERSION)
