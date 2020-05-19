@@ -8,6 +8,11 @@
 
 using namespace std;
 
+class Z80;
+class Renderers;
+
+//region Constants
+
 // Video framebuffer and rendering related
 #define MAX_WIDTH_P (64 * 2)
 #define MAX_WIDTH 512
@@ -20,6 +25,10 @@ using namespace std;
 #define VID_HEIGHT	320		// Full screen height in pixels (same as in scan lines)
 
 #define MEM_CYCLES (VID_TACTS * 2)
+
+//endregion Constants
+
+//region Enumerations
 
 enum VideoModeEnum
 {
@@ -41,20 +50,24 @@ enum VideoModeEnum
 	M_GMX,		// GMX
 };
 
-enum RASTER_N
+enum RasterModeEnum
 {
-	R_256_192 = 0,	// Sinclair
-	R_320_200,		// ATM, TS
-	R_320_240,		// TS
-	R_360_288,		// TS
-	R_384_304,		// AlCo
-	R_512_240,		// Profi
+	R_256_192 = 0,	    // Sinclair
+	R_320_200 = 1,		// ATM, TS
+	R_320_240 = 2,		// TS
+	R_360_288 = 3,		// TS
+	R_384_304 = 4,		// AlCo
+	R_512_240 = 5,		// Profi
 	R_MAX
 };
 
+//endregion Enumerations
+
+//region Structures
+
 struct RASTER
 {
-	RASTER_N num;
+	RasterModeEnum num;
 	uint32_t u_brd;	// first pixel line
 	uint32_t d_brd;	// first lower border line
 	uint32_t l_brd;	// first pixel tact
@@ -88,8 +101,16 @@ struct VideoControl
 	uint16_t		memcyc_lcmd;	// Memory cycles used in last command
 };
 
-class Z80;
-class Renderers;
+struct FramebufferDescriptor
+{
+	uint16_t width = 0;
+	uint16_t height = 0;
+
+	uint8_t* memoryBuffer = nullptr;
+	size_t memoryBufferSize = 0;
+};
+
+//endregion Structures
 
 // ULA+ color models:
 //
@@ -208,6 +229,8 @@ protected:
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
 
+	FramebufferDescriptor _framebuffer;
+
 	DrawCallback _drawCallbacks[16] =
 	{
 		&Screen::DrawBorder,
@@ -232,8 +255,9 @@ public:
 	VideoControl _vid;
 
 public:
-	Screen() = delete;		// Disable default contructor; C++ 11 feature
+	Screen() = delete;		            // Disable default contructor; C++ 11 feature
 	Screen(EmulatorContext* context);
+	virtual ~Screen();
 
 	void Init();
 
@@ -242,6 +266,11 @@ public:
 	virtual void InitMemoryCounters();
 
 	virtual void UpdateScreen();
+
+protected:
+	void AllocateFramebuffer(VideoModeEnum mode);
+	void DeallocateFramebuffer();
+	void GetFramebufferData(uint8_t** buffer, size_t* size);
 
 	void DrawScreenBorder(uint32_t n);
 

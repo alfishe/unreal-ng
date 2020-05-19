@@ -40,6 +40,9 @@
 #define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES*PAGE)
 #define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES*PAGE)
 
+// Byte-size for RGBA pixel
+#define RGBA_SIZE 4
+
 #ifdef MOD_GSZ80
 	#define ROM_GS_M    (ROM_BASE_M + MAX_ROM_PAGES*PAGE)
 	#define GSRAM_M     (ROM_GS_M + MAX_GSROM_PAGES*PAGE)
@@ -61,20 +64,20 @@ enum MOUSE_WHEEL_MODE { MOUSE_WHEEL_NONE, MOUSE_WHEEL_KEYBOARD, MOUSE_WHEEL_KEMP
 
 enum MEM_MODEL
 {
-	MM_PENTAGON = 0,	// Pentagon 128/256/512/1024K
-	MM_TSL,				// TSConf
-	MM_ATM3,			// ATM Turbo 3.0
-	MM_ATM710,			// ATM Turbo 7.1.0
-	MM_ATM450,			// ATM Turbo 4.5.0 (512/1024)
-	MM_PROFI,			// Profi 1024K
-	MM_PLUS3,			// ZX Spectrum +3
-	MM_SCORP,			// Scorpion ZS256
-	MM_PROFSCORP,		// Scorpion ZS256 + ProfROM
-	MM_GMX,				// GMX
-	MM_KAY,				// Kay 1024
-	MM_QUORUM,			// Quorum
-	MM_LSY256,			// 
-	MM_PHOENIX,			// Phoenix
+	MM_PENTAGON = 0,    	// Pentagon 128/256/512/1024K
+	MM_TSL = 1,				// TSConf
+	MM_ATM3 = 2,			// ATM Turbo 3.0
+	MM_ATM710 = 3,			// ATM Turbo 7.1.0
+	MM_ATM450 = 4,			// ATM Turbo 4.5.0 (512/1024)
+	MM_PROFI = 5,			// Profi 1024K
+	MM_PLUS3 = 6,			// ZX Spectrum +3
+	MM_SCORP = 7,			// Scorpion ZS256
+	MM_PROFSCORP = 8,		// Scorpion ZS256 + ProfROM
+	MM_GMX = 9,				// GMX
+	MM_KAY = 10,			// Kay 1024
+	MM_QUORUM = 11,			// Quorum
+	MM_LSY256 = 12,			// LSY256
+	MM_PHOENIX = 13,        // Phoenix
 	N_MM_MODELS
 };
 
@@ -481,7 +484,7 @@ enum AY_SCHEME
 #define FF77_TX         0x06
 #define FF77_TL         0x07
 
-// Биты порта 00 для кворума
+// пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ 00 пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 static const uint8_t Q_F_RAM = 0x01;
 static const uint8_t Q_RAM_8 = 0x08;
 static const uint8_t Q_B_ROM = 0x20;

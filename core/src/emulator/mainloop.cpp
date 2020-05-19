@@ -63,6 +63,10 @@ void MainLoop::RunFrame()
 	// RenderAudio();
 
 	// Queue new frame data to Video/Audio encoding
+
+	// DEBUG: save frame to disk as image
+
+	// DEBUG: save frame to disk as image
 }
 
 //
@@ -77,7 +81,7 @@ void MainLoop::InitSoundFrame()
 //
 void MainLoop::InitVideoFrame()
 {
-	Screen& screen = *_context->pScreen;
+	static Screen& screen = *_context->pScreen;
 
 	screen.InitFrame();
 }

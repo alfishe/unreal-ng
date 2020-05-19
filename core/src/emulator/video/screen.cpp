@@ -14,6 +14,14 @@ Screen::Screen(EmulatorContext* context)
 	_context = context;
 }
 
+Screen::~Screen()
+{
+    if (_framebuffer.memoryBuffer != nullptr)
+    {
+        DeallocateFramebuffer();
+    }
+}
+
 void Screen::InitFrame()
 {
 	static COMPUTER& state = _context->state;
@@ -42,6 +50,8 @@ void Screen::InitRaster()
 	static COMPUTER& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
+
+	//region Set current video mode
 
 	// TSconf
 	/*
@@ -119,6 +129,7 @@ void Screen::InitRaster()
 
 	// Sinclair
 	video.mode = M_ZX;
+	//endregion
 }
 
 void Screen::InitMemoryCounters()
@@ -232,6 +243,46 @@ void Screen::UpdateScreen()
 			video.line++;
 		}
 	}
+}
+
+void Screen::AllocateFramebuffer(VideoModeEnum mode)
+{
+	// Deallocate existing framebuffer memory
+	DeallocateFramebuffer();
+
+	bool isUnknownVideoMode = false;
+	switch (mode)
+	{
+		M_ZX:
+			_framebuffer.width = 111;
+			break;
+		default:
+			LOGWARNING("AllocateFramebuffer: Unknown video mode");
+
+            isUnknownVideoMode = true;
+			break;
+	}
+
+	if (!isUnknownVideoMode)
+	{
+        _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
+        _framebuffer.memoryBuffer = new uint8_t(_framebuffer.memoryBufferSize);
+    }
+}
+
+void Screen::DeallocateFramebuffer()
+{
+	if (_framebuffer.memoryBuffer != nullptr)
+	{
+		delete _framebuffer.memoryBuffer;
+		_framebuffer.memoryBuffer = nullptr;
+		_framebuffer.memoryBufferSize = 0;
+	}
+}
+
+void Screen::GetFramebufferData(uint8_t** buffer, size_t* size)
+{
+
 }
 
 void Screen::DrawScreenBorder(uint32_t n)
