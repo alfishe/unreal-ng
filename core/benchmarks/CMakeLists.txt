@@ -13,8 +13,8 @@ if (APPLE)
     if (OSX_FAMILY LESS 15)
         # Only macOS 15 has std::filesystem libraries in CLang, so use brew installed GCC instead
         message(STATUS "Using GCC compiler on macOS")
-        set(CMAKE_C_COMPILER "/usr/local/bin/gcc")
-        set(CMAKE_CXX_COMPILER "/usr/local/bin/g++")
+        set(CMAKE_C_COMPILER "/usr/local/bin/gcc-9")
+        set(CMAKE_CXX_COMPILER "/usr/local/bin/g++-9")
     endif (OSX_FAMILY LESS 15)
 endif (APPLE)
 # THIS HAS TO COME BEFORE THE PROJECT LINE
