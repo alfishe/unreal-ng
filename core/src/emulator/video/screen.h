@@ -103,6 +103,8 @@ struct VideoControl
 
 struct FramebufferDescriptor
 {
+    VideoModeEnum videoMode = M_NUL;
+
 	uint16_t width = 0;
 	uint16_t height = 0;
 
@@ -271,11 +273,15 @@ protected:
 	void AllocateFramebuffer(VideoModeEnum mode);
 	void DeallocateFramebuffer();
 	void GetFramebufferData(uint8_t** buffer, size_t* size);
+#ifdef _DEBUG
+	void DumpFramebufferInfo(char* buffer, size_t len);
+#endif
 
 	void DrawScreenBorder(uint32_t n);
 
 	// Draw helpers
 public:
+    static std::string GetVideoModeName(VideoModeEnum mode);
 	void Draw(VideoModeEnum mode, uint32_t n);
 
 	void DrawBorder(uint32_t n);	// Border only

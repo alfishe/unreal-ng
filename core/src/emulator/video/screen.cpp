@@ -75,7 +75,7 @@ void Screen::InitRaster()
 		video.raster = raster[R_320_200];
 		if (((state.aFE >> 5) & 3) == aFE_16) { video.mode = M_ATM16; return; }
 		if (((state.aFE >> 5) & 3) == aFE_MC) { video.mode = M_ATMHR; return; }
-		video.mode = M_NUL; return;
+		video.mode = M_NUL;
 	}
 
 	// ATM 2 & 3
@@ -87,7 +87,7 @@ void Screen::InitRaster()
 		if ((state.pFF77 & 7) == FF77_MC) { video.mode = M_ATMHR; return; }
 		if ((state.pFF77 & 7) == FF77_TX) { video.mode = M_ATMTX; return; }
 		if (config.mem_model == MM_ATM3 && (state.pFF77 & 7) == FF77_TL) { video.mode = M_ATMTL; return; }
-		video.mode = M_NUL; return;
+		video.mode = M_NUL;
 	}
 
 	video.raster = raster[R_256_192];
@@ -99,7 +99,6 @@ void Screen::InitRaster()
 		if ((state.pEFF7 & m) == EFF7_HWMC) { video.mode = M_PMC; return; }
 
 		video.mode = M_NUL;
-		return;
 	}
 
 	// Pentagon AlCo modes
@@ -112,24 +111,25 @@ void Screen::InitRaster()
 		if ((state.pEFF7 & m) == EFF7_384) { video.raster = raster[R_384_304]; video.mode = M_P384; return; }
 
 		video.mode = M_NUL;
-		return;
 	}
 
 	if (config.mem_model == MM_PROFI && (state.pDFFD & 0x80))
 	{
 		video.raster = raster[R_512_240];
-		video.mode = M_PROFI; return;
+		video.mode = M_PROFI;
 	}
 
 	if (config.mem_model == MM_GMX && (state.p7EFD & 0x08))
 	{
 		video.raster = raster[R_320_200];
-		video.mode = M_GMX; return;
+		video.mode = M_GMX;
 	}
 
 	// Sinclair
 	video.mode = M_ZX;
 	//endregion
+
+    AllocateFramebuffer(video.mode);
 }
 
 void Screen::InitMemoryCounters()
@@ -247,13 +247,17 @@ void Screen::UpdateScreen()
 
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
+    // Buffer already allocated for the selected video mode
+    if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
+        return;
+
 	// Deallocate existing framebuffer memory
 	DeallocateFramebuffer();
 
 	bool isUnknownVideoMode = false;
 	switch (mode)
 	{
-		M_ZX:
+		case M_ZX:
 			_framebuffer.width = 111;
 			break;
 		default:
@@ -265,8 +269,21 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
 	if (!isUnknownVideoMode)
 	{
+	    _framebuffer.videoMode = mode;
         _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
         _framebuffer.memoryBuffer = new uint8_t(_framebuffer.memoryBufferSize);
+
+#ifdef _DEBUG
+        LOGINFO("Framebuffer allocated");
+
+        static char videoModeInfo[200];
+        DumpFramebufferInfo(videoModeInfo, sizeof(videoModeInfo));
+        LOGINFO(videoModeInfo);
+#endif
+    }
+	else
+    {
+	    LOGERROR("Unable to allocate framebuffer, unknown video mode");
     }
 }
 
@@ -284,6 +301,18 @@ void Screen::GetFramebufferData(uint8_t** buffer, size_t* size)
 {
 
 }
+
+//region Debug methods
+#ifdef _DEBUG
+#include <cstdio>
+
+void Screen::DumpFramebufferInfo(char* buffer, size_t len)
+{
+    std::string videoModeName = GetVideoModeName(_framebuffer.videoMode);
+    snprintf(buffer, len, "VideoMode: %s; Width: %d; Height: %d; Buffer: %d bytes", videoModeName.c_str(), _framebuffer.width, _framebuffer.height, _framebuffer.memoryBufferSize);
+}
+
+#endif
 
 void Screen::DrawScreenBorder(uint32_t n)
 {
@@ -303,6 +332,68 @@ void Screen::DrawScreenBorder(uint32_t n)
 	}
 
 	video.vptr = vptr;
+}
+
+std::string Screen::GetVideoModeName(VideoModeEnum mode)
+{
+    std::string result;
+
+    switch (mode)
+    {
+        case M_BRD:
+            result = "Border";
+            break;
+        case M_NUL:
+            result = "Nul";
+            break;
+        case M_ZX:
+            result = "ZX";
+            break;
+        case M_PMC:
+            result = "PMC";
+            break;
+        case M_P16:
+            result = "P16";
+            break;
+        case M_P384:
+            result = "P384";
+            break;
+        case M_PHR:
+            result = "PHR";
+            break;
+        case M_TS16:
+            result = "TS16";
+            break;
+        case M_TS256:
+            result = "TS256";
+            break;
+        case M_TSTX:
+            result = "TSTX";
+            break;
+        case M_ATM16:
+            result = "ATM16";
+            break;
+        case M_ATMHR:
+            result = "ATMHR";
+            break;
+        case M_ATMTX:
+            result = "ATMTX";
+            break;
+        case M_ATMTL:
+            result = "ATMTL";
+            break;
+        case M_PROFI:
+            result = "PROFI";
+            break;
+        case M_GMX:
+            result = "GMX";
+            break;
+        default:
+            result = "Unknown";
+            break;
+    }
+
+    return result;
 }
 
 //
