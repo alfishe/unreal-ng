@@ -129,7 +129,14 @@ void Screen::InitRaster()
 	video.mode = M_ZX;
 	//endregion
 
-    AllocateFramebuffer(video.mode);
+	// Select renderer for the mode
+	_mode = video.mode;
+	_nullCallback = _drawCallbacks[M_NUL];
+    _drawCallback = _drawCallbacks[_mode];
+    _borderCallback = _drawCallbacks[M_BRD];
+
+    // Allocate framebuffer
+    AllocateFramebuffer(_mode);
 }
 
 void Screen::InitMemoryCounters()
@@ -258,7 +265,6 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 	switch (mode)
 	{
 		case M_ZX:
-			_framebuffer.width = 111;
 			break;
 		default:
 			LOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -269,7 +275,13 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
 	if (!isUnknownVideoMode)
 	{
-	    _framebuffer.videoMode = mode;
+	    const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
+
+        _framebuffer.videoMode = mode;
+	    _framebuffer.width = rasterDescriptor.fullFrameWidth;
+	    _framebuffer.height = rasterDescriptor.fullFrameHeight;
+
+	    // Calculate required buffer size and allocate memory
         _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
         _framebuffer.memoryBuffer = new uint8_t(_framebuffer.memoryBufferSize);
 
@@ -309,30 +321,10 @@ void Screen::GetFramebufferData(uint8_t** buffer, size_t* size)
 void Screen::DumpFramebufferInfo(char* buffer, size_t len)
 {
     std::string videoModeName = GetVideoModeName(_framebuffer.videoMode);
-    snprintf(buffer, len, "VideoMode: %s; Width: %d; Height: %d; Buffer: %d bytes", videoModeName.c_str(), _framebuffer.width, _framebuffer.height, _framebuffer.memoryBufferSize);
+    snprintf(buffer, len, "VideoMode: %s; Width: %dpx; Height: %dpx; Buffer: %d bytes", videoModeName.c_str(), _framebuffer.width, _framebuffer.height, _framebuffer.memoryBufferSize);
 }
 
 #endif
-
-void Screen::DrawScreenBorder(uint32_t n)
-{
-	static Z80& cpu = *_cpu;
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
-
-	video.t_next += n;
-	uint32_t vptr = video.vptr;
-
-	for (; n > 0; n--)
-	{
-		uint32_t p = video.clut[state.ts.border];
-		vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
-		vptr += 4;
-	}
-
-	video.vptr = vptr;
-}
 
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {
@@ -340,9 +332,6 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
 
     switch (mode)
     {
-        case M_BRD:
-            result = "Border";
-            break;
         case M_NUL:
             result = "Nul";
             break;
@@ -360,6 +349,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
             break;
         case M_PHR:
             result = "PHR";
+            break;
+        case M_TIMEX:
+            result = "Timex";
             break;
         case M_TS16:
             result = "TS16";
@@ -388,6 +380,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
         case M_GMX:
             result = "GMX";
             break;
+        case M_BRD:
+            result = "Border";
+            break;
         default:
             result = "Unknown";
             break;
@@ -396,81 +391,32 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
     return result;
 }
 
+void Screen::DrawScreenBorder(uint32_t n)
+{
+    static Z80& cpu = *_cpu;
+    static COMPUTER& state = _context->state;
+    static CONFIG& config = _context->config;
+    static VideoControl& video = _context->pScreen->_vid;
+
+    video.t_next += n;
+    uint32_t vptr = video.vptr;
+
+    for (; n > 0; n--)
+    {
+        uint32_t p = video.clut[state.ts.border];
+        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
+        vptr += 4;
+    }
+
+    video.vptr = vptr;
+}
+
 //
 // Method called after each CPU operation execution to update
 //
-void Screen::Draw(VideoModeEnum mode, uint32_t n)
+void Screen::Draw(uint32_t n)
 {
-	switch (mode)
-	{
-		case VideoModeEnum::M_BRD:
-			DrawBorder(n);
-			break;
-		case VideoModeEnum::M_NUL:
-			DrawNull(n);
-			break;
-		case VideoModeEnum::M_PMC:
-			DrawPMC(n);
-			break;
-		case VideoModeEnum::M_P16:
-			DrawP16(n);
-			break;
-		case VideoModeEnum::M_P384:
-			DrawP384(n);
-			break;
-		case VideoModeEnum::M_PHR:
-			DrawPHR(n);
-			break;
-		case VideoModeEnum::M_TS16:
-			DrawTS16(n);
-			break;
-		case VideoModeEnum::M_TS256:
-			DrawTS256(n);
-			break;
-		case VideoModeEnum::M_TSTX:
-			DrawTSText(n);
-			break;
-		case VideoModeEnum::M_ATM16:
-			DrawATM16(n);
-			break;
-		case VideoModeEnum::M_ATMHR:
-			DrawATMHiRes(n);
-			break;
-		case VideoModeEnum::M_ATMTX:
-			DrawATM2Text(n);
-			break;
-		case VideoModeEnum::M_ATMTL:
-			DrawATM3Text(n);
-			break;
-		case VideoModeEnum::M_PROFI:
-			DrawProfi(n);
-			break;
-		case VideoModeEnum::M_GMX:
-			DrawGMX(n);
-			break;
-		default:
-			DrawNull(n);
-			break;
-	};
-}
-
-void Screen::DrawBorder(uint32_t n)
-{
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
-
-	video.t_next += n;
-	uint32_t vptr = video.vptr;
-
-	for (; n > 0; n--)
-	{
-		uint32_t p = video.clut[state.ts.border];
-		vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
-		vptr += 4;
-	}
-
-	video.vptr = vptr;
+    (this->*_currentDrawCallback)(n);
 }
 
 // Skip render
@@ -506,9 +452,9 @@ void Screen::DrawZX(uint32_t n)
 		}
 	};
 
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
-	VideoControl& video = _vid;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
+	static VideoControl& video = _vid;
 
 	if (n > sizeof vbuf[0])
 	{
@@ -594,6 +540,11 @@ void Screen::DrawPHR(uint32_t n)
 
 }
 
+void Screen::DrawTimex(uint32_t n)
+{
+
+}
+
 void Screen::DrawTS16(uint32_t n)
 {
 
@@ -637,4 +588,23 @@ void Screen::DrawProfi(uint32_t n)
 void Screen::DrawGMX(uint32_t n)
 {
 
+}
+
+void Screen::DrawBorder(uint32_t n)
+{
+    static COMPUTER& state = _context->state;
+    static CONFIG& config = _context->config;
+    static VideoControl& video = _context->pScreen->_vid;
+
+    video.t_next += n;
+    uint32_t vptr = video.vptr;
+
+    for (; n > 0; n--)
+    {
+        uint32_t p = video.clut[state.ts.border];
+        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
+        vptr += 4;
+    }
+
+    video.vptr = vptr;
 }
