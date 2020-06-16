@@ -18,4 +18,23 @@ public:
 
 	string ReplaceAll(string& str, string from, string to);
 	static wstring ReplaceAll(wstring& wstr, wstring wfrom, wstring wto);
+
+    template<typename ... Args>
+    static std::string Format(const std::string& format, Args ... args)
+    {
+        std::string result;
+
+        // Precalculate resulting buffer size (adding +1 byte for trailing '\0')
+        size_t size = snprintf(nullptr, 0, format.c_str(), args ...) + 1;
+        if (size > 0)
+        {
+            std::unique_ptr<char[]> buf(new char[ size ]);
+            snprintf(buf.get(), size, format.c_str(), args ...);
+
+            // Create output string (without trailing '\0')
+            result = std::string(buf.get(),buf.get() + size - 1);
+        }
+
+        return result;
+    }
 };
