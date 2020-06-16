@@ -1,3 +1,4 @@
+#include <common/image/imagehelper.h>
 #include "stdafx.h"
 
 #include "common/logger.h"
@@ -252,6 +253,11 @@ void Screen::UpdateScreen()
 	}
 }
 
+void Screen::SaveScreen()
+{
+    ImageHelper::SaveFrameToPNG(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width, _framebuffer.height);
+}
+
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
     // Buffer already allocated for the selected video mode
@@ -403,8 +409,8 @@ void Screen::DrawScreenBorder(uint32_t n)
 
     for (; n > 0; n--)
     {
-        uint32_t p = video.clut[state.ts.border];
-        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
+        uint32_t pixelColorRGBA = video.clut[state.ts.border];
+        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = pixelColorRGBA;
         vptr += 4;
     }
 

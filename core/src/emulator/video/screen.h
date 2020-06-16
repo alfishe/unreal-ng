@@ -301,6 +301,8 @@ public:
 
 	virtual void UpdateScreen();
 
+	virtual void SaveScreen();
+
 protected:
 	void AllocateFramebuffer(VideoModeEnum mode);
 	void DeallocateFramebuffer();
