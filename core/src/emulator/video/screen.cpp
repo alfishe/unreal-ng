@@ -1,3 +1,4 @@
+#include <common/image/imagehelper.h>
 #include "stdafx.h"
 
 #include "common/logger.h"
@@ -12,6 +13,14 @@ Screen::Screen(EmulatorContext* context)
 	_system = context->pCPU;
 	_cpu = _system->GetZ80();
 	_context = context;
+}
+
+Screen::~Screen()
+{
+    if (_framebuffer.memoryBuffer != nullptr)
+    {
+        DeallocateFramebuffer();
+    }
 }
 
 void Screen::InitFrame()
@@ -43,6 +52,8 @@ void Screen::InitRaster()
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
+	//region Set current video mode
+
 	// TSconf
 	/*
 	if (config.mem_model == MM_TSL)
@@ -65,7 +76,7 @@ void Screen::InitRaster()
 		video.raster = raster[R_320_200];
 		if (((state.aFE >> 5) & 3) == aFE_16) { video.mode = M_ATM16; return; }
 		if (((state.aFE >> 5) & 3) == aFE_MC) { video.mode = M_ATMHR; return; }
-		video.mode = M_NUL; return;
+		video.mode = M_NUL;
 	}
 
 	// ATM 2 & 3
@@ -77,7 +88,7 @@ void Screen::InitRaster()
 		if ((state.pFF77 & 7) == FF77_MC) { video.mode = M_ATMHR; return; }
 		if ((state.pFF77 & 7) == FF77_TX) { video.mode = M_ATMTX; return; }
 		if (config.mem_model == MM_ATM3 && (state.pFF77 & 7) == FF77_TL) { video.mode = M_ATMTL; return; }
-		video.mode = M_NUL; return;
+		video.mode = M_NUL;
 	}
 
 	video.raster = raster[R_256_192];
@@ -89,7 +100,6 @@ void Screen::InitRaster()
 		if ((state.pEFF7 & m) == EFF7_HWMC) { video.mode = M_PMC; return; }
 
 		video.mode = M_NUL;
-		return;
 	}
 
 	// Pentagon AlCo modes
@@ -102,23 +112,32 @@ void Screen::InitRaster()
 		if ((state.pEFF7 & m) == EFF7_384) { video.raster = raster[R_384_304]; video.mode = M_P384; return; }
 
 		video.mode = M_NUL;
-		return;
 	}
 
 	if (config.mem_model == MM_PROFI && (state.pDFFD & 0x80))
 	{
 		video.raster = raster[R_512_240];
-		video.mode = M_PROFI; return;
+		video.mode = M_PROFI;
 	}
 
 	if (config.mem_model == MM_GMX && (state.p7EFD & 0x08))
 	{
 		video.raster = raster[R_320_200];
-		video.mode = M_GMX; return;
+		video.mode = M_GMX;
 	}
 
 	// Sinclair
 	video.mode = M_ZX;
+	//endregion
+
+	// Select renderer for the mode
+	_mode = video.mode;
+	_nullCallback = _drawCallbacks[M_NUL];
+    _drawCallback = _drawCallbacks[_mode];
+    _borderCallback = _drawCallbacks[M_BRD];
+
+    // Allocate framebuffer
+    AllocateFramebuffer(_mode);
 }
 
 void Screen::InitMemoryCounters()
@@ -234,101 +253,176 @@ void Screen::UpdateScreen()
 	}
 }
 
-void Screen::DrawScreenBorder(uint32_t n)
+void Screen::SaveScreen()
 {
-	static Z80& cpu = *_cpu;
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
+    ImageHelper::SaveFrameToPNG(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width, _framebuffer.height);
+}
 
-	video.t_next += n;
-	uint32_t vptr = video.vptr;
+void Screen::AllocateFramebuffer(VideoModeEnum mode)
+{
+    // Buffer already allocated for the selected video mode
+    if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
+        return;
 
-	for (; n > 0; n--)
+	// Deallocate existing framebuffer memory
+	DeallocateFramebuffer();
+
+	bool isUnknownVideoMode = false;
+	switch (mode)
 	{
-		uint32_t p = video.clut[state.ts.border];
-		vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
-		vptr += 4;
+		case M_ZX:
+			break;
+		default:
+			LOGWARNING("AllocateFramebuffer: Unknown video mode");
+
+            isUnknownVideoMode = true;
+			break;
 	}
 
-	video.vptr = vptr;
+	if (!isUnknownVideoMode)
+	{
+	    const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
+
+        _framebuffer.videoMode = mode;
+	    _framebuffer.width = rasterDescriptor.fullFrameWidth;
+	    _framebuffer.height = rasterDescriptor.fullFrameHeight;
+
+	    // Calculate required buffer size and allocate memory
+        _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
+        _framebuffer.memoryBuffer = new uint8_t(_framebuffer.memoryBufferSize);
+
+#ifdef _DEBUG
+        LOGINFO("Framebuffer allocated");
+
+        static char videoModeInfo[200];
+        DumpFramebufferInfo(videoModeInfo, sizeof(videoModeInfo));
+        LOGINFO(videoModeInfo);
+#endif
+    }
+	else
+    {
+	    LOGERROR("Unable to allocate framebuffer, unknown video mode");
+    }
+}
+
+void Screen::DeallocateFramebuffer()
+{
+	if (_framebuffer.memoryBuffer != nullptr)
+	{
+		delete _framebuffer.memoryBuffer;
+		_framebuffer.memoryBuffer = nullptr;
+		_framebuffer.memoryBufferSize = 0;
+	}
+}
+
+void Screen::GetFramebufferData(uint8_t** buffer, size_t* size)
+{
+
+}
+
+//region Debug methods
+#ifdef _DEBUG
+#include <cstdio>
+
+void Screen::DumpFramebufferInfo(char* buffer, size_t len)
+{
+    std::string videoModeName = GetVideoModeName(_framebuffer.videoMode);
+    snprintf(buffer, len, "VideoMode: %s; Width: %dpx; Height: %dpx; Buffer: %d bytes", videoModeName.c_str(), _framebuffer.width, _framebuffer.height, _framebuffer.memoryBufferSize);
+}
+
+#endif
+
+std::string Screen::GetVideoModeName(VideoModeEnum mode)
+{
+    std::string result;
+
+    switch (mode)
+    {
+        case M_NUL:
+            result = "Nul";
+            break;
+        case M_ZX:
+            result = "ZX";
+            break;
+        case M_PMC:
+            result = "PMC";
+            break;
+        case M_P16:
+            result = "P16";
+            break;
+        case M_P384:
+            result = "P384";
+            break;
+        case M_PHR:
+            result = "PHR";
+            break;
+        case M_TIMEX:
+            result = "Timex";
+            break;
+        case M_TS16:
+            result = "TS16";
+            break;
+        case M_TS256:
+            result = "TS256";
+            break;
+        case M_TSTX:
+            result = "TSTX";
+            break;
+        case M_ATM16:
+            result = "ATM16";
+            break;
+        case M_ATMHR:
+            result = "ATMHR";
+            break;
+        case M_ATMTX:
+            result = "ATMTX";
+            break;
+        case M_ATMTL:
+            result = "ATMTL";
+            break;
+        case M_PROFI:
+            result = "PROFI";
+            break;
+        case M_GMX:
+            result = "GMX";
+            break;
+        case M_BRD:
+            result = "Border";
+            break;
+        default:
+            result = "Unknown";
+            break;
+    }
+
+    return result;
+}
+
+void Screen::DrawScreenBorder(uint32_t n)
+{
+    static Z80& cpu = *_cpu;
+    static COMPUTER& state = _context->state;
+    static CONFIG& config = _context->config;
+    static VideoControl& video = _context->pScreen->_vid;
+
+    video.t_next += n;
+    uint32_t vptr = video.vptr;
+
+    for (; n > 0; n--)
+    {
+        uint32_t pixelColorRGBA = video.clut[state.ts.border];
+        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = pixelColorRGBA;
+        vptr += 4;
+    }
+
+    video.vptr = vptr;
 }
 
 //
 // Method called after each CPU operation execution to update
 //
-void Screen::Draw(VideoModeEnum mode, uint32_t n)
+void Screen::Draw(uint32_t n)
 {
-	switch (mode)
-	{
-		case VideoModeEnum::M_BRD:
-			DrawBorder(n);
-			break;
-		case VideoModeEnum::M_NUL:
-			DrawNull(n);
-			break;
-		case VideoModeEnum::M_PMC:
-			DrawPMC(n);
-			break;
-		case VideoModeEnum::M_P16:
-			DrawP16(n);
-			break;
-		case VideoModeEnum::M_P384:
-			DrawP384(n);
-			break;
-		case VideoModeEnum::M_PHR:
-			DrawPHR(n);
-			break;
-		case VideoModeEnum::M_TS16:
-			DrawTS16(n);
-			break;
-		case VideoModeEnum::M_TS256:
-			DrawTS256(n);
-			break;
-		case VideoModeEnum::M_TSTX:
-			DrawTSText(n);
-			break;
-		case VideoModeEnum::M_ATM16:
-			DrawATM16(n);
-			break;
-		case VideoModeEnum::M_ATMHR:
-			DrawATMHiRes(n);
-			break;
-		case VideoModeEnum::M_ATMTX:
-			DrawATM2Text(n);
-			break;
-		case VideoModeEnum::M_ATMTL:
-			DrawATM3Text(n);
-			break;
-		case VideoModeEnum::M_PROFI:
-			DrawProfi(n);
-			break;
-		case VideoModeEnum::M_GMX:
-			DrawGMX(n);
-			break;
-		default:
-			DrawNull(n);
-			break;
-	};
-}
-
-void Screen::DrawBorder(uint32_t n)
-{
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
-
-	video.t_next += n;
-	uint32_t vptr = video.vptr;
-
-	for (; n > 0; n--)
-	{
-		uint32_t p = video.clut[state.ts.border];
-		vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
-		vptr += 4;
-	}
-
-	video.vptr = vptr;
+    (this->*_currentDrawCallback)(n);
 }
 
 // Skip render
@@ -364,9 +458,9 @@ void Screen::DrawZX(uint32_t n)
 		}
 	};
 
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
-	VideoControl& video = _vid;
+	static COMPUTER& state = _context->state;
+	static CONFIG& config = _context->config;
+	static VideoControl& video = _vid;
 
 	if (n > sizeof vbuf[0])
 	{
@@ -452,6 +546,11 @@ void Screen::DrawPHR(uint32_t n)
 
 }
 
+void Screen::DrawTimex(uint32_t n)
+{
+
+}
+
 void Screen::DrawTS16(uint32_t n)
 {
 
@@ -495,4 +594,23 @@ void Screen::DrawProfi(uint32_t n)
 void Screen::DrawGMX(uint32_t n)
 {
 
+}
+
+void Screen::DrawBorder(uint32_t n)
+{
+    static COMPUTER& state = _context->state;
+    static CONFIG& config = _context->config;
+    static VideoControl& video = _context->pScreen->_vid;
+
+    video.t_next += n;
+    uint32_t vptr = video.vptr;
+
+    for (; n > 0; n--)
+    {
+        uint32_t p = video.clut[state.ts.border];
+        vbuf[video.buf][vptr] = vbuf[video.buf][vptr + 1] = vbuf[video.buf][vptr + 2] = vbuf[video.buf][vptr + 3] = p;
+        vptr += 4;
+    }
+
+    video.vptr = vptr;
 }

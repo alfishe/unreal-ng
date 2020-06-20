@@ -49,6 +49,8 @@ void MainLoop::Stop()
 
 void MainLoop::RunFrame()
 {
+    static Screen& screen = *_context->pScreen;
+
 	// Prepare sound and video for next cycle
 	InitSoundFrame();
 	InitVideoFrame();
@@ -65,6 +67,14 @@ void MainLoop::RunFrame()
 	// RenderAudio();
 
 	// Queue new frame data to Video/Audio encoding
+
+	// DEBUG: save frame to disk as image (only each 100th)
+	static int i = 0;
+	if (i % 1000)
+	    screen.SaveScreen();
+	i++;
+
+	// DEBUG: save frame to disk as image
 }
 
 //
@@ -79,7 +89,7 @@ void MainLoop::InitSoundFrame()
 //
 void MainLoop::InitVideoFrame()
 {
-	Screen& screen = *_context->pScreen;
+	static Screen& screen = *_context->pScreen;
 
 	screen.InitFrame();
 }

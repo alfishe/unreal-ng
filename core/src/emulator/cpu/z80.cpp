@@ -500,8 +500,7 @@ void Z80::Z80FrameCycle()
 		// Perform single Z80 command cycle
 		Z80Step();
 
-		// Update screen buffer
-		// TSConf - TSU, DMA
+		// Update screen buffer (including border draw)
 		UpdateScreen();
 	}
 }

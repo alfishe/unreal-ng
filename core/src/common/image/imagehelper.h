@@ -6,5 +6,7 @@
 
 class ImageHelper
 {
-	void savePNG(std::string filename, uint8_t* buffer, size_t size, unsigned width, unsigned height);
+public:
+	static void SavePNG(std::string filename, uint8_t* buffer, size_t size, unsigned width, unsigned height);
+	static void SaveFrameToPNG(uint8_t* buffer, size_t size, unsigned width, unsigned height);
 };

@@ -263,6 +263,7 @@ void Emulator::RunSingleCPUCycle()
 	_cpu->GetZ80()->Z80Step();
 
 #ifdef _DEBUG
+	// Use static buffer to save on strings reallocation. CPU cycle is most frequently called functionality.
 	static char buffer[1024];
 	_cpu->GetZ80()->DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
 	LOGINFO(buffer);

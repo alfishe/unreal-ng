@@ -8,6 +8,11 @@
 
 using namespace std;
 
+class Z80;
+class Renderers;
+
+//region Constants
+
 // Video framebuffer and rendering related
 #define MAX_WIDTH_P (64 * 2)
 #define MAX_WIDTH 512
@@ -21,15 +26,21 @@ using namespace std;
 
 #define MEM_CYCLES (VID_TACTS * 2)
 
-enum VideoModeEnum
+//endregion Constants
+
+//region Enumerations
+
+enum VideoModeEnum : uint8_t
 {
-	M_BRD = 0,	// Border only
-	M_NUL,		// Non-existing mode
-	M_ZX,		// Sinclair
-	M_PMC,		// Pentagon Multicolor
-	M_P16,		// Pentagon 16c
-	M_P384,		// Pentagon 384x304
-	M_PHR,		// Pentagon HiRes
+    M_NUL = 0,	// Non-existing mode
+    M_ZX,		// Sinclair ZX Spectrum
+    M_PMC,		// Pentagon Multicolor
+    M_P16,		// Pentagon 16c
+    M_P384,		// Pentagon 384x304
+    M_PHR,		// Pentagon HiRes
+
+	M_TIMEX,     // Timex with 32 x 192 attributes (2 colors per line)
+
 	M_TS16,		// TS 16c
 	M_TS256,	// TS 256c
 	M_TSTX,		// TS Text
@@ -39,22 +50,31 @@ enum VideoModeEnum
 	M_ATMTL,	// ATM Text Linear
 	M_PROFI,	// Profi
 	M_GMX,		// GMX
+
+    M_BRD,  	// Border only
+
+	M_MAX
 };
 
-enum RASTER_N
+enum RasterModeEnum
 {
-	R_256_192 = 0,	// Sinclair
-	R_320_200,		// ATM, TS
-	R_320_240,		// TS
-	R_360_288,		// TS
-	R_384_304,		// AlCo
-	R_512_240,		// Profi
+	R_256_192 = 0,	    // Sinclair
+	R_320_200 = 1,		// ATM, TS
+	R_320_240 = 2,		// TS
+	R_360_288 = 3,		// TS
+	R_384_304 = 4,		// AlCo
+	R_512_240 = 5,		// Profi
+
 	R_MAX
 };
 
+//endregion Enumerations
+
+//region Structures
+
 struct RASTER
 {
-	RASTER_N num;
+	RasterModeEnum num;
 	uint32_t u_brd;	// first pixel line
 	uint32_t d_brd;	// first lower border line
 	uint32_t l_brd;	// first pixel tact
@@ -88,8 +108,30 @@ struct VideoControl
 	uint16_t		memcyc_lcmd;	// Memory cycles used in last command
 };
 
-class Z80;
-class Renderers;
+struct RasterDescriptor
+{
+    uint16_t fullFrameWidth;
+    uint16_t fullFrameHeight;
+
+    uint16_t screenWidth;
+    uint16_t screenHeight;
+
+    uint16_t screenOffsetLeft;
+    uint16_t screenOffsetTop;
+};
+
+struct FramebufferDescriptor
+{
+    VideoModeEnum videoMode = M_NUL;
+
+	uint16_t width = 0;
+	uint16_t height = 0;
+
+	uint8_t* memoryBuffer = nullptr;
+	size_t memoryBufferSize = 0;
+};
+
+//endregion Structures
 
 // ULA+ color models:
 //
@@ -144,6 +186,13 @@ public:
 		{ R_384_304, 16, 320, 32, 224, 0 },
 		{ R_512_240, 56, 296, 70, 198, 0 },
 	};
+
+	/// Raster descriptors for each video mode
+	const RasterDescriptor rasterDescriptors[M_MAX] =
+    {
+	    { 0, 0, 0, 0, 0, 0 },           // M_NUL
+	    { 352, 312, 256, 192, 48, 32 }  // M_ZX
+    };
 
 	// Default color table: 0RRrrrGG gggBBbbb
 	uint16_t spec_colors[16] =
@@ -208,15 +257,22 @@ protected:
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
 
-	DrawCallback _drawCallbacks[16] =
+	VideoModeEnum _mode;
+	FramebufferDescriptor _framebuffer;
+	DrawCallback _currentDrawCallback;
+	DrawCallback _nullCallback;
+    DrawCallback _drawCallback;
+	DrawCallback _borderCallback;
+
+	DrawCallback _drawCallbacks[M_MAX] =
 	{
-		&Screen::DrawBorder,
 		&Screen::DrawNull,
 		&Screen::DrawZX,
 		&Screen::DrawPMC,
 		&Screen::DrawP16,
 		&Screen::DrawP384,
 		&Screen::DrawPHR,
+		&Screen::DrawTimex,
 		&Screen::DrawTS16,
 		&Screen::DrawTS256,
 		&Screen::DrawTSText,
@@ -225,15 +281,17 @@ protected:
 		&Screen::DrawATM2Text,
 		&Screen::DrawATM3Text,
 		&Screen::DrawProfi,
-		&Screen::DrawGMX
+		&Screen::DrawGMX,
+        &Screen::DrawBorder
 	};
 
 public:
 	VideoControl _vid;
 
 public:
-	Screen() = delete;		// Disable default contructor; C++ 11 feature
+	Screen() = delete;		            // Disable default constructor; C++ 11 feature
 	Screen(EmulatorContext* context);
+	virtual ~Screen();
 
 	void Init();
 
@@ -243,19 +301,30 @@ public:
 
 	virtual void UpdateScreen();
 
+	virtual void SaveScreen();
+
+protected:
+	void AllocateFramebuffer(VideoModeEnum mode);
+	void DeallocateFramebuffer();
+	void GetFramebufferData(uint8_t** buffer, size_t* size);
+#ifdef _DEBUG
+	void DumpFramebufferInfo(char* buffer, size_t len);
+#endif
+
 	void DrawScreenBorder(uint32_t n);
 
 	// Draw helpers
 public:
-	void Draw(VideoModeEnum mode, uint32_t n);
+    static std::string GetVideoModeName(VideoModeEnum mode);
+	void Draw(uint32_t n);
 
-	void DrawBorder(uint32_t n);	// Border only
 	void DrawNull(uint32_t n);		// Non-existing mode (skip draw)
 	void DrawZX(uint32_t n);		// Authentic Sinclair ZX Spectrum
 	void DrawPMC(uint32_t n);		// Pentagon Multicolor
 	void DrawP16(uint32_t n);		// Pentagon 16c
 	void DrawP384(uint32_t n);		// Pentagon 384x304
 	void DrawPHR(uint32_t n);		// Pentagon HiRes
+	void DrawTimex(uint32_t n);     // Timex
 	void DrawTS16(uint32_t n);		// TS 16c
 	void DrawTS256(uint32_t n);		// TS 256c
 	void DrawTSText(uint32_t n);	// TS Text
@@ -265,4 +334,5 @@ public:
 	void DrawATM3Text(uint32_t n);	// ATM Text linear
 	void DrawProfi(uint32_t n);		// Profi
 	void DrawGMX(uint32_t n);		// GMX
+    void DrawBorder(uint32_t n);	// Border only
 };
