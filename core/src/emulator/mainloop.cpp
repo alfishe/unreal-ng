@@ -40,6 +40,8 @@ void MainLoop::Run(volatile bool& stopRequested)
 		LOGINFO("Frame recalculation time: %d us", duration1);
 		sleep_us(15000U - std::min(duration1, 15000U));
 	}
+
+	LOGINFO("Stop requested, exiting main loop");
 }
 
 void MainLoop::Stop()
