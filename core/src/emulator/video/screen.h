@@ -300,7 +300,7 @@ public:
 	virtual void InitMemoryCounters();
 
 	virtual void UpdateScreen();
-
+	virtual void RenderOnlyMainScreen();
 	virtual void SaveScreen();
 
 protected:

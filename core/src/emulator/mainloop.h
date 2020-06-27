@@ -11,6 +11,8 @@ protected:
 	CPU* _cpu = nullptr;
 	EmulatorContext* _context = nullptr;
 
+	volatile bool _stopRequested = false;
+
 public:
 	MainLoop() = delete;	// Disable default constructor. C++ 11 or better feature
 	MainLoop(CPU* cpu, EmulatorContext* context);

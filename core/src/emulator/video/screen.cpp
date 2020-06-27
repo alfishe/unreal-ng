@@ -159,98 +159,16 @@ void Screen::UpdateScreen()
 	// Get Z80 CPU clock cycle counter spent in current frame
 	uint32_t cput = (cpu.t >= config.frame) ? (VID_TACTS * VID_LINES) : cpu.t;
 
-	while (video.t_next < cput)
-	{
-		// Calculate CPU cycles for drawing in current video line
-		int n = min(cput - video.t_next, (uint32_t)VID_TACTS - video.line_pos);
-		int dram_t = n << 1;
+	// TODO: Implement timing-accurate rendering (screen + border)
+}
 
-		// Start of new video line
-		if (!video.line_pos)
-		{
-			if (state.ts.vconf != state.ts.vconf_d)
-			{
-				state.ts.vconf = state.ts.vconf_d;
-				InitRaster();
-			}
-		}
-
-		// Render upper and bottom border
-		if (video.line < video.raster.u_brd || video.line >= video.raster.d_brd)
-		{
-			DrawBorder(n);
-			video.line_pos += n;
-		}
-		else
-		{
-			// Start of new video line
-			if (!video.line_pos)
-			{
-				video.xctr = 0; // clear X video counter
-				video.yctr++;   // increment Y video counter
-
-				if (!state.ts.g_yoffs_updated) // was Y-offset updated?
-				{
-					// no - just increment old
-					video.ygctr++;
-					video.ygctr &= 0x1FF;
-				}
-				else
-				{
-					// yes - reload Y-offset
-					video.ygctr = state.ts.g_yoffs;
-					state.ts.g_yoffs_updated = 0;
-				}
-			}
-
-			// Render left border segment
-			if (video.line_pos < video.raster.l_brd)
-			{
-				uint32_t m = min((uint32_t)n, video.raster.l_brd - video.line_pos);
-				DrawScreenBorder(m);
-				n -= m;
-				video.line_pos += (uint16_t)m;
-			}
-
-			// Render pixel graphics on main screen area
-			if (n > 0 && video.line_pos < video.raster.r_brd)
-			{
-				uint32_t m = min((uint32_t)n, video.raster.r_brd - video.line_pos);
-				uint32_t t = video.t_next; // store tact of video controller
-				uint32_t vptr = video.vptr;
-
-				// Execute render to framebuffer using current video mode renderer
-				DrawCallback draw = _drawCallbacks[video.mode];
-				if (draw != nullptr)
-				{
-					(*this.*draw)(m);
-				}
-
-				t = video.t_next - t; // calculate tacts used by drawers func
-				n -= t;
-				video.line_pos += (uint16_t)t;
-			}
-
-			// Render right border segment
-			if (n > 0)
-			{
-				uint32_t m = min(n, VID_TACTS - video.line_pos);
-				DrawScreenBorder(m);
-				n -= m;
-				video.line_pos += (uint16_t)m;
-			}
-		}
-
-		// Calculate busy CPU cycles for the next line
-		video.memcyc_lcmd = (video.memcyc_lcmd > dram_t) ? (video.memcyc_lcmd - dram_t) : 0;
-
-		// if line is full, then go to the next line
-		if (video.line_pos == VID_TACTS)
-		{
-			video.line_pos = 0;
-			video.line++;
-		}
-	}
+///
+/// Convert whole ZX-Spectrum screen to RGBA framebuffer
+///
+void Screen::RenderOnlyMainScreen()
+{
+    // No default implementation
+    return;
 }
 
 void Screen::SaveScreen()

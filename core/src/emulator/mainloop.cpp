@@ -31,7 +31,9 @@ void MainLoop::Run(volatile bool& stopRequested)
 		return;
 	}
 
-	while (!stopRequested)
+	_stopRequested = false;
+
+	while (!stopRequested && !_stopRequested)
 	{
 		unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
 
@@ -42,7 +44,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 
 void MainLoop::Stop()
 {
-
+    _stopRequested = true;
 }
 
 void MainLoop::RunFrame()
@@ -68,7 +70,7 @@ void MainLoop::RunFrame()
 
 	// DEBUG: save frame to disk as image (only each 100th)
 	static int i = 0;
-	if (i % 1000)
+	if (i % 100 == 0)
 	    screen.SaveScreen();
 	i++;
 
