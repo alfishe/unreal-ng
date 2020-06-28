@@ -14,7 +14,8 @@ public:
 
 protected:
     void CreateTables();
-    uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress);
+    uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
+    uint16_t CalculateXYColorAttrAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
     // Screen class methods override
 public:
@@ -34,6 +35,7 @@ public:
 
 public:
     using ScreenZX::CalculateXYScreenAddress;
+    using ScreenZX::CalculateXYColorAttrAddress;
 
 };
 #endif // _CODE_UNDER_TEST

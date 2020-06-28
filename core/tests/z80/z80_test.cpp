@@ -3,6 +3,8 @@
 #include "z80_test.h"
 #include <string>
 
+/// region <SetUp / TearDown>
+
 void Z80_Test::SetUp()
 {
 	// Instantiate emulator with all peripherals, but no configuration loaded
@@ -36,6 +38,8 @@ void Z80_Test::TearDown()
 		_opcode = nullptr;
 	}
 }
+
+/// endregion </Setup / TearDown>
 
 TEST_F(Z80_Test, Z80Reset)
 {
