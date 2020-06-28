@@ -5,6 +5,7 @@
 #include "cpu.h"
 #include <algorithm>
 #include <cassert>
+#include <emulator/video/videocontroller.h>
 
 using namespace std;
 
@@ -43,7 +44,8 @@ CPU::CPU(EmulatorContext* context)
 	_hdd = new HDD(context);
 
 	// Create Video controller
-	_screen = new Screen(_context);
+	VideoModeEnum mode = M_ZX; // Make ZX the default video mode on start
+	_screen = VideoController::GetScreenForMode(mode, _context);
 	_context->pScreen = _screen;
 }
 

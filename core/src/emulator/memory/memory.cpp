@@ -553,6 +553,32 @@ MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
 	return _bank_mode[bank];
 }
 
+/// Read single byte from address mapped to Z80 address space
+/// Note: Direct access method. Not shown in any traces, memory counters are not incremented
+/// \param address - Z80 space address
+/// \return
+uint8_t Memory::ReadFromMappedMemoryAddress(uint16_t address)
+{
+    uint8_t result = 0x00;
+
+    // Address bits 14 and 15 contain bank number
+    uint8_t bank = (address >> 14) & 0b0000000000000011;
+    result = *(_bank_read[bank] + (uint16_t)(address & (PAGE - 1)));
+
+    return result;
+}
+
+/// Write single byte by address mapped to Z80 address space
+/// Note: Direct access method. Not shown in any traces, memory counters are not incremented
+/// \param address - Z80 space address
+/// \param value - Single byte value to be written by address
+void Memory::WriteByMappedMemoryAddress(uint16_t address, uint8_t value)
+{
+    // Address bits 14 and 15 contain bank number
+    uint8_t bank = (address >> 14) & 0b0000000000000011;
+    *(_bank_write[bank] + (uint16_t)(address & (PAGE - 1))) = value;
+}
+
 //
 // Initialize according Spectrum 48K standard address space settings
 //

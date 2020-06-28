@@ -293,7 +293,7 @@ public:
 	Screen(EmulatorContext* context);
 	virtual ~Screen();
 
-	void Init();
+	virtual void CreateTables() = 0;
 
 	virtual void InitFrame();
 	virtual void InitRaster();

@@ -250,7 +250,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 	else
 	{
 		// Read byte from correspondent memory bank mapped to global memory buffer
-		result = *(memory._bank_read[bank] + (unsigned)(addr & (PAGE - 1)));
+		result = *(memory._bank_read[bank] + (uint16_t)(addr & (PAGE - 1)));
 
 		// Update RAM access counters
 		if (memory._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
@@ -356,7 +356,7 @@ void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
 
 	// Write byte to correspondent memory bank cell
 	uint8_t* bank_addr = mem._bank_write[bank];
-	*(bank_addr + (unsigned)addr) = val;
+	*(bank_addr + (uint16_t)addr) = val;
 }
 
 //

@@ -116,7 +116,10 @@ public:
 
 	MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 
-	// Atomic internal methods (but accessible for testing purposes
+	uint8_t ReadFromMappedMemoryAddress(uint16_t address);
+	void WriteByMappedMemoryAddress(uint16_t address, uint8_t value);
+
+	// Atomic internal methods (but accessible for testing purposes)
 public:
 	void InternalSetBanks();
 };
