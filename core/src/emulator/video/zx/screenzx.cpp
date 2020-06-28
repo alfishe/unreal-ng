@@ -85,6 +85,42 @@ uint16_t ScreenZX::CalculateXYColorAttrAddress(uint8_t x, uint8_t y, uint16_t ba
     return result;
 }
 
+// ZX-Spectrum 48k ULA color bits
+// Where: P [0:7] - paper/background color; I [0:7] - ink/foreground color; B [0:1] - brightness; F [0:1] - flashing
+// Color attr bits:    7    6    5    4    3    2    1    0
+// Data bits:          F    B   P2   P1   P0   I2   I1   I0
+
+// Alternative view:
+// Color attr bits:    7        6         5         4         3       2       1       0
+// Data bits:          F        B   Paper-G   Paper-R   Paper-B   Ink-G   Ink-R   Ink-B
+
+/// Transforms ZX-Spectrum color to RGBA using palette information
+/// \param color - ZX-Spectrum ULA color byte information
+/// \param isPixelSet - determines whether pixel has paper/background or ink/foreground color
+/// \return RGbA color for the pixel
+uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t color, bool isPixelSet)
+{
+    static uint32_t palette[2][8] =
+    {
+        //     Black,       Blue,        Red,    Magenta,      Green,       Cyan,     Yellow,      White
+        { 0x00000000, 0x0022C700, 0xD6281600, 0xD433C700, 0x00C52500, 0x00C7C900, 0xCCC82A00, 0xCACACA00 },  // Brightness = 0
+        { 0x00000000, 0x002BFB00, 0xFF331C00, 0xFF40FC00, 0x00F92F00, 0x00FBFE00, 0xFFFC3600, 0xFFFFFFFF }   // Brightness = 1
+    };
+
+    uint32_t result = 0;
+
+    uint8_t paper = (color & 0b00111000) >> 3;
+    uint8_t ink = color & -0b00000111;
+    bool brightness = (color & 0b01000000) > 0;
+    bool flash = (color & 0b10000000) > 0;
+
+    // Set resulting pixel color based on ZX-Spectrum pixel information (not set => paper color, set => ink color)
+    uint8_t paletteIndex = isPixelSet ? ink : paper;
+    result = palette[brightness][paletteIndex];
+
+    return result;
+}
+
 
 /// endregion </Genuine ZX-Spectrum ULA specifics>
 
