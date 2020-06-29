@@ -91,12 +91,15 @@ uint16_t ScreenZX::CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseA
 /// \return Address for correspondent coordinates adjusted to current screen base offset
 uint16_t ScreenZX::CalculateXYScreenAddressOptimized(uint8_t x, uint8_t y, uint16_t baseAddress)
 {
-    uint16_t result = baseAddress;
+    /*
     uint8_t symbolX = x >> 3;
 
-    result = _screenLineOffsets[y] + symbolX;
+    uint16_t result = baseAddress + _screenLineOffsets[y] + symbolX;
 
     return result;
+     */
+
+    return baseAddress + _screenLineOffsets[y] + (x >> 3);
 }
 
 
@@ -135,12 +138,16 @@ uint16_t ScreenZX::CalculateXYColorAttrAddress(uint8_t x, uint8_t y, uint16_t ba
 /// \return Address for correspondent coordinates adjusted to current screen base offset
 uint16_t ScreenZX::CalculateXYColorAttrAddressOptimized(uint8_t x, uint8_t y, uint16_t baseAddress)
 {
+    /*
     uint8_t symbolX = x >> 3;
 
     // Lookup table values already have offset 0x1800 applied
     uint16_t result = baseAddress + _attrLineOffsets[y] + symbolX;
 
     return result;
+    */
+
+    return baseAddress + _attrLineOffsets[y] + (x >> 3);
 }
 
 // ZX-Spectrum 48k ULA color bits

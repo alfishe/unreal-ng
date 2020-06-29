@@ -56,6 +56,35 @@ TEST_F(ScreenZX_Test, CalculateXYScreenAddress)
     }
 }
 
+TEST_F(ScreenZX_Test, CalculateXYScreenAddressCorrectness)
+{
+    char message[256];
+    uint16_t addr = 0;
+    uint16_t addrOptimized = 0;
+
+    for (uint16_t x = 0; x <= 255; x++)
+    {
+        for (uint8_t y = 0; y < 192; y++)
+        {
+            addr = _screenzx->CalculateXYScreenAddress(x, y, 0x4000);
+            addrOptimized = _screenzx->CalculateXYScreenAddressOptimized(x, y, 0x4000);
+
+            if (addr != addrOptimized)
+            {
+                //ASSERT_EQ(addr, addrOptimized);
+
+                snprintf(message, sizeof message, "x: %03d, y: %03d, addr: 0x%04X, addrOptimized: 0x%04X", x, y, addr, addrOptimized);
+                FAIL() << message << std::endl;
+            }
+
+#ifdef _DEBUG
+            //snprintf(message, sizeof message, "x: %03d, y: %03d, addr: 0x%04X", x, y, addr);
+            //std::cout << message << std::endl;
+#endif // _DEBUG
+        }
+    }
+}
+
 TEST_F(ScreenZX_Test, CalculateXYColorAttrAddress)
 {
     char message[256];
@@ -102,5 +131,4 @@ TEST_F(ScreenZX_Test, CalculateXYColorAddressCorrectness)
 #endif // _DEBUG
         }
     }
-
 }
