@@ -24,7 +24,7 @@ public:
     {
         std::string result;
 
-        // Precalculate resulting buffer size (adding +1 byte for trailing '\0')
+        // Pre-calculate resulting buffer size (adding +1 byte for trailing '\0')
         size_t size = snprintf(nullptr, 0, format.c_str(), args ...) + 1;
         if (size > 0)
         {
