@@ -306,7 +306,7 @@ public:
 protected:
 	void AllocateFramebuffer(VideoModeEnum mode);
 	void DeallocateFramebuffer();
-	void GetFramebufferData(uint8_t** buffer, size_t* size);
+	void GetFramebufferData(uint32_t** buffer, size_t* size);
 #ifdef _DEBUG
 	void DumpFramebufferInfo(char* buffer, size_t len);
 #endif

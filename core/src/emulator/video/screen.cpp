@@ -207,7 +207,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
 	    // Calculate required buffer size and allocate memory
         _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
-        _framebuffer.memoryBuffer = new uint8_t(_framebuffer.memoryBufferSize);
+        _framebuffer.memoryBuffer = new uint8_t[_framebuffer.memoryBufferSize];
 
 #ifdef _DEBUG
         LOGINFO("Framebuffer allocated");
@@ -227,15 +227,19 @@ void Screen::DeallocateFramebuffer()
 {
 	if (_framebuffer.memoryBuffer != nullptr)
 	{
-		delete _framebuffer.memoryBuffer;
+		delete [] _framebuffer.memoryBuffer;
 		_framebuffer.memoryBuffer = nullptr;
 		_framebuffer.memoryBufferSize = 0;
 	}
 }
 
-void Screen::GetFramebufferData(uint8_t** buffer, size_t* size)
+void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
 {
-
+    if (buffer && size && _framebuffer.memoryBuffer && _framebuffer.memoryBufferSize)
+    {
+        *buffer = (uint32_t*)_framebuffer.memoryBuffer;
+        *size = _framebuffer.memoryBufferSize;
+    }
 }
 
 //region Debug methods
