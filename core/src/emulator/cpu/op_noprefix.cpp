@@ -116,7 +116,7 @@ Z80OPCODE op_0F(Z80 *cpu) { // rrca
 Z80OPCODE op_10(Z80 *cpu) { // djnz rr
 	cputact(1);
 
-	uint8_t offset = (uint8_t)cpu->rd(cpu->pc);
+	int8_t offset = (uint8_t)cpu->rd(cpu->pc);
 
 	if (--cpu->b)
 	{
@@ -164,7 +164,7 @@ Z80OPCODE op_17(Z80 *cpu) { // rla
 }
 
 Z80OPCODE op_18(Z80 *cpu) { // jr rr
-	uint8_t offset = cpu->rd(cpu->pc);
+	int8_t offset = cpu->rd(cpu->pc);
 
 	cpu->last_branch = cpu->pc - 1;
 	cpu->pc += offset + 1;
@@ -235,15 +235,19 @@ Z80OPCODE op_1F(Z80 *cpu) { // rra
 }
 
 Z80OPCODE op_20(Z80 *cpu) { // jr nz, rr
-  uint8_t offset = (char)cpu->rd(cpu->pc);
+    int8_t offset = cpu->rd(cpu->pc);
 
-  if (!(cpu->f & ZF))
-  {
-    cpu->last_branch = cpu->pc-1;
-    cpu->memptr = cpu->pc += offset + 1, cputact(5);
-  }
-  else
-	  cpu->pc++;
+    if (!(cpu->f & ZF))
+    {
+        cpu->last_branch = cpu->pc - 1;
+        cpu->pc += offset + 1;
+
+        cpu->memptr = cpu->pc;
+
+        cputact(5);
+    }
+    else
+        cpu->pc++;
 }
 
 Z80OPCODE op_21(Z80 *cpu) { // ld hl,nnnn
@@ -283,7 +287,7 @@ Z80OPCODE op_27(Z80 *cpu) { // daa
 }
 
 Z80OPCODE op_28(Z80 *cpu) { // jr z,rr
-  uint8_t offset = cpu->rd(cpu->pc);
+  int8_t offset = cpu->rd(cpu->pc);
 
   if ((cpu->f & ZF))
   {
@@ -350,7 +354,7 @@ Z80OPCODE op_2F(Z80 *cpu) { // cpl
 }
 
 Z80OPCODE op_30(Z80 *cpu) { // jr nc, rr
-  uint8_t offset = cpu->rd(cpu->pc);
+  int8_t offset = cpu->rd(cpu->pc);
 
   if (!(cpu->f & CF))
   {
