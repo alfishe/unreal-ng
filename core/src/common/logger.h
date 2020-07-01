@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include <ostream>
 #include <stdarg.h>
 #include <string>
 
@@ -29,6 +30,11 @@ using namespace std;
 
 class Logger
 {
+    /// region <Fields>
+protected:
+    static volatile bool g_mute;
+    /// endregion </Fields>
+
 public:
 	static void Debug(string fmt, ...);
 	static void Info(string fmt, ...);
@@ -36,6 +42,39 @@ public:
 	static void Error(string fmt, ...);
 	static void EmptyLine();
 
+	// Flow control
+	static void Mute()
+	{
+	    if (!g_mute)
+	    {
+            fflush(stdout);
+            EmptyLine();
+            OutEnriched("Log muted");
+            EmptyLine();
+            fflush(stdout);
+
+            g_mute = true;
+        }
+	}
+
+	static void Unmute()
+	{
+	    if (g_mute)
+	    {
+            g_mute = false;
+
+            Out("...");
+            EmptyLine();
+            OutEnriched("Log unmuted");
+            EmptyLine();
+            EmptyLine();
+            fflush(stdout);
+        }
+	}
+
 protected:
-	static void Out(string fmt, va_list args);
+    static void OutEnriched(const char* fmt);
+    static void OutEnriched(const char* fmt, va_list args);
+	static void OutEnriched(string fmt, va_list args);
+	static void Out(const char* value);
 };
