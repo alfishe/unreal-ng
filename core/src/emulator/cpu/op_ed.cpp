@@ -213,6 +213,7 @@ Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
 
     cpu->hl = result & 0xFFFF;
     cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+
     cputact(7);
 }
 Z80OPCODE ope_53(Z80 *cpu) { // ld (nnnn),de

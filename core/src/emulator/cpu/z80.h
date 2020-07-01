@@ -5,6 +5,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 
+/// region <Structures>
+
 // Turn on padding to align members within each structure
 #pragma pack(push, 1)
 
@@ -262,6 +264,8 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
 };
 
+/// endregion </Structures>
+
 class Z80 : public Z80State
 {
 protected:
@@ -314,8 +318,8 @@ public:
 public:
 	void SetBanks();								// Reconfigure ROM/RAM banks
 	inline void ProcessInterrupts(bool int_occured,	// Take care about incoming interrupts
-		unsigned int_start,
-		unsigned int_end);
+    unsigned int_start,
+    unsigned int_end);
 	inline void UpdateScreen();			// Trigger screen update after each command cycle
 
 	// Event handlers
@@ -341,11 +345,11 @@ protected:
 	void ts_line_int(bool vdos);
 	void ts_dma_int(bool vdos);
 
-	//region Debug methods
+	/// region <Debug methods>
 #ifdef _DEBUG
 public:
 	void DumpZ80State(char* buffer, size_t len);
 #endif
-	//endregion
+	/// endregion </Debug methods>
 };
 

@@ -7,6 +7,8 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/video/screen.h"
 
+/// region <Constructors / Destructors>
+
 Z80::Z80(EmulatorContext* context)
 {
 	_context = context;
@@ -72,6 +74,8 @@ Z80::~Z80()
 
 	LOGDEBUG("Z80::~Z80()");
 }
+
+/// endregion </Constructors / Destructors>
 
 uint8_t Z80::m1_cycle()
 {
@@ -510,14 +514,12 @@ void Z80::Z80FrameCycle()
 //
 void Z80::Reset()
 {
-	Z80* cpu = this;
-
 	// Emulation state
-	last_branch = 0x0000;	// Address of last branch (in Z80 address space)
-	int_pend = false;		// No interrupts pending
-	int_gate = true;		// Allow external interrupts
-	cycle_count = 0;		// Cycle counter
-	tt = 0;					// Scaled to CPU frequency multiplier cycle count
+	last_branch = 0x0000;	        // Address of last branch (in Z80 address space)
+	int_pend = false;		        // No interrupts pending
+	int_gate = true;		        // Allow external interrupts
+	cycle_count = 0;		        // Cycle counter
+	tt = 0;					        // Scaled to CPU frequency multiplier cycle count
 
 	// Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
 	int_flags = 0;					// Set interrupt mode 0
@@ -526,7 +528,9 @@ void Z80::Reset()
 	im = 0;							// IM0 mode is set by defaule
 	sp = 0xFFFF;					// Stack pointer set to the end of memory address space
 	af = 0xFFFF;					// Real chip behavior
-	IncrementCPUCyclesCounter(3);	// All that takes 3 clock cycles
+
+    // All that takes 3 clock cycles
+	IncrementCPUCyclesCounter(3);
 }
 
 //
@@ -593,6 +597,7 @@ void Z80::Z80Step()
 	{
 		// Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
 		cpu.tt += cpu.rate * 1;
+
 		if (++cpu.halt_cycle == 4)
 		{
 			cpu.r_low += 1;

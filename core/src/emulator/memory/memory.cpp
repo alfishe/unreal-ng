@@ -518,9 +518,9 @@ void Memory::SetBanks()
 	*/
 }
 
-//
-//
-//
+/// Returns pointer in Host memory for the address in Z80 space mapped to current bank configuration
+/// \param addr Z80 space address
+/// \return Pointer to Host memory mapped
 uint8_t* Memory::RemapAddressToCurrentBank(uint16_t addr)
 {
 	COMPUTER& state = *(&_context->state);
