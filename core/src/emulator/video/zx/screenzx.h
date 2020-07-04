@@ -30,7 +30,7 @@ protected:
     uint16_t CalculateXYColorAttrAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint16_t CalculateXYColorAttrAddressOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
-    uint32_t TransformZXSpectrumColorsToRGBA(uint8_t color, bool isPixelSet);
+    uint32_t TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPixelSet);
 
     uint32_t GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint32_t GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);

@@ -160,10 +160,10 @@ uint16_t ScreenZX::CalculateXYColorAttrAddressOptimized(uint8_t x, uint8_t y, ui
 // Data bits:          F        B   Paper-G   Paper-R   Paper-B   Ink-G   Ink-R   Ink-B
 
 /// Transforms ZX-Spectrum color to RGBA using palette information
-/// \param color ZX-Spectrum ULA color byte information
+/// \param attribute ZX-Spectrum ULA color byte information
 /// \param isPixelSet determines whether pixel has paper/background or ink/foreground color
 /// \return RGbA color for the pixel
-uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t color, bool isPixelSet)
+uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPixelSet)
 {
     static uint32_t palette[2][8] =
     {
@@ -174,10 +174,10 @@ uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t color, bool isPixelSe
 
     uint32_t result = 0;
 
-    uint8_t paper = (color & 0b00111000) >> 3;
-    uint8_t ink = color & -0b00000111;
-    bool brightness = (color & 0b01000000) > 0;
-    bool flash = (color & 0b10000000) > 0;
+    uint8_t paper = (attribute & 0b00111000) >> 3;
+    uint8_t ink = attribute & 0b00000111;
+    bool brightness = (attribute & 0b01000000) > 0;
+    bool flash = (attribute & 0b10000000) > 0;
 
     // Set resulting pixel color based on ZX-Spectrum pixel information (not set => paper color, set => ink color)
     uint8_t paletteIndex = isPixelSet ? ink : paper;
@@ -244,9 +244,9 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
 
 /// region <Screen class methods override>
 
+
 void ScreenZX::UpdateScreen()
 {
-
 }
 
 ///
@@ -254,26 +254,59 @@ void ScreenZX::UpdateScreen()
 ///
 void ScreenZX::RenderOnlyMainScreen()
 {
+    static Memory& memory = *_context->pMemory;
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
     // Validate required mode(s) set and framebuffer allocated
     if (rasterDescriptor.screenWidth == 0 || rasterDescriptor.screenHeight == 0 || _framebuffer.memoryBuffer == nullptr || _framebuffer.memoryBufferSize == 0)
         return;
 
-    for (int y = 0; y < rasterDescriptor.screenHeight; y++)
+    // Get host memory address for main ZX-Spectrum screen (Bank 5, #4000)
+    uint8_t* zxScreen = memory.RemapAddressToCurrentBank(0x4000);
+
+    // Get Framebuffer
+    uint32_t* framebuffer;
+    size_t size;
+    GetFramebufferData(&framebuffer, &size);
+    int offset = 0;
+
+    // Render ZX-Spectrum screen to framebuffer
+    if (framebuffer && size > 0)
     {
-        for (int x = 0; x < rasterDescriptor.screenWidth / 8; x++)
+        for (int y = 0; y < rasterDescriptor.screenHeight; y++)
         {
-            /*
-            byte pix = *(src + scrtab[y] + x);
-            byte ink = colortab[*(src + atrtab[y] + x)];
-            byte paper = ink >> 4;
-            ink &= 0x0f;
-            for(int b = 0; b < 8; ++b)
+            for (int x = 0; x < rasterDescriptor.screenWidth / 8; x++)
             {
-                *dst++ = ((pix << b) & 0x80) ? ink : paper;
+                uint8_t pixels = *(zxScreen + _screenLineOffsets[y] + x);
+                uint8_t attributes = *(zxScreen + _attrLineOffsets[y] + x);
+                uint32_t colorInk = _rgbaColors[attributes];
+                uint32_t colorPaper = _rgbaFlashColors[attributes];
+
+                for (int destX = 0; destX < 8; destX++)
+                {
+                    offset = y * rasterDescriptor.fullFrameWidth + (x * 8 + destX);
+                    if (offset < size / sizeof(uint32_t))
+                    {
+                        // Write RGBA pixel to framebuffer with x,y coordinates and calculated color
+                        *(framebuffer + offset) = ((pixels << destX) & 0b10000000) ? colorInk : colorPaper;
+                    }
+                    else
+                    {
+                        LOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
+                    }
+                }
+
+                /*
+                byte pix = *(src + scrtab[y] + x);
+                byte ink = colortab[*(src + atrtab[y] + x)];
+                byte paper = ink >> 4;
+                ink &= 0x0f;
+                for(int b = 0; b < 8; ++b)
+                {
+                    *dst++ = ((pix << b) & 0x80) ? ink : paper;
+                }
+                 */
             }
-             */
         }
     }
 }
