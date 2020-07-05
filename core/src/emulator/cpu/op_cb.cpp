@@ -1316,7 +1316,21 @@ STEPFUNC const logic_opcode[0x100] = {
 
 Z80OPCODE op_CB(Z80 *cpu)
 {
-   uint8_t opcode = cpu->m1_cycle();
-   (logic_opcode[opcode])(cpu);
+    uint8_t opcode = cpu->m1_cycle();
+
+    // Record used prefix
+    if (cpu->prefix > 0)
+    {
+        cpu->prefix = cpu->prefix << 8 + opcode;
+    }
+    else
+    {
+        cpu->prefix = 0xCB;
+    }
+
+    (logic_opcode[opcode])(cpu);
+
+    // Finalize opcode
+    cpu->opcode = opcode;
 }
 //#endif

@@ -118,33 +118,89 @@ uint8_t Z80::m1_cycle()
         LOGINFO("RAM-READ is executed");
         Logger::Mute();
     }
-
+*/
     if (cpu.pc == 0x11EF)
     {
-        Logger::Unmute();
+        Logger::UnmuteSilent();
         LOGINFO("RAM-DONE is executed. PC: %04X", cpu.pc);
-        Logger::Mute();
+        Logger::MuteSilent();
     }
-	*/
 
     if (cpu.pc == 0x1219)
     {
-        Logger::Unmute();
+        Logger::UnmuteSilent();
         LOGINFO("RAM-SET is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
     }
 
-    if (cpu.pc == 0x0D68)
+    if (cpu.pc == 0x12A2)
     {
-        Logger::Unmute();
+        Logger::UnmuteSilent();
+        LOGINFO("MAIN-EXEC is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0D6B)
+    {
+        Logger::UnmuteSilent();
         LOGINFO("CLS is executed. PC: %04X", cpu.pc);
-        Logger::Mute();
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0DAF)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("CL-ALL is executed. PC: %04X", cpu.pc);
+        //Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0D6E)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("CLS-LOWER is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0ADC)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("PO-STORE is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0C0A)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("PO-MSG is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
     }
 
     if (cpu.pc == 0x12A9)
     {
-        Logger::Unmute();
+        Logger::UnmuteSilent();
         LOGINFO("MAIN-1 is executed. PC: %04X", cpu.pc);
-        Logger::Mute();
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x1303)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("MAIN-4 is executed. PC: %04X", cpu.pc);
+        LOGWARNING("HALT!!!");
+    }
+
+    if (cpu.pc == 0x1634)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("CHAN-K is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0C0A)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("PO-MSG is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
     }
 
 	// Z80 CPU M1 cycle logic
@@ -690,7 +746,8 @@ void Z80::Z80Step()
 
 		// Regular Z80 bus cycle
 		// 1. Fetch opcode (Z80 M1 bus cycle)
-		uint8_t opcode = m1_cycle();
+        cpu.prefix = 0x0000;
+        cpu.opcode = m1_cycle();
 
 		// Debug
 		//DumpCurrentState();
@@ -967,7 +1024,7 @@ void Z80::ts_dma_int(bool vdos)
 
 void Z80::DumpZ80State(char* buffer, size_t len)
 {
-	snprintf(buffer, len, "Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X", opcode, pc, af, bc, de, hl, ix, iy, sp, ir_, t);
+	snprintf(buffer, len, "Pr: 0x%04X Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X", prefix, opcode, pc, af, bc, de, hl, ix, iy, sp, ir_, t);
 }
 #endif
 /// endregion </Debug methods>

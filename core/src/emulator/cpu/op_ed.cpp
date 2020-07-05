@@ -992,7 +992,13 @@ STEPFUNC const ext_opcode[0x100] =
 /// \param cpu
 Z80OPCODE op_ED(Z80 *cpu)
 {
+    // Record used prefix
+    cpu->prefix = 0xED;
+
 	uint8_t opcode = cpu->m1_cycle();
 	(ext_opcode[opcode])(cpu);
+
+	// Finalize opcode
+	cpu->opcode = opcode;
 }
 

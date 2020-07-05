@@ -206,63 +206,91 @@ LOGICFUNC const logic_ix_opcode[0x100] =
 // offsets to b,c,d,e,h,l,<unused>,a  from cpu.c
 unsigned reg_offset[] = { 1,0, 5,4, 9,8, 2,13 };
 
-Z80INLINE void Z80FAST ddfd(Z80 *cpu, uint8_t opcode)
+Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
 {
-   uint8_t op1; // last DD/FD prefix
-   do
-   {
-      op1 = opcode;
-      opcode = cpu->m1_cycle();
-   }
-   while ((opcode | 0x20) == 0xFD); // opcode == DD/FD
+    uint8_t op1; // last DD/FD prefix
 
-   if (opcode == 0xCB)
-   {
+    do
+    {
+        op1 = opcode;
+        opcode = cpu->m1_cycle();
+    }
+    while ((opcode | 0x20) == 0xFD); // opcode == DD/FD
 
-      unsigned ptr; // pointer to DDCB operand
-      ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + (char)cpu->rd(cpu->pc++);
-      cpu->memptr = ptr;
+    // xxCB prefix - bit operations
+    // DDCB - IX base address
+    // FDCB - IY base address
+    if (opcode == 0xCB)
+    {
+        cpu->prefix = op1 * 0x100 + 0xCB;
 
-      // DDCBnnXX,FDCBnnXX increment R by 2, not 3!
-      opcode = cpu->m1_cycle();
-      cpu->r_low--;
+        unsigned ptr; // pointer to DDCB operand
+        ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + (char)cpu->rd(cpu->pc++);
+        cpu->memptr = ptr;
 
-	  cputact(1);
+        // DDCBnnXX,FDCBnnXX increment R by 2, not 3!
+        opcode = cpu->m1_cycle();
+        cpu->r_low--;
 
-      uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));
+        cputact(1);
 
-	  cputact(1);
+        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));
 
-      if ((opcode & 0xC0) == 0x40)
-          return; // bit n,rm
+        cputact(1);
 
-      // select destination register for shift/res/set
-      *(&cpu->c + reg_offset[opcode & 7]) = byte;
-      cpu->wd(ptr, byte);
+        if ((opcode & 0xC0) == 0x40)
+            return; // bit n,rm
 
-      return;
-   }
+        // select destination register for shift/res/set
+        *(&cpu->c + reg_offset[opcode & 7]) = byte;
+        cpu->wd(ptr, byte);
 
-   if (opcode == 0xED)
-   {
-      opcode = cpu->m1_cycle();
+        // Finalize opcode
+        cpu->opcode = opcode;
 
-      (ext_opcode[opcode])(cpu);
+        return;
+    }
 
-      return;
-   }
+    // ED prefix
+    if (opcode == 0xED)
+    {
+        opcode = cpu->m1_cycle();
 
-   // one prefix: DD/FD
-   ((op1 == 0xDD) ? ix_opcode[opcode] : iy_opcode[opcode])(cpu);
+        (ext_opcode[opcode])(cpu);
+
+        return;
+    }
+
+    // DD prefix - IX bit operations
+    if (op1 == 0xDD)
+    {
+        cpu->prefix = 0x00DD;
+
+        ix_opcode[opcode](cpu);
+
+        return;
+    }
+
+    // FD prefix - IY bit operations
+    if (op1 = 0xFD)
+    {
+        cpu->prefix = 0x00FD;
+
+        iy_opcode[opcode](cpu);
+
+        return;
+    }
+
+    throw("Unknown opcode");
 }
 
 Z80OPCODE op_DD(Z80 *cpu)
 {
-   ddfd(cpu, 0xDD);
+    ddfd_prefixes(cpu, 0xDD);
 }
 
 Z80OPCODE op_FD(Z80 *cpu)
 {
-   ddfd(cpu, 0xFD);
+    ddfd_prefixes(cpu, 0xFD);
 }
 

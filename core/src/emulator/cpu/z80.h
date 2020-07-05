@@ -198,7 +198,15 @@ struct Z80Registers
 
 struct Z80DecodedOperation
 {
-	uint8_t prefix;                                 // Opcode prefix (if available)
+    union                                           // Opcode prefix (if available)
+    {
+        uint16_t prefix;
+        struct
+        {
+            uint8_t prefix1;
+            uint8_t prefix2;
+        };
+    };
 	uint8_t opcode;                                 // Opcode fetched during Z80 M1 cycle
 
 	union

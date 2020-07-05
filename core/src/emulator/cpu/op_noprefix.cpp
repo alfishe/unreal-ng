@@ -1129,28 +1129,28 @@ Z80OPCODE op_C3(Z80 *cpu) { // jp nnnn
 }
 
 Z80OPCODE op_C4(Z80 *cpu) { // call nz,nnnn
-    uint8_t lo = cpu->rd(cpu->pc);
-    uint16_t hi = cpu->rd(cpu->pc + 1) << 8;
+    uint16_t pc = cpu->pc;
+    uint16_t addr = cpu->rd(pc++) + 0x100 * cpu->rd(pc++);
 
-    uint16_t addr = hi | lo;
-    cpu->memptr = hi | lo;
+    cpu->memptr = addr;
 
-    cpu->pc += 2;
-
+    // Branch taken
     if (!(cpu->f & ZF))
     {
         cputact(1);
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
         cpu->last_branch = cpu->pc - 1;
-        cpu->pc = addr;
+        pc = addr;
     };
+
+    cpu->pc = pc;
 }
 
 Z80OPCODE op_C5(Z80 *cpu) { // push bc
@@ -1251,8 +1251,8 @@ Z80OPCODE op_CC(Z80 *cpu) { // call z,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
@@ -1272,10 +1272,11 @@ Z80OPCODE op_CD(Z80 *cpu) { // call
 
     cputact(1);
 
+    // Put return address to stack
     uint16_t sp = cpu->sp;
 
-    cpu->wd(--sp, cpu->pch);
-    cpu->wd(--sp, cpu->pcl);
+    cpu->wd(--sp, (pc >> 8) & 0xFF);
+    cpu->wd(--sp, pc & 0xFF);
 
     cpu->sp = sp;
 
@@ -1380,8 +1381,8 @@ Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
@@ -1501,8 +1502,8 @@ Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
@@ -1610,8 +1611,8 @@ Z80OPCODE op_E4(Z80 *cpu) { // call po,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
@@ -1718,8 +1719,8 @@ Z80OPCODE op_EC(Z80 *cpu) { // call pe,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
@@ -1820,8 +1821,8 @@ Z80OPCODE op_F4(Z80 *cpu) { // call p,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
@@ -1930,8 +1931,8 @@ Z80OPCODE op_FC(Z80 *cpu) { // call m,nnnn
 
         uint16_t sp = cpu->sp;
 
-        cpu->wd(--sp, cpu->pch);
-        cpu->wd(--sp, cpu->pcl);
+        cpu->wd(--sp, (pc >> 8) & 0xFF);
+        cpu->wd(--sp, pc & 0xFF);
 
         cpu->sp = sp;
 
