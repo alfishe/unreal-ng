@@ -132,3 +132,14 @@ TEST_F(ScreenZX_Test, CalculateXYColorAddressCorrectness)
         }
     }
 }
+
+TEST_F(ScreenZX_Test, TransformZXSpectrumColorsToRGBA)
+{
+    { // Black on non-bright white - default screen colors
+        uint32_t inkColor = _screenzx->TransformZXSpectrumColorsToRGBA(0x38, true);
+        uint32_t paperColor = _screenzx->TransformZXSpectrumColorsToRGBA(0x38, false);
+
+        EXPECT_EQ(inkColor, 0xFF000000);
+        EXPECT_EQ(paperColor, 0xFFCACACA);
+    }
+}
