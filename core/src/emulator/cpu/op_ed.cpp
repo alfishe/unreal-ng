@@ -71,12 +71,16 @@ Z80OPCODE ope_44(Z80 *cpu) { // neg
 Z80OPCODE ope_45(Z80 *cpu) { // retn
    cpu->iff1 = cpu->iff2;
 
-   uint16_t addr = cpu->rd(cpu->sp++);
-   addr += 0x100 * cpu->rd(cpu->sp++);
+   uint16_t sp = cpu->sp;
+
+   uint16_t addr = cpu->rd(sp++);
+   addr += 0x100 * cpu->rd(sp++);
 
    cpu->last_branch = cpu->pc - 2;
    cpu->pc = addr;
    cpu->memptr = addr;
+
+   cpu->sp = sp;
 
    cpu->retn();
 }
@@ -153,12 +157,16 @@ Z80OPCODE ope_4B(Z80 *cpu) { // ld bc,(nnnn)
 Z80OPCODE ope_4D(Z80 *cpu) { // reti
     cpu->iff1 = cpu->iff2;
 
-    uint16_t addr = cpu->rd(cpu->sp++);
-    addr += 0x100 * cpu->rd(cpu->sp++);
+    uint16_t sp = cpu->sp;
+
+    uint16_t addr = cpu->rd(sp++);
+    addr += 0x100 * cpu->rd(sp++);
 
     cpu->last_branch = cpu->pc - 2;
     cpu->pc = addr;
     cpu->memptr = addr;
+
+    cpu->sp = sp;
 }
 
 #define ope_4E ope_56  // im 0/1 -> im1
@@ -247,14 +255,18 @@ Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
 
 Z80OPCODE ope_58(Z80 *cpu) { // in e,(c)
    cputact(4);
+
    cpu->memptr = cpu->bc + 1;
+
    cpu->e = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->e] | (cpu->f & CF);
 }
 
 Z80OPCODE ope_59(Z80 *cpu) { // out (c),e
    cputact(4);
+
    cpu->memptr = cpu->bc + 1;
+
    cpu->out(cpu->bc, cpu->e);
 }
 
@@ -355,24 +367,32 @@ Z80OPCODE ope_62(Z80 *cpu) { // sbc hl,hl
 #define ope_66 ope_46 // im 0
 
 Z80OPCODE ope_67(Z80 *cpu) { // rrd
-  uint8_t tmp = cpu->rd(cpu->hl);
+  uint8_t value = cpu->rd(cpu->hl);
+
   cpu->memptr = cpu->hl + 1;
+
   cputact(4);
-  cpu->wd(cpu->hl, (cpu->a << 4) | (tmp >> 4));
-  cpu->a = (cpu->a & 0xF0) | (tmp & 0x0F);
+
+  cpu->wd(cpu->hl, (cpu->a << 4) | (value >> 4));
+
+  cpu->a = (cpu->a & 0xF0) | (value & 0x0F);
   cpu->f = log_f[cpu->a] | (cpu->f & CF);
 }
+
 Z80OPCODE ope_68(Z80 *cpu) { // in l,(c)
    cputact(4);
 
    cpu->memptr = cpu->bc + 1;
+
    cpu->l = cpu->in(cpu->bc);
    cpu->f = log_f[cpu->l] | (cpu->f & CF);
 }
+
 Z80OPCODE ope_69(Z80 *cpu) { // out (c),l
    cputact(4);
 
    cpu->memptr = cpu->bc + 1;
+
    cpu->out(cpu->bc, cpu->l);
 }
 Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
@@ -433,43 +453,47 @@ Z80OPCODE ope_71(Z80 *cpu) { // out (c),0
 }
 
 Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
-   cpu->memptr = cpu->hl + 1;
+    cpu->memptr = cpu->hl + 1;
 
-   int hl = cpu->hl & 0xFFFF;
-   int sp = cpu->sp & 0xFFFF;
+    int hl = cpu->hl & 0xFFFF;
+    int sp = cpu->sp & 0xFFFF;
 
-   int halfHL = hl & 0x0FFF;
-   int halfSP = sp & 0x0FFF;
+    int halfHL = hl & 0x0FFF;
+    int halfSP = sp & 0x0FFF;
 
-   uint8_t flags = NF;
+    uint8_t flags = NF;
     flags |= ((halfHL - halfSP - (cpu->af & CF)) >> 8) & 0x10; // HF
 
-   unsigned result = hl - sp - (cpu->af & CF);
+    unsigned result = hl - sp - (cpu->af & CF);
 
-   if (result & 0x10000)
-       flags |= CF;
-   if (!(result & 0xFFFF))
-       flags |= ZF;
+    if (result & 0x10000)
+        flags |= CF;
+    if (!(result & 0xFFFF))
+        flags |= ZF;
 
-   int ri = hl - sp - (int)(cpu->af & CF);
-   if (ri < -0x8000 || ri >= 0x8000)
-       flags |= PV;
+    int ri = hl - sp - (int)(cpu->af & CF);
+    if (ri < -0x8000 || ri >= 0x8000)
+        flags |= PV;
 
-   // Store result back to regusters
-   cpu->hl = result & 0xFFFF;
-   cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+    // Store result back to regusters
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-   cputact(7);
+    cputact(7);
 }
 
 Z80OPCODE ope_73(Z80 *cpu) { // ld (nnnn),sp
-    uint16_t addr = cpu->rd(cpu->pc++);
-    addr += cpu->rd(cpu->pc++) * 0x100;
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++);
+    addr += cpu->rd(pc++) * 0x100;
 
     cpu->memptr = addr + 1;
 
     cpu->wd(addr, cpu->spl);
     cpu->wd(addr + 1, cpu->sph);
+
+    cpu->pc = pc;
 }
 
 #define ope_74 ope_44 // neg
@@ -494,6 +518,7 @@ Z80OPCODE ope_79(Z80 *cpu) { // out (c),a
    cputact(4);
 
    cpu->memptr = cpu->bc + 1;
+
    cpu->out(cpu->bc, cpu->a);
 }
 
@@ -527,12 +552,17 @@ Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
 }
 
 Z80OPCODE ope_7B(Z80 *cpu) { // ld sp,(nnnn)
-    uint16_t addr = cpu->rd(cpu->pc++);
+    uint16_t pc = cpu->pc;
 
-    addr += cpu->rd(cpu->pc++) * 0x100;
+    uint16_t addr = cpu->rd(pc++);
+    addr += cpu->rd(pc++) * 0x100;
+
     cpu->memptr = addr + 1;
+
     cpu->spl = cpu->rd(addr);
     cpu->sph = cpu->rd(addr + 1);
+
+    cpu->pc = pc;
 }
 
 #define ope_7C ope_44   // neg
@@ -541,27 +571,27 @@ Z80OPCODE ope_7B(Z80 *cpu) { // ld sp,(nnnn)
 #define ope_7F op_00    // nop
 
 Z80OPCODE ope_A0(Z80 *cpu) { // ldi
-   uint8_t value = cpu->rd(cpu->hl++);
+    uint8_t value = cpu->rd(cpu->hl++);
 
-   cpu->wd(cpu->de++, value);
+    cpu->wd(cpu->de++, value);
 
     value += cpu->a;
     value = (value & F3) + ((value << 4) & F5);
 
-   cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+    cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
 
-   if (--cpu->bc16)
-       cpu->f |= PV;
+    if (--cpu->bc16)
+        cpu->f |= PV;
 
-   cputact(2);
+    cputact(2);
 }
 
 Z80OPCODE ope_A1(Z80 *cpu) { // cpi
    uint8_t cf = cpu->f & CF;
 
-   uint8_t tempbyte = cpu->rd(cpu->hl++);
+   uint8_t value = cpu->rd(cpu->hl++);
 
-   cpu->f = cpf8b[cpu->a * 0x100 + tempbyte] + cf;
+   cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
    if (--cpu->bc16)
 	   cpu->f |= PV;
@@ -576,95 +606,120 @@ Z80OPCODE ope_A2(Z80 *cpu) { // ini
 
    cputact(4);
 
-   cpu->wd(cpu->hl++, cpu->in(cpu->bc));
+   uint16_t hl = cpu->hl;
+   cpu->wd(hl++, cpu->in(cpu->bc));
 
    dec8(cpu, cpu->b);
+
+   cpu->hl = hl;
 
    cputact(1);
 }
 
 Z80OPCODE ope_A3(Z80 *cpu) { // outi
-   cputact(1);
+    cputact(1);
 
-   dec8(cpu, cpu->b);
+    dec8(cpu, cpu->b);
 
-   uint8_t value = cpu->rd(cpu->hl++);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl++);
 
-   cputact(4);
+    cputact(4);
 
-   cpu->out(cpu->bc, value);
-   cpu->f &= ~CF;
-   if (!cpu->l)
-	   cpu->f |= CF;
+    cpu->out(cpu->bc, value);
+    cpu->f &= ~CF;
+    if (!cpu->l)
+        cpu->f |= CF;
 
-   cpu->memptr = cpu->bc + 1;
+    cpu->hl = hl;
+
+    cpu->memptr = cpu->bc + 1;
 }
 
 Z80OPCODE ope_A8(Z80 *cpu) { // ldd
-   uint8_t value = cpu->rd(cpu->hl--);
+    uint16_t hl = cpu->hl;
+    uint16_t de = cpu->de;
 
-   cpu->wd(cpu->de--, value);
+    uint8_t value = cpu->rd(hl--);
+
+    cpu->wd(de--, value);
 
     value += cpu->a;
     value = (value & F3) + ((value << 4) & F5);
 
-   cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+    cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
 
-   if (--cpu->bc16)
-	   cpu->f |= PV;
+    if (--cpu->bc16)
+        cpu->f |= PV;
 
-   cputact(2);
+    cpu->hl = hl;
+    cpu->de = de;
+
+    cputact(2);
 }
 
 Z80OPCODE ope_A9(Z80 *cpu) { // cpd
     uint8_t cf = cpu->f & CF;
 
-    uint8_t value = cpu->rd(cpu->hl--);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl--);
 
-    cpu->f = cpf8b[cpu->a*0x100 + value] + cf;
+    cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
     if (--cpu->bc16)
         cpu->f |= PV;
 
+    cpu->hl = hl;
+
     cpu->memptr--;
+
     cputact(5);
 }
 
 Z80OPCODE ope_AA(Z80 *cpu) { // ind
-   cpu->memptr = cpu->bc - 1;
+    cpu->memptr = cpu->bc - 1;
 
-   cputact(4);
+    cputact(4);
 
-   cpu->wd(cpu->hl--, cpu->in(cpu->bc));
+    uint16_t hl = cpu->hl;
+    cpu->wd(hl--, cpu->in(cpu->bc));
 
-   dec8(cpu, cpu->b);
+    dec8(cpu, cpu->b);
 
-   cputact(1);
+    cpu->hl = hl;
+
+    cputact(1);
 }
 
 Z80OPCODE ope_AB(Z80 *cpu) { // outd
-   cputact(1);
+    cputact(1);
 
-   dec8(cpu, cpu->b);
+    dec8(cpu, cpu->b);
 
-   uint8_t value = cpu->rd(cpu->hl--);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl--);
 
-   cputact(4);
+    cputact(4);
 
-   cpu->out(cpu->bc, value);
+    cpu->out(cpu->bc, value);
 
-   cpu->f &= ~CF;
+    cpu->f &= ~CF;
 
-   if (cpu->l == 0xFF)
-	   cpu->f |= CF;
+    if (cpu->l == 0xFF)
+        cpu->f |= CF;
 
-   cpu->memptr = cpu->bc - 1;
+    cpu->hl = hl;
+
+    cpu->memptr = cpu->bc - 1;
 }
 
 Z80OPCODE ope_B0(Z80 *cpu) { // ldir
-	uint8_t value = cpu->rd(cpu->hl++);
+    uint16_t hl = cpu->hl;
+    uint16_t de = cpu->de;
 
-	cpu->wd(cpu->de++, value);
+	uint8_t value = cpu->rd(hl++);
+
+	cpu->wd(de++, value);
 
     value += cpu->a;
     value = (value & F3) + ((value << 4) & F5);
@@ -674,7 +729,7 @@ Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 	if (--cpu->bc16)
 	{
 		cpu->f |= PV;
-		cpu->pc -= 2;
+		cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 		cputact(7);
 
@@ -684,6 +739,9 @@ Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 	{
 		cputact(2);
 	}
+
+	cpu->hl = hl;
+	cpu->de = de;
 }
 
 Z80OPCODE ope_B1(Z80 *cpu) { // cpir
@@ -691,9 +749,10 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 
    uint8_t cf = cpu->f & CF;
 
-   uint8_t value = cpu->rd(cpu->hl++);
+   uint16_t hl = cpu->hl;
+   uint8_t value = cpu->rd(hl++);
 
-   cpu->f = cpf8b[cpu->a*0x100 + value] + cf;
+   cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
    cputact(5);
 
@@ -703,13 +762,15 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 
 	  if (!(cpu->f & ZF))
 	  {
-		  cpu->pc -= 2;
+		  cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 		  cputact(5);
 
 		  cpu->memptr = cpu->pc + 1;
 	  }
    }
+
+   cpu->hl = hl;
 }
 
 Z80OPCODE ope_B2(Z80 *cpu) { // inir
@@ -717,14 +778,15 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
 
    cputact(4);
 
-   cpu->wd(cpu->hl++, cpu->in(cpu->bc));
+   uint16_t hl = cpu->hl;
+   cpu->wd(hl++, cpu->in(cpu->bc));
 
    dec8(cpu, cpu->b);
 
    if (cpu->b)
    {
 	   cpu->f |= PV;
-	   cpu->pc -= 2;
+	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 	   cputact(6);
    }
@@ -734,6 +796,8 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
 
 	   cputact(1);
    }
+
+   cpu->hl = hl;
 }
 
 Z80OPCODE ope_B3(Z80 *cpu) { // otir
@@ -741,15 +805,17 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
 
    dec8(cpu, cpu->b);
 
-   uint8_t tempbyte = cpu->rd(cpu->hl++);
+   uint16_t hl = cpu->hl;
+   uint8_t value = cpu->rd(hl++);
 
    cputact(4);
 
-   cpu->out(cpu->bc, tempbyte);
+   cpu->out(cpu->bc, value);
+
    if (cpu->b)
    {
 	   cpu->f |= PV;
-	   cpu->pc -= 2;
+	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 	   cputact(5);
    }
@@ -760,13 +826,18 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
 
    cpu->f &= ~CF; if (!cpu->l) cpu->f |= CF;
 
+   cpu->hl = hl;
+
    cpu->memptr = cpu->bc + 1;
 }
 
 Z80OPCODE ope_B8(Z80 *cpu) { // lddr
-   uint8_t value = cpu->rd(cpu->hl--);
+    uint16_t hl = cpu->hl;
+    uint16_t de = cpu->de;
 
-   cpu->wd(cpu->de--, value);
+   uint8_t value = cpu->rd(hl--);
+
+   cpu->wd(de--, value);
 
     value += cpu->a; value = (value & F3) + ((value << 4) & F5);
 
@@ -775,7 +846,7 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
    if (--cpu->bc16)
    {
 	   cpu->f |= PV;
-	   cpu->pc -= 2;
+	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 	   cputact(7);
    }
@@ -783,6 +854,9 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
    {
 	   cputact(2);
    }
+
+   cpu->hl = hl;
+   cpu->de = de;
 }
 
 Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
@@ -790,9 +864,10 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 
    uint8_t cf = cpu->f & CF;
 
-   uint8_t value = cpu->rd(cpu->hl--);
+   uint16_t hl = cpu->hl;
+   uint8_t value = cpu->rd(hl--);
 
-   cpu->f = cpf8b[cpu->a*0x100 + value] + cf;
+   cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
    cputact(5);
 
@@ -802,13 +877,15 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 
 	  if (!(cpu->f & ZF))
 	  {
-		  cpu->pc -= 2;
+		  cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 		  cputact(5);
 
 		  cpu->memptr = cpu->pc + 1;
 	  }
    }
+
+   cpu->hl = hl;
 }
 
 Z80OPCODE ope_BA(Z80 *cpu) { // indr
@@ -816,14 +893,15 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
 
    cputact(4);
 
-   cpu->wd(cpu->hl--, cpu->in(cpu->bc));
+   uint16_t hl = cpu->hl;
+   cpu->wd(hl--, cpu->in(cpu->bc));
 
    dec8(cpu, cpu->b);
 
    if (cpu->b)
    {
 	   cpu->f |= PV;
-	   cpu->pc -= 2;
+	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 	   cputact(6);
    }
@@ -833,6 +911,8 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
 
 	   cputact(1);
    }
+
+   cpu->hl = hl;
 }
 
 Z80OPCODE ope_BB(Z80 *cpu) { // otdr
@@ -840,7 +920,8 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
 
    dec8(cpu, cpu->b);
 
-   uint8_t value = cpu->rd(cpu->hl--);
+   uint16_t hl = cpu->hl;
+   uint8_t value = cpu->rd(hl--);
 
    cputact(4);
 
@@ -849,7 +930,7 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
    if (cpu->b)
    {
 	   cpu->f |= PV;
-	   cpu->pc -= 2;
+       cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
 	   cputact(5);
    }
@@ -860,6 +941,8 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
 
    if (cpu->l == 0xFF)
 	   cpu->f |= CF;
+
+   cpu->hl = hl;
 
    cpu->memptr = cpu->bc - 1;
 }

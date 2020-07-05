@@ -1603,7 +1603,7 @@ Z80OPCODE op_F8(Z80 *cpu) { // ret m
 }
 
 Z80OPCODE op_F9(Z80 *cpu) { // ld sp,hl
-   cpu->sp = cpu->hl;
+   cpu->sp = cpu->hl & 0xFFFF;
    cputact(2);
 }
 
