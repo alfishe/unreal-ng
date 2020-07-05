@@ -176,6 +176,15 @@ void Screen::SaveScreen()
     ImageHelper::SaveFrameToPNG(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width, _framebuffer.height);
 }
 
+void Screen::SaveZXSpectrumNativeScreen()
+{
+    static Memory& memory = *_context->pMemory;
+
+    uint8_t* buffer = memory.RemapAddressToCurrentBank(0x4000);
+
+    ImageHelper::SaveZXSpectrumNativeScreen(buffer);
+}
+
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
     // Buffer already allocated for the selected video mode

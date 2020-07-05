@@ -101,9 +101,58 @@ uint8_t Z80::m1_cycle()
 	}
 	// End of TODO: move to Ports class
 
+	if (cpu.pc == 0x0DAF)
+	    LOGINFO("Clearing whole display area is executed");
+
+	/*
+    if (cpu.pc == 0x11DC)
+    {
+        Logger::Unmute();
+        LOGINFO("RAM-FILL is executed");
+        Logger::Mute();
+    }
+
+    if (cpu.pc == 0x11E2)
+    {
+        Logger::Unmute();
+        LOGINFO("RAM-READ is executed");
+        Logger::Mute();
+    }
+
+    if (cpu.pc == 0x11EF)
+    {
+        Logger::Unmute();
+        LOGINFO("RAM-DONE is executed. PC: %04X", cpu.pc);
+        Logger::Mute();
+    }
+	*/
+
+    if (cpu.pc == 0x1219)
+    {
+        Logger::Unmute();
+        LOGINFO("RAM-SET is executed. PC: %04X", cpu.pc);
+    }
+
+    if (cpu.pc == 0x0D68)
+    {
+        Logger::Unmute();
+        LOGINFO("CLS is executed. PC: %04X", cpu.pc);
+        Logger::Mute();
+    }
+
+    if (cpu.pc == 0x12A9)
+    {
+        Logger::Unmute();
+        LOGINFO("MAIN-1 is executed. PC: %04X", cpu.pc);
+        Logger::Mute();
+    }
+
 	// Z80 CPU M1 cycle logic
 	r_low++;
-	opcode = rd(cpu.pc++);                      // Keep opcode copy for trace / debug purposes
+	opcode = rd(cpu.pc);                      // Keep opcode copy for trace / debug purposes
+
+	// Point PC to next byte
+	cpu.pc++;
 
 	// Align 14MHz CPU memory request to 7MHz DRAM cycle
 	// request can be satisfied only in the next DRAM cycle
@@ -271,6 +320,8 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 //
 uint8_t Z80::MemoryReadDebug(uint16_t addr)
 {
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+
 	// Mark memory cell as accessed on read
 	uint8_t* membit = _membits + (unsigned)addr;
 	*membit |= MEMBITS_R;
@@ -360,7 +411,7 @@ void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
 
 	// Write byte to correspondent memory bank cell
 	uint8_t* bank_addr = mem._bank_write[bank];
-	*(bank_addr + (uint16_t)addr) = val;
+	*(bank_addr + addr) = val;
 }
 
 //
@@ -368,13 +419,34 @@ void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
 //
 void Z80::MemoryWriteDebug(uint16_t addr, uint8_t val)
 {
-	// Mark memory cell as accessed on write
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+
+    // Mark memory cell as accessed on write
 	uint8_t* membit = _membits + (addr & 0xFFFF);
 	*membit |= MEMBITS_W;
 	dbgbreak |= (*membit & MEMBITS_BPW);
 
 	// Write data to memory
 	MemoryWriteFast(addr, val);
+
+    /*
+if (addr >= 0x4000 && addr <= 0x57FF)
+{
+    Logger::UnmuteSilent();
+    LOGINFO("Memory write video. addr: 0x%04X, val: 0x%02X, cycles=%d", addr, val, cycle_count);
+    Logger::MuteSilent();
+}
+
+if (addr == 0x4000 && val == 0x02)
+{
+    // Flush current screen state to framebuffer
+    _context->pScreen->RenderOnlyMainScreen();
+
+    // Save to disk in native and png formats
+    _context->pScreen->SaveZXSpectrumNativeScreen();
+    _context->pScreen->SaveScreen();
+}
+*/
 
 	// Check for breakpoint conditions
 	//brk_mem_wr = addr;
@@ -424,14 +496,18 @@ uint8_t Z80::DirectRead(uint16_t addr)
 //
 void Z80::DirectWrite(uint16_t addr, uint8_t val)
 {
-	Z80& _cpu_state = *this;
 	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
 	*remap_addr = val;
 
 	// Update TSConf cache data
 	// TODO: move to plugin
-	uint16_t cache_pointer = addr & 0x1FF;
-	_cpu_state.tscache_addr[cache_pointer] = -1; // MemoryWrite invalidates flag
+    static CONFIG& config = _context->config;
+    if (config.mem_model == MM_TSL)
+    {
+        Z80 &_cpu_state = *this;
+        uint16_t cache_pointer = addr & 0x1FF;
+        _cpu_state.tscache_addr[cache_pointer] = -1; // MemoryWrite invalidates flag
+    }
 }
 
 void Z80::Z80FrameCycle()
@@ -525,7 +601,7 @@ void Z80::Reset()
 	int_flags = 0;					// Set interrupt mode 0
 	ir_ = 0;						// Reset IR (Instruction Register)
 	pc = 0x0000;					// Reset PC (Program Counter)
-	im = 0;							// IM0 mode is set by defaule
+	im = 0;							// IM0 mode is set by default
 	sp = 0xFFFF;					// Stack pointer set to the end of memory address space
 	af = 0xFFFF;					// Real chip behavior
 
@@ -817,7 +893,8 @@ void Z80::DumpCurrentState()
 #endif
 }
 
-// TSConf specific
+/// region <TSConf specific>
+
 // TODO: Move to adapter
 void Z80::ts_frame_int(bool vdos)
 {
@@ -880,13 +957,15 @@ void Z80::ts_dma_int(bool vdos)
 	}
 }
 
-//region Debug methods
+/// endregion </TSConf specific>
+
+/// region <Debug methods>
 #ifdef _DEBUG
 #include <cstdio>
 
 void Z80::DumpZ80State(char* buffer, size_t len)
 {
-	snprintf(buffer, len, "Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X clock: %04X", opcode, pc, af, bc, de, hl, ix, iy, t);
+	snprintf(buffer, len, "Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X", opcode, pc, af, bc, de, hl, ix, iy, sp, ir_, t);
 }
 #endif
-//endregion
+/// endregion </Debug methods>

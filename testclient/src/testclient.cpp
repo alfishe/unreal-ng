@@ -121,8 +121,17 @@ void TestClient::Start()
 	};
 	messageCenter.AddObserver(topic, callback);
 
-	//_emulator->RunNCPUCycles(100);
-	//return;
+
+    // region Test
+
+	Logger::Mute();
+	_emulator->DebugOn();
+	_emulator->RunNCPUCycles(3000000 - (4560 * 3) - 1600);
+	Logger::Unmute();
+    _emulator->RunNCPUCycles(500);
+
+	return;
+
 	//endregion Test
 
 

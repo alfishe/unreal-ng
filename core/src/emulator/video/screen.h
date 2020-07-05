@@ -302,6 +302,7 @@ public:
 	virtual void UpdateScreen();
 	virtual void RenderOnlyMainScreen();
 	virtual void SaveScreen();
+	virtual void SaveZXSpectrumNativeScreen();
 
 protected:
 	void AllocateFramebuffer(VideoModeEnum mode);

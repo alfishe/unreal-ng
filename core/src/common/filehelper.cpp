@@ -133,3 +133,27 @@ string FileHelper::PrintablePath(wstring wpath)
 
 	return result;
 }
+
+bool FileHelper::SaveBufferToFile(wstring& filePath, uint8_t* buffer, size_t size)
+{
+    // Important! Not a unicode path! Rework needed to support
+    string path = StringHelper::WideStringToString(filePath);
+
+    return FileHelper::SaveBufferToFile(path, buffer, size);
+}
+
+bool FileHelper::SaveBufferToFile(string& filePath, uint8_t* buffer, size_t size)
+{
+    bool result = false;
+
+    FILE* file = fopen(filePath.c_str(), "wb");
+    if (file != nullptr)
+    {
+        fwrite(buffer, 1, size, file);
+        fclose(file);
+
+        result = true;
+    }
+
+    return result;
+}

@@ -73,7 +73,10 @@ void MainLoop::RunFrame()
 	// DEBUG: save frame to disk as image (only each 100th)
 	static int i = 0;
 	if (i % 100 == 0)
-	    screen.SaveScreen();
+	{
+        screen.RenderOnlyMainScreen();
+        screen.SaveScreen();
+    }
 	i++;
 
 	// DEBUG: save frame to disk as image

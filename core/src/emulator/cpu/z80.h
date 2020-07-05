@@ -258,7 +258,6 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	//CallbackSetLastT SetLastT;
 
 	// Memory interfacing
-	uint8_t* _membits;
 	const MemoryInterface* FastMemIf;				// Fast memory interface (max performance
 	const MemoryInterface* DbgMemIf;				// Debug memory interface (supports memory access breakpoints)
 	const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
@@ -303,14 +302,12 @@ public:
 	void MemoryWriteFast(uint16_t addr, uint8_t val);
 	void MemoryWriteDebug(uint16_t addr, uint8_t val);
 
-	/*
-	uint8_t Read(uint16_t addr);
-	void Write(uint16_t addr, uint8_t val);
-	*/
 
+    // Direct memory access methods
 	uint8_t DirectRead(uint16_t addr);				// Direct emulated memory MemoryRead (For debugger use)
 	void DirectWrite(uint16_t addr, uint8_t val);	// Direct emulated memory MemoryWrite (For debugger use)
 
+	// Z80 CPU control methods
 	void Reset();		// Z80 chip reset
 	void Z80Step();		// Single opcode execution
 
@@ -327,9 +324,13 @@ public:
 	void HandleNMI(ROMModeEnum mode);
 	void HandleINT(uint8_t vector);
 
-	// Debugger trigger updates
+	// Debugger interfacing
 public:
 	void ProcessDebuggerEvents();
+	void (* callbackM1_Prefetch)();
+	void (* callbackM1_Postfetch());
+
+	void (* callbackCPUCycleFinished());
 
 protected:
 	__forceinline void IncrementCPUCyclesCounter(uint8_t cycles);	// Increment cycle counters

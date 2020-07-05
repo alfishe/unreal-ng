@@ -43,6 +43,9 @@ public:
 	static void EmptyLine();
 
 	// Flow control
+	static void MuteSilent() { g_mute = true; }
+	static void UnmuteSilent() { g_mute = false; }
+
 	static void Mute()
 	{
 	    if (!g_mute)

@@ -519,9 +519,9 @@ void Memory::SetBanks()
 }
 
 /// Returns pointer in Host memory for the address in Z80 space mapped to current bank configuration
-/// \param addr Z80 space address
+/// \param address Z80 space address
 /// \return Pointer to Host memory mapped
-uint8_t* Memory::RemapAddressToCurrentBank(uint16_t addr)
+uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
 {
 	COMPUTER& state = *(&_context->state);
 	CONFIG& config = *(&_context->config);
@@ -532,8 +532,9 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint16_t addr)
 	#if defined MOD_VID_VD
 		if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800)
 			result = comp.vdbase + (addr & 0x1FFF);
-	#else
-		result = _bank_read[(addr >> 14) & 3] + (addr & (PAGE - 1));
+    #else
+        uint8_t bank = (address >> 14) & 0b0000000000000011;
+		result = _bank_read[bank] + address;
 	#endif
 
 	return result;
@@ -563,7 +564,7 @@ uint8_t Memory::ReadFromMappedMemoryAddress(uint16_t address)
 
     // Address bits 14 and 15 contain bank number
     uint8_t bank = (address >> 14) & 0b0000000000000011;
-    result = *(_bank_read[bank] + (uint16_t)(address & (PAGE - 1)));
+    result = *(_bank_read[bank] + address);
 
     return result;
 }
@@ -576,7 +577,7 @@ void Memory::WriteByMappedMemoryAddress(uint16_t address, uint8_t value)
 {
     // Address bits 14 and 15 contain bank number
     uint8_t bank = (address >> 14) & 0b0000000000000011;
-    *(_bank_write[bank] + (uint16_t)(address & (PAGE - 1))) = value;
+    *(_bank_write[bank] + address) = value;
 }
 
 //

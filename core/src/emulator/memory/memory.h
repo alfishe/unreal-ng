@@ -95,6 +95,8 @@ public:
 	inline uint8_t* MiscBase() { return _miscBase; };
 	inline uint8_t* ROMBase() { return _romBase; };			// Get starting address for ROM
 
+	inline uint8_t* MemoryAccessCounters() { return _membits; };
+
 	// Shortcuts to ROM pages
 	uint8_t* base_sos_rom;
 	uint8_t* base_dos_rom;
@@ -112,7 +114,7 @@ public:
 	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE * page); }	// Up to MAX_RAM_PAGES 256 pages
 	inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE * page); }	// Up to MAX_ROM_PAGES 64 pages
 
-	uint8_t* RemapAddressToCurrentBank(uint16_t addr);									// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
+	uint8_t* RemapAddressToCurrentBank(uint16_t address);									// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
 
 	MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 

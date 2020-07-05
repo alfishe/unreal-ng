@@ -33,6 +33,9 @@ void Logger::Info(string fmt, ...)
 
 void Logger::Warning(string fmt, ...)
 {
+    // Ensure log is not muted
+    Logger::UnmuteSilent();
+
 	va_list args;
 	va_start(args, fmt);
 
@@ -44,6 +47,9 @@ void Logger::Warning(string fmt, ...)
 
 void Logger::Error(string fmt, ...)
 {
+    // Ensure log is not muted
+    Logger::UnmuteSilent();
+
 	va_list args;
 	va_start(args, fmt);
 

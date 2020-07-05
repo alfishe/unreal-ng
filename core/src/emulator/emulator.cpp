@@ -6,7 +6,7 @@
 
 Emulator::Emulator()
 {
-
+    LOGDEBUG("Emulator::Emulator()");
 }
 
 Emulator::~Emulator()
@@ -135,6 +135,9 @@ bool Emulator::Init()
 	if (result)
 	{
 		_cpu->Reset();
+
+		// Init default video render
+		_context->pScreen->InitFrame();
 	}
 
 	return result;
@@ -276,6 +279,18 @@ void Emulator::RunNCPUCycles(unsigned cycles)
 	{
 		RunSingleCPUCycle();
 	}
+}
+
+void Emulator::DebugOn()
+{
+    // Switch to slow but instrumented memory interface
+    _cpu->UseDebugMemoryInterface();
+}
+
+void Emulator::DebugOff()
+{
+    // Switch to fast memory interface
+    _cpu->UseFastMemoryInterface();
 }
 
 //endregion

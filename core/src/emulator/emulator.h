@@ -49,6 +49,9 @@ public:
 	void RunSingleCPUCycle();
 	void RunNCPUCycles(unsigned cycles);
 
+	void DebugOn();
+	void DebugOff();
+
 
 	// Status methods
 	bool IsRunning();

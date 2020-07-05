@@ -29,6 +29,9 @@ public:
 
 	static string PrintablePath(wstring wpath);
 
+	static bool SaveBufferToFile(wstring& filePath, uint8_t* buffer, size_t size);
+    static bool SaveBufferToFile(string& filePath, uint8_t* buffer, size_t size);
+
 private:
 	FileHelper();	// Disable direct object creation by making constructor private. Only static method calls allowed.
 };
