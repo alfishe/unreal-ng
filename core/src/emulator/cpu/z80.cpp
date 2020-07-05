@@ -215,7 +215,7 @@ uint8_t Z80::InterruptVector()
 //
 uint8_t Z80::rd(uint16_t addr)
 {
-	Z80& cpu = *this;
+	static Z80& cpu = *this;
 
 	IncrementCPUCyclesCounter(3);
 
@@ -229,7 +229,7 @@ uint8_t Z80::rd(uint16_t addr)
 //
 void Z80::wd(uint16_t addr, uint8_t val)
 {
-	Z80& cpu = *this;
+	static Z80& cpu = *this;
 
 	IncrementCPUCyclesCounter(3);
 
@@ -266,7 +266,7 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 	// Determine CPU bank (from address bits 14 and 15)
 	uint8_t bank = (addr >> 14) & 0x03;
 
-	// TSConf caching logic
+	/// region <TSConf caching logic>
 	// TODO: move to TSConf plugin
 	if (config.mem_model == MM_TSL)
 	{
@@ -299,18 +299,19 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 		{
 			state.ts.cache_miss = false;
 		}
-	}
-	else
-	{
-		// Read byte from correspondent memory bank mapped to global memory buffer
-		result = *(memory._bank_read[bank] + (uint16_t)(addr & (PAGE - 1)));
 
-		// Update RAM access counters
-		if (memory._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
-		{
-			video.memcpucyc[t % 224]++;
-		}
+		return result;
 	}
+    /// endregion </TSConf caching logic>
+
+    // Read byte from correspondent memory bank mapped to global memory buffer
+    result = *(memory._bank_read[bank] + addr);
+
+    // Update RAM access counters
+    if (memory._bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
+    {
+        video.memcpucyc[t % 224]++;
+    }
 
 	return result;
 }
@@ -352,7 +353,7 @@ void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
 	// Determine CPU bank (from address bits 14 and 15)
 	uint8_t bank = (addr >> 14) & 0x03;
 
-	// TSConf caching logic
+	/// region <TSConf caching logic>
 	// TODO: move to TSConf plugin
 	if (config.mem_model == MM_TSL)
 	{
@@ -395,19 +396,20 @@ void Z80::MemoryWriteFast(uint16_t addr, uint8_t val)
 
 		// Update RAM access counters
 		video.memcpucyc[t / 224]++;
+
+		return;
 	}
-	else
-	{
-		// ATM3 specific
-		// Intercept writing to font area
-		// TODO: Move to ATM3 plugin
-		if ((config.mem_model == MM_ATM3) && (state.pBF & 0x04) /*&& ((addr & 0xF800) == 0)*/) // Font loading enabled for ATM3 // lvd: any addr is possible in ZXEVO
-		{
-			unsigned idx = ((addr & 0x07F8) >> 3) | ((addr & 7) << 8);
-			//fontatm2[idx] = val;
-			return;
-		}
-	}
+    /// endregion </TSConf caching logic>
+    /// region <ATM3 specific>
+    // Intercept writing to font area
+    // TODO: Move to ATM3 plugin
+    if ((config.mem_model == MM_ATM3) && (state.pBF & 0x04) /*&& ((addr & 0xF800) == 0)*/) // Font loading enabled for ATM3 // lvd: any addr is possible in ZXEVO
+    {
+        unsigned idx = ((addr & 0x07F8) >> 3) | ((addr & 7) << 8);
+        //fontatm2[idx] = val;
+        return;
+    }
+    /// endregion </ATM3 specific>
 
 	// Write byte to correspondent memory bank cell
 	uint8_t* bank_addr = mem._bank_write[bank];
