@@ -26,7 +26,7 @@ Z80OPCODE op_02(Z80 *cpu) { // ld (bc),a
 }
 
 Z80OPCODE op_03(Z80 *cpu) { // inc bc
-   cpu->bc++;
+   cpu->bc = (cpu->bc + 1) & 0xFFFF;
 
    cputact(2);
 }
@@ -91,7 +91,8 @@ Z80OPCODE op_0A(Z80 *cpu) { // ld a,(bc)
 }
 
 Z80OPCODE op_0B(Z80 *cpu) { // dec bc
-   cpu->bc--;
+   cpu->bc = (cpu->bc - 1) & 0xFFFF;
+
    cputact(2);
 }
 
@@ -138,7 +139,7 @@ Z80OPCODE op_12(Z80 *cpu) { // ld (de),a
    cpu->wd(cpu->de, cpu->a);
 }
 Z80OPCODE op_13(Z80 *cpu) { // inc de
-   cpu->de++;
+   cpu->de = (cpu->de + 1) & 0xFFFF;
 
    cputact(2);
 }
@@ -209,7 +210,7 @@ Z80OPCODE op_1A(Z80 *cpu) { // ld a,(de)
 }
 
 Z80OPCODE op_1B(Z80 *cpu) { // dec de
-   cpu->de--;
+   cpu->de = (cpu->de - 1) & 0xFFFF;
 
    cputact(2);
 }
@@ -265,7 +266,8 @@ Z80OPCODE op_22(Z80 *cpu) { // ld (nnnn),hl
 }
 
 Z80OPCODE op_23(Z80 *cpu) { // inc hl
-   cpu->hl++;
+   cpu->hl = (cpu->hl + 1) & 0xFFFF;
+
    cputact(2);
 }
 
@@ -282,7 +284,7 @@ Z80OPCODE op_26(Z80 *cpu) { // ld h,nn
 }
 
 Z80OPCODE op_27(Z80 *cpu) { // daa
-   cpu->af = *(uint16_t *)(daatab + (cpu->a + 0x100*((cpu->f & 3) + ((cpu->f >> 2) & 4))) * 2);
+   cpu->af = *(uint16_t *)(daatab + (cpu->a + 0x100 * ((cpu->f & 3) + ((cpu->f >> 2) & 4))) * 2);
 }
 
 Z80OPCODE op_28(Z80 *cpu) { // jr z,rr
@@ -339,7 +341,7 @@ Z80OPCODE op_2A(Z80 *cpu) { // ld hl,(nnnn)
 }
 
 Z80OPCODE op_2B(Z80 *cpu) { // dec hl
-   cpu->hl--;
+   cpu->hl = (cpu->hl - 1) & 0xFFFF;
    cputact(2);
 }
 
@@ -388,7 +390,8 @@ Z80OPCODE op_32(Z80 *cpu) { // ld (nnnn),a
 }
 
 Z80OPCODE op_33(Z80 *cpu) { // inc sp
-	cpu->sp++;
+	cpu->sp = (cpu->sp + 1) & 0xFFFF;
+
 	cputact(2);
 }
 
@@ -431,6 +434,7 @@ Z80OPCODE op_38(Z80 *cpu) { // jr c,rr
 	else
 		cpu->pc++;
 }
+
 Z80OPCODE op_39(Z80 *cpu) { // add hl,sp
    cpu->memptr = cpu->hl + 1;
 
@@ -470,7 +474,7 @@ Z80OPCODE op_3A(Z80 *cpu) { // ld a,(nnnn)
 }
 
 Z80OPCODE op_3B(Z80 *cpu) { // dec sp
-   cpu->sp--;
+   cpu->sp = (cpu->sp - 1) & 0xFFFF;
 
    cputact(2);
 }
@@ -1225,6 +1229,7 @@ Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
 
 Z80OPCODE op_D5(Z80 *cpu) { // push de
   cputact(1);
+
   cpu->wd(--cpu->sp, cpu->d);
   cpu->wd(--cpu->sp, cpu->e);
 }
@@ -1655,7 +1660,7 @@ Z80OPCODE op_FF(Z80 *cpu) { // rst 38
   cpu->wd(--cpu->sp, cpu->pcl);
 
   cpu->last_branch = cpu->pc - 1;
-  
+
   cpu->pc = 0x38;
   cpu->memptr = 0x38;
 }

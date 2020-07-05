@@ -11,366 +11,569 @@
 
 Z80OPCODE opy_09(Z80 *cpu) { // add iy,bc
    cpu->memptr = cpu->iy + 1;
-   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->bc & 0x0FFF)) >> 8) & 0x10; // HF
-   cpu->iy = (cpu->iy & 0xFFFF) + (cpu->bc & 0xFFFF);
 
-   if (cpu->iy & 0x10000)
+   int iy = cpu->iy & 0xFFFF;
+   int bc = cpu->bc & 0xFFFF;
+
+   int halfIY = iy & 0x0FFF;
+   int halfBC = bc & 0x0FFF;
+
+   // Clear flags
+   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+
+    // Set half-carry flag (HF)
+   cpu->f |= ((halfIY + halfBC) >> 8) & 0x10; // HF
+
+   // Do add
+   iy = iy + bc;
+
+   if (iy & 0x10000)
 	   cpu->f |= CF;
 
+   // Store result to registers
+   cpu->iy = iy & 0xFFFF;
    cpu->f |= (cpu->yh & (F5 | F3));
+
    cputact(7);
 }
+
 Z80OPCODE opy_19(Z80 *cpu) { // add iy,de
-   cpu->memptr = cpu->iy + 1;
-   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->de & 0x0FFF)) >> 8) & 0x10; // HF
-   cpu->iy = (cpu->iy & 0xFFFF) + (cpu->de & 0xFFFF);
+    cpu->memptr = cpu->iy + 1;
 
-   if (cpu->iy & 0x10000)
-	   cpu->f |= CF;
+    int iy = cpu->iy & 0xFFFF;
+    int de = cpu->de & 0xFFFF;
 
-   cpu->f |= (cpu->yh & (F5 | F3));
-   cputact(7);
+    int halfIY = iy & 0x0FFF;
+    int halfDE = de & 0x0FFF;
+
+    // Clear flags
+    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+
+    // Set half-carry flag (HF)
+    cpu->f |= ((halfIY + halfDE) >> 8) & 0x10; // HF
+
+    // Do add
+    iy = iy + de;
+
+    if (iy & 0x10000)
+        cpu->f |= CF;
+
+    // Store result to registers
+    cpu->iy = iy & 0xFFFFF;
+    cpu->f |= (cpu->yh & (F5 | F3));
+
+    cputact(7);
 }
+
 Z80OPCODE opy_21(Z80 *cpu) { // ld iy,nnnn
    cpu->yl = cpu->rd(cpu->pc++);
    cpu->yh = cpu->rd(cpu->pc++);
 }
+
 Z80OPCODE opy_22(Z80 *cpu) { // ld (nnnn),iy
-   unsigned adr = cpu->rd(cpu->pc++);
-   adr += cpu->rd(cpu->pc++) * 0x100;
-   cpu->memptr = adr + 1;
-   cpu->wd(adr, cpu->yl);
-   cpu->wd(adr+1, cpu->yh);
+    uint16_t addr = cpu->rd(cpu->pc++);
+    addr += cpu->rd(cpu->pc++) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->wd(addr, cpu->yl);
+    cpu->wd(addr + 1, cpu->yh);
 }
+
 Z80OPCODE opy_23(Z80 *cpu) { // inc iy
    cpu->iy++;
    cputact(2);
 }
+
 Z80OPCODE opy_24(Z80 *cpu) { // inc yh
    inc8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_25(Z80 *cpu) { // dec yh
    dec8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_26(Z80 *cpu) { // ld yh,nn
    cpu->yh = cpu->rd(cpu->pc++);
 }
+
 Z80OPCODE opy_29(Z80 *cpu) { // add iy,iy
-   cpu->memptr = cpu->iy + 1;
-   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= ((cpu->iy >> 7) & 0x10); /* HF */
-   cpu->iy = (cpu->iy & 0xFFFF) * 2;
+    cpu->memptr = cpu->iy + 1;
 
-   if (cpu->iy & 0x10000)
-	   cpu->f |= CF;
+    int iy = cpu->iy & 0xFFFF;
 
-   cpu->f |= (cpu->yh & (F5 | F3));
-   cputact(7);
+    // Clear flags
+    cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+
+    // Set half-carry flag (HF)
+    cpu->f |= ((iy >> 7) & 0x10); // HF
+
+    // Do add
+    iy = iy+ iy;
+
+    if (iy & 0x10000)
+        cpu->f |= CF;
+
+    // Store result to registers
+    cpu->iy = iy & 0xFFFF;
+    cpu->f |= (cpu->yh & (F5 | F3));
+
+    cputact(7);
 }
+
 Z80OPCODE opy_2A(Z80 *cpu) { // ld iy,(nnnn)
-   unsigned adr = cpu->rd(cpu->pc++);
-   adr += cpu->rd(cpu->pc++) * 0x100;
-   cpu->memptr = adr + 1;
-   cpu->yl = cpu->rd(adr);
-   cpu->yh = cpu->rd(adr+1);
+    uint16_t addr = cpu->rd(cpu->pc++);
+    addr += cpu->rd(cpu->pc++) * 0x100;
+
+    cpu->memptr = addr + 1;
+
+    cpu->yl = cpu->rd(addr);
+    cpu->yh = cpu->rd(addr + 1);
 }
+
 Z80OPCODE opy_2B(Z80 *cpu) { // dec iy
    cpu->iy--;
+
    cputact(2);
 }
+
 Z80OPCODE opy_2C(Z80 *cpu) { // inc yl
    inc8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_2D(Z80 *cpu) { // dec yl
    dec8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_2E(Z80 *cpu) { // ld yl,nn
    cpu->yl = cpu->rd(cpu->pc++);
 }
-Z80OPCODE opy_34(Z80 *cpu) { // inc (iy+nn)
-   uint8_t ofs = cpu->rd(cpu->pc++);
-   cputact(5);
-   uint8_t t = cpu->rd(cpu->iy + ofs);
-   inc8(cpu, t);
-   cputact(1);
-   cpu->wd(cpu->iy + ofs, t);
-}
-Z80OPCODE opy_35(Z80 *cpu) { // dec (iy+nn)
-   uint8_t ofs = cpu->rd(cpu->pc++);
-   cputact(5);
-   uint8_t t = cpu->rd(cpu->iy + ofs);
-   dec8(cpu, t);
-   cputact(1);
-   cpu->wd(cpu->iy + ofs, t);
-}
-Z80OPCODE opy_36(Z80 *cpu) { // ld (iy+nn),nn
-   uint8_t ofs = cpu->rd(cpu->pc++);
-   uint8_t tempbyte = cpu->rd(cpu->pc++);
-   cputact(2);
-   cpu->wd(cpu->iy + ofs, tempbyte);
-}
-Z80OPCODE opy_39(Z80 *cpu) { // add iy,sp
-   cpu->memptr = cpu->iy+1;
-   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
-   cpu->f |= (((cpu->iy & 0x0FFF) + (cpu->sp & 0x0FFF)) >> 8) & 0x10; // HF
-   cpu->iy = (cpu->iy & 0xFFFF) + (cpu->sp & 0xFFFF);
 
-   if (cpu->iy & 0x10000)
+Z80OPCODE opy_34(Z80 *cpu) { // inc (iy+nn)
+   int8_t offset = cpu->rd(cpu->pc++);
+
+   cputact(5);
+
+   uint8_t value = cpu->rd(cpu->iy + offset);
+   inc8(cpu, value);
+
+   cputact(1);
+
+   cpu->wd(cpu->iy + offset, value);
+}
+
+Z80OPCODE opy_35(Z80 *cpu) { // dec (iy+nn)
+   int8_t offset = cpu->rd(cpu->pc++);
+
+   cputact(5);
+
+   uint8_t value = cpu->rd(cpu->iy + offset);
+   dec8(cpu, value);
+
+   cputact(1);
+
+   cpu->wd(cpu->iy + offset, value);
+}
+
+Z80OPCODE opy_36(Z80 *cpu) { // ld (iy+nn),nn
+   int8_t offset = cpu->rd(cpu->pc++);
+
+   uint8_t value = cpu->rd(cpu->pc++);
+
+   cputact(2);
+
+   cpu->wd(cpu->iy + offset, value);
+}
+
+Z80OPCODE opy_39(Z80 *cpu) { // add iy,sp
+   cpu->memptr = cpu->iy + 1;
+
+   int iy = cpu->iy & 0xFFFF;
+   int sp = cpu->sp & 0xFFFF;
+
+   int halfIY = iy & 0x0FFF;
+   int halfSP = sp & 0x0FFF;
+
+   // Clear flags
+   cpu->f = (cpu->f & ~(NF | CF | F5 | F3 | HF));
+
+    // Set half-carry flag (HF)
+   cpu->f |= ((halfIY + halfSP) >> 8) & 0x10; // HF
+
+   // Do add
+   iy = iy + sp;
+
+   if (iy & 0x10000)
 	   cpu->f |= CF;
 
+   // Store result to registers
+   cpu->iy = iy & 0xFFFF;
    cpu->f |= (cpu->yh & (F5 | F3));
+
    cputact(7);
 }
+
 Z80OPCODE opy_44(Z80 *cpu) { // ld b,yh
    cpu->b = cpu->yh;
 }
+
 Z80OPCODE opy_45(Z80 *cpu) { // ld b,yl
    cpu->b = cpu->yl;
 }
+
 Z80OPCODE opy_46(Z80 *cpu) { // ld b,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->b = cpu->rd(cpu->iy + ofs);
+
+   cpu->b = cpu->rd(cpu->iy + offset);
 }
+
 Z80OPCODE opy_4C(Z80 *cpu) { // ld c,yh
    cpu->c = cpu->yh;
 }
+
 Z80OPCODE opy_4D(Z80 *cpu) { // ld c,yl
    cpu->c = cpu->yl;
 }
+
 Z80OPCODE opy_4E(Z80 *cpu) { // ld c,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->c = cpu->rd(cpu->iy + ofs);
+
+   cpu->c = cpu->rd(cpu->iy + offset);
 }
+
 Z80OPCODE opy_54(Z80 *cpu) { // ld d,yh
    cpu->d = cpu->yh;
 }
+
 Z80OPCODE opy_55(Z80 *cpu) { // ld d,yl
    cpu->d = cpu->yl;
 }
+
 Z80OPCODE opy_56(Z80 *cpu) { // ld d,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->d = cpu->rd(cpu->iy + ofs);
+
+   cpu->d = cpu->rd(cpu->iy + offset);
 }
+
 Z80OPCODE opy_5C(Z80 *cpu) { // ld e,yh
    cpu->e = cpu->yh;
 }
 Z80OPCODE opy_5D(Z80 *cpu) { // ld e,yl
    cpu->e = cpu->yl;
 }
+
 Z80OPCODE opy_5E(Z80 *cpu) { // ld e,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->e = cpu->rd(cpu->iy + ofs);
+
+   cpu->e = cpu->rd(cpu->iy + offset);
 }
+
 Z80OPCODE opy_60(Z80 *cpu) { // ld yh,b
    cpu->yh = cpu->b;
 }
+
 Z80OPCODE opy_61(Z80 *cpu) { // ld yh,c
    cpu->yh = cpu->c;
 }
+
 Z80OPCODE opy_62(Z80 *cpu) { // ld yh,d
    cpu->yh = cpu->d;
 }
+
 Z80OPCODE opy_63(Z80 *cpu) { // ld yh,e
    cpu->yh = cpu->e;
 }
+
 Z80OPCODE opy_65(Z80 *cpu) { // ld yh,yl
    cpu->yh = cpu->yl;
 }
+
 Z80OPCODE opy_66(Z80 *cpu) { // ld h,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->h = cpu->rd(cpu->iy + ofs);
+
+   cpu->h = cpu->rd(cpu->iy + offset);
 }
+
 Z80OPCODE opy_67(Z80 *cpu) { // ld yh,a
    cpu->yh = cpu->a;
 }
+
 Z80OPCODE opy_68(Z80 *cpu) { // ld yl,b
    cpu->yl = cpu->b;
 }
+
 Z80OPCODE opy_69(Z80 *cpu) { // ld yl,c
    cpu->yl = cpu->c;
 }
+
 Z80OPCODE opy_6A(Z80 *cpu) { // ld yl,d
    cpu->yl = cpu->d;
 }
+
 Z80OPCODE opy_6B(Z80 *cpu) { // ld yl,e
    cpu->yl = cpu->e;
 }
+
 Z80OPCODE opy_6C(Z80 *cpu) { // ld yl,yh
    cpu->yl = cpu->yh;
 }
+
 Z80OPCODE opy_6E(Z80 *cpu) { // ld l,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t ofset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->l = cpu->rd(cpu->iy + ofs);
+
+   cpu->l = cpu->rd(cpu->iy + ofset);
 }
+
 Z80OPCODE opy_6F(Z80 *cpu) { // ld yl,a
    cpu->yl = cpu->a;
 }
+
 Z80OPCODE opy_70(Z80 *cpu) { // ld (iy+nn),b
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->b);
+
+   cpu->wd(cpu->iy + offset, cpu->b);
 }
+
 Z80OPCODE opy_71(Z80 *cpu) { // ld (iy+nn),c
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->c);
+
+   cpu->wd(cpu->iy + offset, cpu->c);
 }
+
 Z80OPCODE opy_72(Z80 *cpu) { // ld (iy+nn),d
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->d);
+
+   cpu->wd(cpu->iy + offset, cpu->d);
 }
+
 Z80OPCODE opy_73(Z80 *cpu) { // ld (iy+nn),e
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->e);
+
+   cpu->wd(cpu->iy + offset, cpu->e);
 }
+
 Z80OPCODE opy_74(Z80 *cpu) { // ld (iy+nn),h
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->h);
+
+   cpu->wd(cpu->iy + offset, cpu->h);
 }
+
 Z80OPCODE opy_75(Z80 *cpu) { // ld (iy+nn),l
-   char ofs = cpu->rd(cpu->pc++);
-   cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->l);
+    int8_t offset = cpu->rd(cpu->pc++);
+
+    cputact(5);
+
+    cpu->wd(cpu->iy + offset, cpu->l);
 }
+
 Z80OPCODE opy_77(Z80 *cpu) { // ld (iy+nn),a
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->wd(cpu->iy + ofs, cpu->a);
+
+   cpu->wd(cpu->iy + offset, cpu->a);
 }
+
 Z80OPCODE opy_7C(Z80 *cpu) { // ld a,yh
    cpu->a = cpu->yh;
 }
+
 Z80OPCODE opy_7D(Z80 *cpu) { // ld a,yl
    cpu->a = cpu->yl;
 }
+
 Z80OPCODE opy_7E(Z80 *cpu) { // ld a,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cpu->a = cpu->rd(cpu->iy + ofs);
+
+   cpu->a = cpu->rd(cpu->iy + offset);
 }
+
 Z80OPCODE opy_84(Z80 *cpu) { // add a,yh
    add8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_85(Z80 *cpu) { // add a,yl
    add8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_86(Z80 *cpu) { // add a,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   add8(cpu, cpu->rd(cpu->iy + ofs));
+
+   add8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_8C(Z80 *cpu) { // adc a,yh
    adc8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_8D(Z80 *cpu) { // adc a,yl
    adc8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_8E(Z80 *cpu) { // adc a,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   adc8(cpu, cpu->rd(cpu->iy + ofs));
+
+   adc8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_94(Z80 *cpu) { // sub yh
    sub8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_95(Z80 *cpu) { // sub yl
    sub8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_96(Z80 *cpu) { // sub (iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   sub8(cpu, cpu->rd(cpu->iy + ofs));
+
+   sub8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_9C(Z80 *cpu) { // sbc a,yh
    sbc8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_9D(Z80 *cpu) { // sbc a,yl
    sbc8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_9E(Z80 *cpu) { // sbc a,(iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   sbc8(cpu, cpu->rd(cpu->iy + ofs));
+
+   sbc8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_A4(Z80 *cpu) { // and yh
    and8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_A5(Z80 *cpu) { // and yl
    and8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_A6(Z80 *cpu) { // and (iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   and8(cpu, cpu->rd(cpu->iy + ofs));
+
+   and8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_AC(Z80 *cpu) { // xor yh
    xor8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_AD(Z80 *cpu) { // xor yl
    xor8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_AE(Z80 *cpu) { // xor (iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   xor8(cpu, cpu->rd(cpu->iy + ofs));
+
+   xor8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_B4(Z80 *cpu) { // or yh
    or8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_B5(Z80 *cpu) { // or yl
    or8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_B6(Z80 *cpu) { // or (iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   or8(cpu, cpu->rd(cpu->iy + ofs));
+
+   or8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_BC(Z80 *cpu) { // cp yh
    cp8(cpu, cpu->yh);
 }
+
 Z80OPCODE opy_BD(Z80 *cpu) { // cp yl
    cp8(cpu, cpu->yl);
 }
+
 Z80OPCODE opy_BE(Z80 *cpu) { // cp (iy+nn)
-   char ofs = cpu->rd(cpu->pc++);
+   int8_t offset = cpu->rd(cpu->pc++);
+
    cputact(5);
-   cp8(cpu, cpu->rd(cpu->iy + ofs));
+
+   cp8(cpu, cpu->rd(cpu->iy + offset));
 }
+
 Z80OPCODE opy_E1(Z80 *cpu) { // pop iy
    cpu->yl = cpu->rd(cpu->sp++);
    cpu->yh = cpu->rd(cpu->sp++);
 }
+
 Z80OPCODE opy_E3(Z80 *cpu) { // ex (sp),iy
-   unsigned tmp = cpu->rd(cpu->sp) + 0x100*cpu->rd(cpu->sp + 1);
+   uint16_t value = cpu->rd(cpu->sp) + 0x100 * cpu->rd(cpu->sp + 1);
    cputact(1);
+
    cpu->wd(cpu->sp, cpu->yl);
-   cpu->wd(cpu->sp+1, cpu->yh);
-   cpu->memptr = tmp;
-   cpu->iy = tmp;
+   cpu->wd(cpu->sp + 1, cpu->yh);
+
+   cpu->memptr = value;
+
+   cpu->iy = value;
+
    cputact(2);
 }
+
 Z80OPCODE opy_E5(Z80 *cpu) { // push iy
    cputact(1);
+
    cpu->wd(--cpu->sp, cpu->yh);
    cpu->wd(--cpu->sp, cpu->yl);
 }
+
 Z80OPCODE opy_E9(Z80 *cpu) { // jp (iy)
-   cpu->last_branch = cpu->pc-2;
+   cpu->last_branch = cpu->pc - 2;
    cpu->pc = cpu->iy;
 }
+
 Z80OPCODE opy_F9(Z80 *cpu) { // ld sp,iy
    cpu->sp = cpu->iy;
+
    cputact(2);
 }
 

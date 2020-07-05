@@ -17,11 +17,13 @@ Z80LOGIC oplx_00(Z80 *cpu, uint8_t byte) { // rlc (ix+nn)
    
    return rol[byte];
 }
+
 Z80LOGIC oplx_08(Z80 *cpu, uint8_t byte) { // rrc (ix+nn)
    cpu->f = rrc_f[byte];
    
    return ror[byte];
 }
+
 Z80LOGIC oplx_10(Z80 *cpu, uint8_t byte) { // rl (ix+nn)
    if (cpu->f & CF)
    {
@@ -32,6 +34,7 @@ Z80LOGIC oplx_10(Z80 *cpu, uint8_t byte) { // rl (ix+nn)
       cpu->f = rl0[byte]; return (byte << 1);
    }
 }
+
 Z80LOGIC oplx_18(Z80 *cpu, uint8_t byte) { // rr (ix+nn)
    if (cpu->f & CF)
    {
@@ -42,93 +45,121 @@ Z80LOGIC oplx_18(Z80 *cpu, uint8_t byte) { // rr (ix+nn)
       cpu->f = rr0[byte]; return (byte >> 1);
    }
 }
+
 Z80LOGIC oplx_20(Z80 *cpu, uint8_t byte) { // sla (ix+nn)
    cpu->f = rl0[byte];
    
    return (byte << 1);
 }
+
 Z80LOGIC oplx_28(Z80 *cpu, uint8_t byte) { // sra (ix+nn)
    cpu->f = sra_f[byte];
    
    return (byte >> 1) + (byte & 0x80);
 }
+
 Z80LOGIC oplx_30(Z80 *cpu, uint8_t byte) { // sli (ix+nn)
    cpu->f = rl1[byte];
    
    return (byte << 1) + 1;
 }
+
 Z80LOGIC oplx_38(Z80 *cpu, uint8_t byte) { // srl (ix+nn)
    cpu->f = rr0[byte]; return (byte >> 1);
 }
+
 Z80LOGIC oplx_40(Z80 *cpu, uint8_t byte) { // bit 0,(ix+nn)
    bitmem(cpu, byte, 0); return byte;
 }
+
 Z80LOGIC oplx_48(Z80 *cpu, uint8_t byte) { // bit 1,(ix+nn)
    bitmem(cpu, byte, 1); return byte;
 }
+
 Z80LOGIC oplx_50(Z80 *cpu, uint8_t byte) { // bit 2,(ix+nn)
    bitmem(cpu, byte, 2); return byte;
 }
+
 Z80LOGIC oplx_58(Z80 *cpu, uint8_t byte) { // bit 3,(ix+nn)
    bitmem(cpu, byte, 3); return byte;
 }
+
 Z80LOGIC oplx_60(Z80 *cpu, uint8_t byte) { // bit 4,(ix+nn)
    bitmem(cpu, byte, 4); return byte;
 }
+
 Z80LOGIC oplx_68(Z80 *cpu, uint8_t byte) { // bit 5,(ix+nn)
    bitmem(cpu, byte, 5); return byte;
 }
+
 Z80LOGIC oplx_70(Z80 *cpu, uint8_t byte) { // bit 6,(ix+nn)
    bitmem(cpu, byte, 6); return byte;
 }
+
 Z80LOGIC oplx_78(Z80 *cpu, uint8_t byte) { // bit 7,(ix+nn)
    bitmem(cpu, byte, 7); return byte;
 }
+
 Z80LOGIC oplx_80(Z80 *cpu, uint8_t byte) { // res 0,(ix+nn)
    return resbyte(byte, 0);
 }
+
 Z80LOGIC oplx_88(Z80 *cpu, uint8_t byte) { // res 1,(ix+nn)
    return resbyte(byte, 1);
 }
+
 Z80LOGIC oplx_90(Z80 *cpu, uint8_t byte) { // res 2,(ix+nn)
    return resbyte(byte, 2);
 }
+
 Z80LOGIC oplx_98(Z80 *cpu, uint8_t byte) { // res 3,(ix+nn)
    return resbyte(byte, 3);
 }
+
 Z80LOGIC oplx_A0(Z80 *cpu, uint8_t byte) { // res 4,(ix+nn)
    return resbyte(byte, 4);
 }
+
 Z80LOGIC oplx_A8(Z80 *cpu, uint8_t byte) { // res 5,(ix+nn)
    return resbyte(byte, 5);
 }
+
 Z80LOGIC oplx_B0(Z80 *cpu, uint8_t byte) { // res 6,(ix+nn)
    return resbyte(byte, 6);
 }
+
 Z80LOGIC oplx_B8(Z80 *cpu, uint8_t byte) { // res 7,(ix+nn)
    return resbyte(byte, 7);
 }
+
 Z80LOGIC oplx_C0(Z80 *cpu, uint8_t byte) { // set 0,(ix+nn)
    return setbyte(byte, 0);
 }
+
 Z80LOGIC oplx_C8(Z80 *cpu, uint8_t byte) { // set 1,(ix+nn)
    return setbyte(byte, 1);
 }
+
 Z80LOGIC oplx_D0(Z80 *cpu, uint8_t byte) { // set 2,(ix+nn)
    return setbyte(byte, 2);
 }
+
 Z80LOGIC oplx_D8(Z80 *cpu, uint8_t byte) { // set 3,(ix+nn)
    return setbyte(byte, 3);
 }
+
 Z80LOGIC oplx_E0(Z80 *cpu, uint8_t byte) { // set 4,(ix+nn)
    return setbyte(byte, 4);
 }
+
 Z80LOGIC oplx_E8(Z80 *cpu, uint8_t byte) { // set 5,(ix+nn)
    return setbyte(byte, 5);
 }
+
 Z80LOGIC oplx_F0(Z80 *cpu, uint8_t byte) { // set 6,(ix+nn)
    return setbyte(byte, 6);
 }
+
 Z80LOGIC oplx_F8(Z80 *cpu, uint8_t byte) { // set 7,(ix+nn)
    return setbyte(byte, 7);
 }
@@ -191,23 +222,33 @@ Z80INLINE void Z80FAST ddfd(Z80 *cpu, uint8_t opcode)
       unsigned ptr; // pointer to DDCB operand
       ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + (char)cpu->rd(cpu->pc++);
       cpu->memptr = ptr;
+
       // DDCBnnXX,FDCBnnXX increment R by 2, not 3!
-      opcode = cpu->m1_cycle(); cpu->r_low--;
+      opcode = cpu->m1_cycle();
+      cpu->r_low--;
+
 	  cputact(1);
 
-      uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));     
+      uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));
+
 	  cputact(1);
-      if ((opcode & 0xC0) == 0x40) return; // bit n,rm
+
+      if ((opcode & 0xC0) == 0x40)
+          return; // bit n,rm
 
       // select destination register for shift/res/set
       *(&cpu->c + reg_offset[opcode & 7]) = byte;
       cpu->wd(ptr, byte);
+
       return;
    }
 
-   if (opcode == 0xED) {
+   if (opcode == 0xED)
+   {
       opcode = cpu->m1_cycle();
+
       (ext_opcode[opcode])(cpu);
+
       return;
    }
 
