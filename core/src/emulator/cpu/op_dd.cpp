@@ -654,8 +654,12 @@ Z80OPCODE opx_BE(Z80 *cpu) { // cp (ix+nn)
 }
 
 Z80OPCODE opx_E1(Z80 *cpu) { // pop ix
-   cpu->xl = cpu->rd(cpu->sp++);
-   cpu->xh = cpu->rd(cpu->sp++);
+    uint16_t sp = cpu->sp;
+
+   cpu->xl = cpu->rd(sp++);
+   cpu->xh = cpu->rd(sp++);
+
+   cpu->sp = sp;
 }
 
 Z80OPCODE opx_E3(Z80 *cpu) { // ex (sp),ix
