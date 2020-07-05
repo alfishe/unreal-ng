@@ -74,6 +74,7 @@ void MainLoop::RunFrame()
 	static int i = 0;
 	if (i % 100 == 0)
 	{
+	    screen.SaveZXSpectrumNativeScreen();
         screen.RenderOnlyMainScreen();
         screen.SaveScreen();
     }
