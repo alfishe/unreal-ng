@@ -191,7 +191,7 @@ public:
 	const RasterDescriptor rasterDescriptors[M_MAX] =
     {
 	    { 0, 0, 0, 0, 0, 0 },           // M_NUL
-	    { 352, 312, 256, 192, 48, 32 }  // M_ZX
+	    { 352, 288, 256, 192, 48, 48 }  // M_ZX
     };
 
 	// Default color table: 0RRrrrGG gggBBbbb

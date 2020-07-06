@@ -291,7 +291,7 @@ void ScreenZX::RenderOnlyMainScreen()
 
                 for (int destX = 0; destX < 8; destX++)
                 {
-                    offset = y * rasterDescriptor.fullFrameWidth + (x * 8 + destX);
+                    offset = (rasterDescriptor.screenOffsetTop + y) * rasterDescriptor.fullFrameWidth + (rasterDescriptor.screenOffsetLeft + x * 8 + destX);
                     if (offset < size / sizeof(uint32_t))
                     {
                         // Write RGBA pixel to framebuffer with x,y coordinates and calculated color
