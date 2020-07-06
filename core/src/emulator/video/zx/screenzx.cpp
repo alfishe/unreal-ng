@@ -302,17 +302,6 @@ void ScreenZX::RenderOnlyMainScreen()
                         LOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
                     }
                 }
-
-                /*
-                byte pix = *(src + scrtab[y] + x);
-                byte ink = colortab[*(src + atrtab[y] + x)];
-                byte paper = ink >> 4;
-                ink &= 0x0f;
-                for(int b = 0; b < 8; ++b)
-                {
-                    *dst++ = ((pix << b) & 0x80) ? ink : paper;
-                }
-                 */
             }
         }
     }

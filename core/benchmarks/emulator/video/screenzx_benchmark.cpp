@@ -9,10 +9,12 @@
 
 static void BM_CalculateXYAddress(benchmark::State& state)
 {
+    /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    /// endregion </Setup>
 
     for (auto _ : state)
     {
@@ -25,6 +27,7 @@ static void BM_CalculateXYAddress(benchmark::State& state)
         }
     }
 
+    /// region <TearDown>
     if (screenzx != nullptr)
     {
         delete screenzx;
@@ -39,16 +42,19 @@ static void BM_CalculateXYAddress(benchmark::State& state)
     {
         delete context;
     }
+    /// endregion </Teardown>
 }
 
 BENCHMARK(BM_CalculateXYAddress)->Iterations(100);
 
 static void BM_CalculateXYAddressOptimized(benchmark::State& state)
 {
+    /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    /// endregion </Setup>
 
     for (auto _ : state)
     {
@@ -61,6 +67,7 @@ static void BM_CalculateXYAddressOptimized(benchmark::State& state)
         }
     }
 
+    /// region <TearDown>
     if (screenzx != nullptr)
     {
         delete screenzx;
@@ -75,16 +82,19 @@ static void BM_CalculateXYAddressOptimized(benchmark::State& state)
     {
         delete context;
     }
+    /// endregion </Teardown>
 }
 
 BENCHMARK(BM_CalculateXYAddressOptimized)->Iterations(100);
 
 static void BM_CalculateXYColorAttrAddress(benchmark::State& state)
 {
+    /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    /// endregion </Setup>
 
     for (auto _ : state)
     {
@@ -97,6 +107,7 @@ static void BM_CalculateXYColorAttrAddress(benchmark::State& state)
         }
     }
 
+    /// region <TearDown>
     if (screenzx != nullptr)
     {
         delete screenzx;
@@ -111,6 +122,7 @@ static void BM_CalculateXYColorAttrAddress(benchmark::State& state)
     {
         delete context;
     }
+    /// endregion </Teardown>
 }
 
 BENCHMARK(BM_CalculateXYColorAttrAddress)->Iterations(100);
@@ -118,10 +130,12 @@ BENCHMARK(BM_CalculateXYColorAttrAddress)->Iterations(100);
 
 static void BM_CalculateXYColorAttrAddressOptimized(benchmark::State& state)
 {
+    /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    /// endregion </Setup>
 
     for (auto _ : state)
     {
@@ -134,6 +148,7 @@ static void BM_CalculateXYColorAttrAddressOptimized(benchmark::State& state)
         }
     }
 
+    /// region <TearDown>
     if (screenzx != nullptr)
     {
         delete screenzx;
@@ -148,6 +163,47 @@ static void BM_CalculateXYColorAttrAddressOptimized(benchmark::State& state)
     {
         delete context;
     }
+    /// endregion </Teardown>
 }
 
 BENCHMARK(BM_CalculateXYColorAttrAddressOptimized)->Iterations(100);
+
+static void BM_RenderOnlyMainScreen(benchmark::State& state)
+{
+    /// region <SetUp>
+
+    // Instantiate emulator with all peripherals, but no configuration loaded
+    EmulatorContext* context = new EmulatorContext();
+
+    CPU* cpu = new CPU(context);
+    // Use Spectrum48K / Pentagon memory layout
+    cpu->GetMemory()->InternalSetBanks();
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->InitFrame();
+
+    /// endregion </Setup>
+
+    for (auto _ : state)
+    {
+        screenzx->RenderOnlyMainScreen();
+    }
+
+    /// region <TearDown>
+    if (screenzx != nullptr)
+    {
+        delete screenzx;
+    }
+
+    if (cpu != nullptr)
+    {
+        delete cpu;
+    }
+
+    if (context != nullptr)
+    {
+        delete context;
+    }
+    /// endregion </Teardown>
+}
+BENCHMARK(BM_RenderOnlyMainScreen)->Iterations(100);

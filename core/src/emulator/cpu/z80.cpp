@@ -101,8 +101,7 @@ uint8_t Z80::m1_cycle()
 	}
 	// End of TODO: move to Ports class
 
-	if (cpu.pc == 0x0DAF)
-	    LOGINFO("Clearing whole display area is executed");
+	/// region <Test>
 
 	/*
     if (cpu.pc == 0x11DC)
@@ -118,7 +117,7 @@ uint8_t Z80::m1_cycle()
         LOGINFO("RAM-READ is executed");
         Logger::Mute();
     }
-*/
+
     if (cpu.pc == 0x11EF)
     {
         Logger::UnmuteSilent();
@@ -202,6 +201,8 @@ uint8_t Z80::m1_cycle()
         LOGINFO("PO-MSG is executed. PC: %04X", cpu.pc);
         Logger::MuteSilent();
     }
+    */
+	/// endregion </Test>
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
