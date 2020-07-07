@@ -89,7 +89,7 @@ void TestClient::Start()
 		return;
 	}
 
-	//region Test
+	/// region <Test messaging>
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 	string topic("CPU_RESET");
 	ObserverCallbackFunc callback = [=](int id, Message* message)
@@ -122,8 +122,10 @@ void TestClient::Start()
 	messageCenter.AddObserver(topic, callback);
 
 
-    // region Test
+    /// endregion </Test messaging>
 
+
+/*
 	Logger::Mute();
 	_emulator->DebugOn();
 	_emulator->RunNCPUCycles(3000000 - (4560 * 3) - 1600);
@@ -131,7 +133,7 @@ void TestClient::Start()
     _emulator->RunNCPUCycles(500);
 
 	return;
-
+*/
 	//endregion Test
 
 

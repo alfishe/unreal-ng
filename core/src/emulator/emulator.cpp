@@ -194,7 +194,7 @@ void Emulator::GetSystemInfo()
 	SystemHelper::GetCPUString(cpuString);
 	LOGINFO("CPU ID: %s", cpuString);
 
-	unsigned cpuver = SystemHelper::GetCPUID(1, 0);		// Read Highest Function Parameter and ManufacturerID
+	unsigned cpuver = SystemHelper::GetCPUID(1, 0);	// Read Highest Function Parameter and ManufacturerID
 	unsigned features = SystemHelper::GetCPUID(1, 1);	// Read Processor Info and Feature Bits
 	host.mmx = (features >> 23) & 1;
 	host.sse = (features >> 25) & 1;
@@ -261,7 +261,7 @@ void Emulator::Stop()
 
 void Emulator::RunSingleCPUCycle()
 {
-	// TODO: handle all timings within frame and I/O
+	// TODO: synchronize with all timings within frame and I/O
 
 	_cpu->GetZ80()->Z80Step();
 
@@ -279,6 +279,11 @@ void Emulator::RunNCPUCycles(unsigned cycles)
 	{
 		RunSingleCPUCycle();
 	}
+}
+
+void Emulator::RunUntilCondition()
+{
+    throw "Not implemented";
 }
 
 void Emulator::DebugOn()

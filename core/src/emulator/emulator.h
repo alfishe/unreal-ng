@@ -36,6 +36,8 @@ public:
 	// Initialization operations
 	bool Init();
 	void Release();
+
+	// Info methods
 	void GetSystemInfo();
 
 	// Emulator control cycle
@@ -48,7 +50,9 @@ public:
 	// Controlled emulator behavior
 	void RunSingleCPUCycle();
 	void RunNCPUCycles(unsigned cycles);
+	void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
 
+    // Debug methods
 	void DebugOn();
 	void DebugOff();
 
@@ -57,8 +61,6 @@ public:
 	bool IsRunning();
 	bool IsPaused();
 	bool IsDebug();
-
-	// Debug methods
 
 	// Counters method
 	void ResetCountersAll();

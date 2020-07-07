@@ -94,6 +94,20 @@ public:
 
 		assert("GetCPUFrequency() not implemented for Linux");
 
+
+		// See: https://stackoverflow.com/questions/11706563/how-can-i-programmatically-find-the-cpu-frequency-with-c
+		unsigned cpuInfo[4];
+		GetCPUID(cpuInfo, 0)
+
+		// Intel CPUs with CPUID level >= 0x16 (Skylake, Kabylake)
+		if (cpuInfo[0] >= 0x16)
+		{
+            GetCPUID(cpuInfo, 0x16);
+
+            // Return base frequency in MHz
+            result = cpuInfo[0];
+		}
+
         #endif
 
         #ifdef __APPLE__

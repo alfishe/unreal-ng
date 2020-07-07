@@ -6,6 +6,9 @@
 
 /// region <Structures>
 
+///
+/// Type of breakpoint. Types can be combined as a bitmask
+///
 enum BreakpointTypeEnum : uint8_t
 {
     BRK_NONE = 0x00,
@@ -16,6 +19,9 @@ enum BreakpointTypeEnum : uint8_t
     BRK_IO_OUT = 0x10
 };
 
+///
+/// Descriptor for a single breakpoint
+///
 struct BreakpointDescriptor
 {
 public:
@@ -33,11 +39,14 @@ protected:
     std::map<uint16_t, BreakpointDescriptor> _breakpoints;
     /// endregion </Fields>
 
+    /// region <Constructors / Destructors>
 public:
     DebugManager();
     virtual ~DebugManager();
 
-    /// region <Breakpoints>
+    /// endregion </Constructors / Destructors>
+
+    /// region <Breakpoint management>
 public:
     void AddBreakpoint(BreakpointTypeEnum type, uint16_t address);
     void RemoveBreakpoint(BreakpointTypeEnum type, uint16_t address);
@@ -46,5 +55,5 @@ public:
     void DisableBreakpoint(BreakpointTypeEnum type, uint16_t address);
     void EnableBreakpoint(BreakpointTypeEnum type, uint16_t address);
 
-    /// endregion </Breakpoints>
+    /// endregion </Breakpoint management>
 };

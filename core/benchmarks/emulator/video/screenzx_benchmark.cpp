@@ -207,3 +207,4 @@ static void BM_RenderOnlyMainScreen(benchmark::State& state)
     /// endregion </Teardown>
 }
 BENCHMARK(BM_RenderOnlyMainScreen)->Iterations(100);
+BENCHMARK(BM_RenderOnlyMainScreen)->Iterations(100)->Threads(12);

@@ -7,6 +7,8 @@
 #include "emulator/platform.h"
 #include <cassert>
 
+/// region <Constructors / Destructors>
+
 Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
@@ -25,6 +27,10 @@ Memory::~Memory()
 
 	LOGDEBUG("Memory::~Memory()");
 }
+
+/// endregion </Constructors / Destructors>
+
+/// region <Runtime methods>
 
 //
 // Switch to certain ROM section RM_SOS | RM_128 | RM_DOS | RM_SYS
@@ -518,6 +524,54 @@ void Memory::SetBanks()
 	*/
 }
 
+/// endregion </Runtime methods>
+
+/// region <Debug methods>
+
+void Memory::SetROM48k()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_SOS);
+
+    // Switch to 48k ROM page
+    _bank_read[0] = base_sos_rom;
+    _bank_write[0] = base_sos_rom;
+}
+
+void Memory::SetROM128k()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_128);
+
+    // Switch to 128k ROM page
+    _bank_read[0] = base_128_rom;
+    _bank_write[0] = base_128_rom;
+}
+
+void Memory::SetROMDOS()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_DOS);
+
+    // Switch to DOS ROM page
+    _bank_read[0] = base_dos_rom;
+    _bank_write[0] = base_dos_rom;
+}
+
+void Memory::SetROMSystem()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_SYS);
+
+    // Switch to DOS ROM page
+    _bank_read[0] = base_sys_rom;
+    _bank_write[0] = base_sys_rom;
+}
+
+/// endregion </Debug methods>
+
+/// region <Helper methods>
+
 /// Returns pointer in Host memory for the address in Z80 space mapped to current bank configuration
 /// \param address Z80 space address
 /// \return Pointer to Host memory mapped
@@ -602,6 +656,8 @@ void Memory::InternalSetBanks()
 	// Reset all address defining flags/signals (they'll be recalculated later in logic)
 	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 }
+
+/// endregion </Helper methods>
 
 /*
 void set_banks()
