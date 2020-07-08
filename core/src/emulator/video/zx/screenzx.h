@@ -15,15 +15,19 @@ protected:
     uint32_t _rgbaColors[256];      // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256]; // Colors when Flash is in blinking=ON state
 
+
     /// endregion </Fields>
 
+    /// region <Constructors / Destructors>
 public:
     ScreenZX() = delete;		            // Disable default constructor; C++ 11 feature
     ScreenZX(EmulatorContext* context);
     virtual ~ScreenZX();
+    /// endregion </Constructors / Destructors>
 
 protected:
     void CreateTables() override;
+    void CreateTimingTable();
     uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint16_t CalculateXYScreenAddressOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
@@ -37,6 +41,7 @@ protected:
 
     // Screen class methods override
 public:
+    void Draw(uint32_t n) override;
     void UpdateScreen() override;
     void RenderOnlyMainScreen() override;
 };

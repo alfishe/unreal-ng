@@ -8,6 +8,8 @@
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"
 
+/// region <Constructors / Destructors>
+
 Screen::Screen(EmulatorContext* context)
 {
 	_system = context->pCPU;
@@ -22,6 +24,10 @@ Screen::~Screen()
         DeallocateFramebuffer();
     }
 }
+
+/// endregion </Constructors / Destructors>
+
+/// region <Initialization>
 
 void Screen::InitFrame()
 {
@@ -148,6 +154,8 @@ void Screen::InitMemoryCounters()
 	memset(_vid.memtstcyc, 0, 320 * sizeof(_vid.memtstcyc[0]));
 	memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
 }
+
+/// endregion </Initialization>
 
 void Screen::UpdateScreen()
 {

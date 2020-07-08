@@ -47,6 +47,45 @@ void ScreenZX::CreateTables()
     }
 }
 
+// Pre-calculate render position based on t-states
+// Each Z80 t-state ULA renders 2 pixels
+// Color information update rate:
+//   - border - each 2 pixels
+//   - screen area - each 8 pixels
+// Pre-calculated values contain per-line information
+
+// Genuine ZX-Spectrum frame is: (64 + 192 + 56) * 224 = 69888 T-states
+// Lines: 8 (vsync) + 8 (top border invisible) + 48 (top border) + 192 (screen) + 48 (bottom border) + 8 (???)
+// Each line: 16 (left border) + 128 (screen) + 16 (right border) + 48 (blank / raytrace) + 16 (hsync) T-states
+void ScreenZX::CreateTimingTable()
+{
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+
+    // 0. Invisible - VSync and VBlank
+
+    // 1. Top segment - top border only
+    for (int lines = 0; lines < rasterDescriptor.screenOffsetTop; lines++)
+    {
+
+    }
+
+    // 2. Middle segment - border on sides and screen area
+    int screenBottom = rasterDescriptor.screenOffsetTop + rasterDescriptor.screenHeight;
+    for (int lines = rasterDescriptor.screenOffsetTop; lines < screenBottom; lines++)
+    {
+
+    }
+
+    // 3. Bottom segment - bottom border only
+    for (int lines = screenBottom; lines < rasterDescriptor.fullFrameHeight; lines++)
+    {
+
+    }
+
+    // Contention memory access pattern
+    // See: https://worldofspectrum.org/faq/reference/48kreference.htm#Contention
+};
+
 // ZX-Spectrum 48k ULA screen addressing:
 // Where: X - 5'bits [0:31] - X-coordinate in 1x8 blocks, Y - 8'bits [0:191] - Y coordinate in pixel lines
 // Address bits:   15   14   13   12   11   10    9    8    7    6    5    4    3    2    1    0
@@ -251,6 +290,10 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
 
 /// region <Screen class methods override>
 
+void ScreenZX::Draw(uint32_t n)
+{
+
+}
 
 void ScreenZX::UpdateScreen()
 {

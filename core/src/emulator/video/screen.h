@@ -118,6 +118,11 @@ struct RasterDescriptor
 
     uint16_t screenOffsetLeft;
     uint16_t screenOffsetTop;
+
+    uint16_t hSyncPixels;
+    uint16_t hBlankPixels;
+    uint16_t vsyncLines;
+    uint16_t vBlankLines;
 };
 
 struct FramebufferDescriptor
@@ -190,8 +195,8 @@ public:
 	/// Raster descriptors for each video mode
 	const RasterDescriptor rasterDescriptors[M_MAX] =
     {
-	    { 0, 0, 0, 0, 0, 0 },           // M_NUL
-	    { 352, 288, 256, 192, 48, 48 }  // M_ZX
+	    { 0, 0, 0, 0, 0, 0 , 0, 0, 0, 0},             // M_NUL
+	    { 352, 288, 256, 192, 48, 48,  32, 32, 16,  16 } // M_ZX
     };
 
 	// Default color table: 0RRrrrGG gggBBbbb
@@ -259,6 +264,8 @@ protected:
 
 	VideoModeEnum _mode;
 	FramebufferDescriptor _framebuffer;
+
+	/// region <Obsolete>
 	DrawCallback _currentDrawCallback;
 	DrawCallback _nullCallback;
     DrawCallback _drawCallback;
@@ -287,6 +294,7 @@ protected:
 
 public:
 	VideoControl _vid;
+	/// endregion </Obsolete>
 
 public:
 	Screen() = delete;		            // Disable default constructor; C++ 11 feature
@@ -299,6 +307,7 @@ public:
 	virtual void InitRaster();
 	virtual void InitMemoryCounters();
 
+    virtual void Draw(uint32_t n);
 	virtual void UpdateScreen();
 	virtual void RenderOnlyMainScreen();
 	virtual void SaveScreen();
@@ -317,7 +326,6 @@ protected:
 	// Draw helpers
 public:
     static std::string GetVideoModeName(VideoModeEnum mode);
-	void Draw(uint32_t n);
 
 	void DrawNull(uint32_t n);		// Non-existing mode (skip draw)
 	void DrawZX(uint32_t n);		// Authentic Sinclair ZX Spectrum
