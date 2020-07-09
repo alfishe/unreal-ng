@@ -84,6 +84,8 @@ void ScreenZX::CreateTimingTable()
 
     // Contention memory access pattern
     // See: https://worldofspectrum.org/faq/reference/48kreference.htm#Contention
+    // See: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
+    // 
 };
 
 // ZX-Spectrum 48k ULA screen addressing:
