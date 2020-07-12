@@ -15,6 +15,8 @@ protected:
     uint32_t _rgbaColors[256];          // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256];     // Colors when Flash is in blinking=ON state
 
+    uint8_t _screenLineRenderers[256];  // Cached render types for each line in screen area (HBlank, HSync, Left Border, Screen, Right Border)
+
 
     /// endregion </Fields>
 

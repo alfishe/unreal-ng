@@ -45,6 +45,9 @@ void ScreenZX::CreateTables()
         _rgbaColors[idx] = TransformZXSpectrumColorsToRGBA(idx, true);          // Normal state colors
         _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);    // Flashing state colors
     }
+
+    // Screen mode dependent
+    CreateTimingTable();
 }
 
 // Pre-calculate render position based on t-states
@@ -60,6 +63,38 @@ void ScreenZX::CreateTables()
 void ScreenZX::CreateTimingTable()
 {
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    const RasterState& state = _rasterState;
+
+    RenderTypeEnum type = RT_BLANK;
+
+    /// region <Line renderer in screen area>
+
+    for (uint16_t i = 0; i <= 255; i++)
+    {
+        if (i >= state.blankLineAreaStart && i <= state.blankLineAreaEnd)
+        {
+            type = RT_BLANK;
+        }
+        else if (i >= state.leftBorderAreaStart && i <= state.leftBorderAreaEnd)
+        {
+            type = RT_BORDER;
+        }
+        else if (i >= state.screenLineAreaStart && i <= state.screenLineAreaEnd)
+        {
+            type = RT_SCREEN;
+        }
+        else if (i >= state.rightBorderAreaStart && i <= state.rightBorderAreaEnd)
+        {
+            type = RT_BORDER;
+        }
+        else
+        {
+            type = RT_BLANK;
+        }
+    }
+
+    /// endregion </Line renderer in screen area>
+
 
     // 0. Invisible - VSync and VBlank
 
