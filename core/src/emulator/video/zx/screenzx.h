@@ -9,11 +9,11 @@ class ScreenZX : public Screen
 {
     /// region <Fields>
 protected:
-    uint16_t _screenLineOffsets[256];
-    uint16_t _attrLineOffsets[256];
+    uint16_t _screenLineOffsets[256];   // Address for each screen line start (relative to screen base offset)
+    uint16_t _attrLineOffsets[256];     // Address for each attribute offset (relative to screen base offset)
 
-    uint32_t _rgbaColors[256];      // Colors when no Flash or Flash is in blinking=OFF state
-    uint32_t _rgbaFlashColors[256]; // Colors when Flash is in blinking=ON state
+    uint32_t _rgbaColors[256];          // Colors when no Flash or Flash is in blinking=OFF state
+    uint32_t _rgbaFlashColors[256];     // Colors when Flash is in blinking=ON state
 
 
     /// endregion </Fields>
@@ -28,6 +28,7 @@ public:
 protected:
     void CreateTables() override;
     void CreateTimingTable();
+
     uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint16_t CalculateXYScreenAddressOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
@@ -39,9 +40,12 @@ protected:
     uint32_t GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint32_t GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
+    RenderTypeEnum GetLineRenderTypeByTiming(uint32_t tstate);
+    bool IsOnScreenByTiming(uint32_t tstate);
+
     // Screen class methods override
 public:
-    void Draw(uint32_t n) override;
+    void Draw(uint32_t tstate) override;
     void UpdateScreen() override;
     void RenderOnlyMainScreen() override;
 };
@@ -67,5 +71,8 @@ public:
 
     using ScreenZX::GetZXSpectrumPixel;
     using ScreenZX::GetZXSpectrumPixelOptimized;
+
+    using ScreenZX::GetLineRenderTypeByTiming;
+    using ScreenZX::IsOnScreenByTiming;
 };
 #endif // _CODE_UNDER_TEST

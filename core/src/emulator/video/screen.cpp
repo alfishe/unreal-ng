@@ -58,6 +58,8 @@ void Screen::InitRaster()
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
+	VideoModeEnum prevMode = video.mode;
+
 	//region Set current video mode
 
 	// TSconf
@@ -137,13 +139,11 @@ void Screen::InitRaster()
 	//endregion
 
 	// Select renderer for the mode
-	_mode = video.mode;
-	_nullCallback = _drawCallbacks[M_NUL];
-    _drawCallback = _drawCallbacks[_mode];
-    _borderCallback = _drawCallbacks[M_BRD];
+	if (prevMode != video.mode)
+	{
+        SetVideoMode(video.mode);
+    }
 
-    // Allocate framebuffer
-    AllocateFramebuffer(_mode);
 }
 
 void Screen::InitMemoryCounters()
@@ -153,6 +153,75 @@ void Screen::InitMemoryCounters()
 	memset(_vid.memtsscyc, 0, 320 * sizeof(_vid.memtsscyc[0]));
 	memset(_vid.memtstcyc, 0, 320 * sizeof(_vid.memtstcyc[0]));
 	memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
+}
+
+void Screen::SetVideoMode(VideoModeEnum mode)
+{
+    _mode = mode;
+    _nullCallback = _drawCallbacks[M_NUL];
+    _drawCallback = _drawCallbacks[_mode];
+    _borderCallback = _drawCallbacks[M_BRD];
+
+    /// region <Calculate raster values>
+
+    /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    const uint8_t pixelsPerTState = 2;
+
+    /// region <Frame timings>
+
+    _rasterState.pixelsPerLine = rasterDescriptor.pixelsPerLine;
+    _rasterState.tstatesPerLine = _rasterState.pixelsPerLine / pixelsPerTState;
+    _rasterState.maxFrameTiming = _rasterState.tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+
+    /// endregion </Frame timings>
+
+    /// region <Vertical timings>
+
+    // Invisible blank area on top
+    _rasterState.blankAreaStart = 0;
+    _rasterState.blankAreaEnd = _rasterState.tstatesPerLine * (rasterDescriptor.vBlankLines + rasterDescriptor.vSyncLines) - 1;
+
+    // Top border
+    _rasterState.topBorderAreaStart = _rasterState.blankAreaEnd + 1;
+    _rasterState.topBorderAreaEnd = _rasterState.topBorderAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenOffsetTop - 1;
+
+    // Screen + side borders
+    _rasterState.screenAreaStart = _rasterState.topBorderAreaEnd + 1;
+    _rasterState.screenAreaEnd = _rasterState.screenAreaStart + _rasterState.tstatesPerLine * rasterDescriptor.screenHeight - 1;
+
+    // Bottom border
+    _rasterState.bottomBorderAreaStart = _rasterState.screenAreaEnd + 1;
+    _rasterState.bottomBorderAreaEnd = _rasterState.bottomBorderAreaStart + _rasterState.tstatesPerLine * (rasterDescriptor.fullFrameHeight - rasterDescriptor.screenHeight - rasterDescriptor.screenOffsetTop) - 1;
+
+    /// endregion </Vertical timings>
+
+    /// region <Horizontal timings>
+
+    _rasterState.blankLineAreaStart = 0;
+    _rasterState.blankLineAreaEnd = ((rasterDescriptor.hBlankPixels + rasterDescriptor.hSyncPixels) / pixelsPerTState) - 1;
+
+    _rasterState.leftBorderAreaStart = _rasterState.leftBorderAreaStart + 1;
+    _rasterState.leftBorderAreaEnd = _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / pixelsPerTState) - 1;
+
+    _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
+    _rasterState.screenLineAreaEnd = _rasterState.screenLineAreaStart +  (rasterDescriptor.screenWidth / pixelsPerTState) - 1;
+
+    _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
+    _rasterState.rightBorderAreaEnd = _rasterState.rightBorderAreaStart + ((rasterDescriptor.fullFrameWidth - rasterDescriptor.screenOffsetLeft - rasterDescriptor.screenWidth) / pixelsPerTState) - 1;
+
+    /// endregion </Horizontal timings>
+
+    /// endregion </Calculate raster values>
+
+    // Allocate framebuffer
+    AllocateFramebuffer(_mode);
+
+#ifdef _DEBUG
+
+    LOGINFO("%s", DumpRasterState().c_str());
+
+#endif // _DEBUG
 }
 
 /// endregion </Initialization>
@@ -206,6 +275,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 	switch (mode)
 	{
 		case M_ZX:
+		case M_PMC:
 			break;
 		default:
 			LOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -258,18 +328,6 @@ void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
         *size = _framebuffer.memoryBufferSize;
     }
 }
-
-//region Debug methods
-#ifdef _DEBUG
-#include <cstdio>
-
-void Screen::DumpFramebufferInfo(char* buffer, size_t len)
-{
-    std::string videoModeName = GetVideoModeName(_framebuffer.videoMode);
-    snprintf(buffer, len, "VideoMode: %s; Width: %dpx; Height: %dpx; Buffer: %d bytes", videoModeName.c_str(), _framebuffer.width, _framebuffer.height, _framebuffer.memoryBufferSize);
-}
-
-#endif
 
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {
@@ -553,3 +611,89 @@ void Screen::DrawBorder(uint32_t n)
 
     video.vptr = vptr;
 }
+
+/// region <Helper methods
+std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
+{
+    static char const *videoModeName[] =
+    {
+        [M_NUL] = "Null",	                // Non-existing mode
+        [M_ZX] = "ZX-Spectrum",		        // Sinclair ZX Spectrum
+        [M_PMC] = "Pentagon",		        // Pentagon Multicolor
+        [M_P16] = "Pentagon 16c",   		// Pentagon 16c
+        [M_P384] = "Pentagon 384x384",		// Pentagon 384x304
+        [M_PHR] = "Pentagon HiRes", 		// Pentagon HiRes
+        [M_TIMEX] = "Timex ULA+",           // Timex with 32 x 192 attributes (2 colors per line)
+        [M_TS16] = "TSConf 16c",	    	// TS 16c
+        [M_TS256] = "TSConf 256c",      	// TS 256c
+        [M_TSTX] = "TSConf Text",   		// TS Text
+        [M_ATM16] = "ATM 16c",          	// ATM 16c
+        [M_ATMHR] = "ATM HiRes",        	// ATM HiRes
+        [M_ATMTX] = "ATM Text",         	// ATM Text
+        [M_ATMTL] = "ATM Text Linear",  	// ATM Text Linear
+        [M_PROFI] = "Profi",            	// Profi
+        [M_GMX] = "GMX",            		// GMX
+        [M_BRD] = "Border only",          	// Border only
+        [M_MAX] = ""
+    };
+
+    std::string result;
+
+    if (mode < M_MAX)
+        result = videoModeName[mode];
+
+    return result;
+}
+/// endregion </Helper methods
+
+
+/// region <Debug methods>
+
+#ifdef _DEBUG
+
+#include <cstdio>
+#include <common/stringhelper.h>
+
+std::string Screen::DumpFramebufferInfo()
+{
+    std::string videoModeName = GetVideoModeName(_framebuffer.videoMode);
+    std::string result = StringHelper::Format("VideoMode: %s; Width: %dpx; Height: %dpx; Buffer: %d bytes",
+        videoModeName.c_str(),
+        _framebuffer.width,
+        _framebuffer.height,
+        _framebuffer.memoryBufferSize
+    );
+
+    return result;
+}
+
+void Screen::DumpFramebufferInfo(char* buffer, size_t len)
+{
+    std::string value = DumpFramebufferInfo();
+    snprintf(buffer, len, value.c_str());
+}
+
+std::string Screen::DumpRasterState()
+{
+    const RasterState& state = _rasterState;
+
+    std::string result = StringHelper::Format("RasterState: ");
+    result += StringHelper::Format("VideoMode: %s; Frame: %d; Lines: %d; PerLine: %d",
+                                   Screen::GetVideoVideoModeName(_mode).c_str(),
+                                   state.maxFrameTiming,
+                                   state.maxFrameTiming / state.tstatesPerLine,
+                                   state.tstatesPerLine
+    );
+
+    return result;
+}
+
+void Screen::DumpRasterState(char* buffer, size_t len)
+{
+    std::string value = DumpFramebufferInfo();
+    snprintf(buffer, len, value.c_str());
+}
+
+#endif // _DEBUG
+
+/// endregion </Debug methods>

@@ -85,7 +85,7 @@ void ScreenZX::CreateTimingTable()
     // Contention memory access pattern
     // See: https://worldofspectrum.org/faq/reference/48kreference.htm#Contention
     // See: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
-    // 
+    //
 };
 
 // ZX-Spectrum 48k ULA screen addressing:
@@ -288,13 +288,83 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
     return result;
 }
 
+RenderTypeEnum ScreenZX::GetLineRenderTypeByTiming(uint32_t tstate)
+{
+    RenderTypeEnum result = RT_BLANK;
+
+    if (tstate >= _rasterState.blankAreaStart && tstate <= _rasterState.blankAreaEnd)
+    {
+        result = RT_BLANK;
+    }
+    else if (tstate >= _rasterState.topBorderAreaStart && tstate <= _rasterState.topBorderAreaEnd)
+    {
+        result = RT_BORDER;
+    }
+    else if (tstate >= _rasterState.screenAreaStart && tstate <= _rasterState.screenAreaEnd)
+    {
+        result = RT_SCREEN;
+    }
+    else if (tstate >= _rasterState.bottomBorderAreaStart && tstate <= _rasterState.bottomBorderAreaEnd)
+    {
+        result = RT_BORDER;
+    }
+    else
+    {
+        result = RT_BLANK;
+
+        LOGDEBUG("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate, _rasterState.maxFrameTiming - 1);
+    }
+
+    return result;
+}
+
+bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
+{
+    bool result = false;
+
+    if (tstate < _rasterState.maxFrameTiming)
+    {
+        if (tstate >= _rasterState.screenAreaStart && tstate <= _rasterState.screenAreaEnd)
+        {
+            uint8_t col = tstate % _rasterState.tstatesPerLine;
+
+            if (col >= _rasterState.screenLineAreaStart && col <= _rasterState.screenLineAreaEnd)
+            {
+                result = true;
+            }
+        }
+    }
+
+    return result;
+}
+
 /// endregion </Genuine ZX-Spectrum ULA specifics>
 
 /// region <Screen class methods override>
 
-void ScreenZX::Draw(uint32_t n)
+void ScreenZX::Draw(uint32_t tstate)
 {
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    const uint16_t tstatesPerLine = rasterDescriptor.pixelsPerLine / 2;
+    const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
 
+    if (tstate < maxFrameTiming)
+    {
+        const uint8_t line = tstate / tstatesPerLine;
+        const uint8_t column = tstate % tstatesPerLine;
+
+        RenderTypeEnum type = GetLineRenderTypeByTiming(tstate);
+
+        switch (type)
+        {
+            case RT_BLANK:
+                break;
+            case RT_BORDER:
+                break;
+            case RT_SCREEN:
+                break;
+        }
+    }
 }
 
 void ScreenZX::UpdateScreen()

@@ -68,6 +68,13 @@ enum RasterModeEnum
 	R_MAX
 };
 
+enum RenderTypeEnum : uint8_t
+{
+    RT_BLANK = 0,        // Invisible area (VBlank, HSync, etc.)
+    RT_BORDER,          // Top/Bottom/Left/Right border
+    RT_SCREEN           // Screen area
+};
+
 //endregion Enumerations
 
 //region Structures
@@ -108,6 +115,10 @@ struct VideoControl
 	uint16_t		memcyc_lcmd;	// Memory cycles used in last command
 };
 
+///
+///
+/// Note: Each t-state ULA renders 2 pixels. All pixel dimensions are translated to t-states by dividing by 2
+//        i.e. Pixel width 256 = 128 t-states.
 struct RasterDescriptor
 {
     uint16_t fullFrameWidth;
@@ -119,10 +130,63 @@ struct RasterDescriptor
     uint16_t screenOffsetLeft;
     uint16_t screenOffsetTop;
 
+    uint16_t pixelsPerLine;
+
     uint16_t hSyncPixels;
     uint16_t hBlankPixels;
-    uint16_t vsyncLines;
+    uint16_t vSyncLines;
     uint16_t vBlankLines;
+};
+
+///
+/// Calculated from RasterDescriptor runtime values.
+/// Should be refreshed after changing raster / screen mode
+///
+struct RasterState
+{
+    /// region <Frame timings>
+
+    uint16_t pixelsPerLine;
+    uint16_t tstatesPerLine;
+    uint32_t maxFrameTiming;
+
+    /// endregion </Frame timings>
+
+    /// region <Vertical timings>
+
+    // Invisible blank area on top
+    uint32_t blankAreaStart;
+    uint32_t blankAreaEnd;
+
+    // Top border
+    uint32_t topBorderAreaStart;
+    uint32_t topBorderAreaEnd;
+
+    // Screen + side borders
+    uint32_t screenAreaStart;
+    uint32_t screenAreaEnd;
+
+    // Bottom border
+    uint32_t bottomBorderAreaStart;
+    uint32_t bottomBorderAreaEnd;
+
+    /// endregion </Vertical timings>
+
+    /// region <Horizontal timings>
+
+    uint8_t blankLineAreaStart;
+    uint8_t blankLineAreaEnd;
+
+    uint8_t leftBorderAreaStart;
+    uint8_t leftBorderAreaEnd;
+
+    uint8_t screenLineAreaStart;
+    uint8_t screenLineAreaEnd;
+
+    uint8_t rightBorderAreaStart;
+    uint8_t rightBorderAreaEnd;
+
+    /// endregion </Horizontal timings>
 };
 
 struct FramebufferDescriptor
@@ -193,10 +257,12 @@ public:
 	};
 
 	/// Raster descriptors for each video mode
+	/// All values are in pixel units!
 	const RasterDescriptor rasterDescriptors[M_MAX] =
     {
-	    { 0, 0, 0, 0, 0, 0 , 0, 0, 0, 0},             // M_NUL
-	    { 352, 288, 256, 192, 48, 48,  32, 32, 16,  16 } // M_ZX
+	    { 0, 0, 0, 0, 0, 0 ,0, 0, 0, 0, 0},                     // M_NUL
+	    { 352, 288, 256, 192, 48, 48, 448, 32, 32, 16,  8 },    // M_ZX
+	    { 352, 288, 256, 192, 48, 48, 448, 32, 32, 16,  16 }    // M_PMC
     };
 
 	// Default color table: 0RRrrrGG gggBBbbb
@@ -263,6 +329,7 @@ protected:
 	Z80* _cpu = nullptr;
 
 	VideoModeEnum _mode;
+    RasterState _rasterState;
 	FramebufferDescriptor _framebuffer;
 
 	/// region <Obsolete>
@@ -306,6 +373,7 @@ public:
 	virtual void InitFrame();
 	virtual void InitRaster();
 	virtual void InitMemoryCounters();
+	virtual void SetVideoMode(VideoModeEnum mode);
 
     virtual void Draw(uint32_t n);
 	virtual void UpdateScreen();
@@ -317,9 +385,6 @@ protected:
 	void AllocateFramebuffer(VideoModeEnum mode);
 	void DeallocateFramebuffer();
 	void GetFramebufferData(uint32_t** buffer, size_t* size);
-#ifdef _DEBUG
-	void DumpFramebufferInfo(char* buffer, size_t len);
-#endif
 
 	void DrawScreenBorder(uint32_t n);
 
@@ -344,4 +409,20 @@ public:
 	void DrawProfi(uint32_t n);		// Profi
 	void DrawGMX(uint32_t n);		// GMX
     void DrawBorder(uint32_t n);	// Border only
+
+    /// region <Helper methods
+public:
+    static std::string GetVideoVideoModeName(VideoModeEnum mode);
+    /// endregion </Helper methods
+
+    /// region <Debug methods>
+#ifdef _DEBUG
+public:
+    std::string DumpFramebufferInfo();
+    void DumpFramebufferInfo(char* buffer, size_t len);
+
+    std::string DumpRasterState();
+    void DumpRasterState(char* buffer, size_t len);
+#endif // _DEBUG
+    /// endregion </Debug methods>
 };
