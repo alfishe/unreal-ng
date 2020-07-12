@@ -877,8 +877,8 @@ void Z80::HandleINT(uint8_t vector)
 	else
 	{
 		// IM2
-		unsigned vec = vector + cpu.i * 0x100;
-		interrupt_handler_address = rd(vec) + 0x100 * rd(vec + 1);
+		uint16_t vectorAddress = vector + cpu.i * 0x100;
+		interrupt_handler_address = rd(vectorAddress) + 0x100 * rd(vectorAddress + 1);
 	}
 
 	if (DirectRead(cpu.pc) == 0x76) // If interrupt occurs on HALT command (opcode 0x76)
@@ -887,13 +887,16 @@ void Z80::HandleINT(uint8_t vector)
 	IncrementCPUCyclesCounter(((cpu.im < 2) ? 13 : 19) - 3);
 
 	// Push return address to stack
-	wd(--cpu.sp, cpu.pch);
-	wd(--cpu.sp, cpu.pcl);
+	uint16_t sp = cpu.sp;
+	wd(--sp, cpu.pch);
+	wd(--sp, cpu.pcl);
+	cpu.sp = sp;
 
 	cpu.pc = interrupt_handler_address;
 	cpu.memptr = interrupt_handler_address;
 	cpu.halted = 0;
-	cpu.iff1 = cpu.iff2 = 0;
+	cpu.iff1 = 0;
+	cpu.iff2 = 0;
 	cpu.int_pend = false;
 
 	// TODO: move to TSConf plugin
