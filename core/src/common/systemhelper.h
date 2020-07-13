@@ -97,7 +97,7 @@ public:
 
 		// See: https://stackoverflow.com/questions/11706563/how-can-i-programmatically-find-the-cpu-frequency-with-c
 		unsigned cpuInfo[4];
-		GetCPUID(cpuInfo, 0)
+		GetCPUID(cpuInfo, 0);
 
 		// Intel CPUs with CPUID level >= 0x16 (Skylake, Kabylake)
 		if (cpuInfo[0] >= 0x16)
