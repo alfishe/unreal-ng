@@ -39,6 +39,8 @@ if (WIN32 AND NOT MSVC)
 set (BENCHMARK_FILES
     ${GOOGLEBENCHMARK_DIR}/src/benchmark.cc
     ${GOOGLEBENCHMARK_DIR}/src/benchmark_api_internal.cc
+    ${GOOGLEBENCHMARK_DIR}/src/benchmark_main.cc
+    ${GOOGLEBENCHMARK_DIR}/src/benchmark_name.cc
     ${GOOGLEBENCHMARK_DIR}/src/benchmark_register.cc
     ${GOOGLEBENCHMARK_DIR}/src/benchmark_runner.cc
     ${GOOGLEBENCHMARK_DIR}/src/colorprint.cc
@@ -46,10 +48,12 @@ set (BENCHMARK_FILES
     ${GOOGLEBENCHMARK_DIR}/src/complexity.cc
     ${GOOGLEBENCHMARK_DIR}/src/console_reporter.cc
     ${GOOGLEBENCHMARK_DIR}/src/counter.cc
+    ${GOOGLEBENCHMARK_DIR}/src/csv_reporter.cc
     ${GOOGLEBENCHMARK_DIR}/src/json_reporter.cc
     ${GOOGLEBENCHMARK_DIR}/src/reporter.cc
     ${GOOGLEBENCHMARK_DIR}/src/sleep.cc
     ${GOOGLEBENCHMARK_DIR}/src/statistics.cc
+    ${GOOGLEBENCHMARK_DIR}/src/string_util.cc
     ${GOOGLEBENCHMARK_DIR}/src/sysinfo.cc
     ${GOOGLEBENCHMARK_DIR}/src/timers.cc
     )
@@ -127,15 +131,26 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
 # Link with following libraries
 if (APPLE)
     set(common_libraries pthread benchmark benchmark_main)
+
+    target_link_libraries(${PROJECT_NAME} ${common_libraries})
 endif (APPLE)
 
 if (UNIX AND NOT APPLE)
     set(common_libraries stdc++ stdc++fs pthread benchmark benchmark_main)
+
+    target_link_libraries(${PROJECT_NAME} ${common_libraries})
 endif (UNIX AND NOT APPLE)
 
-if (WIN32 AND NOT MSVC)
-    set(common_libraries stdc++ stdc++fs)
-endif (WIN32 AND NOT MSVC)
+if (WIN32 AND MINGW)
+    # Suppress benchmark deprecation messages
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wdeprecated-declarations")
+
+    # Link all as static
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+
+    set(common_libraries shlwapi)
+    target_link_libraries(${PROJECT_NAME} ${common_libraries})
+endif (WIN32 AND MINGW)
 
 if (MSVC)
     # Match runtime library with default google benchmark settings. See: https://stackoverflow.com/questions/14172856/compile-with-mt-instead-of-md-using-cmake
@@ -143,6 +158,6 @@ if (MSVC)
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
 
     set(common_libraries shlwapi)
-endif (MSVC)
 
-target_link_libraries(${PROJECT_NAME} ${common_libraries})
+    target_link_libraries(${PROJECT_NAME} ${common_libraries})
+endif (MSVC)
