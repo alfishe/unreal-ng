@@ -90,11 +90,11 @@ void Logger::OutEnriched(string fmt, va_list args)
 
 	gettimeofday(&tv, NULL);
 
-#if defined _WIN32 && defined __GNUC__
+#if defined __GNUC__
     time_t time;
-	tm_info = localtime(&time);
-#else
-	tm_info = localtime(&tv);
+    tm_info = localtime(&time);
+#elif defined __apple__
+    tm_info = localtime(&tv);
 #endif
 
 	time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);

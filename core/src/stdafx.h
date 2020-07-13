@@ -104,7 +104,7 @@ using std::atomic;
 	// Shut down "LNK4221: The object file does not define any previously undefined public symbols, so it will not be used by any link operation that consumes that library" linker error
 	// Error happens with MSVC linker if precompiled header (stdafx.h/.cpp) doesn't bring any symbols into any namespace
 	namespace { char dummy; };
-#endif // _WIN32 && MSVC
+#endif // _WIN32 && defined MSVC
 
 // GCC on Windows (MinGW, MSYS2 etc.)
 #if defined _WIN32 && defined __GNUC__
@@ -133,6 +133,7 @@ using std::atomic;
 	#include <linux/limits.h>	// PATH_MAX constant defined here
 	#include <climits>		    // LLONG_MAX constant defined here
     #include <sys/time.h>       // gettimeofday()
+    #include <time.h>           // localtime()
 
 	#define CACHE_LINE 64
 	#define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
