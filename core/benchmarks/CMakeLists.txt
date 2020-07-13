@@ -106,14 +106,24 @@ endif (CMAKE_BUILD_TYPE MATCHES Debug)
 target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
 
 # Link with following libraries
-if (UNIX)
-    target_link_libraries(${PROJECT_NAME} pthread benchmark benchmark_main)
-endif (UNIX)
+if (APPLE)
+    set(common_libraries pthread benchmark benchmark_main)
+endif (APPLE)
+
+if (UNIX AND NOT APPLE)
+    set(common_libraries stdc++ stdc++fs pthread benchmark benchmark_main)
+endif (UNIX AND NOT APPLE)
+
+if (WIN32 AND NOT MSVC)
+    set(common_libraries stdc++ stdc++fs)
+endif (WIN32 AND NOT MSVC)
 
 if (MSVC)
     # Match runtime library with default google benchmark settings. See: https://stackoverflow.com/questions/14172856/compile-with-mt-instead-of-md-using-cmake
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
 
-    target_link_libraries(${PROJECT_NAME} shlwapi)
+    set(common_libraries shlwapi)
 endif (MSVC)
+
+target_link_libraries(${PROJECT_NAME} ${common_libraries})
