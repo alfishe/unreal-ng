@@ -22,7 +22,7 @@ endif (APPLE)
 project (unreal)
 
 # Build options
-option(BUILD_TESTS "Build the tests" ON)
+option(TESTS "Build the tests" ON)
 option(BENCHMARK "Execute benchmarks" ON)
 
 # Default to Release mode
@@ -45,11 +45,11 @@ add_subdirectory(testclient)
 
 # Unit tests
 #add_subdirectory(core/tests)
-if (BUILD_TESTS)
+if (TESTS)
 	message("Building tests")
 	enable_testing()
 	add_subdirectory(core/tests)
-endif (BUILD_TESTS)
+endif (TESTS)
 
 # Benchmarks
 if (BENCHMARK)
