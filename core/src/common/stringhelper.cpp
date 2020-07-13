@@ -76,7 +76,7 @@ wstring StringHelper::StringToWideString(const string& str)
 	size_t len = str.length() + 1;
 	wstring result = wstring(len, 0);
 
-	#ifdef _WIN32
+	#if defined _WIN32 && defined MSVC
 		// Optimized Windows API conversion
 		int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), NULL, 0);
 		result.resize(size_needed, 0);
@@ -94,7 +94,7 @@ string StringHelper::WideStringToString(const wstring& wstr)
 {
 	string result;
 
-#ifdef _WIN32
+#if defined _WIN32 && defined MSVC
 	// Optimized Windows API conversion
 	int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
 	result = string(size, 0);

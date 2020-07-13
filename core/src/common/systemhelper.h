@@ -65,7 +65,7 @@ public:
 	{
 		uint64_t result = 0;
 
-		#ifdef _WIN32
+		#if defined _WIN32 && defined MSVC
 
 		LARGE_INTEGER Frequency;
 		LARGE_INTEGER Start;

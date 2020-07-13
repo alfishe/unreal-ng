@@ -15,20 +15,22 @@
 #endif
 
 // Cross-compiler version of force inline
-#if defined(__clang__)
-	#define __forceinline __attribute__((always_inline)) inline
-#elif defined(__GNUC__) || defined(__GNUG__)
-	#define __forceinline __attribute__((always_inline)) inline
-#elif defined(_MSC_VER)
-	#if _MSC_VER < 1900
-		#ifndef __forceinline
-			#define __forceinline inline
-		#endif
-	#endif
-#elif defined(__MINGW32__)
-	#define __forceinline __attribute__((always_inline))
-#else
-	#define __forceinline inline
+#ifndef __forceinline
+    #if defined(__clang__)
+        #define __forceinline __attribute__((always_inline)) inline
+    #elif defined(__GNUC__) || defined(__GNUG__)
+        #define __forceinline __attribute__((always_inline)) inline
+    #elif defined(_MSC_VER)
+        #if _MSC_VER < 1900
+            #ifndef __forceinline
+                #define __forceinline inline
+            #endif
+        #endif
+    #elif defined(__MINGW32__)
+        #define __forceinline __attribute__((always_inline))
+    #else
+        #define __forceinline inline
+    #endif
 #endif
 
 // Cross-compiler version for fastcall (Parameters in registers)
@@ -106,7 +108,7 @@
 	static inline u32 _byteswap_ulong(u32 i){return _byteswap_ushort((u16)(i>>16))|(_byteswap_ushort((u16)i)<<16);};
 #endif
 
-#ifdef __GNUC__
+#if defined __GNUC__ && !defined _WIN32
 	#include <stdint.h>
 	#define HANDLE_PRAGMA_PACK_PUSH_POP
 	#define override
@@ -128,6 +130,12 @@
 
 	#define _countof(x) (sizeof(x)/sizeof((x)[0]))
 	#define __assume(x)
-#endif // __GNUC__
+#endif // __GNUC__ && !defined _WIN32
+
+#if defined __GNUC__ && defined _WIN32
+    #define ATTR_ALIGN(x) __attribute__((aligned(x)))
+
+    #define __assume(x)
+#endif // __GNUC__ ** defined _WIN32
 
 #endif // _INCLUDE_SYSDEFS_H_
