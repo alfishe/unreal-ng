@@ -109,7 +109,9 @@ using std::atomic;
 // GCC on Windows (MinGW, MSYS2 etc.)
 #if defined _WIN32 && defined __GNUC__
     #define WIN32_LEAN_AND_MEAN			// Exclude rarely-used stuff from Windows headers
-    #define NOMINMAX					// No min/max macroses defined in <windows.h> - they're conflicting with STL std::min / std::max
+    #ifndef NOMINMAX
+        #define NOMINMAX				// No min/max macroses defined in <windows.h> - they're conflicting with STL std::min / std::max
+    #endif // NOMINMAX
     #undef _HAS_STD_BYTE                // Prevent 'reference to 'byte' is ambiguous' errors in MinGW headers
 
     #include <windows.h>
