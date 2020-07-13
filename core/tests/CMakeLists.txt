@@ -80,14 +80,16 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
 target_link_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/googletest)
 
 # All standard libraries required
-if (WINDOWS AND MSVC)
+if (WIN32 AND MSVC)
     set(common_libraries stdc++ stdc++fs gtest)
-endif (WINDOWS AND MSVC)
+endif (WIN32 AND MSVC)
 
-if (WINDOWS AND NOT MSVC)
-    set(CMAKE_CXX_FLAGS " -static-libstdc++")
-    set(common_libraries -static-libstdc++ stdc++fs gtest)
-endif (WINDOWS AND NOT MSVC)
+if (WIN32 AND MINGW)
+    # Link all as static
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+
+    set(common_libraries shlwapi)
+endif (WIN32 AND MINGW)
 
 if (UNIX AND NOT APPLE)
     set(CMAKE_CXX_FLAGS " -static-libstdc++")
