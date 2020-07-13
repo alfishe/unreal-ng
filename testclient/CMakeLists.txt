@@ -67,7 +67,12 @@ if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/local/lib)
     set(CMAKE_CXX_FLAGS " -static-libstdc++")
     set(common_libraries -static-libstdc++ pthread)
-endif(APPLE)
+endif (APPLE)
+
+if (WIN32 AND MINGW)
+    # Link all libraries as static
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+endif (WIN32 AND MINGW)
 
 # Link with core library
 #target_link_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/build)
