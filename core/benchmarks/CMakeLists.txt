@@ -35,8 +35,8 @@ set(CMAKE_MODULE_PATH "${ROOT_DIR}/cmake" ${CMAKE_MODULE_PATH})
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
-if (WIN32 AND NOT MSVC)
-set (BENCHMARK_FILES
+if (WIN32 AND MINGW)
+set(BENCHMARK_FILES
     ${GOOGLEBENCHMARK_DIR}/src/benchmark.cc
     ${GOOGLEBENCHMARK_DIR}/src/benchmark_api_internal.cc
     ${GOOGLEBENCHMARK_DIR}/src/benchmark_main.cc
@@ -57,11 +57,14 @@ set (BENCHMARK_FILES
     ${GOOGLEBENCHMARK_DIR}/src/sysinfo.cc
     ${GOOGLEBENCHMARK_DIR}/src/timers.cc
     )
-endif (WIN32 AND NOT MSVC)
+
+    # Suppress benchmark deprecation messages
+    set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations)
+endif (WIN32 AND MINGW)
 
 # Google test (explicit sources added to prevent conflicts when gtest and benchmark targets built simultaneously from top level CMakeLists.txt)
 set(GOOGLETEST_PATH ${GOOGLETEST_DIR} CACHE PATH "")                            # Hint for Google Benchmark where to find googletest sources
-set (GOOGLETEST_FILES
+set(GOOGLETEST_FILES
         ${GOOGLETEST_DIR}/googletest/src/gtest.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-death-test.cc
         ${GOOGLETEST_DIR}/googletest/src/gtest-filepath.cc
@@ -142,9 +145,6 @@ if (UNIX AND NOT APPLE)
 endif (UNIX AND NOT APPLE)
 
 if (WIN32 AND MINGW)
-    # Suppress benchmark deprecation messages
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wdeprecated-declarations")
-
     # Link all as static
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
 
