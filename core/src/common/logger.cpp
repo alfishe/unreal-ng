@@ -81,7 +81,6 @@ void Logger::OutEnriched(const char* fmt, va_list args)
 
 void Logger::OutEnriched(string fmt, va_list args)
 {
-	//region Print timestanp
     size_t time_len = 0;
 	struct tm *tm_info;
 	struct timeval tv;
@@ -90,13 +89,22 @@ void Logger::OutEnriched(string fmt, va_list args)
     /// region <Print timestamp>
 
 	gettimeofday(&tv, NULL);
-	tm_info = localtime(&tv.tv_sec);
+
+#if defined _WIN32 && defined __GNUC__
+    time_t time;
+	tm_info = localtime(&time);
+#else
+	tm_info = localtime(&tv);
+#endif
+
 	time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
-#ifdef _WIN32
+
+#if defined _WIN32 && defined MSVC
     time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03lld.%03lld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
 #else
 	time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03d.%03d] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
 #endif
+
 	Out(buffer);
 
 	/// endregion </Print timestamp>

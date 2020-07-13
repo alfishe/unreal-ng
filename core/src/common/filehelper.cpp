@@ -12,7 +12,7 @@ wstring FileHelper::GetExecutablePath()
 {
 	wstring result = filesystem::current_path().wstring();
 
-	#ifdef _WIN32
+	#if defined _WIN32
 		wchar_t buffer[MAX_PATH] = { L'\0' };
 		GetModuleFileNameW(NULL, buffer, MAX_PATH);
 		result = buffer;

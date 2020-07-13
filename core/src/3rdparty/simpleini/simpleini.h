@@ -3250,7 +3250,12 @@ public:
 # endif
 #endif
 
-#include <windows.h>
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN			// Exclude rarely-used stuff from Windows headers
+    #undef _HAS_STD_BYTE                // Prevent 'reference to 'byte' is ambiguous' errors in MinGW headers
+
+    #include <windows.h>
+#endif
 #ifdef SI_NO_MBCS
 # define SI_NoCase   SI_GenericNoCase
 #else // !SI_NO_MBCS
