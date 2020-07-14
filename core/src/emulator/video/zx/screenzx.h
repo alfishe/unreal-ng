@@ -63,7 +63,10 @@ public:
     ScreenZXCUT(EmulatorContext* context) : ScreenZX(context) {};
 
 public:
+    using ScreenZX::_mode;
+    using ScreenZX::_rasterState;
     using ScreenZX::_screenLineRenderers;
+    using ScreenZX::_framebuffer;
 
 public:
     using ScreenZX::CreateTables;

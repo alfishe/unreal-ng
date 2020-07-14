@@ -275,6 +275,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 	switch (mode)
 	{
 		case M_ZX48:
+		case M_ZX128:
 		case M_PMC:
 			break;
 		default:

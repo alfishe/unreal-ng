@@ -286,11 +286,19 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
     _screenzx->SetVideoMode(M_ZX48);
     _screenzx->CreateTimingTable();
 
+    // Check line duration
+    if (_screenzx->_rasterState.tstatesPerLine != 224)
+    {
+        snprintf(message, sizeof message, "ZX-Spectrum 48k has 224 t-states per line. Found: %d", _screenzx->_rasterState.tstatesPerLine);
+        FAIL() << message << std::endl;
+    }
+
     RenderTypeEnum type = RT_BLANK;
     for (int i = 0; i <= 255; i++)
     {
         type = _screenzx->_screenLineRenderers[i];
 
+        // hBlank + hSync
         if (i >= 0 && i <= 47)
         {
             if (type != RT_BLANK)
@@ -300,6 +308,7 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
             }
         }
 
+        // Left border
         if (i >= 48 && i <= 71)
         {
             if (type != RT_BORDER)
@@ -309,6 +318,7 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
             }
         }
 
+        // Screen area
         if (i >= 72 && i <= 199)
         {
             if (type != RT_SCREEN)
@@ -318,6 +328,7 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
             }
         }
 
+        // Right border
         if (i >= 200 && i <= 223)
         {
             if (type != RT_BORDER)
@@ -327,6 +338,7 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
             }
         }
 
+        // Ensure unused part of lookup table is blank
         if (i >= 224)
         {
             if (type != RT_BLANK)
@@ -337,8 +349,6 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
         }
     }
 
-
-
     /// endregion </ZX-Spectrum 48k>
 
     /// region <ZX-Spectrum 128k>
@@ -346,6 +356,141 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
     // Genuine ZX-Spectrum 128k
     // t-states per line: 228
     //
+    _screenzx->SetVideoMode(M_ZX128);
+    _screenzx->CreateTimingTable();
+
+    // Check line duration
+    if (_screenzx->_rasterState.tstatesPerLine != 228)
+    {
+        snprintf(message, sizeof message, "ZX-Spectrum 128k has 228 t-states per line. Found: %d", _screenzx->_rasterState.tstatesPerLine);
+        FAIL() << message << std::endl;
+    }
+
+    type = RT_BLANK;
+    for (int i = 0; i <= 255; i++)
+    {
+        type = _screenzx->_screenLineRenderers[i];
+
+        // hBlank + hSync
+        if (i >= 0 && i <= 47)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Left border
+        if (i >= 48 && i <= 71)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Screen area
+        if (i >= 72 && i <= 199)
+        {
+            if (type != RT_SCREEN)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_SCREEN).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Right border
+        if (i >= 200 && i <= 223)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Ensure unused part of lookup table is blank
+        if (i >= 224)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+    }
 
     /// endregion </ZX-Spectrum 128k>
+
+    /// region <Pentagon>
+
+    _screenzx->SetVideoMode(M_PMC);
+    _screenzx->CreateTimingTable();
+
+    // Check line duration
+    if (_screenzx->_rasterState.tstatesPerLine != 224)
+    {
+        snprintf(message, sizeof message, "Pentagon has 224 t-states per line. Found: %d", _screenzx->_rasterState.tstatesPerLine);
+        FAIL() << message << std::endl;
+    }
+
+    type = RT_BLANK;
+    for (int i = 0; i <= 255; i++)
+    {
+        type = _screenzx->_screenLineRenderers[i];
+
+        // hBlank + hSync
+        if (i >= 0 && i <= 47)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Left border
+        if (i >= 48 && i <= 71)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Screen area
+        if (i >= 72 && i <= 199)
+        {
+            if (type != RT_SCREEN)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_SCREEN).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Right border
+        if (i >= 200 && i <= 223)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        // Ensure unused part of lookup table is blank
+        if (i >= 224)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+    }
+
+    /// endregion </Pentagon>
 }
