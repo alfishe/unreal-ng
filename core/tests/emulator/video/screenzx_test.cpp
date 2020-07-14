@@ -148,7 +148,7 @@ TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
 {
     char message[256];
 
-    /// region <Genuine ZX-Spectrum>
+    /// region <Genuine ZX-Spectrum 48k>
 
     // Genuine ZX-Spectrum
     // Max t-state = 69888
@@ -156,7 +156,7 @@ TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
     // [5476; 16127]    - Top Border
     // [16128; 59135]   - Screen
     // [59136; 69887]   - Bottom Border
-    _screenzx->SetVideoMode(M_ZX);
+    _screenzx->SetVideoMode(M_ZX48);
 
     for (uint32_t tstate = 0; tstate < 70000; tstate++)
     {
@@ -208,7 +208,7 @@ TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
         }
     }
 
-    /// endregion </Genuine ZX-Spectrum>
+    /// endregion </Genuine ZX-Spectrum 48k>
 
     /// region <Pentagon>
 
@@ -272,4 +272,80 @@ TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
 
 
     /// endregion </Pentagon>
+}
+
+TEST_F(ScreenZX_Test, CreateTimingTable)
+{
+    char message[256];
+
+    /// region <ZX-Spectrum 48k>
+
+    // Genuine ZX-Spectrum 48k
+    // t-states per line: 224
+    //
+    _screenzx->SetVideoMode(M_ZX48);
+    _screenzx->CreateTimingTable();
+
+    RenderTypeEnum type = RT_BLANK;
+    for (int i = 0; i <= 255; i++)
+    {
+        type = _screenzx->_screenLineRenderers[i];
+
+        if (i >= 0 && i <= 47)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (i >= 48 && i <= 71)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (i >= 72 && i <= 199)
+        {
+            if (type != RT_SCREEN)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_SCREEN).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (i >= 200 && i <= 223)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BORDER).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (i >= 224)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "line offset (t-states): %d, expected type: %s, found: %s", i, Screen::GetRenderTypeName(RT_BLANK).c_str(), Screen::GetRenderTypeName(type).c_str());
+                FAIL() << message << std::endl;
+            }
+        }
+    }
+
+
+
+    /// endregion </ZX-Spectrum 48k>
+
+    /// region <ZX-Spectrum 128k>
+
+    // Genuine ZX-Spectrum 128k
+    // t-states per line: 228
+    //
+
+    /// endregion </ZX-Spectrum 128k>
 }

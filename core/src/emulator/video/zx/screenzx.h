@@ -9,13 +9,13 @@ class ScreenZX : public Screen
 {
     /// region <Fields>
 protected:
-    uint16_t _screenLineOffsets[256];   // Address for each screen line start (relative to screen base offset)
-    uint16_t _attrLineOffsets[256];     // Address for each attribute offset (relative to screen base offset)
+    uint16_t _screenLineOffsets[256];           // Address for each screen line start (relative to screen base offset)
+    uint16_t _attrLineOffsets[256];             // Address for each attribute offset (relative to screen base offset)
 
-    uint32_t _rgbaColors[256];          // Colors when no Flash or Flash is in blinking=OFF state
-    uint32_t _rgbaFlashColors[256];     // Colors when Flash is in blinking=ON state
+    uint32_t _rgbaColors[256];                  // Colors when no Flash or Flash is in blinking=OFF state
+    uint32_t _rgbaFlashColors[256];             // Colors when Flash is in blinking=ON state
 
-    uint8_t _screenLineRenderers[256];  // Cached render types for each line in screen area (HBlank, HSync, Left Border, Screen, Right Border)
+    RenderTypeEnum _screenLineRenderers[256];   // Cached render types for each line in screen area (HBlank, HSync, Left Border, Screen, Right Border)
 
 
     /// endregion </Fields>
@@ -63,6 +63,12 @@ public:
     ScreenZXCUT(EmulatorContext* context) : ScreenZX(context) {};
 
 public:
+    using ScreenZX::_screenLineRenderers;
+
+public:
+    using ScreenZX::CreateTables;
+    using ScreenZX::CreateTimingTable;
+
     using ScreenZX::CalculateXYScreenAddress;
     using ScreenZX::CalculateXYScreenAddressOptimized;
 

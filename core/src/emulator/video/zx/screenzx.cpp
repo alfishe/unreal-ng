@@ -6,6 +6,7 @@
 
 ScreenZX::ScreenZX(EmulatorContext *context) : Screen(context)
 {
+    SetVideoMode(M_ZX48);
     CreateTables();
 }
 
@@ -91,6 +92,8 @@ void ScreenZX::CreateTimingTable()
         {
             type = RT_BLANK;
         }
+
+        _screenLineRenderers[i] = type;
     }
 
     /// endregion </Line renderer in screen area>

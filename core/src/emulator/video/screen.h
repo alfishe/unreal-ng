@@ -33,7 +33,8 @@ class Renderers;
 enum VideoModeEnum : uint8_t
 {
     M_NUL = 0,	// Non-existing mode
-    M_ZX,		// Sinclair ZX Spectrum
+    M_ZX48,		// Sinclair ZX-Spectrum 48k
+    M_ZX128,    // Sinclair ZX-Spectrum 128k / +2 / +3
     M_PMC,		// Pentagon Multicolor
     M_P16,		// Pentagon 16c
     M_P384,		// Pentagon 384x304
@@ -261,8 +262,9 @@ public:
 	const RasterDescriptor rasterDescriptors[M_MAX] =
     {
 	    { 0, 0, 0, 0, 0, 0 ,0, 0, 0, 0, 0},                     // M_NUL
-	    { 352, 288, 256, 192, 48, 48, 448, 32, 32, 16,  8 },    // M_ZX
-	    { 352, 288, 256, 192, 48, 48, 448, 32, 32, 16,  16 }    // M_PMC
+	    { 352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16 },     // M_ZX48k
+        { 352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 16 },     // M_ZX128
+	    { 352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16 }     // M_PMC
     };
 
 	// Default color table: 0RRrrrGG gggBBbbb
@@ -413,6 +415,7 @@ public:
     /// region <Helper methods
 public:
     static std::string GetVideoVideoModeName(VideoModeEnum mode);
+    static std::string GetRenderTypeName(RenderTypeEnum type);
     /// endregion </Helper methods
 
     /// region <Debug methods>

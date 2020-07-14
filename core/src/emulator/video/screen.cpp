@@ -135,7 +135,7 @@ void Screen::InitRaster()
 	}
 
 	// Sinclair
-	video.mode = M_ZX;
+	video.mode = M_ZX48;
 	//endregion
 
 	// Select renderer for the mode
@@ -201,7 +201,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     _rasterState.blankLineAreaStart = 0;
     _rasterState.blankLineAreaEnd = ((rasterDescriptor.hBlankPixels + rasterDescriptor.hSyncPixels) / pixelsPerTState) - 1;
 
-    _rasterState.leftBorderAreaStart = _rasterState.leftBorderAreaStart + 1;
+    _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
     _rasterState.leftBorderAreaEnd = _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / pixelsPerTState) - 1;
 
     _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
@@ -274,7 +274,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 	bool isUnknownVideoMode = false;
 	switch (mode)
 	{
-		case M_ZX:
+		case M_ZX48:
 		case M_PMC:
 			break;
 		default:
@@ -338,7 +338,7 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
         case M_NUL:
             result = "Nul";
             break;
-        case M_ZX:
+        case M_ZX48:
             result = "ZX";
             break;
         case M_PMC:
@@ -613,12 +613,14 @@ void Screen::DrawBorder(uint32_t n)
 }
 
 /// region <Helper methods
+
 std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
 {
     static char const *videoModeName[] =
     {
         [M_NUL] = "Null",	                // Non-existing mode
-        [M_ZX] = "ZX-Spectrum",		        // Sinclair ZX Spectrum
+        [M_ZX48] = "ZX-Spectrum 48k",		// Sinclair ZX Spectrum 48k
+        [M_ZX128] = "ZX-Spectrum 128k",		// Sinclair ZX Spectrum 128k
         [M_PMC] = "Pentagon",		        // Pentagon Multicolor
         [M_P16] = "Pentagon 16c",   		// Pentagon 16c
         [M_P384] = "Pentagon 384x384",		// Pentagon 384x304
@@ -644,6 +646,24 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
 
     return result;
 }
+
+std::string Screen::GetRenderTypeName(RenderTypeEnum type)
+{
+    static char const *renderTypeName[] =
+    {
+            [RT_BLANK] = "BLANK",
+            [RT_BORDER] = "BORDER",
+            [RT_SCREEN] = "SCREEN"
+    };
+
+    std::string result;
+
+    if (type <= RT_SCREEN)
+        result = renderTypeName[type];
+
+    return result;
+}
+
 /// endregion </Helper methods
 
 

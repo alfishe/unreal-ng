@@ -44,7 +44,7 @@ CPU::CPU(EmulatorContext* context)
 	_hdd = new HDD(context);
 
 	// Create Video controller
-	VideoModeEnum mode = M_ZX; // Make ZX the default video mode on start
+	VideoModeEnum mode = M_ZX48; // Make ZX the default video mode on start
 	_screen = VideoController::GetScreenForMode(mode, _context);
 	_context->pScreen = _screen;
 }

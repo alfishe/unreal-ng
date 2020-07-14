@@ -24,7 +24,7 @@ Screen* VideoController::GetScreenForMode(VideoModeEnum mode, EmulatorContext* c
         {
             case M_NUL:
                 break;
-            case M_ZX:
+            case M_ZX48:
                 result = new ScreenZX(context);
                 break;
             default:
