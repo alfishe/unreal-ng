@@ -250,7 +250,7 @@ void Screen::RenderOnlyMainScreen()
 
 void Screen::SaveScreen()
 {
-    ImageHelper::SaveFrameToPNG(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width, _framebuffer.height);
+    ImageHelper::SaveFrameToPNG_Async(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width, _framebuffer.height);
 }
 
 void Screen::SaveZXSpectrumNativeScreen()
