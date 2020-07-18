@@ -13,6 +13,9 @@ Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
 
+    // Make power turn-on behavior realistic: all memory cells contain random values
+    RandomizeMemoryContent();
+
 	// Initialize with default (non-platform specific)
 	// base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
 	base_sos_rom = ROMPageAddress(0);
@@ -29,6 +32,38 @@ Memory::~Memory()
 }
 
 /// endregion </Constructors / Destructors>
+
+/// regiom <Initialization>
+
+/// Fill whole physical RAM with random values
+void Memory::RandomizeMemoryContent()
+{
+    RandomizeMemoryBlock(page_ram(0), MAX_RAM_SIZE);
+}
+
+/// Fill block of memory with specified size with random values
+/// Note: It's assumed that buffer is 32 bit (4 bytes) aligned
+/// \param buffer Buffer pointer
+/// \param size Size in bytes
+void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
+{
+    if (buffer == nullptr || size == 0)
+    {
+        LOGWARNING("Memory::RandomizeMemoryBlock: unable to randomize non-existing block");
+        return;
+    }
+
+    // Use 32-bit blocks to fill faster
+    uint32_t* buffer32bit = (uint32_t*)buffer;
+    size_t size32bit = size / 4;
+
+    for (uint32_t i = 0; i < size32bit; i++)
+    {
+        *(buffer32bit + i) = rand();
+    }
+}
+
+/// endregion </Initialization>
 
 /// region <Runtime methods>
 

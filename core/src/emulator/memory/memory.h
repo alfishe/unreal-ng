@@ -10,6 +10,8 @@ class Z80;
 // MAX_RAM_PAGES and PAGE defined in platform.h
 #define MAX_RAM_SIZE (MAX_RAM_PAGES * PAGE)
 
+/// region <Structures>
+
 enum MemoryBankModeEnum : uint8_t
 {
 	BANK_ROM = 0,
@@ -57,8 +59,11 @@ struct MemoryInterface
 	MemoryWriteCallback MemoryWrite;
 };
 
+/// endregion </Structures>
+
 class Memory
 {
+    /// region <Fields>
 	friend class Z80;
 	friend class ROM;
 
@@ -67,7 +72,6 @@ protected:
 	EmulatorContext* _context = nullptr;
 
 protected:
-
 #if defined CACHE_ALIGNED
 	ATTR_ALIGN(4096)
 	uint8_t _memory[PAGE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
@@ -103,11 +107,23 @@ public:
 	uint8_t* base_128_rom;
 	uint8_t* base_sys_rom;
 
+    /// endregion </Fields>
+
+    /// region <Constructors / Destructors>
 public:
 	Memory() = delete;	// Disable default constructor. C++ 11 feature
 	Memory(EmulatorContext* context);
 	virtual ~Memory();
 
+	/// endregion </Constructors / Destructors>
+
+	/// region <Initialization>
+public:
+    void RandomizeMemoryContent();
+    void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
+    /// endregion </Initialization>
+
+public:
 	// Runtime methods
 	void SetROMMode(ROMModeEnum mode);
 	void SetBanks();
