@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "common/logger.h"
+#include "common/image/gifanimationhelper.h"
 #include "cpu/cpu.h"
 #include "emulator/emulatorcontext.h"
 
@@ -11,7 +12,10 @@ protected:
 	CPU* _cpu = nullptr;
 	EmulatorContext* _context = nullptr;
 
+	volatile bool _isRunning = false;
 	volatile bool _stopRequested = false;
+
+    GIFAnimationHelper gifAnimationHelper;
 
 public:
 	MainLoop() = delete;	// Disable default constructor. C++ 11 or better feature

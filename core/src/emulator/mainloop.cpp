@@ -10,10 +10,15 @@ MainLoop::MainLoop(CPU* cpu, EmulatorContext* context)
 {
 	_cpu = cpu;
 	_context = context;
+
+    _isRunning = false;
 }
 
 MainLoop::~MainLoop()
 {
+    if (_isRunning)
+        Stop();
+
 	_cpu = nullptr;
 	_context = nullptr;
 
@@ -32,6 +37,16 @@ void MainLoop::Run(volatile bool& stopRequested)
 	}
 
 	_stopRequested = false;
+	_isRunning = true;
+
+	/// region <Debug>
+
+	// Initialize animation
+    static Screen& screen = *_context->pScreen;
+    FramebufferDescriptor& framebuffer = screen.GetFramebufferDescriptor();
+    gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
+
+	/// endregion </Debug>
 
 	while (!stopRequested && !_stopRequested)
 	{
@@ -42,6 +57,11 @@ void MainLoop::Run(volatile bool& stopRequested)
 	}
 
 	LOGINFO("Stop requested, exiting main loop");
+
+    // Stop animation recording and finalize the file
+    gifAnimationHelper.StopAnimation();
+
+    _isRunning = false;
 }
 
 void MainLoop::Stop()
@@ -71,14 +91,30 @@ void MainLoop::RunFrame()
 	// Queue new frame data to Video/Audio encoding
 
 	// DEBUG: save frame to disk as image (only each 100th)
-	static int i = 0;
-	if (i % 100 == 0)
+
+    static int i = 0;
+	//if (i % 100 == 0)
 	{
 	    //screen.SaveZXSpectrumNativeScreen();
         screen.RenderOnlyMainScreen();
+
+        // Save frame as PNG
         screen.SaveScreen();
+
+        // Save frame to GIF animation
+        uint32_t* buffer;
+        size_t size;
+        screen.GetFramebufferData(&buffer, &size);
+        gifAnimationHelper.WriteFrame(buffer, size);
     }
 	i++;
+
+    if (i >= 1000)
+    {
+        gifAnimationHelper.StopAnimation();
+
+        exit(1);
+    }
 
 	// DEBUG: save frame to disk as image
 }

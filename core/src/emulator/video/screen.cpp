@@ -262,6 +262,8 @@ void Screen::SaveZXSpectrumNativeScreen()
     ImageHelper::SaveZXSpectrumNativeScreen(buffer);
 }
 
+/// region <Framebuffer related>
+
 void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
     // Buffer already allocated for the selected video mode
@@ -321,6 +323,11 @@ void Screen::DeallocateFramebuffer()
 	}
 }
 
+FramebufferDescriptor& Screen::GetFramebufferDescriptor()
+{
+    return _framebuffer;
+}
+
 void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
 {
     if (buffer && size && _framebuffer.memoryBuffer && _framebuffer.memoryBufferSize)
@@ -329,6 +336,8 @@ void Screen::GetFramebufferData(uint32_t** buffer, size_t* size)
         *size = _framebuffer.memoryBufferSize;
     }
 }
+
+/// endregion </Framebuffer related>
 
 std::string Screen::GetVideoModeName(VideoModeEnum mode)
 {

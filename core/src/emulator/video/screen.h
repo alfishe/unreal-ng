@@ -11,7 +11,7 @@ using namespace std;
 class Z80;
 class Renderers;
 
-//region Constants
+/// region <Constants>
 
 // Video framebuffer and rendering related
 #define MAX_WIDTH_P (64 * 2)
@@ -26,9 +26,9 @@ class Renderers;
 
 #define MEM_CYCLES (VID_TACTS * 2)
 
-//endregion Constants
+/// endregion </onstants>
 
-//region Enumerations
+/// region <Enumerations>
 
 enum VideoModeEnum : uint8_t
 {
@@ -76,9 +76,9 @@ enum RenderTypeEnum : uint8_t
     RT_SCREEN           // Screen area
 };
 
-//endregion Enumerations
+/// endregion </Enumerations>
 
-//region Structures
+/// region <Structures>
 
 struct RASTER
 {
@@ -201,7 +201,7 @@ struct FramebufferDescriptor
 	size_t memoryBufferSize = 0;
 };
 
-//endregion Structures
+/// endregion </Structures>
 
 // ULA+ color models:
 //
@@ -363,6 +363,7 @@ protected:
 
 public:
 	VideoControl _vid;
+
 	/// endregion </Obsolete>
 
 public:
@@ -383,10 +384,15 @@ public:
 	virtual void SaveScreen();
 	virtual void SaveZXSpectrumNativeScreen();
 
+	/// region <Framebuffer related>
 protected:
 	void AllocateFramebuffer(VideoModeEnum mode);
 	void DeallocateFramebuffer();
+public:
+    FramebufferDescriptor& GetFramebufferDescriptor();
 	void GetFramebufferData(uint32_t** buffer, size_t* size);
+
+    /// endregion </Framebuffer related>
 
 	void DrawScreenBorder(uint32_t n);
 

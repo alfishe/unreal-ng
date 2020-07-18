@@ -46,3 +46,11 @@ void DebugManager::EnableBreakpoint(BreakpointTypeEnum type, uint16_t address)
 }
 
 /// endregion </Breakpoint management>
+
+/// region <State management>
+
+/// endregion </State management>
+
+/// region <Peripheral management>
+
+/// endregion </Peripheral management>
