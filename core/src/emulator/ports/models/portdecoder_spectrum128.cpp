@@ -15,7 +15,7 @@ PortDecoder_Spectrum128::PortDecoder_Spectrum128(EmulatorContext* context)
 
 PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
 {
-
+    LOGDEBUG("PortDecoder_Spectrum128::~PortDecoder_Spectrum128()");
 }
 /// endregion </Constructors / Destructors>
 
@@ -38,23 +38,17 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t addr, uint8_t value)
 {
     //    ZX Spectrum 128 / +2
     //    port: #7FFD
-    //    Match pattern: 0xxxxxxx xxxxxx0x
-    //    Full pattern:  01111111 11111101
-    //    Bits:
-    //      D0 = RAM - bit0 ;128 kB memory
-    //      D1 = RAM - bit1 ;128 kB memory
-    //      D2 = RAM - bit2 ;128 kB memory
-    //      D3 = Screen (Normal (Bank5) | Shadow (Bank 7))
-    //      D4 = ROM (ROM0 = 128k ROM | ROM1 = 48k ROM)
-    //      D5 = Disable memory paging (both ROM and RAM) until reset
-    //      D6 = unused
-    //      D7 = unused
-    const uint16_t port_7FFD_mask = 0b0111111111111101;
 
-    bool isPort_7FFD = addr & port_7FFD_mask;
+    bool isPort_7FFD = IsPort_7FFD(addr);
     if (isPort_7FFD)
     {
         Port_7FFD(value);
+    }
+
+    bool isPort_1FFD = IsPort_1FFD(addr);
+    if (isPort_1FFD)
+    {
+        Port_1FFD(value);
     }
 }
 
@@ -82,4 +76,57 @@ void PortDecoder_Spectrum128::Port_7FFD(uint8_t value)
     }
 
     screen.SetActiveScreen(screenNumber);
+
+    LOGDEBUG(memory.DumpMemoryBankInfo());
+}
+
+/// region <Helper methods>
+bool PortDecoder_Spectrum128::IsPort_7FFD(uint16_t addr)
+{
+    //    ZX Spectrum 128 / +2
+    //    port: #7FFD
+    //    Match pattern: 0xxxxxxx xxxxxx0x
+    //    Full pattern:  01111111 11111101
+    //    The additional memory features of the 128K/+2 are controlled to by writes to port 0x7ffd.
+    //    As normal on Sinclair hardware, the port address is in fact only partially decoded and the hardware will respond
+    //    to any port address with bits 1 and 15 reset.
+    //    Bits:
+    //      D0 = RAM - bit0 ;128 kB memory
+    //      D1 = RAM - bit1 ;128 kB memory
+    //      D2 = RAM - bit2 ;128 kB memory
+    //      D3 = Screen (Normal (Bank5) | Shadow (Bank 7))
+    //      D4 = ROM (ROM0 = 128k ROM | ROM1 = 48k ROM)
+    //      D5 = Disable memory paging (both ROM and RAM) until reset
+    //      D6 = unused
+    //      D7 = unused
+    static const uint16_t port_7FFD_full_mask = 0b0111111111111101;
+    static const uint16_t port_7FFD_mask_inv = 0b1000000000000010;
+
+    bool result = !(addr & port_7FFD_mask_inv);
+
+    return result;
+}
+
+bool PortDecoder_Spectrum128::IsPort_1FFD(uint16_t addr)
+{
+    //    ZX Spectrum +2A / +3
+    //    port: #1FFD
+    //    Match pattern: 0001xxxx xxxxxx0x
+    //    Full pattern:  00011111 11111101
+    //
+    static const uint16_t port_1FFD_full_mask = 0b0001111111111101;
+    static const uint16_t port_1FFD_mask = 0b0001000000000000;
+    static const uint16_t port_1FFD_mask_inv = 0b1110000000000010;
+
+    bool result = !(addr & port_1FFD_mask_inv) && (addr & port_1FFD_mask);
+
+    return result;
+}
+/// endregion <Helper methods>
+
+/// Port #1FFD (Memory) handler
+/// \param value
+void PortDecoder_Spectrum128::Port_1FFD(uint8_t value)
+{
+
 }

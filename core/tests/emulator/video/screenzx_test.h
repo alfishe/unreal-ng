@@ -1,5 +1,6 @@
 #pragma once
 #include "stdafx.h"
+#include "pch.h"
 
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"

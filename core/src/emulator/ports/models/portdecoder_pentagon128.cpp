@@ -15,8 +15,9 @@ PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context)
 
 PortDecoder_Pentagon128::~PortDecoder_Pentagon128()
 {
-
+    LOGDEBUG("PortDecoder_Pentagon128::~PortDecoder_Pentagon128()");
 }
+
 /// endregion </Constructors / Destructors>
 
 /// region <Interface methods>
@@ -36,10 +37,28 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t addr)
 
 void PortDecoder_Pentagon128::DecodePortOut(uint16_t addr, uint8_t value)
 {
-    //    ZX Spectrum 128 / +2
+    //    Pentagon 128K
+    //    port: #7FFD
+
+    bool isPort_7FFD = IsPort_7FFD(addr);
+    if (isPort_7FFD)
+    {
+        Port_7FFD(value);
+    }
+}
+
+/// endregion </Interface methods>
+
+/// region <Helper methods>
+bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t addr)
+{
+    //    Pentagon 128K
     //    port: #7FFD
     //    Match pattern: 0xxxxxxx xxxxxx0x
     //    Full pattern:  01111111 11111101
+    //    The additional memory features of the 128K/+2 are controlled to by writes to port 0x7ffd.
+    //    As normal on Sinclair hardware, the port address is in fact only partially decoded and the hardware will respond
+    //    to any port address with bits 1 and 15 reset.
     //    Bits:
     //      D0 = RAM - bit0 ;128 kB memory
     //      D1 = RAM - bit1 ;128 kB memory
@@ -49,16 +68,15 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t addr, uint8_t value)
     //      D5 = Disable memory paging (both ROM and RAM) until reset
     //      D6 = unused
     //      D7 = unused
-    const uint16_t port_7FFD_mask = 0b0111111111111101;
+    static const uint16_t port_7FFD_full_mask = 0b0111111111111101;
+    static const uint16_t port_7FFD_mask_inv = 0b1000000000000010;
 
-    bool isPort_7FFD = addr & port_7FFD_mask;
-    if (isPort_7FFD)
-    {
-        Port_7FFD(value);
-    }
+    bool result = !(addr & port_7FFD_mask_inv);
+
+    return result;
 }
 
-/// endregion </Interface methods>
+/// endregion <Helper methods>
 
 /// Port #7FFD (Memory) handler
 /// \param value
@@ -82,4 +100,13 @@ void PortDecoder_Pentagon128::Port_7FFD(uint8_t value)
     }
 
     screen.SetActiveScreen(screenNumber);
+
+    LOGDEBUG(memory.DumpMemoryBankInfo());
+}
+
+/// Port #1FFD (Memory) handler
+/// \param value
+void PortDecoder_Pentagon128::Port_1FFD(uint8_t value)
+{
+
 }

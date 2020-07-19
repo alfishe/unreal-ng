@@ -33,6 +33,12 @@ public:
     void DecodePortOut(uint16_t addr, uint8_t value) override;
     /// endregion </Interface methods>
 
+    /// region <Helper methods>
+public:
+    bool IsPort_7FFD(uint16_t addr);
+    /// endregion <Helper methods>
+
 protected:
     void Port_7FFD(uint8_t value);
+    void Port_1FFD(uint8_t value);
 };

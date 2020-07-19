@@ -1,3 +1,4 @@
+#include "stdafx.h"
 #include "pch.h"
 
 #include "screenzx_test.h"
