@@ -26,8 +26,8 @@ TEST_F(PortDecoder_Spectrum128_Test, IsPort_7FFD)
     // Port: #7FFD
     // Sensitivity: 0xxxxxxx xxxxxx0x
     // Equation: /IORQ /WR /A15 /A1
-    static const uint16_t bit15_inv = 0b1000000000000000;
-    static const uint16_t bit1_inv  = 0b0000000000000010;
+    static const uint16_t bit15_inv = 0b1000'0000'0000'0000;
+    static const uint16_t bit1_inv  = 0b0000'0000'0000'0010;
     static char message[256];
 
     for (int i = 0; i <= 0xFFFF; i++)

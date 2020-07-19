@@ -4,6 +4,7 @@
 
 #include "memory.h"
 
+#include "common/stringhelper.h"
 #include "emulator/platform.h"
 #include <cassert>
 
@@ -33,7 +34,7 @@ Memory::~Memory()
 
 /// endregion </Constructors / Destructors>
 
-/// regiom <Initialization>
+/// region <Initialization>
 
 /// Fill whole physical RAM with random values
 void Memory::RandomizeMemoryContent()
@@ -738,6 +739,26 @@ void Memory::InternalSetBanks()
 
 /// endregion </Helper methods>
 
+/// region <Debug methods>
+std::string Memory::DumpMemoryBankInfo()
+{
+    uint8_t bank0page = (_bank_read[0] - _romBase) / PAGE_SIZE;
+    uint8_t bank1page = (_bank_read[1] - _memory) / PAGE_SIZE;
+    uint8_t bank2page = (_bank_read[2] - _memory) / PAGE_SIZE;
+    uint8_t bank3page = (_bank_read[3] - _memory) / PAGE_SIZE;
+
+    std::string result = StringHelper::Format("MemoryBankInfo: ");
+    result += StringHelper::Format("Bank 0: rompage%d; Bank 1: page%d; Bank 2: page%d; Bank 3: page%d",
+        bank0page,
+        bank1page,
+        bank2page,
+        bank3page
+    );
+
+    return result;
+}
+/// endregion <Debug methods>
+
 /*
 void set_banks()
 {
@@ -1219,15 +1240,6 @@ void cmos_write(uint8_t val)
    }
 
    cmos[comp.cmos_addr] = val;
-}
-
-
-
-void rand_ram()
-{
-	uint8_t *mem = page_ram(0);
-	for (uint32_t i=0; i<(4096*1024); i++)
-		mem[i] = rand();
 }
 
 */

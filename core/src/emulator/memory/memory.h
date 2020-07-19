@@ -152,5 +152,10 @@ public:
 	// Atomic internal methods (but accessible for testing purposes)
 public:
 	void InternalSetBanks();
+
+	/// region <Debug methods>
+public:
+    std::string DumpMemoryBankInfo();
+	/// endregion <Debug methods>
 };
 

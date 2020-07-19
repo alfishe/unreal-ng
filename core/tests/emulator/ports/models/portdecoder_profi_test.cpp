@@ -1,16 +1,16 @@
 #include "stdafx.h"
 #include "pch.h"
 
-#include "portdecoder_spectrum3_test.h"
+#include "portdecoder_profi_test.h"
 
 /// region <SetUp / TearDown>
 
-void PortDecoder_Spectrum3_Test::SetUp()
+void PortDecoder_Profi_Test::SetUp()
 {
-    _portDecoder = new PortDecoder_Spectrum3(_context);
+    _portDecoder = new PortDecoder_Profi(_context);
 }
 
-void PortDecoder_Spectrum3_Test::TearDown()
+void PortDecoder_Profi_Test::TearDown()
 {
     if (_portDecoder != nullptr)
     {
@@ -21,20 +21,19 @@ void PortDecoder_Spectrum3_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
-TEST_F(PortDecoder_Spectrum3_Test, IsPort_7FFD)
+TEST_F(PortDecoder_Profi_Test, IsPort_7FFD)
 {
     // Port: #7FFD
-    // Sensitivity: 01xxxxxx xxxxxx0x
-    // Equation: /IORQ /WR /A15 A14 /A1
+    // Sensitivity: 0xxxxxxx xxxxxx0x
+    // Equation: /IORQ /WR /A15 /A1
     static const uint16_t bit15_inv = 0b1000'0000'0000'0000;
-    static const uint16_t bit14     = 0b0100'0000'0000'0000;
     static const uint16_t bit1_inv  = 0b0000'0000'0000'0010;
     static char message[256];
 
     for (int i = 0; i <= 0xFFFF; i++)
     {
         uint16_t port = i & 0xFFFF;
-        bool referenceIs_7FFD = ((~port & bit15_inv) && (port & bit14) && (~port & bit1_inv));
+        bool referenceIs_7FFD = (~port & bit15_inv) && (~port & bit1_inv);
         bool is_7FFD = _portDecoder->IsPort_7FFD(port);
 
         if (referenceIs_7FFD != is_7FFD)
@@ -53,35 +52,31 @@ TEST_F(PortDecoder_Spectrum3_Test, IsPort_7FFD)
     }
 }
 
-TEST_F(PortDecoder_Spectrum3_Test, IsPort_1FFD)
+TEST_F(PortDecoder_Profi_Test, IsPort_DFFD)
 {
-    // Port: #1FFD
-    // Sensitivity: 0001xxxx xxxxxx0x
-    // Equation: /IORQ /WR /A15 /A14 /A13 A12 /A1
-    static const uint16_t bit15_inv = 0b1000'0000'0000'0000;
-    static const uint16_t bit14_inv = 0b0100'0000'0000'0000;
+    // Port: #DFFD
+    // Sensitivity: xx0xxxxx xxxxxx0x
+    // Equation: /IORQ /WR /A13 /A1
     static const uint16_t bit13_inv = 0b0010'0000'0000'0000;
-    static const uint16_t bit12     = 0b0001'0000'0000'0000;
     static const uint16_t bit1_inv  = 0b0000'0000'0000'0010;
     static char message[256];
 
     for (int i = 0; i <= 0xFFFF; i++)
     {
         uint16_t port = i & 0xFFFF;
-        bool referenceIs_1FFD = (~port & bit15_inv) && (~port & bit14_inv) && (~port & bit13_inv) && (port & bit12) &&
-                                (~port & bit1_inv);
-        bool is_1FFD = _portDecoder->IsPort_1FFD(port);
+        bool referenceIs_DFFD = (~port & bit13_inv) && (~port & bit1_inv);
+        bool is_DFFD = _portDecoder->IsPort_DFFD(port);
 
-        if (referenceIs_1FFD != is_1FFD)
+        if (referenceIs_DFFD != is_DFFD)
         {
-            snprintf(message, sizeof message, "port: #%04X. Expected: %d, returned: %d", port, referenceIs_1FFD, is_1FFD);
+            snprintf(message, sizeof message, "port: #%04X. Expected: %d, returned: %d", port, referenceIs_DFFD, is_DFFD);
             FAIL() << message << std::endl;
         }
 
 #ifdef _DEBUG
-        if (is_1FFD)
+        if (is_DFFD)
         {
-            snprintf(message, sizeof message, "port: #%04X. Expected: %d, returned: %d", port, referenceIs_1FFD, is_1FFD);
+            snprintf(message, sizeof message, "port: #%04X. Expected: %d, returned: %d", port, referenceIs_DFFD, is_DFFD);
             std::cout << message << std::endl;
         }
 #endif // _DEBUG
