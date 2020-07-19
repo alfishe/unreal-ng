@@ -68,8 +68,8 @@ bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t addr)
     //      D5 = Disable memory paging (both ROM and RAM) until reset
     //      D6 = unused
     //      D7 = unused
-    static const uint16_t port_7FFD_full_mask = 0b0111111111111101;
-    static const uint16_t port_7FFD_mask_inv = 0b1000000000000010;
+    static const uint16_t port_7FFD_full_mask   = 0b0111111111111101;
+    static const uint16_t port_7FFD_mask_inv    = 0b1000000000000010;
 
     bool result = !(addr & port_7FFD_mask_inv);
 
@@ -102,11 +102,4 @@ void PortDecoder_Pentagon128::Port_7FFD(uint8_t value)
     screen.SetActiveScreen(screenNumber);
 
     LOGDEBUG(memory.DumpMemoryBankInfo());
-}
-
-/// Port #1FFD (Memory) handler
-/// \param value
-void PortDecoder_Pentagon128::Port_1FFD(uint8_t value)
-{
-
 }

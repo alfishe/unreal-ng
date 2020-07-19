@@ -6,12 +6,11 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
 
-
 ///
 /// See: https://worldofspectrum.org/faq/reference/128kreference.htm
 /// See: https://zx-pk.ru/threads/11490-paging-ports-of-zx-clones.html?langid=1
 /// See: http://zx.clan.su/forum/11-46-1
-class PortDecoder_Pentagon128 : public PortDecoder
+class PortDecoder_Spectrum3 : public PortDecoder
 {
     /// region <Fields>
 protected:
@@ -21,9 +20,9 @@ protected:
 
     /// region <Constructors / Destructors>
 public:
-    PortDecoder_Pentagon128() = delete;                 // Disable default constructor; C++ 11 feature
-    PortDecoder_Pentagon128(EmulatorContext* context);
-    virtual ~PortDecoder_Pentagon128();
+    PortDecoder_Spectrum3() = delete;                 // Disable default constructor; C++ 11 feature
+    PortDecoder_Spectrum3(EmulatorContext* context);
+    virtual ~PortDecoder_Spectrum3();
     /// endregion </Constructors / Destructors>
 
     /// region <Interface methods>
@@ -36,8 +35,10 @@ public:
     /// region <Helper methods>
 public:
     bool IsPort_7FFD(uint16_t addr);
+    bool IsPort_1FFD(uint16_t addr);
     /// endregion <Helper methods>
 
 protected:
     void Port_7FFD(uint8_t value);
+    void Port_1FFD(uint8_t value);
 };
