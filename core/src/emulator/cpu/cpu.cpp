@@ -5,9 +5,9 @@
 #include "cpu.h"
 #include <algorithm>
 #include <cassert>
+#include "emulator/ports/portdecoder.h"
 #include <emulator/video/videocontroller.h>
 
-using namespace std;
 
 // Instantiate CPU tables as static (only one instance per process)
 CPUTables CPU::_cpuTables;
@@ -32,7 +32,10 @@ CPU::CPU(EmulatorContext* context)
 	_context->pMemory = _memory;
 
 	// Instantiate ports decoder
+	MEM_MODEL model = context->config.mem_model;
 	_ports = new Ports(context);
+    _portDecoder = PortDecoder::GetPortDecoderForModel(model, _context);
+    context->pPortDecoder = _portDecoder;
 
 	// Instantiate ROM implementation
 	_rom = new ROM(context);
@@ -68,6 +71,12 @@ CPU::~CPU()
 		delete _rom;
 		_rom = nullptr;
 	}
+
+	if (_portDecoder != nullptr)
+    {
+	    delete _portDecoder;
+        _portDecoder = nullptr;
+    }
 
 	if (_ports != nullptr)
 	{
@@ -136,7 +145,7 @@ void CPU::Reset()
 	state.pBF = 0;		// ATM3
 	state.pBE = 0;		// ATM3
 
-	// TSConf specific
+	/// region <TSConf specific>
 	// TODO: Move to TSConf plugin
 	if (config.mem_model == MM_TSL)
 	{
@@ -156,6 +165,7 @@ void CPU::Reset()
 
 		// load_spec_colors();
 	}
+	/// endregion </TSConf specific>
 
 	// LSY256 specific
 	if (config.mem_model == MM_LSY256)
@@ -241,6 +251,8 @@ void CPU::Reset()
 
 	// Set ROM mode
 	_memory->SetROMMode(_mode);
+
+	_memory->SetROMMode(RM_128);
 
 	// Reset counters
 	state.t_states = 0;

@@ -7,6 +7,8 @@
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/video/screen.h"
 
+#include "emulator/ports/portdecoder.h"
+
 /// region <Constructors / Destructors>
 
 Z80::Z80(EmulatorContext* context)
@@ -295,13 +297,20 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
-	uint8_t result = 0xFF;
+    static PortDecoder& portDecoder = *_context->pPortDecoder;
+
+    // Let model-specific decoder to process port output
+	uint8_t result = portDecoder.DecodePortIn(port);
 
 	return result;
 }
 
 void Z80::out(uint16_t port, uint8_t val)
 {
+    static PortDecoder& portDecoder = *_context->pPortDecoder;
+
+    // Let model-specific decoder to process port output
+    portDecoder.DecodePortOut(port, val);
 }
 
 void Z80::retn()

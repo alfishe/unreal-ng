@@ -2,6 +2,8 @@
 
 #include "emulator/cpu/z80.h"
 
+#include <cassert>
+
 /// region <Constructors / Destructors>
 
 ScreenZX::ScreenZX(EmulatorContext *context) : Screen(context)
@@ -391,16 +393,22 @@ void ScreenZX::Draw(uint32_t tstate)
         const uint8_t line = tstate / tstatesPerLine;
         const uint8_t column = tstate % tstatesPerLine;
 
-        RenderTypeEnum type = GetLineRenderTypeByTiming(tstate);
-
-        switch (type)
+        // Determine position for the whole line
+        RenderTypeEnum lineType = GetLineRenderTypeByTiming(tstate);
+        if (lineType != RT_BLANK)
         {
-            case RT_BLANK:
-                break;
-            case RT_BORDER:
-                break;
-            case RT_SCREEN:
-                break;
+            // If line is in visible area (Border / screen) - determine exact ray position and correspondent render type
+            RenderTypeEnum posType = _screenLineRenderers[column];
+
+            switch (posType)
+            {
+                case RT_BLANK:
+                    break;
+                case RT_BORDER:
+                    break;
+                case RT_SCREEN:
+                    break;
+            }
         }
     }
 }
@@ -410,19 +418,26 @@ void ScreenZX::UpdateScreen()
 }
 
 ///
-/// Convert ZX-Spectrum screen (content area only) to RGBA framebuffer
+/// Convert ZX-Spectrum screen (pixel area only) to RGBA framebuffer
 ///
 void ScreenZX::RenderOnlyMainScreen()
 {
     static Memory& memory = *_context->pMemory;
+    static uint8_t* bank5Base = memory.RAMPageAddress(5);
+    static uint8_t* bank7Base = memory.RAMPageAddress(7);
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
     // Validate required mode(s) set and framebuffer allocated
     if (rasterDescriptor.screenWidth == 0 || rasterDescriptor.screenHeight == 0 || _framebuffer.memoryBuffer == nullptr || _framebuffer.memoryBufferSize == 0)
         return;
 
-    // Get host memory address for main ZX-Spectrum screen (Bank 5, #4000)
-    uint8_t* zxScreen = memory.RemapAddressToCurrentBank(0x4000);
+    // Get host memory address for selected ZX-Spectrum screen (Bank 5 for Normal and Bank 7 for Shadow screen modes)
+    uint8_t* zxScreen = _activeScreenMemoryOffset;
+    if (zxScreen != bank5Base && zxScreen != bank7Base)
+    {
+        LOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
+        assert("Invalid screen memory");
+    }
 
     // Get Framebuffer
     uint32_t* framebuffer;

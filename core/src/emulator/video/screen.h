@@ -330,6 +330,8 @@ protected:
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
 
+	uint8_t _activeScreen;
+	uint8_t* _activeScreenMemoryOffset;
 	VideoModeEnum _mode;
     RasterState _rasterState;
 	FramebufferDescriptor _framebuffer;
@@ -377,6 +379,7 @@ public:
 	virtual void InitRaster();
 	virtual void InitMemoryCounters();
 	virtual void SetVideoMode(VideoModeEnum mode);
+	virtual void SetActiveScreen(uint8_t screen);
 
     virtual void Draw(uint32_t n);
 	virtual void UpdateScreen();

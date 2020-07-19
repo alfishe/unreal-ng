@@ -1,0 +1,85 @@
+#include "stdafx.h"
+
+#include "common/logger.h"
+
+#include "portdecoder_spectrum128.h"
+
+/// region <Constructors / Destructors>
+
+PortDecoder_Spectrum128::PortDecoder_Spectrum128(EmulatorContext* context)
+{
+    _context = context;
+
+    _7FFD_Locked = false;
+}
+
+PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
+{
+
+}
+/// endregion </Constructors / Destructors>
+
+/// region <Interface methods>
+
+void PortDecoder_Spectrum128::Reset()
+{
+    // Reset memory paging lock latch
+    _7FFD_Locked = false;
+}
+
+uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t addr)
+{
+    uint8_t result = 0xFF;
+
+    return result;
+}
+
+void PortDecoder_Spectrum128::DecodePortOut(uint16_t addr, uint8_t value)
+{
+    //    ZX Spectrum 128 / +2
+    //    port: #7FFD
+    //    Match pattern: 0xxxxxxx xxxxxx0x
+    //    Full pattern:  01111111 11111101
+    //    Bits:
+    //      D0 = RAM - bit0 ;128 kB memory
+    //      D1 = RAM - bit1 ;128 kB memory
+    //      D2 = RAM - bit2 ;128 kB memory
+    //      D3 = Screen (Normal (Bank5) | Shadow (Bank 7))
+    //      D4 = ROM (ROM0 = 128k ROM | ROM1 = 48k ROM)
+    //      D5 = Disable memory paging (both ROM and RAM) until reset
+    //      D6 = unused
+    //      D7 = unused
+    const uint16_t port_7FFD_mask = 0b0111111111111101;
+
+    bool isPort_7FFD = addr & port_7FFD_mask;
+    if (isPort_7FFD)
+    {
+        Port_7FFD(value);
+    }
+}
+
+/// endregion </Interface methods>
+
+/// Port #7FFD (Memory) handler
+/// \param value
+void PortDecoder_Spectrum128::Port_7FFD(uint8_t value)
+{
+    static Memory& memory = *_context->pMemory;
+    static Screen& screen = *_context->pScreen;
+
+    uint8_t bankRAM = value & 0b00000111;
+    uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
+    bool isROM0 = value & 0b00010000;
+    bool isPagingDisabled = value & 0b00100000;
+
+    // Disabling latch is kept until reset
+    if (!_7FFD_Locked)
+    {
+        memory.SetRAMPageToBank3(bankRAM);
+        memory.SetROMMode(isROM0 ? RM_128 : RM_SOS);
+
+        _7FFD_Locked = isPagingDisabled;
+    }
+
+    screen.SetActiveScreen(screenNumber);
+}

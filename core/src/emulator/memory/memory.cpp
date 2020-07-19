@@ -69,7 +69,7 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
 
 //
 // Switch to certain ROM section RM_SOS | RM_128 | RM_DOS | RM_SYS
-//
+// Address space: [0x0000 - 0x3FFF]
 void Memory::SetROMMode(ROMModeEnum mode)
 {
 	if (mode == RM_NOCHANGE)
@@ -119,6 +119,21 @@ void Memory::SetROMMode(ROMModeEnum mode)
 	}
 
 	SetBanks();
+}
+
+/// Switch to specified RAM Bank in RAM Page 3
+/// Address space: [0xC000 - 0xFFFF]
+/// \param page Page number (in 16KiB pages)
+void Memory::SetRAMPageToBank3(uint8_t page)
+{
+    if (page >= MAX_RAM_PAGES)
+    {
+        LOGERROR("Memory::SetRAMPageToBank3 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
+        assert("Invalid RAM page");
+        return;
+    }
+
+    _bank_write[3] = _bank_read[3] = page_ram(page);
 }
 
 // input: ports 7FFD, 1FFD, DFFD, FFF7, FF77, EFF7, flags CF_TRDOS,CF_CACHEON
@@ -503,13 +518,13 @@ void Memory::SetBanks()
 
 	if (_bank_read[0] >= _romBase || (config.mem_model == MM_TSL && !state.ts.w0_we && !state.ts.vdos))
 	{
-		_bank_write[0] = TRASH_M;
+		_bank_write[0] = TRASH_MEMORY_PAGE;
 	}
 
 	// Disable MemoryWrite for banks that marked as ROM
-	if (_bank_read[1] >= _romBase) _bank_write[1] = TRASH_M;
-	if (_bank_read[2] >= _romBase) _bank_write[2] = TRASH_M;
-	if (_bank_read[3] >= _romBase) _bank_write[3] = TRASH_M;
+	if (_bank_read[1] >= _romBase) _bank_write[1] = TRASH_MEMORY_PAGE;
+	if (_bank_read[2] >= _romBase) _bank_write[2] = TRASH_MEMORY_PAGE;
+	if (_bank_read[3] >= _romBase) _bank_write[3] = TRASH_MEMORY_PAGE;
 
 	uint8_t dosflags = CF_LEAVEDOSRAM;
 
@@ -539,7 +554,7 @@ void Memory::SetBanks()
 		if (config.cache == 32 && !(state.p7FFD & 0x10))
 			cpage += PAGE;
 		_bank_read[0] = _bank_write[0] = cpage;
-		// if (comp.pEFF7 & EFF7_ROCACHE) bankw[0] = TRASH_M; //Alone Coder 0.36.4
+		// if (comp.pEFF7 & EFF7_ROCACHE) bankw[0] = TRASH_MEMORY_PAGE; //Alone Coder 0.36.4
 	}
 
 	if ((state.flags & CF_DOSPORTS) ? config.floatdos : config.floatbus)
@@ -570,7 +585,7 @@ void Memory::SetROM48k()
 
     // Switch to 48k ROM page
     _bank_read[0] = base_sos_rom;
-    _bank_write[0] = base_sos_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
 void Memory::SetROM128k()
@@ -580,7 +595,7 @@ void Memory::SetROM128k()
 
     // Switch to 128k ROM page
     _bank_read[0] = base_128_rom;
-    _bank_write[0] = base_128_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
 void Memory::SetROMDOS()
@@ -590,7 +605,7 @@ void Memory::SetROMDOS()
 
     // Switch to DOS ROM page
     _bank_read[0] = base_dos_rom;
-    _bank_write[0] = base_dos_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
 void Memory::SetROMSystem()
@@ -600,10 +615,38 @@ void Memory::SetROMSystem()
 
     // Switch to DOS ROM page
     _bank_read[0] = base_sys_rom;
-    _bank_write[0] = base_sys_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
 /// endregion </Debug methods>
+
+/// region <Service methods>
+
+/// Load content from contentBuffer with length size to emulated memory starting specified address in Z80 space
+/// Note: current active bank configuration will be used. No overflow after 0xFFFF address available
+/// \param contentBuffer
+/// \param size
+/// \param z80address
+void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address)
+{
+    if (contentBuffer == nullptr || size <= 0)
+    {
+        LOGWARNING("Memory::LoadContentToMemory: Nothing to load");
+        return;
+    }
+
+    // Fill Z80 memory only until 0xFFFF address, then stop
+    uint16_t sizeAvailable = 0xFFFF - z80address;
+    if (sizeAvailable > size)
+        sizeAvailable = size;
+
+    for (uint16_t addr = z80address; addr < z80address + sizeAvailable; addr++)
+    {
+
+    }
+}
+
+/// endregion </Service methods>
 
 /// region <Helper methods>
 
@@ -678,15 +721,16 @@ void Memory::InternalSetBanks()
 	CONFIG& config = _context->config;
 
 	// Initialize according Spectrum 128K standard address space settings
-	_bank_write[0] = _bank_read[0] = base_sos_rom;		// 48K (SOS) ROM					for [0x0000 - 0x3FFF]
+	_bank_write[0] = TRASH_MEMORY_PAGE;                         // ROM is not writable - redirect such requests to unused memory bank
+	_bank_read[0] = base_sos_rom;                 		        // 48K (SOS) ROM					for [0x0000 - 0x3FFF]
 	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
 	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default			for [0x8000 - 0xBFFF]
 	_bank_write[3] = _bank_read[3] = RAMPageAddress(0);	// Set page 0 as default			for [0xC000 - 0xFFFF]
 
-	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		// Bank 0 is ROM [0x0000 - 0x3FFF]
-	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		// Bank 1 is RAM [0x4000 - 0x7FFF]
-	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		// Bank 2 is RAM [0x8000 - 0xBFFF]
-	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		// Bank 3 is RAM [0xC000 - 0xFFFF]
+	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		        // Bank 0 is ROM [0x0000 - 0x3FFF]
+	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		        // Bank 1 is RAM [0x4000 - 0x7FFF]
+	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		        // Bank 2 is RAM [0x8000 - 0xBFFF]
+	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		        // Bank 3 is RAM [0xC000 - 0xFFFF]
 
 	// Reset all address defining flags/signals (they'll be recalculated later in logic)
 	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
@@ -1063,11 +1107,11 @@ void set_banks()
    bankw[3] = bankr[3] = bank3;
 
    if (bankr[0] >= ROM_BASE_M ||
-     (conf.mem_model == MM_TSL && !comp.ts.w0_we && !comp.ts.vdos)) bankw[0] = TRASH_M;
+     (conf.mem_model == MM_TSL && !comp.ts.w0_we && !comp.ts.vdos)) bankw[0] = TRASH_MEMORY_PAGE;
 
-   if (bankr[1] >= ROM_BASE_M) bankw[1] = TRASH_M;
-   if (bankr[2] >= ROM_BASE_M) bankw[2] = TRASH_M;
-   if (bankr[3] >= ROM_BASE_M) bankw[3] = TRASH_M;
+   if (bankr[1] >= ROM_BASE_M) bankw[1] = TRASH_MEMORY_PAGE;
+   if (bankr[2] >= ROM_BASE_M) bankw[2] = TRASH_MEMORY_PAGE;
+   if (bankr[3] >= ROM_BASE_M) bankw[3] = TRASH_MEMORY_PAGE;
 
    uint8_t dosflags = CF_LEAVEDOSRAM;
    if (conf.mem_model == MM_TSL && comp.ts.vdos)
@@ -1092,7 +1136,7 @@ void set_banks()
       if (conf.cache == 32 && !(comp.p7FFD & 0x10))
 		  cpage += PAGE;
       bankr[0] = bankw[0] = cpage;
-      // if (comp.pEFF7 & EFF7_ROCACHE) bankw[0] = TRASH_M; //Alone Coder 0.36.4
+      // if (comp.pEFF7 & EFF7_ROCACHE) bankw[0] = TRASH_MEMORY_PAGE; //Alone Coder 0.36.4
    }
 
    if ((comp.flags & CF_DOSPORTS)? conf.floatdos : conf.floatbus)

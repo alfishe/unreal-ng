@@ -5,7 +5,9 @@
 
 class CPU;
 class Memory;
+class PortDecoder;
 class Screen;
+class DebugManager;
 
 class EmulatorContext
 {
@@ -29,6 +31,11 @@ public:
 	// Memory controller instance
 	Memory* pMemory;
 
+	// Model-specific port decoder
+	PortDecoder* pPortDecoder;
+
 	// Video controller parameters and logic
 	Screen* pScreen;
+
+	DebugManager* pDebugManager;
 };

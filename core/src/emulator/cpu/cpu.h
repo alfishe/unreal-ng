@@ -16,6 +16,7 @@ class MessageCenter;
 class Z80;
 class Memory;
 class Ports;
+class PortDecoder;
 class ROM;
 class Sound;
 class HDD;
@@ -26,6 +27,7 @@ class CPU
 	friend class Z80;
 	friend class Memory;
 	friend class Ports;
+	friend class PortDecoder;
 	friend class ROM;
 	friend class Sound;
 	friend class HDD;
@@ -41,6 +43,7 @@ protected:
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;
 	Ports* _ports = nullptr;
+	PortDecoder* _portDecoder = nullptr;
 	ROM* _rom = nullptr;
 	Sound* _sound = nullptr;
 	HDD* _hdd = nullptr;

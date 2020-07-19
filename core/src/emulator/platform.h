@@ -36,19 +36,20 @@
 #define page_rom(a) ROM_BASE_M + PAGE * (a)
 
 #define RAM_BASE_M  _memory
-#define CACHE_M     (RAM_BASE_M + MAX_RAM_PAGES*PAGE)
-#define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES*PAGE)
-#define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES*PAGE)
+#define CACHE_M     (RAM_BASE_M + MAX_RAM_PAGES * PAGE)
+#define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES * PAGE)
+#define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES * PAGE)
 
 // Byte-size for RGBA pixel
 #define RGBA_SIZE 4
 
 #ifdef MOD_GSZ80
-	#define ROM_GS_M    (ROM_BASE_M + MAX_ROM_PAGES*PAGE)
-	#define GSRAM_M     (ROM_GS_M + MAX_GSROM_PAGES*PAGE)
+	#define ROM_GS_M    (ROM_BASE_M + MAX_ROM_PAGES * PAGE)
+	#define GSRAM_M     (ROM_GS_M + MAX_GSROM_PAGES * PAGE)
 #endif
 
-#define TRASH_M     (MISC_BASE_M+0*PAGE)
+// Special memory page to collect writes to ROM
+#define TRASH_MEMORY_PAGE     (MISC_BASE_M + 0 * PAGE)
 
 enum IDE_SCHEME
 {
@@ -70,7 +71,7 @@ enum MEM_MODEL
 	MM_ATM710 = 3,			// ATM Turbo 7.1.0
 	MM_ATM450 = 4,			// ATM Turbo 4.5.0 (512/1024)
 	MM_PROFI = 5,			// Profi 1024K
-	MM_PLUS3 = 6,			// ZX Spectrum +3
+	MM_PLUS3 = 6,			// ZX Spectrum +2/+3
 	MM_SCORP = 7,			// Scorpion ZS256
 	MM_PROFSCORP = 8,		// Scorpion ZS256 + ProfROM
 	MM_GMX = 9,				// GMX

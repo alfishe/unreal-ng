@@ -8,6 +8,8 @@
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"
 
+#include <cassert>
+
 /// region <Constructors / Destructors>
 
 Screen::Screen(EmulatorContext* context)
@@ -15,6 +17,11 @@ Screen::Screen(EmulatorContext* context)
 	_system = context->pCPU;
 	_cpu = _system->GetZ80();
 	_context = context;
+
+	// Set Normal screen (Bank 5) mode by default
+	Memory& memory = *context->pMemory;
+	_activeScreen = 0;
+	_activeScreenMemoryOffset = memory.RAMPageAddress(5);
 }
 
 Screen::~Screen()
@@ -222,6 +229,31 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     LOGINFO("%s", DumpRasterState().c_str());
 
 #endif // _DEBUG
+}
+
+/// Set active ZX-Spectrum screen
+/// \param screen
+void Screen::SetActiveScreen(uint8_t screen)
+{
+    static Memory& memory = *_context->pMemory;
+
+    uint8_t* activeScreenMemoryOffset = memory.RAMPageAddress(5);   // RAM Page 5 is used for default / normal screen
+    switch (screen)
+    {
+        case 0:     // Normal screen (Bank 5)
+            activeScreenMemoryOffset = memory.RAMPageAddress(5);
+            break;
+        case 1:     // Shadow screen (Bank 7)
+            activeScreenMemoryOffset = memory.RAMPageAddress(7);
+            break;
+        default:
+            LOGERROR("Screen::SetActiveScreen - Invalid screen mode specified %d. Only 0=Normal, 1=Shadow are valid", screen);
+            assert("Invalid screen");
+            break;
+    }
+
+    _activeScreen = screen;
+    _activeScreenMemoryOffset = activeScreenMemoryOffset;
 }
 
 /// endregion </Initialization>

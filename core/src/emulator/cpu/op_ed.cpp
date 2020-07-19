@@ -63,6 +63,7 @@ Z80OPCODE ope_43(Z80 *cpu) { // ld (nnnn),bc
    cpu->wd(addr, cpu->c);
    cpu->wd(addr + 1, cpu->b);
 }
+
 Z80OPCODE ope_44(Z80 *cpu) { // neg
    cpu->f = sbc_f[cpu->a];
    cpu->a = -cpu->a;
@@ -82,6 +83,7 @@ Z80OPCODE ope_45(Z80 *cpu) { // retn
 
    cpu->sp = sp;
 
+   // TODO: Is callback still needed?
    cpu->retn();
 }
 

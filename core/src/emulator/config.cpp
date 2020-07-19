@@ -208,7 +208,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	CopyStringValue(inimanager.GetValue(misc, "HIMEM", "PENTAGON", nullptr), line, sizeof line);
 	config.ramsize = inimanager.GetLongValue(misc, "RamSize", 128, nullptr);
 	
-	// Make sure we're emulating write config
+	// Make sure we're emulating valid model & configuration
 	if (DetermineModel(line, config.ramsize))
 	{
 		result = true;

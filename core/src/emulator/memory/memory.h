@@ -126,6 +126,7 @@ public:
 public:
 	// Runtime methods
 	void SetROMMode(ROMModeEnum mode);
+	void SetRAMPageToBank3(uint8_t page);
 	void SetBanks();
 
 	// Debug methods
@@ -133,6 +134,9 @@ public:
 	void SetROM128k();
 	void SetROMDOS();
 	void SetROMSystem();
+
+	// Service methods
+	void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
 
 	// Helper methods
 	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE * page); }	// Up to MAX_RAM_PAGES 256 pages
