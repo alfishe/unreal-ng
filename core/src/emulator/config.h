@@ -31,12 +31,14 @@ private:
 	const struct TMemModel mem_model[N_MM_MODELS] =
 	{
 		{ "Pentagon", "PENTAGON",                MM_PENTAGON, 128,  RAM_128 | RAM_256 | RAM_512 | RAM_1024 },
+        { "ZX-Spectrum 48k", "48K",              MM_SPECTRUM48, 48, RAM_48 },
+        { "ZX-Spectrum 128k", "128k",            MM_SPECTRUM128, 128, RAM_128 },
+        { "ZX-Spectrum +3", "PLUS3",             MM_PLUS3, 128,  RAM_128 },
 		{ "TS-Config", "TSL",                    MM_TSL, 4096, RAM_4096 },
 		{ "ZX-Evo", "ATM3",                      MM_ATM3, 4096, RAM_4096 },
 		{ "ATM-Turbo 2+ v7.10", "ATM710",        MM_ATM710, 1024, RAM_128 | RAM_256 | RAM_512 | RAM_1024 },
 		{ "ATM-Turbo v4.50", "ATM450",           MM_ATM450, 512,  RAM_512 | RAM_1024 },
 		{ "Profi", "PROFI",                      MM_PROFI, 1024, RAM_1024 },
-		{ "ZX-Spectrum +3", "PLUS3",             MM_PLUS3, 128,  RAM_128 },
 		{ "ZS Scorpion", "SCORPION",             MM_SCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + PROF ROM", "PROFSCORP", MM_PROFSCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + GMX", "GMX",			 MM_GMX, 2048,  RAM_2048 },

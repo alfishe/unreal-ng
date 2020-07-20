@@ -5,6 +5,8 @@
 #include <string>
 #include <map>
 
+/// region <Structures and type>
+
 struct KnownROM
 {
 	const char* FullName;
@@ -14,11 +16,15 @@ struct KnownROM
 typedef map<string, string> ROMSMap;
 typedef pair<string, string> ROMSignature;
 
+/// endregion </Structures and type>
+
 class ROM
 {
 protected:
 	EmulatorContext* _context = nullptr;
-	string _activeROMFile;
+	std::string _activeROMFile;
+	uint8_t _ROMBanksLoaded = 0;
+
 
 	ROMSMap _signatures;
 
@@ -35,6 +41,6 @@ public:
 	// Signature-related methods
 public:
 	void CalculateSignatures();
-	string CalculateSignature(uint8_t* buffer, size_t length);
+	std::string CalculateSignature(uint8_t* buffer, size_t length);
 };
 

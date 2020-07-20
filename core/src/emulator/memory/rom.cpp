@@ -50,6 +50,29 @@ bool ROM::LoadROM()
 			memory.base_sos_rom = memory.ROMPageAddress(3);
 			romname = config.pent_rom_path;
 			break;
+	    case MM_SPECTRUM48:
+	        memory.base_sos_rom = memory.ROMPageAddress(0);
+	        romname = config.zx48_rom_path;
+
+	        memory.base_128_rom = nullptr;
+	        memory.base_dos_rom = nullptr;
+	        memory.base_sys_rom = nullptr;
+	        break;
+	    case MM_SPECTRUM128:
+            memory.base_128_rom = memory.ROMPageAddress(0);
+            memory.base_sos_rom = memory.ROMPageAddress(1);
+            romname = config.zx128_rom_path;
+
+            memory.base_dos_rom = nullptr;
+            memory.base_sys_rom = nullptr;
+            break;
+        case MM_PLUS3:
+            memory.base_128_rom = memory.ROMPageAddress(0);
+            memory.base_sys_rom = memory.ROMPageAddress(1);
+            memory.base_dos_rom = memory.ROMPageAddress(2);
+            memory.base_sos_rom = memory.ROMPageAddress(3);
+            romname = config.plus3_rom_path;
+            break;
 		case MM_PROFI:
 			memory.base_sys_rom = memory.ROMPageAddress(0);
 			memory.base_dos_rom = memory.ROMPageAddress(1);
@@ -99,13 +122,6 @@ bool ROM::LoadROM()
 			memory.base_sys_rom = memory.ROMPageAddress(3);
 			romname = config.atm2_rom_path;					// TODO: Correct?
 			break;
-		case MM_PLUS3:
-			memory.base_128_rom = memory.ROMPageAddress(0);
-			memory.base_sys_rom = memory.ROMPageAddress(1);
-			memory.base_dos_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
-			romname = config.plus3_rom_path;
-			break;
 		case MM_QUORUM:
 			memory.base_sys_rom = memory.ROMPageAddress(0);
 			memory.base_dos_rom = memory.ROMPageAddress(1);
@@ -149,6 +165,7 @@ bool ROM::LoadROM()
 		{
 			// Try to load ROM up to 1024KB in size
 			uint16_t loadedBanks = LoadROM(wromname, memory.ROMBase(), 64);
+            _ROMBanksLoaded = loadedBanks;
 
 			result = true;
 
@@ -157,7 +174,7 @@ bool ROM::LoadROM()
 			{
 				if (loadedBanks != 4 || loadedBanks != 8 || loadedBanks != 16)
 				{
-					LOGERROR("Incorrect ROM size for Scorpion ZS256 Prof. Should be 64|128|256 KB. Found %d", loadedBanks * PAGE);
+					LOGERROR("Incorrect ROM size for Scorpion ZS256 Prof. Should be 64|128|256 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
@@ -165,24 +182,24 @@ bool ROM::LoadROM()
 			{
 				if (loadedBanks != 4 || loadedBanks != 8 || loadedBanks != 32 || loadedBanks != 64)
 				{
-					LOGERROR("Incorrect ROM size for ATM3/7.10. Should be 64|128|512|1024 KB. Found %d", loadedBanks * PAGE);
+					LOGERROR("Incorrect ROM size for ATM3/7.10. Should be 64|128|512|1024 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 				else
 				{
 					// ATM3 and 7.10 keep standard ROM set in last 4 banks
 					uint8_t* lastPage = memory.ROMBase() + (loadedBanks - 4);
-					memory.base_sos_rom = lastPage + 0 * PAGE;
-					memory.base_dos_rom = lastPage + 1 * PAGE;
-					memory.base_128_rom = lastPage + 2 * PAGE;
-					memory.base_sys_rom = lastPage + 3 * PAGE;
+					memory.base_sos_rom = lastPage + 0 * PAGE_SIZE;
+					memory.base_dos_rom = lastPage + 1 * PAGE_SIZE;
+					memory.base_128_rom = lastPage + 2 * PAGE_SIZE;
+					memory.base_sys_rom = lastPage + 3 * PAGE_SIZE;
 				}
 			}
 			else if (config.mem_model == MM_GMX)
 			{
 				if (loadedBanks != 32)
 				{
-					LOGERROR("Incorrect ROM size for GMX. Should be 512 KB. Found %d", loadedBanks * PAGE);
+					LOGERROR("Incorrect ROM size for GMX. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
@@ -190,16 +207,32 @@ bool ROM::LoadROM()
 			{
 				if (loadedBanks != 32)
 				{
-					LOGERROR("Incorrect ROM size for TS-Conf. Should be 512 KB. Found %d", loadedBanks * PAGE);
+					LOGERROR("Incorrect ROM size for TS-Conf. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
+            else if (config.mem_model == MM_SPECTRUM48)
+            {
+                if (loadedBanks != 1)
+                {
+                    LOGERROR("Incorrect ROM size. Should be 16 KB. Found %d", loadedBanks * PAGE_SIZE);
+                    result = false;
+                }
+            }
+			else if (config.mem_model == MM_SPECTRUM128)
+            {
+			    if (loadedBanks != 2)
+                {
+                    LOGERROR("Incorrect ROM size. Should be 32 KB. Found %d", loadedBanks * PAGE_SIZE);
+                    result = false;
+                }
+            }
 			else
 			{
 				// All other models have 64KB (4 banks) ROM chips
 				if (loadedBanks != 4)
 				{
-					LOGERROR("Incorrect ROM size. Should be 64 KB. Found %d", loadedBanks * PAGE);
+					LOGERROR("Incorrect ROM size. Should be 64 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
@@ -262,15 +295,17 @@ bool ROM::LoadROMSet()
 	return result;
 }
 
-//
-// Loads up to <max_banks> ROM banks (16KB each). from file with filepath <path> to the buffer with address <bank>
-//
+/// Loads up to <max_banks> ROM banks (16KB each). from file with filepath <path> to the buffer with address <bank>
+/// \param path
+/// \param bank
+/// \param max_banks Max 16KiB banks to load
+/// \return Number of banks loaded
 uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 {
 	uint16_t result = 0;
 
 	// Clear whole ROM area before loading
-	memset(bank, 0xFF, max_banks * PAGE);
+	memset(bank, 0xFF, max_banks * PAGE_SIZE);
 
 	if (path.empty())
 	{
@@ -296,15 +331,15 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 	FILE* romfile = fopen(normalizedPath.c_str(), "rb");
 	if (romfile)
 	{
-		size_t size = fread(bank, 1, max_banks * PAGE, romfile);
-		if (size && !(size & (PAGE - 1)))
+		size_t size = fread(bank, 1, max_banks * PAGE_SIZE, romfile);
+		if (size && !(size & (PAGE_SIZE - 1)))
 		{
 
-			result = static_cast<uint16_t>(size / PAGE);
+			result = static_cast<uint16_t>(size / PAGE_SIZE);
 		}
 		else
 		{
-			LOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE, size);
+			LOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE_SIZE, size);
 		}
 
 		fclose(romfile);
@@ -323,23 +358,44 @@ void ROM::CalculateSignatures()
 	CONFIG& config = _context->config;
 	Memory& memory = *_context->pMemory;
 
-	if (!memory.base_sos_rom || !memory.base_128_rom || !memory.base_dos_rom || !memory.base_sys_rom)
+	if (_ROMBanksLoaded == 0)
 	{
-		LOGERROR("ROM::CalculateSignatures - no data about base_sos_rom, base_128_rom, base_dos_rom, base_sys_rom available. Unable to calculate ROM signatures");
+		LOGERROR("ROM::CalculateSignatures - no ROM loaded. Unable to calculate ROM signatures");
 		return;
 	}
 
-	string signatures[4];
+	LOGINFO("ROM Banks info (as loaded):");
+	for (int i = 0; i < _ROMBanksLoaded; i++)
+    {
+	    std::string signature = CalculateSignature(memory.ROMPageAddress(i), 0x4000);
+	    const char* detectedROM = _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM";
+        LOGINFO("  ROM page %d: %s", i, detectedROM);
+    }
 
-	signatures[0] = CalculateSignature(memory.base_sos_rom, 16384);
-	signatures[1] = CalculateSignature(memory.base_128_rom, 16384);
-	signatures[2] = CalculateSignature(memory.base_dos_rom, 16384);
-	signatures[3] = CalculateSignature(memory.base_sys_rom, 16384);
+    LOGINFO("ROM Banks info (as mapped):");
+	if (memory.base_sos_rom)
+    {
+        std::string signature = CalculateSignature(memory.base_sos_rom, 0x4000);
+        LOGINFO("  base_sos_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+    }
 
-	LOGINFO("base_sos_rom: %s", _signatures.find(signatures[0]) != _signatures.end() ? _signatures[signatures[0]].c_str() : "Unknown ROM");
-	LOGINFO("base_128_rom: %s", _signatures.find(signatures[1]) != _signatures.end() ? _signatures[signatures[1]].c_str() : "Unknown ROM");
-	LOGINFO("base_dos_rom: %s", _signatures.find(signatures[2]) != _signatures.end() ? _signatures[signatures[2]].c_str() : "Unknown ROM");
-	LOGINFO("base_sys_rom: %s", _signatures.find(signatures[3]) != _signatures.end() ? _signatures[signatures[3]].c_str() : "Unknown ROM");
+    if (memory.base_128_rom)
+    {
+        std::string signature = CalculateSignature(memory.base_128_rom, 0x4000);
+        LOGINFO("  base_128_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+    }
+
+    if (memory.base_dos_rom)
+    {
+        std::string signature = CalculateSignature(memory.base_dos_rom, 0x4000);
+        LOGINFO("  base_dos_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+    }
+
+    if (memory.base_sys_rom)
+    {
+        std::string signature = CalculateSignature(memory.base_sys_rom, 0x4000);
+        LOGINFO("  base_sys_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+    }
 }
 
 string ROM::CalculateSignature(uint8_t* buffer, size_t length)
