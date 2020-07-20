@@ -30,13 +30,13 @@ public:
     /// region <Interface methods>
 public:
     virtual void Reset() = 0;
-    virtual uint8_t DecodePortIn(uint16_t addr) = 0;
-    virtual void DecodePortOut(uint16_t addr, uint8_t value) = 0;
+    virtual uint8_t DecodePortIn(uint16_t addr, uint16_t pc) = 0;
+    virtual void DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc) = 0;
 
     virtual void SetRAMPage(uint8_t oage) = 0;
     virtual void SetROMPage(uint8_t page) = 0;
 
 protected:
-    virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, const char* comment = nullptr);
+    virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment = nullptr);
     /// endregion </Interface methods>
 };

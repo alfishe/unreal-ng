@@ -25,29 +25,29 @@ void PortDecoder_Scorpion256::Reset()
     _7FFD_Locked = false;
 }
 
-uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t addr)
+uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
 
     return result;
 }
 
-void PortDecoder_Scorpion256::DecodePortOut(uint16_t addr, uint8_t value)
+void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     //    ZX Spectrum 128 +2A/+2B/+3
     //    port: #7FFD
     //    port: #1FFD
 
-    bool isPort_7FFD = IsPort_7FFD(addr);
+    bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
     {
-        Port_7FFD(value);
+        Port_7FFD(value, pc);
     }
 
-    bool isPort_1FFD = IsPort_1FFD(addr);
+    bool isPort_1FFD = IsPort_1FFD(port);
     if (isPort_1FFD)
     {
-        Port_1FFD(value);
+        Port_1FFD(value, pc);
     }
 }
 
@@ -64,7 +64,7 @@ void PortDecoder_Scorpion256::SetROMPage(uint8_t page)
 /// endregion </Interface methods>
 
 /// region <Helper methods>
-bool PortDecoder_Scorpion256::IsPort_7FFD(uint16_t addr)
+bool PortDecoder_Scorpion256::IsPort_7FFD(uint16_t port)
 {
     //    Scorpion ZS256
     //    port: #7FFD
@@ -75,12 +75,12 @@ bool PortDecoder_Scorpion256::IsPort_7FFD(uint16_t addr)
     static const uint16_t port_7FFD_mask    = 0b1101'0000'0010'0111;
     static const uint16_t port_7FFD_match   = 0b0101'0000'0010'0101;
 
-    bool result = (addr & port_7FFD_mask) == port_7FFD_match;
+    bool result = (port & port_7FFD_mask) == port_7FFD_match;
 
     return result;
 }
 
-bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t addr)
+bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t port)
 {
     //    Scorpion ZS256
     //    port: #1FFD
@@ -91,7 +91,7 @@ bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t addr)
     static const uint16_t port_1FFD_mask    = 0b1101'0000'0010'0111;
     static const uint16_t port_1FFD_match   = 0b0001'0000'0010'0101;
 
-    bool result = (addr & port_1FFD_mask) == port_1FFD_match;
+    bool result = (port & port_1FFD_mask) == port_1FFD_match;
 
     return result;
 }
@@ -99,7 +99,7 @@ bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t addr)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Scorpion256::Port_7FFD(uint8_t value)
+void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
 {
     //  Port: #7FFD
     //  Bits:
@@ -136,7 +136,7 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value)
 
 /// Port #1FFD (Memory) handler
 /// \param value
-void PortDecoder_Scorpion256::Port_1FFD(uint8_t value)
+void PortDecoder_Scorpion256::Port_1FFD(uint8_t value, uint16_t pc)
 {
 
 }

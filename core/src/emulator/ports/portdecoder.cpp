@@ -53,16 +53,16 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 /// endregion </Static methods>
 
 /// region <Interface methods>
-std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, const char* comment)
+std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment)
 {
     std::string result;
     if (comment != nullptr)
     {
-        result = StringHelper::Format("[Out] Port #%04X, decoded as #%04X value: 0x%02X (%s)", port, refPort, value, comment);
+        result = StringHelper::Format("[Out] [PC:0x%04X] Port #%04X, decoded as #%04X value: 0x%02X (%s)", pc, port, refPort, value, comment);
     }
     else
     {
-        result = StringHelper::Format("[Out] Port #%04X, decoded as #%04X value: 0x%02X", port, refPort, value);
+        result = StringHelper::Format("[Out] [PC:0x%04X] Port #%04X, decoded as #%04X value: 0x%02X", pc, port, refPort, value);
     }
 
     return result;

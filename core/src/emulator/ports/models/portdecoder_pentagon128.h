@@ -28,8 +28,8 @@ public:
     /// region <Interface methods>
 public:
     void Reset() override;
-    uint8_t DecodePortIn(uint16_t addr) override;
-    void DecodePortOut(uint16_t addr, uint8_t value) override;
+    uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
+    void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 
     void SetRAMPage(uint8_t oage) override;
     void SetROMPage(uint8_t page) override;
@@ -37,9 +37,9 @@ public:
 
     /// region <Helper methods>
 public:
-    bool IsPort_7FFD(uint16_t addr);
+    bool IsPort_7FFD(uint16_t port);
     /// endregion <Helper methods>
 
 protected:
-    void Port_7FFD(uint16_t port, uint8_t value);
+    void Port_7FFD(uint16_t port, uint8_t value, uint16_t pc);
 };

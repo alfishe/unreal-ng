@@ -25,29 +25,29 @@ void PortDecoder_Profi::Reset()
     _7FFD_Locked = false;
 }
 
-uint8_t PortDecoder_Profi::DecodePortIn(uint16_t addr)
+uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
 
     return result;
 }
 
-void PortDecoder_Profi::DecodePortOut(uint16_t addr, uint8_t value)
+void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     //    Profi 1024
     //    port: #7FFD
     //    port: #DFFD
 
-    bool isPort_7FFD = IsPort_7FFD(addr);
+    bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
     {
-        Port_7FFD(value);
+        Port_7FFD(value, pc);
     }
 
-    bool isPort_DFFD = IsPort_DFFD(addr);
+    bool isPort_DFFD = IsPort_DFFD(port);
     if (isPort_DFFD)
     {
-        Port_DFFD(value);
+        Port_DFFD(value, pc);
     }
 }
 
@@ -64,7 +64,7 @@ void PortDecoder_Profi::SetROMPage(uint8_t page)
 /// endregion </Interface methods>
 
 /// region <Helper methods>
-bool PortDecoder_Profi::IsPort_7FFD(uint16_t addr)
+bool PortDecoder_Profi::IsPort_7FFD(uint16_t port)
 {
     //    Profi
     //    port: #7FFD
@@ -75,12 +75,12 @@ bool PortDecoder_Profi::IsPort_7FFD(uint16_t addr)
     static const uint16_t port_7FFD_mask        = 0b1000'0000'0000'0010;
     static const uint16_t port_7FFD_match       = 0b0000'0000'0000'0000;
 
-    bool result = (addr & port_7FFD_mask) == port_7FFD_match;
+    bool result = (port & port_7FFD_mask) == port_7FFD_match;
 
     return result;
 }
 
-bool PortDecoder_Profi::IsPort_DFFD(uint16_t addr)
+bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
 {
     //    Profi
     //    port: #DFFD
@@ -91,7 +91,7 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t addr)
     static const uint16_t port_DFFD_mask        = 0b0010'0000'0000'0010;
     static const uint16_t port_DFFD_match       = 0b0000'0000'0000'0000;
 
-    bool result = (addr & port_DFFD_mask) == port_DFFD_match;
+    bool result = (port & port_DFFD_mask) == port_DFFD_match;
 
     return result;
 }
@@ -99,7 +99,7 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t addr)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Profi::Port_7FFD(uint8_t value)
+void PortDecoder_Profi::Port_7FFD(uint8_t value, uint16_t pc)
 {
     //  Port: #7FFD
     //  Bits:
@@ -136,7 +136,7 @@ void PortDecoder_Profi::Port_7FFD(uint8_t value)
 
 /// Port #DFFD (Memory) handler
 /// \param value
-void PortDecoder_Profi::Port_DFFD(uint8_t value)
+void PortDecoder_Profi::Port_DFFD(uint8_t value, uint16_t pc)
 {
 
 }
