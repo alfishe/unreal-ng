@@ -6,6 +6,7 @@
 
 #include "common/stringhelper.h"
 #include "emulator/platform.h"
+#include "emulator/ports/portdecoder.h"
 #include <cassert>
 
 /// region <Constructors / Destructors>
@@ -39,7 +40,7 @@ Memory::~Memory()
 /// Fill whole physical RAM with random values
 void Memory::RandomizeMemoryContent()
 {
-    RandomizeMemoryBlock(page_ram(0), MAX_RAM_SIZE);
+    RandomizeMemoryBlock(RAMPageAddress(0), MAX_RAM_SIZE);
 }
 
 /// Fill block of memory with specified size with random values
@@ -73,11 +74,13 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
 // Address space: [0x0000 - 0x3FFF]
 void Memory::SetROMMode(ROMModeEnum mode)
 {
+    static COMPUTER& state = _context->state;
+    static CONFIG& config = _context->config;
+    static PortDecoder& portDecoder = *_context->pPortDecoder;
+
 	if (mode == RM_NOCHANGE)
 		return;
 
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
 
 	if (mode == RM_CACHE)
 	{
@@ -119,7 +122,70 @@ void Memory::SetROMMode(ROMModeEnum mode)
 		}
 	}
 
-	SetBanks();
+	//SetBanks();
+}
+
+/// Set ROM page
+/// Address space: [0x0000 - 0x3FFF]
+/// \param page ROM page number
+void Memory::SetROMPage(uint8_t page)
+{
+    if (page >= MAX_ROM_PAGES)
+    {
+        LOGERROR("Memory::SetROMPage - invalid ROM page specified: %d. Only %d pages allowed", page, MAX_ROM_PAGES);
+        assert("Invalid ROM page");
+        return;
+    }
+
+    _bank_mode[0] = BANK_ROM;
+    _bank_read[0] = ROMPageAddress(page);
+    _bank_write[0] = TRASH_MEMORY_PAGE;
+}
+
+/// Switch to specified RAM Bank in RAM Page 3
+/// Address space: [0x0000 - 0x3FFF]
+/// \param page Page number (in 16KiB pages)
+void Memory::SetRAMPageToBank0(uint8_t page)
+{
+    if (page >= MAX_RAM_PAGES)
+    {
+        LOGERROR("Memory::SetRAMPageToBank0 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
+        assert("Invalid RAM page");
+        return;
+    }
+
+    _bank_mode[0] = BANK_RAM;
+    _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
+}
+
+/// Switch to specified RAM Bank in RAM Page 1
+/// Address space: [0x4000 - 0x7FFF]
+/// \param page Page number (in 16KiB pages)
+void Memory::SetRAMPageToBank1(uint8_t page)
+{
+    if (page >= MAX_RAM_PAGES)
+    {
+        LOGERROR("Memory::SetRAMPageToBank1 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
+        assert("Invalid RAM page");
+        return;
+    }
+
+    _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
+}
+
+/// Switch to specified RAM Bank in RAM Page 2
+/// Address space: [0x8000 - 0xBFFF]
+/// \param page Page number (in 16KiB pages)
+void Memory::SetRAMPageToBank2(uint8_t page)
+{
+    if (page >= MAX_RAM_PAGES)
+    {
+        LOGERROR("Memory::SetRAMPageToBank2 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
+        assert("Invalid RAM page");
+        return;
+    }
+
+    _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -134,10 +200,257 @@ void Memory::SetRAMPageToBank3(uint8_t page)
         return;
     }
 
-    _bank_write[3] = _bank_read[3] = page_ram(page);
+    _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
 }
 
-// input: ports 7FFD, 1FFD, DFFD, FFF7, FF77, EFF7, flags CF_TRDOS,CF_CACHEON
+/// endregion </Runtime methods>
+
+/// region  <Address helper methods>
+
+/// Returns RAM page number (16KiB page size) for the specified host address if mapping is available
+/// \param hostAddress Host address
+/// \return RAM page number relative to RAMBase() or MEMORY_UNMAPPABLE =0xFF if address is outside emulated RAM space
+uint8_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
+{
+    uint8_t result = MEMORY_UNMAPPABLE;
+
+    if (hostAddress >= RAMBase() && hostAddress < RAMBase() + MAX_RAM_PAGES * PAGE_SIZE)
+    {
+        result = (hostAddress - RAMBase()) / PAGE_SIZE;
+    }
+    else
+    {
+        LOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, RAMBase(), RAMBase() + MAX_RAM_PAGES * PAGE_SIZE - 1);
+    }
+
+    return result;
+}
+
+/// Returns ROM page number (16KiB page size) for the specified host address if mapping is available
+/// \param hostAddress Host address
+/// \return ROM page number relative to ROMBase() or MEMORY_UNMAPPABLE =0xFF if address is outside emulated RAM space
+uint8_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
+{
+    uint8_t result = MEMORY_UNMAPPABLE;
+
+    if (hostAddress >= ROMBase() && hostAddress < ROMBase() + MAX_ROM_PAGES * PAGE_SIZE)
+    {
+        result = (hostAddress - ROMBase()) / PAGE_SIZE;
+    }
+    else
+    {
+        LOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, ROMBase(), ROMBase() + MAX_ROM_PAGES * PAGE_SIZE - 1);
+    }
+
+    return result;
+}
+
+/// Returns pointer in Host memory for the address in Z80 space mapped to current bank configuration
+/// \param address Z80 space address
+/// \return Pointer to Host memory mapped
+uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
+{
+    COMPUTER& state = *(&_context->state);
+    CONFIG& config = *(&_context->config);
+    TEMP& temp = *(&_context->temporary);
+
+    uint8_t* result = nullptr;
+
+#if defined MOD_VID_VD
+    if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800)
+			result = comp.vdbase + (addr & 0x1FFF);
+#else
+    uint8_t bank = (address >> 14) & 0b0000000000000011;
+    result = _bank_read[bank] + address;
+#endif
+
+    return result;
+}
+
+/// endregion </ddress helper methods>
+
+/// region <Debug methods>
+
+void Memory::SetROM48k()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_SOS);
+
+    // Switch to 48k ROM page
+    _bank_read[0] = base_sos_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
+}
+
+void Memory::SetROM128k()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_128);
+
+    // Switch to 128k ROM page
+    _bank_read[0] = base_128_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
+}
+
+void Memory::SetROMDOS()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_DOS);
+
+    // Switch to DOS ROM page
+    _bank_read[0] = base_dos_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
+}
+
+void Memory::SetROMSystem()
+{
+    // Set all port values accordingly
+    SetROMMode(RM_SYS);
+
+    // Switch to DOS ROM page
+    _bank_read[0] = base_sys_rom;
+    _bank_write[0] = TRASH_MEMORY_PAGE;
+}
+
+/// endregion </Debug methods>
+
+/// region <Service methods>
+
+/// Load content from contentBuffer with length size to emulated memory starting specified address in Z80 space
+/// Note: current active bank configuration will be used. No overflow after 0xFFFF address available
+/// \param contentBuffer
+/// \param size
+/// \param z80address
+void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address)
+{
+    if (contentBuffer == nullptr || size <= 0)
+    {
+        LOGWARNING("Memory::LoadContentToMemory: Nothing to load");
+        return;
+    }
+
+    // Fill Z80 memory only until 0xFFFF address, then stop
+    uint16_t sizeAvailable = 0xFFFF - z80address;
+    if (sizeAvailable > size)
+        sizeAvailable = size;
+
+    for (uint16_t addr = z80address; addr < z80address + sizeAvailable; addr++)
+    {
+
+    }
+}
+
+/// endregion </Service methods>
+
+/// region <Helper methods>
+
+
+//
+//
+//
+MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
+{
+	if (bank >= 4)
+	{
+		LOGERROR("Memory::GetMemoryBankMode() - Z80 memory bank can only be [0:3]. Found: %d", bank);
+		assert("Invalid Z80 bank");
+	}
+
+	return _bank_mode[bank];
+}
+
+/// Read single byte from address mapped to Z80 address space
+/// Note: Direct access method. Not shown in any traces, memory counters are not incremented
+/// \param address - Z80 space address
+/// \return
+uint8_t Memory::ReadFromMappedMemoryAddress(uint16_t address)
+{
+    uint8_t result = 0x00;
+
+    // Address bits 14 and 15 contain bank number
+    uint8_t bank = (address >> 14) & 0b0000000000000011;
+    result = *(_bank_read[bank] + address);
+
+    return result;
+}
+
+/// Write single byte by address mapped to Z80 address space
+/// Note: Direct access method. Not shown in any traces, memory counters are not incremented
+/// \param address - Z80 space address
+/// \param value - Single byte value to be written by address
+void Memory::WriteByMappedMemoryAddress(uint16_t address, uint8_t value)
+{
+    // Address bits 14 and 15 contain bank number
+    uint8_t bank = (address >> 14) & 0b0000000000000011;
+    *(_bank_write[bank] + address) = value;
+}
+
+//
+// Initialize according Spectrum 48K standard address space settings
+//
+void Memory::InternalSetBanks()
+{
+	COMPUTER& state = _context->state;
+	CONFIG& config = _context->config;
+
+	// Initialize according Spectrum 128K standard address space settings
+	_bank_write[0] = TRASH_MEMORY_PAGE;                         // ROM is not writable - redirect such requests to unused memory bank
+	_bank_read[0] = base_sos_rom;                 		        // 48K (SOS) ROM					for [0x0000 - 0x3FFF]
+	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
+	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default			for [0x8000 - 0xBFFF]
+	_bank_write[3] = _bank_read[3] = RAMPageAddress(0);	// Set page 0 as default			for [0xC000 - 0xFFFF]
+
+	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		        // Bank 0 is ROM [0x0000 - 0x3FFF]
+	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		        // Bank 1 is RAM [0x4000 - 0x7FFF]
+	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		        // Bank 2 is RAM [0x8000 - 0xBFFF]
+	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		        // Bank 3 is RAM [0xC000 - 0xFFFF]
+
+	// Reset all address defining flags/signals (they'll be recalculated later in logic)
+	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
+}
+
+/// endregion </Helper methods>
+
+/// region <Debug methods>
+std::string Memory::DumpMemoryBankInfo()
+{
+    uint8_t bank0page;
+    string bank0text;
+    if (_bank_mode[0] == BANK_ROM)
+    {
+        bank0page = GetROMPageFromAddress(_bank_read[0]);
+        if (bank0page != MEMORY_UNMAPPABLE)
+            bank0text = StringHelper::Format("rompage%d", bank0page);
+        else
+            bank0text = "<Unknown ROM>";
+    }
+    else
+    {
+        bank0page = GetRAMPageFromAddress(_bank_read[0]);
+        if (bank0page != MEMORY_UNMAPPABLE)
+            bank0text = StringHelper::Format("page%d", bank0page);
+        else
+            bank0text = "<Unknown RAM>";
+    }
+
+    uint8_t bank1page = GetRAMPageFromAddress(_bank_read[1]);
+    uint8_t bank2page = GetRAMPageFromAddress(_bank_read[2]);
+    uint8_t bank3page = GetRAMPageFromAddress(_bank_read[3]);
+
+    std::string result = StringHelper::Format("MemoryBankInfo: ");
+    result += StringHelper::Format("Bank0: %s; Bank1: page%d; Bank2: page%d; Bank3: page%d",
+        bank0text.c_str(),
+        bank1page,
+        bank2page,
+        bank3page
+    );
+
+    return result;
+}
+/// endregion <Debug methods>
+
+/*
+
+ // input: ports 7FFD, 1FFD, DFFD, FFF7, FF77, EFF7, flags CF_TRDOS,CF_CACHEON
 void Memory::SetBanks()
 {
 	COMPUTER& state = _context->state;
@@ -562,7 +875,6 @@ void Memory::SetBanks()
 		state.flags |= CF_Z80FBUS;
 
 	// Bank usage trace
-	/*
 	if (temp.led.osw && (trace_rom | trace_ram))
 	{
 		for (unsigned i = 0; i < 4; i++)
@@ -572,195 +884,9 @@ void Memory::SetBanks()
 				used_banks[bank] = 1;
 		}
 	}
-	*/
 }
 
-/// endregion </Runtime methods>
-
-/// region <Debug methods>
-
-void Memory::SetROM48k()
-{
-    // Set all port values accordingly
-    SetROMMode(RM_SOS);
-
-    // Switch to 48k ROM page
-    _bank_read[0] = base_sos_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
-}
-
-void Memory::SetROM128k()
-{
-    // Set all port values accordingly
-    SetROMMode(RM_128);
-
-    // Switch to 128k ROM page
-    _bank_read[0] = base_128_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
-}
-
-void Memory::SetROMDOS()
-{
-    // Set all port values accordingly
-    SetROMMode(RM_DOS);
-
-    // Switch to DOS ROM page
-    _bank_read[0] = base_dos_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
-}
-
-void Memory::SetROMSystem()
-{
-    // Set all port values accordingly
-    SetROMMode(RM_SYS);
-
-    // Switch to DOS ROM page
-    _bank_read[0] = base_sys_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
-}
-
-/// endregion </Debug methods>
-
-/// region <Service methods>
-
-/// Load content from contentBuffer with length size to emulated memory starting specified address in Z80 space
-/// Note: current active bank configuration will be used. No overflow after 0xFFFF address available
-/// \param contentBuffer
-/// \param size
-/// \param z80address
-void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address)
-{
-    if (contentBuffer == nullptr || size <= 0)
-    {
-        LOGWARNING("Memory::LoadContentToMemory: Nothing to load");
-        return;
-    }
-
-    // Fill Z80 memory only until 0xFFFF address, then stop
-    uint16_t sizeAvailable = 0xFFFF - z80address;
-    if (sizeAvailable > size)
-        sizeAvailable = size;
-
-    for (uint16_t addr = z80address; addr < z80address + sizeAvailable; addr++)
-    {
-
-    }
-}
-
-/// endregion </Service methods>
-
-/// region <Helper methods>
-
-/// Returns pointer in Host memory for the address in Z80 space mapped to current bank configuration
-/// \param address Z80 space address
-/// \return Pointer to Host memory mapped
-uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
-{
-	COMPUTER& state = *(&_context->state);
-	CONFIG& config = *(&_context->config);
-	TEMP& temp = *(&_context->temporary);
-
-	uint8_t* result = nullptr;
-
-	#if defined MOD_VID_VD
-		if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800)
-			result = comp.vdbase + (addr & 0x1FFF);
-    #else
-        uint8_t bank = (address >> 14) & 0b0000000000000011;
-		result = _bank_read[bank] + address;
-	#endif
-
-	return result;
-}
-
-//
-//
-//
-MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
-{
-	if (bank >= 4)
-	{
-		LOGERROR("Memory::GetMemoryBankMode() - Z80 memory bank can only be [0:3]. Found: %d", bank);
-		assert("Invalid Z80 bank");
-	}
-
-	return _bank_mode[bank];
-}
-
-/// Read single byte from address mapped to Z80 address space
-/// Note: Direct access method. Not shown in any traces, memory counters are not incremented
-/// \param address - Z80 space address
-/// \return
-uint8_t Memory::ReadFromMappedMemoryAddress(uint16_t address)
-{
-    uint8_t result = 0x00;
-
-    // Address bits 14 and 15 contain bank number
-    uint8_t bank = (address >> 14) & 0b0000000000000011;
-    result = *(_bank_read[bank] + address);
-
-    return result;
-}
-
-/// Write single byte by address mapped to Z80 address space
-/// Note: Direct access method. Not shown in any traces, memory counters are not incremented
-/// \param address - Z80 space address
-/// \param value - Single byte value to be written by address
-void Memory::WriteByMappedMemoryAddress(uint16_t address, uint8_t value)
-{
-    // Address bits 14 and 15 contain bank number
-    uint8_t bank = (address >> 14) & 0b0000000000000011;
-    *(_bank_write[bank] + address) = value;
-}
-
-//
-// Initialize according Spectrum 48K standard address space settings
-//
-void Memory::InternalSetBanks()
-{
-	COMPUTER& state = _context->state;
-	CONFIG& config = _context->config;
-
-	// Initialize according Spectrum 128K standard address space settings
-	_bank_write[0] = TRASH_MEMORY_PAGE;                         // ROM is not writable - redirect such requests to unused memory bank
-	_bank_read[0] = base_sos_rom;                 		        // 48K (SOS) ROM					for [0x0000 - 0x3FFF]
-	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
-	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default			for [0x8000 - 0xBFFF]
-	_bank_write[3] = _bank_read[3] = RAMPageAddress(0);	// Set page 0 as default			for [0xC000 - 0xFFFF]
-
-	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		        // Bank 0 is ROM [0x0000 - 0x3FFF]
-	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		        // Bank 1 is RAM [0x4000 - 0x7FFF]
-	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		        // Bank 2 is RAM [0x8000 - 0xBFFF]
-	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		        // Bank 3 is RAM [0xC000 - 0xFFFF]
-
-	// Reset all address defining flags/signals (they'll be recalculated later in logic)
-	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
-}
-
-/// endregion </Helper methods>
-
-/// region <Debug methods>
-std::string Memory::DumpMemoryBankInfo()
-{
-    uint8_t bank0page = (_bank_read[0] - _romBase) / PAGE_SIZE;
-    uint8_t bank1page = (_bank_read[1] - _memory) / PAGE_SIZE;
-    uint8_t bank2page = (_bank_read[2] - _memory) / PAGE_SIZE;
-    uint8_t bank3page = (_bank_read[3] - _memory) / PAGE_SIZE;
-
-    std::string result = StringHelper::Format("MemoryBankInfo: ");
-    result += StringHelper::Format("Bank 0: rompage%d; Bank 1: page%d; Bank 2: page%d; Bank 3: page%d",
-        bank0page,
-        bank1page,
-        bank2page,
-        bank3page
-    );
-
-    return result;
-}
-/// endregion <Debug methods>
-
-/*
-void set_banks()
+ void set_banks()
 {
    // set default values for memory windows
    bankw[1] = bankr[1] = page_ram(5);

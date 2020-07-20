@@ -375,6 +375,8 @@ public:
 
 	virtual void CreateTables() = 0;
 
+	virtual void Reset();
+
 	virtual void InitFrame();
 	virtual void InitRaster();
 	virtual void InitMemoryCounters();

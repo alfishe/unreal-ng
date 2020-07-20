@@ -6,10 +6,8 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context)
+PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
 {
-    _context = context;
-
     _7FFD_Locked = false;
 }
 
@@ -51,6 +49,16 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t addr, uint8_t value)
     {
         Port_1FFD(value);
     }
+}
+
+void PortDecoder_Scorpion256::SetRAMPage(uint8_t page)
+{
+
+}
+
+void PortDecoder_Scorpion256::SetROMPage(uint8_t page)
+{
+
 }
 
 /// endregion </Interface methods>

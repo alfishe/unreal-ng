@@ -8,7 +8,10 @@ class Z80;
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
 // MAX_RAM_PAGES and PAGE defined in platform.h
-#define MAX_RAM_SIZE (MAX_RAM_PAGES * PAGE)
+#define MAX_RAM_SIZE (MAX_RAM_PAGES * PAGE_SIZE)
+
+/// Return code when host memory address cannot be mapped to any RAM/ROM page
+#define MEMORY_UNMAPPABLE 0xFF
 
 /// region <Structures>
 
@@ -65,6 +68,7 @@ class Memory
 {
     /// region <Fields>
 	friend class Z80;
+	friend class PortDecoder;
 	friend class ROM;
 
 protected:
@@ -74,7 +78,7 @@ protected:
 protected:
 #if defined CACHE_ALIGNED
 	ATTR_ALIGN(4096)
-	uint8_t _memory[PAGE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
+	uint8_t _memory[PAGE_SIZE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
 #else // __declspec(align) not available, force u64 align with old method
 	uint64_t memory__[PAGE * MAX_PAGES / sizeof(uint64_t)];
 	uint8_t* const memory = (uint8_t*)memory__;
@@ -84,9 +88,9 @@ protected:
 
 	// Derived addresses
 	uint8_t* _ramBase = _memory;
-	uint8_t* _cacheBase = _memory + MAX_RAM_PAGES * PAGE;
-	uint8_t* _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE;
-	uint8_t* _romBase = _miscBase + MAX_MISC_PAGES * PAGE;
+	uint8_t* _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
+	uint8_t* _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
+	uint8_t* _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
 
 	MemoryBankModeEnum _bank_mode[4];	// Mode for each of four banks. 
 	uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
@@ -94,7 +98,7 @@ protected:
 
 public:
 	// Base addresses for memory classes
-	inline uint8_t* RAMBase() { return _memory; };			// Get starting address for RAM
+	inline uint8_t* RAMBase() { return _ramBase; };			// Get starting address for RAM
 	inline uint8_t* CacheBase() { return _cacheBase; };		// Get starting address for Cache
 	inline uint8_t* MiscBase() { return _miscBase; };
 	inline uint8_t* ROMBase() { return _romBase; };			// Get starting address for ROM
@@ -126,8 +130,11 @@ public:
 public:
 	// Runtime methods
 	void SetROMMode(ROMModeEnum mode);
+    void SetROMPage(uint8_t page);
+    void SetRAMPageToBank0(uint8_t page);
+    void SetRAMPageToBank1(uint8_t page);
+    void SetRAMPageToBank2(uint8_t page);
 	void SetRAMPageToBank3(uint8_t page);
-	void SetBanks();
 
 	// Debug methods
 	void SetROM48k();
@@ -138,9 +145,12 @@ public:
 	// Service methods
 	void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
 
-	// Helper methods
-	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE * page); }	// Up to MAX_RAM_PAGES 256 pages
-	inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE * page); }	// Up to MAX_ROM_PAGES 64 pages
+	/// region  <Address helper methods>
+	inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE_SIZE * page); }	// Up to MAX_RAM_PAGES 256 pages
+	inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE_SIZE * page); }	// Up to MAX_ROM_PAGES 64 pages
+
+	uint8_t GetRAMPageFromAddress(uint8_t* hostAddress);
+	uint8_t GetROMPageFromAddress(uint8_t* hostAddress);
 
 	uint8_t* RemapAddressToCurrentBank(uint16_t address);								// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
 
@@ -148,6 +158,8 @@ public:
 
 	uint8_t ReadFromMappedMemoryAddress(uint16_t address);
 	void WriteByMappedMemoryAddress(uint16_t address, uint8_t value);
+
+    /// endregion  </Address helper methods>
 
 	// Atomic internal methods (but accessible for testing purposes)
 public:

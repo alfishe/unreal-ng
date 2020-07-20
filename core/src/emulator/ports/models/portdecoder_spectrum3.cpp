@@ -6,10 +6,8 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_Spectrum3::PortDecoder_Spectrum3(EmulatorContext* context)
+PortDecoder_Spectrum3::PortDecoder_Spectrum3(EmulatorContext* context) : PortDecoder(context)
 {
-    _context = context;
-
     _7FFD_Locked = false;
 }
 
@@ -51,6 +49,16 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t addr, uint8_t value)
     {
         Port_1FFD(value);
     }
+}
+
+void PortDecoder_Spectrum3::SetRAMPage(uint8_t page)
+{
+
+}
+
+void PortDecoder_Spectrum3::SetROMPage(uint8_t page)
+{
+
 }
 
 /// endregion </Interface methods>

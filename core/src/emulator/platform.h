@@ -8,7 +8,9 @@
 #define EMUL_DEBUG
 #define TRASH_PAGE
 
-#define PAGE 0x4000U			// Spectrum memory page size is 16Kb (0x4000 or 16384)
+#undef PAGE_SIZE
+#define PAGE_SIZE 0x4000U		// Spectrum memory page size is 16Kb (0x4000 or 16384)
+
 #define MAX_RAM_PAGES 256       // 4Mb RAM
 #define MAX_CACHE_PAGES 2       // 32K cache
 #define MAX_MISC_PAGES 1        // trash page
@@ -32,13 +34,10 @@
 
 #define MAX_PAGES (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES + MAX_GSROM_PAGES + MAX_GSRAM_PAGES)
 
-#define page_ram(a) RAM_BASE_M + PAGE * (a)
-#define page_rom(a) ROM_BASE_M + PAGE * (a)
-
 #define RAM_BASE_M  _memory
-#define CACHE_M     (RAM_BASE_M + MAX_RAM_PAGES * PAGE)
-#define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES * PAGE)
-#define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES * PAGE)
+#define CACHE_M     (RAM_BASE_M + MAX_RAM_PAGES * PAGE_SIZE)
+#define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES * PAGE_SIZE)
+#define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES * PAGE_SIZE)
 
 // Byte-size for RGBA pixel
 #define RGBA_SIZE 4
@@ -49,7 +48,7 @@
 #endif
 
 // Special memory page to collect writes to ROM
-#define TRASH_MEMORY_PAGE     (MISC_BASE_M + 0 * PAGE)
+#define TRASH_MEMORY_PAGE     (MISC_BASE_M + 0 * PAGE_SIZE)
 
 enum IDE_SCHEME
 {

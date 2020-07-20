@@ -3,13 +3,12 @@
 #include "common/logger.h"
 
 #include "portdecoder_pentagon128.h"
+#include "cassert"
 
 /// region <Constructors / Destructors>
 
-PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context)
+PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context) : PortDecoder(context)
 {
-    _context = context;
-
     _7FFD_Locked = false;
 }
 
@@ -22,10 +21,28 @@ PortDecoder_Pentagon128::~PortDecoder_Pentagon128()
 
 /// region <Interface methods>
 
+// See: https://zx-pk.ru/archive/index.php/t-11295.html - Pentagon 128K ROM pages
 void PortDecoder_Pentagon128::Reset()
 {
+    // Pentagon ROM pages
+    // 0 - Service <-- Set after reset
+    // 1 - TR_DOS
+    // 2 - SOS128
+    // 3 - SOS48
+
+    // Set default 120K memory pages
+    Memory& memory = *_context->pMemory;
+    memory.SetROMPage(0);
+    memory.SetRAMPageToBank1(5);
+    memory.SetRAMPageToBank2(2);
+    memory.SetRAMPageToBank3(0);
+
+
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+
+    // Set default memory paging state: RAM bank: 0; Screen: Normal (bank 5); ROM bank: 0; Disable paging: No
+    Port_7FFD(0x7FFD, 0x00);
 }
 
 uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t addr)
@@ -39,11 +56,33 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t addr, uint8_t value)
 {
     //    Pentagon 128K
     //    port: #7FFD
-
     bool isPort_7FFD = IsPort_7FFD(addr);
     if (isPort_7FFD)
     {
-        Port_7FFD(value);
+        Port_7FFD(addr, value);
+    }
+}
+
+/// Actualize port(s) state according selected RAM page
+/// Note: Pentagon 128K has 8 RAM pages (16KiB each)
+/// \param page Page number [0..7]
+void PortDecoder_Pentagon128::SetRAMPage(uint8_t page)
+{
+    if (page > 7)
+    {
+        LOGERROR("PortDecoder_Pentagon128::SetRAMPage - Invalid RAM page number %d", page);
+        assert("Invalid RAM page");
+    }
+
+    _state->p7FFD = _state->p7FFD & 0b1111'1100 ;
+}
+
+void PortDecoder_Pentagon128::SetROMPage(uint8_t page)
+{
+    if (page > 3)
+    {
+        LOGERROR("PortDecoder_Pentagon128::SetROMPage - Invalid ROM page number %d", page);
+        assert("Invalid ROM page");
     }
 }
 
@@ -80,8 +119,9 @@ bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t addr)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Pentagon128::Port_7FFD(uint8_t value)
+void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value)
 {
+    static COMPUTER& state = _context->state;
     static Memory& memory = *_context->pMemory;
     static Screen& screen = *_context->pScreen;
 
@@ -101,5 +141,9 @@ void PortDecoder_Pentagon128::Port_7FFD(uint8_t value)
 
     screen.SetActiveScreen(screenNumber);
 
+    // Cache out port value in state
+    state.p7FFD = value;
+
+    LOGDEBUG(DumpPortValue(0x7FFD, port, value));
     LOGDEBUG(memory.DumpMemoryBankInfo());
 }

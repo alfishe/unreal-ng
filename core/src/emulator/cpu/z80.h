@@ -321,7 +321,6 @@ public:
 
 	// Trigger updates
 public:
-	void SetBanks();								// Reconfigure ROM/RAM banks
 	inline void ProcessInterrupts(bool int_occured,	// Take care about incoming interrupts
     unsigned int_start,
     unsigned int_end);

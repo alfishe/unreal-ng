@@ -85,8 +85,10 @@ uint8_t Z80::m1_cycle()
 	static CONFIG& config = _context->config;
 	static COMPUTER& state = _context->state;
 	static TEMP& temporary = _context->temporary;
+	static PortDecoder& portDecoder = *_context->pPortDecoder;
 
 	// TODO: move to Ports class
+	/*
 	if ((config.mem_model == MM_PENTAGON) &&
 		((state.pEFF7 & (EFF7_CMOS | EFF7_4BPP)) == (EFF7_CMOS | EFF7_4BPP)))
 		temporary.offset_vscroll++;
@@ -101,6 +103,7 @@ uint8_t Z80::m1_cycle()
 		state.ts.vdos_m1 = 0;
 		SetBanks();
 	}
+	 */
 	// End of TODO: move to Ports class
 
 	/// region <Test>
@@ -347,10 +350,10 @@ uint8_t Z80::MemoryReadFast(uint16_t addr)
 			{
 				// Read two sequential bytes with address bits xxxxxx00 and xxxxxx01 and cache them
 				uint16_t cache_addr = addr & 0xFFFE;
-				tscache_data[cache_pointer & 0xFFFE] = *(memory._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
+				tscache_data[cache_pointer & 0xFFFE] = *(memory._bank_read[bank] + (unsigned)(cache_addr & (PAGE_SIZE - 1)));
 
 				cache_addr = addr | 0x0001;
-				tscache_data[cache_pointer | 0x0001] = *(memory._bank_read[bank] + (unsigned)(cache_addr & (PAGE - 1)));
+				tscache_data[cache_pointer | 0x0001] = *(memory._bank_read[bank] + (unsigned)(cache_addr & (PAGE_SIZE - 1)));
 
 				tscache_addr[cache_pointer & 0xFFFE] = tscache_addr[cache_pointer | 0x0001] = cached_address;     // Set cache tags for two subsequent 8-bit addresses
 
@@ -692,7 +695,7 @@ void Z80::Z80Step()
 	ProcessDebuggerEvents();
 
 	// Ports logic
-	// TODO: move to Ports class
+	/* TODO: move to Ports class
 	if (state.flags & CF_SETDOSROM)
 	{
 		if (cpu.pch == 0x3D)
@@ -726,6 +729,7 @@ void Z80::Z80Step()
 		//if (config.trdos_traps)
 		//	state.wd.trdos_traps();
 	}
+	 */
 
 	// Tape related IO
 	// TODO: Move to io/tape
@@ -788,12 +792,6 @@ void Z80::Z80Step()
 #endif
 }
 
-void Z80::SetBanks()
-{
-	// Let memory manager set it up
-	_context->pMemory->SetBanks();
-}
-
 void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
 	static Z80& cpu = *this;
@@ -808,6 +806,7 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 	// NMI processing
 	if (_nmi_pending_count > 0)
 	{
+	    /* move to ports logic
 		if (config.mem_model == MM_ATM3)
 		{
 			_nmi_pending_count = 0;
@@ -828,16 +827,19 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 		}
 		else
 			_nmi_pending_count = 0;
+	     */
 	} // end if (nmi_pending)
 
 	// Baseconf NMI
 	if (state.pBE)
 	{
+	    /*
 		if (config.mem_model == MM_ATM3 && state.pBE == 1)
 		{
 			cpu.nmi_in_progress = false;
 			SetBanks();
 		}
+	     */
 		state.pBE--;
 	}
 

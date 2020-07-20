@@ -5,8 +5,6 @@
 #include "ports.h"
 #include <algorithm>
 
-using namespace std;
-
 Ports::Ports(EmulatorContext* context)
 {
 	_context = context;

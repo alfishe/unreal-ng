@@ -14,7 +14,6 @@ class PortDecoder_Spectrum128 : public PortDecoder
 {
     /// region <Fields>
 protected:
-    EmulatorContext* _context;
     bool _7FFD_Locked = false;
     /// endregion </Fields>
 
@@ -30,6 +29,9 @@ public:
     void Reset() override;
     uint8_t DecodePortIn(uint16_t addr) override;
     void DecodePortOut(uint16_t addr, uint8_t value) override;
+
+    void SetRAMPage(uint8_t oage) override;
+    void SetROMPage(uint8_t page) override;
     /// endregion </Interface methods>
 
     /// region <Helper methods>
@@ -39,6 +41,7 @@ public:
     /// endregion <Helper methods>
 
 protected:
-    void Port_7FFD(uint8_t value);
-    void Port_1FFD(uint8_t value);
+    void Port_7FFD(uint16_t port, uint8_t value);
+
+    std::string Dump_7FFD_value(uint8_t value);
 };

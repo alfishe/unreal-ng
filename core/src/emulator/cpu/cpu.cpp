@@ -35,6 +35,11 @@ CPU::CPU(EmulatorContext* context)
 	MEM_MODEL model = context->config.mem_model;
 	_ports = new Ports(context);
     _portDecoder = PortDecoder::GetPortDecoderForModel(model, _context);
+    if (!_portDecoder)
+    {
+        LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
+        assert("No port decoder");
+    }
     context->pPortDecoder = _portDecoder;
 
 	// Instantiate ROM implementation
@@ -124,6 +129,8 @@ void CPU::Reset()
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
 	_mode = static_cast<ROMModeEnum>(config.reset_rom);
 
+	/// region <Obsolete>
+	/*
 	state.pEFF7 &= config.EFF7_mask;
 	state.pEFF7 |= EFF7_GIGASCREEN; // [vv] disable turbo
 	{
@@ -231,10 +238,14 @@ void CPU::Reset()
 	}
 	else
 		SetCPUClockSpeed(1);		// turbo 1x (3.5MHz) for all other clones
+	 */
+	/// endregion </Obsolete>
 
 	// Reset main Z80 CPU and all peripherals
 	_cpu->Reset();					// Main Z80
-	_sound->Reset();				// All sound devices (AY(s), COVOX, MoonSound, GS)
+	_portDecoder->Reset();          // Reset peripheral port decoder
+	_sound->Reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
+	_screen->Reset();               // Reset all video subsystem
 
 	//reset_tape();					// Reset tape loader state
 

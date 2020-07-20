@@ -6,10 +6,8 @@
 
 /// region <Constructors / Destructors>
 
-PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context)
+PortDecoder_Profi::PortDecoder_Profi(EmulatorContext* context) : PortDecoder(context)
 {
-    _context = context;
-
     _7FFD_Locked = false;
 }
 
@@ -51,6 +49,16 @@ void PortDecoder_Profi::DecodePortOut(uint16_t addr, uint8_t value)
     {
         Port_DFFD(value);
     }
+}
+
+void PortDecoder_Profi::SetRAMPage(uint8_t page)
+{
+
+}
+
+void PortDecoder_Profi::SetROMPage(uint8_t page)
+{
+
 }
 
 /// endregion </Interface methods>

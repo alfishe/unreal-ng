@@ -99,7 +99,7 @@ void MainLoop::RunFrame()
         screen.RenderOnlyMainScreen();
 
         // Save frame as PNG
-        screen.SaveScreen();
+        //screen.SaveScreen();
 
         // Save frame to GIF animation
         uint32_t* buffer;
@@ -109,7 +109,7 @@ void MainLoop::RunFrame()
     }
 	i++;
 
-    if (i >= 1000)
+    if (i >= 200)
     {
         gifAnimationHelper.StopAnimation();
 

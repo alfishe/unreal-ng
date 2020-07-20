@@ -36,6 +36,14 @@ Screen::~Screen()
 
 /// region <Initialization>
 
+void Screen::Reset()
+{
+    // Set Normal screen (Bank 5) mode by default
+    Memory& memory = *_context->pMemory;
+    _activeScreen = 0;
+    _activeScreenMemoryOffset = memory.RAMPageAddress(5);
+}
+
 void Screen::InitFrame()
 {
 	static COMPUTER& state = _context->state;

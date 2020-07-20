@@ -13,8 +13,17 @@ public:
     static PortDecoder* GetPortDecoderForModel(MEM_MODEL model, EmulatorContext* context);
     /// endregion </Static methods>
 
+    /// region <Fields>
+protected:
+    COMPUTER* _state = nullptr;
+
+    EmulatorContext* _context = nullptr;
+    /// endregion </Fields>
+
     /// region <Constructors / destructors>
 public:
+    PortDecoder() = delete;     // Disable default constructor; C++ 11 feature
+    PortDecoder(EmulatorContext* context);
     virtual ~PortDecoder() {};
     /// endregion </Constructors / destructors>
 
@@ -23,5 +32,11 @@ public:
     virtual void Reset() = 0;
     virtual uint8_t DecodePortIn(uint16_t addr) = 0;
     virtual void DecodePortOut(uint16_t addr, uint8_t value) = 0;
+
+    virtual void SetRAMPage(uint8_t oage) = 0;
+    virtual void SetROMPage(uint8_t page) = 0;
+
+protected:
+    virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, const char* comment = nullptr);
     /// endregion </Interface methods>
 };
