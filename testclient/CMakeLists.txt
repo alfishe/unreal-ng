@@ -82,7 +82,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 
 # Copy default config file to binary folder after successfull compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
+SET (CONFIG_FILE ${DATA_PATH}/configs/spectrum128/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
 message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 add_custom_command(
