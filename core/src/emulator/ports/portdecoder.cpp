@@ -56,13 +56,25 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment)
 {
     std::string result;
-    if (comment != nullptr)
+
+    std::string pcString;
+    if (pc == 0x0000)
     {
-        result = StringHelper::Format("[Out] [PC:0x%04X] Port #%04X, decoded as #%04X value: 0x%02X (%s)", pc, port, refPort, value, comment);
+        // Port triggered during reset / debug
+        pcString = "<Init>";
     }
     else
     {
-        result = StringHelper::Format("[Out] [PC:0x%04X] Port #%04X, decoded as #%04X value: 0x%02X", pc, port, refPort, value);
+        pcString = StringHelper::Format("PC:0x%04X", pc);
+    }
+
+    if (comment != nullptr)
+    {
+        result = StringHelper::Format("[Out] [%s] Port #%04X, decoded as #%04X value: 0x%02X (%s)", pcString.c_str(), port, refPort, value, comment);
+    }
+    else
+    {
+        result = StringHelper::Format("[Out] [%s] Port #%04X, decoded as #%04X value: 0x%02X", pcString.c_str(), port, refPort, value);
     }
 
     return result;
