@@ -60,6 +60,19 @@ CPU::CPU(EmulatorContext* context)
 
 CPU::~CPU()
 {
+    _context->pPortDecoder = nullptr;
+    if (_portDecoder != nullptr)
+    {
+        delete _portDecoder;
+        _portDecoder = nullptr;
+    }
+
+    if (_ports != nullptr)
+    {
+        delete _ports;
+        _ports = nullptr;
+    }
+
 	if (_hdd != nullptr)
 	{
 		delete _hdd;
@@ -72,29 +85,17 @@ CPU::~CPU()
 		_sound = nullptr;
 	}
 
+    _context->pMemory = nullptr;
+    if (_memory != nullptr)
+    {
+        delete _memory;
+        _memory = nullptr;
+    }
+
 	if (_rom != nullptr)
 	{
 		delete _rom;
 		_rom = nullptr;
-	}
-
-	if (_portDecoder != nullptr)
-    {
-	    delete _portDecoder;
-        _portDecoder = nullptr;
-    }
-
-	if (_ports != nullptr)
-	{
-		delete _ports;
-		_ports = nullptr;
-	}
-
-	_context->pMemory = nullptr;
-	if (_memory != nullptr)
-	{
-		delete _memory;
-		_memory = nullptr;
 	}
 
 	if (_cpu != nullptr)
