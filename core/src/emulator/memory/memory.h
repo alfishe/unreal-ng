@@ -130,11 +130,19 @@ public:
 public:
 	// Runtime methods
 	void SetROMMode(ROMModeEnum mode);
+
     void SetROMPage(uint8_t page);
     void SetRAMPageToBank0(uint8_t page);
     void SetRAMPageToBank1(uint8_t page);
     void SetRAMPageToBank2(uint8_t page);
 	void SetRAMPageToBank3(uint8_t page);
+
+	bool IsBank0ROM();
+	uint8_t GetROMPage();
+	uint8_t GetRAMPageForBank0();
+    uint8_t GetRAMPageForBank1();
+    uint8_t GetRAMPageForBank2();
+    uint8_t GetRAMPageForBank3();
 
 	// Debug methods
 	void SetROM48k();

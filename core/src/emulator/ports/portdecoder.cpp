@@ -55,6 +55,34 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 /// endregion </Static methods>
 
 /// region <Interface methods>
+
+std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
+{
+    std::string result;
+
+    Memory& memory = *_context->pMemory;
+    if (pc < 0x4000)
+    {
+        if (memory.IsBank0ROM())
+        {
+            uint8_t romPage = memory.GetROMPage();
+            result = StringHelper::Format(" ROM_%d", romPage);
+        }
+        else
+        {
+            uint8_t ramPage = memory.GetRAMPageForBank0();
+            result = StringHelper::Format(" RAM_%d", ramPage);
+        }
+    }
+    else if (pc >= 0xC000)
+    {
+        uint8_t ramPage = memory.GetRAMPageForBank3();
+        result = StringHelper::Format(" RAM_%d", ramPage);
+    }
+
+    return result;
+}
+
 std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment)
 {
     std::string result;
@@ -67,7 +95,10 @@ std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t 
     }
     else
     {
-        pcString = StringHelper::Format("PC:0x%04X", pc);
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+
+        pcString = StringHelper::Format("PC:0x%04X%s", pc, currentMemoryPage.c_str());
     }
 
     if (comment != nullptr)

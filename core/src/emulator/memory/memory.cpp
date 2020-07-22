@@ -203,6 +203,36 @@ void Memory::SetRAMPageToBank3(uint8_t page)
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
 }
 
+bool Memory::IsBank0ROM()
+{
+    return _bank_mode[0] == BANK_ROM;
+}
+
+uint8_t Memory::GetROMPage()
+{
+    return GetROMPageFromAddress(_bank_read[0]);
+}
+
+uint8_t Memory::GetRAMPageForBank0()
+{
+    return GetRAMPageFromAddress(_bank_read[0]);
+}
+
+uint8_t Memory::GetRAMPageForBank1()
+{
+    return GetRAMPageFromAddress(_bank_read[1]);
+}
+
+uint8_t Memory::GetRAMPageForBank2()
+{
+    return GetRAMPageFromAddress(_bank_read[2]);
+}
+
+uint8_t Memory::GetRAMPageForBank3()
+{
+    return GetRAMPageFromAddress(_bank_read[3]);
+}
+
 /// endregion </Runtime methods>
 
 /// region  <Address helper methods>

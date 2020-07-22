@@ -50,6 +50,11 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
 
+    // Determine RAM/ROM page where code executed from
+    std::string currentMemoryPage = GetPCAddressLocator(pc);
+
+    LOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+
     return result;
 }
 
@@ -76,7 +81,9 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     }
     else
     {
-        LOGWARNING("[Out] [PC:%04X] Port: %02X; Value: %02X", pc, port, value);
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
 }
 
@@ -178,30 +185,34 @@ void PortDecoder_Spectrum128::Port_FE(uint16_t port, uint8_t value, uint16_t pc)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Spectrum128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc)
-{
-    static Memory& memory = *_context->pMemory;
+void PortDecoder_Spectrum128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc) {
+    static Memory &memory = *_context->pMemory;
 
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    bool isROM0 = value & 0b00010000;
+    uint8_t romPage = (value & 0b00010000) >> 4;
     bool isPagingDisabled = value & 0b00100000;
 
     // Disabling latch is kept until reset
     if (!_7FFD_Locked)
     {
         memory.SetRAMPageToBank3(bankRAM);
-        memory.SetROMMode(isROM0 ? RM_128 : RM_SOS);
+        memory.SetROMPage(romPage);
 
         _7FFD_Locked = isPagingDisabled;
     }
 
-    _screen->SetActiveScreen(screenNumber);
+    // Detect if screen switch requested. Do not switch screen if state not changed
+    uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
+    if (prevScreenNumber != screenNumber)
+    {
+        _screen->SetActiveScreen(screenNumber);
+    }
 
     // Cache out port value in state
     _state->p7FFD = value;
 
-    LOGDEBUG(DumpPortValue(0x7FFD, port, value, pc, Dump_7FFD_value(value).c_str()));
+    LOGWARNING(DumpPortValue(0x7FFD, port, value, pc, Dump_7FFD_value(value).c_str()));
     LOGDEBUG(memory.DumpMemoryBankInfo());
 }
 
@@ -214,7 +225,7 @@ void PortDecoder_Spectrum128::Port_BFFD(uint16_t port, uint8_t value, uint16_t p
     // Cache out port value in state
     _state->pBFFD = value;
 
-    LOGDEBUG(DumpPortValue(0xBFFD, port, value, pc, Dump_BFFD_value(value).c_str()));
+    LOGWARNING(DumpPortValue(0xBFFD, port, value, pc, Dump_BFFD_value(value).c_str()));
 }
 
 void PortDecoder_Spectrum128::Port_FFFD(uint16_t port, uint8_t value, uint16_t pc)
@@ -226,7 +237,7 @@ void PortDecoder_Spectrum128::Port_FFFD(uint16_t port, uint8_t value, uint16_t p
     // Cache out port value in state
     _state->pFFFD = value;
 
-    LOGDEBUG(DumpPortValue(0xFFFD, port, value, pc, Dump_FFFD_value(value).c_str()));
+    LOGWARNING(DumpPortValue(0xFFFD, port, value, pc, Dump_FFFD_value(value).c_str()));
 }
 
 std::string PortDecoder_Spectrum128::Dump_FE_value(uint8_t value)
@@ -244,10 +255,10 @@ std::string PortDecoder_Spectrum128::Dump_7FFD_value(uint8_t value)
 {
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    bool isROM0 = value & 0b00010000;
+    uint8_t romPage = (value & 0b00010000) >> 4;
     bool isPagingDisabled = value & 0b00100000;
 
-    std::string result = StringHelper::Format("RAM bank3 page: %d; Screen: %d; ROM: %d; #7FFD lock: %d", bankRAM, screenNumber, isROM0, isPagingDisabled);
+    std::string result = StringHelper::Format("RAM bank3 page: %d; Screen: %d; ROM: %d; #7FFD lock: %d", bankRAM, screenNumber, romPage, isPagingDisabled);
 
     return result;
 }

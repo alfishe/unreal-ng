@@ -39,6 +39,7 @@ public:
     virtual void SetROMPage(uint8_t page) = 0;
 
 protected:
+    virtual std::string GetPCAddressLocator(uint16_t pc);
     virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment = nullptr);
     /// endregion </Interface methods>
 };
