@@ -10,6 +10,27 @@
 
 #include <cassert>
 
+/// region <Static methods>
+std::string Screen::GetColorName(uint8_t color)
+{
+    static const char* colorNames[] =
+    {
+        "Black",
+        "Blue",
+        "Red",
+        "Magenta",
+        "Green",
+        "Cyan",
+        "Yellow",
+        "White"
+    };
+
+    std::string result = colorNames[color & 0b0000'0111];
+
+    return result;
+}
+/// endregion </Static methods>
+
 /// region <Constructors / Destructors>
 
 Screen::Screen(EmulatorContext* context)
@@ -170,6 +191,8 @@ void Screen::InitMemoryCounters()
 	memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
 }
 
+/// endregion </Initialization>
+
 void Screen::SetVideoMode(VideoModeEnum mode)
 {
     _mode = mode;
@@ -264,7 +287,15 @@ void Screen::SetActiveScreen(uint8_t screen)
     _activeScreenMemoryOffset = activeScreenMemoryOffset;
 }
 
-/// endregion </Initialization>
+/// Set current border color
+/// \param color
+void Screen::SetBorderColor(uint8_t color)
+{
+    _borderColor = color;
+}
+
+
+
 
 void Screen::UpdateScreen()
 {

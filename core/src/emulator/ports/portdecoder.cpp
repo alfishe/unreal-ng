@@ -15,7 +15,9 @@
 PortDecoder::PortDecoder(EmulatorContext* context)
 {
     _context = context;
+
     _state = &context->state;
+    _screen = context->pScreen;
 }
 /// endregion </Constructors / Destructors>
 

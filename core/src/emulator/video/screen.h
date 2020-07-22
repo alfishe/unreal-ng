@@ -71,9 +71,27 @@ enum RasterModeEnum
 
 enum RenderTypeEnum : uint8_t
 {
-    RT_BLANK = 0,        // Invisible area (VBlank, HSync, etc.)
+    RT_BLANK = 0,       // Invisible area (VBlank, HSync, etc.)
     RT_BORDER,          // Top/Bottom/Left/Right border
     RT_SCREEN           // Screen area
+};
+
+enum ColorEnum : uint8_t
+{
+    COLOR_BLACK = 0,
+    COLOR_BLUE,
+    COLOR_RED,
+    COLOR_MAGENTA,
+    COLOR_CYAN,
+    COLOR_YELLOW,
+    COLOR_WHITE,
+    COLOR_BRIGHT_BLACK,
+    COLOR_BRIGHT_BLUE,
+    COLOR_BRIGHT_RED,
+    COLOR_BRIGHT_MAGENTA,
+    COLOR_BRIGHT_CYAN,
+    COLOR_BRIGHT_YELLOW,
+    COLOR_BRIGHT_WHITE,
 };
 
 /// endregion </Enumerations>
@@ -332,6 +350,8 @@ protected:
 
 	uint8_t _activeScreen;
 	uint8_t* _activeScreenMemoryOffset;
+	uint8_t _borderColor;
+
 	VideoModeEnum _mode;
     RasterState _rasterState;
 	FramebufferDescriptor _framebuffer;
@@ -368,11 +388,19 @@ public:
 
 	/// endregion </Obsolete>
 
+	/// region <Static methods>
+    static std::string GetColorName(uint8_t color);
+	/// endregion </Static methods>
+
+	/// region <Constructors / Destructors>
 public:
 	Screen() = delete;		            // Disable default constructor; C++ 11 feature
 	Screen(EmulatorContext* context);
 	virtual ~Screen();
+	/// endregion </Constructors / Destructors>
 
+	/// region <Initialization>
+public:
 	virtual void CreateTables() = 0;
 
 	virtual void Reset();
@@ -380,8 +408,13 @@ public:
 	virtual void InitFrame();
 	virtual void InitRaster();
 	virtual void InitMemoryCounters();
+	/// endregion </Initialization>
+
+public:
 	virtual void SetVideoMode(VideoModeEnum mode);
 	virtual void SetActiveScreen(uint8_t screen);
+    virtual void SetBorderColor(uint8_t color);
+
 
     virtual void Draw(uint32_t n);
 	virtual void UpdateScreen();
