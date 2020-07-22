@@ -517,8 +517,9 @@ struct NVRAM
 
 struct COMPUTER
 {
-	uint8_t p7FFD, pFE, pEFF7, pXXXX;
-	uint8_t pDFFD, pFDFD, p1FFD, pFF77;
+	uint8_t p7FFD, pFE, pEFF7, pXXXX;   // Common ports
+	uint8_t pBFFD, pFFFD;               // AY sound-specific
+	uint8_t pDFFD, pFDFD, p1FFD, pFF77; // Models with extended memory-specific
 	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // GMX specific
 	uint8_t p00, p80FD; // Quorum specific
 

@@ -31,17 +31,6 @@ CPU::CPU(EmulatorContext* context)
 	_memory = new Memory(context);
 	_context->pMemory = _memory;
 
-	// Instantiate ports decoder
-	MEM_MODEL model = context->config.mem_model;
-	_ports = new Ports(context);
-    _portDecoder = PortDecoder::GetPortDecoderForModel(model, _context);
-    if (!_portDecoder)
-    {
-        LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
-        assert("No port decoder");
-    }
-    context->pPortDecoder = _portDecoder;
-
 	// Instantiate ROM implementation
 	_rom = new ROM(context);
 
@@ -55,6 +44,18 @@ CPU::CPU(EmulatorContext* context)
 	VideoModeEnum mode = M_ZX48; // Make ZX the default video mode on start
 	_screen = VideoController::GetScreenForMode(mode, _context);
 	_context->pScreen = _screen;
+
+    // Instantiate ports decoder
+    // As ports decoder should know and control all peripherals - instantiate it as last step
+    MEM_MODEL model = context->config.mem_model;
+    _ports = new Ports(context);
+    _portDecoder = PortDecoder::GetPortDecoderForModel(model, _context);
+    if (!_portDecoder)
+    {
+        LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
+        assert("No port decoder");
+    }
+    context->pPortDecoder = _portDecoder;
 }
 
 CPU::~CPU()

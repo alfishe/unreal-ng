@@ -224,18 +224,19 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
 	uint32_t m_z80_index;							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
+	uint16_t m1_pc;                                 // PC when M1 cycle started
 
 
 	unsigned rate;									// Rate for Z80 speed recalculations. 3.5MHz -> 256, 7MHz -> 128
 	bool vm1;										// Halt handling type (True - ...; False - ...)
-	uint8_t outc0;
+	uint8_t outc0;                                  // What to use when 'out (c), 0' is called
 
 	uint8_t tmp0, tmp1, tmp3;
 	uint16_t last_branch;
 	unsigned trace_curs, trace_top, trace_mode;
 	unsigned mem_curs, mem_top, mem_second;
 	unsigned pc_trflags;
-	unsigned nextpc;
+	uint16_t nextpc;
 
 	// Debugger related
 	uint8_t dbgchk;									// Active breakpoints

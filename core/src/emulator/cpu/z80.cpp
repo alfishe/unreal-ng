@@ -87,7 +87,7 @@ uint8_t Z80::m1_cycle()
 	static TEMP& temporary = _context->temporary;
 	static PortDecoder& portDecoder = *_context->pPortDecoder;
 
-	// TODO: move to Ports class
+	/// region TODO: move to Ports class
 	/*
 	if ((config.mem_model == MM_PENTAGON) &&
 		((state.pEFF7 & (EFF7_CMOS | EFF7_4BPP)) == (EFF7_CMOS | EFF7_4BPP)))
@@ -104,7 +104,7 @@ uint8_t Z80::m1_cycle()
 		SetBanks();
 	}
 	 */
-	// End of TODO: move to Ports class
+	/// endregion TODO: move to Ports class
 
 	/// region <Test>
 
@@ -207,7 +207,19 @@ uint8_t Z80::m1_cycle()
         Logger::MuteSilent();
     }
     */
+
+	/// Spectrum 128K names
+	if (cpu.pc == 0x1F20)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("USE_NORMAL_RAM_CONFIG is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
 	/// endregion </Test>
+
+	// Record PC for current opcode
+    m1_pc = cpu.pc;
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
@@ -303,7 +315,7 @@ uint8_t Z80::in(uint16_t port)
     static PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
-	uint8_t result = portDecoder.DecodePortIn(port, pc);
+	uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
 
 	return result;
 }
@@ -313,7 +325,7 @@ void Z80::out(uint16_t port, uint8_t val)
     static PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
-    portDecoder.DecodePortOut(port, val, pc);
+    portDecoder.DecodePortOut(port, val, m1_pc);
 }
 
 void Z80::retn()

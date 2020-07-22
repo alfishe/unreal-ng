@@ -36,12 +36,23 @@ public:
 
     /// region <Helper methods>
 public:
+    bool IsPort_FE(uint16_t port);
+
     bool IsPort_7FFD(uint16_t port);
-    bool IsPort_1FFD(uint16_t port);
+
+    bool IsPort_BFFD(uint16_t port);
+    bool IsPort_FFFD(uint16_t port);
+
     /// endregion <Helper methods>
 
 protected:
+    void Port_FE(uint16_t port, uint8_t value, uint16_t pc);
     void Port_7FFD(uint16_t port, uint8_t value, uint16_t pc);
+    void Port_BFFD(uint16_t port, uint8_t value, uint16_t pc);
+    void Port_FFFD(uint16_t port, uint8_t value, uint16_t pc);
 
+    std::string Dump_FE_value(uint8_t value);
     std::string Dump_7FFD_value(uint8_t value);
+    std::string Dump_BFFD_value(uint8_t value);
+    std::string Dump_FFFD_value(uint8_t value);
 };
