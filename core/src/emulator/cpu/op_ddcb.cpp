@@ -203,8 +203,12 @@ LOGICFUNC const logic_ix_opcode[0x100] =
    oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8, oplx_F8,
 };
 
+// Direct pointers to registers in Z80 State for: b,c,d,e,h,l,<unused>,a
+// Filled in Z80::Z80(EmulatorContext* context)
+uint8_t* direct_registers[8];
+
 // offsets to b,c,d,e,h,l,<unused>,a  from cpu.c
-unsigned reg_offset[] = { 1,0, 5,4, 9,8, 2,13 };
+//unsigned reg_offset[] = { 1,0, 5,4, 9,8, 2,13 };
 
 Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
 {
@@ -224,7 +228,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
     {
         cpu->prefix = op1 * 0x100 + 0xCB;
 
-        unsigned ptr; // pointer to DDCB operand
+        uint16_t ptr; // pointer to DDCB operand
         ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + (char)cpu->rd(cpu->pc++);
         cpu->memptr = ptr;
 
@@ -241,8 +245,23 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         if ((opcode & 0xC0) == 0x40)
             return; // bit n,rm
 
-        // select destination register for shift/res/set
-        *(&cpu->c + reg_offset[opcode & 7]) = byte;
+        // Select destination register for shift/res/set:
+        // [0] - b
+        // [1] - c
+        // [2] - d
+        // [3] - e
+        // [4] - h
+        // [5] - l
+        // [6] - <unused>
+        // [7] - a
+        uint8_t destRegisterIndex = opcode & 0b0000'0111;
+
+        // Store operation result into specified register
+        // Note: If destRegisterIndex=6 i.e. no results should be stored - _trashRegister will be used
+        // Examples: set <N>, (iy + <M>) and similar mnemonics
+        *(direct_registers[destRegisterIndex]) = byte;
+
+        // Store result to IX/IY addressed memory
         cpu->wd(ptr, byte);
 
         // Finalize opcode

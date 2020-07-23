@@ -56,6 +56,25 @@ Z80::Z80(EmulatorContext* context)
 	// Initialize memory access interfaces
 	FastMemIf = new MemoryInterface(&Z80::MemoryReadFast, &Z80::MemoryWriteFast);
 	DbgMemIf = new MemoryInterface(&Z80::MemoryReadDebug, &Z80::MemoryWriteDebug);
+
+	// Supply direct references to registers for DDCB prefix operation results
+    // Indexes:
+    // [0] - b
+    // [1] - c
+    // [2] - d
+    // [3] - e
+    // [4] - h
+    // [5] - l
+    // [6] - <unused>
+    // [7] - a
+    direct_registers[0] = &b;
+    direct_registers[1] = &c;
+    direct_registers[2] = &d;
+    direct_registers[3] = &e;
+    direct_registers[4] = &h;
+    direct_registers[5] = &l;
+    direct_registers[6] = &_trashRegister; // Redirect DDCB operation writes with no destination registers to unused register variable
+    direct_registers[7] = &a;
 }
 
 Z80::~Z80()

@@ -5,6 +5,9 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 
+// Defined in op_ddcb.cpp - pointers to registers in Z80 state
+extern uint8_t* direct_registers[8];
+
 /// region <Structures>
 
 // Turn on padding to align members within each structure
@@ -278,6 +281,8 @@ class Z80 : public Z80State
 {
 protected:
 	EmulatorContext* _context;
+
+	uint8_t _trashRegister;        // Redirect DDCB operation writes with no destination registers here (related to op_ddcb.cpp and direct_registers[6] unused pointer)
 
 protected:
 	int _nmi_pending_count = 0;
