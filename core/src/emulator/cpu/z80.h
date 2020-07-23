@@ -227,6 +227,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
 	uint32_t m_z80_index;							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
+	uint16_t prev_pc;                               // PC on previous cycle
 	uint16_t m1_pc;                                 // PC when M1 cycle started
 
 

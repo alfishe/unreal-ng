@@ -313,11 +313,6 @@ uint8_t Z80::m1_cycle()
         Logger::MuteSilent();
     }
 
-    if (cpu.pc == 0x01AF)
-    {
-        Logger::UnmuteSilent();
-    }
-
     if (cycles_to_capture > 0)
     {
         cycles_to_capture--;
@@ -888,13 +883,13 @@ void Z80::Z80Step()
 		if (cpu.pch & temporary.evenM1_C0)
 			cpu.tt += (cpu.tt & cpu.rate);
 
+		// Preserve previous PC register state
+		cpu.prev_pc = m1_pc;
+
 		// Regular Z80 bus cycle
 		// 1. Fetch opcode (Z80 M1 bus cycle)
         cpu.prefix = 0x0000;
         cpu.opcode = m1_cycle();
-
-		// Debug
-		//DumpCurrentState();
 
 		// 2. Emulate fetched Z80 opcode
 		(normal_opcode[opcode])(&cpu);
@@ -908,6 +903,7 @@ void Z80::Z80Step()
         LOGINFO(buffer);
     }
 
+	/// region <Extra debug validations
 #ifdef _DEBUG
 	// Sanity check for register corruption
 	if (bc > 0xFFFF || de > 0xFFFF || hl > 0xFFFF || ix > 0xFFFF || iy > 0xFFFF || sp > 0xFFFF)
@@ -928,6 +924,7 @@ void Z80::Z80Step()
         exit(1);
     }
 #endif // _DEBUG
+    /// endregion </Extra debug validations
 
 	/* [vv]
 	//todo if (comp.turbo)cpu.t-=tbias[cpu.t-oldt]
@@ -1198,17 +1195,35 @@ void Z80::DumpCurrentState()
 
 void Z80::DumpZ80State(char* buffer, size_t len)
 {
+    std::string annotation;
+
+    // If we were executing in memory and jumped to ROM - we need to highlight what ROM page was used
+    if (prev_pc >= 0x4000 && m1_pc < 0x4000)
+    {
+        annotation = StringHelper::Format(" <-- ROM%d", _context->pMemory->GetROMPage());
+    }
+
+    // If we were executing in ROM or fixed RAM pages and jumped to RAM Bank 3 - we need to highlight what RAM page was used
+    if (prev_pc < 0xC000 && m1_pc >= 0xC000)
+    {
+        annotation = StringHelper::Format(" <-- RAM%d", _context->pMemory->GetRAMPageForBank3());
+    }
+    else if (prev_pc < 0x4000 && m1_pc >= 0x4000)
+    {
+        annotation = StringHelper::Format(" <-- RAM%d", _context->pMemory->GetRAMPageFromAddress(_context->pMemory->RemapAddressToCurrentBank(m1_pc)));
+    }
+
     if (prefix > 0)
     {
         snprintf(buffer, len,
-                 "Pr: 0x%04X Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X",
-                 prefix, opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t);
+                 "Pr: 0x%04X Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X%s",
+                 prefix, opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t, annotation.c_str());
     }
     else
     {
         snprintf(buffer, len,
-                 "           Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X",
-                 opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t);
+                 "           Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X%s",
+                 opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t, annotation.c_str());
     }
 }
 #endif

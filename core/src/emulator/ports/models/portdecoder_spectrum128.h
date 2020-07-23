@@ -10,6 +10,13 @@
 /// See: https://worldofspectrum.org/faq/reference/128kreference.htm
 /// See: https://zx-pk.ru/threads/11490-paging-ports-of-zx-clones.html?langid=1
 /// See: http://zx.clan.su/forum/11-46-1
+// ----------
+// Memory Map
+// ----------
+// ROM 0 or 1 resides at $0000-$3FFF
+// RAM bank 5 resides at $4000-$7FFF always
+// RAM bank 2 resides at $8000-$BFFF always
+// Any RAM bank may reside at $C000-$FFFF
 class PortDecoder_Spectrum128 : public PortDecoder
 {
     /// region <Fields>
