@@ -17,6 +17,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _context = context;
 
     _state = &context->state;
+    _memory = context->pMemory;
     _screen = context->pScreen;
 }
 /// endregion </Constructors / Destructors>
@@ -60,23 +61,22 @@ std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 {
     std::string result;
 
-    Memory& memory = *_context->pMemory;
     if (pc < 0x4000)
     {
-        if (memory.IsBank0ROM())
+        if (_memory->IsBank0ROM())
         {
-            uint8_t romPage = memory.GetROMPage();
+            uint8_t romPage = _memory->GetROMPage();
             result = StringHelper::Format(" ROM_%d", romPage);
         }
         else
         {
-            uint8_t ramPage = memory.GetRAMPageForBank0();
+            uint8_t ramPage = _memory->GetRAMPageForBank0();
             result = StringHelper::Format(" RAM_%d", ramPage);
         }
     }
     else if (pc >= 0xC000)
     {
-        uint8_t ramPage = memory.GetRAMPageForBank3();
+        uint8_t ramPage = _memory->GetRAMPageForBank3();
         result = StringHelper::Format(" RAM_%d", ramPage);
     }
 

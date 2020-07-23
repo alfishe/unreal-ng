@@ -294,7 +294,10 @@ void Screen::SetBorderColor(uint8_t color)
     _borderColor = color;
 }
 
-
+uint8_t Screen::GetActiveScreen()
+{
+    return _activeScreen;
+}
 
 
 void Screen::UpdateScreen()

@@ -252,6 +252,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	unsigned cbp[MAX_CBP][128];						// Conditional breakpoints data
 	unsigned cbpn;
 	int64_t debug_last_t;							// Used to find time delta
+	int cycles_to_capture;                          // [NEW] Number of cycles to capture after trigger
 
 
 	// Interrupts / HALT
@@ -348,10 +349,6 @@ public:
 protected:
 	__forceinline void IncrementCPUCyclesCounter(uint8_t cycles);	// Increment cycle counters
 
-	// Debug and trace methods
-public:
-	void DumpCurrentState();
-
 	// TSConf specific
 	// TODO: Move to plugin
 protected:
@@ -362,6 +359,7 @@ protected:
 	/// region <Debug methods>
 #ifdef _DEBUG
 public:
+    void DumpCurrentState();
 	void DumpZ80State(char* buffer, size_t len);
 #endif
 	/// endregion </Debug methods>

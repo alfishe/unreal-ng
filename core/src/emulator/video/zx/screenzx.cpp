@@ -433,6 +433,8 @@ void ScreenZX::RenderOnlyMainScreen()
 
     // Get host memory address for selected ZX-Spectrum screen (Bank 5 for Normal and Bank 7 for Shadow screen modes)
     uint8_t* zxScreen = _activeScreenMemoryOffset;
+    //uint8_t* zxScreen = memory.RemapAddressToCurrentBank(0x4000);
+    uint8_t ramPage = memory.GetRAMPageFromAddress(zxScreen);
     if (zxScreen != bank5Base && zxScreen != bank7Base)
     {
         LOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
@@ -468,6 +470,7 @@ void ScreenZX::RenderOnlyMainScreen()
                     else
                     {
                         LOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
+                        assert("Framebuffer invalid offset");
                     }
                 }
             }

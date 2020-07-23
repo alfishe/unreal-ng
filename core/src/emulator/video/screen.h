@@ -415,6 +415,8 @@ public:
 	virtual void SetActiveScreen(uint8_t screen);
     virtual void SetBorderColor(uint8_t color);
 
+    virtual uint8_t GetActiveScreen();
+
 
     virtual void Draw(uint32_t n);
 	virtual void UpdateScreen();

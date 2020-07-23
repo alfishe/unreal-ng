@@ -4,6 +4,7 @@
 #include "emulator/platform.h"
 
 class EmulatorContext;
+class Memory;
 class Screen;
 
 /// Base class for all model port decoders
@@ -16,10 +17,12 @@ public:
 
     /// region <Fields>
 protected:
+    EmulatorContext* _context = nullptr;
+
     COMPUTER* _state = nullptr;
+    Memory* _memory = nullptr;
     Screen* _screen = nullptr;
 
-    EmulatorContext* _context = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>

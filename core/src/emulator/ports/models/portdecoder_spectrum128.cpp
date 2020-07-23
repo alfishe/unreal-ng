@@ -169,6 +169,8 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
 
 /// endregion <Helper methods>
 
+/// region <Port handlers>
+
 /// Port #FE (Border, Beeper)
 /// \param port
 /// \param value
@@ -239,6 +241,10 @@ void PortDecoder_Spectrum128::Port_FFFD(uint16_t port, uint8_t value, uint16_t p
 
     LOGWARNING(DumpPortValue(0xFFFD, port, value, pc, Dump_FFFD_value(value).c_str()));
 }
+
+/// endregion </Port handlers>
+
+/// region <Debug information>
 
 std::string PortDecoder_Spectrum128::Dump_FE_value(uint8_t value)
 {
@@ -434,3 +440,5 @@ std::string PortDecoder_Spectrum128::Dump_FFFD_value(uint8_t value)
 
     return result;
 }
+
+/// endregion </Debug information>

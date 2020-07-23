@@ -18,6 +18,11 @@ Memory::Memory(EmulatorContext* context)
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
 
+#ifdef _DEBUG
+    // Dump information about all memory regions
+    LOGDEBUG(DumpAllMemoryRegions());
+#endif // _DEBUG
+
 	// Initialize with default (non-platform specific)
 	// base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
 	base_sos_rom = ROMPageAddress(0);
@@ -280,19 +285,10 @@ uint8_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
 /// \return Pointer to Host memory mapped
 uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
 {
-    COMPUTER& state = *(&_context->state);
-    CONFIG& config = *(&_context->config);
-    TEMP& temp = *(&_context->temporary);
+    uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
+    uint16_t addressInBank = address & 0b0011'1111'1111'1111;
 
-    uint8_t* result = nullptr;
-
-#if defined MOD_VID_VD
-    if (comp.vdbase && (unsigned)((addr & 0xFFFF) - 0x4000) < 0x1800)
-			result = comp.vdbase + (addr & 0x1FFF);
-#else
-    uint8_t bank = (address >> 14) & 0b0000000000000011;
-    result = _bank_read[bank] + address;
-#endif
+    uint8_t* result = _bank_read[bank] + addressInBank;
 
     return result;
 }
@@ -476,7 +472,36 @@ std::string Memory::DumpMemoryBankInfo()
 
     return result;
 }
+
+std::string Memory::DumpAllMemoryRegions()
+{
+    std::string result = "\n\nMemory regions:\n";
+    result += StringHelper::Format("rambase:  0x%08x\n", _ramBase);
+    result += StringHelper::Format("rombase:  0x%08x\n\n", _romBase);
+
+    for (int i = 0; i < 4; i ++)
+    {
+        result += StringHelper::Format("rompage%d: 0x%08x\n", i, ROMPageAddress(i));
+    }
+
+    result += "\n";
+
+    for (int i = 0; i < 8; i ++)
+    {
+        result += StringHelper::Format("rampage%d: 0x%08x\n", i, RAMPageAddress(i));
+    }
+
+    result += StringHelper::Format("\nNormal screen (Bank5): 0x%08x\n", RAMPageAddress(5));
+    result += StringHelper::Format("Shadow screen (Bank7): 0x%08x\n", RAMPageAddress(7));
+
+    result += "\n";
+
+    return result;
+}
+
 /// endregion <Debug methods>
+
+/// region <Obsolete>
 
 /*
 
@@ -1399,3 +1424,5 @@ void cmos_write(uint8_t val)
 }
 
 */
+
+/// endregion </Obsolete>

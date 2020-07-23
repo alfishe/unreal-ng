@@ -176,6 +176,7 @@ public:
 	/// region <Debug methods>
 public:
     std::string DumpMemoryBankInfo();
+    std::string DumpAllMemoryRegions();
 	/// endregion <Debug methods>
 };
 

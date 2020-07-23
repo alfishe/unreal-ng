@@ -228,6 +228,12 @@ uint8_t Z80::m1_cycle()
     */
 
 	/// Spectrum 128K names
+	if (cpu.pc == 0x0000)
+    {
+	    Logger::MuteSilent();
+        cycles_to_capture = -1;
+    }
+
 	if (cpu.pc == 0x1F20)
     {
         Logger::UnmuteSilent();
@@ -235,10 +241,98 @@ uint8_t Z80::m1_cycle()
         Logger::MuteSilent();
     }
 
+    if (cpu.pc == 0x00C7)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("INIT1 is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x0137)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("INIT2 is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x019D)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("NEW is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x1C64)
+    {
+        Logger::UnmuteSilent();
+        LOGINFO("SET_RAM_PAGE is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x018A)
+    {
+        Logger::UnmuteSilent();
+        LOGWARNING("RST #28 call! PC: %04X", cpu.pc);
+        LOGWARNING("CPU cycles: %d", cpu.cycle_count);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x5B00)
+    {
+        //cycles_to_capture = 400;
+
+        Logger::UnmuteSilent();
+        LOGINFO("RAM_SWAP_5B00 is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x259F)
+    {
+        //cycles_to_capture = 400;
+
+        Logger::UnmuteSilent();
+        LOGINFO("MAINMENU is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x36A8)
+    {
+        cycles_to_capture = 400;
+
+        Logger::UnmuteSilent();
+        LOGINFO("DISPLAY_MENU is executed. PC: %04X", cpu.pc);
+        //Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x3719)
+    {
+        //cycles_to_capture = 400;
+
+        Logger::UnmuteSilent();
+        LOGINFO("PLOT_LINE is executed. PC: %04X", cpu.pc);
+        Logger::MuteSilent();
+    }
+
+    if (cpu.pc == 0x01AF)
+    {
+        Logger::UnmuteSilent();
+    }
+
+    if (cycles_to_capture > 0)
+    {
+        cycles_to_capture--;
+    }
+    else if (cycles_to_capture == 0)
+    {
+        Logger::MuteSilent();
+        //exit(1);
+    }
+
 	/// endregion </Test>
 
-	// Record PC for current opcode
-    m1_pc = cpu.pc;
+	// Record PC for current opcode (prefixes should not alter original PC)
+	if (prefix == 0x0000)
+        m1_pc = cpu.pc;
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
@@ -725,7 +819,7 @@ void Z80::Z80Step()
 	// Let debugger process step event
 	ProcessDebuggerEvents();
 
-	// Ports logic
+	/// region  <Ports logic>
 	/* TODO: move to Ports class
 	if (state.flags & CF_SETDOSROM)
 	{
@@ -761,7 +855,10 @@ void Z80::Z80Step()
 		//	state.wd.trdos_traps();
 	}
 	 */
+    /// endregion  </Ports logic>
 
+
+    /// region <Tape related>
 	// Tape related IO
 	// TODO: Move to io/tape
 	/*
@@ -771,6 +868,8 @@ void Z80::Z80Step()
 	if (state.tape.play_pointer && !config.sound.enabled)
 		fast_tape();
 	*/
+
+    /// endregion </Tape related>
 
 	if (cpu.vm1 && cpu.halted)
 	{
@@ -800,6 +899,35 @@ void Z80::Z80Step()
 		// 2. Emulate fetched Z80 opcode
 		(normal_opcode[opcode])(&cpu);
 	}
+
+	// Trace CPU for all duration of cycles requested
+	if (cycles_to_capture > 0)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+        LOGINFO(buffer);
+    }
+
+#ifdef _DEBUG
+	// Sanity check for register corruption
+	if (bc > 0xFFFF || de > 0xFFFF || hl > 0xFFFF || ix > 0xFFFF || iy > 0xFFFF || sp > 0xFFFF)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+        LOGERROR(buffer);
+	    LOGERROR("Main register(s) corrupted");
+	    exit(1);
+    }
+
+	if (alt.bc > 0xFFFF || alt.de > 0xFFFF || alt.hl > 0xFFFF)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+        LOGERROR(buffer);
+        LOGERROR("Alternative register(s) corrupted");
+        exit(1);
+    }
+#endif // _DEBUG
 
 	/* [vv]
 	//todo if (comp.turbo)cpu.t-=tbias[cpu.t-oldt]
@@ -972,32 +1100,6 @@ void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 	cycle_count += cycles;
 }
 
-void Z80::DumpCurrentState()
-{
-	static char dumpBuffer[512];
-
-	int pos = 0;
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "Cycle:%d\r\n", cycle_count);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "Op:%02X    IR:%04X\r\n", opcode, ir_);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "PC:%04X  SP:%04X\r\n", pc, sp);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "AF:%04X 'AF:%04X\r\n", af, alt.af);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "BC:%04X 'BC:%04X\r\n", bc, alt.bc);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "DE:%04X 'DE:%04X\r\n", de, alt.de);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "HL:%04X 'HL:%04X\r\n", hl, alt.hl);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "IX:%04X  IY:%04X\r\n", ix, iy);
-	pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "\r\n");
-
-#ifdef _WIN32
-	#ifdef _UNICODE
-		wstring message = StringHelper::StringToWideString(dumpBuffer);
-		OutputDebugString(message.c_str());
-	#else
-		string message = dumpBuffer;
-		OutputDebugString(message.c_str());
-	#endif
-#endif
-}
-
 /// region <TSConf specific>
 
 // TODO: Move to adapter
@@ -1068,9 +1170,46 @@ void Z80::ts_dma_int(bool vdos)
 #ifdef _DEBUG
 #include <cstdio>
 
+void Z80::DumpCurrentState()
+{
+    static char dumpBuffer[512];
+
+    int pos = 0;
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "Cycle:%d\r\n", cycle_count);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "Op:%02X    IR:%04X\r\n", opcode, ir_);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "PC:%04X  SP:%04X\r\n", pc, sp);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "AF:%04X 'AF:%04X\r\n", af, alt.af);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "BC:%04X 'BC:%04X\r\n", bc, alt.bc);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "DE:%04X 'DE:%04X\r\n", de, alt.de);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "HL:%04X 'HL:%04X\r\n", hl, alt.hl);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "IX:%04X  IY:%04X\r\n", ix, iy);
+    pos += snprintf(dumpBuffer + pos, sizeof dumpBuffer, "\r\n");
+
+#ifdef _WIN32
+    #ifdef _UNICODE
+		wstring message = StringHelper::StringToWideString(dumpBuffer);
+		OutputDebugString(message.c_str());
+	#else
+		string message = dumpBuffer;
+		OutputDebugString(message.c_str());
+	#endif
+#endif
+}
+
 void Z80::DumpZ80State(char* buffer, size_t len)
 {
-	snprintf(buffer, len, "Pr: 0x%04X Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X", prefix, opcode, pc, af, bc, de, hl, ix, iy, sp, ir_, t);
+    if (prefix > 0)
+    {
+        snprintf(buffer, len,
+                 "Pr: 0x%04X Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X",
+                 prefix, opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t);
+    }
+    else
+    {
+        snprintf(buffer, len,
+                 "           Op: 0x%02X PC: 0x%04X AF: 0x%04X BC: 0x%04X DE: 0x%04X HL: 0x%04X IX: %04X IY: %04X SP: %04X IR: %04X clock: %04X",
+                 opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t);
+    }
 }
 #endif
 /// endregion </Debug methods>
