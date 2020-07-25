@@ -16,16 +16,16 @@ CPU::CPU(EmulatorContext* context)
 {
 	_context = context;
 
+	// Instantiation sequence
+    // Step 1       - Memory()
+
+	// Step N - 1   - Z80()
+	// Step N       - PortDecoder()
+
 	_messageCenter = &MessageCenter::DefaultMessageCenter();
 
 	// Register itself in context
 	_context->pCPU = this;
-
-	// Create main CPU core instance (Z80)
-	_cpu = new Z80(context);
-
-	// Use fast memory interface by default
-	UseFastMemoryInterface();
 
 	// Create memory subsystem (allocates all RAM/ROM regions)
 	_memory = new Memory(context);
@@ -44,6 +44,10 @@ CPU::CPU(EmulatorContext* context)
 	VideoModeEnum mode = M_ZX48; // Make ZX the default video mode on start
 	_screen = VideoController::GetScreenForMode(mode, _context);
 	_context->pScreen = _screen;
+
+    // Create main CPU core instance (Z80)
+    _cpu = new Z80(context);
+    UseFastMemoryInterface();    // Use fast memory interface by default
 
     // Instantiate ports decoder
     // As ports decoder should know and control all peripherals - instantiate it as last step

@@ -47,8 +47,8 @@ enum MemoryBitsEnum : uint8_t
 // Memory interface descriptor
 //  Read callback to access memory cell (byte)
 //  Write callback - to MemoryWrite data into memory cell (byte)
-typedef uint8_t (Z80::* MemoryReadCallback)(uint16_t addr);
-typedef void (Z80::* MemoryWriteCallback)(uint16_t addr, uint8_t val);
+typedef uint8_t (Memory::* MemoryReadCallback)(uint16_t addr);
+typedef void (Memory::* MemoryWriteCallback)(uint16_t addr, uint8_t val);
 struct MemoryInterface
 {
 	MemoryInterface() = delete;			// Disable default constructor. C++ 11 feature
@@ -118,7 +118,6 @@ public:
 	Memory() = delete;	// Disable default constructor. C++ 11 feature
 	Memory(EmulatorContext* context);
 	virtual ~Memory();
-
 	/// endregion </Constructors / Destructors>
 
 	/// region <Initialization>
@@ -126,6 +125,20 @@ public:
     void RandomizeMemoryContent();
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
     /// endregion </Initialization>
+
+    /// region <Memory access implementation methods>
+public:
+    static MemoryInterface* GetFastMemoryInterface();
+    static MemoryInterface* GetDebugMemoryInterface();
+
+public:
+    uint8_t MemoryReadFast(uint16_t addr);
+    uint8_t MemoryReadDebug(uint16_t addr);
+    void MemoryWriteFast(uint16_t addr, uint8_t value);
+    void MemoryWriteDebug(uint16_t addr, uint8_t value);
+
+
+    /// endregion </Memory access implementation methods>
 
 public:
 	// Runtime methods

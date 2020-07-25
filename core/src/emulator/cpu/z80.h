@@ -283,6 +283,7 @@ class Z80 : public Z80State
 {
 protected:
 	EmulatorContext* _context;
+	Memory* _memory;
 
 	uint8_t _trashRegister;        // Redirect DDCB operation writes with no destination registers here (related to op_ddcb.cpp and direct_registers[6] unused pointer)
 
@@ -310,13 +311,6 @@ public:
 	uint8_t rd(uint16_t addr);
 	void wd(uint16_t addr, uint8_t val);
 	// End of TODO: convert obsolete naming
-
-
-	// Memory access implementation methods
-	uint8_t MemoryReadFast(uint16_t addr);
-	uint8_t MemoryReadDebug(uint16_t addr);
-	void MemoryWriteFast(uint16_t addr, uint8_t val);
-	void MemoryWriteDebug(uint16_t addr, uint8_t val);
 
 
     // Direct memory access methods

@@ -40,6 +40,125 @@ Memory::~Memory()
 
 /// endregion </Constructors / Destructors>
 
+/// region <Memory access implementation methods>
+
+MemoryInterface* Memory::GetFastMemoryInterface()
+{
+    MemoryInterface* result = new MemoryInterface(&Memory::MemoryReadFast, &Memory::MemoryWriteFast);
+
+    return result;
+}
+
+MemoryInterface* Memory::GetDebugMemoryInterface()
+{
+    MemoryInterface* result = new MemoryInterface(&Memory::MemoryReadDebug, &Memory::MemoryWriteDebug);
+
+    return result;
+}
+
+//
+// Implementation memory read method. Used from FastMemIf.
+//
+uint8_t Memory::MemoryReadFast(uint16_t addr)
+{
+
+    uint8_t result = 0xFF;
+
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0x03;
+
+    // Read byte from correspondent memory bank mapped to global memory buffer
+    result = *(_bank_read[bank] + addr);
+
+    // Update per-line access counter
+    /*
+    if (_bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
+    {
+        //video.memcpucyc[t % 224]++;
+    }
+    */
+
+    return result;
+}
+
+//
+// Implementation memory read method. Used from DbgMemIf.
+//
+uint8_t Memory::MemoryReadDebug(uint16_t addr)
+{
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+
+    // Mark memory cell as accessed on read
+    uint8_t* membit = _membits + (unsigned)addr;
+    *membit |= MEMBITS_R;
+    //_context->pCPU->dbgbreak |= (*membit & MEMBITS_BPR);
+
+    // Fetch data from memory
+    uint8_t result = MemoryReadFast(addr);
+
+    // Check for breakpoint conditions
+    //brk_mem_rd = addr;
+    //brk_mem_val = result;
+    //debug_cond_check(&cpu);		// Debug conditions check is very slow
+
+    return result;
+}
+
+//
+// Implementation memory write method. Used from FastMemIf.
+//
+void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
+{
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0x03;
+
+    // Write byte to correspondent memory bank cell
+    uint8_t* bank_addr = _bank_write[bank];
+    *(bank_addr + addr) = value;
+}
+
+//
+// Implementation memory write method. Used from DbgMemIf.
+//
+void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
+{
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+
+    // Mark memory cell as accessed on write
+    uint8_t* membit = _membits + (addr & 0xFFFF);
+    *membit |= MEMBITS_W;
+    //dbgbreak |= (*membit & MEMBITS_BPW);
+
+    // Write data to memory
+    MemoryWriteFast(addr, value);
+
+    /*
+if (addr >= 0x4000 && addr <= 0x57FF)
+{
+    Logger::UnmuteSilent();
+    LOGINFO("Memory write video. addr: 0x%04X, val: 0x%02X, cycles=%d", addr, val, cycle_count);
+    Logger::MuteSilent();
+}
+
+if (addr == 0x4000 && val == 0x02)
+{
+    // Flush current screen state to framebuffer
+    _context->pScreen->RenderOnlyMainScreen();
+
+    // Save to disk in native and png formats
+    _context->pScreen->SaveZXSpectrumNativeScreen();
+    _context->pScreen->SaveScreen();
+}
+*/
+
+    // Check for breakpoint conditions
+    //brk_mem_wr = addr;
+    //brk_mem_val = val;
+    //debug_cond_check(&cpu);		// Debug conditions check is very slow
+}
+
+/// endregion /<Memory access implementation methods>
+
 /// region <Initialization>
 
 /// Fill whole physical RAM with random values
