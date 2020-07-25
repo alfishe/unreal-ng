@@ -9,6 +9,7 @@
 #include "emulator/config.h"
 #include "emulator/mainloop.h"
 #include "cpu/cpu.h"
+#include "cpu/z80.h"
 #include "emulatorcontext.h"
 
 class Emulator
@@ -17,6 +18,7 @@ protected:
 	EmulatorContext* _context = nullptr;
 	Config* _config = nullptr;
 	CPU* _cpu = nullptr;
+	Z80* _z80 = nullptr;
 	MainLoop* _mainloop = nullptr;
 
 	// Control flow

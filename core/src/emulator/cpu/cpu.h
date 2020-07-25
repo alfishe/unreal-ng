@@ -24,6 +24,7 @@ class Screen;
 
 class CPU
 {
+    friend class Emulator;
 	friend class Z80;
 	friend class Memory;
 	friend class Ports;

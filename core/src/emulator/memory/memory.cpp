@@ -56,9 +56,10 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
     return result;
 }
 
-//
-// Implementation memory read method. Used from FastMemIf.
-//
+/// Implementation memory read method
+/// Used from: Z80::FastMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadFast(uint16_t addr)
 {
 
@@ -81,32 +82,36 @@ uint8_t Memory::MemoryReadFast(uint16_t addr)
     return result;
 }
 
-//
-// Implementation memory read method. Used from DbgMemIf.
-//
+// Implementation memory read method
+/// Used from: Z80::DbgMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadDebug(uint16_t addr)
 {
-    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+    // Fetch data from memory
+    uint8_t result = MemoryReadFast(addr);
 
+    /// region <Refactor>
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
     // Mark memory cell as accessed on read
     uint8_t* membit = _membits + (unsigned)addr;
     *membit |= MEMBITS_R;
     //_context->pCPU->dbgbreak |= (*membit & MEMBITS_BPR);
 
-    // Fetch data from memory
-    uint8_t result = MemoryReadFast(addr);
 
     // Check for breakpoint conditions
     //brk_mem_rd = addr;
     //brk_mem_val = result;
     //debug_cond_check(&cpu);		// Debug conditions check is very slow
+    /// endregion </Refactor>
 
     return result;
 }
 
-//
-// Implementation memory write method. Used from FastMemIf.
-//
+/// Implementation memory write method
+/// Used from Z80::FastMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \param value 8-bit value to write into Z80 memory
 void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
 {
     // Determine CPU bank (from address bits 14 and 15)
@@ -117,44 +122,57 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     *(bank_addr + addr) = value;
 }
 
-//
-// Implementation memory write method. Used from DbgMemIf.
-//
+/// Implementation memory write method
+/// Used from Z80::DbgMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \param value 8-bit value to write into Z80 memory
 void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
 {
-    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+    // Write data to memory
+    MemoryWriteFast(addr, value);
 
+    /// region <Test>
+    if (addr >= 0x4000 && addr <= 0x57FF && value != 0x00)
+    {
+        Logger::UnmuteSilent();
+        uint8_t bank = GetRAMPageFromAddress(RemapAddressToCurrentBank(addr));
+        LOGINFO("Pixel write - addr: RAM%d:0x%04X, val: 0x%02X", bank, addr, value);
+        Logger::MuteSilent();
+    }
+
+    if (addr >= 5800 && addr <= 0x5AFF && value != 0x00)
+    {
+        Logger::UnmuteSilent();
+        uint8_t bank = GetRAMPageFromAddress(RemapAddressToCurrentBank(addr));
+        LOGINFO("Attributes write - addr: RAM%d:0x%04X, val: 0x%02X", bank, addr, value);
+        Logger::MuteSilent();
+    }
+
+/*
+if (addr == 0x4000 && val == 0x02)
+{
+   // Flush current screen state to framebuffer
+   _context->pScreen->RenderOnlyMainScreen();
+
+   // Save to disk in native and png formats
+   _context->pScreen->SaveZXSpectrumNativeScreen();
+   _context->pScreen->SaveScreen();
+}
+*/
+    /// endregion </Test>
+
+    /// region <Refactor>
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
     // Mark memory cell as accessed on write
     uint8_t* membit = _membits + (addr & 0xFFFF);
     *membit |= MEMBITS_W;
     //dbgbreak |= (*membit & MEMBITS_BPW);
 
-    // Write data to memory
-    MemoryWriteFast(addr, value);
-
-    /*
-if (addr >= 0x4000 && addr <= 0x57FF)
-{
-    Logger::UnmuteSilent();
-    LOGINFO("Memory write video. addr: 0x%04X, val: 0x%02X, cycles=%d", addr, val, cycle_count);
-    Logger::MuteSilent();
-}
-
-if (addr == 0x4000 && val == 0x02)
-{
-    // Flush current screen state to framebuffer
-    _context->pScreen->RenderOnlyMainScreen();
-
-    // Save to disk in native and png formats
-    _context->pScreen->SaveZXSpectrumNativeScreen();
-    _context->pScreen->SaveScreen();
-}
-*/
-
     // Check for breakpoint conditions
     //brk_mem_wr = addr;
     //brk_mem_val = val;
     //debug_cond_check(&cpu);		// Debug conditions check is very slow
+    /// endregion </Refactor>
 }
 
 /// endregion /<Memory access implementation methods>

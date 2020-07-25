@@ -70,6 +70,8 @@ bool Emulator::Init()
 		{
 			LOGDEBUG("Emulator::Init - CPU system created");
 
+			_z80 = _cpu->GetZ80();
+
 			result = true;
 		}
 		else
@@ -290,12 +292,16 @@ void Emulator::DebugOn()
 {
     // Switch to slow but instrumented memory interface
     _cpu->UseDebugMemoryInterface();
+
+    _z80->dbgchk = true;
 }
 
 void Emulator::DebugOff()
 {
     // Switch to fast memory interface
     _cpu->UseFastMemoryInterface();
+
+    _z80->dbgchk = false;
 }
 
 //endregion

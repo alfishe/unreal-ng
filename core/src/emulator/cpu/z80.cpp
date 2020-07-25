@@ -16,6 +16,8 @@ Z80::Z80(EmulatorContext* context)
 	_context = context;
     _memory = context->pMemory;
 
+    //
+
     // Initialize memory access interfaces
     FastMemIf = Memory::GetFastMemoryInterface();
     DbgMemIf = Memory::GetDebugMemoryInterface();
@@ -96,6 +98,8 @@ Z80::~Z80()
 }
 
 /// endregion </Constructors / Destructors>
+
+/// region <Z80 lifecycle>
 
 uint8_t Z80::m1_cycle()
 {
@@ -296,11 +300,11 @@ uint8_t Z80::m1_cycle()
 
     if (cpu.pc == 0x36A8)
     {
-        cycles_to_capture = 400;
+        //cycles_to_capture = 400;
 
         Logger::UnmuteSilent();
         LOGINFO("DISPLAY_MENU is executed. PC: %04X", cpu.pc);
-        //Logger::MuteSilent();
+        Logger::MuteSilent();
     }
 
     if (cpu.pc == 0x3719)
@@ -348,52 +352,10 @@ uint8_t Z80::m1_cycle()
 	return opcode;
 }
 
-// Note: Only TSConf supports interrupt vectors
-uint8_t Z80::InterruptVector()
-{
-	static Z80& _cpu_state = *this;
-	static CONFIG& config = _context->config;
-	static COMPUTER& state = _context->state;
-
-	uint8_t result = 0xFF;
-
-	_cpu_state.tt += _cpu_state.rate * 3; // Skip 3 CPU cycles before reading INT vector
-
-	if (config.mem_model == MM_TSL)
-	{
-		// Note: Only TSConf supports interrupt vectors
-
-		// check status of frame INT
-		//ts_frame_int(state.ts.vdos || state.ts.vdos_m1);
-
-		if (state.ts.intctrl.frame_pend)
-			return state.ts.im2vect[INT_FRAME];
-
-		else if (state.ts.intctrl.line_pend)
-			return state.ts.im2vect[INT_LINE];
-
-		else if (state.ts.intctrl.dma_pend)
-			return state.ts.im2vect[INT_DMA];
-
-		else
-			return 0xFF;
-	}
-	else
-	{
-		// Simulate random noise on data bus
-		// Getting CPU time counter for that
-		if (state.flags & CF_Z80FBUS)
-			result = (uint8_t)(rdtsc() & 0xFF);
-	}
-
-	return result;
-}
-
-// TODO: Obsolete method - refactor
-//
-// Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)
-// Read access to memory takes 3 clock cycles
-//
+/// Dispatching memory read method. Used directly from Z80 microcode (CPULogic and opcode)
+/// Read access to memory takes 3 clock cycles
+/// \param addr
+/// \return
 uint8_t Z80::rd(uint16_t addr)
 {
 	IncrementCPUCyclesCounter(3);
@@ -401,11 +363,10 @@ uint8_t Z80::rd(uint16_t addr)
 	return (_memory->*MemIf->MemoryRead)(addr);
 }
 
-// TODO: Obsolete method - refactor
-//
-// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
-// Write access to memory takes 3 clock cycles
-//
+/// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)
+/// Write access to memory takes 3 clock cycles
+/// \param addr
+/// \param val
 void Z80::wd(uint16_t addr, uint8_t val)
 {
 	IncrementCPUCyclesCounter(3);
@@ -435,29 +396,48 @@ void Z80::retn()
 {
 }
 
-/*
-uint8_t Z80::Read(uint16_t addr)
+/// endregion </Z80 lifecycle>
+
+// Note: Only TSConf supports interrupt vectors
+uint8_t Z80::InterruptVector()
 {
-	Z80& cpu = *this;
-	COMPUTER& state = _context->state;
+    static Z80& _cpu_state = *this;
+    static CONFIG& config = _context->config;
+    static COMPUTER& state = _context->state;
 
-	uint8_t result = rd(addr);
+    uint8_t result = 0xFF;
 
-	// Align 14MHz CPU memory request to 7MHz DRAM cycle
-	// request can be satisfied only in the next DRAM cycle
-	if (state.ts.cache_miss && cpu.rate == 0x40)
-		cpu.tt += (cpu.tt & 0x40) ? 0x40 * 6 : 0x40 * 5;
-	else
-		cpu.tt += cpu.rate * 3;
+    _cpu_state.tt += _cpu_state.rate * 3; // Skip 3 CPU cycles before reading INT vector
 
-	return result;
+    if (config.mem_model == MM_TSL)
+    {
+        // Note: Only TSConf supports interrupt vectors
+
+        // check status of frame INT
+        //ts_frame_int(state.ts.vdos || state.ts.vdos_m1);
+
+        if (state.ts.intctrl.frame_pend)
+            return state.ts.im2vect[INT_FRAME];
+
+        else if (state.ts.intctrl.line_pend)
+            return state.ts.im2vect[INT_LINE];
+
+        else if (state.ts.intctrl.dma_pend)
+            return state.ts.im2vect[INT_DMA];
+
+        else
+            return 0xFF;
+    }
+    else
+    {
+        // Simulate random noise on data bus
+        // Getting CPU time counter for that
+        if (state.flags & CF_Z80FBUS)
+            result = (uint8_t)(rdtsc() & 0xFF);
+    }
+
+    return result;
 }
-
-void Z80::Write(uint16_t addr, uint8_t val)
-{
-
-}
-*/
 
 //
 // Read byte directly from ZX-Spectrum memory (current memory bank setup used)

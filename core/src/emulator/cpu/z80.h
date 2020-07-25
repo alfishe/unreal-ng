@@ -5,7 +5,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 
-// Defined in op_ddcb.cpp - pointers to registers in Z80 state
+// Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
 extern uint8_t* direct_registers[8];
 
 /// region <Structures>
@@ -225,7 +225,7 @@ struct Z80DecodedOperation
 
 struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
-	uint32_t m_z80_index;							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
+	uint32_t z80_index; 							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
 	uint16_t prev_pc;                               // PC on previous cycle
 	uint16_t m1_pc;                                 // PC when M1 cycle started
@@ -249,10 +249,12 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	unsigned dbg_stopsp;
 	unsigned dbg_loop_r1;
 	unsigned dbg_loop_r2;
+
 	#define MAX_CBP 16								// Up to 16 conditional breakpoints
 	unsigned cbp[MAX_CBP][128];						// Conditional breakpoints data
 	unsigned cbpn;
 	int64_t debug_last_t;							// Used to find time delta
+
 	int cycles_to_capture;                          // [NEW] Number of cycles to capture after trigger
 
 
@@ -265,14 +267,8 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	uint32_t tpi;									// Ticks per interrupt (CPU cycles per video frame)
 	uint32_t trpc[40];
 
-	// Callbacks to time critical functions
-	//CallbackBankNames BankNames;
-	//CallbackStep Z80Step;
-	//CallbackDelta Delta;
-	//CallbackSetLastT SetLastT;
-
 	// Memory interfacing
-	const MemoryInterface* FastMemIf;				// Fast memory interface (max performance
+	const MemoryInterface* FastMemIf;				// Fast memory interface (max performance)
 	const MemoryInterface* DbgMemIf;				// Debug memory interface (supports memory access breakpoints)
 	const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
 };
@@ -281,6 +277,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
 class Z80 : public Z80State
 {
+    /// region <Fields>
 protected:
 	EmulatorContext* _context;
 	Memory* _memory;
@@ -289,19 +286,17 @@ protected:
 
 protected:
 	int _nmi_pending_count = 0;
+    /// endregion </Fields>
 
+	/// region <Constructors / Destructors>
 public:
 	Z80() = delete;					// Disable default constuctor. C++ 11 feature
 	Z80(EmulatorContext* context);	// Only constructor with context param is allowed
 	virtual ~Z80();
+    /// endregion </Constructors / Destructors>
 
-
+    /// region <Z80 lifecycle>
 public:
-	uint8_t InterruptVector();
-	void CheckNextFrame();
-
-	// TODO: convert obsolete naming
-	void Z80FrameCycle();
 	uint8_t m1_cycle();
 	uint8_t in(uint16_t port);
 	void out(uint16_t port, uint8_t val);
@@ -310,7 +305,7 @@ public:
 	// Memory access dispatching methods
 	uint8_t rd(uint16_t addr);
 	void wd(uint16_t addr, uint8_t val);
-	// End of TODO: convert obsolete naming
+    /// endregion </Z80 lifecycle>
 
 
     // Direct memory access methods
@@ -320,6 +315,11 @@ public:
 	// Z80 CPU control methods
 	void Reset();		// Z80 chip reset
 	void Z80Step();		// Single opcode execution
+
+public:
+    uint8_t InterruptVector();
+    void CheckNextFrame();
+    void Z80FrameCycle();
 
 	// Trigger updates
 public:
