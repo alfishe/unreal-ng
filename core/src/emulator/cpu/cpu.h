@@ -40,7 +40,7 @@ public:
 	/// region <Fields>
 protected:
 	EmulatorContext* _context = nullptr;
-    COMPUTER* _state = nullptr;
+    State* _state = nullptr;
     const CONFIG* _config = nullptr;
 
     MessageCenter* _messageCenter = nullptr;

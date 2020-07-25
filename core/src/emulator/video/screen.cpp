@@ -69,19 +69,16 @@ void Screen::Reset()
 
 void Screen::InitFrame()
 {
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-
 	_vid.buf ^= 0x00000001;						// Swap current video buffer
 	_vid.t_next = 0;
 	_vid.vptr = 0;
 	_vid.yctr = 0;
-	_vid.ygctr = state.ts.g_yoffs - 1;
+	_vid.ygctr = _state->ts.g_yoffs - 1;
 	_vid.line = 0;								// Reset current render line
 	_vid.line_pos = 0;							// Reset current render line position
 
-	state.ts.g_yoffs_updated = 0;
-	_vid.flash = state.frame_counter & 0x10;	// Flash attribute changes each 
+    _state->ts.g_yoffs_updated = 0;
+	_vid.flash = _state->frame_counter & 0x10;	// Flash attribute changes each
 
 	InitRaster();
 	InitMemoryCounters();
@@ -92,7 +89,7 @@ void Screen::InitFrame()
 //
 void Screen::InitRaster()
 {
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
@@ -186,6 +183,8 @@ void Screen::InitRaster()
 
 void Screen::InitMemoryCounters()
 {
+    _state->video_memory_changed = false;
+
 	memset(_vid.memcpucyc, 0, 320 * sizeof(_vid.memcpucyc[0]));
 	memset(_vid.memvidcyc, 0, 320 * sizeof(_vid.memvidcyc[0]));
 	memset(_vid.memtsscyc, 0, 320 * sizeof(_vid.memtsscyc[0]));
@@ -305,7 +304,7 @@ uint8_t Screen::GetActiveScreen()
 void Screen::UpdateScreen()
 {
 	static Z80& cpu = *_cpu;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
@@ -332,7 +331,12 @@ void Screen::SaveScreen()
 void Screen::SaveZXSpectrumNativeScreen()
 {
     uint8_t* buffer = _memory->RemapAddressToCurrentBank(0x4000);
+    uint8_t bank = _memory->GetRAMPageFromAddress(buffer);
     int frameNumber = _state->frame_counter;
+
+    Logger::UnmuteSilent();
+    LOGDEBUG("Saving ZX Native screen: RAN%d (0x%08x)", bank, buffer);
+    Logger::MuteSilent();
 
     ImageHelper::SaveZXSpectrumNativeScreen(buffer, frameNumber);
 }
@@ -482,7 +486,7 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
 void Screen::DrawScreenBorder(uint32_t n)
 {
     static Z80& cpu = *_cpu;
-    static COMPUTER& state = _context->state;
+    static State& state = _context->state;
     static CONFIG& config = _context->config;
     static VideoControl& video = _context->pScreen->_vid;
 
@@ -540,7 +544,7 @@ void Screen::DrawZX(uint32_t n)
 		}
 	};
 
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _vid;
 
@@ -680,7 +684,7 @@ void Screen::DrawGMX(uint32_t n)
 
 void Screen::DrawBorder(uint32_t n)
 {
-    static COMPUTER& state = _context->state;
+    static State& state = _context->state;
     static CONFIG& config = _context->config;
     static VideoControl& video = _context->pScreen->_vid;
 

@@ -105,7 +105,7 @@ uint8_t Z80::m1_cycle()
 {
 	static Z80& cpu = *this;
 	static CONFIG& config = _context->config;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static TEMP& temporary = _context->temporary;
 	static PortDecoder& portDecoder = *_context->pPortDecoder;
 
@@ -403,7 +403,7 @@ uint8_t Z80::InterruptVector()
 {
     static Z80& _cpu_state = *this;
     static CONFIG& config = _context->config;
-    static COMPUTER& state = _context->state;
+    static State& state = _context->state;
 
     uint8_t result = 0xFF;
 
@@ -474,7 +474,7 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 void Z80::Z80FrameCycle()
 {
 	static Z80& cpu = *this;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
@@ -577,7 +577,7 @@ void Z80::Z80Step()
 {
 	static Z80& cpu = *this;
 	static CONFIG& config = _context->config;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static TEMP& temporary = _context->temporary;
 	static Memory& memory = *_context->pMemory;
 
@@ -722,7 +722,7 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 {
 	static Z80& cpu = *this;
 	static CONFIG& config = _context->config;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static VideoControl& video = _context->pScreen->_vid;
 
 	// Baseconf NMI trap
@@ -804,7 +804,7 @@ void Z80::HandleINT(uint8_t vector)
 {
 	static Z80& cpu = *this;
 	static CONFIG& config = _context->config;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 
 	unsigned interrupt_handler_address;
 	if (cpu.im < 2)
@@ -874,7 +874,7 @@ void Z80::ts_frame_int(bool vdos)
 {
 	static Z80& _cpu_state = *this;
 	static CONFIG& config = _context->config;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 
 	if (!state.ts.intctrl.frame_pend)
 	{
@@ -902,7 +902,7 @@ void Z80::ts_frame_int(bool vdos)
 void Z80::ts_line_int(bool vdos)
 {
 	Z80& _cpu_state = *this;
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 
 	if (_cpu_state.t >= state.ts.intctrl.line_t)
 	{
@@ -922,7 +922,7 @@ void Z80::ts_line_int(bool vdos)
 
 void Z80::ts_dma_int(bool vdos)
 {
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 
 	if (state.ts.intctrl.new_dma)
 	{

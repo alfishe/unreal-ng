@@ -12,7 +12,7 @@
 void WD1793::process()
 {
 	Z80& cpu = *_context->pCPU->GetZ80();
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
    time = state.t_states + cpu.t;
@@ -174,16 +174,16 @@ void WD1793::process()
             }
 
             // read sector(s)
-            if (!seldrive->t.hdr[foundid].data) goto nextmk; // Сектор без зоны данных
+            if (!seldrive->t.hdr[foundid].data) goto nextmk; // пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             if (!config.wd93_nodelay)
-                next += seldrive->t.ts_byte*(seldrive->t.hdr[foundid].data - seldrive->t.hdr[foundid].id); // Задержка на пропуск заголовка сектора и пробела между заголовком и зоной данных
+                next += seldrive->t.ts_byte*(seldrive->t.hdr[foundid].data - seldrive->t.hdr[foundid].id); // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 			wd_state = S_WAIT;
 			wd_state2 = S_RDSEC;
             break;
 
          case S_RDSEC:
             if (seldrive->t.hdr[foundid].data[-1] == 0xF8) status |= WDS_RECORDT; else status &= ~WDS_RECORDT;
-            rwptr = (unsigned int)(seldrive->t.hdr[foundid].data - seldrive->t.trkd); // Смещение зоны данных сектора (в байтах) относительно начала трека
+            rwptr = (unsigned int)(seldrive->t.hdr[foundid].data - seldrive->t.trkd); // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ) пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
             rwlen = 128 << (seldrive->t.hdr[foundid].l & 3); // [vv]
             goto read_first_byte;
 
@@ -493,7 +493,7 @@ void WD1793::process()
 void WD1793::find_marker()
 {
 	Z80& cpu = *_context->pCPU->GetZ80();
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
    if (config.wd93_nodelay && seldrive->track != track)
@@ -503,15 +503,15 @@ void WD1793::find_marker()
    foundid = -1;
    if (seldrive->motor && seldrive->rawdata)
    {
-      unsigned div = seldrive->t.trklen*seldrive->t.ts_byte; // Длина дорожки в тактах cpu
-      unsigned i = (unsigned)((next+tshift) % div) / seldrive->t.ts_byte; // Позиция байта соответствующего текущему такту на дорожке
+      unsigned div = seldrive->t.trklen*seldrive->t.ts_byte; // пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ cpu
+      unsigned i = (unsigned)((next+tshift) % div) / seldrive->t.ts_byte; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
       unsigned wait = -1;
 
-      // Поиск заголовка минимально отстоящего от текущего байта
+      // пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
       for (unsigned is = 0; is < seldrive->t.s; is++)
       {
-         unsigned pos = (unsigned int)(seldrive->t.hdr[is].id - seldrive->t.trkd); // Смещение (в байтах) заголовка относительно начала дорожки
-         unsigned dist = (pos > i)? pos-i : seldrive->t.trklen+pos-i; // Расстояние (в байтах) от заголовка до текущего байта
+         unsigned pos = (unsigned int)(seldrive->t.hdr[is].id - seldrive->t.trkd); // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ) пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+         unsigned dist = (pos > i)? pos-i : seldrive->t.trklen+pos-i; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ) пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
          if (dist < wait)
          {
              wait = dist;
@@ -520,7 +520,7 @@ void WD1793::find_marker()
       }
 
       if (foundid != -1)
-          wait *= seldrive->t.ts_byte; // Задержка в тактах от текущего такта до такта чтения первого байта заголовка
+          wait *= seldrive->t.ts_byte; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
       else
           wait = 10*Z80FQ/FDD_RPS;
 
@@ -550,7 +550,7 @@ void WD1793::find_marker()
 
 char WD1793::notready()
 {
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
    // fdc is too fast in no-delay mode, wait until cpu handles DRQ, but not more 'end_waiting_am'
@@ -566,7 +566,7 @@ char WD1793::notready()
 
 void WD1793::getindex()
 {
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
    unsigned trlen = seldrive->t.trklen*seldrive->t.ts_byte;
@@ -617,7 +617,7 @@ uint8_t WD1793::in(uint8_t port)
 void WD1793::out(uint8_t port, uint8_t val)
 {
 	Z80& cpu = *_context->pCPU->GetZ80();
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
    process();
@@ -776,13 +776,13 @@ void WD1793::trdos_traps()
 {
 	/*
 	Z80& cpu = *_context->pCPU->GetZ80();
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
    unsigned pc = (cpu.pc & 0xFFFF);
    if (pc < 0x3DFD) return;
 
-   // Позиционирование на соседнюю дорожку (пауза)
+   // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅ)
    if (pc == 0x3DFD && bankr[0][0x3DFD] == 0x3E && bankr[0][0x3DFF] == 0x0E)
    {
        cpu.pc = cpu.DbgMemIf->MemoryRead(cpu.sp++);
@@ -791,7 +791,7 @@ void WD1793::trdos_traps()
        cpu.c = 0;
    }
 
-   // Позиционирование на произвольную дорожку (пауза)
+   // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅ)
    if (pc == 0x3EA0 && bankr[0][0x3EA0] == 0x06 && bankr[0][0x3EA2] == 0x3E)
    {
        cpu.pc = cpu.DbgMemIf->MemoryRead(cpu.sp++);

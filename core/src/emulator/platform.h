@@ -515,13 +515,26 @@ struct NVRAM
 	void MemoryWrite(uint8_t val);
 };
 
-struct COMPUTER
+struct State
 {
+    /// region <Port state>
 	uint8_t p7FFD, pFE, pEFF7, pXXXX;   // Common ports
 	uint8_t pBFFD, pFFFD;               // AY sound-specific
 	uint8_t pDFFD, pFDFD, p1FFD, pFF77; // Models with extended memory-specific
 	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // GMX specific
 	uint8_t p00, p80FD; // Quorum specific
+	/// endregion </Port state>
+
+	/// region <Counters>
+
+	uint64_t t_states; // inc with conf.frame by each frame
+    unsigned frame_counter; // Counting each video frame displayed
+
+	/// endregion </Counters>
+
+	/// region <Access flags>
+	bool video_memory_changed;  // [Debug mode only] Indicates if video memory was changed
+	/// endregion </Access flags>
 
 	bool nmi_in_progress = false;
 	
@@ -530,8 +543,7 @@ struct COMPUTER
 	uint8_t pLSY256;
 	uint16_t cram[256];
 	uint16_t sfile[256];
-	uint64_t t_states; // inc with conf.frame by each frame
-	unsigned frame_counter; // inc each frame
+
 	uint8_t aFE, aFB; // ATM 4.50 system ports
 	unsigned pFFF7[8]; // ATM 7.10 / ATM3(4Mb) memory map
 	// |7ffd|rom|b7b6|b5..b0| b7b6 = 0 for atm2
@@ -589,7 +601,7 @@ struct COMPUTER
 	uint8_t profrom_bank;
 };
 
-// bits for COMPUTER::flags
+// bits for State::flags
 #define CF_DOSPORTS     0x01    // tr-dos ports are accessible
 #define CF_TRDOS        0x02    // DOSEN trigger
 #define CF_SETDOSROM    0x04    // tr-dos ROM become active at #3Dxx

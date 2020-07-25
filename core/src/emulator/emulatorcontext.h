@@ -16,7 +16,7 @@ public:
 	CONFIG config;
 
 	// Emulated system state (ports, flags including peripheral devices)
-	COMPUTER state;
+	State state;
 
 	// Temporary state for all extended platform features
 	// TODO: rework and put into appropriate platform / state classes

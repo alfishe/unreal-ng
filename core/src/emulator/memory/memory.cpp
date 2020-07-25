@@ -67,10 +67,11 @@ uint8_t Memory::MemoryReadFast(uint16_t addr)
     uint8_t result = 0xFF;
 
     // Determine CPU bank (from address bits 14 and 15)
-    uint8_t bank = (addr >> 14) & 0x03;
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
     // Read byte from correspondent memory bank mapped to global memory buffer
-    result = *(_bank_read[bank] + addr);
+    result = *(_bank_read[bank] + addressInBank);
 
     // Update per-line access counter
     /*
@@ -116,11 +117,12 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr)
 void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
 {
     // Determine CPU bank (from address bits 14 and 15)
-    uint8_t bank = (addr >> 14) & 0x03;
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
     // Write byte to correspondent memory bank cell
     uint8_t* bank_addr = _bank_write[bank];
-    *(bank_addr + addr) = value;
+    *(bank_addr + addressInBank) = value;
 }
 
 /// Implementation memory write method
@@ -132,13 +134,20 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // Write data to memory
     MemoryWriteFast(addr, value);
 
+    // Raise flag that video memory was changed
+    if (addr >= 0x4000 && addr <= 0x5B00)
+    {
+        _state->video_memory_changed = true;
+    }
+
     /// region <Test>
     if (addr >= 0x4000 && addr <= 0x57FF && value != 0x00)
     {
         Logger::UnmuteSilent();
         uint32_t frame = _state->frame_counter;
-        uint8_t bank = GetRAMPageFromAddress(RemapAddressToCurrentBank(addr));
-        LOGINFO("Pixel write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X", frame, bank, addr, value);
+        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
+        uint8_t bank = GetRAMPageFromAddress(accessAddress);
+        LOGINFO("Pixel write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)", frame, bank, addr, value, accessAddress);
         Logger::MuteSilent();
     }
 
@@ -146,8 +155,9 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     {
         Logger::UnmuteSilent();
         uint32_t frame = _state->frame_counter;
-        uint8_t bank = GetRAMPageFromAddress(RemapAddressToCurrentBank(addr));
-        LOGINFO("Attributes write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X",frame, bank, addr, value);
+        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
+        uint8_t bank = GetRAMPageFromAddress(accessAddress);
+        LOGINFO("Attributes write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)",frame, bank, addr, value, accessAddress);
         Logger::MuteSilent();
     }
 
@@ -219,7 +229,7 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
 // Address space: [0x0000 - 0x3FFF]
 void Memory::SetROMMode(ROMModeEnum mode)
 {
-    static COMPUTER& state = _context->state;
+    static State& state = _context->state;
     static CONFIG& config = _context->config;
     static PortDecoder& portDecoder = *_context->pPortDecoder;
 
@@ -555,7 +565,7 @@ void Memory::WriteByMappedMemoryAddress(uint16_t address, uint8_t value)
 //
 void Memory::InternalSetBanks()
 {
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 
 	// Initialize according Spectrum 128K standard address space settings
@@ -648,7 +658,7 @@ std::string Memory::DumpAllMemoryRegions()
  // input: ports 7FFD, 1FFD, DFFD, FFF7, FF77, EFF7, flags CF_TRDOS,CF_CACHEON
 void Memory::SetBanks()
 {
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 	TEMP& temp = _context->temporary;
 

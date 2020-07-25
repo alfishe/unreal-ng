@@ -19,7 +19,7 @@ public:
 protected:
     EmulatorContext* _context = nullptr;
 
-    COMPUTER* _state = nullptr;
+    State* _state = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
 

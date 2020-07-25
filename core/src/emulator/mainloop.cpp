@@ -6,10 +6,12 @@
 #include "common/timehelper.h"
 #include <algorithm>
 
-MainLoop::MainLoop(CPU* cpu, EmulatorContext* context)
+MainLoop::MainLoop(EmulatorContext* context)
 {
-	_cpu = cpu;
 	_context = context;
+	_state = &_context->state;
+	_cpu = _context->pCPU;
+    _screen = _context->pScreen;
 
     _isRunning = false;
 }
@@ -19,7 +21,9 @@ MainLoop::~MainLoop()
     if (_isRunning)
         Stop();
 
+    _screen = nullptr;
 	_cpu = nullptr;
+	_state = nullptr;
 	_context = nullptr;
 
 	LOGDEBUG("MainLoop::~MainLoop()");
@@ -42,8 +46,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 	/// region <Debug>
 
 	// Initialize animation
-    static Screen& screen = *_context->pScreen;
-    FramebufferDescriptor& framebuffer = screen.GetFramebufferDescriptor();
+    FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
     gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
 
 	/// endregion </Debug>
@@ -95,11 +98,11 @@ void MainLoop::RunFrame()
     static int i = 0;
 	//if (i % 100 == 0)
 	{
-	    //screen.SaveZXSpectrumNativeScreen();
         screen.RenderOnlyMainScreen();
 
-        // Save frame as PNG
-        //screen.SaveScreen();
+        // Save frame if video memory was changed
+        //if (_state->video_memory_changed)
+        //    screen.SaveZXSpectrumNativeScreen();
 
         // Save frame to GIF animation
         uint32_t* buffer;
@@ -131,9 +134,7 @@ void MainLoop::InitSoundFrame()
 //
 void MainLoop::InitVideoFrame()
 {
-	static Screen& screen = *_context->pScreen;
-
-	screen.InitFrame();
+	_screen->InitFrame();
 }
 
 //

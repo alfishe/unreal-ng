@@ -120,7 +120,7 @@ bool Emulator::Init()
 	{
 		result = false;
 
-		_mainloop = new MainLoop(_cpu, _context);
+		_mainloop = new MainLoop(_context);
 		if (_mainloop != nullptr)
 		{
 			LOGDEBUG("Emulator::Init - mainloop created");

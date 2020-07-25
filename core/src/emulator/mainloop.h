@@ -9,8 +9,11 @@
 class MainLoop
 {
 protected:
-	CPU* _cpu = nullptr;
-	EmulatorContext* _context = nullptr;
+    EmulatorContext* _context = nullptr;
+    State* _state = nullptr;
+    CPU* _cpu = nullptr;
+    Screen* _screen = nullptr;
+
 
 	volatile bool _isRunning = false;
 	volatile bool _stopRequested = false;
@@ -19,7 +22,7 @@ protected:
 
 public:
 	MainLoop() = delete;	// Disable default constructor. C++ 11 or better feature
-	MainLoop(CPU* cpu, EmulatorContext* context);
+	MainLoop(EmulatorContext* context);
 	virtual ~MainLoop();
 
 	void Run(volatile bool& exit);

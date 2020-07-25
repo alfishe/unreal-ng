@@ -124,16 +124,18 @@ void TestClient::Start()
 
     /// endregion </Test messaging>
 
+    _emulator->DebugOn();
 
 /*
 	Logger::Mute();
 	_emulator->DebugOn();
-	_emulator->RunNCPUCycles(3000000 - (4560 * 3) - 1600);
+	_emulator->RunNCPUCycles(3455994 + 100);
 	Logger::Unmute();
     _emulator->RunNCPUCycles(500);
 
 	return;
-*/
+ */
+
 	//endregion Test
 
 

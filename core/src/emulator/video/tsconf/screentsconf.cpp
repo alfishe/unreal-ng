@@ -6,7 +6,7 @@
 void ScreenTSConf::UpdateScreen()
 {
 	Z80& cpu = *_cpu;
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 	VideoControl& video = _context->pScreen->_vid;
 
@@ -139,7 +139,7 @@ void ScreenTSConf::UpdateScreen()
 uint32_t ScreenTSConf::TSConf_GetAvailableFrameMemcycles(uint32_t dram_t)
 {
 	static Z80& cpu = *_cpu;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
@@ -167,7 +167,7 @@ void ScreenTSConf::TSConf_Draw(uint32_t vptr)
 uint32_t ScreenTSConf::TSConf_Render(uint32_t tacts)
 {
 	static Z80& cpu = *_cpu;
-	static COMPUTER& state = _context->state;
+	static State& state = _context->state;
 	static CONFIG& config = _context->config;
 	static VideoControl& video = _context->pScreen->_vid;
 
@@ -248,7 +248,7 @@ fin:
 void ScreenTSConf::TSConf_DMA(uint32_t tacts)
 {
 	Z80& cpu = *_cpu;
-	COMPUTER& state = _context->state;
+	State& state = _context->state;
 	CONFIG& config = _context->config;
 	VideoControl& video = _context->pScreen->_vid;
 

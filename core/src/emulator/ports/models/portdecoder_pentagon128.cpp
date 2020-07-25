@@ -113,7 +113,7 @@ bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t port)
 /// \param value
 void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc)
 {
-    static COMPUTER& state = _context->state;
+    static State& state = _context->state;
     static Memory& memory = *_context->pMemory;
     static Screen& screen = *_context->pScreen;
 
