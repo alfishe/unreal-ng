@@ -20,7 +20,7 @@ public:
 	static void SaveFrameToPNG(uint8_t* buffer, size_t size, unsigned width, unsigned height, int frameNumber = -1);
     static void SaveFrameToHex(uint8_t* buffer, size_t size, int frameNumber = -1);
 
-	static void SaveZXSpectrumNativeScreen(uint8_t* buffer);
+	static void SaveZXSpectrumNativeScreen(uint8_t* buffer, int frameNumber = -1);
 
     /// endregion </Synchronous operations>
 };

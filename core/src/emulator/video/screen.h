@@ -345,8 +345,10 @@ public:
 
 protected:
 	EmulatorContext* _context = nullptr;
+	COMPUTER* _state = nullptr;
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
+	Memory* _memory = nullptr;
 
 	uint8_t _activeScreen;
 	uint8_t* _activeScreenMemoryOffset;

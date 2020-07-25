@@ -74,6 +74,7 @@ class Memory
 protected:
 	// Context passed during initialization
 	EmulatorContext* _context = nullptr;
+	COMPUTER* _state = nullptr;
 
 protected:
 #if defined CACHE_ALIGNED

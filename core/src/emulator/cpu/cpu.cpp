@@ -15,6 +15,8 @@ CPUTables CPU::_cpuTables;
 CPU::CPU(EmulatorContext* context)
 {
 	_context = context;
+    _state = &_context->state;
+    _config = &_context->config;
 
 	// Instantiation sequence
     // Step 1       - Memory()
@@ -129,11 +131,8 @@ void CPU::Reset()
 	static int topicID = messageCenter.RegisterTopic("CPU_RESET");
 	messageCenter.Post(topicID, (void*)"CPU reset started");
 
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-	_mode = static_cast<ROMModeEnum>(config.reset_rom);
+	_mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
 	/// region <Obsolete>
 	/*
@@ -262,8 +261,8 @@ void CPU::Reset()
 	// input.buffer.Enable(false);
 
 	// Turn off TRDOS ROM by default
-	if ((!config.trdos_present && _mode == RM_DOS) ||
-		(!config.cache && _mode == RM_CACHE))
+	if ((!_config->trdos_present && _mode == RM_DOS) ||
+		(!_config->cache && _mode == RM_CACHE))
 		_mode = RM_SOS;
 
 	// Set ROM mode
@@ -272,8 +271,8 @@ void CPU::Reset()
 	_memory->SetROMMode(RM_128);
 
 	// Reset counters
-	state.t_states = 0;
-	state.frame_counter = 0;
+    _state->frame_counter = 0;
+	_state->t_states = 0;
 
 	messageCenter.Post(topicID, (void*)"CPU reset finished");
 }
@@ -295,9 +294,6 @@ void CPU::SetCPUClockSpeed(uint8_t multiplier)
 
 void CPU::CPUFrameCycle()
 {
-	static COMPUTER& state = _context->state;
-	static CONFIG& config = _context->config;
-
 	// Execute Z80 cycle
 	if (_cpu->dbgchk)
 	{
@@ -313,14 +309,15 @@ void CPU::CPUFrameCycle()
 	}
 
 	// Update frame stats
-	state.t_states += config.frame;
-	_cpu->t -= config.frame;
-	_cpu->eipos -= config.frame;
-	state.frame_counter++;
+    _state->frame_counter++;
 
-	if (config.mem_model == MM_TSL)
+    _state->t_states += _config->frame;
+	_cpu->t -= _config->frame;
+	_cpu->eipos -= _config->frame;
+
+	if (_config->mem_model == MM_TSL)
 	{
-		state.ts.intctrl.last_cput -= config.frame;
+        _state->ts.intctrl.last_cput -= _config->frame;
 	}
 }
 

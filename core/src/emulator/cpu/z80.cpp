@@ -303,7 +303,7 @@ uint8_t Z80::m1_cycle()
         //cycles_to_capture = 400;
 
         Logger::UnmuteSilent();
-        LOGINFO("DISPLAY_MENU is executed. PC: %04X", cpu.pc);
+        LOGINFO("DISPLAY_MENU is executed. Frame: %03d, PC: %04X", state.frame_counter, cpu.pc);
         Logger::MuteSilent();
     }
 

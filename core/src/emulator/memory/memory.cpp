@@ -14,6 +14,7 @@
 Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
+    _state = &context->state;
 
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
@@ -135,16 +136,18 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     if (addr >= 0x4000 && addr <= 0x57FF && value != 0x00)
     {
         Logger::UnmuteSilent();
+        uint32_t frame = _state->frame_counter;
         uint8_t bank = GetRAMPageFromAddress(RemapAddressToCurrentBank(addr));
-        LOGINFO("Pixel write - addr: RAM%d:0x%04X, val: 0x%02X", bank, addr, value);
+        LOGINFO("Pixel write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X", frame, bank, addr, value);
         Logger::MuteSilent();
     }
 
-    if (addr >= 5800 && addr <= 0x5AFF && value != 0x00)
+    if (addr >= 0x5800 && addr <= 0x5AFF && value != 0x00)
     {
         Logger::UnmuteSilent();
+        uint32_t frame = _state->frame_counter;
         uint8_t bank = GetRAMPageFromAddress(RemapAddressToCurrentBank(addr));
-        LOGINFO("Attributes write - addr: RAM%d:0x%04X, val: 0x%02X", bank, addr, value);
+        LOGINFO("Attributes write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X",frame, bank, addr, value);
         Logger::MuteSilent();
     }
 

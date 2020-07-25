@@ -103,15 +103,15 @@ void ImageHelper::SaveFrameToHex(uint8_t* buffer, size_t size, int frameNumber)
     DumpHelper::SaveHexDumpToFile(filename, buffer, size);
 }
 
-void ImageHelper::SaveZXSpectrumNativeScreen(uint8_t* buffer)
+void ImageHelper::SaveZXSpectrumNativeScreen(uint8_t* buffer, int frameNumber)
 {
     static int frameCount = 0;
     frameCount++;
 
-    string filename = StringHelper::Format("ZX_%04d.scr", frameCount);
+    string filename = StringHelper::Format("ZX_%04d.scr", frameNumber >= 0 ? frameNumber : frameCount);
     FileHelper::SaveBufferToFile(filename, buffer, 6144 + 768);
 
-    filename = StringHelper::Format("ZX_%04d.hex", frameCount);
+    filename = StringHelper::Format("ZX_%04d.hex", frameNumber >= 0 ? frameNumber : frameCount);
     DumpHelper::SaveHexDumpToFile(filename, buffer, 6144 + 768);
 }
 

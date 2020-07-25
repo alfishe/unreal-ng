@@ -35,14 +35,16 @@ std::string Screen::GetColorName(uint8_t color)
 
 Screen::Screen(EmulatorContext* context)
 {
-	_system = context->pCPU;
+    _context = context;
+    _state = &_context->state;
+	_system = _context->pCPU;
 	_cpu = _system->GetZ80();
-	_context = context;
+	_memory = _context->pMemory;
+
 
 	// Set Normal screen (Bank 5) mode by default
-	Memory& memory = *context->pMemory;
 	_activeScreen = 0;
-	_activeScreenMemoryOffset = memory.RAMPageAddress(5);
+	_activeScreenMemoryOffset = _memory->RAMPageAddress(5);
 }
 
 Screen::~Screen()
@@ -329,11 +331,10 @@ void Screen::SaveScreen()
 
 void Screen::SaveZXSpectrumNativeScreen()
 {
-    static Memory& memory = *_context->pMemory;
+    uint8_t* buffer = _memory->RemapAddressToCurrentBank(0x4000);
+    int frameNumber = _state->frame_counter;
 
-    uint8_t* buffer = memory.RemapAddressToCurrentBank(0x4000);
-
-    ImageHelper::SaveZXSpectrumNativeScreen(buffer);
+    ImageHelper::SaveZXSpectrumNativeScreen(buffer, frameNumber);
 }
 
 /// region <Framebuffer related>

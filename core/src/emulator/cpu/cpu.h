@@ -37,10 +37,14 @@ class CPU
 public:
 	static CPUTables _cpuTables;
 
+	/// region <Fields>
 protected:
-	MessageCenter* _messageCenter = nullptr;
-
 	EmulatorContext* _context = nullptr;
+    COMPUTER* _state = nullptr;
+    const CONFIG* _config = nullptr;
+
+    MessageCenter* _messageCenter = nullptr;
+
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;
 	Ports* _ports = nullptr;
@@ -52,6 +56,7 @@ protected:
 	Screen* _screen = nullptr;
 
 	ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
+    /// endregion </Fields>
 
 public:
 	CPU() = delete;					// Disable default constructor. C++ 11 feature
