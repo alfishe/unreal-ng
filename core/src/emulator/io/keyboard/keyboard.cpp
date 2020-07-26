@@ -21,12 +21,19 @@ Keyboard::~Keyboard()
 
 /// region <Keyboard control>
 
+/// Handle system reset
 void Keyboard::Reset()
+{
+    // Clear ZX-Spectrum keyboard matrix state
+    memset(_keyboard_matrix, 0xFF, sizeof (_keyboard_matrix));
+}
+
+void Keyboard::PressKey()
 {
 
 }
 
-void Keyboard::SendKey()
+void Keyboard::ReleaseKey()
 {
 
 }
@@ -65,6 +72,8 @@ void Keyboard::OnKey(char key, bool isPressed, bool shift, bool ctrl, bool alt)
     // Right Arrow  - Caps Shift + 8
     // Up Arrow     - Caps Shift + 7
     // Down Arrow   - Caps Shift + 6
+
+
 }
 
 /// endregion </Handle keyboard events>

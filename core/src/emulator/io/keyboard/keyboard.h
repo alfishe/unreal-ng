@@ -183,7 +183,12 @@ class Keyboard
         //{ '>=', ZXKEY_SYM_SHIFT, ZXKEY_E },
         { '^', ZXKEY_SYM_SHIFT, ZXKEY_H },
         { '_', ZXKEY_SYM_SHIFT, ZXKEY_O},
-        { '~', ZXKEY_SYM_SHIFT, ZXKEY_A }
+        { '~', ZXKEY_SYM_SHIFT, ZXKEY_A },
+
+        //{ '<Left arrow>', ZXKEY_CAPS_SHIFT, ZXKEY_5 },
+        //{ '<Right arrow>', ZXKEY_CAPS_SHIFT, ZXKEY_8 },
+        //{ '<Up arrow>', ZXKEY_CAPS_SHIFT, ZXKEY_6 },
+        //{ '<Down arrow>', ZXKEY_CAPS_SHIFT, ZXKEY_6 },
     };
 
     /// endregion </Constants>
@@ -206,7 +211,8 @@ public:
     /// region <Keyboard control>
 public:
     void Reset();
-    void SendKey();
+    void PressKey();
+    void ReleaseKey();
     void SendKeyCombination();
     /// endregion </Keyboard control>
 
