@@ -6,6 +6,7 @@
 class EmulatorContext;
 class Memory;
 class Screen;
+class Keyboard;
 
 /// Base class for all model port decoders
 class PortDecoder
@@ -20,6 +21,7 @@ protected:
     EmulatorContext* _context = nullptr;
 
     State* _state = nullptr;
+    Keyboard* _keyboard = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
 
@@ -40,6 +42,8 @@ public:
 
     virtual void SetRAMPage(uint8_t oage) = 0;
     virtual void SetROMPage(uint8_t page) = 0;
+
+    virtual bool IsFEPort(uint16_t port);
 
 protected:
     virtual std::string GetPCAddressLocator(uint16_t pc);

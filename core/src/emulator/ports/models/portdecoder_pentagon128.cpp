@@ -98,9 +98,9 @@ bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t port)
     //    The additional memory features of the 128K/+2 are controlled to by writes to port 0x7ffd.
     //    As normal on Sinclair hardware, the port address is in fact only partially decoded and the hardware will respond
     //    to any port address with bits 1 and 15 reset.
-    static const uint16_t port_7FFD_full    = 0b0111111111111101;
-    static const uint16_t port_7FFD_mask    = 0b1000000000000010;
-    static const uint16_t port_7FFD_match   = 0b0000000000000000;
+    static const uint16_t port_7FFD_full    = 0b0111'1111'1111'1101;
+    static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0010;
+    static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0000;
 
     bool result = (port & port_7FFD_mask) == port_7FFD_match;
 
@@ -117,10 +117,10 @@ void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value, uint16_t p
     static Memory& memory = *_context->pMemory;
     static Screen& screen = *_context->pScreen;
 
-    uint8_t bankRAM = value & 0b00000111;
-    uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    bool isROM0 = value & 0b00010000;
-    bool isPagingDisabled = value & 0b00100000;
+    uint8_t bankRAM = value & 0b0000'0111;
+    uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
+    bool isROM0 = value & 0b000'10000;
+    bool isPagingDisabled = value & 0b0010'0000;
 
     // Disabling latch is kept until reset
     if (!_7FFD_Locked)

@@ -4,6 +4,7 @@
 #include "emulator/platform.h"
 
 class CPU;
+class Keyboard;
 class Memory;
 class PortDecoder;
 class Screen;
@@ -27,6 +28,9 @@ public:
 
 	// Computer system instance
 	CPU* pCPU;
+
+	// Keyboard controller instance
+	Keyboard* pKeyboard;
 
 	// Memory controller instance
 	Memory* pMemory;

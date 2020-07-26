@@ -17,6 +17,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _context = context;
 
     _state = &context->state;
+    _keyboard = context->pKeyboard;
     _memory = context->pMemory;
     _screen = context->pScreen;
 }
@@ -56,6 +57,27 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 /// endregion </Static methods>
 
 /// region <Interface methods>
+
+/// Keyboard ports:
+/// #FEFE
+/// #FDFE
+/// #FBFE
+/// #F7FE
+/// #EFFE
+/// #DFFE
+/// #BFFE
+/// #7FFE
+/// \param port Port to check for match
+/// \return If port matched as #FE
+bool PortDecoder::IsFEPort(uint16_t port)
+{
+    static const uint16_t port_FE_mask    = 0b0000'0000'0000'0001;
+    static const uint16_t port_FE_match   = 0b0000'0000'0000'0000;
+
+    bool result = (port & port_FE_mask) == port_FE_match;
+
+    return result;
+}
 
 std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 {

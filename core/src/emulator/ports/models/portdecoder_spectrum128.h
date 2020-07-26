@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"

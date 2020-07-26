@@ -50,6 +50,11 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
 
+    if (IsPort_FE(port))
+    {
+        result = _keyboard->HandlePort(port);
+    }
+
     // Determine RAM/ROM page where code executed from
     std::string currentMemoryPage = GetPCAddressLocator(pc);
 
