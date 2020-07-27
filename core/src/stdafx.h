@@ -5,6 +5,7 @@
 
 #include "targetver.h"
 
+#include <cassert>
 #include <cstdint>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,9 +22,10 @@
 #include <memory>
 #include <vector>
 #include <array>
-#include <sstream>
 #include <list>
+#include <map>
 #include <atomic>
+#include <sstream>
 
 #include "common/utf8util.h"
 
@@ -44,6 +46,7 @@ using std::stringstream;
 using utf8::ifstream;
 using utf8::ofstream;
 using std::list;
+using std::map;
 using std::min;
 using std::max;
 using std::string;
