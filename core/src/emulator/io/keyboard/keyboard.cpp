@@ -38,6 +38,11 @@ void Keyboard::ReleaseKey()
 
 }
 
+void Keyboard::TypeSymbol(char symbol)
+{
+
+}
+
 void Keyboard::SendKeyCombination()
 {
 
@@ -52,7 +57,39 @@ void Keyboard::SendKeyCombination()
 /// \return
 uint8_t Keyboard::HandlePort(uint16_t port)
 {
-    uint8_t result;
+    uint8_t result = 0xFF;
+
+    uint8_t portFE = port & 0x00FF;
+    uint8_t subport = port >> 8;
+    //uint8_t matrix_index = ~subport
+
+    if (portFE == 0xFE)
+    {
+        switch (subport)
+        {
+            case 0xFE:      // Caps Shift, Z, X, C, V
+                break;
+            case 0xFD:      // A, S, D, F, G
+                break;
+            case 0xFB:      // Q, W, E, R, T
+                break;
+            case 0xF7:      // 1, 2, 3, 4, 5
+                break;
+            case 0xEF:      // 0, 9, 8, 7, 6
+                break;
+            case 0xDF:      // P, O, I, U, Y
+                break;
+            case 0xBF:      // Enter, L, K, J, H
+                break;
+            case 0x7F:      // Space, Symbol Shift, M, N, B
+                break;
+        }
+    }
+    else
+    {
+        LOGERROR("Keyboard cannot handle non #FE port");
+        assert("Keyboard non-#FE port");
+    }
 
     return result;
 }

@@ -7,6 +7,7 @@ class EmulatorContext;
 
 constexpr uint8_t KEYS_COUNT = 40;
 
+// 40 Buttons for original ZX-Spectrum
 enum ZXKeysEnum : uint8_t
 {
     ZXKEY_NONE        = 0x00,     // Non-existent key, used in mapping
@@ -52,7 +53,8 @@ enum ZXKeysEnum : uint8_t
     ZXKEY_Z           = 0x5A
 };
 
-enum SymbolsEnum : uint8_t
+// Standardized keys to map host input events
+enum KeysEnum : uint8_t
 {
     KEY_LEFT,
     KEY_RIGHT,
@@ -146,6 +148,7 @@ class Keyboard
         { ZXKEY_B,            0b0001'1111, 0b0000'1111, 0x7FFE, 7 },
     };
 
+    // Mapping special symbols to key combinations
     // See: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
     static constexpr KeyMapper mapper[] =
     {
@@ -213,6 +216,7 @@ public:
     void Reset();
     void PressKey();
     void ReleaseKey();
+    void TypeSymbol(char symbol);
     void SendKeyCombination();
     /// endregion </Keyboard control>
 
