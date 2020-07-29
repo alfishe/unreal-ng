@@ -36,6 +36,10 @@ CPU::CPU(EmulatorContext* context)
 	// Instantiate ROM implementation
 	_rom = new ROM(context);
 
+	// Instantiate Keyboard implementation
+	_keyboard = new Keyboard(context);
+	_context->pKeyboard = _keyboard;
+
 	// Instantiate sound manager
 	_sound = new Sound(context);
 
@@ -248,13 +252,13 @@ void CPU::Reset()
 
 	// Reset main Z80 CPU and all peripherals
 	_cpu->Reset();					// Main Z80
-	_portDecoder->Reset();          // Reset peripheral port decoder
+	_memory->Reset();               // Memory
+	_keyboard->Reset();             // Keyboard
 	_sound->Reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
 	_screen->Reset();               // Reset all video subsystem
-
 	//reset_tape();					// Reset tape loader state
-
 	_hdd->Reset();					// Reset IDE controller
+    _portDecoder->Reset();          // Reset peripheral port decoder
 
 	// Input controllers reset
 	//input.atm51.reset();

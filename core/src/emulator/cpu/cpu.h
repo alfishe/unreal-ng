@@ -4,6 +4,7 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/ports.h"
 #include "emulator/memory/rom.h"
@@ -14,13 +15,7 @@
 
 class MessageCenter;
 class Z80;
-class Memory;
-class Ports;
 class PortDecoder;
-class ROM;
-class Sound;
-class HDD;
-class Screen;
 
 class CPU
 {
@@ -50,6 +45,7 @@ protected:
 	Ports* _ports = nullptr;
 	PortDecoder* _portDecoder = nullptr;
 	ROM* _rom = nullptr;
+	Keyboard* _keyboard = nullptr;
 	Sound* _sound = nullptr;
 	HDD* _hdd = nullptr;
 	VideoControl* _video = nullptr;

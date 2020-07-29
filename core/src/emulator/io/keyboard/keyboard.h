@@ -50,7 +50,17 @@ enum ZXKeysEnum : uint8_t
     ZXKEY_W           = 0x57,
     ZXKEY_X           = 0x58,
     ZXKEY_Y           = 0x59,
-    ZXKEY_Z           = 0x5A
+    ZXKEY_Z           = 0x5A,
+
+    ZXKEY_EXT_CTRL    = 0x80,
+    ZXKEY_EXT_UP      = 0x81,
+    ZXKEY_EXT_DOWN    = 0x82,
+    ZXKEY_EXT_LEFT    = 0x83,
+    ZXKEY_EXT_RIGHT   = 0x84,
+    ZXKEY_EXT_DELETE  = 0x85,
+    ZXKEY_EXT_BREAK   = 0x86,
+    ZXKEY_EXT_DOT     = 0x87,
+    ZXKEY_EXT_COMMA   = 0x88,
 };
 
 // Standardized keys to map host input events
@@ -79,25 +89,28 @@ struct KeyMapper
     ZXKeysEnum key;
 };
 
+typedef std::map<ZXKeysEnum, KeyDescriptor> ZXKeyMap;
+
 /// endregion </Structs and Enums>
 
 /// See: http://www.breakintoprogram.co.uk/computers/zx-spectrum/keyboard
 /// See: https://www.salkin.co.uk/~wiki/index.php/Spectrum_Keyboard
+/// See: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
 class Keyboard
 {
     /// region <Constants>
 
     //    Port	    Dec	    Bin	                    Address line	D0	        D1	        D2	D3	D4
-    //    $fefe	    65278	%1111 1110 1111 1110	A8	            Caps shift	Z	        X	C	V
-    //    $fdfe	    65022	%1111 1101 1111 1110	A9	            A	        S	        D	F	G
-    //    $fbfe	    64510	%1111 1011 1111 1110	A10	            Q	        W	        E	R	T
-    //    $f7fe	    63486	%1111 0111 1111 1110	A11	            1	        2	        3	4	5
-    //    $effe	    61438	%1110 1111 1111 1110	A12	            0	        9	        8	7	6
-    //    $dffe	    57342	%1101 1111 1111 1110	A13	            P	        O	        I	U	Y
-    //    $bffe	    49150	%1011 1111 1111 1110	A14	            Ent	        L	        K	J	H
-    //    $7ffe	    32766	%0111 1111 1111 1110	A15	            Spc	        Sym shift	M	N	B
+    //    $FEFE	    65278	%1111 1110 1111 1110	A8	            Caps shift	Z	        X	C	V
+    //    $FDFE	    65022	%1111 1101 1111 1110	A9	            A	        S	        D	F	G
+    //    $FBFE	    64510	%1111 1011 1111 1110	A10	            Q	        W	        E	R	T
+    //    $F7FE	    63486	%1111 0111 1111 1110	A11	            1	        2	        3	4	5
+    //    $EFFE	    61438	%1110 1111 1111 1110	A12	            0	        9	        8	7	6
+    //    $DFFE	    57342	%1101 1111 1111 1110	A13	            P	        O	        I	U	Y
+    //    $BFFE	    49150	%1011 1111 1111 1110	A14	            Ent	        L	        K	J	H
+    //    $7FFE	    32766	%0111 1111 1111 1110	A15	            Spc	        Sym shift	M	N	B
 
-    static constexpr KeyDescriptor keys[KEYS_COUNT] =
+    static constexpr KeyDescriptor _keys[KEYS_COUNT] =
     {
         { ZXKEY_CAPS_SHIFT,   0b0001'1111, 0b0001'1110, 0xFEFE, 0 },
         { ZXKEY_Z,            0b0001'1111, 0b0001'1101, 0xFEFE, 0 },
@@ -198,9 +211,12 @@ class Keyboard
 
     /// region <Fields>
 protected:
+    static ZXKeyMap _zxKeyMap;
+
+protected:
     EmulatorContext* _context;
 
-    uint8_t _keyboard_matrix[8];
+    uint8_t _keyboardMatrixState[8];
 
     /// endregion </Fields>
 
@@ -214,8 +230,8 @@ public:
     /// region <Keyboard control>
 public:
     void Reset();
-    void PressKey();
-    void ReleaseKey();
+    void PressKey(ZXKeysEnum key);
+    void ReleaseKey(ZXKeysEnum key);
     void TypeSymbol(char symbol);
     void SendKeyCombination();
     /// endregion </Keyboard control>

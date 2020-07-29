@@ -71,6 +71,8 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 /// \return If port matched as #FE
 bool PortDecoder::IsFEPort(uint16_t port)
 {
+    // Any even port will be decoded as #FE
+    static const uint16_t port_FE_full    = 0b0000'0000'1111'1110;
     static const uint16_t port_FE_mask    = 0b0000'0000'0000'0001;
     static const uint16_t port_FE_match   = 0b0000'0000'0000'0000;
 

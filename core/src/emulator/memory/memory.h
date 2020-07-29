@@ -123,6 +123,7 @@ public:
 
 	/// region <Initialization>
 public:
+    void Reset();
     void RandomizeMemoryContent();
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
     /// endregion </Initialization>

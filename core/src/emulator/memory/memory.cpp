@@ -192,6 +192,11 @@ if (addr == 0x4000 && val == 0x02)
 
 /// region <Initialization>
 
+void Memory::Reset()
+{
+    // No DRAM-specific actions required on reset
+}
+
 /// Fill whole physical RAM with random values
 void Memory::RandomizeMemoryContent()
 {
