@@ -5,6 +5,15 @@
 
 using namespace std;
 
+/// region <Helper fprmatters>
+class ThousandsDelimiterPunct : public std::numpunct<char>
+{
+protected:
+    virtual char do_thousands_sep() const { return ','; }
+    virtual std::string do_grouping() const { return "\03"; }
+};
+/// endregion </Helper formatters>
+
 class StringHelper
 {
 public:
@@ -42,4 +51,6 @@ public:
 
         return result;
     }
+
+    static std::string FormatWithThousandsDelimiter(int64_t n);
 };

@@ -195,3 +195,14 @@ string_view StringHelper::Trim(string_view str)
 {
     return LTrim(RTrim(str));
 }
+
+std::string StringHelper::FormatWithThousandsDelimiter(int64_t n)
+{
+    std::stringstream ss;
+    ss.imbue(std::locale( std::locale::classic(), new ThousandsDelimiterPunct ) );
+    ss << n;
+
+    std::string result = ss.str();
+
+    return result;
+}
