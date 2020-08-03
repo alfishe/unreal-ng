@@ -963,6 +963,16 @@ void Z80::DumpCurrentState()
 #endif
 }
 
+std::string Z80::DumpZ80State()
+{
+    std::string result;
+    result.reserve(2048);
+
+    DumpZ80State(result.data(), result.capacity());
+
+    return result;
+}
+
 void Z80::DumpZ80State(char* buffer, size_t len)
 {
     std::string annotation;

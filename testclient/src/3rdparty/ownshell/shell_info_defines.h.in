@@ -1,0 +1,21 @@
+/* Copyright (C) 2015 the ownShell authors and contributors
+ * <see AUTHORS file>
+ *
+ * This module is part of ownShell and is released under
+ * the MIT License: http://www.opensource.org/licenses/mit-license.php
+*/
+
+
+/* Libray defines */
+
+#ifndef _OWNSHELL_I_LIB_INFO_DEFINES_H
+#define _OWNSHELL_I_LIB_INFO_DEFINES_H
+
+#define OWNSHELL_VERSION_MAJOR @OWNSHELL_VERSION_MAJOR@
+#define OWNSHELL_VERSION_MINOR @OWNSHELL_VERSION_MINOR@
+#define OWNSHELL_VERSION_PATCH @OWNSHELL_VERSION_PATCH@
+#define OWNSHELL_VERSION_EXTRA @OWNSHELL_VERSION_EXTRA@
+#define OWNSHELL_COPYRIGHT @OWNSHELL_COPYRIGHT@
+#define OWNSHELL_NAME @OWNSHELL_NAME@
+
+#endif

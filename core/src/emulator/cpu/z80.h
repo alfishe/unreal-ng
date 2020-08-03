@@ -355,6 +355,7 @@ protected:
 #ifdef _DEBUG
 public:
     void DumpCurrentState();
+    std::string DumpZ80State();
 	void DumpZ80State(char* buffer, size_t len);
 #endif
 	/// endregion </Debug methods>

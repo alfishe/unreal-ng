@@ -1,8 +1,11 @@
 #include "stdafx.h"
 
 #include "emulator.h"
+#include "common/stringhelper.h"
 #include "common/systemhelper.h"
 #include "3rdparty/message-center/messagecenter.h"
+
+/// region <Constructors / Destructors>
 
 Emulator::Emulator()
 {
@@ -13,6 +16,10 @@ Emulator::~Emulator()
 {
 	LOGDEBUG("Emulator::~Emulator()");
 }
+
+/// endregion </Constructors / Destructors>
+
+/// region <Initialization>
 
 bool Emulator::Init()
 {
@@ -71,6 +78,7 @@ bool Emulator::Init()
 			LOGDEBUG("Emulator::Init - CPU system created");
 
 			_z80 = _cpu->GetZ80();
+			_memory = _cpu->_memory;
 
 			result = true;
 		}
@@ -182,6 +190,8 @@ void Emulator::Release()
 	}
 }
 
+/// endregion </Initialization>
+
 //
 // Read CPU ID string and analyze MMX/SSE/SSE2 feature flags
 // See: https://en.wikipedia.org/wiki/CPUID
@@ -288,6 +298,19 @@ void Emulator::RunUntilCondition()
     throw "Not implemented";
 }
 
+/// Load ROM file (up to 64 banks to ROM area)
+/// \param path File path to ROM file
+bool Emulator::LoadROM(std::string path)
+{
+    Pause();
+
+    ROM& rom = *_cpu->GetROM();
+
+    bool result = rom.LoadROM(path, _memory->ROMBase(), MAX_ROM_PAGES);
+
+    return result;
+}
+
 void Emulator::DebugOn()
 {
     // Switch to slow but instrumented memory interface
@@ -321,6 +344,21 @@ bool Emulator::IsPaused()
 bool Emulator::IsDebug()
 {
 	return _isDebug;
+}
+
+std::string Emulator::GetStatistics()
+{
+    State& state = _context->state;
+    Memory& memory = *_context->pMemory;
+    Z80& z80 = *_context->pCPU->GetZ80();
+
+    std::string cpuState = string(StringHelper::Trim(z80.DumpZ80State()));
+
+    std::string result = StringHelper::Format("  Frame: %d\n", state.frame_counter);
+    result += StringHelper::Format("  Memory:\n    %s\n", memory.DumpMemoryBankInfo().c_str());
+    result += StringHelper::Format("  CPU: %s", cpuState.c_str());
+
+    return result;
 }
 
 //endregion

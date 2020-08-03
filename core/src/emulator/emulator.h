@@ -19,6 +19,7 @@ protected:
 	Config* _config = nullptr;
 	CPU* _cpu = nullptr;
 	Z80* _z80 = nullptr;
+	Memory* _memory = nullptr;
 	MainLoop* _mainloop = nullptr;
 
 	// Control flow
@@ -54,6 +55,10 @@ public:
 	void RunNCPUCycles(unsigned cycles);
 	void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
 
+	// Actions
+	bool LoadROM(std::string path);
+
+
     // Debug methods
 	void DebugOn();
 	void DebugOff();
@@ -63,6 +68,7 @@ public:
 	bool IsRunning();
 	bool IsPaused();
 	bool IsDebug();
+    std::string GetStatistics();
 
 	// Counters method
 	void ResetCountersAll();
