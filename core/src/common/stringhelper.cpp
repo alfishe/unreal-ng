@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "stringhelper.h"
+#include <algorithm>
 #include <cassert>
 
 uint8_t StringHelper::Hex(uint8_t val)
@@ -44,6 +45,38 @@ int StringHelper::Compare(wstring& wstr1, wstring& wstr2)
 	}
 
 	return result;
+}
+
+int StringHelper::Compare(string& str1, string& str2)
+{
+    int result = -1;
+
+    size_t len1 = str1.length();
+    size_t len2 = str2.length();
+
+    if (len1 == len2)
+    {
+        char* ptr1 = (char*)str1.c_str();
+        char* ptr2 = (char*)str2.c_str();
+
+        do
+        {
+            if (!(*ptr1 && *ptr2))
+                break;
+
+            if (*ptr1 != *ptr2)
+                break;
+        }
+        while (len1-- && *ptr1++ && *ptr2++);
+
+        result = *ptr1 - *ptr2;
+    }
+    else
+    {
+        result = (int)(len1 - len2);
+    }
+
+    return result;
 }
 
 int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, size_t len)
@@ -140,4 +173,25 @@ wstring StringHelper::ReplaceAll(wstring& wstr, wstring wfrom, wstring wto)
 	}
 
 	return result;
+}
+
+string_view StringHelper::LTrim(string_view str)
+{
+    str.remove_prefix(std::distance(str.cbegin(), std::find_if(str.cbegin(), str.cend(),
+                                                           [](int c) {return !std::isspace(c);})));
+
+    return str;
+}
+
+string_view StringHelper::RTrim(string_view str)
+{
+    str.remove_suffix(std::distance(str.crbegin(), std::find_if(str.crbegin(), str.crend(),
+                                                            [](int c) {return !std::isspace(c);})));
+
+    return str;
+}
+
+string_view StringHelper::Trim(string_view str)
+{
+    return LTrim(RTrim(str));
 }

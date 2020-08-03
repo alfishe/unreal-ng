@@ -49,3 +49,54 @@ TEST_F(StringHelper_Test, Compare)
 		}
 	}
 }
+
+TEST_F(StringHelper_Test, LTrim)
+{
+    // Original string contains both spaces and tabs
+    string original = " \t    test string \t  ";
+    string reference = "test string \t  ";
+
+    string_view trimView = StringHelper::LTrim(original);
+    string result = string(trimView);
+
+    EXPECT_EQ(result, reference);
+
+    if (StringHelper::Compare(result, reference) != 0)
+    {
+        FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
+    }
+}
+
+TEST_F(StringHelper_Test, RTrim)
+{
+    // Original string contains both spaces and tabs
+    string original = " \t    test string \t  ";
+    string reference = " \t    test string";
+
+    string_view trimView = StringHelper::RTrim(original);
+    string result = string(trimView);
+
+    EXPECT_EQ(result, reference);
+
+    if (StringHelper::Compare(result, reference) != 0)
+    {
+        FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
+    }
+}
+
+TEST_F(StringHelper_Test, Trim)
+{
+    // Original string contains both spaces and tabs
+    string original = " \t    test string \t  ";
+    string reference = "test string";
+
+    string_view trimView = StringHelper::Trim(original);
+    string result = string(trimView);
+
+    EXPECT_EQ(result, reference);
+
+    if (StringHelper::Compare(result, reference) != 0)
+    {
+        FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
+    }
+}
