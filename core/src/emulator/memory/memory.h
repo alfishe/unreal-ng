@@ -146,11 +146,11 @@ public:
 	// Runtime methods
 	void SetROMMode(ROMModeEnum mode);
 
-    void SetROMPage(uint8_t page);
-    void SetRAMPageToBank0(uint8_t page);
+    void SetROMPage(uint8_t page, bool updatePorts = false);
+    void SetRAMPageToBank0(uint8_t page, bool updatePorts = false);
     void SetRAMPageToBank1(uint8_t page);
     void SetRAMPageToBank2(uint8_t page);
-	void SetRAMPageToBank3(uint8_t page);
+	void SetRAMPageToBank3(uint8_t page, bool updatePorts = false);
 
 	bool IsBank0ROM();
 	uint8_t GetROMPage();
@@ -160,10 +160,10 @@ public:
     uint8_t GetRAMPageForBank3();
 
 	// Debug methods
-	void SetROM48k();
-	void SetROM128k();
-	void SetROMDOS();
-	void SetROMSystem();
+	void SetROM48k(bool updatePorts = false);
+	void SetROM128k(bool updatePorts = false);
+	void SetROMDOS(bool updatePorts = false);
+	void SetROMSystem(bool updatePorts = false);
 
 	// Service methods
 	void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);

@@ -100,3 +100,18 @@ TEST_F(StringHelper_Test, Trim)
         FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
     }
 }
+
+TEST_F(StringHelper_Test, FormatWithThousandsDelimiter)
+{
+    int64_t original = 123456789012;
+    string reference = "123,456,789,012";
+
+    string result = StringHelper::FormatWithThousandsDelimiter(original);
+
+    EXPECT_EQ(result, reference);
+
+    if (StringHelper::Compare(result, reference) != 0)
+    {
+        FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
+    }
+}

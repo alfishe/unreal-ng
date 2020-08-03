@@ -288,7 +288,7 @@ void Memory::SetROMMode(ROMModeEnum mode)
 /// Set ROM page
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page ROM page number
-void Memory::SetROMPage(uint8_t page)
+void Memory::SetROMPage(uint8_t page, bool updatePorts)
 {
     if (page >= MAX_ROM_PAGES)
     {
@@ -300,12 +300,15 @@ void Memory::SetROMPage(uint8_t page)
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = ROMPageAddress(page);
     _bank_write[0] = TRASH_MEMORY_PAGE;
+
+    if (updatePorts)
+        _context->pPortDecoder->SetROMPage(page);
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank0(uint8_t page)
+void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
 {
     if (page >= MAX_RAM_PAGES)
     {
@@ -351,7 +354,7 @@ void Memory::SetRAMPageToBank2(uint8_t page)
 /// Switch to specified RAM Bank in RAM Page 3
 /// Address space: [0xC000 - 0xFFFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank3(uint8_t page)
+void Memory::SetRAMPageToBank3(uint8_t page, bool updatePorts)
 {
     if (page >= MAX_RAM_PAGES)
     {
@@ -361,6 +364,9 @@ void Memory::SetRAMPageToBank3(uint8_t page)
     }
 
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
+
+    if (updatePorts)
+        _context->pPortDecoder->SetRAMPage(page);
 }
 
 bool Memory::IsBank0ROM()
@@ -452,7 +458,7 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
 
 /// region <Debug methods>
 
-void Memory::SetROM48k()
+void Memory::SetROM48k(bool updatePorts)
 {
     // Set all port values accordingly
     SetROMMode(RM_SOS);
@@ -462,7 +468,7 @@ void Memory::SetROM48k()
     _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
-void Memory::SetROM128k()
+void Memory::SetROM128k(bool updatePorts)
 {
     // Set all port values accordingly
     SetROMMode(RM_128);
@@ -472,7 +478,7 @@ void Memory::SetROM128k()
     _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
-void Memory::SetROMDOS()
+void Memory::SetROMDOS(bool updatePorts)
 {
     // Set all port values accordingly
     SetROMMode(RM_DOS);
@@ -482,7 +488,7 @@ void Memory::SetROMDOS()
     _bank_write[0] = TRASH_MEMORY_PAGE;
 }
 
-void Memory::SetROMSystem()
+void Memory::SetROMSystem(bool updatePorts)
 {
     // Set all port values accordingly
     SetROMMode(RM_SYS);

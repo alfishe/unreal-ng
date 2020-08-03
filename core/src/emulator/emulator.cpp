@@ -352,9 +352,11 @@ std::string Emulator::GetStatistics()
     Memory& memory = *_context->pMemory;
     Z80& z80 = *_context->pCPU->GetZ80();
 
-    std::string cpuState = string(StringHelper::Trim(z80.DumpZ80State()));
+    std::string dump = z80.DumpZ80State();
+    std::string cpuState = string(StringHelper::Trim(dump));
 
     std::string result = StringHelper::Format("  Frame: %d\n", state.frame_counter);
+    result += StringHelper::Format("  CPU cycles: %s\n", StringHelper::FormatWithThousandsDelimiter(z80.cycle_count).c_str());
     result += StringHelper::Format("  Memory:\n    %s\n", memory.DumpMemoryBankInfo().c_str());
     result += StringHelper::Format("  CPU: %s", cpuState.c_str());
 

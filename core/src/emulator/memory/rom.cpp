@@ -32,6 +32,8 @@ ROM::~ROM()
 	LOGDEBUG("ROM::~ROM()");
 }
 
+/// Load single ROM file based on information from config file and information about selected model
+/// \return Result whether ROM file load was successful
 bool ROM::LoadROM()
 {
 	bool result = false;
@@ -160,11 +162,11 @@ bool ROM::LoadROM()
 	else
 	{
 		// Load model specific ROM bundles (single file)
-		wstring wromname = StringHelper::StringToWideString(romname.c_str());
+		//wstring wromname = StringHelper::StringToWideString(romname.c_str());
 		if (!romname.empty())
 		{
-			// Try to load ROM up to 1024KB in size
-			uint16_t loadedBanks = LoadROM(wromname, memory.ROMBase(), 64);
+			// Try to load ROM up to 1024KB (64 pages 16KiB each) in size
+			uint16_t loadedBanks = LoadROM(romname, memory.ROMBase(), MAX_ROM_PAGES);
             _ROMBanksLoaded = loadedBanks;
 
 			result = true;
@@ -259,7 +261,7 @@ bool ROM::LoadROMSet()
 	Memory& memory = *_context->pCPU->GetMemory();
 
 	// BASIC48 (SOS)
-	wstring rompath = StringHelper::StringToWideString(config.sos_rom_path);
+	string rompath = config.sos_rom_path;
 	bool result1 = LoadROM(rompath, memory.base_sos_rom);
 	if (!result1)
 	{
@@ -267,7 +269,7 @@ bool ROM::LoadROMSet()
 	}
 
 	// BASIC128
-	rompath = StringHelper::StringToWideString(config.zx128_rom_path);
+	rompath = config.zx128_rom_path;
 	bool result2 = LoadROM(rompath, memory.base_128_rom);
 	if (!result2)
 	{
@@ -275,7 +277,7 @@ bool ROM::LoadROMSet()
 	}
 
 	// DOS (TR-DOS)
-	rompath = StringHelper::StringToWideString(config.dos_rom_path);
+	rompath = config.dos_rom_path;
 	bool result3 = LoadROM(rompath, memory.base_dos_rom);
 	if (!result3)
 	{
@@ -283,7 +285,7 @@ bool ROM::LoadROMSet()
 	}
 
 	// Shadow (SYS)
-	rompath = StringHelper::StringToWideString(config.sys_rom_path);
+    rompath = config.sys_rom_path;
 	bool result4 = LoadROM(rompath, memory.base_sys_rom);
 	if (!result4)
 	{
@@ -300,7 +302,7 @@ bool ROM::LoadROMSet()
 /// \param bank
 /// \param max_banks Max 16KiB banks to load
 /// \return Number of banks loaded
-uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
+uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 {
 	uint16_t result = 0;
 
@@ -313,12 +315,12 @@ uint16_t ROM::LoadROM(wstring& path, uint8_t* bank, uint16_t max_banks)
 		return result;
 	}
 
-	wstring resolvedPath = FileHelper::NormalizePath(path);
-	if (!FileHelper::FileExists(path))
+	wstring resolvedPath = StringHelper::StringToWideString(path);
+	if (!FileHelper::FileExists(resolvedPath))
 	{
 		// Try to use as relative path if not found using original path
 		wstring executablePath = FileHelper::GetExecutablePath();
-		resolvedPath = FileHelper::PathCombine(executablePath, path);
+		resolvedPath = FileHelper::PathCombine(executablePath, resolvedPath);
 
 		if (!FileHelper::FileExists(resolvedPath))
 		{

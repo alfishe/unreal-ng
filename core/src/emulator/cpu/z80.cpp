@@ -965,10 +965,11 @@ void Z80::DumpCurrentState()
 
 std::string Z80::DumpZ80State()
 {
-    std::string result;
-    result.reserve(2048);
+    static char buffer[512];
 
-    DumpZ80State(result.data(), result.capacity());
+    DumpZ80State(buffer, sizeof(buffer));
+
+    std::string result(buffer);
 
     return result;
 }

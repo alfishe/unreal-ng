@@ -14,4 +14,6 @@ public:
 
 	void Start();
 	void Stop();
+
+	Emulator* GetEmulator();
 };
