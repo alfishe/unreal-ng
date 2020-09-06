@@ -52,7 +52,7 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 # Link all dependencies into static lib
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries -static-libstdc++ pthread iconv)
+    set(common_libraries pthread iconv)
 endif (APPLE)
 
 if (UNIX AND NOT APPLE)
