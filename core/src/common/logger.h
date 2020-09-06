@@ -1,9 +1,13 @@
 #pragma once
 #include "stdafx.h"
 
+#include <fstream>
+#include <iostream>
 #include <ostream>
 #include <stdarg.h>
 #include <string>
+#include <unistd.h>
+#include <fcntl.h>
 
 using namespace std;
 
@@ -33,6 +37,10 @@ class Logger
     /// region <Fields>
 protected:
     static volatile bool g_mute;
+    static int _stdout;
+    static int _stderr;
+    static int _outFile;
+    static int _errFile;
     /// endregion </Fields>
 
 public:

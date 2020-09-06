@@ -312,13 +312,6 @@ void Memory::SetROMPage(uint8_t page, bool updatePorts)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
 {
-    if (page >= MAX_RAM_PAGES)
-    {
-        LOGERROR("Memory::SetRAMPageToBank0 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
-        assert("Invalid RAM page");
-        return;
-    }
-
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
 }
@@ -328,13 +321,6 @@ void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank1(uint8_t page)
 {
-    if (page >= MAX_RAM_PAGES)
-    {
-        LOGERROR("Memory::SetRAMPageToBank1 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
-        assert("Invalid RAM page");
-        return;
-    }
-
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
 }
 
@@ -343,13 +329,6 @@ void Memory::SetRAMPageToBank1(uint8_t page)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank2(uint8_t page)
 {
-    if (page >= MAX_RAM_PAGES)
-    {
-        LOGERROR("Memory::SetRAMPageToBank2 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
-        assert("Invalid RAM page");
-        return;
-    }
-
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
 }
 
@@ -358,13 +337,6 @@ void Memory::SetRAMPageToBank2(uint8_t page)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank3(uint8_t page, bool updatePorts)
 {
-    if (page >= MAX_RAM_PAGES)
-    {
-        LOGERROR("Memory::SetRAMPageToBank3 - invalid RAM page specified: %d. Only %d pages allowed", page, MAX_RAM_PAGES);
-        assert("Invalid RAM page");
-        return;
-    }
-
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
 
     if (updatePorts)

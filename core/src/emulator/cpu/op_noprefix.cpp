@@ -1130,7 +1130,8 @@ Z80OPCODE op_C3(Z80 *cpu) { // jp nnnn
 
 Z80OPCODE op_C4(Z80 *cpu) { // call nz,nnnn
     uint16_t pc = cpu->pc;
-    uint16_t addr = cpu->rd(pc++) + 0x100 * cpu->rd(pc++);
+    uint16_t addr = cpu->rd(pc++);
+    addr = 0x100 * cpu->rd(pc++) + addr;
 
     cpu->memptr = addr;
 

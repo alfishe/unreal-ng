@@ -779,7 +779,7 @@ std::string Screen::DumpFramebufferInfo()
 void Screen::DumpFramebufferInfo(char* buffer, size_t len)
 {
     std::string value = DumpFramebufferInfo();
-    snprintf(buffer, len, value.c_str());
+    snprintf(buffer, len, "%s", value.c_str());
 }
 
 std::string Screen::DumpRasterState()
@@ -800,7 +800,7 @@ std::string Screen::DumpRasterState()
 void Screen::DumpRasterState(char* buffer, size_t len)
 {
     std::string value = DumpFramebufferInfo();
-    snprintf(buffer, len, value.c_str());
+    snprintf(buffer, len, "%s", value.c_str());
 }
 
 #endif // _DEBUG

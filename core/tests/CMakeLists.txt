@@ -98,7 +98,7 @@ endif (UNIX AND NOT APPLE)
 
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries -static-libstdc++ pthread iconv gtest)
+    set(common_libraries pthread iconv gtest)
 endif (APPLE)
 
 target_link_libraries(${PROJECT_NAME} ${common_libraries})

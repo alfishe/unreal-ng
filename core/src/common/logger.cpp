@@ -5,6 +5,10 @@
 /// region <Fields>
 
 volatile bool Logger::g_mute = false;
+int Logger::_stdout = -1;
+int Logger::_stderr = -1;
+int Logger::_outFile = -1;
+int Logger::_errFile = -1;
 
 /// endregion </Fields>
 
@@ -93,7 +97,7 @@ void Logger::OutEnriched(string fmt, va_list args)
 #if defined __GNUC__
     time_t time;
     tm_info = localtime(&time);
-#elif defined __apple__
+#elif defined __APPLE__
     tm_info = localtime(&tv);
 #endif
 
@@ -123,5 +127,5 @@ void Logger::Out(const char* value)
 {
     // If unmuted - pass value to stdout
     if (!g_mute)
-        printf(value);
+        fprintf(stdout, "%s", value);
 }

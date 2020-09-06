@@ -228,7 +228,6 @@ void runAsShell()
 {
     // Create additional pipe to redirect log messages
     //createNamedPipe();
-    Logger::RedirectOutputToFile("unreal_log");
 
     // Share Emulator instance with all shell command handlers
     g_emulator = client.GetEmulator();
@@ -242,8 +241,6 @@ void runAsShell()
 
     shell.Init();
     shell.Run();
-
-    Logger::RestoreOutput();
 }
 
 int main()

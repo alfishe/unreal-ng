@@ -70,8 +70,8 @@ if (UNIX AND NOT APPLE)
 endif (UNIX AND NOT APPLE)
 
 if (APPLE)
-    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries -static-libstdc++ pthread iconv)
+    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)   # Use system-provided libpthread and libiconv
+    set(common_libraries pthread iconv)
 endif (APPLE)
 
 if (WIN32 AND MINGW)
