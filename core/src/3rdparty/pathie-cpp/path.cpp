@@ -927,7 +927,7 @@ Path Path::pwd()
 Path Path::exe()
 {
 #if defined(__linux__)
-  char buf[PATH_MAX];
+    char buf[PATH_MAX];
   ssize_t size = ::readlink("/proc/self/exe", buf, PATH_MAX);
 
   if (size < 0)
@@ -935,42 +935,50 @@ Path Path::exe()
 
   return Path(filename_to_utf8(std::string(buf, size)));
 #elif defined(__APPLE__)
-  char buf[PATH_MAX];
-  uint32_t size = sizeof(buf);
+    uint32_t size = 0;
 
-  if (_NSGetExecutablePath(buf, &size) == 0) {
-      size = strlen(buf);
-      // Might contain symlinks or extra slashes. Shouldn't be an issue though
-      // https://stackoverflow.com/questions/799679/programmatically-retrieving-the-absolute-path-of-an-os-x-command-line-app/1024933#1024933
-      return Path(filename_to_utf8(std::string(buf, size)));
-  }
-  else
-    throw(Pathie::ErrnoError(errno));
+    // Get path length first
+    _NSGetExecutablePath(nullptr, &size);
+    if (size > 0)
+    {
+        std::vector<char> buffer;
+        buffer.reserve(size);
+
+        if (_NSGetExecutablePath(buffer.data(), &size) == 0)
+        {
+            // Might contain symlinks or extra slashes. Shouldn't be an issue though
+            // https://stackoverflow.com/questions/799679/programmatically-retrieving-the-absolute-path-of-an-os-x-command-line-app/1024933#1024933
+            return Path(filename_to_utf8(std::string(buffer.data())));
+        }
+    }
+    else
+        throw(Pathie::ErrnoError(errno));
 #elif defined(BSD)
-  // BSD does not have /proc mounted by default. However, using raw syscalls,
-  // we can figure out what would have been in /proc/curproc/file. See
-  // sysctl(3) for the management info base identifiers that are used here.
-  int mib[4];
-  char buf[PATH_MAX];
-  size_t bufsize = PATH_MAX;
-  mib[0] = CTL_KERN;
-  mib[1] = KERN_PROC;
-  mib[2] = KERN_PROC_PATHNAME;
-  mib[3] = -1; // According to sysctl(3), -1 means the current process.
+    // BSD does not have /proc mounted by default. However, using raw syscalls,
+    // we can figure out what would have been in /proc/curproc/file. See
+    // sysctl(3) for the management info base identifiers that are used here.
+    int mib[4];
+    char buf[PATH_MAX];
+    size_t bufsize = PATH_MAX;
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC;
+    mib[2] = KERN_PROC_PATHNAME;
+    mib[3] = -1; // According to sysctl(3), -1 means the current process.
 
-  if (sysctl(mib, 4, buf, &bufsize, NULL, 0) != 0) // Note this changes `bufsize' to the number of chars copied
-    throw(Pathie::ErrnoError(errno));
+    if (sysctl(mib, 4, buf, &bufsize, NULL, 0) != 0) // Note this changes `bufsize' to the number of chars copied
+        throw(Pathie::ErrnoError(errno));
 
-  return Path(filename_to_utf8(std::string(buf, bufsize - 1))); // Exclude terminating NUL
+    return Path(filename_to_utf8(std::string(buf, bufsize - 1))); // Exclude terminating NUL
 #elif defined(_WIN32)
-  wchar_t buf[MAX_PATH];
-  if (GetModuleFileNameW(NULL, buf, MAX_PATH) == 0) {
-    DWORD err = GetLastError();
-    throw(Pathie::WindowsError(err));
-  }
+    wchar_t buf[MAX_PATH];
+    if (GetModuleFileNameW(NULL, buf, MAX_PATH) == 0)
+    {
+        DWORD err = GetLastError();
+        throw(Pathie::WindowsError(err));
+    }
 
-  std::string str = utf16_to_utf8(buf);
-  return Path(str);
+    std::string str = utf16_to_utf8(buf);
+    return Path(str);
 #else
 #error Unsupported platform.
 #endif
