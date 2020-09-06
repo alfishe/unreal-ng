@@ -63,7 +63,7 @@ void EventQueue::dispose()
     }
 }
 
-int EventQueue::AddObserver(std::string& topic, ObserverCallback callback)
+int EventQueue::AddObserver(const std::string& topic, ObserverCallback callback)
 {
     ObserverDescriptor* observer = new ObserverDescriptor();
     observer->callback = callback;
@@ -88,7 +88,7 @@ int EventQueue::AddObserver(std::string& topic, ObserverCallback callback)
 // ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&TestObservers_ClassMethod_class::ObserverTestMethod);
 //
 // queue.AddObserver(topic, observerInstance, callback);
-int EventQueue::AddObserver(std::string& topic, Observer* instance, ObserverCallbackMethod callback)
+int EventQueue::AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback)
 {
     ObserverDescriptor* observer = new ObserverDescriptor();
     observer->callbackMethod = callback;
@@ -97,14 +97,14 @@ int EventQueue::AddObserver(std::string& topic, Observer* instance, ObserverCall
     return AddObserver(topic, observer);
 }
 
-int EventQueue::AddObserver(std::string& topic, ObserverCallbackFunc callback)
+int EventQueue::AddObserver(const std::string& topic, ObserverCallbackFunc callback)
 {
     ObserverDescriptor* observer = new ObserverDescriptor();
     observer->callbackFunc = callback;
     return AddObserver(topic, observer);
 }
 
-int EventQueue::AddObserver(std::string& topic, ObserverDescriptor* observer)
+int EventQueue::AddObserver(const std::string& topic, ObserverDescriptor* observer)
 {
     // Register Topic (or get TopicID if already registered)
     int result = RegisterTopic(topic);
@@ -131,7 +131,7 @@ int EventQueue::AddObserver(std::string& topic, ObserverDescriptor* observer)
     return result;
 }
 
-void EventQueue::RemoveObserver(std::string& topic, ObserverCallback callback)
+void EventQueue::RemoveObserver(const std::string& topic, ObserverCallback callback)
 {
     int result = ResolveTopic(topic);
 
@@ -159,7 +159,7 @@ void EventQueue::RemoveObserver(std::string& topic, ObserverCallback callback)
     }
 }
 
-void EventQueue::RemoveObserver(std::string& topic, Observer* instance, ObserverCallbackMethod callback)
+void EventQueue::RemoveObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback)
 {
     int result = ResolveTopic(topic);
 
@@ -187,7 +187,7 @@ void EventQueue::RemoveObserver(std::string& topic, Observer* instance, Observer
     }
 }
 
-void EventQueue::RemoveObserver(std::string& topic, ObserverCallbackFunc callback)
+void EventQueue::RemoveObserver(const std::string& topic, ObserverCallbackFunc callback)
 {
     int result = ResolveTopic(topic);
 
@@ -227,7 +227,7 @@ int EventQueue::ResolveTopic(const char* topic)
 }
 
 
-int EventQueue::ResolveTopic(std::string& topic)
+int EventQueue::ResolveTopic(const std::string& topic)
 {
     int result = -1;
 
@@ -250,7 +250,7 @@ int EventQueue::RegisterTopic(const char* topic)
     return result;
 }
 
-int EventQueue::RegisterTopic(std::string& topic)
+int EventQueue::RegisterTopic(const std::string& topic)
 {
     int result = -1;
 

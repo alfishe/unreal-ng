@@ -99,20 +99,20 @@ public:
 
 // Public methods
 public:
-    int AddObserver(std::string& topic, ObserverCallback callback);
-    int AddObserver(std::string& topic, Observer* instance, ObserverCallbackMethod callback);
-    int AddObserver(std::string& topic, ObserverCallbackFunc callback);
-    int AddObserver(std::string& topic, ObserverDescriptor* observer);
+    int AddObserver(const std::string& topic, ObserverCallback callback);
+    int AddObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback);
+    int AddObserver(const std::string& topic, ObserverCallbackFunc callback);
+    int AddObserver(const std::string& topic, ObserverDescriptor* observer);
 
-    void RemoveObserver(std::string& topic, ObserverCallback callback);
-    void RemoveObserver(std::string& topic, Observer* instance, ObserverCallbackMethod callback);
-    void RemoveObserver(std::string& topic, ObserverCallbackFunc callback);
-    void RemoveObserver(std::string& topic, ObserverDescriptor* observer);
+    void RemoveObserver(const std::string& topic, ObserverCallback callback);
+    void RemoveObserver(const std::string& topic, Observer* instance, ObserverCallbackMethod callback);
+    void RemoveObserver(const std::string& topic, ObserverCallbackFunc callback);
+    void RemoveObserver(const std::string& topic, ObserverDescriptor* observer);
 
     int ResolveTopic(const char* topic);
-    int ResolveTopic(std::string& topic);
+    int ResolveTopic(const std::string& topic);
     int RegisterTopic(const char* topic);
-    int RegisterTopic(std::string& topic);
+    int RegisterTopic(const std::string& topic);
     std::string GetTopicByID(int id);
     void ClearTopics();
 
