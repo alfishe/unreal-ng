@@ -21,9 +21,9 @@ constexpr unsigned MAX_TOPICS = 1024;
 
 struct Observer;
 struct Message;
-typedef void (ObserverCallback)(int id, Message* message);
-typedef void (Observer::* ObserverCallbackMethod)(int id, Message* message);
-typedef std::function<void(int id, Message* message)> ObserverCallbackFunc;
+typedef void (ObserverCallback)(int id, Message* message);                      // Classic callback
+typedef void (Observer::* ObserverCallbackMethod)(int id, Message* message);    // Class method callback
+typedef std::function<void(int id, Message* message)> ObserverCallbackFunc;     // For lambda usage
 struct ObserverDescriptor
 {
     ObserverCallback* callback;
@@ -104,7 +104,12 @@ public:
     int AddObserver(std::string& topic, ObserverCallbackFunc callback);
     int AddObserver(std::string& topic, ObserverDescriptor* observer);
 
-	int ResolveTopic(const char* topic);
+    void RemoveObserver(std::string& topic, ObserverCallback callback);
+    void RemoveObserver(std::string& topic, Observer* instance, ObserverCallbackMethod callback);
+    void RemoveObserver(std::string& topic, ObserverCallbackFunc callback);
+    void RemoveObserver(std::string& topic, ObserverDescriptor* observer);
+
+    int ResolveTopic(const char* topic);
     int ResolveTopic(std::string& topic);
     int RegisterTopic(const char* topic);
     int RegisterTopic(std::string& topic);

@@ -76,20 +76,6 @@ inline void erase_entry_if_empty(T& container, const Key& key)
     }
 }
 
-// TODO: Totally untested!
-// std::vector<int> some_vector;
-// for_each<int>(some_vector, [&](int const & func) { action(); });
-template <typename C, class T, typename Function>
-inline void for_each(C& container, Function function)
-{
-    auto begin = container.begin();
-    auto end = container.end();
-
-    for_each(begin, end, [&](T const & func)
-    {
-        func();
-    });
-}
 } // End of namespace mc
 
 #endif //MESSAGE_CENTER_COLLECTIONHELPER_H
