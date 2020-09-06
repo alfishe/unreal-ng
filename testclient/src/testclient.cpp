@@ -217,13 +217,15 @@ void createNamedPipe()
 
 /// endregion </Platform-dependent handlers>
 
-int main()
+void run()
 {
-    std::cout << "Unreal Speccy NG Emulator\n";
+    client.GetEmulator()->Init();
 
-    // Register signal handler
-    registerSignalHandler();
+    client.Start();
+}
 
+void runAsShell()
+{
     // Create additional pipe to redirect log messages
     //createNamedPipe();
     Logger::RedirectOutputToFile("unreal_log");
@@ -232,14 +234,25 @@ int main()
     g_emulator = client.GetEmulator();
 
     std::thread t([]()
-    {
-        cout << "Client thread started" << endl;
+                  {
+                      cout << "Client thread started" << endl;
 
-        client.Start();
-    });
+                      client.Start();
+                  });
 
     shell.Init();
     shell.Run();
 
     Logger::RestoreOutput();
+}
+
+int main()
+{
+    std::cout << "Unreal Speccy NG Emulator\n";
+
+    // Register signal handler
+    registerSignalHandler();
+
+    run();
+    // runAsShell();
 }

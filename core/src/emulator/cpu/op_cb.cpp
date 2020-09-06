@@ -1321,7 +1321,7 @@ Z80OPCODE op_CB(Z80 *cpu)
     // Record used prefix
     if (cpu->prefix > 0)
     {
-        cpu->prefix = cpu->prefix << 8 + opcode;
+        cpu->prefix = (cpu->prefix << 8) + opcode;
     }
     else
     {

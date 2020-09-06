@@ -152,6 +152,12 @@ bool ROM::LoadROM()
 			memory.base_sos_rom = memory.ROMPageAddress(3);
 			romname = config.phoenix_rom_path;
 			break;
+	    case MM_GMX:
+            assert("Not implemented");
+            break;
+	    default:
+	        break;
+
 	};
 
 	if (config.use_romset)
@@ -315,11 +321,11 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		return result;
 	}
 
-	wstring resolvedPath = StringHelper::StringToWideString(path);
+	string resolvedPath = FileHelper::NormalizePath(path);
 	if (!FileHelper::FileExists(resolvedPath))
 	{
 		// Try to use as relative path if not found using original path
-		wstring executablePath = FileHelper::GetExecutablePath();
+		string executablePath = FileHelper::GetExecutablePath();
 		resolvedPath = FileHelper::PathCombine(executablePath, resolvedPath);
 
 		if (!FileHelper::FileExists(resolvedPath))
@@ -329,8 +335,7 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		}
 	}
 
-	string normalizedPath = FileHelper::PrintablePath(resolvedPath);
-	FILE* romfile = fopen(normalizedPath.c_str(), "rb");
+	FILE* romfile = fopen(resolvedPath.c_str(), "rb");
 	if (romfile)
 	{
 		size_t size = fread(bank, 1, max_banks * PAGE_SIZE, romfile);

@@ -49,4 +49,15 @@ endif (CMAKE_BUILD_TYPE MATCHES Debug)
 # 'stdafx.h' is our precompiled header
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 
+# Link all dependencies into static lib
+if (APPLE)
+    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
+    set(common_libraries -static-libstdc++ pthread iconv)
+endif (APPLE)
+
+if (UNIX AND NOT APPLE)
+    set(common_libraries -static-libstdc++ pthread)
+endif (UNIX AND NOT APPLE)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 

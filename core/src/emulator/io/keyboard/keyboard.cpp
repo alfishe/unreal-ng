@@ -95,7 +95,7 @@ void Keyboard::PressKey(ZXKeysEnum key)
     uint8_t keyBits = keyDescriptor.match;
 
     // Resetting the bit that corresponds to ZX-Spectrum key in half-row state byte
-    _keyboardMatrixState[matrixIndex] & keyBits;
+    _keyboardMatrixState[matrixIndex] &= keyBits;
 }
 
 void Keyboard::ReleaseKey(ZXKeysEnum key)
@@ -105,7 +105,7 @@ void Keyboard::ReleaseKey(ZXKeysEnum key)
     uint8_t keyBits = ~keyDescriptor.match;
 
     // Setting the bit that corresponds to ZX-Spectrum key in half-row state byte
-    _keyboardMatrixState[matrixIndex] | keyBits;
+    _keyboardMatrixState[matrixIndex] |= keyBits;
 }
 
 void Keyboard::TypeSymbol(char symbol)

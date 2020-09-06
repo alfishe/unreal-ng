@@ -133,13 +133,13 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
 
 # Link with following libraries
 if (APPLE)
-    set(common_libraries pthread benchmark benchmark_main)
+    set(common_libraries pthread iconv benchmark benchmark_main)
 
     target_link_libraries(${PROJECT_NAME} ${common_libraries})
 endif (APPLE)
 
 if (UNIX AND NOT APPLE)
-    set(common_libraries stdc++ stdc++fs pthread benchmark benchmark_main)
+    set(common_libraries stdc++ pthread benchmark benchmark_main)
 
     target_link_libraries(${PROJECT_NAME} ${common_libraries})
 endif (UNIX AND NOT APPLE)

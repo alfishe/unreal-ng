@@ -38,6 +38,10 @@ public:
     {
         std::string result;
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat-security"
+
         // Pre-calculate resulting buffer size (adding +1 byte for trailing '\0')
         size_t size = snprintf(nullptr, 0, format.c_str(), args ...) + 1;
         if (size > 0)
@@ -48,6 +52,8 @@ public:
             // Create output string (without trailing '\0')
             result = std::string(buf.get(),buf.get() + size - 1);
         }
+
+#pragma clang diagnostic pop
 
         return result;
     }

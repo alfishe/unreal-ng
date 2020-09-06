@@ -291,7 +291,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
     }
 
     // FD prefix - IY bit operations
-    if (op1 = 0xFD)
+    if (op1 == 0xFD)
     {
         cpu->prefix = 0x00FD;
 

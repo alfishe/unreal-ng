@@ -66,13 +66,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
 # All standard libraries required
 if (UNIX AND NOT APPLE)
     set(CMAKE_CXX_FLAGS " -static-libstdc++")
-    set(common_libraries -static-libstdc++ stdc++fs pthread)
+    set(common_libraries -static-libstdc++ pthread)
 endif (UNIX AND NOT APPLE)
 
 if (APPLE)
-    target_link_directories(${PROJECT_NAME} PRIVATE /usr/local/lib)
-    set(CMAKE_CXX_FLAGS " -static-libstdc++")
-    set(common_libraries -static-libstdc++ pthread)
+    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
+    set(common_libraries -static-libstdc++ pthread iconv)
 endif (APPLE)
 
 if (WIN32 AND MINGW)
@@ -87,7 +86,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 
 
-# Copy default config file to binary folder after successfull compilation
+# Copy default config file to binary folder after successful compilation
 SET (CONFIG_FILE ${DATA_PATH}/configs/spectrum128/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
 message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")

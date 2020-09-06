@@ -17,6 +17,7 @@ protected:
 
 	volatile bool _isRunning = false;
 	volatile bool _stopRequested = false;
+	volatile bool _pauseRequested = false;
 
     GIFAnimationHelper gifAnimationHelper;
 
@@ -27,6 +28,9 @@ public:
 
 	void Run(volatile bool& exit);
 	void Stop();
+
+	void Pause();
+	void Resume();
 
 protected:
 	void RunFrame();

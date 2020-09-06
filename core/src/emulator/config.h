@@ -50,7 +50,7 @@ private:
 
 protected:
 	EmulatorContext* _context;
-	wstring _configFilePath;
+	string _configFilePath;
 
 public:
 	static const char* GetDefaultConfig();
@@ -61,11 +61,11 @@ public:
 	virtual ~Config();
 
 public:
-	wstring GetScreenshotsFolder();
+	string GetScreenshotsFolder();
 
 public:
 	[[nodiscard]] bool LoadConfig();
-	[[nodiscard]] bool LoadConfig(wstring& filename);
+	[[nodiscard]] bool LoadConfig(string& filename);
 	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);

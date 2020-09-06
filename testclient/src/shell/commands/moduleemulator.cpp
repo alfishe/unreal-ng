@@ -61,7 +61,6 @@ std::string Emulator_Resume_Cmd::run(std::vector<std::string> args)
 {
     if (g_emulator->IsPaused())
     {
-
         g_emulator->Resume();
 
         _result = "Resumed";
@@ -78,7 +77,7 @@ std::string Emulator_Resume_Cmd::run(std::vector<std::string> args)
 /// region <Stop>
 std::string Emulator_Stop_Cmd::run(std::vector<std::string> args)
 {
-    if (g_emulator->IsRunning())
+    if (g_emulator->IsRunning() || g_emulator->IsPaused())
     {
         g_emulator->Stop();
 
@@ -88,7 +87,6 @@ std::string Emulator_Stop_Cmd::run(std::vector<std::string> args)
     {
         _result = "Already stopped / not started";
     }
-
 
     return _result;
 }

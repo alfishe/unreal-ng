@@ -41,6 +41,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 	}
 
 	_stopRequested = false;
+	_pauseRequested = false;
 	_isRunning = true;
 
 	/// region <Debug>
@@ -54,6 +55,21 @@ void MainLoop::Run(volatile bool& stopRequested)
 	while (!stopRequested && !_stopRequested)
 	{
 		unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+
+
+		/// region <Handle Pause>
+		if (_pauseRequested)
+        {
+		    LOGINFO("Pause requested");
+
+		    while (_pauseRequested)
+            {
+		        sleep_ms(20);
+            }
+
+		    continue;
+        }
+		/// endregion </Handle Pause>
 
 		LOGINFO("Frame recalculation time: %d us", duration1);
 		sleep_us(15000U - std::min(duration1, 15000U));
@@ -70,6 +86,16 @@ void MainLoop::Run(volatile bool& stopRequested)
 void MainLoop::Stop()
 {
     _stopRequested = true;
+}
+
+void MainLoop::Pause()
+{
+    _pauseRequested = true;
+}
+
+void MainLoop::Resume()
+{
+    _pauseRequested = false;
 }
 
 void MainLoop::RunFrame()
@@ -112,7 +138,7 @@ void MainLoop::RunFrame()
     }
 	i++;
 
-    if (i >= 200)
+    if (i >= 2000)
     {
         gifAnimationHelper.StopAnimation();
 

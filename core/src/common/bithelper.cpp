@@ -14,15 +14,18 @@ uint8_t BitHelper::GetFirstSetBitPosition(uint8_t value)
     constexpr uint8_t valueSizeInBits = sizeof(value) * 8;
 
     int i = 0;
-    while (i < valueSizeInBits && value != 0)
+    if (value != 0)
     {
-        if (value & 0x01)
+        while (i < valueSizeInBits)
         {
-            result = i;
-            break;
-        }
+            if (value & 0x01)
+            {
+                result = i;
+                break;
+            }
 
-        value >>= 1;
+            value >>= 1;
+        }
     }
 
     return result;
@@ -38,15 +41,18 @@ uint8_t BitHelper::GetFirstSetBitPosition(uint16_t value)
     constexpr uint8_t valueSizeInBits = sizeof(value) * 8;
 
     int i = 0;
-    while (i < valueSizeInBits && value != 0)
+    if (value != 0)
     {
-        if (value & 0x01)
+        while (i < valueSizeInBits)
         {
-            result = i;
-            break;
-        }
+            if (value & 0x01)
+            {
+                result = i;
+                break;
+            }
 
-        value >>= 1;
+            value >>= 1;
+        }
     }
 
     return result;
@@ -62,15 +68,18 @@ uint8_t BitHelper::GetLastSetBitPosition(uint8_t value)
     constexpr uint8_t valueSizeInBits = sizeof(value) * 8;
 
     int i = 0;
-    while (i < valueSizeInBits && value != 0)
+    if (value != 0)
     {
-        if (value & 0x01)
+        while (i < valueSizeInBits)
         {
-            result = valueSizeInBits - i;
-            break;
-        }
+            if (value & 0x01)
+            {
+                result = valueSizeInBits - i;
+                break;
+            }
 
-        value <<= 1;
+            value <<= 1;
+        }
     }
 
     return result;
@@ -86,15 +95,18 @@ uint8_t BitHelper::GetLastSetBitPosition(uint16_t value)
     constexpr uint8_t valueSizeInBits = sizeof(value) * 8;
 
     int i = 0;
-    while (i < valueSizeInBits && value != 0)
+    if (value != 0)
     {
-        if (value & 0x01)
+        while (i < valueSizeInBits)
         {
-            result = valueSizeInBits - i;
-            break;
-        }
+            if (value & 0x01)
+            {
+                result = valueSizeInBits - i;
+                break;
+            }
 
-        value <<= 1;
+            value <<= 1;
+        }
     }
 
     return result;

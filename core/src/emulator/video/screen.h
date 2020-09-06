@@ -331,16 +331,19 @@ public:
 	};
 
 	const uint32_t cb[2][4] =
-	{
+        {
+            {
 		col_b(0),
 		col_b(3),
 		col_b(5),
-		col_b(7),
-
+                col_b(7)
+            },
+            {
 		col_b(0),
 		col_b(3),
 		col_b(4),
 		col_b(7)
+            }
 	};
 
 protected:

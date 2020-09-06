@@ -81,25 +81,24 @@ target_link_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/goog
 
 # All standard libraries required
 if (WIN32 AND MSVC)
-    set(common_libraries stdc++ stdc++fs gtest)
+    set(common_libraries stdc++ iconv gtest)
 endif (WIN32 AND MSVC)
 
 if (WIN32 AND MINGW)
     # Link all as static
-    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
 
     set(common_libraries shlwapi)
 endif (WIN32 AND MINGW)
 
 if (UNIX AND NOT APPLE)
     set(CMAKE_CXX_FLAGS " -static-libstdc++")
-    set(common_libraries -static-libstdc++ stdc++fs pthread gtest)
+    set(common_libraries -static-libstdc++ pthread gtest)
 endif (UNIX AND NOT APPLE)
 
 if (APPLE)
-    target_link_directories(${PROJECT_NAME} PRIVATE /usr/local/lib)
-    set(CMAKE_CXX_FLAGS " -static-libstdc++")
-    set(common_libraries -static-libstdc++ stdc++fs pthread gtest)
+    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
+    set(common_libraries -static-libstdc++ pthread iconv gtest)
 endif (APPLE)
 
 target_link_libraries(${PROJECT_NAME} ${common_libraries})

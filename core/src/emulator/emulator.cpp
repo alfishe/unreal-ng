@@ -240,19 +240,20 @@ void Emulator::Start()
 
 void Emulator::Pause()
 {
-	_stopRequested = true;
+    _isPaused = true;
+    _isRunning = false;
 
-	_isPaused = true;
-	_isRunning = false;
+    _mainloop->Pause();
 }
 
 void Emulator::Resume()
 {
 	_stopRequested = false;
 	_isPaused = false;
-	_isRunning = false;
 
-	_mainloop->Run(_stopRequested);
+	_mainloop->Resume();
+
+	_isRunning = false;
 }
 
 void Emulator::Stop()
@@ -290,6 +291,9 @@ void Emulator::RunNCPUCycles(unsigned cycles)
 	for (unsigned i = 0; i < cycles; i++)
 	{
 		RunSingleCPUCycle();
+
+		if (_stopRequested)
+		    break;
 	}
 }
 

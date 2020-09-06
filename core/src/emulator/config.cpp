@@ -46,10 +46,10 @@ const char* Config::GetDefaultConfig()
 	return "unreal.ini";
 }
 
-wstring Config::GetScreenshotsFolder()
+string Config::GetScreenshotsFolder()
 {
-	static wstring exePath = FileHelper::GetExecutablePath();
-	static wstring screenshotsPath = FileHelper::PathCombine(exePath, "/screenshots");
+	static string exePath = FileHelper::GetExecutablePath();
+	static string screenshotsPath = FileHelper::PathCombine(exePath, "/screenshots");
 
 	return screenshotsPath;
 }
@@ -59,10 +59,10 @@ bool Config::LoadConfig()
 	bool result = false;
 
 	// Use 'unreal.ini' file located in the same folder as executable by default
-	wstring path = FileHelper::GetExecutablePath();
+	string path = FileHelper::GetExecutablePath();
 	if (!path.empty())
 	{
-		wstring configPath = FileHelper::PathCombine(path, GetDefaultConfig());
+		string configPath = FileHelper::PathCombine(path, GetDefaultConfig());
 
 		if (LoadConfig(configPath))
 		{
@@ -82,7 +82,7 @@ bool Config::LoadConfig()
 	return result;
 }
 
-bool Config::LoadConfig(wstring& filename)
+bool Config::LoadConfig(string& filename)
 {
 	bool result = false;
 
@@ -105,7 +105,7 @@ bool Config::LoadConfig(wstring& filename)
 	inimanager.SetUnicode();
 
 	// Load and parse config file (internally within SimpleINI)
-	SI_Error rc = inimanager.LoadFile(StringHelper::WideStringToString(_configFilePath).c_str());
+	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
 	if (rc == SI_OK)
 	{
 		LOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters

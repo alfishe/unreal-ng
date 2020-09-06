@@ -5,12 +5,21 @@
 #include "common/stringhelper.h"
 #include <algorithm>
 
+char FileHelper::GetPathSeparator()
+{
+#ifdef _WIN32
+    return '\\';
+#else
+    return '/';
+#endif
+}
+
 //
 // Returns path for executable file
 //
-wstring FileHelper::GetExecutablePath()
+std::string FileHelper::GetExecutablePath()
 {
-	wstring result = filesystem::current_path().wstring();
+	string result;
 
 	#if defined _WIN32
 		wchar_t buffer[MAX_PATH] = { L'\0' };
@@ -22,7 +31,7 @@ wstring FileHelper::GetExecutablePath()
 		char buffer[PATH_MAX];
 		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
 		buffer[count] = '\0';
-		result = StringHelper::StringToWideString(buffer);
+		result = buffer;
     #endif
 
     #ifdef __APPLE__
@@ -31,83 +40,83 @@ wstring FileHelper::GetExecutablePath()
         if (_NSGetExecutablePath(buffer, &size) == 0)
         {
 			buffer[size] = '\0';
-            result = StringHelper::StringToWideString(buffer);
+            result = buffer;
         }
     #endif
 
-	filesystem::path basePath = filesystem::canonical(result);
-	result = basePath.parent_path().wstring();
+    Pathie::Path executablePath(result);
+    result = executablePath.parent().str();
+
+
+
+    Pathie::Path exepath = Pathie::Path::exe();
+    result = exepath.parent().str();
 
 	return result;
 }
 
-wstring FileHelper::NormalizePath(wstring& path, wchar_t separator)
+string FileHelper::NormalizePath(string& path, char separator)
 {
 	if (separator == L'\0')
-		separator = filesystem::path::preferred_separator;
+		separator = GetPathSeparator();
 
-	wstring result = path;
+	string result = path;
 
 	// Important note: std::filesystem::path::make_preferred() does not convert windows separators to linux preferred so we have to care about that (if configs are created with backslashes)
-	replace(result.begin(), result.end(), L'/', separator);
-	replace(result.begin(), result.end(), L'\\', separator);
+	replace(result.begin(), result.end(), '/', separator);
+	replace(result.begin(), result.end(), '\\', separator);
 
 	return result;
 }
 
-wstring FileHelper::NormalizePath(wstring& path)
+string FileHelper::NormalizePath(string& path)
 {
-	static wchar_t preferred_separator = filesystem::path::preferred_separator;
+	static char systemSeparator = GetPathSeparator();
 
-	wstring result = NormalizePath(path, preferred_separator);
+	string result = NormalizePath(path, systemSeparator);
 
 	return result;
 }
 
-wstring FileHelper::PathCombine(wstring& path1, wstring& path2)
+string FileHelper::PathCombine(string& path1, string& path2)
 {
-	filesystem::path basePath = path1;
-	basePath = filesystem::weakly_canonical(basePath);	// Remove trailing path separator if exists
-	basePath /= path2;									// Re-add trailing path separator
+    Pathie::Path basePath = Pathie::Path::from_native(path1);
+    basePath.expand();
 
-	wstring result = basePath.wstring();
+    basePath /= path2;
+
+	string result = basePath.str();
 	result = NormalizePath(result);
 
 	return result;
 }
 
-wstring FileHelper::PathCombine(wstring& path1, const char* path2)
+string FileHelper::PathCombine(string& path1, const char* path2)
 {
-	string strPath2 = path2;
-	wstring pathPart2 = StringHelper::StringToWideString(strPath2);
+	string pathPart2 = path2;
 	return PathCombine(path1, pathPart2);
 }
 
-wstring FileHelper::PathCombine(wstring& path1, const wchar_t* path2)
-{
-	wstring pathPart2 = path2;
-	return PathCombine(path1, pathPart2);
-}
-
-bool FileHelper::IsFile(wstring& path)
+bool FileHelper::IsFile(string& path)
 {
 	bool result = FileExists(path);
 
 	return result;
 }
 
-bool FileHelper::IsFolder(wstring& path)
+bool FileHelper::IsFolder(string& path)
 {
 	bool result = FolderExists(path);
 
 	return result;
 }
 
-bool FileHelper::FileExists(wstring& path)
+bool FileHelper::FileExists(string& path)
 {
 	bool result = false;
+	Pathie::Path basePath(path);
 
-	if (filesystem::exists(path) && filesystem::is_regular_file(path))
+	if (basePath.exists() && basePath.is_file())
 	{
 		result = true;
 	}
@@ -115,11 +124,12 @@ bool FileHelper::FileExists(wstring& path)
 	return result;
 }
 
-bool FileHelper::FolderExists(wstring& path)
+bool FileHelper::FolderExists(string& path)
 {
 	bool result = false;
+    Pathie::Path basePath(path);
 
-	if (filesystem::exists(path) && filesystem::is_directory(path))
+	if (basePath.exists() && basePath.is_directory())
 	{
 		result = true;
 	}
@@ -127,19 +137,11 @@ bool FileHelper::FolderExists(wstring& path)
 	return result;
 }
 
-string FileHelper::PrintablePath(wstring wpath)
+string FileHelper::PrintablePath(string path)
 {
-	string result = StringHelper::WideStringToString(wpath);
+	string result = path;
 
 	return result;
-}
-
-bool FileHelper::SaveBufferToFile(wstring& filePath, uint8_t* buffer, size_t size)
-{
-    // Important! Not a unicode path! Rework needed to support
-    string path = StringHelper::WideStringToString(filePath);
-
-    return FileHelper::SaveBufferToFile(path, buffer, size);
 }
 
 bool FileHelper::SaveBufferToFile(string& filePath, uint8_t* buffer, size_t size)

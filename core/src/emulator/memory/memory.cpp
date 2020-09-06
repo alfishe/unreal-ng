@@ -279,6 +279,8 @@ void Memory::SetROMMode(ROMModeEnum mode)
 				if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
 					state.p7FFD &= ~0x10;
 				break;
+		    default:
+		        break;
 		}
 	}
 

@@ -8,29 +8,28 @@
 #include <string>
 
 using namespace std;
-using namespace std::filesystem;
 using namespace std::string_literals; // Enables s-suffix for std::string literals
 
 
 class FileHelper
 {
 public:
-	static wstring GetExecutablePath();
-	static wstring NormalizePath(wstring& path, wchar_t separator);
-	static wstring NormalizePath(wstring& path);
-	static wstring PathCombine(wstring& path1, wstring& path2);
-	static wstring PathCombine(wstring& path1, const char* path2);
-	static wstring PathCombine(wstring& path1, const wchar_t* path2);
+    static char GetPathSeparator();
 
-	static bool IsFile(wstring& path);
-	static bool IsFolder(wstring& path);
-	static bool FileExists(wstring& path);
-	static bool FolderExists(wstring& path);
+	static string GetExecutablePath();
+	static string NormalizePath(string& path, char separator);
+	static string NormalizePath(string& path);
+	static string PathCombine(string& path1, string& path2);
+	static string PathCombine(string& path1, const char* path2);
 
-	static string PrintablePath(wstring wpath);
+	static bool IsFile(string& path);
+	static bool IsFolder(string& path);
+	static bool FileExists(string& path);
+	static bool FolderExists(string& path);
 
-	static bool SaveBufferToFile(wstring& filePath, uint8_t* buffer, size_t size);
-    static bool SaveBufferToFile(string& filePath, uint8_t* buffer, size_t size);
+	static string PrintablePath(string wpath);
+
+	static bool SaveBufferToFile(string& filePath, uint8_t* buffer, size_t size);
 
 private:
 	FileHelper();	// Disable direct object creation by making constructor private. Only static method calls allowed.
