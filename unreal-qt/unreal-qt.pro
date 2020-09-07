@@ -46,7 +46,8 @@ DISTFILES +=
 
 win32:CONFIG(release, debug|release): LIBS += -L$$PWD/../cmake-build-debug/core-static/src/release/ -lcore
 else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/../cmake-build-debug/core-static/src/debug/ -lcore
-else:unix: LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore -liconv
+else:unix:!macx: LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore
+else:macx: LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore -liconv
 
 INCLUDEPATH += $$PWD/../core/src
 DEPENDPATH += $$PWD/../core/src
