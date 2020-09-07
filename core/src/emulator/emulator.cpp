@@ -157,7 +157,7 @@ void Emulator::Release()
 {
 	// Stop and release MessageCenter
 	// Assuming that only single Emulator instance exists
-	MessageCenter::DisposeDefaultMessageCenter();
+	//MessageCenter::DisposeDefaultMessageCenter();
 
 	// Stop and release main loop
 	if (_mainloop != nullptr)
@@ -289,10 +289,11 @@ void Emulator::Stop()
 	// Fully shut down video / sound
 
 	// If executed in async thread - wait for thread finish and destroy it
-	if (_asyncThread)
+	if (_asyncThread && _asyncThread->joinable())
     {
 	    _asyncThread->join();
 	    delete _asyncThread;
+	    _asyncThread = nullptr;
     }
 }
 
