@@ -61,8 +61,15 @@ else:unix: PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/libcore.a
 
 unix:!macx {
     CONFIG_FILE = $$PWD/../data/configs/spectrum128/unreal.ini
+    ROM_PATH = $$PWD/../data/rom/
 
-    QMAKE_POST_LINK += $$quote(cp $$CONFIG_FILE $$OUT_PWD$$escape_expand(\n\t))
+    COPY_CONFIG_COMMAND = $$quote(cp $$CONFIG_FILE $$OUT_PWD$$escape_expand(\n\t))
+    COPY_ROM_COMMAND = $$quote(cp -R $$ROM_PATH $$OUT_PWD$$/rom/$$escape_expand(\n\t))
+    message($$COPY_CONFIG_COMMAND)
+    message($$COPY_ROM_COMMAND)
+
+    QMAKE_POST_LINK += && $$COPY_CONFIG_COMMAND
+    QMAKE_POST_LINK += && $$COPY_ROM_COMMAND
 }
 
 macx: {
