@@ -133,7 +133,7 @@ void CPU::Reset()
 {
 	static MessageCenter& messageCenter = *_messageCenter;
 	static int topicID = messageCenter.RegisterTopic("CPU_RESET");
-	messageCenter.Post(topicID, (void*)"CPU reset started");
+	messageCenter.Post(topicID, new SimpleTextPayload("CPU reset started"));
 
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
 	_mode = static_cast<ROMModeEnum>(_config->reset_rom);
@@ -278,7 +278,7 @@ void CPU::Reset()
     _state->frame_counter = 0;
 	_state->t_states = 0;
 
-	messageCenter.Post(topicID, (void*)"CPU reset finished");
+	messageCenter.Post(topicID, new SimpleTextPayload("CPU reset finished"));
 }
 
 //

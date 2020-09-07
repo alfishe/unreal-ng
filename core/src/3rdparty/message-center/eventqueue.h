@@ -16,8 +16,14 @@
 #include <string>
 #include <vector>
 
+/// region <Constants>
+
 // MAX_TOPICS - By default we're allocating descriptor table for 1024 topics
 constexpr unsigned MAX_TOPICS = 1024;
+
+/// endregion </Constants>
+
+/// region <Types>
 
 struct Observer;
 struct Message;
@@ -50,21 +56,51 @@ typedef std::vector<ObserverDescriptor*> ObserversVector;
 typedef ObserversVector* ObserverVectorPtr;
 typedef std::map<int, ObserverVectorPtr> TopicObserversMap;
 
+// Base class for payload objects
+class MessagePayload
+{
+public:
+    MessagePayload() {};
+    virtual ~MessagePayload() {};
+};
+
+
 // Message types
 struct Message
 {
 public:
     unsigned tid;
-    void* obj;
+    MessagePayload* obj;
+    bool cleanupPayload;
 
-    Message(unsigned tid, void* obj = nullptr)
+    Message(unsigned tid, MessagePayload* obj = nullptr, bool cleanupPayload = true)
     {
         this->tid = tid;
         this->obj = obj;
+        this->cleanupPayload = cleanupPayload;
     }
 };
 typedef std::deque<Message*> MessageQueue;
 
+/// endregion </Types>
+
+/// region <Predefined payload types>
+
+/// Allows to pass text string in MessageCenter message
+/// Example: messageCenter.Post(topic, new SimpleTextPayload("my text message");
+class SimpleTextPayload : public MessagePayload
+{
+protected:
+    std::string _payloadText;
+
+public:
+    SimpleTextPayload(std::string& text) : MessagePayload() { _payloadText = std::string(text); };
+    SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
+    ~SimpleTextPayload() {};
+};
+
+
+/// endregion </Predefined payload types>
 class EventQueue
 {
 // Synchronization primitives
@@ -116,8 +152,8 @@ public:
     std::string GetTopicByID(int id);
     void ClearTopics();
 
-    void Post(int id, void* obj = nullptr);
-    void Post(std::string topic, void* obj = nullptr);
+    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
+    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
 
 protected:
     Message* GetQueueMessage();

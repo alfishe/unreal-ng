@@ -302,14 +302,14 @@ void EventQueue::ClearTopics()
     m_topicMax = 0;
 }
 
-void EventQueue::Post(int id, void* obj)
+void EventQueue::Post(int id, MessagePayload* obj, bool autoCleanupPayload)
 {
     if (id >= 0)
     {
         // Lock parallel threads to access (unique_lock can be unlocked arbitrarily)
         std::unique_lock<std::mutex> lock(m_mutexMessages);
 
-        Message* message = new Message(id, obj);
+        Message* message = new Message(id, obj, autoCleanupPayload);
         m_messageQueue.push_back(message);
         lock.unlock();
 
@@ -317,10 +317,10 @@ void EventQueue::Post(int id, void* obj)
     }
 }
 
-void EventQueue::Post(std::string topic, void* obj)
+void EventQueue::Post(std::string topic, MessagePayload* obj, bool autoCleanupPayload)
 {
     int id = ResolveTopic(topic);
-    Post(id, obj);
+    Post(id, obj, autoCleanupPayload);
 }
 
 // Lookup for observer list for topic with <id>
@@ -378,6 +378,17 @@ void EventQueue::Dispatch(int id, Message* message)
                 (it->callbackFunc)(id, message);
             }
         }
+    }
+
+    // Cleanup message when delivered
+    if (message)
+    {
+        if (message->cleanupPayload && message->obj)
+        {
+            delete message->obj;
+        }
+
+        delete message;
     }
 }
 
