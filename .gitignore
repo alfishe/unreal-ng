@@ -13,6 +13,9 @@
 **/CMakeFiles
 **/[Cc][Mm]ake-[Bb]uild*
 
+# QT build folders
+**/[Bb]uild-*
+
 # MSTest test Results
 **/[Tt]est[Rr]esult*
 **/[Bb]uild[Ll]og.*
