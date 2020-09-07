@@ -6,14 +6,22 @@
 
 /// region <Constructors / Destructors>
 
-DebugManager::DebugManager()
+DebugManager::DebugManager(EmulatorContext* context)
 {
+    _context = context;
 
+    _breakpoints = new BreakpointManager(context);
 }
 
 DebugManager::~DebugManager()
 {
+    if (_breakpoints)
+    {
+        delete _breakpoints;
+        _breakpoints = nullptr;
+    }
 
+    _context = nullptr;
 }
 
 /// endregion </Constructors / Destructors>

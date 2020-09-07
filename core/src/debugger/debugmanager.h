@@ -1,50 +1,31 @@
 #pragma once
-
 #include "stdafx.h"
 
+#include "emulatorcontext.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include <map>
-
-/// region <Structures>
-
-///
-/// Type of breakpoint. Types can be combined as a bitmask
-///
-enum BreakpointTypeEnum : uint8_t
-{
-    BRK_NONE = 0x00,
-    BRK_EXECUTE = 0x01,
-    BRK_READ = 0x02,
-    BRK_WRITE = 0x04,
-    BRK_IO_IN = 0x08,
-    BRK_IO_OUT = 0x10
-};
-
-///
-/// Descriptor for a single breakpoint
-///
-struct BreakpointDescriptor
-{
-public:
-    BreakpointTypeEnum type = BRK_NONE;
-    uint16_t address = 0x0000;
-    bool isActive = false;
-};
-
-/// endregion </Structures>
 
 class DebugManager
 {
     /// region <Fields>
 protected:
-    std::map<uint16_t, BreakpointDescriptor> _breakpoints;
+    EmulatorContext* _context;
+    BreakpointManager* _breakpoints;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
 public:
-    DebugManager();
+    DebugManager() = delete;        // Disable default constructor. C++ 11 feature
+    DebugManager(EmulatorContext* context);
     virtual ~DebugManager();
 
     /// endregion </Constructors / Destructors>
+
+    /// region <CPU registers>
+    /// endregion <CPU registers>
+
+    /// region <Memory access>
+    /// endregion </Memory access>x
 
     /// region <Breakpoint management>
 public:
