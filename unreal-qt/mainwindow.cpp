@@ -2,7 +2,9 @@
 #include "ui_mainwindow.h"
 
 #include <stdio.h>
-#include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QCloseEvent>
+#include <QDebug>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -23,10 +25,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
 
-    QVBoxLayout* layout = new QVBoxLayout;
-    layout->addWidget(deviceScreen);
+    QHBoxLayout* layout = new QHBoxLayout;
+    layout->addWidget(deviceScreen, Qt::AlignHCenter);
     contentFrame->setLayout(layout);
-    deviceScreen->setSizePolicy(contentFrame->sizePolicy());
+    QSizePolicy dp;
+    dp.setHorizontalPolicy(QSizePolicy::Expanding);
+    dp.setVerticalPolicy(QSizePolicy::Expanding);
+    deviceScreen->setSizePolicy(dp);
+
+    // Center device screen within content frame
+    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
     // Connect button signal to appropriate slot
     connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
@@ -47,6 +55,43 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+void MainWindow::showEvent(QShowEvent *event)
+{
+    // Center device screen within content frame
+    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+
+    QWidget::showEvent(event);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+     event->accept();
+     qDebug() << "QCloseEvent : Closing application";
+
+     // Unsubscribe from message bus events
+     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+     std::string topic = "FRAME_REFRESH";
+     Observer* observerInstance = static_cast<Observer*>(this);
+     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+     messageCenter.RemoveObserver(topic, observerInstance, callback);
+
+     // Shutdown emulator
+     _emulator->Stop();
+     deviceScreen->detach();
+     delete _emulator;
+     _emulator = nullptr;
+
+     qDebug() << "QCloseEvent : Emulator shutdown complete";
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    //deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
+    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+
+    QWidget::resizeEvent(event);
+}
+
 void MainWindow::handleStartButton()
 {
     if (_emulator == nullptr)
@@ -56,6 +101,7 @@ void MainWindow::handleStartButton()
         // Initialize emulator instance
         _emulator = new Emulator();
         _emulator->Init();
+        Logger::MuteSilent();
 
         // Attach emulator framebuffer to GUI
         FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
@@ -110,7 +156,7 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
 {
     if (deviceScreen)
     {
-        // Invoke in main thread
+        // Invoke deviceScreen->refresh() in main thread
         QMetaObject::invokeMethod(deviceScreen,"refresh", Qt::QueuedConnection);
     }
 }
