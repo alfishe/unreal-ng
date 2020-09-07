@@ -146,6 +146,11 @@ void MainLoop::RunFrame()
     }
 
 	// DEBUG: save frame to disk as image
+
+	// Notify that frame is composed and ready for rendering
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::string topic = "FRAME_REFRESH";
+    messageCenter.Post(topic);
 }
 
 //

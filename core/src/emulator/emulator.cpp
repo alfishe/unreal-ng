@@ -217,6 +217,15 @@ void Emulator::GetSystemInfo()
 	LOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
 }
 
+///region <Integration interfaces>
+
+FramebufferDescriptor Emulator::GetFramebuffer()
+{
+    return _context->pScreen->GetFramebufferDescriptor();
+}
+
+///endregion </Integration interfaces>
+
 //region Regular workflow
 
 void Emulator::Reset()
@@ -236,6 +245,18 @@ void Emulator::Start()
 	_isRunning = true;
 
 	_mainloop->Run(_stopRequested);
+}
+
+void Emulator::StartAsync()
+{
+    // Stop existing thread
+    if (_asyncThread)
+        Stop();
+
+    _asyncThread = new std::thread([this]()
+    {
+        this->Start();
+    });
 }
 
 void Emulator::Pause()
@@ -266,6 +287,13 @@ void Emulator::Stop()
 	// FDC: flush changes to disk image(s)
 	// HDD: flush changes and unmount
 	// Fully shut down video / sound
+
+	// If executed in async thread - wait for thread finish and destroy it
+	if (_asyncThread)
+    {
+	    _asyncThread->join();
+	    delete _asyncThread;
+    }
 }
 
 //endregion

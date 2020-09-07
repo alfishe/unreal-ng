@@ -15,6 +15,8 @@
 class Emulator
 {
 protected:
+    std::thread* _asyncThread = nullptr;
+
 	EmulatorContext* _context = nullptr;
 	Config* _config = nullptr;
 	CPU* _cpu = nullptr;
@@ -43,9 +45,13 @@ public:
 	// Info methods
 	void GetSystemInfo();
 
+	// Integration interfaces
+    FramebufferDescriptor GetFramebuffer();
+
 	// Emulator control cycle
 	void Reset();
 	void Start();
+	void StartAsync();
 	void Pause();
 	void Resume();
 	void Stop();
