@@ -378,6 +378,10 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
         _framebuffer.memoryBuffer = new uint8_t[_framebuffer.memoryBufferSize];
 
+        // Clear the whole framebuffer
+        memset(_framebuffer.memoryBuffer, 0x00, _framebuffer.memoryBufferSize);
+
+
 #ifdef _DEBUG
         LOGINFO("Framebuffer allocated");
 
