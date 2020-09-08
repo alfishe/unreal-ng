@@ -37,6 +37,8 @@ private:
 
     QRectF devicePixelsRect;
     QImage* devicePixels = nullptr;
+
+    float ratio = 352.0f / 288.0f;
 };
 
 #endif // DEVICESCREEN_H

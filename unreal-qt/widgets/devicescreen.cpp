@@ -1,10 +1,21 @@
 #include "devicescreen.h"
 #include "ui_devicescreen.h"
 
+
 #include <QDebug>
 #include <QKeyEvent>
 #include <QPainter>
 
+#include <cmath>
+bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
+{
+    bool result = false;
+
+   if (fabs(x - y) < epsilon)
+      result = true;
+
+   return result;
+}
 
 DeviceScreen::DeviceScreen(QWidget *parent) :
     QWidget(parent),
@@ -23,6 +34,8 @@ DeviceScreen::~DeviceScreen()
 void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer)
 {
     detach();
+
+    ratio = static_cast<float>(width) / static_cast<float>(height);
 
     devicePixelsRect = QRectF(0.0, 0.0, width, height);
     devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
@@ -50,7 +63,16 @@ void DeviceScreen::paintEvent(QPaintEvent *event)
     {
         painter.setRenderHint(QPainter::LosslessImageRendering);
 
-        painter.drawImage(rect(), *devicePixels, devicePixelsRect);
+        int newWidth = event->rect().width();
+        int newHeight = event->rect().height();
+
+        float curRatio = static_cast<float>(newWidth) / static_cast<float>(newHeight);
+        if (!isFloatsEqual(curRatio, ratio))
+        {
+            qDebug() << "width: " << newWidth << " height: " << newHeight << " ratio: " << curRatio;
+        }
+
+        painter.drawImage(event->rect(), *devicePixels, devicePixelsRect);
     }
 }
 
@@ -68,7 +90,8 @@ void DeviceScreen::mousePressEvent(QMouseEvent *event)
 
 void DeviceScreen::resizeEvent(QResizeEvent *event)
 {
-    static constexpr float ratio = 352.0 / 288.0;
+    //int oldWidth = event->oldSize().width();
+    //int oldHeight = event->oldSize().height();
 
     float width = static_cast<float>(event->size().width());
     float height = static_cast<float>(event->size().height());
