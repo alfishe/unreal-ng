@@ -259,7 +259,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
 
 	// Interrupts / HALT
-	bool int_pend;									// INT pending
+	bool int_pending;									// INT pending
 	bool int_gate;									// External interrupts gate (True - enabled; False - disabled)
 	unsigned halt_cycle;
 
@@ -317,12 +317,13 @@ public:
 	void Z80Step();		// Single opcode execution
 
 public:
-    uint8_t InterruptVector();
     void CheckNextFrame();
     void Z80FrameCycle();
 
 	// Trigger updates
 public:
+    void RequestMaskedInterrupt();
+    void RequestNonMaskedInterrupt();
 	inline void ProcessInterrupts(bool int_occured,	// Take care about incoming interrupts
     unsigned int_start,
     unsigned int_end);
@@ -331,7 +332,7 @@ public:
 	// Event handlers
 public:
 	void HandleNMI(ROMModeEnum mode);
-	void HandleINT(uint8_t vector);
+	void HandleINT(uint8_t vector = 0);
 
 	// Debugger interfacing
 public:
@@ -347,17 +348,17 @@ protected:
 	// TSConf specific
 	// TODO: Move to plugin
 protected:
+    uint8_t GetTSConfInterruptVector();
 	void ts_frame_int(bool vdos);
 	void ts_line_int(bool vdos);
 	void ts_dma_int(bool vdos);
 
 	/// region <Debug methods>
-#ifdef _DEBUG
 public:
     void DumpCurrentState();
     std::string DumpZ80State();
 	void DumpZ80State(char* buffer, size_t len);
-#endif
+
 	/// endregion </Debug methods>
 };
 

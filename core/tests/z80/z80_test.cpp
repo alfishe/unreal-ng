@@ -52,7 +52,7 @@ TEST_F(Z80_Test, Z80Reset)
 
 	EXPECT_EQ(cpu->ir_, 0x0000);
 	EXPECT_EQ(cpu->int_flags, 0);
-	EXPECT_EQ(cpu->int_pend, false);
+	EXPECT_EQ(cpu->int_pending, false);
 	EXPECT_EQ(cpu->int_gate, true);
 	EXPECT_EQ(cpu->last_branch, 0x0000);
 

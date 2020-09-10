@@ -54,7 +54,7 @@ Z80::Z80(EmulatorContext* context)
 	dbg_stophere = dbg_stopsp = (unsigned)-1;
 	dbg_loop_r1 = 0;
 	dbg_loop_r2 = 0xFFFF;
-	int_pend = false;
+    int_pending = false;
 	int_gate = true;
 	nmi_in_progress = false;
 
@@ -398,47 +398,6 @@ void Z80::retn()
 
 /// endregion </Z80 lifecycle>
 
-// Note: Only TSConf supports interrupt vectors
-uint8_t Z80::InterruptVector()
-{
-    static Z80& _cpu_state = *this;
-    static CONFIG& config = _context->config;
-    static State& state = _context->state;
-
-    uint8_t result = 0xFF;
-
-    _cpu_state.tt += _cpu_state.rate * 3; // Skip 3 CPU cycles before reading INT vector
-
-    if (config.mem_model == MM_TSL)
-    {
-        // Note: Only TSConf supports interrupt vectors
-
-        // check status of frame INT
-        //ts_frame_int(state.ts.vdos || state.ts.vdos_m1);
-
-        if (state.ts.intctrl.frame_pend)
-            return state.ts.im2vect[INT_FRAME];
-
-        else if (state.ts.intctrl.line_pend)
-            return state.ts.im2vect[INT_LINE];
-
-        else if (state.ts.intctrl.dma_pend)
-            return state.ts.im2vect[INT_DMA];
-
-        else
-            return 0xFF;
-    }
-    else
-    {
-        // Simulate random noise on data bus
-        // Getting CPU time counter for that
-        if (state.flags & CF_Z80FBUS)
-            result = (uint8_t)(rdtsc() & 0xFF);
-    }
-
-    return result;
-}
-
 //
 // Read byte directly from ZX-Spectrum memory (current memory bank setup used)
 // No cycle counters will be incremented
@@ -473,10 +432,10 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 
 void Z80::Z80FrameCycle()
 {
-	static Z80& cpu = *this;
-	static State& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
+	Z80& cpu = *this;
+	State& state = _context->state;
+	CONFIG& config = _context->config;
+	VideoControl& video = _context->pScreen->_vid;
 
 	// TODO: Move to platform plugin
 	// Was:
@@ -505,7 +464,7 @@ void Z80::Z80FrameCycle()
 
 			if (state.ts.intctrl.pend && cpu.iff1 && (cpu.t != cpu.eipos) && !vdos) // int disabled in vdos after r/w vg ports
 			{
-				HandleINT(InterruptVector());
+				HandleINT(GetTSConfInterruptVector());
 			}
 
 			Z80Step();
@@ -528,7 +487,7 @@ void Z80::Z80FrameCycle()
 	if (int_end >= config.frame)
 	{
 		int_end -= config.frame;
-		cpu.int_pend = true;
+		cpu.int_pending = true;
 		int_occurred = true;
 	}
 
@@ -553,7 +512,7 @@ void Z80::Reset()
 {
 	// Emulation state
 	last_branch = 0x0000;	        // Address of last branch (in Z80 address space)
-	int_pend = false;		        // No interrupts pending
+	int_pending = false;	        // No interrupts pending
 	int_gate = true;		        // Allow external interrupts
 	cycle_count = 0;		        // Cycle counter
 	tt = 0;					        // Scaled to CPU frequency multiplier cycle count
@@ -575,11 +534,11 @@ void Z80::Reset()
 //
 void Z80::Z80Step()
 {
-	static Z80& cpu = *this;
-	static CONFIG& config = _context->config;
-	static State& state = _context->state;
-	static TEMP& temporary = _context->temporary;
-	static Memory& memory = *_context->pMemory;
+	Z80& cpu = *this;
+	CONFIG& config = _context->config;
+	State& state = _context->state;
+	TEMP& temporary = _context->temporary;
+	Memory& memory = *_context->pMemory;
 
 	// Let debugger process step event
 	ProcessDebuggerEvents();
@@ -665,6 +624,8 @@ void Z80::Z80Step()
 		(normal_opcode[opcode])(&cpu);
 	}
 
+	/// region <Debug trace capture>
+
 	// Trace CPU for all duration of cycles requested
 	if (cycles_to_capture > 0)
     {
@@ -672,6 +633,8 @@ void Z80::Z80Step()
         DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
         LOGINFO(buffer);
     }
+
+    /// endregion </Debug trace capture>
 
 	/// region <Extra debug validations
 #ifdef _DEBUG
@@ -718,12 +681,35 @@ void Z80::Z80Step()
 #endif
 }
 
+///
+/// Simulate Z80 INT pin signal raising
+/// Interrupt request will be processed before next CPU cycle in
+void Z80::RequestMaskedInterrupt()
+{
+    Z80& cpu = *this;
+
+    cpu.int_pending = true;
+}
+
+///
+/// Simulate Z80 NMI pin signal raising
+///
+void Z80::RequestNonMaskedInterrupt()
+{
+
+}
+
+///
+/// See: http://www.z80.info/interrup.htm
+/// \param int_occurred
+/// \param int_start
+/// \param int_end
 void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
-	static Z80& cpu = *this;
-	static CONFIG& config = _context->config;
-	static State& state = _context->state;
-	static VideoControl& video = _context->pScreen->_vid;
+	Z80& cpu = *this;
+	CONFIG& config = _context->config;
+	State& state = _context->state;
+	VideoControl& video = _context->pScreen->_vid;
 
 	// Baseconf NMI trap
 	if (config.mem_model == MM_ATM3 && (state.pBF & 0x10) && (cpu.pc == state.pBD))
@@ -769,25 +755,28 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 		state.pBE--;
 	}
 
-	// Reset INT
+	// Generate INT
+	// TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
 	if (!int_occurred && cpu.t >= int_start)
 	{
 		int_occurred = true;
-		cpu.int_pend = true;
+		cpu.int_pending = true;
 	}
 
-	if (cpu.int_pend && (cpu.t >= int_end))
-		cpu.int_pend = false;
+	if (cpu.int_pending && (cpu.t >= int_end))
+		cpu.int_pending = false;
 
-	video.memcyc_lcmd = 0;							// new command, start accumulate number of busy memcycles
+	video.memcyc_lcmd = 0;				// new command, start accumulate number of busy memcycles
 
-	// INT
-	if (cpu.int_pend && cpu.iff1 &&	// INT enabled in CPU
-		(cpu.t != cpu.eipos) &&		// INT disabled after EI
-		cpu.int_gate)						// INT enabled by ATM hardware (no INT disabling in PentEvo)
-	{
-		HandleINT(InterruptVector());
-	}
+	/// region <INT (Non-masked interrupt)>
+
+	// If INT signal raised and IFF1 flag is set allowing interrupts handling (set by EI command)
+	if (cpu.int_pending && cpu.iff1)
+    {
+        HandleINT();
+    }
+
+	/// endregion </INT (Non-masked interrupt)>
 }
 
 void Z80::UpdateScreen()
@@ -802,26 +791,54 @@ void Z80::HandleNMI(ROMModeEnum mode)
 
 void Z80::HandleINT(uint8_t vector)
 {
-	static Z80& cpu = *this;
-	static CONFIG& config = _context->config;
-	static State& state = _context->state;
+	Z80& cpu = *this;
+	CONFIG& config = _context->config;
+	State& state = _context->state;
 
-	unsigned interrupt_handler_address;
+    /// region <CPU is stopped on HALT (opcode 0x76) command>
+
+    // If CPU halted - unblock it by moving PC forward
+    if (DirectRead(cpu.pc) == 0x76)
+        cpu.pc++;
+
+    /// endregion </CPU is stopped on HALT (opcode 0x76) command>
+
+	/// region <Determine interrupt handler address>
+	uint16_t interruptHandlerAddress;
 	if (cpu.im < 2)
 	{
-		interrupt_handler_address = 0x38;
+	    // IM0, IM1
+		interruptHandlerAddress = 0x38;
 	}
 	else
 	{
 		// IM2
 		uint16_t vectorAddress = vector + cpu.i * 0x100;
-		interrupt_handler_address = rd(vectorAddress) + 0x100 * rd(vectorAddress + 1);
+        interruptHandlerAddress = rd(vectorAddress) + 0x100 * rd(vectorAddress + 1);
 	}
+    /// endregion </Determine interrupt handler address>
 
-	if (DirectRead(cpu.pc) == 0x76) // If interrupt occurs on HALT command (opcode 0x76)
-		cpu.pc++;
+	/// region <Calculate INT duration>
 
-	IncrementCPUCyclesCounter(((cpu.im < 2) ? 13 : 19) - 3);
+	int interruptDuration = 0;
+
+	switch (cpu.im)
+    {
+        case 0:
+        case 1:
+           interruptDuration = 13 - 3; // M1 cycle (3 cycles) is already counted
+           break;
+        case 2:
+            interruptDuration = 19 - 3; // M1 cycle (3 cycles) is already counted
+            break;
+        default:
+            throw std::logic_error("Unknown interrupt mode detected");
+            break;
+    }
+
+	IncrementCPUCyclesCounter(interruptDuration);
+
+    /// endregion </Calculate INT duration>
 
 	// Push return address to stack
 	uint16_t sp = cpu.sp;
@@ -829,12 +846,15 @@ void Z80::HandleINT(uint8_t vector)
 	wd(--sp, cpu.pcl);
 	cpu.sp = sp;
 
-	cpu.pc = interrupt_handler_address;
-	cpu.memptr = interrupt_handler_address;
+	// Jump to interrupt handler
+	cpu.pc = interruptHandlerAddress;
+	cpu.memptr = interruptHandlerAddress;
 	cpu.halted = 0;
 	cpu.iff1 = 0;
 	cpu.iff2 = 0;
-	cpu.int_pend = false;
+	cpu.int_pending = false;
+
+	/// region <TSConf>
 
 	// TODO: move to TSConf plugin
 	if (config.mem_model == MM_TSL)
@@ -847,6 +867,8 @@ void Z80::HandleINT(uint8_t vector)
 				if (state.ts.intctrl.dma_pend)
 					state.ts.intctrl.dma_pend = 0;
 	}
+
+	/// endregion </TSConf>
 }
 
 // Debugger trigger updates
@@ -868,6 +890,47 @@ void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 }
 
 /// region <TSConf specific>
+
+// Note: Only TSConf supports interrupt vectors
+uint8_t Z80::GetTSConfInterruptVector()
+{
+    static Z80& _cpu_state = *this;
+    static CONFIG& config = _context->config;
+    static State& state = _context->state;
+
+    uint8_t result = 0xFF;
+
+    _cpu_state.tt += _cpu_state.rate * 3; // Skip 3 CPU cycles before reading INT vector
+
+    if (config.mem_model == MM_TSL)
+    {
+        // Note: Only TSConf supports interrupt vectors
+
+        // check status of frame INT
+        //ts_frame_int(state.ts.vdos || state.ts.vdos_m1);
+
+        if (state.ts.intctrl.frame_pend)
+            return state.ts.im2vect[INT_FRAME];
+
+        else if (state.ts.intctrl.line_pend)
+            return state.ts.im2vect[INT_LINE];
+
+        else if (state.ts.intctrl.dma_pend)
+            return state.ts.im2vect[INT_DMA];
+
+        else
+            return 0xFF;
+    }
+    else
+    {
+        // Simulate random noise on data bus
+        // Getting CPU time counter for that
+        if (state.flags & CF_Z80FBUS)
+            result = (uint8_t)(rdtsc() & 0xFF);
+    }
+
+    return result;
+}
 
 // TODO: Move to adapter
 void Z80::ts_frame_int(bool vdos)
@@ -934,7 +997,6 @@ void Z80::ts_dma_int(bool vdos)
 /// endregion </TSConf specific>
 
 /// region <Debug methods>
-#ifdef _DEBUG
 #include <cstdio>
 
 void Z80::DumpCurrentState()
@@ -1007,5 +1069,5 @@ void Z80::DumpZ80State(char* buffer, size_t len)
                  opcode, m1_pc, af, bc, de, hl, ix, iy, sp, ir_, t, annotation.c_str());
     }
 }
-#endif
+
 /// endregion </Debug methods>
