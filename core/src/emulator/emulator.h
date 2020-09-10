@@ -15,6 +15,9 @@
 class Emulator
 {
 protected:
+    std::atomic<bool> _initialized;
+    std::mutex _mutexInitialization;
+
     std::thread* _asyncThread = nullptr;
 
 	EmulatorContext* _context = nullptr;

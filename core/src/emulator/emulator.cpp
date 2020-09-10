@@ -23,7 +23,18 @@ Emulator::~Emulator()
 
 bool Emulator::Init()
 {
-	bool result = false;
+    bool result = false;
+
+    // Lock mutex until exiting current scope
+    std::lock_guard<std::mutex> lock(_mutexInitialization);
+
+    if (_initialized)
+    {
+        LOGERROR("Emulator::Init() - already initialized");
+        throw std::logic_error("Emulator::Init() - already initialized");
+
+        return result;
+    }
 
 	// Ensure that MessageCenter instance is up and running
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
@@ -148,6 +159,9 @@ bool Emulator::Init()
 
 		// Init default video render
 		_context->pScreen->InitFrame();
+
+		// Mark as initialized at the very last moment
+		_initialized = true;
 	}
 
 	return result;
