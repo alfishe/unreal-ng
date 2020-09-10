@@ -7,6 +7,7 @@
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
+#include "emulator/ports/models/portdecoder_spectrum48.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include <cassert>
@@ -31,6 +32,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 
     switch (model)
     {
+        case MM_SPECTRUM48:
+            result = new PortDecoder_Spectrum48(context);
+            break;
         case MM_PENTAGON:
             result = new PortDecoder_Pentagon128(context);
             break;
@@ -48,7 +52,8 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             break;
         default:
             LOGERROR("PortDecoder::GetPortDecoderForModel - Unknown model: %d", model);
-            assert("Unknown model");
+            throw std::logic_error(StringHelper::Format("PortDecoder::GetPortDecoderForModel - unknown model %d", model));
+            break;
     }
 
     return result;

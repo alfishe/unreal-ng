@@ -19,6 +19,7 @@ PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
 {
     LOGDEBUG("PortDecoder_Spectrum128::~PortDecoder_Spectrum128()");
 }
+
 /// endregion </Constructors / Destructors>
 
 /// region <Interface methods>
@@ -427,7 +428,7 @@ std::string PortDecoder_Spectrum128::Dump_FFFD_value(uint8_t value)
 
     std::string result;
 
-    if (value <=15) // Documented AY-8910/8912 command registers
+    if (value <= 15) // Documented AY-8910/8912 command registers
     {
         result = AYRegisterNames[value];
     }
