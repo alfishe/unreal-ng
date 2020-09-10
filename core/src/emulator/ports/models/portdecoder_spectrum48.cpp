@@ -28,9 +28,9 @@ void PortDecoder_Spectrum48::Reset()
     // Set default 48K memory pages
     Memory& memory = *_context->pMemory;
     memory.SetROMPage(0);
-    memory.SetRAMPageToBank1(0);
-    memory.SetRAMPageToBank2(1);
-    memory.SetRAMPageToBank3(2);
+    memory.SetRAMPageToBank1(5);
+    memory.SetRAMPageToBank2(2);
+    memory.SetRAMPageToBank3(0);
 
     // Set default border color to white
     _screen->SetBorderColor(COLOR_WHITE);
