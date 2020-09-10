@@ -69,24 +69,26 @@ public:
     template <typename T>
     static std::string FormatBinary(T n)
     {
+        size_t size = sizeof(n) * 8;
+
         std::stringstream ss;
 
-        ss << "b'";
+        ss << "b";
 
-        for (int i = 0; i < sizeof(n) * 8; i++)
+        for (int i = 0; i < size; i++)
         {
             if ((i % 4) == 0)
             {
                 ss << '\'';
             }
 
-            if ((n >> i) & 1)
+            if ((n >> (size - 1 - i)) & 1)
             {
-                ss << '0';
+                ss << '1';
             }
             else
-                {
-                ss << '1';
+            {
+                ss << '0';
             }
         }
 
