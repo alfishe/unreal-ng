@@ -219,8 +219,6 @@ void createNamedPipe()
 
 void run()
 {
-    client.GetEmulator()->Init();
-
     client.Start();
 }
 
