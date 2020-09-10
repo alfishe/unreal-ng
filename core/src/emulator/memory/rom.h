@@ -42,5 +42,6 @@ public:
 public:
 	void CalculateSignatures();
 	std::string CalculateSignature(uint8_t* buffer, size_t length);
+	std::string GetROMTitle(std::string& signature);
 };
 

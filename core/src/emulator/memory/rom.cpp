@@ -4,6 +4,7 @@
 
 #include "rom.h"
 
+#include "common/collectionhelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/cpu.h"
@@ -18,6 +19,7 @@ ROM::ROM(EmulatorContext* context)
 	_context = context;
 
 	// TODO: load known ROM signatures from file
+    _signatures.insert({ "d55daa439b673b0e3f5897f99ac37ecb45f974d1862b4dadb85dec34af99cb42", "Original 48K ROM" });
 	_signatures.insert({ "8d93c3342321e9d1e51d60afcd7d15f6a7afd978c231b43435a7c0757c60b9a3", "128k ROM 1 (48k BASIC)" });
 	_signatures.insert({ "3ba308f23b9471d13d9ba30c23030059a9ce5d4b317b85b86274b132651d1425", "128k ROM 0 (128k editor & menu)" });
 	_signatures.insert({ "1ef928538972ed8f0425c4469f3f471267393f7635b813f000de0fec4ea39fa3", "TR-DOS v5.04TM ROM" });
@@ -375,33 +377,32 @@ void ROM::CalculateSignatures()
 	for (int i = 0; i < _ROMBanksLoaded; i++)
     {
 	    std::string signature = CalculateSignature(memory.ROMPageAddress(i), 0x4000);
-	    const char* detectedROM = _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM";
-        LOGINFO("  ROM page %d: %s", i, detectedROM);
+        LOGINFO("  ROM page %d: %s", i, GetROMTitle(signature).c_str());
     }
 
     LOGINFO("ROM Banks info (as mapped):");
 	if (memory.base_sos_rom)
     {
         std::string signature = CalculateSignature(memory.base_sos_rom, 0x4000);
-        LOGINFO("  base_sos_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+        LOGINFO("  base_sos_rom: %s", GetROMTitle(signature).c_str());
     }
 
     if (memory.base_128_rom)
     {
         std::string signature = CalculateSignature(memory.base_128_rom, 0x4000);
-        LOGINFO("  base_128_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+        LOGINFO("  base_128_rom: %s", GetROMTitle(signature).c_str());
     }
 
     if (memory.base_dos_rom)
     {
         std::string signature = CalculateSignature(memory.base_dos_rom, 0x4000);
-        LOGINFO("  base_dos_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+        LOGINFO("  base_dos_rom: %s", GetROMTitle(signature).c_str());
     }
 
     if (memory.base_sys_rom)
     {
         std::string signature = CalculateSignature(memory.base_sys_rom, 0x4000);
-        LOGINFO("  base_sys_rom: %s", _signatures.find(signature) != _signatures.end() ? _signatures[signature].c_str() : "Unknown ROM");
+        LOGINFO("  base_sys_rom: %s", GetROMTitle(signature).c_str());
     }
 }
 
@@ -418,4 +419,26 @@ string ROM::CalculateSignature(uint8_t* buffer, size_t length)
 	result = sha256().absorb(buffer, length).hexdigest();
 
 	return result;
+}
+
+std::string ROM::GetROMTitle(std::string& signature)
+{
+    static const char* EMPTY_SIGNATURE = "Empty signature";
+    static const char* UNKNOWN_ROM = "Unknown ROM";
+
+    std::string result = EMPTY_SIGNATURE;
+
+    if (signature.size() > 0)
+    {
+        if (key_exists(_signatures, signature))
+        {
+            result = _signatures[signature];
+        }
+        else
+        {
+            result = StringHelper::Format("%s, <%s>", UNKNOWN_ROM, signature.c_str());
+        }
+    }
+
+    return result;
 }
