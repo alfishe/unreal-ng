@@ -63,7 +63,7 @@ CPU::CPU(EmulatorContext* context)
     if (!_portDecoder)
     {
         LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
-        assert("No port decoder");
+        throw std::logic_error("No port decoder");
     }
     context->pPortDecoder = _portDecoder;
 }
