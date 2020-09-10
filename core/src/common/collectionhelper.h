@@ -58,6 +58,26 @@ inline void find_and_execute(T& container, const Key& key, FoundFunction found_f
     }
 }
 
+/// Erase key'ed element if such element exists
+/// \tparam T
+/// \tparam Key
+/// \param container
+/// \param key
+template <typename T, typename Key>
+inline void erase_from_collection(T& container, const Key& key)
+{
+    auto it = container.find(key);
+    if (it != std::end(container))
+    {
+        container.erase(key);
+    }
+}
+
+/// Erase key'ed element from collection only if it has nested colleciton and it is empty
+/// \tparam T
+/// \tparam Key
+/// \param container
+/// \param key
 template <typename T, typename Key>
 inline void erase_entry_if_empty(T& container, const Key& key)
 {
@@ -70,5 +90,6 @@ inline void erase_entry_if_empty(T& container, const Key& key)
 		}
 	}
 }
+
 
 #endif /* COMMON_HELPERS_COLLECTIONHELPER_H_ */

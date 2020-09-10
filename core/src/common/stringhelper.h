@@ -59,4 +59,39 @@ public:
     }
 
     static std::string FormatWithThousandsDelimiter(int64_t n);
+
+    /// Format any integer number to bit quads
+    /// int8  => b'0110'1111
+    /// int16 => b'0110'1111'0000'1111
+    /// \tparam T
+    /// \param n
+    /// \return
+    template <typename T>
+    static std::string FormatBinary(T n)
+    {
+        std::stringstream ss;
+
+        ss << "b'";
+
+        for (int i = 0; i < sizeof(n) * 8; i++)
+        {
+            if ((i % 4) == 0)
+            {
+                ss << '\'';
+            }
+
+            if ((n >> i) & 1)
+            {
+                ss << '0';
+            }
+            else
+                {
+                ss << '1';
+            }
+        }
+
+        std::string result = ss.str();
+
+        return result;
+    }
 };
