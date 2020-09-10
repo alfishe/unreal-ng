@@ -90,7 +90,7 @@ typedef std::deque<Message*> MessageQueue;
 /// Example: messageCenter.Post(topic, new SimpleTextPayload("my text message");
 class SimpleTextPayload : public MessagePayload
 {
-protected:
+public:
     std::string _payloadText;
 
 public:

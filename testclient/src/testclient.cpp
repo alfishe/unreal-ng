@@ -32,10 +32,13 @@ void TestClient::Start()
     string topic("CPU_RESET");
     ObserverCallbackFunc callback = [=](int id, Message* message)
     {
-        if (message != nullptr)
+        if (message && message->obj)
         {
-            const char* text = (const char*)message->obj;
-            LOGINFO("CPU was reset with message '%s'", text);
+            SimpleTextPayload* payload = dynamic_cast<SimpleTextPayload*>(message->obj);
+            if (payload && payload->_payloadText.size() > 0)
+            {
+                LOGINFO("CPU was reset with message '%s'", payload->_payloadText.c_str());
+            }
         }
         else
         {
