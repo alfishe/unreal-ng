@@ -67,10 +67,13 @@ ZXKeyMap Keyboard::_zxKeyMap(
 // Extended key mappings
 ZXExtendedKeyMap Keyboard::_zxExtendedKeyMap(
 {
-    { ZXKEY_EXT_LEFT, {ZXKEY_EXT_LEFT, ZXKEY_CAPS_SHIFT, ZXKEY_5 }},
-    { ZXKEY_EXT_RIGHT, {ZXKEY_EXT_RIGHT, ZXKEY_CAPS_SHIFT, ZXKEY_8 }},
-    { ZXKEY_EXT_UP, {ZXKEY_EXT_UP, ZXKEY_CAPS_SHIFT, ZXKEY_7 }},
-    { ZXKEY_EXT_DOWN, {ZXKEY_EXT_DOWN, ZXKEY_CAPS_SHIFT, ZXKEY_6 }},
+    { ZXKEY_EXT_LEFT, {ZXKEY_EXT_LEFT, ZXKEY_CAPS_SHIFT, ZXKEY_5 } },
+    { ZXKEY_EXT_RIGHT, {ZXKEY_EXT_RIGHT, ZXKEY_CAPS_SHIFT, ZXKEY_8 } },
+    { ZXKEY_EXT_UP, {ZXKEY_EXT_UP, ZXKEY_CAPS_SHIFT, ZXKEY_7 } },
+    { ZXKEY_EXT_DOWN, {ZXKEY_EXT_DOWN, ZXKEY_CAPS_SHIFT, ZXKEY_6 } },
+
+    { ZXKEY_EXT_DELETE, {ZXKEY_EXT_DELETE, ZXKEY_CAPS_SHIFT, ZXKEY_0 } },
+    { ZXKEY_EXT_CAPSLOCK, {ZXKEY_EXT_CAPSLOCK, ZXKEY_CAPS_SHIFT, ZXKEY_2 } },
 });
 
 /// endregion </Static>
@@ -303,6 +306,7 @@ uint8_t Keyboard::HandlePort(uint16_t port)
     //    $BFFE	    49150	%1011 1111 1111 1110	A14	            Ent	        L	        K	J	H
     //    $7FFE	    3766	%0111 1111 1111 1110	A15	            Spc	        Sym shift	M	N	B
 
+    /// See: http://www.breakintoprogram.co.uk/computers/zx-spectrum/keyboard
     /// endregion </Info>
 
     uint8_t portFE = port & 0x00FF;     // Lower byte for the port. Should be always #FE

@@ -79,6 +79,7 @@ enum ZXKeysEnum : uint8_t
     ZXKEY_EXT_MULTIPLY  = 0x8B,       // ZXKEY_SYM_SHIFT  + ZXKEY_B       '*'
     ZXKEY_EXT_DIVIDE    = 0x8C,       // ZXKEY_SYM_SHIFT  + ZXKEY_V       '/'
     ZXKEY_EXT_BAR       = 0x8D,       // ZXKEY_SYM_SHIFT  + ZXKEY_S       '|'
+    ZXKEY_EXT_CAPSLOCK  = 0x8E,       // ZXKEY_CAPS_SHIFT + ZXKEY_2
 };
 
 // Standardized keys to map host input events
