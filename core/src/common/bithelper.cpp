@@ -25,6 +25,8 @@ uint8_t BitHelper::GetFirstSetBitPosition(uint8_t value)
             }
 
             value >>= 1;
+
+            i++;
         }
     }
 
@@ -52,6 +54,8 @@ uint8_t BitHelper::GetFirstSetBitPosition(uint16_t value)
             }
 
             value >>= 1;
+
+            i++;
         }
     }
 
@@ -72,13 +76,15 @@ uint8_t BitHelper::GetLastSetBitPosition(uint8_t value)
     {
         while (i < valueSizeInBits)
         {
-            if (value & 0x01)
+            if (value & 0b1000'0000)
             {
-                result = valueSizeInBits - i;
+                result = valueSizeInBits - i - 1;
                 break;
             }
 
             value <<= 1;
+
+            i++;
         }
     }
 
@@ -99,13 +105,15 @@ uint8_t BitHelper::GetLastSetBitPosition(uint16_t value)
     {
         while (i < valueSizeInBits)
         {
-            if (value & 0x01)
+            if (value & 0b1000'0000'0000'0000)
             {
-                result = valueSizeInBits - i;
+                result = valueSizeInBits - i - 1;
                 break;
             }
 
             value <<= 1;
+
+            i++;
         }
     }
 
