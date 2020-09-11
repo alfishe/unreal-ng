@@ -66,20 +66,25 @@ enum ZXKeysEnum : uint8_t
     // Extended keys for 128k and newer models (combination of existing keys)
     // See mappings: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
     ZXKEY_EXT_CTRL      = 0x80,
-    ZXKEY_EXT_UP        = 0x81,       // ZXKEY_CAPS_SHIFT + ZXKEY_7
-    ZXKEY_EXT_DOWN      = 0x82,       // ZXKEY_CAPS_SHIFT + ZXKEY_6
-    ZXKEY_EXT_LEFT      = 0x83,       // ZXKEY_CAPS_SHIFT + ZXKEY_5
-    ZXKEY_EXT_RIGHT     = 0x84,       // ZXKEY_CAPS_SHIFT + ZXKEY_8
-    ZXKEY_EXT_DELETE    = 0x85,       // ZXKEY_CAPS_SHIFT + ZXKEY_0
-    ZXKEY_EXT_BREAK     = 0x86,       // ZXKEY_CAPS_SHIFT + ZXKEY_SPACE
-    ZXKEY_EXT_DOT       = 0x87,       // ZXKEY_SYM_SHIFT  + ZXKEY_M       '.'
-    ZXKEY_EXT_COMMA     = 0x88,       // ZXKEY_SYM_SHIFT  + ZXKEY_N       ','
-    ZXKEY_EXT_PLUS      = 0x89,       // ZXKEY_SYM_SHIFT  + ZXKEY_K       '+'
-    ZXKEY_EXT_MINUS     = 0x8A,       // ZXKEY_SYM_SHIFT  + ZXKEY_J       '-'
-    ZXKEY_EXT_MULTIPLY  = 0x8B,       // ZXKEY_SYM_SHIFT  + ZXKEY_B       '*'
-    ZXKEY_EXT_DIVIDE    = 0x8C,       // ZXKEY_SYM_SHIFT  + ZXKEY_V       '/'
-    ZXKEY_EXT_BAR       = 0x8D,       // ZXKEY_SYM_SHIFT  + ZXKEY_S       '|'
-    ZXKEY_EXT_CAPSLOCK  = 0x8E,       // ZXKEY_CAPS_SHIFT + ZXKEY_2
+    ZXKEY_EXT_UP,                   // ZXKEY_CAPS_SHIFT + ZXKEY_7
+    ZXKEY_EXT_DOWN,                 // ZXKEY_CAPS_SHIFT + ZXKEY_6
+    ZXKEY_EXT_LEFT,                 // ZXKEY_CAPS_SHIFT + ZXKEY_5
+    ZXKEY_EXT_RIGHT,                // ZXKEY_CAPS_SHIFT + ZXKEY_8
+
+    ZXKEY_EXT_DELETE,               // ZXKEY_CAPS_SHIFT + ZXKEY_0
+    ZXKEY_EXT_BREAK,                // ZXKEY_CAPS_SHIFT + ZXKEY_SPACE
+    ZXKEY_EXT_EDIT,                 // ZXKEY_CAPS_SHIFT + ZXKEY_1
+
+    ZXKEY_EXT_DOT,                  // ZXKEY_SYM_SHIFT  + ZXKEY_M       '.'
+    ZXKEY_EXT_COMMA,                // ZXKEY_SYM_SHIFT  + ZXKEY_N       ','
+    ZXKEY_EXT_PLUS,                 // ZXKEY_SYM_SHIFT  + ZXKEY_K       '+'
+    ZXKEY_EXT_MINUS,                // ZXKEY_SYM_SHIFT  + ZXKEY_J       '-'
+    ZXKEY_EXT_MULTIPLY,             // ZXKEY_SYM_SHIFT  + ZXKEY_B       '*'
+    ZXKEY_EXT_DIVIDE,               // ZXKEY_SYM_SHIFT  + ZXKEY_V       '/'
+    ZXKEY_EXT_EQUAL,                // ZXKEY_SYM_SHIFT  + ZXKEY_L       '='
+    ZXKEY_EXT_BAR,                  // ZXKEY_SYM_SHIFT  + ZXKEY_S       '|'
+    ZXKEY_EXT_BACKSLASH,            // ZXKEY_SYM_SHIFT  + ZXKEY_D       '\'
+    ZXKEY_EXT_CAPSLOCK,             // ZXKEY_CAPS_SHIFT + ZXKEY_2
 };
 
 // Standardized keys to map host input events
