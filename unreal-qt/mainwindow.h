@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QPushButton>
 #include "widgets/devicescreen.h"
+#include "emulator/emulatormanager.h"
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulator.h"
@@ -23,11 +24,16 @@ public:
 private slots:
     void handleStartButton();
     void handleMessageScreenRefresh(int id, Message* message);
+    void resetEmulator();
 
 protected:
     void showEvent(QShowEvent *event);
     void closeEvent(QCloseEvent *event);
     void resizeEvent(QResizeEvent *event);
+
+    void keyPressEvent(QKeyEvent *event);
+    void mousePressEvent(QMouseEvent *event);
+    bool eventFilter(QObject* watched, QEvent* event);
 
     void updatePosition(QWidget *widget, QWidget *parent, float xscale, float yscale)
     {
@@ -41,6 +47,7 @@ private:
     DeviceScreen* deviceScreen;
     QPushButton* startButton;
 
+    EmulatorManager* _emulatorManager = nullptr;
     Emulator* _emulator = nullptr;
 };
 #endif // MAINWINDOW_H

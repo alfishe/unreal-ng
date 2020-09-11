@@ -5,12 +5,15 @@
 #include <QVBoxLayout>
 #include <QCloseEvent>
 #include <QDebug>
+#include <QTimer>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
-    ui->setupUi(this);
+    // Intercept all keyboard and mouse events
+    //qApp->installEventFilter(this);
 
+    ui->setupUi(this);
     startButton = ui->startEmulator;
 
     // Create layoyt
@@ -38,12 +41,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     // Connect button signal to appropriate slot
     connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
+
+    // Create bridge between GUI and emulator
+    _emulatorManager = new EmulatorManager();
 }
 
 MainWindow::~MainWindow()
 {
     if (deviceScreen != nullptr)
         delete deviceScreen;
+
+    if (_emulatorManager)
+        delete _emulatorManager;
 
     QLayout* ptrLayout = layout();
     if (ptrLayout != nullptr)
@@ -87,9 +96,72 @@ void MainWindow::closeEvent(QCloseEvent *event)
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     //deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
+
+    // Keep widget center-aligned. Alignment policy is not working good
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
     QWidget::resizeEvent(event);
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    event->accept();
+
+    qDebug() << "MainWindow : keyPressEvent , key : " << event->text();
+}
+
+void MainWindow::mousePressEvent(QMouseEvent *event)
+{
+    event->accept();
+
+    qDebug() << "MainWindow : mousePressEvent";
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    switch (event->type())
+    {
+        case QEvent::KeyPress:
+            {
+                 QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+                 QString keyName = QKeySequence(keyEvent->key()).toString();
+                 QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
+                 QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
+
+                 qDebug() << "MainWindow : eventFilter - keyPress, scan: "<< hexScanCode << "virt: " << hexVirtualKey << " key: " << keyName << " " << keyEvent->text();
+
+                 /*
+                 if (keyEvent->key() == Qt::Key_F1)
+                 {
+                        if( QWidget* w = QApplication::widgetAt( QCursor::pos() ) )
+                        {
+                                if( w == XXX )
+                                {
+                                       // show help
+                                       return;
+                                 }
+                        }
+                 }
+                 */
+            }
+            break;
+        case QEvent::KeyRelease:
+            {
+                QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+                QString keyName = QKeySequence(keyEvent->key()).toString();
+                QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
+                QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
+
+                qDebug() << "MainWindow : eventFilter - keyRelease, scan: "<< hexScanCode << "virt: " << hexVirtualKey << " key: " << keyName << " " << keyEvent->text();
+            }
+            break;
+        default:
+            break;
+    }
+
+    return false;
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::handleStartButton()
@@ -100,28 +172,40 @@ void MainWindow::handleStartButton()
 
         // Initialize emulator instance
         _emulator = new Emulator();
-        _emulator->Init();
-        Logger::MuteSilent();
+        if (_emulator->Init())
+        {
+            Logger::MuteSilent();
 
-        // Attach emulator framebuffer to GUI
-        FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
-        this->deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+            // Attach emulator framebuffer to GUI
+            FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
+            this->deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
 
-        // Subscribe to frame refresh events
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string topic = "FRAME_REFRESH";
-        Observer* observerInstance = static_cast<Observer*>(this);
-        ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-        messageCenter.AddObserver(topic, observerInstance, callback);
+            // Subscribe to frame refresh events
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            std::string topic = "FRAME_REFRESH";
+            Observer* observerInstance = static_cast<Observer*>(this);
+            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+            messageCenter.AddObserver(topic, observerInstance, callback);
 
-        // Start in async own thread
-        _emulator->StartAsync();
+            // Start in async own thread
+            _emulator->StartAsync();
 
 
-        fflush(stdout);
-        fflush(stderr);
-        startButton->setText("Stop");
-        startButton->setEnabled(true);
+            fflush(stdout);
+            fflush(stderr);
+            startButton->setText("Stop");
+            startButton->setEnabled(true);
+
+            // DEBUG: Reset ZX-Spectrum each 2 seconds
+            //QTimer *timer = new QTimer(this);
+            //connect(timer, SIGNAL(timeout()), this, SLOT(resetEmulator()));
+            //timer->start(2000);
+        }
+        else
+        {
+            delete _emulator;
+            _emulator = nullptr;
+        }
     }
     else
     {
@@ -158,5 +242,13 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     {
         // Invoke deviceScreen->refresh() in main thread
         QMetaObject::invokeMethod(deviceScreen,"refresh", Qt::QueuedConnection);
+    }
+}
+
+void MainWindow::resetEmulator()
+{
+    if (_emulator)
+    {
+        _emulator->Reset();
     }
 }

@@ -6,6 +6,8 @@
 #include <QKeyEvent>
 #include <QPainter>
 
+#include "emulator/keyboardmanager.h"
+
 #include <cmath>
 bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
@@ -80,7 +82,46 @@ void DeviceScreen::keyPressEvent(QKeyEvent *event)
 {
     event->accept();
 
-     qDebug() << "DeviceScreen : keyPressEvent , key : " << event->text();
+    // Don't react on auto-repeat
+    if (!event->isAutoRepeat())
+    {
+        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKey(event->key());
+
+        // Skip unknown keys
+        if (zxKey != 0)
+        {
+            KeyboardEvent* event = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
+
+            // Send valid key combinations to emulator instance
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(MC_KEY_PRESSED, event);
+        }
+    }
+
+    qDebug() << "DeviceScreen : keyPressEvent , key : " << event->key();
+}
+
+void DeviceScreen::keyReleaseEvent(QKeyEvent *event)
+{
+    event->accept();
+
+    // Don't react on auto-repeat
+    if (!event->isAutoRepeat())
+    {
+        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKey(event->key());
+
+        // Skip unknown keys
+        if (zxKey != 0)
+        {
+            KeyboardEvent* event = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
+
+            // Send valid key combinations to emulator instance
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(MC_KEY_RELEASED, event);
+        }
+    }
+
+    qDebug() << "DeviceScreen : keyReleaseEvent , key : " << event->key();
 }
 
 void DeviceScreen::mousePressEvent(QMouseEvent *event)
