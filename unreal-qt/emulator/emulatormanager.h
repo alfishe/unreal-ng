@@ -17,7 +17,7 @@ public:
     Emulator* createEmulatorInstance();
     void destroyEmulatorInstanc(Emulator* emulator);
 
-    void sendKeyEvent(uint16_t key, KeyEventEnum type);
+    void sendKeyEvent(uint8_t key, KeyEventEnum type);
 };
 
 #endif // EMULATORMANAGER_H

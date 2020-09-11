@@ -20,7 +20,7 @@ void destroyEmulatorInstanc(Emulator* emulator)
 
 }
 
-void EmulatorManager::sendKeyEvent(uint16_t key, KeyEventEnum type)
+void EmulatorManager::sendKeyEvent(uint8_t key, KeyEventEnum type)
 {
     static MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
