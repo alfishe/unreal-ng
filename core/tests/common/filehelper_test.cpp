@@ -8,8 +8,9 @@
 #include <iostream>
 #include <exception>
 
-
 using namespace std;
+
+/// region <SetUp / TearDown>
 
 void FileHelper_Test::SetUp()
 {
@@ -20,6 +21,8 @@ void FileHelper_Test::TearDown()
 {
 
 }
+
+/// endregion </SetUp / TearDown>
 
 TEST_F(FileHelper_Test, NormalizePath)
 {

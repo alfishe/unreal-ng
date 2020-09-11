@@ -10,6 +10,8 @@
 
 using namespace std;
 
+/// region <SetUp / TearDown>
+
 void StringHelper_Test::SetUp()
 {
 }
@@ -17,6 +19,8 @@ void StringHelper_Test::SetUp()
 void StringHelper_Test::TearDown()
 {
 }
+
+/// endregion </SetUp / TearDown>
 
 TEST_F(StringHelper_Test, Compare)
 {

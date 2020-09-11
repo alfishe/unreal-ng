@@ -1,16 +1,9 @@
-//
-// Created by Dev on 9/10/20.
-//
+#pragma once
+#include "pch.h"
 
-#ifndef UNREAL_BITHELPER_TEST_H
-#define UNREAL_BITHELPER_TEST_H
-
-
-
-class bithelper_test {
-
+class BitHelper_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override;
+    void TearDown() override;
 };
-
-
-
-#endif //UNREAL_BITHELPER_TEST_H
