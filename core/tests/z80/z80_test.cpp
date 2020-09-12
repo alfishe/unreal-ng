@@ -105,7 +105,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_Noprefix)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 
@@ -160,7 +160,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_ED)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xED 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0xED 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 }
@@ -207,7 +207,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_CB)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xCB 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0xCB 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 }
@@ -254,7 +254,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DD)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xDD 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0xDD 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 }
@@ -301,7 +301,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DDCB)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xDD 0xCB 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0xDD 0xCB 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 }
@@ -348,7 +348,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FD)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xFD 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0xFD 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 }
@@ -395,7 +395,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xFD 0xCB 0x%02X\0", i);
+		snprintf(message, sizeof message, "Opcode: 0xFD 0xCB 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
 	}
 }
