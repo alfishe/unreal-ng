@@ -44,7 +44,7 @@ void PortDecoder_Spectrum128::Reset()
     _7FFD_Locked = false;
 
     // Set default memory paging state: RAM bank: 0; Screen: Normal (bank 5); ROM bank: 0; Disable paging: No
-    Port_7FFD(0x7FFD, 0x00, 0x0000);
+    Port_7FFD_Out(0x7FFD, 0x00, 0x0000);
 }
 
 uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
@@ -71,19 +71,19 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
     {
-        Port_7FFD(port, value, pc);
+        Port_7FFD_Out(port, value, pc);
     }
     else if (IsPort_BFFD(port))
     {
-        Port_BFFD(port, value, pc);
+        Port_BFFD_Out(port, value, pc);
     }
     else if (IsPort_FFFD(port))
     {
-        Port_FFFD(port, value, pc);
+        Port_FFFD_Out(port, value, pc);
     }
     else if (IsPort_FE(port))
     {
-        Port_FE(port, value, pc);
+        PortFE_Out(port, value, pc);
     }
     else
     {
@@ -177,23 +177,9 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
 
 /// region <Port handlers>
 
-/// Port #FE (Border, Beeper)
-/// \param port
-/// \param value
-/// \param pc
-void PortDecoder_Spectrum128::Port_FE(uint16_t port, uint8_t value, uint16_t pc)
-{
-    uint8_t borderColor = value & 0b000'00111;
-    bool beeperBit = value & 0b0001'0000;
-
-    _screen->SetBorderColor(borderColor);
-
-    LOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
-}
-
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Spectrum128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc) {
+void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) {
     static Memory &memory = *_context->pMemory;
 
     uint8_t bankRAM = value & 0b00000111;
@@ -224,7 +210,7 @@ void PortDecoder_Spectrum128::Port_7FFD(uint16_t port, uint8_t value, uint16_t p
     LOGDEBUG(memory.DumpMemoryBankInfo());
 }
 
-void PortDecoder_Spectrum128::Port_BFFD(uint16_t port, uint8_t value, uint16_t pc)
+void PortDecoder_Spectrum128::Port_BFFD_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     // See: http://f.rdw.se/AY-3-8910-datasheet.pdf - Seems AY control register enumeration is wrong here
     // See: http://cpctech.cpc-live.com/docs/ay38912/psgspec.htm
@@ -236,7 +222,7 @@ void PortDecoder_Spectrum128::Port_BFFD(uint16_t port, uint8_t value, uint16_t p
     LOGWARNING(DumpPortValue(0xBFFD, port, value, pc, Dump_BFFD_value(value).c_str()));
 }
 
-void PortDecoder_Spectrum128::Port_FFFD(uint16_t port, uint8_t value, uint16_t pc)
+void PortDecoder_Spectrum128::Port_FFFD_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     // See: http://f.rdw.se/AY-3-8910-datasheet.pdf - Seems AY control register enumeration is wrong here
     // See: http://cpctech.cpc-live.com/docs/ay38912/psgspec.htm
@@ -251,17 +237,6 @@ void PortDecoder_Spectrum128::Port_FFFD(uint16_t port, uint8_t value, uint16_t p
 /// endregion </Port handlers>
 
 /// region <Debug information>
-
-std::string PortDecoder_Spectrum128::Dump_FE_value(uint8_t value)
-{
-    uint8_t borderColor = value & 0b000'00111;
-    bool beeperBit = value & 0b0001'0000;
-    std::string colorText = Screen::GetColorName(borderColor);
-
-    std::string result = StringHelper::Format("Border color: %d (%s); Beeper: %d", borderColor, colorText.c_str(), beeperBit);
-
-    return result;
-}
 
 std::string PortDecoder_Spectrum128::Dump_7FFD_value(uint8_t value)
 {

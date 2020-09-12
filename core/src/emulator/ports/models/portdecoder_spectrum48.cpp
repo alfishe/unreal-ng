@@ -40,7 +40,7 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 {
     uint8_t result = 0xFF;
 
-    if (IsPort_FE(port))
+    if (IsPort_FE_Out(port))
     {
         result = _keyboard->HandlePort(port);
     }
@@ -55,7 +55,7 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
-    if (IsPort_FE(port))
+    if (IsPort_FE_Out(port))
     {
         Port_FE(port, value, pc);
     }
@@ -81,7 +81,7 @@ void PortDecoder_Spectrum48::SetROMPage(uint8_t page)
 
 /// region <Helper methods>
 
-bool PortDecoder_Spectrum48::IsPort_FE(uint16_t port)
+bool PortDecoder_Spectrum48::IsPort_FE_Out(uint16_t port)
 {
     //    ZX Spectrum 48
     //    Port: #FE

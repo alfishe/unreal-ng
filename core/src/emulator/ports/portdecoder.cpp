@@ -86,6 +86,28 @@ bool PortDecoder::IsFEPort(uint16_t port)
     return result;
 }
 
+/// Default implementation for 'out (#FE)'
+/// Bits [0:2]  - Border color
+/// Bit [4]     - Beeper output bit
+/// See: https://worldofspectrum.org/faq/reference/48kreference.htm
+/// \param port
+/// \param value
+/// \param pc
+/// \return
+bool PortDecoder::PortFE_Out(uint16_t port, uint8_t value, uint16_t pc)
+{
+    bool result = false;
+
+    uint8_t borderColor = value & 0b000'00111;
+    bool beeperBit = value & 0b0001'0000;
+
+    _screen->SetBorderColor(borderColor);
+
+    LOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
+
+    return result;
+}
+
 std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 {
     std::string result;
@@ -111,6 +133,10 @@ std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 
     return result;
 }
+
+/// endregion </Interface methods>
+
+/// region <Debug information>
 
 std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment)
 {
@@ -141,4 +167,16 @@ std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t 
 
     return result;
 }
-/// endregion </Interface methods>
+
+std::string PortDecoder::Dump_FE_value(uint8_t value)
+{
+    uint8_t borderColor = value & 0b000'00111;
+    bool beeperBit = value & 0b0001'0000;
+    std::string colorText = Screen::GetColorName(borderColor);
+
+    std::string result = StringHelper::Format("Border color: %d (%s); Beeper: %d", borderColor, colorText.c_str(), beeperBit);
+
+    return result;
+}
+
+/// endregion </Debug information>

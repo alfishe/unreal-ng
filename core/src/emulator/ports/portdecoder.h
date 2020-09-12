@@ -44,9 +44,18 @@ public:
     virtual void SetROMPage(uint8_t page) = 0;
 
     virtual bool IsFEPort(uint16_t port);
+    virtual bool PortFE_Out(uint16_t port, uint8_t value, uint16_t pc);
 
 protected:
     virtual std::string GetPCAddressLocator(uint16_t pc);
-    virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment = nullptr);
     /// endregion </Interface methods>
+
+
+    /// region <Debug information>
+protected:
+    virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment = nullptr);
+    virtual std::string Dump_FE_value(uint8_t value);
+
+    /// endregion </Debug information>
+
 };
