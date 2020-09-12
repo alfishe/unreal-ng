@@ -438,7 +438,7 @@ void ScreenZX::RenderOnlyMainScreen()
     if (zxScreen != bank5Base && zxScreen != bank7Base)
     {
         LOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
-        assert("Invalid screen memory");
+        throw std::logic_error("Invalid screen memory");
     }
 
     // Get Framebuffer
@@ -470,7 +470,7 @@ void ScreenZX::RenderOnlyMainScreen()
                     else
                     {
                         LOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
-                        assert("Framebuffer invalid offset");
+                        throw std::logic_error("Framebuffer invalid offset");
                     }
                 }
             }

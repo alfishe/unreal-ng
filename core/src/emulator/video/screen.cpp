@@ -292,7 +292,13 @@ void Screen::SetActiveScreen(uint8_t screen)
 /// \param color
 void Screen::SetBorderColor(uint8_t color)
 {
-    _borderColor = color;
+    // Only bits [0:2] contain border color
+    _borderColor = color & 0b0000'0111;
+}
+
+VideoModeEnum Screen::GetVideoMode()
+{
+    return _mode;
 }
 
 uint8_t Screen::GetActiveScreen()
@@ -300,19 +306,11 @@ uint8_t Screen::GetActiveScreen()
     return _activeScreen;
 }
 
-
-void Screen::UpdateScreen()
+uint8_t Screen::GetBorderColor()
 {
-	static Z80& cpu = *_cpu;
-	static State& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
-
-	// Get Z80 CPU clock cycle counter spent in current frame
-	uint32_t cput = (cpu.t >= config.frame) ? (VID_TACTS * VID_LINES) : cpu.t;
-
-	// TODO: Implement timing-accurate rendering (screen + border)
+    return _borderColor;
 }
+
 
 ///
 /// Convert whole ZX-Spectrum screen to RGBA framebuffer

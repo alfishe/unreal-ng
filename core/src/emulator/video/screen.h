@@ -420,11 +420,13 @@ public:
 	virtual void SetActiveScreen(uint8_t screen);
     virtual void SetBorderColor(uint8_t color);
 
+    virtual VideoModeEnum GetVideoMode();
     virtual uint8_t GetActiveScreen();
+    virtual uint8_t GetBorderColor();
 
 
+    virtual void UpdateScreen() = 0;
     virtual void Draw(uint32_t n);
-	virtual void UpdateScreen();
 	virtual void RenderOnlyMainScreen();
 	virtual void SaveScreen();
 	virtual void SaveZXSpectrumNativeScreen();
