@@ -26,13 +26,13 @@ class Renderers;
 
 #define MEM_CYCLES (VID_TACTS * 2)
 
-/// endregion </onstants>
+/// endregion </Constants>
 
 /// region <Enumerations>
 
 enum VideoModeEnum : uint8_t
 {
-    M_NUL = 0,	// Non-existing mode
+    M_NUL = 0,	// Non-existing mode / headless
     M_ZX48,		// Sinclair ZX-Spectrum 48k
     M_ZX128,    // Sinclair ZX-Spectrum 128k / +2 / +3
     M_PMC,		// Pentagon Multicolor
@@ -163,6 +163,10 @@ struct RasterDescriptor
 ///
 struct RasterState
 {
+    /// region <Config values>
+    uint32_t configFrameDuration;   // Full frame duration between two INTs (in t-states). Can be any but longer than raster-defined frame duration
+    /// endregion </Config values>
+
     /// region <Frame timings>
 
     uint16_t pixelsPerLine;
@@ -361,7 +365,10 @@ protected:
     RasterState _rasterState;
 	FramebufferDescriptor _framebuffer;
 
-	/// region <Obsolete>
+    uint32_t _prevTstate = 0; // Previous Draw call t-state value (since emulation is not concurrent as in hardware - we need to know what time period to replay)
+
+
+    /// region <Obsolete>
 	DrawCallback _currentDrawCallback;
 	DrawCallback _nullCallback;
     DrawCallback _drawCallback;
@@ -423,10 +430,12 @@ public:
     virtual VideoModeEnum GetVideoMode();
     virtual uint8_t GetActiveScreen();
     virtual uint8_t GetBorderColor();
+    virtual uint32_t GetCurrentTstate();
 
 
     virtual void UpdateScreen() = 0;
-    virtual void Draw(uint32_t n);
+    virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate, uint8_t borderColor);
+    virtual void Draw(uint32_t tstate, uint8_t borderColor);
 	virtual void RenderOnlyMainScreen();
 	virtual void SaveScreen();
 	virtual void SaveZXSpectrumNativeScreen();
@@ -479,6 +488,7 @@ public:
 
     std::string DumpRasterState();
     void DumpRasterState(char* buffer, size_t len);
+
 #endif // _DEBUG
     /// endregion </Debug methods>
 };

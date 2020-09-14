@@ -38,6 +38,8 @@ void ScreenZX_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
+/// region <ZX screen coordinates tests>
+
 TEST_F(ScreenZX_Test, CalculateXYScreenAddress)
 {
     char message[256];
@@ -145,135 +147,9 @@ TEST_F(ScreenZX_Test, TransformZXSpectrumColorsToRGBA)
     }
 }
 
-TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
-{
-    char message[256];
+/// endregion </ZX screen coordinates tests>
 
-    /// region <Genuine ZX-Spectrum 48k>
-
-    // Genuine ZX-Spectrum
-    // Max t-state = 69888
-    // [0; 5375]        - Top Blank
-    // [5476; 16127]    - Top Border
-    // [16128; 59135]   - Screen
-    // [59136; 69887]   - Bottom Border
-    _screenzx->SetVideoMode(M_ZX48);
-
-    for (uint32_t tstate = 0; tstate < 70000; tstate++)
-    {
-        RenderTypeEnum type = _screenzx->GetLineRenderTypeByTiming(tstate);
-
-        if (tstate >= 0 && tstate <= 5375)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BLANK, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 5476 && tstate <= 16127)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 16128 && tstate <= 59135)
-        {
-            if (type != RT_SCREEN)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_SCREEN, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 59136 && tstate <= 69887)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 69888)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "tstate: %05d, expected type: %d, found: %d", tstate, RT_BLANK, type);
-                FAIL() << message << std::endl;
-            }
-        }
-    }
-
-    /// endregion </Genuine ZX-Spectrum 48k>
-
-    /// region <Pentagon>
-
-    // Pentagon
-    // Max t-state = 71680
-    // [0; 7167]        - Top Blank
-    // [7168; 17919]    - Top Border
-    // [17920; 60927]   - Screen
-    // [60928; 71679]   - Bottom Border
-    _screenzx->SetVideoMode(M_PMC);
-
-    for (uint32_t tstate = 0; tstate < 72000; tstate++)
-    {
-        RenderTypeEnum type = _screenzx->GetLineRenderTypeByTiming(tstate);
-
-        if (tstate >= 0 && tstate <= 7167)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BLANK, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 7168 && tstate <= 17919)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 17920 && tstate <= 60927)
-        {
-            if (type != RT_SCREEN)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_SCREEN, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 60928 && tstate <= 71679)
-        {
-            if (type != RT_BORDER)
-            {
-                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
-                FAIL() << message << std::endl;
-            }
-        }
-
-        if (tstate >= 71680)
-        {
-            if (type != RT_BLANK)
-            {
-                snprintf(message, sizeof message, "tstate: %05d, expected type: %d, found: %d", tstate, RT_BLANK, type);
-                FAIL() << message << std::endl;
-            }
-        }
-    }
-
-
-    /// endregion </Pentagon>
-}
+/// region <ULA tables creation tests>
 
 TEST_F(ScreenZX_Test, CreateTimingTable)
 {
@@ -495,3 +371,145 @@ TEST_F(ScreenZX_Test, CreateTimingTable)
 
     /// endregion </Pentagon>
 }
+
+/// endregion </ULA tables creation tests>
+
+/// region <ULA video render tests>
+
+TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
+{
+    char message[256];
+
+    /// region <Genuine ZX-Spectrum 48k>
+
+    // Value is used by renderer for sanity checks
+    _context->config.frame = 69888;
+
+    // Genuine ZX-Spectrum
+    // Max t-state = 69888
+    // [0; 5375]        - Top Blank
+    // [5476; 16127]    - Top Border
+    // [16128; 59135]   - Screen
+    // [59136; 69887]   - Bottom Border
+    _screenzx->SetVideoMode(M_ZX48);
+
+    for (uint32_t tstate = 0; tstate < 70000; tstate++)
+    {
+        RenderTypeEnum type = _screenzx->GetLineRenderTypeByTiming(tstate);
+
+        if (tstate >= 0 && tstate <= 5375)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BLANK, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 5476 && tstate <= 16127)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 16128 && tstate <= 59135)
+        {
+            if (type != RT_SCREEN)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_SCREEN, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 59136 && tstate <= 69887)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 69888)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "tstate: %05d, expected type: %d, found: %d", tstate, RT_BLANK, type);
+                FAIL() << message << std::endl;
+            }
+        }
+    }
+
+    /// endregion </Genuine ZX-Spectrum 48k>
+
+    /// region <Pentagon>
+
+    // Value is used by renderer for sanity checks
+    _context->config.frame = 71680;
+
+    // Pentagon
+    // Max t-state = 71680
+    // [0; 7167]        - Top Blank
+    // [7168; 17919]    - Top Border
+    // [17920; 60927]   - Screen
+    // [60928; 71679]   - Bottom Border
+    _screenzx->SetVideoMode(M_PMC);
+
+    for (uint32_t tstate = 0; tstate < 72000; tstate++)
+    {
+        RenderTypeEnum type = _screenzx->GetLineRenderTypeByTiming(tstate);
+
+        if (tstate >= 0 && tstate <= 7167)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BLANK, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 7168 && tstate <= 17919)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 17920 && tstate <= 60927)
+        {
+            if (type != RT_SCREEN)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_SCREEN, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 60928 && tstate <= 71679)
+        {
+            if (type != RT_BORDER)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected type: %d, found: %d", tstate, RT_BORDER, type);
+                FAIL() << message << std::endl;
+            }
+        }
+
+        if (tstate >= 71680)
+        {
+            if (type != RT_BLANK)
+            {
+                snprintf(message, sizeof message, "tstate: %05d, expected type: %d, found: %d", tstate, RT_BLANK, type);
+                FAIL() << message << std::endl;
+            }
+        }
+    }
+
+
+    /// endregion </Pentagon>
+}
+
+/// endregion </ULA video render tests>

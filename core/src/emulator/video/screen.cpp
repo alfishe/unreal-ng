@@ -5,6 +5,7 @@
 
 #include "screen.h"
 
+#include "common/stringhelper.h"
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"
 
@@ -65,6 +66,9 @@ void Screen::Reset()
     Memory& memory = *_context->pMemory;
     _activeScreen = 0;
     _activeScreenMemoryOffset = memory.RAMPageAddress(5);
+
+    // Reset t-state cached
+    _prevTstate = 0;
 }
 
 void Screen::InitFrame()
@@ -78,7 +82,7 @@ void Screen::InitFrame()
 	_vid.line_pos = 0;							// Reset current render line position
 
     _state->ts.g_yoffs_updated = 0;
-	_vid.flash = _state->frame_counter & 0x10;	// Flash attribute changes each
+	_vid.flash = _state->frame_counter & 0x10;	// Flash attribute changes each 16 frames
 
 	InitRaster();
 	InitMemoryCounters();
@@ -95,21 +99,7 @@ void Screen::InitRaster()
 
 	VideoModeEnum prevMode = video.mode;
 
-	//region Set current video mode
-
-	// TSconf
-	/*
-	if (config.mem_model == MM_TSL)
-	{
-		video.raster = raster[state.ts.rres];
-		EnterCriticalSection(&tsu_toggle_cr); // wbcbz7 note: huhuhuhuhuhuh...dirty code :)
-		if ((state.ts.nogfx) || (!comp.ts.tsu.toggle.gfx)) { video.mode = M_BRD; LeaveCriticalSection(&tsu_toggle_cr); return; }
-		if (state.ts.vmode == 0) { video.mode = M_ZX; LeaveCriticalSection(&tsu_toggle_cr); return; }
-		if (state.ts.vmode == 1) { video.mode = M_TS16; LeaveCriticalSection(&tsu_toggle_cr); return; }
-		if (state.ts.vmode == 2) { video.mode = M_TS256; LeaveCriticalSection(&tsu_toggle_cr); return; }
-		if (state.ts.vmode == 3) { video.mode = M_TSTX; LeaveCriticalSection(&tsu_toggle_cr); return; }
-	}
-	*/
+	///region Set current video mode
 
 	uint8_t m = EFF7_4BPP | EFF7_HWMC;
 
@@ -171,12 +161,24 @@ void Screen::InitRaster()
 
 	// Sinclair
 	video.mode = M_ZX48;
-	//endregion
+
+	///endregion
 
 	// Select renderer for the mode
 	if (prevMode != video.mode)
 	{
         SetVideoMode(video.mode);
+
+        /// region <Sanity checks>
+
+        // 1. Frame duration from config should be longer than raster-defined frame duration
+        if (_rasterState.configFrameDuration < _rasterState.maxFrameTiming)
+        {
+            std::string error = StringHelper::Format("Screen::SetVideoMode config.frame: %d cannot be less than _rasterState.maxFrameTiming: %d", _rasterState.configFrameDuration, _rasterState.maxFrameTiming);
+            throw logic_error(error);
+        }
+
+        /// endergion </Sanity checks>
     }
 
 }
@@ -206,6 +208,10 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
     const uint8_t pixelsPerTState = 2;
+
+    /// region <Config values>
+    _rasterState.configFrameDuration = _context->config.frame;
+    /// endregion </Config values>
 
     /// region <Frame timings>
 
@@ -311,6 +317,12 @@ uint8_t Screen::GetBorderColor()
     return _borderColor;
 }
 
+uint32_t Screen::GetCurrentTstate()
+{
+    uint32_t result = _context->pCPU->GetZ80()->t;
+
+    return result;
+}
 
 ///
 /// Convert whole ZX-Spectrum screen to RGBA framebuffer
@@ -487,10 +499,10 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
 
 void Screen::DrawScreenBorder(uint32_t n)
 {
-    static Z80& cpu = *_cpu;
-    static State& state = _context->state;
-    static CONFIG& config = _context->config;
-    static VideoControl& video = _context->pScreen->_vid;
+    Z80& cpu = *_cpu;
+    State& state = _context->state;
+    CONFIG& config = _context->config;
+    VideoControl& video = _context->pScreen->_vid;
 
     video.t_next += n;
     uint32_t vptr = video.vptr;
@@ -505,12 +517,59 @@ void Screen::DrawScreenBorder(uint32_t n)
     video.vptr = vptr;
 }
 
-//
-// Method called after each CPU operation execution to update
-//
-void Screen::Draw(uint32_t n)
+/// Replay ULA render for the whole period since last call (same as prev. CPU command complete)
+/// \param fromTstate
+/// \param toTstate
+/// \param borderColor
+void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate, uint8_t borderColor)
 {
-    (this->*_currentDrawCallback)(n);
+    /// region <Sanity checks>
+    constexpr int MAX_FRAME_DURATION_TOLERANCE = 100;   // We can allow up to 100 t-state cycles after frame ends since CPU can be in the middle of current command proceesing
+
+    State& state = _context->state;
+    CONFIG& config = _context->config;
+    uint32_t maxFrameDuration = config.frame + MAX_FRAME_DURATION_TOLERANCE;
+
+    // Next frame started during current CPU command processing. Adjust toTstate
+    if (fromTstate > toTstate)
+    {
+        if (toTstate < MAX_FRAME_DURATION_TOLERANCE)
+        {
+            toTstate = fromTstate + toTstate;
+        }
+        else
+        {
+            std::string error = StringHelper::Format("Incorrect fromTstate: %d and/or toTstate: %d. Tolerance: %d", fromTstate, toTstate, MAX_FRAME_DURATION_TOLERANCE);
+            throw std::logic_error(error);
+        }
+    }
+
+    if (fromTstate >= maxFrameDuration || toTstate >= maxFrameDuration)
+    {
+        std::string error = StringHelper::Format("Incorrect fromTstate: %d and/or toTstate: %d. MAX_FRAME_DURATION: %d", fromTstate, toTstate, maxFrameDuration);
+        throw std::logic_error(error);
+    }
+
+    // Do not capture previously handled t-state (at the end of previous period. i.e. (from: to]
+    if (toTstate > fromTstate)
+    {
+        fromTstate += 1;
+    }
+
+    /// endregion </Sanity checks>
+
+    for (uint32_t i = fromTstate; i <= toTstate; i++)
+    {
+        Draw(i, borderColor);
+    }
+}
+
+/// ULA video frame render simulation.
+/// Called after each CPU command cycle
+/// Note: default implementation calls registered callback. Platform specific overrides allowed.
+void Screen::Draw(uint32_t tstate, uint8_t borderColor)
+{
+    (this->*_currentDrawCallback)(tstate);
 }
 
 // Skip render
@@ -546,9 +605,9 @@ void Screen::DrawZX(uint32_t n)
 		}
 	};
 
-	static State& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _vid;
+	State& state = _context->state;
+	CONFIG& config = _context->config;
+	VideoControl& video = _vid;
 
 	if (n > sizeof vbuf[0])
 	{
