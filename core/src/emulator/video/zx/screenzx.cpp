@@ -1,5 +1,6 @@
 #include "screenzx.h"
 
+#include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 
 #include <cassert>
@@ -61,7 +62,7 @@ void ScreenZX::CreateTables()
 // Pre-calculated values contain per-line information
 
 // Genuine ZX-Spectrum frame is: (64 + 192 + 56) * 224 = 69888 T-states
-// Lines: 8 (vsync) + 8 (top border invisible) + 48 (top border) + 192 (screen) + 48 (bottom border) + 8 (???)
+// Lines: 8 (vsync) + 8 (top border invisible) + 48 (top border) + 192 (screen) + 48 (bottom border) + 8 (raytrace)
 // Each line: 16 (left border) + 128 (screen) + 16 (right border) + 48 (blank / raytrace) + 16 (hsync) T-states
 void ScreenZX::CreateTimingTable()
 {
@@ -72,7 +73,7 @@ void ScreenZX::CreateTimingTable()
 
     /// region <Line renderer in screen area>
 
-    for (uint16_t i = 0; i <= 255; i++)
+    for (uint16_t i = 0; i < 288; i++)
     {
         if (i >= state.blankLineAreaStart && i <= state.blankLineAreaEnd)
         {
@@ -328,6 +329,97 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
     return result;
 }
 
+/// Transform t-state timing position to coordinates in framebuffer (if drawing position is within framebuffer)
+/// \param tstate
+/// \param x
+/// \param y
+/// \return
+bool ScreenZX::TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, uint16_t* y)
+{
+    bool result = false;
+    *x = 0;
+    *y = 0;
+
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    const uint16_t tstatesPerLine = _rasterState.tstatesPerLine;
+    const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
+
+    if (tstate < maxFrameTiming)
+    {
+        // ULA draws 2 pixels per t-state
+        const int framebufferX = (tstate % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
+        // Get raster line and skip invisible lines that are drawn before framebuffer render
+        const int framebufferY = tstate / tstatesPerLine - (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines);
+
+        const uint16_t frameWidth = rasterDescriptor.fullFrameWidth;
+        const uint16_t frameHeight = rasterDescriptor.fullFrameHeight;
+
+        if (framebufferY >= 0 && framebufferY < frameHeight && framebufferX < frameWidth)
+        {
+            *x = framebufferX;
+            *y = framebufferY;
+
+            result = true;
+        }
+    }
+
+    return result;
+}
+
+bool ScreenZX::TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_t* zxY)
+{
+    bool result = false;
+    *zxX = 0;
+    *zxY = 0;
+
+    if (tstate >= _rasterState.screenAreaStart && tstate <= _rasterState.screenAreaEnd)
+    {
+        RasterDescriptor rasterDescriptor = rasterDescriptors[_mode];
+        const uint16_t pixelX = (tstate % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
+
+        if (pixelX >= rasterDescriptor.screenOffsetLeft && pixelX < (rasterDescriptor.screenOffsetLeft + rasterDescriptor.screenWidth))
+        {
+            // Translate framebuffer coordinate to ZX screen coordinate by subtracting left border width
+            const uint16_t x = pixelX - rasterDescriptor.screenOffsetLeft;
+
+            // Translate raster line to ZX screen line
+            const uint16_t y = (tstate - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
+
+            if (x <= 255 && y <= 192)
+            {
+                *zxX = x;
+                *zxY = y;
+
+                result = true;
+            }
+            else
+            {
+                std::string error = StringHelper::Format("Invalid coordinates - x: %d, y: %d", x, y);
+                throw std::logic_error(error);
+            }
+        }
+    }
+
+    return result;
+}
+
+uint32_t ScreenZX::GetPixelOrBorderColorForTState(uint32_t tstate)
+{
+    uint32_t result = spec_colors[0];
+
+    if (IsOnScreenByTiming(tstate))
+    {
+        // Get pixel and attribute information from ZX Spectrum screen memory
+    }
+    else
+    {
+        // It's border
+        result = _rgbaColors[_borderColor];
+    }
+
+    return result;
+}
+
 RenderTypeEnum ScreenZX::GetLineRenderTypeByTiming(uint32_t tstate)
 {
     RenderTypeEnum result = RT_BLANK;
@@ -352,7 +444,44 @@ RenderTypeEnum ScreenZX::GetLineRenderTypeByTiming(uint32_t tstate)
     {
         result = RT_BLANK;
 
-        LOGDEBUG("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate, _rasterState.maxFrameTiming - 1);
+        CONFIG& config = _context->config;
+        if (_rasterState.maxFrameTiming <= config.frame)
+        {
+            LOGWARNING("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate, _rasterState.maxFrameTiming - 1);
+        }
+        else
+        {
+            std::string error = StringHelper::Format("tstate: %d is out of config.frame: %d (_rasterState.maxFrametiming: %d)", tstate, config.frame, _rasterState.maxFrameTiming);
+            throw std::logic_error(error);
+        }
+    }
+
+    return result;
+}
+
+RenderTypeEnum ScreenZX::GetRenderType(uint16_t line, uint16_t col)
+{
+    RenderTypeEnum result = RT_BLANK;
+
+    /// region <Sanity checks>
+    if (col >= _rasterState.tstatesPerLine)
+    {
+        std::string error = StringHelper::Format("col: %d cannot be greater than tstatesPerLine: %d", _rasterState.tstatesPerLine);
+        throw std::logic_error(error);
+    }
+    /// endregion </Sanity checks>
+
+    uint16_t lineStart = _rasterState.tstatesPerLine * line;
+    uint16_t lineEnd = lineStart + _rasterState.tstatesPerLine - 1;
+    uint32_t posTstate = lineStart + col;
+
+    RenderTypeEnum lineType = GetLineRenderTypeByTiming(posTstate);
+    if (lineType != RT_BLANK)
+    {
+        // If line is in visible area (Border / screen) - determine exact ray position and correspondent render type
+        RenderTypeEnum posType = _screenLineRenderers[col];
+
+        result = posType;
     }
 
     return result;
@@ -382,6 +511,29 @@ bool ScreenZX::IsOnScreenByTiming(uint32_t tstate)
 
 /// region <Screen class methods override>
 
+/// Emulate ULA video signal generator
+/// Note: ULA is drawing 2 pixels per t-state @ 3.5MHz
+/// See: http://www.zxdesign.info/vidparam.shtml
+void ScreenZX::UpdateScreen()
+{
+    Screen& screen = *this;
+
+    // Border color is latched in PortDecoder (or model-specific override) after each 'out (#FE)' port command and stored in Screen object property
+    uint8_t borderColor = screen.GetBorderColor();
+
+    // Get current t-state (value corresponds to CPU cycles relative to current video frame)
+    uint32_t tstate = screen.GetCurrentTstate();
+
+    // Allow renderer to do its job. Cover whole period between previous call and current one
+    DrawPeriod(_prevTstate, tstate);
+
+    // Store t-state position for next call
+    _prevTstate = tstate;
+}
+
+/// Render for single t-state (ULA draws 2 pixels per each t-state)
+/// \param tstate
+/// \param borderColor
 void ScreenZX::Draw(uint32_t tstate)
 {
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
@@ -390,31 +542,60 @@ void ScreenZX::Draw(uint32_t tstate)
 
     if (tstate < maxFrameTiming)
     {
-        const uint8_t line = tstate / tstatesPerLine;
-        const uint8_t column = tstate % tstatesPerLine;
+        uint16_t zxX;
+        uint16_t zxY;
+        uint16_t destX;
+        uint16_t destY;
 
-        // Determine position for the whole line
-        RenderTypeEnum lineType = GetLineRenderTypeByTiming(tstate);
-        if (lineType != RT_BLANK)
+        if (TransformTstateToFramebufferCoords(tstate, &destX, &destY))
         {
-            // If line is in visible area (Border / screen) - determine exact ray position and correspondent render type
-            RenderTypeEnum posType = _screenLineRenderers[column];
+            uint32_t* framebuffer = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
+            size_t framebufferSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
 
-            switch (posType)
+            if (TransformTstateToZXCoords(tstate, &zxX, &zxY))
             {
-                case RT_BLANK:
-                    break;
-                case RT_BORDER:
-                    break;
-                case RT_SCREEN:
-                    break;
+                // Render two sequential pixels
+                // It is guaranteed that both pixels are within same line and ZX-Spectrum pixel byte / attribute byte
+                for (uint16_t x = zxX; x <= zxX + 1; x++, destX++)
+                {
+                    const uint8_t symbolX = x / 8;
+                    const uint8_t pixelXBit = x % 8;
+
+                    uint8_t *zxScreen = _activeScreenMemoryOffset;
+                    uint8_t pixels = *(zxScreen + _screenLineOffsets[zxY] + symbolX);
+                    uint8_t attributes = *(zxScreen + _attrLineOffsets[zxY] + symbolX);
+                    uint32_t colorInk = _rgbaColors[attributes];
+                    uint32_t colorPaper = _rgbaFlashColors[attributes];
+
+                    uint32_t resultingPixelColor = ((pixels << pixelXBit) & 0b1000'0000) ? colorInk : colorPaper;
+                    int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
+
+                    if (framebufferOffset < framebufferSize)
+                    {
+                        *(framebuffer + framebufferOffset) = resultingPixelColor;
+                    }
+                    else
+                    {
+                        std::string error = StringHelper::Format("Framebuffer overflow - tstate: %d, destX: %d, destY: %d", tstate, destX, destY);
+                        throw std::logic_error(error);
+                    }
+                }
+            }
+            else
+            {
+                // Render border
+                // It is guaranteed that border pixels are within same line
+                int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
+                uint32_t borderColor = _rgbaColors[_borderColor];
+                *(framebuffer + framebufferOffset) = borderColor;
+                *(framebuffer + framebufferOffset + 1) = borderColor;
             }
         }
     }
-}
-
-void ScreenZX::UpdateScreen()
-{
+    else
+    {
+        // Spare cycles set in emulation config - no draw here
+    }
 }
 
 ///
@@ -479,3 +660,37 @@ void ScreenZX::RenderOnlyMainScreen()
 }
 
 /// endregion </Screen class methods override>
+
+/// region <Debug Info>
+std::string ScreenZX::DumpRenderForTState(uint32_t tstate)
+{
+    std::string result;
+    std::stringstream ss;
+
+    CONFIG& config = _context->config;
+
+    const uint32_t configFrameDuration = config.frame;
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    const uint16_t tstatesPerLine = rasterDescriptor.pixelsPerLine / 2;
+    const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+    const uint8_t line = tstate / tstatesPerLine;
+    const uint8_t column = tstate % tstatesPerLine;
+
+    RenderTypeEnum lineType = GetLineRenderTypeByTiming(tstate);
+    RenderTypeEnum posType = _screenLineRenderers[column];
+    std::string lineTypeName = GetRenderTypeName(lineType);
+    std::string posTypeName = GetRenderTypeName(posType);
+
+
+    ss << StringHelper::Format("T-State: %05d", tstate) << std::endl;
+    ss << StringHelper::Format("config.frame: %05d raster: %05d", configFrameDuration, maxFrameTiming) << std::endl;
+    ss << StringHelper::Format("line:     %03d      column:  %03d", line, column) << std::endl;
+    ss << StringHelper::Format("linetype: %s    coltype: %s", lineTypeName.c_str(), posTypeName.c_str()) << std::endl;
+    ss << StringHelper::Format("");
+    ss << StringHelper::Format("");
+
+    result = ss.str();
+
+    return result;
+}
+/// endregion </Debug Info>

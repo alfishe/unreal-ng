@@ -169,6 +169,8 @@ struct RasterState
 
     /// region <Frame timings>
 
+    const uint8_t pixelsPerTState = 2; // Fixed value
+
     uint16_t pixelsPerLine;
     uint16_t tstatesPerLine;
     uint32_t maxFrameTiming;
@@ -434,8 +436,8 @@ public:
 
 
     virtual void UpdateScreen() = 0;
-    virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate, uint8_t borderColor);
-    virtual void Draw(uint32_t tstate, uint8_t borderColor);
+    virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
+    virtual void Draw(uint32_t tstate);
 	virtual void RenderOnlyMainScreen();
 	virtual void SaveScreen();
 	virtual void SaveZXSpectrumNativeScreen();

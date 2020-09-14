@@ -512,4 +512,165 @@ TEST_F(ScreenZX_Test, GetRenderTypeByTiming)
     /// endregion </Pentagon>
 }
 
+TEST_F(ScreenZX_Test, TransformTstateToFramebufferCoords)
+{
+    char message[256];
+
+    /// region <Genuine ZX-Spectrum 48k>
+
+    // Value is used by renderer for sanity checks
+    _context->config.frame = 69888;
+
+    // Genuine ZX-Spectrum
+    // Max t-state = 69888
+    // [0; 5375]        - Top Blank
+    // [5476; 16127]    - Top Border
+    // [16128; 59135]   - Screen
+    // [59136; 69887]   - Bottom Border
+    _screenzx->SetVideoMode(M_ZX48);
+    RasterDescriptor rasterDescriptor = _screenzx->rasterDescriptors[_screenzx->_mode];
+    RasterState& rasterState = _screenzx->_rasterState;
+
+    bool coordsFound;
+    uint16_t x;
+    uint16_t y;
+
+    for (uint32_t tstate = 0; tstate < 70000; tstate++)
+    {
+        const uint16_t line = tstate / rasterState.tstatesPerLine;
+        const uint16_t column = (tstate % rasterState.tstatesPerLine) * rasterState.pixelsPerTState;
+
+        coordsFound = _screenzx->TransformTstateToFramebufferCoords(tstate, &x, &y);
+
+        if (tstate >= 0 && tstate <= 5375)
+        {
+            if (coordsFound)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected value: %d, found: %d", tstate, false, coordsFound);
+                FAIL() << message << std::endl;
+            }
+        }
+        else if (tstate >= 5376 && tstate <= 69887)
+        {
+            /// region <Check if position is within framebuffer>
+
+            if (line >= 24 && line < 312)
+            {
+                if (column >= rasterDescriptor.fullFrameWidth)
+                {
+                    if (coordsFound)
+                    {
+                        snprintf(message, sizeof message, "tstate: %d (line %d, col: %d), expected coordsFound value: %d, found: %d (x: %d, y: %d)", tstate, line, column, false, coordsFound, x, y);
+                        FAIL() << message << std::endl;
+                    }
+                }
+                else
+                {
+                    if (!coordsFound)
+                    {
+                        snprintf(message, sizeof message, "tstate: %d (line %d, col: %d), expected coordsFound value: %d, found: %d (x: %d, y: %d)", tstate, line, column, true, coordsFound, x, y);
+                        FAIL() << message << std::endl;
+                    }
+
+                    if (x % 2 == 1)
+                    {
+                        snprintf(message, sizeof message, "tstate: %d (line %d, col: %d), (x: %d, y: %d), X cannot be odd. ULA draws 2 pixels per t-state", tstate, line, column, x, y);
+                        FAIL() << message << std::endl;
+                    }
+                }
+            }
+            else
+            {
+                if (coordsFound)
+                {
+                    snprintf(message, sizeof message, "tstate: %d (line: %d, col: %d), expected coordsFound value: %d, found: %d", tstate, line, column, false, coordsFound);
+                    FAIL() << message << std::endl;
+                }
+            }
+
+            /// endregion </Check if position is within framebuffer>
+
+
+            if (coordsFound)
+            {
+                if (x > rasterDescriptor.fullFrameWidth)
+                {
+                    snprintf(message, sizeof message, "tstate: %d (line: %d, col: %d), X expected value: %d, found: %d (rasterDescriptor.fullFrameWidth: %d)", tstate, line, column, false, x, rasterDescriptor.fullFrameWidth);
+                    FAIL() << message << std::endl;
+                }
+
+                if (y > rasterDescriptor.fullFrameHeight)
+                {
+                    snprintf(message, sizeof message, "tstate: %d (line: %d, col: %d), Y expected value: %d, found: %d (rasterDescriptor.fullFrameHeight: %d)", tstate, line, column, false, y, rasterDescriptor.fullFrameHeight);
+                    FAIL() << message << std::endl;
+                }
+            }
+        }
+        else
+        {
+            if (coordsFound)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected value: %d, found: %d", tstate, false, coordsFound);
+                FAIL() << message << std::endl;
+            }
+        }
+    }
+
+    /// endregion </Genuine ZX-Spectrum 48k>
+}
+
+TEST_F(ScreenZX_Test, TransformTstateToZXCoords)
+{
+    char message[256];
+
+    /// region <Genuine ZX-Spectrum 48k>
+
+    // Value is used by renderer for sanity checks
+    _context->config.frame = 69888;
+
+    // Genuine ZX-Spectrum
+    // Max t-state = 69888
+    // [0; 5375]        - Top Blank
+    // [5476; 16127]    - Top Border
+    // [16128; 59135]   - Screen
+    // [59136; 69887]   - Bottom Border
+    _screenzx->SetVideoMode(M_ZX48);
+    RasterDescriptor rasterDescriptor = _screenzx->rasterDescriptors[_screenzx->_mode];
+    RasterState& rasterState = _screenzx->_rasterState;
+
+    bool coordsFound;
+    uint16_t x;
+    uint16_t y;
+
+    for (uint32_t tstate = 0; tstate < 70000; tstate++)
+    {
+        const uint16_t line = tstate / rasterState.tstatesPerLine;
+        const uint16_t column = (tstate % rasterState.tstatesPerLine) * rasterState.pixelsPerTState;
+
+        coordsFound = _screenzx->TransformTstateToZXCoords(tstate, &x, &y);
+
+        if (tstate >= rasterState.screenAreaStart && tstate <= rasterState.screenAreaEnd)
+        {
+            if (column >= rasterDescriptor.screenOffsetLeft && column < rasterDescriptor.screenOffsetLeft + rasterDescriptor.screenWidth)
+            {
+                if (!coordsFound)
+                {
+                    snprintf(message, sizeof message,"tstate: %d (line %d, col: %d), expected coordsFound value: %d, found: %d (x: %d, y: %d)", tstate, line, column, true, coordsFound, x, y);
+                    FAIL() << message << std::endl;
+                }
+            }
+        }
+        else
+        {
+            if (coordsFound)
+            {
+                snprintf(message, sizeof message, "tstate: %d, expected value: %d, found: %d", tstate, false, coordsFound);
+                FAIL() << message << std::endl;
+            }
+        }
+    }
+
+    /// endregion </Genuine ZX-Spectrum 48k>
+}
+
 /// endregion </ULA video render tests>

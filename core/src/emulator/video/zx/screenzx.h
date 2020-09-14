@@ -15,8 +15,7 @@ protected:
     uint32_t _rgbaColors[256];                  // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256];             // Colors when Flash is in blinking=ON state
 
-    RenderTypeEnum _screenLineRenderers[256];   // Cached render types for each line in screen area (HBlank, HSync, Left Border, Screen, Right Border)
-
+    RenderTypeEnum _screenLineRenderers[288];   // Cached render types for each line in screen area (HBlank, HSync, Left Border, Screen, Right Border)
 
     /// endregion </Fields>
 
@@ -42,14 +41,26 @@ protected:
     uint32_t GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint32_t GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 
-    RenderTypeEnum GetLineRenderTypeByTiming(uint32_t tstate);
+
+    bool TransformTstateToFramebufferCoords(uint32_t tstate, uint16_t* x, uint16_t* y);
+    bool TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_t* zxY);
+    uint32_t GetPixelOrBorderColorForTState(uint32_t tstate);
     bool IsOnScreenByTiming(uint32_t tstate);
+
+    RenderTypeEnum GetLineRenderTypeByTiming(uint32_t tstate);
+    RenderTypeEnum GetRenderType(uint16_t line, uint16_t col);
 
     // Screen class methods override
 public:
-    void Draw(uint32_t tstate) override;
     void UpdateScreen() override;
+    void Draw(uint32_t tstate) override;
+
     void RenderOnlyMainScreen() override;
+
+    /// region <Debug info>
+public:
+    std::string DumpRenderForTState(uint32_t tstate);
+    /// endregion </Debug info>
 };
 
 //
@@ -83,6 +94,8 @@ public:
     using ScreenZX::GetZXSpectrumPixel;
     using ScreenZX::GetZXSpectrumPixelOptimized;
 
+    using ScreenZX::TransformTstateToFramebufferCoords;
+    using ScreenZX::TransformTstateToZXCoords;
     using ScreenZX::GetLineRenderTypeByTiming;
     using ScreenZX::IsOnScreenByTiming;
 };

@@ -207,7 +207,6 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     /// Note!: all timings are in t-states, although raster descriptor has pixels as UOM. So recalculation is required
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
-    const uint8_t pixelsPerTState = 2;
 
     /// region <Config values>
     _rasterState.configFrameDuration = _context->config.frame;
@@ -216,7 +215,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// region <Frame timings>
 
     _rasterState.pixelsPerLine = rasterDescriptor.pixelsPerLine;
-    _rasterState.tstatesPerLine = _rasterState.pixelsPerLine / pixelsPerTState;
+    _rasterState.tstatesPerLine = _rasterState.pixelsPerLine / _rasterState.pixelsPerTState;
     _rasterState.maxFrameTiming = _rasterState.tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
 
     /// endregion </Frame timings>
@@ -244,16 +243,16 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// region <Horizontal timings>
 
     _rasterState.blankLineAreaStart = 0;
-    _rasterState.blankLineAreaEnd = ((rasterDescriptor.hBlankPixels + rasterDescriptor.hSyncPixels) / pixelsPerTState) - 1;
+    _rasterState.blankLineAreaEnd = ((rasterDescriptor.hBlankPixels + rasterDescriptor.hSyncPixels) / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
-    _rasterState.leftBorderAreaEnd = _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / pixelsPerTState) - 1;
+    _rasterState.leftBorderAreaEnd = _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.screenLineAreaStart = _rasterState.leftBorderAreaEnd + 1;
-    _rasterState.screenLineAreaEnd = _rasterState.screenLineAreaStart +  (rasterDescriptor.screenWidth / pixelsPerTState) - 1;
+    _rasterState.screenLineAreaEnd = _rasterState.screenLineAreaStart +  (rasterDescriptor.screenWidth / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.rightBorderAreaStart = _rasterState.screenLineAreaEnd + 1;
-    _rasterState.rightBorderAreaEnd = _rasterState.rightBorderAreaStart + ((rasterDescriptor.fullFrameWidth - rasterDescriptor.screenOffsetLeft - rasterDescriptor.screenWidth) / pixelsPerTState) - 1;
+    _rasterState.rightBorderAreaEnd = _rasterState.rightBorderAreaStart + ((rasterDescriptor.fullFrameWidth - rasterDescriptor.screenOffsetLeft - rasterDescriptor.screenWidth) / _rasterState.pixelsPerTState) - 1;
 
     /// endregion </Horizontal timings>
 
@@ -521,7 +520,7 @@ void Screen::DrawScreenBorder(uint32_t n)
 /// \param fromTstate
 /// \param toTstate
 /// \param borderColor
-void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate, uint8_t borderColor)
+void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
 {
     /// region <Sanity checks>
     constexpr int MAX_FRAME_DURATION_TOLERANCE = 100;   // We can allow up to 100 t-state cycles after frame ends since CPU can be in the middle of current command proceesing
@@ -560,14 +559,14 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate, uint8_t borderCo
 
     for (uint32_t i = fromTstate; i <= toTstate; i++)
     {
-        Draw(i, borderColor);
+        Draw(i);
     }
 }
 
 /// ULA video frame render simulation.
 /// Called after each CPU command cycle
 /// Note: default implementation calls registered callback. Platform specific overrides allowed.
-void Screen::Draw(uint32_t tstate, uint8_t borderColor)
+void Screen::Draw(uint32_t tstate)
 {
     (this->*_currentDrawCallback)(tstate);
 }
