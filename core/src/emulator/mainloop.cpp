@@ -124,7 +124,7 @@ void MainLoop::RunFrame()
     static int i = 0;
 	//if (i % 100 == 0)
 	{
-        screen.RenderOnlyMainScreen();
+        //screen.RenderOnlyMainScreen();
 
         // Save frame if video memory was changed
         //if (_state->video_memory_changed)
