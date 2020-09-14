@@ -43,7 +43,8 @@ std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
     { Qt::Key_Y, ZXKEY_Y },
     { Qt::Key_Z, ZXKEY_Z },
 
-    { Qt::Key_Control, ZXKEY_SYM_SHIFT },
+    { Qt::Key_Control, ZXKEY_SYM_SHIFT },   // Ctrl on PC keyboard
+    { Qt::Key_Meta, ZXKEY_SYM_SHIFT },      // Ctrl on Apple keyboard
     { Qt::Key_Shift, ZXKEY_CAPS_SHIFT },
 
     { Qt::Key_Space, ZXKEY_SPACE },

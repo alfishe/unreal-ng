@@ -96,9 +96,9 @@ void DeviceScreen::keyPressEvent(QKeyEvent *event)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             messageCenter.Post(MC_KEY_PRESSED, event);
         }
-    }
 
-    qDebug() << "DeviceScreen : keyPressEvent , key : " << event->key();
+        qDebug() << "DeviceScreen : keyPressEvent , key : " << event->key();
+    }
 }
 
 void DeviceScreen::keyReleaseEvent(QKeyEvent *event)
