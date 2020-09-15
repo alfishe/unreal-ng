@@ -103,11 +103,11 @@ Z80::~Z80()
 
 uint8_t Z80::m1_cycle()
 {
-	static Z80& cpu = *this;
-	static CONFIG& config = _context->config;
-	static State& state = _context->state;
-	static TEMP& temporary = _context->temporary;
-	static PortDecoder& portDecoder = *_context->pPortDecoder;
+	Z80& cpu = *this;
+    const CONFIG& config = _context->config;
+    State& state = _context->state;
+    const TEMP& temporary = _context->temporary;
+    const PortDecoder& portDecoder = *_context->pPortDecoder;
 
 	/// region TODO: move to Ports class
 	/*
@@ -421,7 +421,7 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 
 	// Update TSConf cache data
 	// TODO: move to plugin
-    static CONFIG& config = _context->config;
+    const CONFIG& config = _context->config;
     if (config.mem_model == MM_TSL)
     {
         Z80 &_cpu_state = *this;
@@ -894,9 +894,9 @@ void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 // Note: Only TSConf supports interrupt vectors
 uint8_t Z80::GetTSConfInterruptVector()
 {
-    static Z80& _cpu_state = *this;
-    static CONFIG& config = _context->config;
-    static State& state = _context->state;
+    Z80& _cpu_state = *this;
+    const CONFIG& config = _context->config;
+    const State& state = _context->state;
 
     uint8_t result = 0xFF;
 
@@ -935,9 +935,9 @@ uint8_t Z80::GetTSConfInterruptVector()
 // TODO: Move to adapter
 void Z80::ts_frame_int(bool vdos)
 {
-	static Z80& _cpu_state = *this;
-	static CONFIG& config = _context->config;
-	static State& state = _context->state;
+    Z80& _cpu_state = *this;
+    const CONFIG& config = _context->config;
+    State& state = _context->state;
 
 	if (!state.ts.intctrl.frame_pend)
 	{

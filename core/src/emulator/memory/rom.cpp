@@ -40,8 +40,8 @@ bool ROM::LoadROM()
 {
 	bool result = false;
 
-	static CONFIG& config = _context->config;
-	static Memory& memory = *_context->pMemory;
+    const CONFIG& config = _context->config;
+    Memory& memory = *_context->pMemory;
 	
 	string romname;
 

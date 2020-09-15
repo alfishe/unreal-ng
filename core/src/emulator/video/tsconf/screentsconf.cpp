@@ -138,10 +138,10 @@ void ScreenTSConf::UpdateScreen()
 //region TSConf specific methods
 uint32_t ScreenTSConf::TSConf_GetAvailableFrameMemcycles(uint32_t dram_t)
 {
-	static Z80& cpu = *_cpu;
-	static State& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
+	Z80& cpu = *_cpu;
+	State& state = _context->state;
+    const CONFIG& config = _context->config;
+	VideoControl& video = _context->pScreen->_vid;
 
 	uint32_t result = 0;
 
@@ -166,10 +166,10 @@ void ScreenTSConf::TSConf_Draw(uint32_t vptr)
 
 uint32_t ScreenTSConf::TSConf_Render(uint32_t tacts)
 {
-	static Z80& cpu = *_cpu;
-	static State& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
+	Z80& cpu = *_cpu;
+	State& state = _context->state;
+    const CONFIG& config = _context->config;
+	VideoControl& video = _context->pScreen->_vid;
 
 	// save and set toggle bits
 	uint8_t old_s_en = state.ts.s_en;

@@ -234,9 +234,9 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
 // Address space: [0x0000 - 0x3FFF]
 void Memory::SetROMMode(ROMModeEnum mode)
 {
-    static State& state = _context->state;
-    static CONFIG& config = _context->config;
-    static PortDecoder& portDecoder = *_context->pPortDecoder;
+    State& state = _context->state;
+    const CONFIG& config = _context->config;
+    const PortDecoder& portDecoder = *_context->pPortDecoder;
 
 	if (mode == RM_NOCHANGE)
 		return;

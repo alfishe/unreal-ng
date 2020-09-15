@@ -93,9 +93,9 @@ void Screen::InitFrame()
 //
 void Screen::InitRaster()
 {
-	static State& state = _context->state;
-	static CONFIG& config = _context->config;
-	static VideoControl& video = _context->pScreen->_vid;
+	State& state = _context->state;
+    const CONFIG& config = _context->config;
+    VideoControl& video = _context->pScreen->_vid;
 
 	VideoModeEnum prevMode = video.mode;
 
@@ -744,9 +744,9 @@ void Screen::DrawGMX(uint32_t n)
 
 void Screen::DrawBorder(uint32_t n)
 {
-    static State& state = _context->state;
-    static CONFIG& config = _context->config;
-    static VideoControl& video = _context->pScreen->_vid;
+    State& state = _context->state;
+    const CONFIG& config = _context->config;
+    VideoControl& video = _context->pScreen->_vid;
 
     video.t_next += n;
     uint32_t vptr = video.vptr;
