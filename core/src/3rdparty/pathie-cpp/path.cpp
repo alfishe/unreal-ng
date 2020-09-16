@@ -982,6 +982,8 @@ Path Path::exe()
 #else
 #error Unsupported platform.
 #endif
+
+    return Path();
 }
 
 /**
