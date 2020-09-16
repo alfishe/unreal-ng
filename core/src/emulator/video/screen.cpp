@@ -63,9 +63,13 @@ Screen::~Screen()
 void Screen::Reset()
 {
     // Set Normal screen (Bank 5) mode by default
-    Memory& memory = *_context->pMemory;
+    Memory* memory = _context->pMemory;
+    if (memory)
+    {
+        _activeScreenMemoryOffset = memory->RAMPageAddress(5);
+    }
+
     _activeScreen = 0;
-    _activeScreenMemoryOffset = memory.RAMPageAddress(5);
 
     // Reset t-state cached
     _prevTstate = 0;
@@ -95,7 +99,7 @@ void Screen::InitRaster()
 {
 	State& state = _context->state;
     const CONFIG& config = _context->config;
-    VideoControl& video = _context->pScreen->_vid;
+    VideoControl& video = _vid;
 
 	VideoModeEnum prevMode = video.mode;
 
@@ -272,7 +276,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 /// \param screen
 void Screen::SetActiveScreen(uint8_t screen)
 {
-    static Memory& memory = *_context->pMemory;
+    Memory& memory = *_context->pMemory;
 
     uint8_t* activeScreenMemoryOffset = memory.RAMPageAddress(5);   // RAM Page 5 is used for default / normal screen
     switch (screen)

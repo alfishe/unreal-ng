@@ -376,7 +376,7 @@ void Z80::wd(uint16_t addr, uint8_t val)
 
 uint8_t Z80::in(uint16_t port)
 {
-    static PortDecoder& portDecoder = *_context->pPortDecoder;
+    PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
 	uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
@@ -386,7 +386,7 @@ uint8_t Z80::in(uint16_t port)
 
 void Z80::out(uint16_t port, uint8_t val)
 {
-    static PortDecoder& portDecoder = *_context->pPortDecoder;
+    PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
     portDecoder.DecodePortOut(port, val, m1_pc);
@@ -437,6 +437,8 @@ void Z80::Z80FrameCycle()
 	CONFIG& config = _context->config;
 	VideoControl& video = _context->pScreen->_vid;
 
+	/// region <TSConf only>
+
 	// TODO: Move to platform plugin
 	// Was:
 	// void z80loop()
@@ -473,6 +475,8 @@ void Z80::Z80FrameCycle()
 
 		return;
 	}
+
+	/// endregion </TSConf only>
 
 	// All non-TSConf platforms behavior
 
@@ -985,7 +989,7 @@ void Z80::ts_line_int(bool vdos)
 
 void Z80::ts_dma_int(bool vdos)
 {
-	static State& state = _context->state;
+	State& state = _context->state;
 
 	if (state.ts.intctrl.new_dma)
 	{

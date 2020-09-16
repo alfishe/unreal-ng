@@ -7,10 +7,6 @@
 
 class VideoController
 {
-protected:
-    // std::unique_ptr is managing Screen object release and destroy once global _screens map destroyed
-    static std::map<VideoModeEnum, std::shared_ptr<Screen*>> _screens;
-
 public:
     static Screen* GetScreenForMode(VideoModeEnum mode, EmulatorContext* context);
 };

@@ -15,7 +15,7 @@
 class Emulator
 {
 protected:
-    std::atomic<bool> _initialized;
+    bool _initialized = false;
     std::mutex _mutexInitialization;
 
     std::thread* _asyncThread = nullptr;
@@ -40,9 +40,12 @@ public:
 	Emulator();
 	virtual ~Emulator();
 
+private:
+    void ReleaseNoGuard();
+
 public:
 	// Initialization operations
-	bool Init();
+    [[nodiscard]] bool Init();
 	void Release();
 
 	// Info methods

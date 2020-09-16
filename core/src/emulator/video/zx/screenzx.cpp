@@ -282,7 +282,7 @@ uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPix
 /// \return pixel RGBA color
 uint32_t ScreenZX::GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress)
 {
-    static Memory& memory = *_context->pMemory;
+    Memory& memory = *_context->pMemory;
 
     uint32_t result = 0x00000000;
 
@@ -309,7 +309,7 @@ uint32_t ScreenZX::GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress
 /// \return pixel RGBA color
 uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t baseAddress)
 {
-    static Memory& memory = *_context->pMemory;
+    Memory& memory = *_context->pMemory;
 
     uint32_t result = 0x00000000;
 
@@ -603,9 +603,9 @@ void ScreenZX::Draw(uint32_t tstate)
 ///
 void ScreenZX::RenderOnlyMainScreen()
 {
-    static Memory& memory = *_context->pMemory;
-    static uint8_t* bank5Base = memory.RAMPageAddress(5);
-    static uint8_t* bank7Base = memory.RAMPageAddress(7);
+    Memory& memory = *_context->pMemory;
+    uint8_t* bank5Base = memory.RAMPageAddress(5);
+    uint8_t* bank7Base = memory.RAMPageAddress(7);
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
     // Validate required mode(s) set and framebuffer allocated

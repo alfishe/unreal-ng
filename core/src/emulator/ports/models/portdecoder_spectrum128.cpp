@@ -180,7 +180,7 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
 /// Port #7FFD (Memory) handler
 /// \param value
 void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) {
-    static Memory &memory = *_context->pMemory;
+    Memory &memory = *_context->pMemory;
 
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)

@@ -48,7 +48,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 
 	// Initialize animation
     FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
-    gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
+    //gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
 
 	/// endregion </Debug>
 
@@ -78,7 +78,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 	LOGINFO("Stop requested, exiting main loop");
 
     // Stop animation recording and finalize the file
-    gifAnimationHelper.StopAnimation();
+    //gifAnimationHelper.StopAnimation();
 
     _isRunning = false;
 }
@@ -100,7 +100,9 @@ void MainLoop::Resume()
 
 void MainLoop::RunFrame()
 {
-    static Screen& screen = *_context->pScreen;
+    Screen& screen = *_context->pScreen;
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    const std::string topic = "FRAME_REFRESH";
 
 	// Prepare sound and video for next cycle
 	InitSoundFrame();
@@ -134,22 +136,20 @@ void MainLoop::RunFrame()
         uint32_t* buffer;
         size_t size;
         screen.GetFramebufferData(&buffer, &size);
-        gifAnimationHelper.WriteFrame(buffer, size);
+        //gifAnimationHelper.WriteFrame(buffer, size);
     }
 	i++;
 
     if (i >= 2000)
     {
-        gifAnimationHelper.StopAnimation();
+        //gifAnimationHelper.StopAnimation();
 
-        exit(1);
+        //exit(1);
     }
 
 	// DEBUG: save frame to disk as image
 
 	// Notify that frame is composed and ready for rendering
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    std::string topic = "FRAME_REFRESH";
     messageCenter.Post(topic);
 }
 

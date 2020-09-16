@@ -7,69 +7,204 @@
 #include <cassert>
 #include "emulator/ports/portdecoder.h"
 #include <emulator/video/videocontroller.h>
+#include "emulator/video/zx/screenzx.h"
 
 
 // Instantiate CPU tables as static (only one instance per process)
 CPUTables CPU::_cpuTables;
+
+/// region <Constructors / Destructors>
 
 CPU::CPU(EmulatorContext* context)
 {
 	_context = context;
     _state = &_context->state;
     _config = &_context->config;
-
-	// Instantiation sequence
-    // Step 1       - Memory()
-
-	// Step N - 1   - Z80()
-	// Step N       - PortDecoder()
-
-	_messageCenter = &MessageCenter::DefaultMessageCenter();
-
-	// Register itself in context
-	_context->pCPU = this;
-
-	// Create memory subsystem (allocates all RAM/ROM regions)
-	_memory = new Memory(context);
-	_context->pMemory = _memory;
-
-	// Instantiate ROM implementation
-	_rom = new ROM(context);
-
-	// Instantiate Keyboard implementation
-	_keyboard = new Keyboard(context);
-	_context->pKeyboard = _keyboard;
-
-	// Instantiate sound manager
-	_sound = new Sound(context);
-
-	// Create HDD controller
-	_hdd = new HDD(context);
-
-	// Create Video controller
-	VideoModeEnum mode = M_ZX48; // Make ZX the default video mode on start
-	_screen = VideoController::GetScreenForMode(mode, _context);
-	_context->pScreen = _screen;
-
-    // Create main CPU core instance (Z80)
-    _cpu = new Z80(context);
-    UseFastMemoryInterface();    // Use fast memory interface by default
-
-    // Instantiate ports decoder
-    // As ports decoder should know and control all peripherals - instantiate it as last step
-    MEM_MODEL model = context->config.mem_model;
-    _ports = new Ports(context);
-    _portDecoder = PortDecoder::GetPortDecoderForModel(model, _context);
-    if (!_portDecoder)
-    {
-        LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
-        throw std::logic_error("No port decoder");
-    }
-    context->pPortDecoder = _portDecoder;
 }
 
 CPU::~CPU()
 {
+    Release();
+
+    _context = nullptr;
+}
+
+/// endregion </Constructors / Destructors>
+
+/// region <Initialization>
+bool CPU::Init()
+{
+    bool result = false;
+
+    // Instantiation sequence
+    // Step 1       - Memory()
+
+    // Step N - 1   - Z80()
+    // Step N       - PortDecoder()
+
+    // Register itself in context
+    _context->pCPU = this;
+
+    /// region <Memory>
+
+    // Create memory subsystem (allocates all RAM/ROM regions)
+    _memory = new Memory(_context);
+    if (_memory)
+    {
+        _context->pMemory = _memory;
+
+        result = true;
+    }
+
+    /// endregion </Memory>
+
+    /// region <ROM>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate ROM implementation
+        _rom = new ROM(_context);
+        if (_rom)
+        {
+            result = true;
+        }
+    }
+
+    /// endregion </ROM>
+
+    /// region <Keyboard>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate Keyboard implementation
+        _keyboard = new Keyboard(_context);
+        if (_keyboard)
+        {
+            _context->pKeyboard = _keyboard;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Keyboard>
+
+    /// region <Sound manager>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate sound manager
+        _sound = new Sound(_context);
+
+        if (_sound)
+        {
+            result = true;
+        }
+    }
+
+    /// endregion </Sound manager>
+
+    /// region <HDD>
+
+    if (result)
+    {
+        result = false;
+
+        // Create HDD controller
+        _hdd = new HDD(_context);
+        if (_hdd)
+        {
+            result = true;
+        }
+    }
+
+    /// endregion </HDD>
+
+    /// region <Video controller>
+
+    if (result)
+    {
+        result = false;
+
+        // Create Video controller
+        VideoModeEnum mode = M_ZX48; // Make ZX the default video mode on start
+        _screen = VideoController::GetScreenForMode(mode, _context);
+        if (_screen)
+        {
+            _context->pScreen = _screen;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Video controller>
+
+    /// region <Z80>
+
+    if (result)
+    {
+        result = false;
+
+        // Create main CPU core instance (Z80)
+        _cpu = new Z80(_context);
+        if (_cpu)
+        {
+            UseFastMemoryInterface();    // Use fast memory interface by default
+
+            result = true;
+        }
+    }
+
+    /// endregion </Z80>
+
+    /// region <Ports decoder>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate ports decoder
+        // As ports decoder should know and control all peripherals - instantiate it as last step
+        MEM_MODEL model = _context->config.mem_model;
+        _ports = new Ports(_context);
+        if (_ports)
+        {
+            _portDecoder = PortDecoder::GetPortDecoderForModel(model, _context);
+            if (_portDecoder)
+            {
+                _context->pPortDecoder = _portDecoder;
+
+                result = true;
+            }
+            else
+            {
+                LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
+                throw std::logic_error("No port decoder");
+            }
+        }
+    }
+
+    // endregion </Ports decoder>
+
+    // Release all allocated object in case of at least single failure
+    if (!result)
+    {
+        Release();
+    }
+
+    return result;
+}
+
+void CPU::Release()
+{
+    // Unegister itself from context
+    _context->pCPU = nullptr;
+
     _context->pPortDecoder = nullptr;
     if (_portDecoder != nullptr)
     {
@@ -83,17 +218,37 @@ CPU::~CPU()
         _ports = nullptr;
     }
 
-	if (_hdd != nullptr)
-	{
-		delete _hdd;
-		_hdd = nullptr;
-	}
+    _context->pScreen = nullptr;
+    if (_screen != nullptr)
+    {
+        delete _screen;
+        _screen = nullptr;
+    }
 
-	if (_sound != nullptr)
-	{
-		delete _sound;
-		_sound = nullptr;
-	}
+    if (_hdd != nullptr)
+    {
+        delete _hdd;
+        _hdd = nullptr;
+    }
+
+    if (_sound != nullptr)
+    {
+        delete _sound;
+        _sound = nullptr;
+    }
+
+    _context->pKeyboard = nullptr;
+    if (_keyboard != nullptr)
+    {
+        delete _keyboard;
+        _keyboard = nullptr;
+    }
+
+    if (_rom != nullptr)
+    {
+        delete _rom;
+        _rom = nullptr;
+    }
 
     _context->pMemory = nullptr;
     if (_memory != nullptr)
@@ -102,20 +257,13 @@ CPU::~CPU()
         _memory = nullptr;
     }
 
-	if (_rom != nullptr)
-	{
-		delete _rom;
-		_rom = nullptr;
-	}
-
-	if (_cpu != nullptr)
-	{
-		delete _cpu;
-		_cpu = nullptr;
-	}
-
-	_context = nullptr;
+    if (_cpu != nullptr)
+    {
+        delete _cpu;
+        _cpu = nullptr;
+    }
 }
+/// endregion </Initialization>
 
 // Configuration methods
 void CPU::UseFastMemoryInterface()
@@ -131,8 +279,8 @@ void CPU::UseDebugMemoryInterface()
 
 void CPU::Reset()
 {
-	static MessageCenter& messageCenter = *_messageCenter;
-	static int topicID = messageCenter.RegisterTopic("CPU_RESET");
+	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+	int topicID = messageCenter.RegisterTopic("CPU_RESET");
 	messageCenter.Post(topicID, new SimpleTextPayload("CPU reset started"));
 
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
@@ -272,7 +420,7 @@ void CPU::Reset()
 	// Set ROM mode
 	_memory->SetROMMode(_mode);
 
-	_memory->SetROMMode(RM_128);
+	//_memory->SetROMMode(RM_128);
 
 	// Reset counters
     _state->frame_counter = 0;
@@ -312,20 +460,38 @@ void CPU::CPUFrameCycle()
 		_cpu->Z80FrameCycle();
 	}
 
-	// Update frame stats
+    AdjustFrameCounters();
+}
+
+/// Perform corrections after each frame rendered
+void CPU::AdjustFrameCounters()
+{
+    /// region <Input parameters validation>
+    if (_cpu->t < _config->frame)
+        return;
+    /// endregion </Input parameters validation>
+
+    // Update frame stats
     _state->frame_counter++;
 
+    // Update counter
     _state->t_states += _config->frame;
-	_cpu->t -= _config->frame;
-	_cpu->eipos -= _config->frame;
 
-	if (_config->mem_model == MM_TSL)
-	{
+    // Re-adjust CPU frame t-state counter and interrupt position
+    _cpu->t -= _config->frame;
+    _cpu->eipos -= _config->frame;
+
+    /// region <TSConf only>
+
+    if (_config->mem_model == MM_TSL)
+    {
         _state->ts.intctrl.last_cput -= _config->frame;
-	}
+    }
+
+    /// endregion </TSConf only>
 }
 
 void CPU::UpdateScreen()
 {
-	
+	GetZ80()->UpdateScreen();
 }

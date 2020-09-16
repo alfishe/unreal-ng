@@ -112,8 +112,8 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
     //      D6 = unused
     //      D7 = unused
 
-    static Memory& memory = *_context->pMemory;
-    static Screen& screen = *_context->pScreen;
+    Memory& memory = *_context->pMemory;
+    Screen& screen = *_context->pScreen;
 
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)

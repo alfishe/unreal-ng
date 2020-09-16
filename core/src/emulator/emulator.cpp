@@ -83,20 +83,23 @@ bool Emulator::Init()
 	// Create and initialize CPU system instance (including most peripheral devices)
 	if (result)
 	{
+	    result = false;
+
 		_cpu = new CPU(_context);
-		if (_cpu != nullptr)
+		if (_cpu && _cpu->Init())
 		{
 			LOGDEBUG("Emulator::Init - CPU system created");
 
+			_context->pCPU = _cpu;
+
 			_z80 = _cpu->GetZ80();
-			_memory = _cpu->_memory;
+			_memory = _cpu->GetMemory();
 
 			result = true;
 		}
 		else
 		{
 			LOGERROR("Emulator::Init - CPU system (or main peripheral devices) creation failed");
-			result = false;
 		}
 	}
 
@@ -152,6 +155,58 @@ bool Emulator::Init()
 		}
 	}
 
+	/// region <Sanity checks>
+
+    if (!_context)
+    {
+        std::string error = "Context was not created";
+        throw std::logic_error(error);
+    }
+
+    if (!_config)
+    {
+        std::string error = "Config was not created";
+        throw std::logic_error(error);
+    }
+
+	if (!_cpu)
+    {
+	    std::string error = "CPU was not created";
+	    throw std::logic_error(error);
+    }
+
+    if (!_context->pCPU)
+    {
+        std::string error = "_context->pCPU not available";
+        throw std::logic_error(error);
+    }
+
+    if (!_context->pMemory)
+    {
+        std::string error = "_context->pMemory not available";
+        throw std::logic_error(error);
+    }
+
+    if (!_context->pScreen)
+    {
+        std::string error = "_context->pScreen not available";
+        throw std::logic_error(error);
+    }
+
+    if (!_context->pKeyboard)
+    {
+        std::string error = "_context->pKeyboard not available";
+        throw std::logic_error(error);
+    }
+
+    if (!_context->pPortDecoder)
+    {
+        std::string error = "_context->pPortDecoder not available";
+        throw std::logic_error(error);
+    }
+
+	/// endregion </Sanity checks>
+
 	// Reset CPU and set-up all ports / ROM and RAM pages
 	if (result)
 	{
@@ -164,44 +219,63 @@ bool Emulator::Init()
 		_initialized = true;
 	}
 
+	// Release all created resources if any of initialization steps failed
+	if (!result)
+    {
+	    // Important!: ReleaseNoGuard() only since we're already locked mutex
+        ReleaseNoGuard();
+    }
+
 	return result;
 }
 
 void Emulator::Release()
 {
-	// Stop and release MessageCenter
-	// Assuming that only single Emulator instance exists
-	//MessageCenter::DisposeDefaultMessageCenter();
+    // Lock mutex until exiting current scope
+    std::lock_guard<std::mutex> lock(_mutexInitialization);
 
-	// Stop and release main loop
-	if (_mainloop != nullptr)
-	{
-		_mainloop->Stop();
+    ReleaseNoGuard();
+}
 
-		delete _mainloop;
-		_mainloop = nullptr;
-	}
+void Emulator::ReleaseNoGuard()
+{
+    // Stop and release main loop
+    if (_mainloop != nullptr)
+    {
+        _mainloop->Stop();
 
-	// Release additional peripheral devices
-	// GS / NGS
-	// ZiFi
-	// HDD/CD
-	// Tape
+        delete _mainloop;
+        _mainloop = nullptr;
+    }
+
+    // Release additional peripheral devices
+    // GS / NGS
+    // ZiFi
+    // HDD/CD
+    // Tape
 
 
-	// Release CPU subsystem (it will release all main peripherals)
-	if (_cpu != nullptr)
-	{
-		delete _cpu;
-		_cpu = nullptr;
-	}
+    // Release CPU subsystem (it will release all main peripherals)
+    _context->pCPU = nullptr;
+    if (_cpu != nullptr)
+    {
+        delete _cpu;
+        _cpu = nullptr;
+    }
 
-	// Release EmulatorContext as last step
-	if (_context != nullptr)
-	{
-		delete _context;
-		_context = nullptr;
-	}
+    // Release Config
+    if (_config != nullptr)
+    {
+        delete _config;
+        _config = nullptr;
+    }
+
+    // Release EmulatorContext as last step
+    if (_context != nullptr)
+    {
+        delete _context;
+        _context = nullptr;
+    }
 }
 
 /// endregion </Initialization>
@@ -317,9 +391,19 @@ void Emulator::Stop()
 
 void Emulator::RunSingleCPUCycle()
 {
+    CONFIG& config = _context->config;
+    Z80& z80 = *_cpu->GetZ80();
+
 	// TODO: synchronize with all timings within frame and I/O
 
-	_cpu->GetZ80()->Z80Step();
+    z80.Z80Step();
+    z80.UpdateScreen();
+
+    // New frame to be started
+    if (z80.t >= config.frame)
+    {
+        _cpu->AdjustFrameCounters();
+    }
 
 #ifdef _DEBUG
 	// Use static buffer to save on strings reallocation. CPU cycle is most frequently called functionality.

@@ -46,6 +46,7 @@ private:
     Ui::MainWindow* ui;
     DeviceScreen* deviceScreen;
     QPushButton* startButton;
+    QMutex lockMutex;
 
     EmulatorManager* _emulatorManager = nullptr;
     Emulator* _emulator = nullptr;

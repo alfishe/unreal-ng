@@ -327,7 +327,7 @@ public:
 	inline void ProcessInterrupts(bool int_occured,	// Take care about incoming interrupts
     unsigned int_start,
     unsigned int_end);
-	inline void UpdateScreen();			// Trigger screen update after each command cycle
+	void UpdateScreen();			                // Trigger screen update after each command cycle
 
 	// Event handlers
 public:

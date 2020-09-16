@@ -19,63 +19,65 @@ class PortDecoder;
 
 class CPU
 {
-    friend class Emulator;
-	friend class Z80;
-	friend class Memory;
-	friend class Ports;
-	friend class PortDecoder;
-	friend class ROM;
-	friend class Sound;
-	friend class HDD;
-
-	// Ensure that all flag / decoding tables are initialized only once using static member
+    /// region <Static>
+    // Ensure that all flag / decoding tables are initialized only once using static member
 public:
-	static CPUTables _cpuTables;
+    static CPUTables _cpuTables;
+    /// endregion </Static>
 
-	/// region <Fields>
+    /// region <Fields>
 protected:
-	EmulatorContext* _context = nullptr;
+    EmulatorContext* _context = nullptr;
     State* _state = nullptr;
     const CONFIG* _config = nullptr;
 
-    MessageCenter* _messageCenter = nullptr;
+    Z80* _cpu = nullptr;
+    Memory* _memory = nullptr;
+    Ports* _ports = nullptr;
+    PortDecoder* _portDecoder = nullptr;
+    ROM* _rom = nullptr;
+    Keyboard* _keyboard = nullptr;
+    Sound* _sound = nullptr;
+    HDD* _hdd = nullptr;
+    VideoControl* _video = nullptr;
+    Screen* _screen = nullptr;
 
-	Z80* _cpu = nullptr;
-	Memory* _memory = nullptr;
-	Ports* _ports = nullptr;
-	PortDecoder* _portDecoder = nullptr;
-	ROM* _rom = nullptr;
-	Keyboard* _keyboard = nullptr;
-	Sound* _sound = nullptr;
-	HDD* _hdd = nullptr;
-	VideoControl* _video = nullptr;
-	Screen* _screen = nullptr;
-
-	ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
+    ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
     /// endregion </Fields>
 
+    /// region <Constructors / Destructors>
 public:
-	CPU() = delete;					// Disable default constructor. C++ 11 feature
-	CPU(EmulatorContext* context);	// Only constructor with context param is allowed
-	virtual ~CPU();
+    CPU() = delete;			        // Disable default constructor. C++ 11 feature
+    CPU(EmulatorContext* context);              // Only constructor with context param is allowed
+    virtual ~CPU();
+    /// endregion </Constructors / Destructors
 
-	inline Z80* GetZ80() { return _cpu; }
-	inline Memory* GetMemory() { return _memory; }
-	inline Ports* GetPorts() { return _ports; }
-	inline ROM* GetROM() { return _rom; }
+    /// region <Initialization>
+    [[nodiscard]] bool Init();
+    void Release();
+    /// endregion </Initialization>
 
-	// Configuration methods
+    /// region <Properties>
+    Z80* GetZ80() { return _cpu; }
+    Memory* GetMemory() { return _memory; }
+    Ports* GetPorts() { return _ports; }
+    ROM* GetROM() { return _rom; }
+
+    /// endregion </Properties>
+
+    // Configuration methods
 public:
-	void UseFastMemoryInterface();
-	void UseDebugMemoryInterface();
+    void UseFastMemoryInterface();
+    void UseDebugMemoryInterface();
 
-	// Z80 CPU-related methods
+    // Z80 CPU-related methods
 public:
-	void Reset();
-	void SetCPUClockSpeed(uint8_t);
-	void CPUFrameCycle();
+    void Reset();
+    void SetCPUClockSpeed(uint8_t);
+    void CPUFrameCycle();
+    void AdjustFrameCounters();
 
-	// Event handlers
+    // Event handlers
 public:
-	void UpdateScreen();
+    void UpdateScreen();
 };

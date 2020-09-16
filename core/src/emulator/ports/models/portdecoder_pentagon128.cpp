@@ -113,9 +113,9 @@ bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t port)
 /// \param value
 void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc)
 {
-    static State& state = _context->state;
-    static Memory& memory = *_context->pMemory;
-    static Screen& screen = *_context->pScreen;
+    State& state = _context->state;
+    Memory& memory = *_context->pMemory;
+    Screen& screen = *_context->pScreen;
 
     uint8_t bankRAM = value & 0b0000'0111;
     uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)

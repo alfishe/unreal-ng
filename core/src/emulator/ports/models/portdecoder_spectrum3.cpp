@@ -103,8 +103,8 @@ bool PortDecoder_Spectrum3::IsPort_1FFD(uint16_t port)
 /// \param value
 void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
 {
-    static Memory& memory = *_context->pMemory;
-    static Screen& screen = *_context->pScreen;
+    Memory& memory = *_context->pMemory;
+    Screen& screen = *_context->pScreen;
 
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)

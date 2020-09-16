@@ -166,6 +166,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 void MainWindow::handleStartButton()
 {
+    // Lock will be removed after method exit
+    QMutexLocker ml(&lockMutex);
+
     if (_emulator == nullptr)
     {
         startButton->setEnabled(false);
@@ -211,6 +214,9 @@ void MainWindow::handleStartButton()
     {
         startButton->setEnabled(false);
 
+        // Stop emulator instance
+        _emulator->Stop();
+
         // Unsubscribe from message bus events
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         std::string topic = "FRAME_REFRESH";
@@ -218,13 +224,11 @@ void MainWindow::handleStartButton()
         ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
         messageCenter.RemoveObserver(topic, observerInstance, callback);
 
-        // Stop emulator instance
-        _emulator->Stop();
-
         // Detach framebuffer
         deviceScreen->detach();
 
         // Destroy emulator
+        _emulator->Release();
         delete _emulator;
         _emulator = nullptr;
 
