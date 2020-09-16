@@ -6,7 +6,7 @@
 #include "common/collectionhelper.h"
 
 // Defining static collection
-map<VideoModeEnum, std::unique_ptr<Screen*>> VideoController::_screens;
+map<VideoModeEnum, std::shared_ptr<Screen*>> VideoController::_screens;
 
 Screen* VideoController::GetScreenForMode(VideoModeEnum mode, EmulatorContext* context)
 {
@@ -34,7 +34,7 @@ Screen* VideoController::GetScreenForMode(VideoModeEnum mode, EmulatorContext* c
 
         // Cache screen for future use
         if (result != nullptr)
-            _screens.insert({ mode, std::make_unique<Screen*>(result) });
+            _screens.insert({ mode, std::make_shared<Screen*>(result) });
     }
 
     return result;
