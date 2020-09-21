@@ -8,6 +8,127 @@
 #define EMUL_DEBUG
 #define TRASH_PAGE
 
+/// region <Logging / Tracing data>
+
+constexpr char const * NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODULES";
+constexpr char const * NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
+
+// High level modules
+enum PlatformModulesEnum : uint8_t
+{
+    MODULE_NONE                 = 0,
+    MODULE_CORE                 = 1,
+    MODULE_Z80                  = 2,
+    MODULE_MEMORY               = 3,
+    MODULE_IO                   = 4,
+    MODULE_DISK                 = 5,
+    MODULE_VIDEO                = 6,
+    MODULE_SOUND                = 7,
+    MODULE_DMA                  = 8,
+    MODULE_DEBUGGER             = 9,
+
+    MODULE_ALL                  = 0xFF
+};
+
+enum PlatformCoreSubmodulesEnum : uint16_t
+{
+    SUBMODULE_CORE_NONE         = 0x0000,
+    SUBMODULE_CORE_FILES        = 0x0001,
+
+    SUBMODULE_CORE_ALL          = 0xFFFF
+};
+
+enum PlatformZ80SubmodulesEnum : uint16_t
+{
+    SUBMODULE_Z80_NONE          = 0x0000,
+    SUBMODULE_Z80_CALLS         = 0x0001,
+    SUBMODULE_Z80_JUMPS         = 0x0002,
+    SUBMODULE_Z80_INTERRUPTS    = 0x0004,
+    SUBMODULE_Z80_BIT           = 0x0008,
+    SUBMODULE_Z80_ARITHMETICS   = 0x0010,
+    SUBMODULE_Z80_STACK         = 0x0020,
+    SUBMODULE_Z80_REGISTERS     = 0x0040,
+    SUBMODULE_Z80_IO            = 0x0080,
+
+    SUBMODULE_Z80_ALL           = 0xFFFF,
+};
+
+enum PlatformMemorySubmodulesEnum : uint16_t
+{
+    SUBMODULE_MEM_NONE          = 0x0000,
+    SUBMODULE_MEM_ROM           = 0x0001,
+    SUBMODULE_MEM_RAM           = 0x0002,
+
+    SUBMODULE_MEM_ALL           = 0xFFFF
+};
+
+enum PlatformIOSubmodulesEnum: uint16_t
+{
+    SUBMODULE_IO_NONE           = 0x0000,
+    SUBMODULE_IO_KEYBOARD       = 0x0001,
+    SUBMODULE_IO_KEMPSTON_JOY   = 0x0002,
+    SUBMODULE_IO_KEMPSTON_MOUSE = 0x0004,
+
+    SUBMODULE_IO_ALL            = 0xFFFF
+};
+
+enum PlatformDiskSubmodulesEnum : uint16_t
+{
+    SUBMODULE_DISK_NONE         = 0x0000,
+    SUBMODULE_DISK_FDC          = 0x0001,
+    SUBMODULE_DISK_HDD          = 0x0002,
+
+    SUBMODULE_DISK_ALL          = 0xFFFF
+};
+
+enum PlatformSoundSubmodulesEnum : uint16_t
+{
+    SUBMODULE_SOUND_ALL         = 0x0000,
+    SUBMODULE_SOUND_AY          = 0x0001,
+    SUBMODULE_SOUND_GS          = 0x0002,
+    SUBMODULE_SOUND_MOONSOUND   = 0x0004,
+    SUBMODULE_SOUND_SAA         = 0x0008
+};
+
+enum PlatformVideoSubmodulesEnum : uint16_t
+{
+    SUBMODULE_VIDEO_NONE        = 0x0000,
+    SUBMODULE_VIDEO_ULA         = 0x0001,
+    SUBMODULE_VIDEO_ULAPLUS     = 0x0002,
+    SUBMODULE_VIDEO_MISC        = 0x0004,
+    SUBMODULE_VIDEO_NEXT        = 0x0008,
+    SUBMODULE_VIDEO_PROFI       = 0x0010,
+    SUBMODULE_VIDEO_ATM         = 0x0020,
+    SUBMODULE_VIDEO_TSCONF      = 0x0040,
+
+    SUBMODULE_VIDEO_ALL         = 0xFFFF
+};
+
+enum PlatformDMASubmodulesEnum : uint16_t
+{
+    SUBMODULE_DMA_NONE          = 0x0000,
+    SUBMODULE_DMA_NEXT          = 0x0001,
+    SUBMODULE_DMA_TSCONF        = 0x0002,
+
+    SUBMODULE_DMA_ALL           = 0xFFFF
+};
+
+enum PlatformDebuggerSubmodulesEnum : uint16_t
+{
+    SUBMODULE_DEBUGGER_NONE         = 0x0000,
+    SUBMODULE_DEBUGGER_BREAKPOINTS  = 0x0001,
+    SUBMODULE_DEBUGGER_WATCHES      = 0x0002,
+    SUBMODULE_DEBUGGER_CPUTRACE     = 0x0004,
+    SUBMODULE_DEBUGGER_MEMORYTRACE  = 0x0008,
+    SUBMODULE_DEBUGGER_IOTRACE      = 0x0010,
+
+    SUBMODULE_DEBUGGER_ALL          = 0xFFFF
+};
+
+/// endregion </Logging / Tracing data>
+
+
+
 #undef PAGE_SIZE
 #define PAGE_SIZE 0x4000U		// Spectrum memory page size is 16Kb (0x4000 or 16384)
 
@@ -80,7 +201,8 @@ enum MEM_MODEL : uint8_t
 	MM_QUORUM,  			// Quorum
 	MM_LSY256,  			// LSY256
 	MM_PHOENIX,             // Phoenix
-	N_MM_MODELS
+	MM_NEXT,                // ZX Next
+	N_MM_MODELS             // <End of enumeration>
 };
 
 const int RAM_48 = 48, RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
