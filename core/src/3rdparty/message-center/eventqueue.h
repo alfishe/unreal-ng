@@ -96,7 +96,19 @@ public:
 public:
     SimpleTextPayload(std::string& text) : MessagePayload() { _payloadText = std::string(text); };
     SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
-    ~SimpleTextPayload() {};
+    virtual ~SimpleTextPayload() {};
+};
+
+/// Allows to pass 32 bit numbers in MessageCenter message
+/// Example: messageCenter.Post(topic, new SimpleNumberPayload(0x12345678);
+class SimpleNumberPayload : public MessagePayload
+{
+public:
+    uint32_t _payloadNumber;
+
+public:
+    SimpleNumberPayload(uint32_t value) : MessagePayload() { _payloadNumber = value; };
+    virtual ~SimpleNumberPayload() {};
 };
 
 
