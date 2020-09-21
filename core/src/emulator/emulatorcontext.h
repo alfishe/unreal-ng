@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include "common/modulelogger.h"
 
 class CPU;
 class Keyboard;
@@ -13,6 +14,9 @@ class DebugManager;
 class EmulatorContext
 {
 public:
+    // Settings for logger
+    LoggerSettings loggerSettings;
+
 	// Global emulator configuration (MemoryRead from ini file)
 	CONFIG config;
 
