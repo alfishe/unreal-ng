@@ -256,6 +256,12 @@ typedef void(Screen::* DrawCallback)(uint32_t n);
 
 class Screen
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_VIDEO;
+    const uint16_t _SUBMODULE = PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_GENERIC;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
 public:
 	static constexpr uint32_t rb2_offs = MAX_HEIGHT * MAX_WIDTH_P;
 	static constexpr uint32_t sizeof_rbuf = rb2_offs * (MAX_BUFFERS + 2);
@@ -358,6 +364,7 @@ protected:
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;
+    ModuleLogger* _logger;
 
 	uint8_t _activeScreen;
 	uint8_t* _activeScreenMemoryOffset;

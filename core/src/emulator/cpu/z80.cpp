@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "z80.h"
 #include "common/stringhelper.h"
@@ -14,6 +14,7 @@
 Z80::Z80(EmulatorContext* context)
 {
 	_context = context;
+    _logger = context->pModuleLogger;
     _memory = context->pMemory;
 
     //
@@ -94,7 +95,7 @@ Z80::~Z80()
 
 	_context = nullptr;
 
-	LOGDEBUG("Z80::~Z80()");
+	MLOGDEBUG("Z80::~Z80()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -103,6 +104,10 @@ Z80::~Z80()
 
 uint8_t Z80::m1_cycle()
 {
+    /// region <Overriding submodule for module logger>
+    const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1;
+    /// endregion </Overriding submodule for module logger>
+
 	Z80& cpu = *this;
     const CONFIG& config = _context->config;
     State& state = _context->state;
@@ -233,87 +238,66 @@ uint8_t Z80::m1_cycle()
 	/// Spectrum 128K names
 	if (cpu.pc == 0x0000)
     {
-	    Logger::MuteSilent();
         cycles_to_capture = -1;
     }
 
 	if (cpu.pc == 0x1F20)
     {
-        Logger::UnmuteSilent();
-        LOGINFO("USE_NORMAL_RAM_CONFIG is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("USE_NORMAL_RAM_CONFIG is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x00C7)
     {
-        Logger::UnmuteSilent();
-        LOGINFO("INIT1 is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("INIT1 is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x0137)
     {
-        Logger::UnmuteSilent();
-        LOGINFO("INIT2 is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("INIT2 is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x019D)
     {
-        Logger::UnmuteSilent();
-        LOGINFO("NEW is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("NEW is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x1C64)
     {
-        Logger::UnmuteSilent();
-        LOGINFO("SET_RAM_PAGE is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("SET_RAM_PAGE is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x018A)
     {
-        Logger::UnmuteSilent();
-        LOGWARNING("RST #28 call! PC: %04X", cpu.pc);
-        LOGWARNING("CPU cycles: %d", cpu.cycle_count);
-        Logger::MuteSilent();
+        MLOGWARNING("RST #28 call! PC: %04X", cpu.pc);
+        MLOGWARNING("CPU cycles: %d", cpu.cycle_count);
     }
 
     if (cpu.pc == 0x5B00)
     {
         //cycles_to_capture = 400;
 
-        Logger::UnmuteSilent();
-        LOGINFO("RAM_SWAP_5B00 is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("RAM_SWAP_5B00 is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x259F)
     {
         //cycles_to_capture = 400;
 
-        Logger::UnmuteSilent();
-        LOGINFO("MAINMENU is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("MAINMENU is executed. PC: %04X", cpu.pc);
     }
 
     if (cpu.pc == 0x36A8)
     {
         //cycles_to_capture = 400;
 
-        Logger::UnmuteSilent();
-        LOGINFO("DISPLAY_MENU is executed. Frame: %03d, PC: %04X", state.frame_counter, cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("DISPLAY_MENU is executed. Frame: %03d, PC: %04X", state.frame_counter, cpu.pc);
     }
 
     if (cpu.pc == 0x3719)
     {
         //cycles_to_capture = 400;
 
-        Logger::UnmuteSilent();
-        LOGINFO("PLOT_LINE is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
+        MLOGINFO("PLOT_LINE is executed. PC: %04X", cpu.pc);
     }
 
     if (cycles_to_capture > 0)

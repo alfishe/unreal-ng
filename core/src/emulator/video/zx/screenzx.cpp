@@ -447,7 +447,7 @@ RenderTypeEnum ScreenZX::GetLineRenderTypeByTiming(uint32_t tstate)
         CONFIG& config = _context->config;
         if (_rasterState.maxFrameTiming <= config.frame)
         {
-            LOGWARNING("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate, _rasterState.maxFrameTiming - 1);
+            MLOGWARNING("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate, _rasterState.maxFrameTiming - 1);
         }
         else
         {
@@ -549,8 +549,8 @@ void ScreenZX::Draw(uint32_t tstate)
 
         if (TransformTstateToFramebufferCoords(tstate, &destX, &destY))
         {
-            uint32_t* framebuffer = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
-            size_t framebufferSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
+            uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
+            size_t framebufferARGBSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
 
             if (TransformTstateToZXCoords(tstate, &zxX, &zxY))
             {
@@ -570,9 +570,9 @@ void ScreenZX::Draw(uint32_t tstate)
                     uint32_t resultingPixelColor = ((pixels << pixelXBit) & 0b1000'0000) ? colorInk : colorPaper;
                     int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
 
-                    if (framebufferOffset < framebufferSize)
+                    if (framebufferOffset < framebufferARGBSize)
                     {
-                        *(framebuffer + framebufferOffset) = resultingPixelColor;
+                        *(framebufferARGB + framebufferOffset) = resultingPixelColor;
                     }
                     else
                     {
@@ -587,8 +587,8 @@ void ScreenZX::Draw(uint32_t tstate)
                 // It is guaranteed that border pixels are within same line
                 int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
                 uint32_t borderColor = _rgbaColors[_borderColor];
-                *(framebuffer + framebufferOffset) = borderColor;
-                *(framebuffer + framebufferOffset + 1) = borderColor;
+                *(framebufferARGB + framebufferOffset) = borderColor;
+                *(framebufferARGB + framebufferOffset + 1) = borderColor;
             }
         }
     }
@@ -618,7 +618,7 @@ void ScreenZX::RenderOnlyMainScreen()
     uint8_t ramPage = memory.GetRAMPageFromAddress(zxScreen);
     if (zxScreen != bank5Base && zxScreen != bank7Base)
     {
-        LOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
+        MLOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
         throw std::logic_error("Invalid screen memory");
     }
 
@@ -650,7 +650,7 @@ void ScreenZX::RenderOnlyMainScreen()
                     }
                     else
                     {
-                        LOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
+                        MLOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
                         throw std::logic_error("Framebuffer invalid offset");
                     }
                 }

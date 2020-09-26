@@ -33,7 +33,9 @@ enum PlatformModulesEnum : uint8_t
 enum PlatformCoreSubmodulesEnum : uint16_t
 {
     SUBMODULE_CORE_NONE         = 0x0000,
-    SUBMODULE_CORE_FILES        = 0x0001,
+    SUBMODULE_CORE_GENERIC      = 0x0001,
+    SUBMODULE_CORE_CONFIG       = 0x0002,
+    SUBMODULE_CORE_FILES        = 0x0004,
 
     SUBMODULE_CORE_ALL          = 0xFFFF
 };
@@ -41,14 +43,16 @@ enum PlatformCoreSubmodulesEnum : uint16_t
 enum PlatformZ80SubmodulesEnum : uint16_t
 {
     SUBMODULE_Z80_NONE          = 0x0000,
-    SUBMODULE_Z80_CALLS         = 0x0001,
-    SUBMODULE_Z80_JUMPS         = 0x0002,
-    SUBMODULE_Z80_INTERRUPTS    = 0x0004,
-    SUBMODULE_Z80_BIT           = 0x0008,
-    SUBMODULE_Z80_ARITHMETICS   = 0x0010,
-    SUBMODULE_Z80_STACK         = 0x0020,
-    SUBMODULE_Z80_REGISTERS     = 0x0040,
-    SUBMODULE_Z80_IO            = 0x0080,
+    SUBMODULE_Z80_GENERIC       = 0x0001,
+    SUBMODULE_Z80_M1            = 0x0002,
+    SUBMODULE_Z80_CALLS         = 0x0004,
+    SUBMODULE_Z80_JUMPS         = 0x0008,
+    SUBMODULE_Z80_INTERRUPTS    = 0x0010,
+    SUBMODULE_Z80_BIT           = 0x0020,
+    SUBMODULE_Z80_ARITHMETICS   = 0x0040,
+    SUBMODULE_Z80_STACK         = 0x0080,
+    SUBMODULE_Z80_REGISTERS     = 0x0100,
+    SUBMODULE_Z80_IO            = 0x0200,
 
     SUBMODULE_Z80_ALL           = 0xFFFF,
 };
@@ -56,8 +60,9 @@ enum PlatformZ80SubmodulesEnum : uint16_t
 enum PlatformMemorySubmodulesEnum : uint16_t
 {
     SUBMODULE_MEM_NONE          = 0x0000,
-    SUBMODULE_MEM_ROM           = 0x0001,
-    SUBMODULE_MEM_RAM           = 0x0002,
+    SUBMODULE_MEM_GENERIC       = 0x0001,
+    SUBMODULE_MEM_ROM           = 0x0002,
+    SUBMODULE_MEM_RAM           = 0x0004,
 
     SUBMODULE_MEM_ALL           = 0xFFFF
 };
@@ -65,9 +70,12 @@ enum PlatformMemorySubmodulesEnum : uint16_t
 enum PlatformIOSubmodulesEnum: uint16_t
 {
     SUBMODULE_IO_NONE           = 0x0000,
-    SUBMODULE_IO_KEYBOARD       = 0x0001,
-    SUBMODULE_IO_KEMPSTON_JOY   = 0x0002,
-    SUBMODULE_IO_KEMPSTON_MOUSE = 0x0004,
+    SUBMODULE_IO_GENERIC        = 0x0001,
+    SUBMODULE_IO_IN             = 0x0002,
+    SUBMODULE_IO_OUT            = 0x0004,
+    SUBMODULE_IO_KEYBOARD       = 0x0008,
+    SUBMODULE_IO_KEMPSTON_JOY   = 0x0010,
+    SUBMODULE_IO_KEMPSTON_MOUSE = 0x0020,
 
     SUBMODULE_IO_ALL            = 0xFFFF
 };
@@ -75,31 +83,36 @@ enum PlatformIOSubmodulesEnum: uint16_t
 enum PlatformDiskSubmodulesEnum : uint16_t
 {
     SUBMODULE_DISK_NONE         = 0x0000,
-    SUBMODULE_DISK_FDC          = 0x0001,
-    SUBMODULE_DISK_HDD          = 0x0002,
+    SUBMODULE_DISK_GENERIC      = 0x0001,
+    SUBMODULE_DISK_FDC          = 0x0002,
+    SUBMODULE_DISK_HDD          = 0x0004,
 
     SUBMODULE_DISK_ALL          = 0xFFFF
 };
 
 enum PlatformSoundSubmodulesEnum : uint16_t
 {
-    SUBMODULE_SOUND_ALL         = 0x0000,
-    SUBMODULE_SOUND_AY          = 0x0001,
-    SUBMODULE_SOUND_GS          = 0x0002,
-    SUBMODULE_SOUND_MOONSOUND   = 0x0004,
-    SUBMODULE_SOUND_SAA         = 0x0008
+    SUBMODULE_SOUND_NONE        = 0x0000,
+    SUBMODULE_SOUND_GENERIC     = 0x0001,
+    SUBMODULE_SOUND_AY          = 0x0002,
+    SUBMODULE_SOUND_GS          = 0x0004,
+    SUBMODULE_SOUND_MOONSOUND   = 0x0008,
+    SUBMODULE_SOUND_SAA         = 0x0010,
+
+    SUBMODULE_SOUND_ALL         = 0xFFFF
 };
 
 enum PlatformVideoSubmodulesEnum : uint16_t
 {
     SUBMODULE_VIDEO_NONE        = 0x0000,
-    SUBMODULE_VIDEO_ULA         = 0x0001,
-    SUBMODULE_VIDEO_ULAPLUS     = 0x0002,
-    SUBMODULE_VIDEO_MISC        = 0x0004,
-    SUBMODULE_VIDEO_NEXT        = 0x0008,
-    SUBMODULE_VIDEO_PROFI       = 0x0010,
-    SUBMODULE_VIDEO_ATM         = 0x0020,
-    SUBMODULE_VIDEO_TSCONF      = 0x0040,
+    SUBMODULE_VIDEO_GENERIC     = 0x0001,
+    SUBMODULE_VIDEO_ULA         = 0x0002,
+    SUBMODULE_VIDEO_ULAPLUS     = 0x0004,
+    SUBMODULE_VIDEO_MISC        = 0x0008,
+    SUBMODULE_VIDEO_NEXT        = 0x0010,
+    SUBMODULE_VIDEO_PROFI       = 0x0020,
+    SUBMODULE_VIDEO_ATM         = 0x0040,
+    SUBMODULE_VIDEO_TSCONF      = 0x0080,
 
     SUBMODULE_VIDEO_ALL         = 0xFFFF
 };

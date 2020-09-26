@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "emulator.h"
+#include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -52,6 +53,26 @@ bool Emulator::Init()
 		LOGERROR("Emulator::Init - context creation failed");
 		result = false;
 	}
+
+	// Create advanced logging
+	if (result)
+	{
+	    result = false;
+
+        ModuleLogger* moduleLogger = new ModuleLogger(_context);
+        if (moduleLogger != nullptr)
+        {
+            _context->pModuleLogger = moduleLogger;
+
+            moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG, "Emulator - ModuleLogger initialized");
+            result = true;
+        }
+        else
+        {
+            LOGERROR("Emulator::Init - Unable to initialize ModuleLogger");
+        }
+    }
+
 
 	// Get host system info
 	GetSystemInfo();
@@ -214,6 +235,9 @@ bool Emulator::Init()
 
 		// Init default video render
 		_context->pScreen->InitFrame();
+
+		// Ensure all logger messages displayed
+		_context->pModuleLogger->Flush();
 
 		// Mark as initialized at the very last moment
 		_initialized = true;

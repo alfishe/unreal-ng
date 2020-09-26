@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "config.h"
 #include "common/filehelper.h"
@@ -34,6 +34,7 @@ const char* Config::zc = "ZC";
 Config::Config(EmulatorContext* context)
 {
 	_context = context;
+	_logger = context->pModuleLogger;
 }
 
 Config::~Config()
@@ -70,13 +71,14 @@ bool Config::LoadConfig()
 		}
 		else
 		{
-			LOGERROR("Config::LoadConfig() - unable to process config file");
+			MLOGERROR("Config::LoadConfig() - unable to process config file");
 		}
 	}
 	else
 	{
-		LOGERROR("Config::LoadConfig() - Unable to determine executable path");
-		assert("Config::LoadConfig() - Unable to determine executable path");
+	    std::string error = "Config::LoadConfig() - Unable to determine executable path";
+		MLOGERROR(error);
+		throw std::logic_error(error);
 	}
 
 	return result;
@@ -88,7 +90,7 @@ bool Config::LoadConfig(string& filename)
 
 	if (filename.empty())
 	{
-		LOGERROR("Config::LoadConfig - Empty config filename provided");
+		MLOGERROR("Config::LoadConfig - Empty config filename provided");
 		return result;
 	}
 

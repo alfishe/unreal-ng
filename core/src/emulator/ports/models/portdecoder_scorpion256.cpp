@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "portdecoder_scorpion256.h"
 
@@ -27,6 +27,10 @@ void PortDecoder_Scorpion256::Reset()
 
 uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
+    /// endregion </Override submodule>
+
     uint8_t result = 0xFF;
 
     return result;
@@ -34,6 +38,10 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     //    ZX Spectrum 128 +2A/+2B/+3
     //    port: #7FFD
     //    port: #1FFD

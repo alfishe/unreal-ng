@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "cpu.h"
 #include <algorithm>
@@ -20,6 +20,7 @@ CPU::CPU(EmulatorContext* context)
 	_context = context;
     _state = &_context->state;
     _config = &_context->config;
+    _logger = _context->pModuleLogger;
 }
 
 CPU::~CPU()

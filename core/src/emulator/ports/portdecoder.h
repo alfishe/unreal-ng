@@ -3,6 +3,7 @@
 
 #include "emulator/platform.h"
 
+class ModuleLogger;
 class EmulatorContext;
 class Memory;
 class Screen;
@@ -11,6 +12,13 @@ class Keyboard;
 /// Base class for all model port decoders
 class PortDecoder
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_IO;
+    const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_GENERIC;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
+
     /// region <Static methods>
 public:
     static PortDecoder* GetPortDecoderForModel(MEM_MODEL model, EmulatorContext* context);
@@ -24,6 +32,7 @@ protected:
     Keyboard* _keyboard = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
+    ModuleLogger* _logger = nullptr;
 
     /// endregion </Fields>
 

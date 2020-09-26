@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "portdecoder_spectrum128.h"
 
@@ -17,7 +17,7 @@ PortDecoder_Spectrum128::PortDecoder_Spectrum128(EmulatorContext* context) : Por
 
 PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
 {
-    LOGDEBUG("PortDecoder_Spectrum128::~PortDecoder_Spectrum128()");
+    MLOGDEBUG("PortDecoder_Spectrum128::~PortDecoder_Spectrum128()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -49,6 +49,10 @@ void PortDecoder_Spectrum128::Reset()
 
 uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
+    /// endregion </Override submodule>
+
     uint8_t result = 0xFF;
 
     if (IsPort_FE(port))
@@ -59,13 +63,17 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
     // Determine RAM/ROM page where code executed from
     std::string currentMemoryPage = GetPCAddressLocator(pc);
 
-    LOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+    MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
 
     return result;
 }
 
 void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     //    ZX Spectrum 128 / +2
     //    port: #7FFD
     bool isPort_7FFD = IsPort_7FFD(port);
@@ -89,7 +97,7 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         // Determine RAM/ROM page where code executed from
         std::string currentMemoryPage = GetPCAddressLocator(pc);
-        LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
 }
 
@@ -179,7 +187,12 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc) {
+void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc)
+{
+    /// region <Override submodule>
+    uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     Memory &memory = *_context->pMemory;
 
     uint8_t bankRAM = value & 0b00000111;
@@ -206,12 +219,16 @@ void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     // Cache out port value in state
     _state->p7FFD = value;
 
-    LOGWARNING(DumpPortValue(0x7FFD, port, value, pc, Dump_7FFD_value(value).c_str()));
-    LOGDEBUG(memory.DumpMemoryBankInfo());
+    MLOGWARNING(DumpPortValue(0x7FFD, port, value, pc, Dump_7FFD_value(value).c_str()));
+    MLOGDEBUG(memory.DumpMemoryBankInfo());
 }
 
 void PortDecoder_Spectrum128::Port_BFFD_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     // See: http://f.rdw.se/AY-3-8910-datasheet.pdf - Seems AY control register enumeration is wrong here
     // See: http://cpctech.cpc-live.com/docs/ay38912/psgspec.htm
     // See: https://softspectrum48.weebly.com/notes/ay-emulation-part-2-about-the-ay-3-8912
@@ -219,11 +236,15 @@ void PortDecoder_Spectrum128::Port_BFFD_Out(uint16_t port, uint8_t value, uint16
     // Cache out port value in state
     _state->pBFFD = value;
 
-    LOGWARNING(DumpPortValue(0xBFFD, port, value, pc, Dump_BFFD_value(value).c_str()));
+    MLOGWARNING(DumpPortValue(0xBFFD, port, value, pc, Dump_BFFD_value(value).c_str()));
 }
 
 void PortDecoder_Spectrum128::Port_FFFD_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     // See: http://f.rdw.se/AY-3-8910-datasheet.pdf - Seems AY control register enumeration is wrong here
     // See: http://cpctech.cpc-live.com/docs/ay38912/psgspec.htm
     // See: https://softspectrum48.weebly.com/notes/ay-emulation-part-2-about-the-ay-3-8912
@@ -231,7 +252,7 @@ void PortDecoder_Spectrum128::Port_FFFD_Out(uint16_t port, uint8_t value, uint16
     // Cache out port value in state
     _state->pFFFD = value;
 
-    LOGWARNING(DumpPortValue(0xFFFD, port, value, pc, Dump_FFFD_value(value).c_str()));
+    MLOGWARNING(DumpPortValue(0xFFFD, port, value, pc, Dump_FFFD_value(value).c_str()));
 }
 
 /// endregion </Port handlers>

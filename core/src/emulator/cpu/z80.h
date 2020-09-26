@@ -277,9 +277,16 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
 class Z80 : public Z80State
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_Z80;
+    const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_GENERIC;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
     /// region <Fields>
 protected:
 	EmulatorContext* _context;
+	ModuleLogger* _logger;
 	Memory* _memory;
 
 	uint8_t _trashRegister;        // Redirect DDCB operation writes with no destination registers here (related to op_ddcb.cpp and direct_registers[6] unused pointer)

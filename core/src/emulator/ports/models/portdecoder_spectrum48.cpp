@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "portdecoder_spectrum48.h"
 
@@ -16,7 +16,7 @@ PortDecoder_Spectrum48::PortDecoder_Spectrum48(EmulatorContext* context) : PortD
 
 PortDecoder_Spectrum48::~PortDecoder_Spectrum48()
 {
-    LOGDEBUG("PortDecoder_Spectrum48::~PortDecoder_Spectrum48()");
+    MLOGDEBUG("PortDecoder_Spectrum48::~PortDecoder_Spectrum48()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -38,9 +38,13 @@ void PortDecoder_Spectrum48::Reset()
 
 uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
+    /// endregion </Override submodule>
+
     uint8_t result = 0xFF;
 
-    if (IsPort_FE_Out(port))
+    if (IsPort_FE(port))
     {
         result = _keyboard->HandlePort(port);
     }
@@ -48,14 +52,18 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
     // Determine RAM/ROM page where code executed from
     std::string currentMemoryPage = GetPCAddressLocator(pc);
 
-    LOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+    MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
 
     return result;
 }
 
 void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
-    if (IsPort_FE_Out(port))
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
+    if (IsPort_FE(port))
     {
         Port_FE(port, value, pc);
     }
@@ -81,7 +89,7 @@ void PortDecoder_Spectrum48::SetROMPage(uint8_t page)
 
 /// region <Helper methods>
 
-bool PortDecoder_Spectrum48::IsPort_FE_Out(uint16_t port)
+bool PortDecoder_Spectrum48::IsPort_FE(uint16_t port)
 {
     //    ZX Spectrum 48
     //    Port: #FE

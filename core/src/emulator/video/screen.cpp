@@ -1,7 +1,7 @@
 #include <common/image/imagehelper.h>
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "screen.h"
 
@@ -41,6 +41,7 @@ Screen::Screen(EmulatorContext* context)
 	_system = _context->pCPU;
 	_cpu = _system->GetZ80();
 	_memory = _context->pMemory;
+	_logger = _context->pModuleLogger;
 
 
 	// Set Normal screen (Bank 5) mode by default
@@ -373,7 +374,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 		case M_PMC:
 			break;
 		default:
-			LOGWARNING("AllocateFramebuffer: Unknown video mode");
+			MLOGWARNING("AllocateFramebuffer: Unknown video mode");
 
             isUnknownVideoMode = true;
 			break;
@@ -396,16 +397,16 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 
 
 #ifdef _DEBUG
-        LOGINFO("Framebuffer allocated");
+        MLOGINFO("Framebuffer allocated");
 
         static char videoModeInfo[200];
         DumpFramebufferInfo(videoModeInfo, sizeof(videoModeInfo));
-        LOGINFO(videoModeInfo);
+        MLOGINFO(videoModeInfo);
 #endif
     }
 	else
     {
-	    LOGERROR("Unable to allocate framebuffer, unknown video mode");
+	    MLOGERROR("Unable to allocate framebuffer, unknown video mode");
     }
 }
 

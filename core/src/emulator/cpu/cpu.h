@@ -13,12 +13,19 @@
 #include "emulator/video/screen.h"
 #include "emulator/emulatorcontext.h"
 
+class ModuleLogger;
 class MessageCenter;
 class Z80;
 class PortDecoder;
 
 class CPU
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
+    const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
     /// region <Static>
     // Ensure that all flag / decoding tables are initialized only once using static member
 public:
@@ -30,6 +37,7 @@ protected:
     EmulatorContext* _context = nullptr;
     State* _state = nullptr;
     const CONFIG* _config = nullptr;
+    ModuleLogger* _logger = nullptr;
 
     Z80* _cpu = nullptr;
     Memory* _memory = nullptr;

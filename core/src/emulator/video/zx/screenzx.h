@@ -1,12 +1,18 @@
 #pragma once
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "emulator/video/screen.h"
 
 class ScreenZX : public Screen
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_VIDEO;
+    const uint16_t _SUBMODULE = PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_ULA;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
     /// region <Fields>
 protected:
     uint16_t _screenLineOffsets[256];           // Address for each screen line start (relative to screen base offset)

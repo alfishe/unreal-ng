@@ -28,7 +28,7 @@ public:
 
     /// region <Helper methods>
 public:
-    bool IsPort_FE_Out(uint16_t port);
+    bool IsPort_FE(uint16_t port);
 
     /// endregion <Helper methods>
 

@@ -4,13 +4,44 @@
 #include "common/logger.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/platform.h"
 #include <cstring>
+
+#ifndef _CODE_UNDER_TEST
+
+// Write all Debug / Info logs if not under unit testing / benchmarking
+#define MLOGDEBUG(format, ...) _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGINFO(format, ...) _logger->Info(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGWARNING(format, ...) _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGERROR(format, ...) _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
+
+#else
+
+// No Debug / Info for unit tests and benchmarks
+#define MLOGDEBUG(format, ...)
+#define MLOGINFO(format, ...)
+#define MLOGWARNING(format, ...) _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGERROR(format, ...) _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
+
+#endif
 
 /// region <Structures>
 
+enum LoggerLevel : uint8_t
+{
+    LogNone = 0,
+    LogTrace,
+    LogDebug,
+    LogInfo,
+    LogWarning,
+    LogError
+};
+
 struct LoggerSettings
 {
-    uint32_t modules;                       // All modules on/off flags
+    uint32_t modules;                       // Per module on/off flags
 
     union
     {
@@ -43,7 +74,7 @@ public:
     LoggerSettingsModulePayload(LoggerSettings& settings)
     {
         // Copy structure content
-        memcpy((void *)&settings, (const void *)&settings, sizeof (LoggerSettings));
+        memcpy((void *)&settings, (const void *)&settings, sizeof(LoggerSettings));
     }
     virtual ~LoggerSettingsModulePayload() {};
 };
@@ -56,30 +87,23 @@ class ModuleLogger : public Observer
 {
     /// region <Constants>
 
-    const char* ALL = "<All>";
-    const char* NONE = "<None>";
+    static const char* LoggerLevelNames[6];
 
-    const char* moduleNames[10] =
-    {
-        "<Unknown>",
-        "Core",
-        "Z80",
-        "Memory",
-        "I/O",
-        "Disk",
-        "Video",
-        "Sound",
-        "DMA",
-        "Debugger"
-    };
+    static const char* ALL;
+    static const char* NONE;
 
-    const char* submoduleCoreNames[1] =
+    static const char* moduleNames[10];
+
+    const char* submoduleCoreNames[2] =
     {
+        "Config",
         "Files"
     };
 
-    const char* submoduleZ80Names[8] =
+    const char* submoduleZ80Names[10] =
     {
+        "Generic",
+        "M1",
         "Calls",
         "Jumps",
         "Interrupts",
@@ -90,27 +114,33 @@ class ModuleLogger : public Observer
         "I/O"
     };
 
-    const char* submoduleMemoryNames[2] =
+    const char* submoduleMemoryNames[3] =
     {
+        "Generic",
         "ROM",
         "RAM"
     };
 
-    const char* submoduleIONames[3] =
+    const char* submoduleIONames[6] =
     {
+        "Generic",
+        "In",
+        "Out",
         "Keyboard",
         "Kempston joystick",
         "Kempston mouse"
     };
 
-    const char* submoduleDiskNames[2] =
+    const char* submoduleDiskNames[3] =
     {
-            "Floppy",
-            "HDD"
+        "Generic",
+        "Floppy",
+        "HDD"
     };
 
-    const char* submoduleVideoNames[7] =
+    const char* submoduleVideoNames[8] =
     {
+        "Generic",
         "ULA",
         "ULA+",
         "Misc.",
@@ -120,8 +150,9 @@ class ModuleLogger : public Observer
         "TSConf"
     };
 
-    const char* submoduleSoundNames[4] =
+    const char* submoduleSoundNames[5] =
     {
+        "Generic",
         "AY",
         "General Sound",
         "MoonSound",
@@ -130,12 +161,12 @@ class ModuleLogger : public Observer
 
     const char* submoduleDMANames[1] =
     {
-        "None",
+        "Generic",
     };
 
     const char* submoduleDebuggerNames[1] =
     {
-        "None",
+        "Generic",
     };
 
 
@@ -143,6 +174,7 @@ class ModuleLogger : public Observer
     /// endregion </Constants>
 protected:
     EmulatorContext* _context;
+    LoggerSettings _settings;
 
     /// region <Constructors / Destructors>
 public:
@@ -153,7 +185,74 @@ public:
     /// region <Methods>
 public:
     void SetLoggingSettings(LoggerSettings& settings);
+    void SetLoggerOut();
+    void ResetLoggerOut();
+
+    template<typename Fmt, typename... Args>
+    void Trace(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
+    {
+        if (!IsLoggingEnabled(module, submodule))
+            return;
+
+        LogMessage(LoggerLevel::LogTrace, module, submodule, fmt, args...);
+    }
+
+    template<typename Fmt, typename... Args>
+    void Debug(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
+    {
+        if (!IsLoggingEnabled(module, submodule))
+            return;
+
+        LogMessage(LoggerLevel::LogDebug, module, submodule, fmt, args...);
+    }
+
+    template<typename Fmt, typename... Args>
+    void Info(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
+    {
+        if (!IsLoggingEnabled(module, submodule))
+            return;
+
+        LogMessage(LoggerLevel::LogInfo, module, submodule, fmt, args...);
+    }
+
+    template<typename Fmt, typename... Args>
+    void Warning(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
+    {
+        if (!IsLoggingEnabled(module, submodule))
+            return;
+
+        LogMessage(LoggerLevel::LogWarning, module, submodule, fmt, args...);
+    }
+
+    template<typename Fmt, typename... Args>
+    void Error(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
+    {
+        if (!IsLoggingEnabled(module, submodule))
+            return;
+
+        LogMessage(LoggerLevel::LogError, module, submodule, fmt, args...);
+    }
+
+    void EmptyLine();
+
+    void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string& fmt, ...);
+    void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const char* fmt, ...);
+    void LogModuleMessage(PlatformModulesEnum module, uint16_t submodule, const std::string& message);
+
+    void OutLine(const char* buffer, size_t len);
+    void Out(const char* buffer, size_t len);
+    void Flush();
+
     /// endregion </Methods>
+
+    /// region <Helper methods>
+protected:
+    bool IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule);
+
+    std::string GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule);
+    std::string GetModuleSubmoduleBriefString(PlatformModulesEnum module, uint16_t submodule);
+    std::string GetModuleSubmoduleHexString(PlatformModulesEnum module, uint16_t submodule);
+    /// endregion </Helper methods>
 
     /// region <Handle MessageCenter settings events>
 public:
@@ -185,6 +284,11 @@ public:
     ModuleLoggerCUT(EmulatorContext* context) : ModuleLogger(context) {};
 
 public:
+    using ModuleLogger::_settings;
+
+    using ModuleLogger::IsLoggingEnabled;
+    using ModuleLogger::GetModuleSubmoduleHexString;
+
     using ModuleLogger::DumpModules;
     using ModuleLogger::DumpModuleName;
     using ModuleLogger::DumpResolveSubmodule;

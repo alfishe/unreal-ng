@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "portdecoder.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "common/stringhelper.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
@@ -21,6 +21,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _keyboard = context->pKeyboard;
     _memory = context->pMemory;
     _screen = context->pScreen;
+    _logger = context->pModuleLogger;
 }
 /// endregion </Constructors / Destructors>
 
@@ -76,6 +77,10 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 /// \return If port matched as #FE
 bool PortDecoder::IsFEPort(uint16_t port)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
+    /// endregion </Override submodule>
+
     // Any even port will be decoded as #FE
     static const uint16_t port_FE_full    = 0b0000'0000'1111'1110;
     static const uint16_t port_FE_mask    = 0b0000'0000'0000'0001;
@@ -96,6 +101,10 @@ bool PortDecoder::IsFEPort(uint16_t port)
 /// \return
 bool PortDecoder::PortFE_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     bool result = false;
 
     uint8_t borderColor = value & 0b000'00111;
@@ -103,7 +112,7 @@ bool PortDecoder::PortFE_Out(uint16_t port, uint8_t value, uint16_t pc)
 
     _screen->SetBorderColor(borderColor);
 
-    LOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
+    MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
 
     return result;
 }

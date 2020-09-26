@@ -1,3 +1,4 @@
+#include <common/modulelogger.h>
 #include "pch.h"
 
 #include "modulelogger_test.h"
@@ -98,7 +99,7 @@ TEST_F(ModuleLogger_Test, DumpModules)
 
 TEST_F(ModuleLogger_Test, DumpSettings)
 {
-    LoggerSettings& loggerSettings = _context->loggerSettings;
+    LoggerSettings& loggerSettings = _moduleLogger->_settings;
     loggerSettings.modules = 0xFFFFFFFF;
 
     // TODO: Not implemented yet

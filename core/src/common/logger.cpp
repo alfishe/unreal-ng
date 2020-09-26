@@ -126,6 +126,6 @@ void Logger::OutEnriched(string fmt, va_list args)
 void Logger::Out(const char* value)
 {
     // If unmuted - pass value to stdout
-    if (!g_mute)
-        fprintf(stdout, "%s", value);
+    //if (!g_mute)
+    //    fprintf(stdout, "%s", value);
 }
