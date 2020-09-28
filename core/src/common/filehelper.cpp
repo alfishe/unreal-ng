@@ -22,8 +22,8 @@ std::string FileHelper::GetExecutablePath()
 	string result;
 
 	#if defined _WIN32
-		wchar_t buffer[MAX_PATH] = { L'\0' };
-		GetModuleFileNameW(NULL, buffer, MAX_PATH);
+		char buffer[MAX_PATH] = { '\0' };
+		GetModuleFileNameA(NULL, buffer, MAX_PATH);
 		result = buffer;
     #endif
 
@@ -80,9 +80,15 @@ string FileHelper::NormalizePath(string& path)
 
 string FileHelper::PathCombine(string& path1, string& path2)
 {
-    Pathie::Path basePath = Pathie::Path::from_native(path1);
-    basePath.expand();
+#ifdef _WIN32
+    Pathie::Path basePath = Pathie::Path::from_native(StringHelper::StringToWideString(path1));
+#endif // _WIN32
 
+#ifndef _WIN32
+    Pathie::Path basePath = Pathie::Path::from_native(path1);
+#endif
+
+    basePath.expand();
     basePath /= path2;
 
 	string result = basePath.str();
