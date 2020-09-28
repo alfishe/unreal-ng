@@ -15,7 +15,7 @@ Emulator* createEmulatorInstance()
 
 }
 
-void destroyEmulatorInstanc(Emulator* emulator)
+void destroyEmulatorInstance(Emulator* emulator)
 {
 
 }

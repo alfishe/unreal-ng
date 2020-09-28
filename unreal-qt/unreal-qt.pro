@@ -19,6 +19,7 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
     emulator/emulatormanager.cpp \
     emulator/keyboardmanager.cpp \
+    logviewer/logviewer.cpp \
     main.cpp \
     mainwindow.cpp \
     widgets/devicescreen.cpp \
@@ -27,6 +28,7 @@ SOURCES += \
 HEADERS += \
     emulator/emulatormanager.h \
     emulator/keyboardmanager.h \
+    logviewer/logviewer.h \
     mainwindow.h \
     widgets/devicescreen.h \
     widgets/verticallabel.h

@@ -15,7 +15,7 @@ public:
 
 public:
     Emulator* createEmulatorInstance();
-    void destroyEmulatorInstanc(Emulator* emulator);
+    void destroyEmulatorInstance(Emulator* emulator);
 
     void sendKeyEvent(uint8_t key, KeyEventEnum type);
 };
