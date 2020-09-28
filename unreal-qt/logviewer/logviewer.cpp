@@ -114,7 +114,7 @@ void LogViewer::resizeEvent(QResizeEvent* event)
 
 void LogViewer::wheelEvent(QWheelEvent* event)
 {
-    int degrees = event->angleDelta() / 8;
+    int degrees = event->delta() / 8;
     int steps = degrees / 15;
 
     if (event->modifiers() == Qt::ControlModifier)
