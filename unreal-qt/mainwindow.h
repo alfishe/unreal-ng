@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QMutex>
 #include <QPushButton>
 #include "widgets/devicescreen.h"
 #include "emulator/emulatormanager.h"

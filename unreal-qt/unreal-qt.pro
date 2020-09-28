@@ -48,8 +48,8 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 
 DISTFILES +=
 
-win32:CONFIG(release, debug|release): LIBS += -L$$PWD/../cmake-build-debug/core-static/src/release/ -lcore
-else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/../cmake-build-debug/core-static/src/debug/ -lcore
+win32:CONFIG(release, debug|release): LIBS += -L$$PWD/../cmake-build-release/core/src/ -lcore -lshlwapi
+else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore -lshlwapi
 else:unix:!macx: LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore
 else:macx: LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore -liconv
 
@@ -57,7 +57,7 @@ INCLUDEPATH += $$PWD/../core/src
 DEPENDPATH += $$PWD/../core/src
 
 
-win32-g++:CONFIG(release, debug|release): PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/release/libcore.a
+win32-g++:CONFIG(release, debug|release): PRE_TARGETDEPS += $$PWD/../cmake-build-release/core/src/libcore.a
 else:win32-g++:CONFIG(debug, debug|release): PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/debug/libcore.a
 else:win32:!win32-g++:CONFIG(release, debug|release): PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/release/core.lib
 else:win32:!win32-g++:CONFIG(debug, debug|release): PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/debug/core.lib
