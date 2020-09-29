@@ -7,6 +7,7 @@
 #include <QScrollBar>
 #include <QButtonGroup>
 #include <QAbstractButton>
+#include <QThread>
 #include <QtCore/QRegExp>
 #include <QtCore/QUrl>
 #include <QtCore/QFile>
@@ -15,6 +16,8 @@
 
 LogViewer::LogViewer(QWidget* parent, bool showLineNumber) : QPlainTextEdit(parent)
 {
+    mainThread = QApplication::instance()->thread();
+
     m_showLineNumber = showLineNumber;
     m_isZoomMode = false;
 
@@ -44,11 +47,48 @@ void LogViewer::init()
     setPalette(palette);
 }
 
+///
+/// \brief LogViewer::Out
+/// \param line Text to print into log
+/// \param len Length of text
+///
+void LogViewer::Out(const char* line, size_t len)
+{
+    QThread* currentThread = QThread::currentThread();
+
+    if (currentThread != mainThread)
+    {
+        // Invoke setPlainText() in main thread
+        QMetaObject::invokeMethod(this, "Out", Qt::QueuedConnection, Q_ARG(QString, line));
+    }
+    else
+    {
+        Out(line);
+    }
+}
+
+void LogViewer::Out(QString line)
+{
+#ifdef QT_DEBUG
+    QThread* currentThread = QThread::currentThread();
+
+    if (currentThread != mainThread)
+    {
+        throw std::logic_error("LogViewer::Out called from non-main thread");
+    }
+#endif
+
+    //QString text = document()->toPlainText() + line + '\n';
+    QString text = line + '\n';
+    document()->setPlainText(text);
+}
+
 int LogViewer::lineNumberAreaWidth()
 {
     int digits = 1;
     int max = qMax(1, document()->blockCount());
-    while (max >= 10) {
+    while (max >= 10)
+    {
         max /= 10;
         ++digits;
     }
@@ -62,7 +102,7 @@ int LogViewer::lineNumberAreaWidth()
 void LogViewer::lineNumberAreaPaintEvent(QPaintEvent* event)
 {
     if (!m_showLineNumber)
-        return ;
+        return;
 
     QPainter painter(m_lineNumberArea);
     QColor bgColor = QColor(Qt::lightGray).lighter(125);

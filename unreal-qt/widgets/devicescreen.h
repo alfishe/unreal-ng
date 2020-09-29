@@ -31,6 +31,7 @@ protected:
     void mousePressEvent(QMouseEvent *event);
 
     void resizeEvent(QResizeEvent *event);
+    using QWidget::heightForWidth;  // Bring method declaration from QWidget
     int heightForWidth(int width);
 
 private:

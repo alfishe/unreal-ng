@@ -4,10 +4,13 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <QPushButton>
+#include "logviewer/logviewer.h"
 #include "widgets/devicescreen.h"
+#include "emulator/guiemulatorcontext.h"
 #include "emulator/emulatormanager.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/modulelogger.h"
 #include "emulator/emulator.h"
 
 QT_BEGIN_NAMESPACE
@@ -45,11 +48,13 @@ protected:
 
 private:
     Ui::MainWindow* ui;
+    LogViewer* logViewer;
     DeviceScreen* deviceScreen;
     QPushButton* startButton;
     QMutex lockMutex;
 
     EmulatorManager* _emulatorManager = nullptr;
+    GUIEmulatorContext* _guiContext = nullptr;
     Emulator* _emulator = nullptr;
 };
 #endif // MAINWINDOW_H

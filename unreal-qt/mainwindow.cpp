@@ -7,6 +7,8 @@
 #include <QDebug>
 #include <QTimer>
 
+#include "common/modulelogger.h"
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
@@ -44,15 +46,26 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     // Create bridge between GUI and emulator
     _emulatorManager = new EmulatorManager();
+
+    logViewer = new LogViewer();
 }
 
 MainWindow::~MainWindow()
 {
+    if (logViewer != nullptr)
+    {
+        logViewer->hide();
+        delete logViewer;
+    }
+
     if (deviceScreen != nullptr)
         delete deviceScreen;
 
     if (_emulatorManager)
         delete _emulatorManager;
+
+    if (_guiContext)
+        delete _guiContext;
 
     QLayout* ptrLayout = layout();
     if (ptrLayout != nullptr)
@@ -83,6 +96,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
      Observer* observerInstance = static_cast<Observer*>(this);
      ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
      messageCenter.RemoveObserver(topic, observerInstance, callback);
+
+     // Close LogViewer
+     if (logViewer)
+     {
+         logViewer->hide();
+         delete logViewer;
+         logViewer = nullptr;
+     }
 
      // Shutdown emulator
      _emulator->Stop();
@@ -177,7 +198,12 @@ void MainWindow::handleStartButton()
         _emulator = new Emulator();
         if (_emulator->Init())
         {
-            Logger::MuteSilent();
+            // Redirect all module logger output to LogWindow
+            ModuleLogger* logger = _emulator->GetLogger();
+            ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logViewer);
+            ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogViewer::Out);
+            logger->SetLoggerOut(loggerObserverInstance, loggerCallback);
+            logViewer->show();
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
