@@ -85,6 +85,30 @@ void ModuleLogger::SetLoggingSettings(LoggerSettings& settings)
     memcpy((void *)&_settings, (const void *)&settings, sizeof(LoggerSettings));
 }
 
+void ModuleLogger::SetLoggerOut(ModuleLoggerOutCallback callback)
+{
+    if (callback != nullptr)
+    {
+        _outCallback = callback;
+    }
+}
+
+void ModuleLogger::SetLoggerOut(ModuleLoggerObserver* instance, ModuleObserverObserverCallbackMethod callback)
+{
+    if (instance && callback)
+    {
+        _observerInstance = instance;
+        _callbackMethod = callback;
+    }
+}
+
+void ModuleLogger::ResetLoggerOut()
+{
+    _outCallback = nullptr;
+    _observerInstance = nullptr;
+    _callbackMethod = nullptr;
+}
+
 void ModuleLogger::EmptyLine()
 {
     static const char linefeed[] = "\n";
@@ -93,7 +117,7 @@ void ModuleLogger::EmptyLine()
     Out(linefeed, len);
 }
 
-void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string& fmt, ...)
+void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -201,12 +225,38 @@ void ModuleLogger::LogModuleMessage(PlatformModulesEnum module, uint16_t submodu
 
 void ModuleLogger::OutLine(const char* buffer, size_t len)
 {
-    cout << buffer << std::endl;
+    if (_observerInstance && _callbackMethod)
+    {
+        (_observerInstance->*_callbackMethod)(buffer, len);
+    }
+    else if (_outCallback)
+    {
+        // Externally provided callback
+        _outCallback(buffer, len);
+    }
+    else
+    {
+        // Default out
+        cout << buffer << std::endl;
+    }
 }
 
 void ModuleLogger::Out(const char* buffer, size_t len)
 {
-    cout << buffer;
+    if (_observerInstance && _callbackMethod)
+    {
+        (_observerInstance->*_callbackMethod)(buffer, len);
+    }
+    else if (_outCallback)
+    {
+        // Externally provided callback
+        _outCallback(buffer, len);
+    }
+    else
+    {
+        // Default out
+        cout << buffer;
+    }
 }
 
 void ModuleLogger::Flush()

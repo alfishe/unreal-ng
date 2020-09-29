@@ -79,6 +79,17 @@ public:
     virtual ~LoggerSettingsModulePayload() {};
 };
 
+// Base class for all observer listeners. Derived class can implement method with any name
+// But signature should be exactly void _custom_method_(const char* buffer, size_t len)
+struct ModuleLoggerObserver
+{
+public:
+    //virtual void ObserverCallbackMethod(const char* buffer, size_t len) = 0;
+};
+
+typedef void (ModuleLoggerOutCallback)(const char* buffer, size_t len);                                           // Classic callback
+typedef void (ModuleLoggerObserver::* ModuleObserverObserverCallbackMethod)(const char* buffer, size_t len);      // Class method callback
+
 /// endregion </Structures
 
 class EmulatorContext;
@@ -169,12 +180,19 @@ class ModuleLogger : public Observer
         "Generic",
     };
 
-
-
     /// endregion </Constants>
+
+    /// region <Fields>
 protected:
-    EmulatorContext* _context;
     LoggerSettings _settings;
+
+    EmulatorContext* _context = nullptr;
+    ModuleLoggerOutCallback* _outCallback = nullptr;
+
+    ModuleLoggerObserver* _observerInstance = nullptr;               // Observer class instance
+    ModuleObserverObserverCallbackMethod _callbackMethod = nullptr;  // Class method
+
+    /// endregion </Fields>
 
     /// region <Constructors / Destructors>
 public:
@@ -185,7 +203,8 @@ public:
     /// region <Methods>
 public:
     void SetLoggingSettings(LoggerSettings& settings);
-    void SetLoggerOut();
+    void SetLoggerOut(ModuleLoggerOutCallback callback);
+    void SetLoggerOut(ModuleLoggerObserver* instance, ModuleObserverObserverCallbackMethod callback);
     void ResetLoggerOut();
 
     template<typename Fmt, typename... Args>
@@ -235,7 +254,7 @@ public:
 
     void EmptyLine();
 
-    void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string& fmt, ...);
+    void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string fmt, ...);
     void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const char* fmt, ...);
     void LogModuleMessage(PlatformModulesEnum module, uint16_t submodule, const std::string& message);
 

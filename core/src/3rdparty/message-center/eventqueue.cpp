@@ -150,6 +150,9 @@ void EventQueue::RemoveObserver(const std::string& topic, ObserverCallback callb
             {
                 // Erase current element and get next iterator value
                 it = observers->erase(it);
+
+                // Destroy descriptor object
+                delete observer;
             }
             else
             {
@@ -178,6 +181,9 @@ void EventQueue::RemoveObserver(const std::string& topic, Observer* instance, Ob
             {
                 // Erase current element and get next iterator value
                 it = observers->erase(it);
+
+                // Destroy descriptor object
+                delete observer;
             }
             else
             {
@@ -209,6 +215,9 @@ void EventQueue::RemoveObserver(const std::string& topic, ObserverCallbackFunc c
             {
                 // Erase current element and get next iterator value
                 it = observers->erase(it);
+
+                // Destroy descriptor object
+                delete observer;
             }
             else
             {

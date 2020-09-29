@@ -331,6 +331,16 @@ void Emulator::GetSystemInfo()
 
 ///region <Integration interfaces>
 
+EmulatorContext* Emulator::GetContext()
+{
+    return _context;
+}
+
+ModuleLogger* Emulator::GetLogger()
+{
+    return _context->pModuleLogger;
+}
+
 FramebufferDescriptor Emulator::GetFramebuffer()
 {
     return _context->pScreen->GetFramebufferDescriptor();

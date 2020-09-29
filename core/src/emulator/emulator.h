@@ -52,6 +52,8 @@ public:
 	void GetSystemInfo();
 
 	// Integration interfaces
+	EmulatorContext* GetContext();
+    ModuleLogger* GetLogger();
     FramebufferDescriptor GetFramebuffer();
 
 	// Emulator control cycle
