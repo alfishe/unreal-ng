@@ -42,6 +42,8 @@ HEADERS += \
 FORMS += \
     mainwindow.ui \
     ui/devicescreen.ui \
+    ui/logstatusbar.ui \
+    ui/logwindow.ui \
     ui/memoryblock.ui \
     ui/memorymap.ui \
     ui/registers.ui

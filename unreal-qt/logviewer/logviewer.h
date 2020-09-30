@@ -7,8 +7,6 @@
 #include <QWidget>
 #include <QThread>
 
-#include "common/modulelogger.h"
-
 class QButtonGroup;
 class QTextCodec;
 class QStandardItemModel;
@@ -17,7 +15,7 @@ class LineNumberArea;
 #define LINENUMBER_AREA_LEFT_MARGIN 2
 #define LINENUMBER_AREA_RIGHT_MARGIN 5
 
-class LogViewer : public QPlainTextEdit, public ModuleLoggerObserver
+class LogViewer : public QPlainTextEdit
 {
     Q_OBJECT
 
@@ -27,10 +25,6 @@ public:
 
 protected:
     void init();
-
-public slots:
-    void Out(const char* line, size_t len);
-    void Out(QString line);
 
     // Line numbering area
 public:

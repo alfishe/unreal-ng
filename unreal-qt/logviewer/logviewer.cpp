@@ -47,42 +47,6 @@ void LogViewer::init()
     setPalette(palette);
 }
 
-///
-/// \brief LogViewer::Out
-/// \param line Text to print into log
-/// \param len Length of text
-///
-void LogViewer::Out(const char* line, size_t len)
-{
-    QThread* currentThread = QThread::currentThread();
-
-    if (currentThread != m_mainThread)
-    {
-        // Invoke setPlainText() in main thread
-        QMetaObject::invokeMethod(this, "Out", Qt::QueuedConnection, Q_ARG(QString, line));
-    }
-    else
-    {
-        Out(line);
-    }
-}
-
-void LogViewer::Out(QString line)
-{
-#ifdef QT_DEBUG
-    QThread* currentThread = QThread::currentThread();
-
-    if (currentThread != m_mainThread)
-    {
-        throw std::logic_error("LogViewer::Out called from non-main thread");
-    }
-#endif
-
-    //QString text = document()->toPlainText() + line + '\n';
-    QString text = line + '\n';
-    document()->setPlainText(text);
-}
-
 int LogViewer::lineNumberAreaWidth()
 {
     int digits = 1;
@@ -173,7 +137,9 @@ void LogViewer::paintEvent(QPaintEvent* e)
     QPainter painter(viewport());
     Q_ASSERT(qobject_cast<QPlainTextDocumentLayout*>(document()->documentLayout()));
 
+    // Adjust left margin (line number column offset added)
     QPointF offset(contentOffset());
+    offset.setX(offset.x() + lineNumberAreaWidth());
 
     QRect er = e->rect();
     QRect viewportRect = viewport()->rect();
@@ -222,19 +188,23 @@ void LogViewer::paintEvent(QPaintEvent* e)
             QVector<QTextLayout::FormatRange> selections;
             int blpos = block.position();
             int bllen = block.length();
-            for (int i = 0; i < context.selections.size(); ++i) {
+            for (int i = 0; i < context.selections.size(); ++i)
+            {
                 const QAbstractTextDocumentLayout::Selection &range = context.selections.at(i);
                 const int selStart = range.cursor.selectionStart() - blpos;
                 const int selEnd = range.cursor.selectionEnd() - blpos;
                 if (selStart < bllen && selEnd > 0
-                    && selEnd > selStart) {
+                    && selEnd > selStart)
+                {
                     QTextLayout::FormatRange o;
                     o.start = selStart;
                     o.length = selEnd - selStart;
                     o.format = range.format;
                     selections.append(o);
-                } else if (!range.cursor.hasSelection() && range.format.hasProperty(QTextFormat::FullWidthSelection)
-                           && block.contains(range.cursor.position())) {
+                }
+                else if (!range.cursor.hasSelection() && range.format.hasProperty(QTextFormat::FullWidthSelection)
+                           && block.contains(range.cursor.position()))
+                {
                     // for full width selections we don't require an actual selection, just
                     // a position to specify the line. that's more convenience in usage.
                     QTextLayout::FormatRange o;
@@ -261,7 +231,7 @@ void LogViewer::paintEvent(QPaintEvent* e)
                     drawCursorAsBlock = false;
                 }
                 else
-                    {
+                {
                     QTextLayout::FormatRange o;
                     o.start = context.cursorPosition - blpos;
                     o.length = 1;

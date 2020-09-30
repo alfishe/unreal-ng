@@ -4,7 +4,7 @@
 #include <QMainWindow>
 #include <QMutex>
 #include <QPushButton>
-#include "logviewer/logviewer.h"
+#include "logviewer/logwindow.h"
 #include "widgets/devicescreen.h"
 #include "emulator/guiemulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -48,7 +48,7 @@ protected:
 
 private:
     Ui::MainWindow* ui;
-    LogViewer* logViewer;
+    LogWindow* logWindow;
     DeviceScreen* deviceScreen;
     QPushButton* startButton;
     QMutex lockMutex;

@@ -9,12 +9,12 @@
 
 #include "common/modulelogger.h"
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
+MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
     // Intercept all keyboard and mouse events
     //qApp->installEventFilter(this);
 
+    // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
     startButton = ui->startEmulator;
 
@@ -47,15 +47,16 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     // Create bridge between GUI and emulator
     _emulatorManager = new EmulatorManager();
 
-    logViewer = new LogViewer();
+    // Instantiate Logger window
+    logWindow = new LogWindow();
 }
 
 MainWindow::~MainWindow()
 {
-    if (logViewer != nullptr)
+    if (logWindow != nullptr)
     {
-        logViewer->hide();
-        delete logViewer;
+        logWindow->hide();
+        delete logWindow;
     }
 
     if (deviceScreen != nullptr)
@@ -98,11 +99,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
      messageCenter.RemoveObserver(topic, observerInstance, callback);
 
      // Close LogViewer
-     if (logViewer)
+     if (logWindow)
      {
-         logViewer->hide();
-         delete logViewer;
-         logViewer = nullptr;
+         logWindow->hide();
+         delete logWindow;
+         logWindow = nullptr;
      }
 
      // Shutdown emulator
@@ -200,10 +201,11 @@ void MainWindow::handleStartButton()
         {
             // Redirect all module logger output to LogWindow
             ModuleLogger* logger = _emulator->GetLogger();
-            ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logViewer);
-            ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogViewer::Out);
+            ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
+            ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogWindow::Out);
             logger->SetLoggerOut(loggerObserverInstance, loggerCallback);
-            logViewer->show();
+            logWindow->reset();
+            logWindow->show();
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
