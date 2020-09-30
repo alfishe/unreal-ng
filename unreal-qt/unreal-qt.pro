@@ -20,7 +20,9 @@ SOURCES += \
     emulator/emulatormanager.cpp \
     emulator/guiemulatorcontext.cpp \
     emulator/keyboardmanager.cpp \
+    logviewer/logstatusbar.cpp \
     logviewer/logviewer.cpp \
+    logviewer/logwindow.cpp \
     main.cpp \
     mainwindow.cpp \
     widgets/devicescreen.cpp \
@@ -30,7 +32,9 @@ HEADERS += \
     emulator/emulatormanager.h \
     emulator/guiemulatorcontext.h \
     emulator/keyboardmanager.h \
+    logviewer/logstatusbar.h \
     logviewer/logviewer.h \
+    logviewer/logwindow.h \
     mainwindow.h \
     widgets/devicescreen.h \
     widgets/verticallabel.h

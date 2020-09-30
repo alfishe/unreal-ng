@@ -16,7 +16,7 @@
 
 LogViewer::LogViewer(QWidget* parent, bool showLineNumber) : QPlainTextEdit(parent)
 {
-    mainThread = QApplication::instance()->thread();
+    m_mainThread = QApplication::instance()->thread();
 
     m_showLineNumber = showLineNumber;
     m_isZoomMode = false;
@@ -56,7 +56,7 @@ void LogViewer::Out(const char* line, size_t len)
 {
     QThread* currentThread = QThread::currentThread();
 
-    if (currentThread != mainThread)
+    if (currentThread != m_mainThread)
     {
         // Invoke setPlainText() in main thread
         QMetaObject::invokeMethod(this, "Out", Qt::QueuedConnection, Q_ARG(QString, line));
@@ -72,7 +72,7 @@ void LogViewer::Out(QString line)
 #ifdef QT_DEBUG
     QThread* currentThread = QThread::currentThread();
 
-    if (currentThread != mainThread)
+    if (currentThread != m_mainThread)
     {
         throw std::logic_error("LogViewer::Out called from non-main thread");
     }

@@ -47,7 +47,7 @@ protected:
 
     // Fields
 protected:
-    QThread* mainThread;
+    QThread* m_mainThread;
     bool m_showLineNumber;
     bool m_isFirstAppend;
     bool m_isZoomMode;
