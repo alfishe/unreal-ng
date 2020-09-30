@@ -50,6 +50,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 //#include <ntifs.h> // Currently not in msys2
+
 #ifndef F_OK
 #define F_OK 0
 #endif
@@ -1958,43 +1959,6 @@ void Path::rmtree() const
   else { // file or similar
     unlink();
   }
-}
-
-/**
- * \note This method writes to the filesystem.
- *
- * This method makes the referenced file a symbolic link
- * to the path passed as an argument. On Windows, an
- * NTFS symlink is created.
- *
- * \remark On Windows, this function requires that the process holds
- * the `SE_CREATE_SYMBOLIC_LINK_NAME` privilege or it will fail with a
- * WindowsError exception whose error code is 1314
- * (`ERROR_PRIVILEGE_NOT_HELD`).
- */
-void Path::make_symlink(const Path& target) const
-{
-#if defined(_PATHIE_UNIX)
-  std::string target_nstr = target.native();
-  std::string nstr = native();
-
-  if (symlink(target_nstr.c_str(), nstr.c_str()) < 0)
-    throw(Pathie::ErrnoError(errno));
-#elif defined(_WIN32)
-  std::wstring source = utf8_to_utf16(m_path);
-  std::wstring target2 = utf8_to_utf16(target.m_path);
-
-  DWORD flags = 0;
-  if (target.is_directory())
-    flags = SYMBOLIC_LINK_FLAG_DIRECTORY;
-
-  if (CreateSymbolicLinkW(source.c_str(), target2.c_str(), flags) == 0) {
-    DWORD err = GetLastError();
-    throw(Pathie::WindowsError(err));
-  }
-#else
-#error Unsupported system.
-#endif
 }
 
 /**

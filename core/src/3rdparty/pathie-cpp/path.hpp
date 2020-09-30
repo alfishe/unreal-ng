@@ -325,8 +325,6 @@ namespace Pathie {
     bool is_symlink() const;
 
     Path readlink() const;
-    /// Create a symbolic link.
-    void make_symlink(const Path& target) const;
     void mkdir() const;
     void rmdir() const;
     void unlink() const;

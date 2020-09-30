@@ -272,7 +272,7 @@ bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodu
 {
     bool result = false;
 
-    uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(module);
+    uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
 
     // Check if logging for the whole module allowed
     if (BitHelper::IsBitSet(_settings.modules, moduleBitNumber))
