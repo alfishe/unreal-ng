@@ -67,6 +67,7 @@ public:
 	// Controlled emulator behavior
 	void RunSingleCPUCycle();
 	void RunNCPUCycles(unsigned cycles);
+	void RunUntilInterrupt();
 	void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
 
 	// Actions
@@ -76,6 +77,8 @@ public:
     // Debug methods
 	void DebugOn();
 	void DebugOff();
+
+    Z80State* GetZ80State();
 
 
 	// Status methods

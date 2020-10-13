@@ -396,7 +396,7 @@ void Emulator::Resume()
 
 	_mainloop->Resume();
 
-	_isRunning = false;
+	_isRunning = true;
 }
 
 void Emulator::Stop()
@@ -458,6 +458,11 @@ void Emulator::RunNCPUCycles(unsigned cycles)
 	}
 }
 
+void Emulator::RunUntilInterrupt()
+{
+
+}
+
 void Emulator::RunUntilCondition()
 {
     throw "Not implemented";
@@ -490,6 +495,11 @@ void Emulator::DebugOff()
     _cpu->UseFastMemoryInterface();
 
     _z80->dbgchk = false;
+}
+
+Z80State* Emulator::GetZ80State()
+{
+    return static_cast<Z80State*>(_z80);
 }
 
 //endregion

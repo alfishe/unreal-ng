@@ -191,10 +191,6 @@ struct Z80Registers
 	/*------------------------------*/
 	uint8_t im;				// Interrupt mode [IM0|IM1|IM2]
 	bool nmi_in_progress;
-
-
-	uint32_t tscache_addr[TS_CACHE_SIZE];
-	uint8_t  tscache_data[TS_CACHE_SIZE];
 };
 
 #pragma pack(pop)
@@ -271,6 +267,11 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	const MemoryInterface* FastMemIf;				// Fast memory interface (max performance)
 	const MemoryInterface* DbgMemIf;				// Debug memory interface (supports memory access breakpoints)
 	const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
+
+	// TS-Conf specific
+	// TODO: move to appropriate module
+    uint32_t tscache_addr[TS_CACHE_SIZE];
+    uint8_t  tscache_data[TS_CACHE_SIZE];
 };
 
 /// endregion </Structures>
