@@ -1,5 +1,7 @@
 #include "emulatormanager.h"
 
+EmulatorManager* EmulatorManager::_instance = nullptr;
+
 EmulatorManager::EmulatorManager()
 {
 
@@ -10,12 +12,24 @@ EmulatorManager::~EmulatorManager()
 
 }
 
-Emulator* createEmulatorInstance()
+EmulatorManager* EmulatorManager::defaultInstance()
 {
+    if (!_instance)
+    {
+        _instance = new EmulatorManager();
+    }
 
+    return _instance;
 }
 
-void destroyEmulatorInstance(Emulator* emulator)
+Emulator* EmulatorManager::createEmulatorInstance()
+{
+    Emulator* result = nullptr;
+
+    return result;
+}
+
+void EmulatorManager::destroyEmulatorInstance(Emulator* emulator)
 {
 
 }

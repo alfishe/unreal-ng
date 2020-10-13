@@ -17,6 +17,8 @@ DEFINES += QT_DEPRECATED_WARNINGS
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    debugger/debuggerwindow.cpp \
+    debugger/registerswidget.cpp \
     emulator/emulatormanager.cpp \
     emulator/guiemulatorcontext.cpp \
     emulator/keyboardmanager.cpp \
@@ -29,6 +31,8 @@ SOURCES += \
     widgets/verticallabel.cpp
 
 HEADERS += \
+    debugger/debuggerwindow.h \
+    debugger/registerswidget.h \
     emulator/emulatormanager.h \
     emulator/guiemulatorcontext.h \
     emulator/keyboardmanager.h \
@@ -41,12 +45,15 @@ HEADERS += \
 
 FORMS += \
     mainwindow.ui \
+    ui/debuggerwindow.ui \
     ui/devicescreen.ui \
+    ui/hexview.ui \
     ui/logstatusbar.ui \
     ui/logwindow.ui \
     ui/memoryblock.ui \
     ui/memorymap.ui \
-    ui/registers.ui
+    ui/registers.ui \
+    ui/ula.ui
 
 TRANSLATIONS += \
     unreal-qt_en_US.ts

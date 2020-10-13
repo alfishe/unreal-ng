@@ -9,15 +9,23 @@
 
 class EmulatorManager
 {   
-public:
-    EmulatorManager();
-    virtual ~EmulatorManager();
+private:
+    static EmulatorManager* _instance;
+    EmulatorManager();     // Do not allow to create object explicitly. Use singleton method EmulatorManager::defaultInstance();
 
 public:
+    virtual ~EmulatorManager();
+
+
+public:
+    static EmulatorManager* defaultInstance();
     Emulator* createEmulatorInstance();
     void destroyEmulatorInstance(Emulator* emulator);
 
     void sendKeyEvent(uint8_t key, KeyEventEnum type);
+
+private:
+
 };
 
 #endif // EMULATORMANAGER_H

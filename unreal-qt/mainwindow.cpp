@@ -45,14 +45,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
 
     // Create bridge between GUI and emulator
-    _emulatorManager = new EmulatorManager();
+    _emulatorManager = EmulatorManager::defaultInstance();
 
     // Instantiate Logger window
     logWindow = new LogWindow();
+
+    // Instantiate debugger window
+    debuggerWindow = new DebuggerWindow();
+    debuggerWindow->reset();
+    debuggerWindow->show();
 }
 
 MainWindow::~MainWindow()
 {
+    if (debuggerWindow != nullptr)
+    {
+        debuggerWindow->hide();
+        delete debuggerWindow;
+    }
+
     if (logWindow != nullptr)
     {
         logWindow->hide();
@@ -91,12 +102,26 @@ void MainWindow::closeEvent(QCloseEvent *event)
      event->accept();
      qDebug() << "QCloseEvent : Closing application";
 
+     // Stop emulator
+     if (_emulator)
+     {
+        _emulator->Stop();
+     }
+
      // Unsubscribe from message bus events
      MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
      std::string topic = "FRAME_REFRESH";
      Observer* observerInstance = static_cast<Observer*>(this);
      ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
      messageCenter.RemoveObserver(topic, observerInstance, callback);
+
+     // Close debugger
+     if (debuggerWindow)
+     {
+        debuggerWindow->hide();
+        delete debuggerWindow;
+        debuggerWindow = nullptr;
+     }
 
      // Close LogViewer
      if (logWindow)
@@ -107,10 +132,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
      }
 
      // Shutdown emulator
-     _emulator->Stop();
-     deviceScreen->detach();
-     delete _emulator;
-     _emulator = nullptr;
+     if (deviceScreen)
+     {
+        deviceScreen->detach();
+     }
+
+     if (_emulator)
+     {
+         delete _emulator;
+         _emulator = nullptr;
+     }
 
      qDebug() << "QCloseEvent : Emulator shutdown complete";
 }
@@ -220,6 +251,9 @@ void MainWindow::handleStartButton()
 
             // Start in async own thread
             _emulator->StartAsync();
+
+            // Notify debugger about new emulator instance
+            debuggerWindow->setEmulator(_emulator);
 
 
             fflush(stdout);
