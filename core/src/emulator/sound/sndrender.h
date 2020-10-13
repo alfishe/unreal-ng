@@ -18,8 +18,8 @@ struct SNDOUT;
 
 const unsigned SNDR_DEFAULT_SYSTICK_RATE = 3500000; // ZX-Spectrum Z80 clock
 const unsigned SNDR_DEFAULT_SAMPLE_RATE = 44100;
-const unsigned TICK_FF = 6;            // oversampling ratio: 2^6 = 64
-const unsigned MULT_C = 12;   // fixed point precision for 'system tick -> sound tick'
+const unsigned TICK_FF = 6;                         // oversampling ratio: 2^6 = 64
+const unsigned MULT_C = 12;                         // fixed point precision for 'system tick -> sound tick'
 
 #ifdef SND_EXTERNAL_BUFFER
  typedef unsigned bufptr_t;
@@ -51,13 +51,11 @@ class SNDRENDER
    SNDRENDER();
 
  protected:
-
    unsigned mix_l, mix_r;
    bufptr_t dstpos, dst_start;
    unsigned clock_rate, sample_rate; //Alone Coder
 
  private:
-
    unsigned tick, base_tick;
    unsigned s1_l, s1_r;
    unsigned s2_l, s2_r;
@@ -74,8 +72,12 @@ class SNDRENDER
 
 union SNDSAMPLE
 {
-   unsigned sample; // left/right channels in low/high WORDs
-   struct { uint16_t left, right; } ch; // or left/right separately
+   uint32_t sample;     // left/right channels in low/high WORDs
+   struct               // or left/right separately
+   {
+       uint16_t left;
+       uint16_t right;
+   } ch;
 };
 
 struct SNDOUT
