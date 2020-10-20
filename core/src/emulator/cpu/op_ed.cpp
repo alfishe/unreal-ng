@@ -7,6 +7,75 @@
 #include "op_noprefix.h"
 #include "op_ed.h"
 
+/// region <Information>
+
+// There are ED prefixed undocumented commands (synonyms to existing documented ones)
+// See: http://www.z80.info/zip/z80-documented.pdf
+// See: http://www.z80.info/z80undoc3.txt
+//    1.4) ED Prefix [1]
+//
+//    There are a number of undocumented EDxx instructions, of which most are
+//            duplicates of documented instructions. Any instruction not listed has
+//    no effect (just like 2 NOP instructions).
+//
+//    The complete list except for the block instructions: (* = undocumented)
+//
+//    ED40   IN B,(C)                 ED60   IN H,(C)
+//    ED41   OUT (C),B                ED61   OUT (C),H
+//    ED42   SBC HL,BC                ED62   SBC HL,HL
+//    ED43   LD (nn),BC               ED63   LD (nn),HL
+//    ED44   NEG                      ED64 * NEG
+//    ED45   RETN                     ED65 * RETN
+//    ED46   IM 0                     ED66 * IM 0
+//    ED47   LD I,A                   ED67   RRD
+//    ED48   IN C,(C)                 ED68   IN L,(C)
+//    ED49   OUT (C),C                ED69   OUT (C),L
+//    ED4A   ADC HL,BC                ED6A   ADC HL,HL
+//    ED4B   LD BC,(nn)               ED6B   LD HL,(nn)
+//    ED4C * NEG                      ED6C * NEG
+//    ED4D   RETI                     ED6D * RETN
+//    ED4E * IM 0                     ED6E * IM 0
+//    ED4F   LD R,A                   ED6F   RLD
+//
+//    ED50   IN D,(C)                 ED70 * IN (C) / IN F,(C)
+//    ED51   OUT (C),D                ED71 * OUT (C),0
+//    ED52   SBC HL,DE                ED72   SBC HL,SP
+//    ED53   LD (nn),DE               ED73   LD (nn),SP
+//    ED54 * NEG                      ED74 * NEG
+//    ED55 * RETN                     ED75 * RETN
+//    ED56   IM 1                     ED76 * IM 1
+//    ED57   LD A,I                   ED77 * NOP
+//    ED58   IN E,(C)                 ED78   IN A,(C)
+//    ED59   OUT (C),E                ED79   OUT (C),A
+//    ED5A   ADC HL,DE                ED7A   ADC HL,SP
+//    ED5B   LD DE,(nn)               ED7B   LD SP,(nn)
+//    ED5C * NEG                      ED7C * NEG
+//    ED5D * RETN                     ED7D * RETN
+//    ED5E   IM 2                     ED7E * IM 2
+//    ED5F   LD A,R                   ED7F * NOP
+//
+//    The ED70 instruction reads from I/O port C, but does not store the result.
+//    It just affects the flags like the other IN x,(C) instruction. ED71 simply
+//    outs the value 0 to I/O port C.
+//
+//    The ED63 is a duplicate of the 22 instruction (LD (nn),HL) just like the
+//    ED6B is a duplicate of the 2A instruction. Of course the timings are
+//    different. These instructions are listed in the official documentation.
+//
+//    According to Gerton Lunter (gerton@math.rug.nl):
+//    The instructions ED 4E and ED 6E are IM 0 equivalents: when FF was put
+//    on the bus (physically) at interrupt time, the Spectrum continued to
+//    execute normally, whereas when an EF (RST #28) was put on the bus it
+//    crashed, just as it does in that case when the Z80 is in the official
+//    interrupt mode 0.  In IM 1 the Z80 just executes a RST #38 (opcode FF)
+//    no matter what is on the bus.
+//
+//    [5] All the RETI/RETN instructions are the same, all like the RETN
+//    instruction. So they all, including RETI, copy IFF2 to IFF1. More information
+//    on RETI and RETN and IM x is in the part about Interrupts and I register (3).
+
+/// endregion </Information>
+
 // ED opcodes
 
 Z80OPCODE ope_40(Z80 *cpu) { // in b,(c)
@@ -55,13 +124,13 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
 }
 
 Z80OPCODE ope_43(Z80 *cpu) { // ld (nnnn),bc
-   uint16_t addr = cpu->rd(cpu->pc++);
+    uint16_t addr = cpu->rd(cpu->pc++);
     addr += cpu->rd(cpu->pc++) * 0x100;
 
-   cpu->memptr = addr + 1;
+    cpu->memptr = addr + 1;
 
-   cpu->wd(addr, cpu->c);
-   cpu->wd(addr + 1, cpu->b);
+    cpu->wd(addr, cpu->c);
+    cpu->wd(addr + 1, cpu->b);
 }
 
 Z80OPCODE ope_44(Z80 *cpu) { // neg
@@ -171,7 +240,7 @@ Z80OPCODE ope_4D(Z80 *cpu) { // reti
     cpu->sp = sp;
 }
 
-#define ope_4E ope_56  // im 0/1 -> im1
+#define ope_4E ope_46  // im0 undocumented
 
 Z80OPCODE ope_4F(Z80 *cpu) { // ld r,a
    cpu->r_low = cpu->a;
@@ -226,23 +295,24 @@ Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
 
     cputact(7);
 }
+
 Z80OPCODE ope_53(Z80 *cpu) { // ld (nnnn),de
     // Read 2 bytes of address from memory
     uint16_t adr = cpu->rd(cpu->pc++);
     adr += cpu->rd(cpu->pc++) * 0x100;
 
-   cpu->memptr = adr + 1;
+    cpu->memptr = adr + 1;
 
-   // Write 2 bytes from DE to memory using fetched address
-   cpu->wd(adr, cpu->e);
-   cpu->wd(adr + 1, cpu->d);
+    // Write 2 bytes from DE to memory using fetched address
+    cpu->wd(adr, cpu->e);
+    cpu->wd(adr + 1, cpu->d);
 }
 
 #define ope_54 ope_44 // neg
 #define ope_55 ope_45 // retn
 
 Z80OPCODE ope_56(Z80 *cpu) { // im 1
-   cpu->im = 1;
+    cpu->im = 1;
 }
 
 Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
@@ -438,7 +508,7 @@ Z80OPCODE ope_6F(Z80 *cpu) { // rld
   cpu->f = log_f[cpu->a] | (cpu->f & CF);
 }
 
-Z80OPCODE ope_70(Z80 *cpu) { // in (c)
+Z80OPCODE ope_70(Z80 *cpu) { // in (c) - Undocumented. Reads from the port and affects flags, but does not store the value to a register
    cputact(4);
 
    cpu->memptr = cpu->bc + 1;
@@ -446,7 +516,7 @@ Z80OPCODE ope_70(Z80 *cpu) { // in (c)
    cpu->f = log_f[cpu->in(cpu->bc)] | (cpu->f & CF);
 }
 
-Z80OPCODE ope_71(Z80 *cpu) { // out (c),0
+Z80OPCODE ope_71(Z80 *cpu) { // out (c),0 - Undocumented. Writes zero to the port
    cputact(4);
 
    cpu->memptr = cpu->bc + 1;

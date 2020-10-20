@@ -9,7 +9,9 @@ void Z80_Test::SetUp()
 {
 	// Instantiate emulator with all peripherals, but no configuration loaded
 	_context = new EmulatorContext();
+
 	_cpu = new CPU(_context);
+	_cpu->Init();
 
 	// Use Spectrum48K / Pentagon memory layout
 	_cpu->GetMemory()->InternalSetBanks();

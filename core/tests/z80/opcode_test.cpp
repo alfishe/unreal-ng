@@ -74,7 +74,7 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 		// Check instructions table correctness (if instruction has length 2-4 bytes, they have to be filled by correspondent parameter markers
 		if (operation.instruction[i] == 0x00 && prefix == 0x00 && i > 1)
 		{
-			snprintf(message, sizeof message, "Test table invalid. Opcode:0x%02X. Instruction[%d] shouldn't be 0x00\0", opcode, i);
+			snprintf(message, sizeof message, "Test table invalid. Opcode:0x%02X. Instruction[%d] shouldn't be 0x00", opcode, i);
 			throw message;
 			break;
 		}

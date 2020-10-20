@@ -26,6 +26,7 @@ enum PlatformModulesEnum : uint8_t
     MODULE_SOUND                = 7,
     MODULE_DMA                  = 8,
     MODULE_DEBUGGER             = 9,
+    MODULE_DISASSEMBLER         = 10,
 
     MODULE_ALL                  = 0xFF
 };
@@ -138,9 +139,20 @@ enum PlatformDebuggerSubmodulesEnum : uint16_t
     SUBMODULE_DEBUGGER_ALL          = 0xFFFF
 };
 
+enum PlatformDisassemblerSubmodulesEnum : uint16_t
+{
+    SUBMODULE_DISASSEMBLER_NONE     = 0x0000,
+    SUBMODULE_DISASSEMBLER_CORE     = 0x0001,
+
+    SUBMODULE_DISASSEMBLER_ALL      = 0xFFFF
+};
+
 /// endregion </Logging / Tracing data>
 
+/// region <CPU runtime>
+constexpr char const * NC_CPU_STEP = "CPU_STEP";    // Event fired when one single CPU step performed. Active in debug mode only.
 
+/// endregion </CPU runtime>
 
 #undef PAGE_SIZE
 #define PAGE_SIZE 0x4000U		// Spectrum memory page size is 16Kb (0x4000 or 16384)
