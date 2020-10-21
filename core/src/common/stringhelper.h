@@ -33,6 +33,43 @@ public:
     static string_view RTrim(string_view str);
     static string_view Trim(string_view str);
 
+    static string ToUpper(const string& str);
+    static string ToLower(const string& str);
+
+    template <typename T>
+    static std::string ToHex(T n)
+    {
+        std::stringstream ss;
+
+        ss << std::setfill ('0') << std::setw(sizeof(T) * 2) << std::hex;
+
+        // char, unsigned char and derived types (like int8_t and uint8_t are not by default treated as numbers by stringstream
+        if (typeid(T) == typeid(char) || typeid(T) == typeid(unsigned char) || sizeof(T) == 1)
+        {
+            ss << static_cast<int>(n & 0xFF);
+        }
+        else
+        {
+            ss << n;
+        }
+
+        std::string result = ss.str();
+
+        return result;
+    }
+
+    template <typename T>
+    static std::string ToHexWithPrefix(T n, const char* prefix = "0x")
+    {
+        std::stringstream ss;
+
+        ss << prefix << ToHex(n);
+
+        std::string result = ss.str();
+
+        return result;
+    }
+
     template<typename ... Args>
     static std::string Format(const std::string& format, Args ... args)
     {

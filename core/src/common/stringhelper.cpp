@@ -196,6 +196,48 @@ string_view StringHelper::Trim(string_view str)
     return LTrim(RTrim(str));
 }
 
+std::string StringHelper::ToUpper(const string& str)
+{
+    std::string result;
+    std::stringstream ss;
+
+    for (std::string::size_type i = 0; i < str.length(); i++)
+    {
+        ss << static_cast<char>(std::toupper(str[i]));
+    }
+
+    result = ss.str();
+
+    /* In-place conversion
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c){ return std::toupper(c); }
+    );
+    */
+
+    return result;
+}
+
+std::string StringHelper::ToLower(const string& str)
+{
+    std::string result;
+    std::stringstream ss;
+
+    for (std::string::size_type i = 0; i < str.length(); i++)
+    {
+        ss << static_cast<char>(std::tolower(str[i]));
+    }
+
+    result = ss.str();
+
+    /* In-place conversion
+    std::transform(str.begin(), str.end(), str.begin(),
+                   [](unsigned char c){ return std::tolower(c); }
+    );
+    */
+
+    return result;
+}
+
 std::string StringHelper::FormatWithThousandsDelimiter(int64_t n)
 {
     std::stringstream ss;
