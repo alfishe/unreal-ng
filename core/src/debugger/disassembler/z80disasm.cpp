@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "z80disasm.h"
+#include "common/stringhelper.h"
 
 /// region <Information>
 
@@ -11,6 +12,8 @@
 // See: http://www.z80.info/z80undoc3.txt
 
 /// endregion </Information>
+
+/// region <Static>
 
 /// region <No prefix opcodes>
 
@@ -1962,6 +1965,12 @@ OpCode Z80Disassembler::fdcbOpcodes[256]
 
 /// endregion </#FDCB prefix opcodes>
 
+// Match opcode operands in mnemonic. :<N>
+// Example: ld a,:1; ld hl,:2
+std::regex Z80Disassembler::regexOpcodeOperands(":\\d+");
+
+/// endregion </Static>
+
 std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, size_t len)
 {
     std::string result;
@@ -1979,3 +1988,154 @@ std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, siz
 
     return result;
 }
+
+/// region <Helper methods>
+
+std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic)
+{
+    std::vector<uint8_t> result;
+
+    if (mnemonic.size() > 0)
+    {
+        try
+        {
+            std::sregex_iterator next(mnemonic.begin(), mnemonic.end(), regexOpcodeOperands);
+            std::sregex_iterator end;
+            while (next != end)
+            {
+                std::smatch match = *next;
+
+                // Get match string like ':2'
+                std::string value = match.str();
+
+                /// region <Sanity checks>
+                if (value.size() < 2)
+                {
+                    throw std::logic_error("Invalid regex to parse operands. Should produce at least 2 symbols like ':1', ':2'");
+                }
+                /// endregion </Sanity checks>
+
+                // Remove leading ':' => '2'
+                value = value.substr(1);
+
+                // Convert from std::string to int
+                uint8_t operandSize = std::stoi(value);
+
+
+                /// region <Sanity checks>
+                if (operandSize > 2)
+                {
+                    std::string message = StringHelper::Format("Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                    throw std::logic_error(message);
+                }
+
+                if (operandSize == 0)
+                {
+                    std::string message = StringHelper::Format("Z80 cannot have operand with 0 bytes. In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                    throw std::logic_error(message);
+                }
+
+                /// endregion </Sanity checks>
+
+                result.push_back(operandSize);
+
+                next++;
+            }
+        }
+        catch (std::regex_error& e)
+        {
+            // Syntax error in the regular expression
+        }
+    }
+
+    return result;
+}
+
+std::string Z80Disassembler::formatOperandString(std::string& mnemonic, std::vector<uint16_t>& values)
+{
+    static const char* HEX_PREFIX = "#";
+
+    std::string result;
+    std::stringstream ss;
+
+    try
+    {
+        int i = 0;
+        int startPos = 0;
+
+        std::sregex_iterator next(mnemonic.begin(), mnemonic.end(), regexOpcodeOperands);
+        std::sregex_iterator end;
+        while (next != end)
+        {
+            std::smatch match = *next;
+
+            // Get match string like ':2'
+            std::string value = match.str();
+
+            /// region <Sanity checks>
+            if (value.size() < 2)
+            {
+                throw std::logic_error("Invalid regex to parse operands. Should produce at least 2 symbols like ':1', ':2'");
+            }
+            /// endregion </Sanity checks>
+
+            // Remove leading ':' => '2'
+            value = value.substr(1);
+
+            // Convert from std::string to int
+            uint8_t operandSize = std::stoi(value);
+
+            /// region <Sanity checks>
+            if (operandSize > 2)
+            {
+                std::string message = StringHelper::Format("Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                throw std::logic_error(message);
+            }
+
+            if (operandSize == 0)
+            {
+                std::string message = StringHelper::Format("Z80 cannot have operand with 0 bytes. In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                throw std::logic_error(message);
+            }
+
+            /// endregion </Sanity checks>
+
+            // Print mnemonic fragment till operand placeholder
+            ss << mnemonic.substr(startPos, match.position() - startPos);
+
+            // Print operand value
+            std::string operand;
+            switch (operandSize)
+            {
+                case 1:
+                    operand = StringHelper::ToHexWithPrefix(static_cast<uint8_t>(values[i]), HEX_PREFIX);
+                    break;
+                case 2:
+                    operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
+                    break;
+                default:
+                    throw std::logic_error("Invalid operand size");
+            }
+
+            ss << StringHelper::ToUpper(operand);
+
+            startPos = match.position() + match.length();
+            i++;
+            next++;
+        }
+
+        // Print mnemonic leftover after last operand
+        ss << mnemonic.substr(startPos);
+
+        result = ss.str();
+    }
+    catch (std::regex_error& e)
+    {
+        // Syntax error in the regular expression
+    }
+
+    return result;
+}
+
+
+/// endregion </Helper methods>

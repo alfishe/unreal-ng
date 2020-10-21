@@ -1,6 +1,10 @@
 #pragma once
 #include "stdafx.h"
 
+#include <regex>
+#include <vector>
+#include "emulator/platform.h"
+
 /// region <Types>
 
 struct OpCode
@@ -23,7 +27,9 @@ constexpr uint8_t OF_MEMADR = (1 << 5);		// operand contains memory address (nn)
 constexpr uint8_t OF_CONDITION = (1 << 6);  // operation checks condition
 constexpr uint8_t OF_VAR_T = (1 << 7);      // operation takes variable number of t-states (i.e. cycles)
 
-/// endergion </Types>
+/// endregion </Types>
+
+class ModuleLogger;
 
 class Z80Disassembler
 {
@@ -33,6 +39,7 @@ public:
     const uint16_t _SUBMODULE = PlatformDisassemblerSubmodulesEnum::SUBMODULE_DISASSEMBLER_CORE;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
+    /// region <Static>
 protected:
     static OpCode noprefixOpcodes[256];
     static OpCode cbOpcodes[256];
@@ -42,6 +49,10 @@ protected:
     static OpCode ddcbOpcodes[256];
     static OpCode fdcbOpcodes[256];
 
+    static std::regex regexOpcodeOperands;
+
+    /// endregion </Static>
+
     /// region <Fields>
 protected:
     ModuleLogger* _logger;
@@ -50,7 +61,31 @@ protected:
 public:
     std::string disassembleSingleCommand(const uint8_t* buffer, size_t len);
 
+    /// region <Helper methods>
+protected:
     uint8_t getByte();
     uint16_t getWord();
     int getRelativeOffset();
+
+    std::vector<uint8_t> parseOperands(std::string& mnemonic);
+    std::string formatOperandString(std::string& mnemonic, std::vector<uint16_t>& values);
+
+    /// endregion </Helper methods>
 };
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class Z80DisassemblerCUT : public Z80Disassembler
+{
+public:
+    using Z80Disassembler::getByte;
+    using Z80Disassembler::getWord;
+    using Z80Disassembler::getRelativeOffset;
+    using Z80Disassembler::parseOperands;
+    using Z80Disassembler::formatOperandString;
+
+};
+#endif // _CODE_UNDER_TEST
