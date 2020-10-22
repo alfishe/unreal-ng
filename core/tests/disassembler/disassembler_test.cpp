@@ -3,7 +3,8 @@
 #include "disassembler_test.h"
 
 #include <vector>
-#include <common/stringhelper.h>
+#include "common/dumphelper.h"
+#include "common/stringhelper.h"
 
 /// region <SetUp / TearDown>
 
@@ -168,6 +169,7 @@ TEST_F(Disassembler_Test, formatOperandString)
 
         try
         {
+            // Probe method under test and get result
             result = _disasm->formatOperandString(mnemonic, values);
         }
         catch (std::logic_error e)
@@ -192,6 +194,51 @@ TEST_F(Disassembler_Test, formatOperandString)
             EXPECT_EQ(referenceResult, result) << message << std::endl;
         }
 
+
+        i++;
+    }
+}
+
+TEST_F(Disassembler_Test, disassembleSingleCommand)
+{
+    static char message[256];
+    static constexpr const char* ERROR_OPERANDS = "<FAIL>";
+
+    std::vector<std::vector<uint8_t>> testData =
+    {
+        { 0x00 },                     // nop
+        { 0x01, 0xEF, 0xBE },         // ld bc,#BEEF
+        { 0xCB, 0x2F },               // sra a
+        { 0xFD, 0x36, 0xBA, 0x13 },   // ld (iy+#BA),#13
+        { 0x38, 0x35 },               // jr c,#35
+    };
+
+    std::vector<std::string> referenceValues =
+    {
+        "nop",
+        "ld bc,#BEEF",
+        "sra a",
+        "ld (iy+#BA),#13",
+        "jr c,#35",
+    };
+
+    int i = 0;
+    for (auto& cmd : testData)
+    {
+        uint8_t* command = cmd.data();
+        std::string hexCommand = DumpHelper::HexDumpBuffer(command, cmd.size(), ", ", "0x");
+        std::string referenceResult = referenceValues[i];
+
+        // Probe method under test and get result
+        std::string result = _disasm->disassembleSingleCommand(command, cmd.size());
+
+        if (result != referenceResult)
+        {
+            snprintf(message, sizeof message, "Iteration %d. Data '%s'. Expected '%s', found '%s'", i,
+                     hexCommand.c_str(), referenceResult.c_str(), result.c_str());
+
+            EXPECT_EQ(referenceResult, result) << message << std::endl;
+        }
 
         i++;
     }
