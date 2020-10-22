@@ -13,7 +13,7 @@ public:
     static void SaveHexDumpToFile(std::wstring& filePath, uint8_t* buffer, size_t size);
     static void SaveHexDumpToFile(std::string& filePath, uint8_t* buffer, size_t size);
 
-    static std::string HesDumpBuffer(uint8_t* buffer, size_t size);
-    static void HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size);
+    static std::string HexDumpBuffer(uint8_t* buffer, size_t size, const std::string& delimiter = " ", const std::string& prefix = "");
+    static void HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter = " ", const std::string& prefix = "");
 
 };

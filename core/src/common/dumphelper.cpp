@@ -46,15 +46,15 @@ void DumpHelper::SaveHexDumpToFile(std::string& filePath, uint8_t* buffer, size_
 /// \param buffer
 /// \param size
 /// \return
-std::string DumpHelper::HesDumpBuffer(uint8_t* buffer, size_t size)
+std::string DumpHelper::HexDumpBuffer(uint8_t* buffer, size_t size, const std::string& delimiter, const std::string& prefix)
 {
     std::string result;
 
     // Preallocate memory for output string
-    const int bufferSize = size * 3; // Byte of data printed as hex with spaces between and line feeds takes x3 more space
+    const int bufferSize = size * (2 + delimiter.size() + prefix.size()); // Byte of data printed as hex with spaces between and line feeds takes more 2 x symbols per each data byte + delimiters + prefixes
     result.resize(bufferSize);
 
-    DumpHelper::HexDumpBuffer(result.data(), result.length(), buffer, size);
+    DumpHelper::HexDumpBuffer(result.data(), result.length(), buffer, size, delimiter, prefix);
 
     return result;
 }
@@ -64,30 +64,55 @@ std::string DumpHelper::HesDumpBuffer(uint8_t* buffer, size_t size)
 /// \param outSize
 /// \param buffer
 /// \param size
-void DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size)
+void DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter, const std::string& prefix)
 {
     int outPos = 0;
     int symbolsPrinted = 0;
+    int fullLines = size / width;
+    int remainder = size % width;
+    bool delimiterEnabled = delimiter.size() > 0;
+    bool prefixEnabled = prefix.size() > 0;
 
-    for (int lines = 0; lines < size / width; lines++)
+    if (remainder > 0)
     {
+        fullLines += 1;
+    }
+
+    // Full lines
+    for (int line = 0; line < fullLines; line++)
+    {
+        bool lastLine = line == fullLines - 1;
+
         for (int column = 0; column < width; column++)
         {
-            symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%02X", buffer[lines * width + column]);
+            bool lastColumn = (column == width - 1) || (remainder > 0 && lastLine && column == remainder - 1);
+
+            // Stop on data end
+            if (lastLine && remainder > 0 && column == remainder)
+                break;
+
+            if (prefixEnabled)
+            {
+                symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%s%02X", prefix.c_str(), buffer[line * width + column]);
+            }
+            else
+            {
+                symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%02X", buffer[line * width + column]);
+            }
 
             if (symbolsPrinted > 0)
             {
                 outPos += symbolsPrinted;
 
-                if (column >= 0 && column < width - 1 && outPos < outSize)
+                if (delimiterEnabled && !lastColumn && outPos < outSize)
                 {
-                    *(outBuffer + outPos) = ' ';
-                    outPos++;
+                    symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%s", delimiter.c_str());
+                    outPos += symbolsPrinted;
                 }
             }
         }
 
-        if (outPos < outSize)
+        if (!lastLine && outPos < outSize)
         {
             *(outBuffer + outPos) = '\n';
             outPos++;
