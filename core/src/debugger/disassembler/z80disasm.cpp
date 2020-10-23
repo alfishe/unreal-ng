@@ -1993,7 +1993,6 @@ std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, siz
     if (decoded.isValid)
     {
         result = decoded.mnemonic;
-        cout << result << std::endl;
     }
 
     return result;

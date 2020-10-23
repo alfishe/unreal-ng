@@ -226,7 +226,7 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
     for (auto& cmd : testData)
     {
         uint8_t* command = cmd.data();
-        std::string hexCommand = DumpHelper::HexDumpBuffer(command, cmd.size(), ", ", "0x");
+        std::string hexCommand = DumpHelper::HexDumpBuffer(command, cmd.size());
         std::string referenceResult = referenceValues[i];
 
         // Probe method under test and get result
@@ -238,6 +238,12 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
                      hexCommand.c_str(), referenceResult.c_str(), result.c_str());
 
             EXPECT_EQ(referenceResult, result) << message << std::endl;
+        }
+        else
+        {
+#ifdef _DEBUG
+            cout << left << setw(16) << hexCommand << setw(0) << result << std::endl;
+#endif // _DEBUG
         }
 
         i++;
