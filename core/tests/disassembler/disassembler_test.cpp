@@ -77,7 +77,9 @@ TEST_F(Disassembler_Test, parseOperands)
         }
         catch (std::logic_error e)
         {
+#ifdef _DEBUG
             std::cout << e.what() << std::endl;
+#endif // _DEBUG
             resultValue = ERROR_OPERANDS;
         }
 
@@ -174,7 +176,10 @@ TEST_F(Disassembler_Test, formatOperandString)
         }
         catch (std::logic_error e)
         {
+#ifdef _DEBUG
             std::cout << e.what() << std::endl;
+#endif // _DEBUG
+
             result = ERROR_OPERANDS;
         }
 
