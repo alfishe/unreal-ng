@@ -18,6 +18,10 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
     debugger/debuggerwindow.cpp \
+    debugger/disassemblercolumnview.cpp \
+    debugger/disassemblerlistingview.cpp \
+    debugger/disassemblertextview.cpp \
+    debugger/disassemblerview.cpp \
     debugger/registerswidget.cpp \
     emulator/emulatormanager.cpp \
     emulator/guiemulatorcontext.cpp \
@@ -32,6 +36,10 @@ SOURCES += \
 
 HEADERS += \
     debugger/debuggerwindow.h \
+    debugger/disassemblercolumnview.h \
+    debugger/disassemblerlistingview.h \
+    debugger/disassemblertextview.h \
+    debugger/disassemblerview.h \
     debugger/registerswidget.h \
     emulator/emulatormanager.h \
     emulator/guiemulatorcontext.h \
@@ -47,6 +55,7 @@ FORMS += \
     mainwindow.ui \
     ui/debuggerwindow.ui \
     ui/devicescreen.ui \
+    ui/disassemblerview.ui \
     ui/hexview.ui \
     ui/logstatusbar.ui \
     ui/logwindow.ui \
