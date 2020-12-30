@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "portdecoder_pentagon128.h"
 #include "cassert"
@@ -14,7 +14,7 @@ PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context) : Por
 
 PortDecoder_Pentagon128::~PortDecoder_Pentagon128()
 {
-    LOGDEBUG("PortDecoder_Pentagon128::~PortDecoder_Pentagon128()");
+    MLOGDEBUG("PortDecoder_Pentagon128::~PortDecoder_Pentagon128()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -47,7 +47,21 @@ void PortDecoder_Pentagon128::Reset()
 
 uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
 {
+/// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
+    /// endregion </Override submodule>
+
     uint8_t result = 0xFF;
+
+    if (IsPort_FE(port))
+    {
+        result = _keyboard->HandlePort(port);
+    }
+
+    // Determine RAM/ROM page where code executed from
+    std::string currentMemoryPage = GetPCAddressLocator(pc);
+
+    MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
 
     return result;
 }
@@ -70,7 +84,7 @@ void PortDecoder_Pentagon128::SetRAMPage(uint8_t page)
 {
     if (page > 7)
     {
-        LOGERROR("PortDecoder_Pentagon128::SetRAMPage - Invalid RAM page number %d", page);
+        MLOGERROR("PortDecoder_Pentagon128::SetRAMPage - Invalid RAM page number %d", page);
         assert("Invalid RAM page");
     }
 
@@ -81,7 +95,7 @@ void PortDecoder_Pentagon128::SetROMPage(uint8_t page)
 {
     if (page > 3)
     {
-        LOGERROR("PortDecoder_Pentagon128::SetROMPage - Invalid ROM page number %d", page);
+        MLOGERROR("PortDecoder_Pentagon128::SetROMPage - Invalid ROM page number %d", page);
         assert("Invalid ROM page");
     }
 }
@@ -89,20 +103,68 @@ void PortDecoder_Pentagon128::SetROMPage(uint8_t page)
 /// endregion </Interface methods>
 
 /// region <Helper methods>
+
+bool PortDecoder_Pentagon128::IsPort_FE(uint16_t port)
+{
+    //    Pentagon 128K
+    //    Port: #FE
+    //    Match pattern: xxxxxxxx xxxxxxx0
+    //    Full pattern:  xxxxxxxx 11111110
+    static const uint16_t port_FE_full      = 0b0000'0000'1111'1110;
+    static const uint16_t port_FE_mask      = 0b0000'0000'0000'0001;
+    static const uint16_t port_FE_match     = 0b0000'0000'0000'0000;
+
+    bool result = (port & port_FE_mask) == port_FE_match;
+
+    return result;
+}
+
 bool PortDecoder_Pentagon128::IsPort_7FFD(uint16_t port)
 {
     //    Pentagon 128K
-    //    port: #7FFD
+    //    Port: #7FFD
     //    Match pattern: 0xxxxxxx xxxxxx0x
     //    Full pattern:  01111111 11111101
-    //    The additional memory features of the 128K/+2 are controlled to by writes to port 0x7ffd.
-    //    As normal on Sinclair hardware, the port address is in fact only partially decoded and the hardware will respond
+    //    The additional memory features of the Pentagon 128K are controlled to by writes to port 0x7ffd.
+    //    As normal on Spectrum-clones hardware, the port address is in fact only partially decoded and the hardware will respond
     //    to any port address with bits 1 and 15 reset.
     static const uint16_t port_7FFD_full    = 0b0111'1111'1111'1101;
     static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0010;
     static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0000;
 
     bool result = (port & port_7FFD_mask) == port_7FFD_match;
+
+    return result;
+}
+
+bool PortDecoder_Pentagon128::IsPort_BFFD(uint16_t port)
+{
+    //    Pentagon 128K
+    //    Port: #BFFD
+    //    Match pattern: 10xxxxxx xxxxxx0x
+    //    Full pattern:  10111111 11111101
+    //    AY music co-processor data register
+    static const uint16_t port_BFFD_full    = 0b1011'1111'1111'1101;
+    static const uint16_t port_BFFD_mask    = 0b1100'0000'0000'0010;
+    static const uint16_t port_BFFD_match   = 0b1000'0000'0000'0000;
+
+    bool result = (port & port_BFFD_mask) == port_BFFD_match;
+
+    return result;
+}
+
+bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
+{
+    //    Pentagon 128K
+    //    Port: #BFFD
+    //    Match pattern: 11xxxxxx xxxxxx0x
+    //    Full pattern:  11111111 11111101
+    //    AY music co-processor control register
+    static const uint16_t port_FFFD_full    = 0b1111'1111'1111'1101;
+    static const uint16_t port_FFFD_mask    = 0b1100'0000'0000'0010;
+    static const uint16_t port_FFFD_match   = 0b1100'0000'0000'0000;
+
+    bool result = (port & port_FFFD_mask) == port_FFFD_match;
 
     return result;
 }
@@ -136,6 +198,6 @@ void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value, uint16_t p
     // Cache out port value in state
     state.p7FFD = value;
 
-    LOGDEBUG(DumpPortValue(0x7FFD, port, value, pc));
-    LOGDEBUG(memory.DumpMemoryBankInfo());
+    MLOGDEBUG(DumpPortValue(0x7FFD, port, value, pc));
+    MLOGDEBUG(memory.DumpMemoryBankInfo());
 }

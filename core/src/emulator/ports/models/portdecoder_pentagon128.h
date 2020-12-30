@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -44,7 +45,13 @@ public:
 
     /// region <Helper methods>
 public:
+    bool IsPort_FE(uint16_t port);
+
     bool IsPort_7FFD(uint16_t port);
+
+    bool IsPort_BFFD(uint16_t port);
+    bool IsPort_FFFD(uint16_t port);
+
     /// endregion <Helper methods>
 
 protected:
