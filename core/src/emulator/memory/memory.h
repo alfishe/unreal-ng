@@ -78,8 +78,8 @@ protected:
 
 protected:
 #if defined CACHE_ALIGNED
-    ATTR_ALIGN(4096)
-    uint8_t _memory[PAGE_SIZE * MAX_PAGES];	// Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size.
+    // Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size
+    uint8_t _memory[PAGE_SIZE * MAX_PAGES] ATTR_ALIGN(4096);
 #else // __declspec(align) not available, force u64 align with old method
     uint64_t memory__[PAGE * MAX_PAGES / sizeof(uint64_t)];
     uint8_t* const memory = (uint8_t*)memory__;
