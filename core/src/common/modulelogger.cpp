@@ -20,7 +20,7 @@ const char* ModuleLogger::LoggerLevelNames[6] =
 const char* ModuleLogger::ALL = "<All>";
 const char* ModuleLogger::NONE = "<None>";
 
-const char* ModuleLogger::moduleNames[10] =
+const char* ModuleLogger::moduleNames[12] =
 {
         "<Unknown>",
         "Core",
@@ -31,7 +31,9 @@ const char* ModuleLogger::moduleNames[10] =
         "Video",
         "Sound",
         "DMA",
-        "Debugger"
+        "Loader",
+        "Debugger",
+        "Disassembler"
 };
 
 /// endregion </Constants>
@@ -465,9 +467,17 @@ bool ModuleLogger::DumpResolveSubmodule(uint16_t module, const char*** submodule
             *submoduleNames = submoduleDMANames;
             *submoduleNamesSize = sizeof(submoduleDMANames) / sizeof(submoduleDMANames[0]);
             break;
+        case MODULE_LOADER:
+            *submoduleNames = submoduleLoaderNames;
+            *submoduleNamesSize = sizeof(submoduleLoaderNames) / sizeof(submoduleLoaderNames[0]);
+            break;
         case MODULE_DEBUGGER:
             *submoduleNames = submoduleDebuggerNames;
             *submoduleNamesSize = sizeof(submoduleDebuggerNames) / sizeof(submoduleDebuggerNames[0]);
+            break;
+        case MODULE_DISASSEMBLER:
+            *submoduleNames = submoduleDisassemblerNames;
+            *submoduleNamesSize = sizeof(submoduleDisassemblerNames) / sizeof(submoduleDisassemblerNames[0]);
             break;
         default:
             result = false;

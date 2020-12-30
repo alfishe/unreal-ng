@@ -103,7 +103,7 @@ class ModuleLogger : public Observer
     static const char* ALL;
     static const char* NONE;
 
-    static const char* moduleNames[10];
+    static const char* moduleNames[12];
 
     const char* submoduleCoreNames[2] =
     {
@@ -175,7 +175,18 @@ class ModuleLogger : public Observer
         "Generic",
     };
 
+    const char* submoduleLoaderNames[3] =
+    {
+        "SNA",
+        "Z80"
+    };
+
     const char* submoduleDebuggerNames[1] =
+    {
+        "Generic",
+    };
+
+    const char* submoduleDisassemblerNames[1] =
     {
         "Generic",
     };
