@@ -77,7 +77,7 @@
 #endif
 
 // Optimized bit rotation
-#if __ICL >= 1000 || defined(__GNUC__)
+#if (__ICL >= 1000 || defined(__GNUC__)) && defined __x86_64__
 	static inline uint8_t rol8(uint8_t val, uint8_t shift)
 	{
 		__asm__ volatile ("rolb %1,%0" : "=r"(val) : "cI"(shift), "0"(val));
@@ -108,7 +108,7 @@
 	static inline u32 _byteswap_ulong(u32 i){return _byteswap_ushort((u16)(i>>16))|(_byteswap_ushort((u16)i)<<16);};
 #endif
 
-#if defined __GNUC__ && !defined _WIN32
+#if defined __GNUC__ && !defined _WIN32 && defined __x86_64__
 	#include <stdint.h>
 	#define HANDLE_PRAGMA_PACK_PUSH_POP
 	#define override
