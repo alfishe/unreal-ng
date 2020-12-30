@@ -12,7 +12,7 @@ public:
 			__cpuid((int *)cpuInfo, _eax);
 		#endif
 
-		#ifdef __GNUC__
+		#if defined __GNUC__ && defined __x86_64__
 			__cpuid(_eax, cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
 		#endif
 	}
@@ -90,7 +90,7 @@ public:
 
 		#endif
 
-		#ifdef __linux__
+		#if defined __linux__ && defined __x86_64__
 
 		assert("GetCPUFrequency() not implemented for Linux");
 
