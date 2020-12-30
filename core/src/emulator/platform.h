@@ -25,8 +25,9 @@ enum PlatformModulesEnum : uint8_t
     MODULE_VIDEO                = 6,
     MODULE_SOUND                = 7,
     MODULE_DMA                  = 8,
-    MODULE_DEBUGGER             = 9,
-    MODULE_DISASSEMBLER         = 10,
+    MODULE_LOADER               = 9,
+    MODULE_DEBUGGER             = 10,
+    MODULE_DISASSEMBLER         = 11,
 
     MODULE_ALL                  = 0xFF
 };
@@ -125,6 +126,15 @@ enum PlatformDMASubmodulesEnum : uint16_t
     SUBMODULE_DMA_TSCONF        = 0x0002,
 
     SUBMODULE_DMA_ALL           = 0xFFFF
+};
+
+enum PlatformLoaderSubmodulesEnum : uint16_t
+{
+    SUBMODULE_LOADER_NONE       = 0x0000,
+    SUBMODULE_LOADER_SNA        = 0x0001,
+    SUBMODULE_LOADER_Z80        = 0x0002,
+
+    SUBMODULE_LOADER_ALL        = 0xFFFF
 };
 
 enum PlatformDebuggerSubmodulesEnum : uint16_t

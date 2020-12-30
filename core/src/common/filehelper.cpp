@@ -1,8 +1,6 @@
 #include "stdafx.h"
-#include "common/logger.h"
 
 #include "filehelper.h"
-#include "common/stringhelper.h"
 #include <algorithm>
 
 char FileHelper::GetPathSeparator()
@@ -55,7 +53,7 @@ std::string FileHelper::GetExecutablePath()
 	return result;
 }
 
-string FileHelper::NormalizePath(string& path, char separator)
+string FileHelper::NormalizePath(std::string& path, char separator)
 {
 	if (separator == L'\0')
 		separator = GetPathSeparator();
@@ -69,7 +67,7 @@ string FileHelper::NormalizePath(string& path, char separator)
 	return result;
 }
 
-string FileHelper::NormalizePath(string& path)
+string FileHelper::NormalizePath(std::string& path)
 {
 	static char systemSeparator = GetPathSeparator();
 
@@ -78,7 +76,29 @@ string FileHelper::NormalizePath(string& path)
 	return result;
 }
 
-string FileHelper::PathCombine(string& path1, string& path2)
+std::string FileHelper::AbsolutePath(std::string& path)
+{
+    std::string result;
+
+#if defined _WIN32
+#endif
+
+#ifdef __linux__
+    char buffer[PATH_MAX];
+    realpath(path.c_str(), buffer);
+    result = std::string(buffer);
+#endif
+
+#ifdef __APPLE__
+    char buffer[PATH_MAX];
+    realpath(path.c_str(), buffer);
+    result = std::string(buffer);
+#endif
+
+    return result;
+}
+
+string FileHelper::PathCombine(std::string& path1, string& path2)
 {
 #ifdef _WIN32
     Pathie::Path basePath = Pathie::Path::from_native(StringHelper::StringToWideString(path1));
@@ -97,27 +117,27 @@ string FileHelper::PathCombine(string& path1, string& path2)
 	return result;
 }
 
-string FileHelper::PathCombine(string& path1, const char* path2)
+string FileHelper::PathCombine(std::string& path1, const char* path2)
 {
 	string pathPart2 = path2;
 	return PathCombine(path1, pathPart2);
 }
 
-bool FileHelper::IsFile(string& path)
+bool FileHelper::IsFile(std::string& path)
 {
 	bool result = FileExists(path);
 
 	return result;
 }
 
-bool FileHelper::IsFolder(string& path)
+bool FileHelper::IsFolder(std::string& path)
 {
 	bool result = FolderExists(path);
 
 	return result;
 }
 
-bool FileHelper::FileExists(string& path)
+bool FileHelper::FileExists(std::string& path)
 {
 	bool result = false;
 	Pathie::Path basePath(path);
@@ -130,7 +150,7 @@ bool FileHelper::FileExists(string& path)
 	return result;
 }
 
-bool FileHelper::FolderExists(string& path)
+bool FileHelper::FolderExists(std::string& path)
 {
 	bool result = false;
     Pathie::Path basePath(path);
@@ -143,16 +163,97 @@ bool FileHelper::FolderExists(string& path)
 	return result;
 }
 
-string FileHelper::PrintablePath(string path)
+size_t FileHelper::GetFileSize(std::string& path)
+{
+    size_t result = -1;
+
+    std::ifstream ifile;
+    ifile.open(path);
+
+    if (ifile.is_open())
+    {
+        ifile.seekg(0, std::ios_base::end);
+        std::fpos pos = ifile.tellg();
+
+        result = pos;
+
+        ifile.close();
+    }
+
+    return result;
+}
+
+size_t FileHelper::GetFileSize(FILE* file)
+{
+    size_t result = -1;
+
+    if (file != nullptr)
+    {
+        // Remember current position
+        fpos_t position;
+        fgetpos(file, &position);
+
+        // Determine EOF position = file size
+        rewind(file);
+        fseek(file, 0, SEEK_END);
+        result = ftell(file);
+
+        // Restore position
+        fsetpos(file, &position);
+    }
+
+    return result;
+}
+
+string FileHelper::PrintablePath(std::string path)
 {
 	string result = path;
 
 	return result;
 }
 
-bool FileHelper::SaveBufferToFile(string& filePath, uint8_t* buffer, size_t size)
+FILE* FileHelper::OpenFile(std::string& path, const char* mode)
+{
+    FILE* result = nullptr;
+
+    if (FileExists(path))
+    {
+        result = fopen(path.c_str(), mode);
+    }
+
+    return result;
+}
+
+void FileHelper::CloseFile(FILE* file)
+{
+    if (file != nullptr)
+    {
+        fclose(file);
+    }
+}
+
+size_t FileHelper::ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size)
+{
+    size_t result = 0;
+
+    if (file == nullptr || buffer == nullptr || size == 0)
+    {
+        return result;
+    }
+
+    result = fread(buffer, size, 1, file);
+
+    return result;
+}
+
+bool FileHelper::SaveBufferToFile(std::string& filePath, uint8_t* buffer, size_t size)
 {
     bool result = false;
+
+    if (buffer == nullptr || size == 0)
+    {
+        return result;
+    }
 
     FILE* file = fopen(filePath.c_str(), "wb");
     if (file != nullptr)

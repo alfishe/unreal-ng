@@ -428,7 +428,7 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
     return result;
 }
 
-/// endregion </ddress helper methods>
+/// endregion </Address helper methods>
 
 /// region <Debug methods>
 
@@ -500,6 +500,24 @@ void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z
     }
 }
 
+///
+/// \param page - RAM page to populate with data
+/// \param fromBuffer - source buffer address
+/// \param bufferSize - source buffer size
+/// Note: if source buffer size > 16k - only first 16k will be loaded
+///       if source buffer size < 16k - all it's data will be copied to RAM page, remaining memory kept untouched
+void Memory::LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize)
+{
+    if (fromBuffer != nullptr && bufferSize > 0)
+    {
+        if (bufferSize > PAGE_SIZE)
+            bufferSize = PAGE_SIZE;
+
+        uint8_t* pageAddress = RAMPageAddress(page);
+        memcpy(pageAddress, fromBuffer, bufferSize);
+    }
+}
+
 /// endregion </Service methods>
 
 /// region <Helper methods>
@@ -523,12 +541,13 @@ MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
 /// Note: Direct access method. Not shown in any traces, memory counters are not incremented
 /// \param address - Z80 space address
 /// \return
-uint8_t Memory::ReadFromMappedMemoryAddress(uint16_t address)
+uint8_t Memory::DirectReadFromZ80Memory(uint16_t address)
 {
     uint8_t result = 0x00;
 
     // Address bits 14 and 15 contain bank number
-    uint8_t bank = (address >> 14) & 0b0000000000000011;
+    uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
+    address = address & 0b0011'1111'1111'1111;
     result = *(_bank_read[bank] + address);
 
     return result;
@@ -538,10 +557,11 @@ uint8_t Memory::ReadFromMappedMemoryAddress(uint16_t address)
 /// Note: Direct access method. Not shown in any traces, memory counters are not incremented
 /// \param address - Z80 space address
 /// \param value - Single byte value to be written by address
-void Memory::WriteByMappedMemoryAddress(uint16_t address, uint8_t value)
+void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
 {
     // Address bits 14 and 15 contain bank number
     uint8_t bank = (address >> 14) & 0b0000000000000011;
+    address = address & 0b0011'1111'1111'1111;
     *(_bank_write[bank] + address) = value;
 }
 

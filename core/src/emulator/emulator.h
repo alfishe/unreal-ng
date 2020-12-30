@@ -64,6 +64,9 @@ public:
 	void Resume();
 	void Stop();
 
+	// File format operations
+	bool LoadSnapshot(std::string& path);
+
 	// Controlled emulator behavior
 	void RunSingleCPUCycle();
 	void RunNCPUCycles(unsigned cycles);

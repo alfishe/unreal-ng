@@ -5,6 +5,7 @@
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
 #include "3rdparty/message-center/messagecenter.h"
+#include "loaders/snapshot/loader_sna.h"
 
 /// region <Constructors / Destructors>
 
@@ -366,6 +367,9 @@ void Emulator::Start()
 	_isPaused = false;
 	_isRunning = true;
 
+	std::string snapshotPath = "/Volumes/SSDData/LocalGit/unreal/tests/loaders/sna/multifix.sna";
+	LoadSnapshot(snapshotPath);
+
 	_mainloop->Run(_stopRequested);
 }
 
@@ -383,6 +387,9 @@ void Emulator::StartAsync()
 
 void Emulator::Pause()
 {
+    if (_isPaused)
+        return;
+
     _isPaused = true;
     _isRunning = false;
 
@@ -391,6 +398,9 @@ void Emulator::Pause()
 
 void Emulator::Resume()
 {
+    if (!_isPaused)
+        return;
+
 	_stopRequested = false;
 	_isPaused = false;
 
@@ -401,9 +411,19 @@ void Emulator::Resume()
 
 void Emulator::Stop()
 {
-	_stopRequested = true;
-	_isPaused = false;
-	_isRunning = false;
+    if (!_isRunning)
+        return;
+
+    // Request emulator to stop
+    _stopRequested = true;
+
+    // If emulator was paused - un-pause, allowing mainloop to react
+    if (_isPaused)
+    {
+        _mainloop->Resume();
+        _isPaused = false;
+    }
+
 
 	// TODO: handle IO shutting down
 	// FDC: flush changes to disk image(s)
@@ -417,9 +437,43 @@ void Emulator::Stop()
 	    delete _asyncThread;
 	    _asyncThread = nullptr;
     }
+
+	// Set emulator state
+    _isRunning = false;
+	_stopRequested = false;
+	_isPaused = false;
 }
 
 //endregion
+
+/// region <File operations>
+
+bool Emulator::LoadSnapshot(std::string &path)
+{
+    bool result = false;
+
+    // Pause execution
+    bool wasRunning = false;
+    if (!IsPaused())
+    {
+        Pause();
+        wasRunning = true;
+    }
+
+    LoaderSNA loaderSna(_context, path);
+    result = loaderSna.load();
+
+    // Resume execution
+    if (wasRunning)
+    {
+        Resume();
+    }
+
+    return result;
+}
+
+/// endregion </File operations>
+
 
 //region Controlled flow
 

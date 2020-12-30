@@ -93,7 +93,7 @@ protected:
     uint8_t* _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
     uint8_t* _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
 
-    MemoryBankModeEnum _bank_mode[4];	// Mode for each of four banks.
+    MemoryBankModeEnum _bank_mode[4];	// Mode for each of four banks
     uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
     uint8_t* _bank_write[4];			// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
 
@@ -128,7 +128,7 @@ public:
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
     /// endregion </Initialization>
 
-    /// region <Memory access implementation methods>
+    /// region <Emulation memory access methods>
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
@@ -139,8 +139,7 @@ public:
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
-
-    /// endregion </Memory access implementation methods>
+    /// endregion </Emulation memory access methods>
 
 public:
     // Runtime methods
@@ -167,6 +166,7 @@ public:
 
     // Service methods
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
+    void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
 
     /// region  <Address helper methods>
     inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE_SIZE * page); }	// Up to MAX_RAM_PAGES 256 pages
@@ -179,8 +179,8 @@ public:
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 
-    uint8_t ReadFromMappedMemoryAddress(uint16_t address);
-    void WriteByMappedMemoryAddress(uint16_t address, uint8_t value);
+    uint8_t DirectReadFromZ80Memory(uint16_t address);
+    void DirectWriteToZ80Memory(uint16_t address, uint8_t value);
 
     /// endregion  </Address helper methods>
 
