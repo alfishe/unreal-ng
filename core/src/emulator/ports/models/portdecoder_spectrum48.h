@@ -35,5 +35,5 @@ public:
 protected:
     void Port_FE(uint16_t port, uint8_t value, uint16_t pc);
 
-    std::string Dump_FE_value(uint8_t value);
+    std::string Dump_FE_value(uint8_t value) override;
 };

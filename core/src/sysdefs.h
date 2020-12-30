@@ -108,13 +108,8 @@
 	static inline u32 _byteswap_ulong(u32 i){return _byteswap_ushort((u16)(i>>16))|(_byteswap_ushort((u16)i)<<16);};
 #endif
 
+// Inline assembly accelerators for x86
 #if defined __GNUC__ && !defined _WIN32 && defined __x86_64__
-	#include <stdint.h>
-	#define HANDLE_PRAGMA_PACK_PUSH_POP
-	#define override
-
-	#define ATTR_ALIGN(x) __attribute__((aligned(x)))
-
 	static __inline__ void __debugbreak(void)
 	{
 	  __asm__ __volatile__ ("int $3");
@@ -125,17 +120,14 @@
 		__asm__("xchgb %b0,%h0" : "=q"(x) :  "0"(x));
 		return x;
 	}
-
-	#define _byteswap_ulong(x) _bswap(x) 
-
-	#define _countof(x) (sizeof(x)/sizeof((x)[0]))
-	#define __assume(x)
 #endif // __GNUC__ && !defined _WIN32
 
-#if defined __GNUC__ && defined _WIN32
+// Cross-platform GCC-related (both x86 and ARM)
+#if defined __GNUC__
     #define ATTR_ALIGN(x) __attribute__((aligned(x)))
+    #define _countof(x) (sizeof(x)/sizeof((x)[0]))
 
     #define __assume(x)
-#endif // __GNUC__ ** defined _WIN32
+#endif // __GNUC__
 
 #endif // _INCLUDE_SYSDEFS_H_
