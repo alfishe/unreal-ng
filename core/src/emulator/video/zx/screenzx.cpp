@@ -292,8 +292,8 @@ uint32_t ScreenZX::GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress
     uint16_t colorAddress = CalculateXYColorAttrAddress(x, y, baseAddress);
 
     // Fetch pixel and color data from Z80 memory
-    uint8_t pixelByteValue = memory.ReadFromMappedMemoryAddress(pixelAddress);
-    uint8_t colorByteValue = memory.ReadFromMappedMemoryAddress(colorAddress);
+    uint8_t pixelByteValue = memory.DirectReadFromZ80Memory(pixelAddress);
+    uint8_t colorByteValue = memory.DirectReadFromZ80Memory(colorAddress);
 
     // Masking only pixel specified (from 1x8 byte block)
     bool isPixelSet = pixelByteValue & (1 << pixelIndex);
@@ -319,8 +319,8 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
     uint16_t colorAddress = CalculateXYColorAttrAddressOptimized(x, y, baseAddress);
 
     // Fetch pixel and color data from Z80 memory
-    uint8_t pixelByteValue = memory.ReadFromMappedMemoryAddress(pixelAddress);
-    uint8_t colorByteValue = memory.ReadFromMappedMemoryAddress(colorAddress);
+    uint8_t pixelByteValue = memory.DirectReadFromZ80Memory(pixelAddress);
+    uint8_t colorByteValue = memory.DirectReadFromZ80Memory(colorAddress);
 
     // Masking only pixel specified (from 1x8 byte block)
     bool isPixelSet = pixelByteValue & (1 << pixelIndex);
