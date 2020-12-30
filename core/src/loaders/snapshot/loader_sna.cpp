@@ -1,8 +1,11 @@
 #include "stdafx.h"
 
+#include "common/modulelogger.h"
+
 #include "loader_sna.h"
 
 #include "common/filehelper.h"
+#include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"
@@ -85,6 +88,37 @@ bool LoaderSNA::validateSnapshotFile()
 
     // Persist validation state in the field
     _fileValidated = result;
+
+    /// region <Info logging>
+    if (result)
+    {
+        std::string version;
+        if (_snapshotMode == SNA_48)
+        {
+            version = "SNA48";
+        }
+        if (_snapshotMode == SNA_128)
+        {
+            version = "SNA128";
+        }
+
+        MLOGINFO("Valid SNA file, type: %s, size: %d path: '%s'", version.c_str(), _fileSize, _path.c_str());
+    }
+    else
+    {
+        std::string version = "UNKNOWN";
+        if (_snapshotMode == SNA_48)
+        {
+            version = "SNA48";
+        }
+        if (_snapshotMode == SNA_128)
+        {
+            version = "SNA128";
+        }
+
+        MLOGWARNING("File is not valid SNA, type: %s, size: %d '%s'", version.c_str(), _fileSize, _path.c_str());
+    }
+    /// endregion </Info logging>
 
     return result;
 }
@@ -192,7 +226,7 @@ bool LoaderSNA::load128kToStaging()
         fread(&_ext128Header, sizeof(_ext128Header), 1, _file);
 
         // Memory page mapped to [C000:FFFF]
-        uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07;
+        uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
 
         // Move Page 0 content loaded previously to mapped RAM page
         if (currentTopPage != 0)
@@ -281,9 +315,9 @@ bool LoaderSNA::applySnapshotFromStaging()
 
         z80.i = _header.i;
         z80.r_low = _header.r;
-        z80.r_hi = _header.r & 0x80;
-        z80.im = _header.imod & 0x03;
-        z80.iff1 = (_header.flag19 & 0b00000'0100) >> 2;
+        z80.r_hi = _header.r & 0x80u;
+        z80.im = _header.imod & 0x03u;
+        z80.iff1 = (_header.flag19 & 0b00000'0100u) >> 2;
         z80.iff2 = 1;
 
         // Set up ports
@@ -305,7 +339,7 @@ bool LoaderSNA::applySnapshotFromStaging()
         if (_snapshotMode == SNA_128)
         {
             // Memory page mapped to [C000:FFFF]
-            uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07;
+            uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
 
             memory.SetRAMPageToBank1(5);
             memory.SetRAMPageToBank2(2);
