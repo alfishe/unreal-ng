@@ -60,12 +60,13 @@ bool Config::LoadConfig()
 	bool result = false;
 
 	// Use 'unreal.ini' file located in the same folder as executable by default
-	string path = FileHelper::GetExecutablePath();
+	std::string path = FileHelper::GetExecutablePath();
 	if (!path.empty())
 	{
-		string configPath = FileHelper::PathCombine(path, GetDefaultConfig());
+        std::string configPath = FileHelper::PathCombine(path, GetDefaultConfig());
+        std::string absoluteConfigPath = FileHelper::AbsolutePath(configPath);
 
-		if (LoadConfig(configPath))
+		if (LoadConfig(absoluteConfigPath))
 		{
 			result = true;
 		}
@@ -96,7 +97,7 @@ bool Config::LoadConfig(string& filename)
 
 	if (!FileHelper::FileExists(filename))
 	{
-		LOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+		MLOGERROR("Config::LoadConfig - File '%s' does not exist", FileHelper::PrintablePath(filename).c_str());
 		return result;
 	}
 
@@ -110,14 +111,13 @@ bool Config::LoadConfig(string& filename)
 	SI_Error rc = inimanager.LoadFile(_configFilePath.c_str());
 	if (rc == SI_OK)
 	{
-		LOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
-
+		MLOGDEBUG("Config::LoadConfig - config '%s' successfully loaded to SimpleINI parser", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 
 		result = true;
 	}
 	else
 	{
-		LOGERROR("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
+        MLOGDEBUG("Config::LoadConfig - error during loading config '%s' by SimpleINI", FileHelper::PrintablePath(_configFilePath).c_str());	// FileHelper::PrintablePath is mandatory since Logger works only with 'string' type and formatters
 	}
 
 	// Populate configuration fields from config file data
