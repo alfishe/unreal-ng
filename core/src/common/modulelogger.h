@@ -105,10 +105,12 @@ class ModuleLogger : public Observer
 
     static const char* moduleNames[12];
 
-    const char* submoduleCoreNames[2] =
+    const char* submoduleCoreNames[4] =
     {
+        "Generic",
         "Config",
-        "Files"
+        "Files",
+        "Mainloop"
     };
 
     const char* submoduleZ80Names[10] =

@@ -8,8 +8,16 @@
 
 class MainLoop
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
+    const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
 protected:
     EmulatorContext* _context = nullptr;
+    ModuleLogger* _logger;
+
     State* _state = nullptr;
     CPU* _cpu = nullptr;
     Screen* _screen = nullptr;

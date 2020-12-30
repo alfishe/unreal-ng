@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "mainloop.h"
 #include "common/timehelper.h"
@@ -9,6 +9,8 @@
 MainLoop::MainLoop(EmulatorContext* context)
 {
 	_context = context;
+    _logger = context->pModuleLogger;
+
 	_state = &_context->state;
 	_cpu = _context->pCPU;
     _screen = _context->pScreen;
@@ -26,7 +28,7 @@ MainLoop::~MainLoop()
 	_state = nullptr;
 	_context = nullptr;
 
-	LOGDEBUG("MainLoop::~MainLoop()");
+	MLOGDEBUG("MainLoop::~MainLoop()");
 }
 
 //
@@ -36,7 +38,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 {
 	if (_cpu == nullptr || _context == nullptr)
 	{
-		LOGERROR("MainLoop::Run - _cpu and _context shouldn't be nullptr");
+		MLOGERROR("MainLoop::Run - _cpu and _context shouldn't be nullptr");
 		return;
 	}
 
@@ -71,7 +73,7 @@ void MainLoop::Run(volatile bool& stopRequested)
         }
 		/// endregion </Handle Pause>
 
-		LOGINFO("Frame recalculation time: %d us", duration1);
+		MLOGINFO("Frame recalculation time: %d us", duration1);
 		sleep_us(15000U - std::min(duration1, 15000U));
 	}
 
