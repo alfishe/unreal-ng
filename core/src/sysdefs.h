@@ -7,8 +7,8 @@
 	// Microsoft Visual Studio
 	#include <intrin.h>			// CPUID capability
 	#include <immintrin.h>		// AVX intrinsics
-#else
-	// GCC/CLang
+#elif __x86_64__
+    // GCC/CLang
 	#include <cpuid.h>			// _cpuid()
 	#include <x86intrin.h>		// _mm_pause()
 	#include <immintrin.h>		// AVX intrinsics
