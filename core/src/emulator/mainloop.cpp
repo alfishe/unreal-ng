@@ -187,7 +187,13 @@ void MainLoop::DoIdle()
 	CONFIG& config = _context->config;
 	HOST& host = _context->host;
 
-	static volatile uint64_t prev_time = rdtsc();
+	static volatile uint64_t prev_time = 0;
+
+#if defined (__x86_64__)
+	prev_time = rdtsc();
+#elif defined (__arm__) || defined(__aarch64__)
+
+#endif
 
 	for (;;)
 	{

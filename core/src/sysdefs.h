@@ -115,12 +115,49 @@
 	  __asm__ __volatile__ ("int $3");
 	}
 
-	static __inline__ unsigned short _byteswap_ushort(unsigned short x)
+	static __inline__ unsigned short _byteswap_ushort(uint16_t x)
 	{
 		__asm__("xchgb %b0,%h0" : "=q"(x) :  "0"(x));
 		return x;
 	}
 #endif // __GNUC__ && !defined _WIN32
+
+// ARM architecture fallbacks
+#if defined(__arm__) || defined(__aarch64__)
+    static inline uint16_t _byteswap_ushort(uint16_t x)
+    {
+        return __builtin_bswap16(x);
+    }
+
+    /*
+    static inline uint16_t _byteswap_ushort(uint16_t x)
+	{
+	    uint8_t hiByte = x >> 8;
+	    uint16_t loByte = x & 0x00FF;
+
+	    return (loByte << 8) | hiByte;
+	}
+    */
+
+    static inline uint64_t rdtsc()
+    {
+        unsigned tsc;
+        uint64_t final_tsc;
+
+        // Read PMCCNTR co-processor register
+        asm volatile("mrc p15, 0, %0, c9, c13, 0" : "=r"(tsc));
+        return (uint64_t)final_tsc;
+    }
+
+    static inline void _mm_pause()
+    {
+#ifdef __aarch64__
+        asm volatile ("yield");
+#else
+        asm volatile ("nop");
+#endif
+    }
+#endif
 
 // Cross-platform GCC-related (both x86 and ARM)
 #if defined __GNUC__

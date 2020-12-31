@@ -913,8 +913,15 @@ uint8_t Z80::GetTSConfInterruptVector()
     {
         // Simulate random noise on data bus
         // Getting CPU time counter for that
+#if defined __x86_64__
         if (state.flags & CF_Z80FBUS)
             result = (uint8_t)(rdtsc() & 0xFF);
+#endif
+
+#if defined(__arm__) || defined(__aarch64__)
+        if (state.flags & CF_Z80FBUS)
+            result = (uint8_t)(rdtsc() & 0xFF);
+#endif
     }
 
     return result;
