@@ -68,6 +68,8 @@ TEST_F(ModuleLogger_Test, DumpModules)
         0x00000080,
         0x00000100,
         0x00000200,
+        0x00000400,
+        0x00000800,
         0x0000FFFF,
         0x0000FFFE
     };
@@ -85,9 +87,11 @@ TEST_F(ModuleLogger_Test, DumpModules)
         "Video",
         "Sound",
         "DMA",
+        "Loader",
         "Debugger",
-        "<Unknown>, Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Debugger",
-        "Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Debugger"
+        "Disassembler",
+        "<Unknown>, Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler",
+        "Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler"
     };
 
     for (int i = 0; i < refInputs.size(); i++)
