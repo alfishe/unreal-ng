@@ -48,10 +48,10 @@ bool ROM::LoadROM()
 	switch (config.mem_model)
 	{
 		case MM_PENTAGON:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageAddress(0); // Empty ot system ROM
+			memory.base_dos_rom = memory.ROMPageAddress(1); // TR-DOS 5.04T
+			memory.base_128_rom = memory.ROMPageAddress(2); // Basic 128K
+			memory.base_sos_rom = memory.ROMPageAddress(3); // 48K
 			romname = config.pent_rom_path;
 			break;
 	    case MM_SPECTRUM48:

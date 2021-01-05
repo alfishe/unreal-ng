@@ -47,7 +47,7 @@ void PortDecoder_Pentagon128::Reset()
 
 uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
 {
-/// region <Override submodule>
+    /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
 
@@ -68,6 +68,10 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
 
 void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     //    Pentagon 128K
     //    port: #7FFD
     bool isPort_7FFD = IsPort_7FFD(port);
@@ -175,6 +179,10 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
 /// \param value
 void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     State& state = _context->state;
     Memory& memory = *_context->pMemory;
     Screen& screen = *_context->pScreen;
