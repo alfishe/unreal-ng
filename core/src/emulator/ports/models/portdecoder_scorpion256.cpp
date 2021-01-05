@@ -109,6 +109,10 @@ bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t port)
 /// \param value
 void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    /// endregion </Override submodule>
+
     //  Port: #7FFD
     //  Bits:
     //      D0 = RAM - bit0 ;128 kB memory
