@@ -44,7 +44,7 @@ ModuleLogger::ModuleLogger(EmulatorContext* context)
 {
     _context = context;
 
-    // Ensure all modules / submodules are enabled by defaule
+    // Ensure all modules / submodules are enabled by default
     memset(&_settings, 0xFF, sizeof(_settings));
 
     //_settings.modules &= ~PlatformModulesEnum::MODULE_IO;
@@ -390,9 +390,10 @@ std::string ModuleLogger::DumpModules(uint32_t moduleFlags)
             {
                 if (!isFirstModule)
                     ss << ", ";
+                else
+                    isFirstModule = false;
 
                 ss << DumpModuleName(i).c_str();
-                isFirstModule = false;
             }
         }
     }
