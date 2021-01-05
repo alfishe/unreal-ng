@@ -10,6 +10,7 @@ class Memory;
 class PortDecoder;
 class Screen;
 class DebugManager;
+class Z80Disassembler;
 
 class EmulatorContext
 {
@@ -46,4 +47,6 @@ public:
 	Screen* pScreen;
 
 	DebugManager* pDebugManager;
+
+    Z80Disassembler* pDisassembler;
 };
