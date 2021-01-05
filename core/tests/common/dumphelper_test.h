@@ -1,16 +1,9 @@
-//
-// Created by Dev on 1/4/21.
-//
+#pragma once
+#include "pch.h"
 
-#ifndef UNREAL_DUMPHELPER_TEST_H
-#define UNREAL_DUMPHELPER_TEST_H
-
-
-
-class dumphelper_test {
-
+class DumpHelper_Test : public ::testing::Test
+{
+protected:
+    void SetUp() override;
+    void TearDown() override;
 };
-
-
-
-#endif //UNREAL_DUMPHELPER_TEST_H
