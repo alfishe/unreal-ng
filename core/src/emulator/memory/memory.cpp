@@ -194,7 +194,12 @@ if (addr == 0x4000 && val == 0x02)
 
 void Memory::Reset()
 {
-    // No DRAM-specific actions required on reset
+    // Set default banks mapping
+    // Bank 0 [0000:3FFF] - ROM
+    // Bank 1 [4000:7FFF] - RAM
+    // Bank 2 [8000:BFFF] - RAM
+    // Bank 3 [C000:FFFF] - RAM
+    InternalSetBanks();
 }
 
 /// Fill whole physical RAM with random values
@@ -576,9 +581,9 @@ void Memory::InternalSetBanks()
 	// Initialize according Spectrum 128K standard address space settings
 	_bank_write[0] = TRASH_MEMORY_PAGE;                         // ROM is not writable - redirect such requests to unused memory bank
 	_bank_read[0] = base_sos_rom;                 		        // 48K (SOS) ROM					for [0x0000 - 0x3FFF]
-	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	// Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
-	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	// Set page 2 as default			for [0x8000 - 0xBFFF]
-	_bank_write[3] = _bank_read[3] = RAMPageAddress(0);	// Set page 0 as default			for [0xC000 - 0xFFFF]
+	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	        // Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
+	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	        // Set page 2 as default			for [0x8000 - 0xBFFF]
+	_bank_write[3] = _bank_read[3] = RAMPageAddress(0);	        // Set page 0 as default			for [0xC000 - 0xFFFF]
 
 	_bank_mode[0] = MemoryBankModeEnum::BANK_ROM;		        // Bank 0 is ROM [0x0000 - 0x3FFF]
 	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		        // Bank 1 is RAM [0x4000 - 0x7FFF]
@@ -592,38 +597,51 @@ void Memory::InternalSetBanks()
 /// endregion </Helper methods>
 
 /// region <Debug methods>
-std::string Memory::DumpMemoryBankInfo()
+
+std::string Memory::GetCurrentBankName(uint8_t bank)
 {
-    uint8_t bank0page;
-    string bank0text;
-    if (_bank_mode[0] == BANK_ROM)
+    std::string result = "<UNKNOWN>";
+
+    if (bank > 3)
     {
-        bank0page = GetROMPageFromAddress(_bank_read[0]);
-        if (bank0page != MEMORY_UNMAPPABLE)
-            bank0text = StringHelper::Format("rompage%d", bank0page);
-        else
-            bank0text = "<Unknown ROM>";
+        throw std::logic_error("ZX-Spectrum can only have 4 banks [0:3], 16KiB each");
+    }
+
+    bool isROM = _bank_mode[bank] == BANK_ROM;
+    uint8_t bankPage = 0;
+
+    if (isROM)
+    {
+        bankPage = GetROMPageFromAddress(_bank_read[bank]);
+        if (bankPage != MEMORY_UNMAPPABLE)
+        {
+            result = StringHelper::Format("ROM %d", bankPage);
+        }
     }
     else
     {
-        bank0page = GetRAMPageFromAddress(_bank_read[0]);
-        if (bank0page != MEMORY_UNMAPPABLE)
-            bank0text = StringHelper::Format("page%d", bank0page);
-        else
-            bank0text = "<Unknown RAM>";
+        bankPage = GetRAMPageFromAddress(_bank_read[bank]);
+        if (bankPage != MEMORY_UNMAPPABLE)
+        {
+            result = StringHelper::Format("RAM %d", bankPage);
+        }
     }
 
-    uint8_t bank1page = GetRAMPageFromAddress(_bank_read[1]);
-    uint8_t bank2page = GetRAMPageFromAddress(_bank_read[2]);
-    uint8_t bank3page = GetRAMPageFromAddress(_bank_read[3]);
+    return result;
+}
 
-    std::string result = StringHelper::Format("MemoryBankInfo: ");
-    result += StringHelper::Format("Bank0: %s; Bank1: page%d; Bank2: page%d; Bank3: page%d",
-        bank0text.c_str(),
-        bank1page,
-        bank2page,
-        bank3page
-    );
+std::string Memory::DumpMemoryBankInfo()
+{
+    std::string result;
+    std::stringstream ss;
+
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        ss << StringHelper::Format("Bank%d: %s; ", i, GetCurrentBankName(i).c_str());
+    }
+    ss << std::endl;
+
+    result = ss.str();
 
     return result;
 }

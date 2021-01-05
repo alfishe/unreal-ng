@@ -190,6 +190,7 @@ public:
 
     /// region <Debug methods>
 public:
+    std::string GetCurrentBankName(uint8_t bank);
     std::string DumpMemoryBankInfo();
     std::string DumpAllMemoryRegions();
     /// endregion <Debug methods>
