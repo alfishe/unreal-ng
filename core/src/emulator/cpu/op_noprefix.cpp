@@ -193,7 +193,7 @@ Z80OPCODE op_18(Z80 *cpu) { // jr rr
     uint16_t pc = cpu->pc;
     int8_t offset = cpu->rd(pc++);
 
-    cpu->last_branch = cpu->pc - 1;
+    cpu->last_branch = cpu->m1_pc;
 
     pc += offset;
     cpu->memptr = pc;
@@ -270,19 +270,17 @@ Z80OPCODE op_1F(Z80 *cpu) { // rra
 
 Z80OPCODE op_20(Z80 *cpu) { // jr nz, rr
     uint16_t pc = cpu->pc;
-    int8_t offset = cpu->rd(pc);
+    int8_t offset = cpu->rd(pc++);
 
     if (!(cpu->f & ZF))
     {
-        cpu->last_branch = pc - 1;
-        pc += offset + 1;
+        cpu->last_branch = cpu->m1_pc;
+        pc += offset;
 
         cpu->memptr = pc;
 
         cputact(5);
     }
-    else
-        pc += 1;
 
     cpu->pc = pc;
 }
@@ -344,7 +342,7 @@ Z80OPCODE op_28(Z80 *cpu) { // jr z,rr
     // Branch taken
     if ((cpu->f & ZF))
     {
-        cpu->last_branch = cpu->pc - 1;
+        cpu->last_branch = cpu->m1_pc;
         pc += offset;
         cpu->memptr = pc;
 
@@ -426,18 +424,16 @@ Z80OPCODE op_2F(Z80 *cpu) { // cpl
 
 Z80OPCODE op_30(Z80 *cpu) { // jr nc, rr
     uint16_t pc = cpu->pc;
-    int8_t offset = cpu->rd(pc);
+    int8_t offset = cpu->rd(pc++);
 
     if (!(cpu->f & CF))
     {
-        cpu->last_branch = pc - 1;
-        pc += offset + 1;
+        cpu->last_branch = cpu->m1_pc;
+        pc += offset;
         cpu->memptr = pc;
 
         cputact(5);
     }
-    else
-        pc++;
 
     cpu->pc = pc;
 }
