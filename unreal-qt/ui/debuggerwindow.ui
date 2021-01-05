@@ -59,6 +59,16 @@
          </property>
         </spacer>
        </item>
+       <item>
+        <widget class="DisassemblerWidget" name="disassemblerWidget" native="true">
+         <property name="minimumSize">
+          <size>
+           <width>400</width>
+           <height>120</height>
+          </size>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item>
@@ -73,6 +83,12 @@
    <class>RegistersWidget</class>
    <extends>QWidget</extends>
    <header>debugger/registerswidget.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>DisassemblerWidget</class>
+   <extends>QWidget</extends>
+   <header>debugger/disassemblerwidget.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

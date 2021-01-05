@@ -15,7 +15,7 @@ class RegistersWidget : public QWidget
     Q_OBJECT
 public:
     explicit RegistersWidget(QWidget *parent = nullptr);
-    virtual ~RegistersWidget();
+    virtual ~RegistersWidget() override;
 
     void setZ80State(Z80State* state);
 

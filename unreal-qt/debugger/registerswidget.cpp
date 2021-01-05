@@ -1,5 +1,5 @@
 #include "registerswidget.h"
-#include "ui_registers.h"
+#include "ui_registerswidget.h"
 
 #include <cstring>
 #include <QMetaObject>
@@ -94,7 +94,7 @@ void RegistersWidget::refresh()
 
         //ui->valIR->setText(QStringLiteral("%1").arg(m_z80Registers.i, 4, 16, QLatin1Char('0')).toUpper());
         ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers.t, 4, 16, QLatin1Char('0')).toUpper());
-        //ui->valINT->setText(QStringLiteral("%1").arg(m_z80Registers.ix, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valINT->setText(QStringLiteral("%1").arg(m_z80Registers.im, 2, 16, QLatin1Char('0')).toUpper());
         //ui->valFlags->setText(QStringLiteral("%1").arg(m_z80Registers.iy, 4, 16, QLatin1Char('0')).toUpper());
 
         update();

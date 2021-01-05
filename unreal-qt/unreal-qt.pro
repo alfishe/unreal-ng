@@ -22,6 +22,7 @@ SOURCES += \
     debugger/disassemblerlistingview.cpp \
     debugger/disassemblertextview.cpp \
     debugger/disassemblerview.cpp \
+    debugger/disassemblerwidget.cpp \
     debugger/registerswidget.cpp \
     emulator/emulatormanager.cpp \
     emulator/guiemulatorcontext.cpp \
@@ -40,6 +41,7 @@ HEADERS += \
     debugger/disassemblerlistingview.h \
     debugger/disassemblertextview.h \
     debugger/disassemblerview.h \
+    debugger/disassemblerwidget.h \
     debugger/registerswidget.h \
     emulator/emulatormanager.h \
     emulator/guiemulatorcontext.h \
@@ -61,8 +63,9 @@ FORMS += \
     ui/logwindow.ui \
     ui/memoryblock.ui \
     ui/memorymap.ui \
-    ui/registers.ui \
-    ui/ula.ui
+    ui/ula.ui \
+    ui/widgets/disassemblerwidget.ui \
+    ui/widgets/registerswidget.ui
 
 TRANSLATIONS += \
     unreal-qt_en_US.ts
@@ -89,6 +92,9 @@ else:win32:!win32-g++:CONFIG(release, debug|release): PRE_TARGETDEPS += $$PWD/..
 else:win32:!win32-g++:CONFIG(debug, debug|release): PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/debug/core.lib
 else:unix: PRE_TARGETDEPS += $$PWD/../cmake-build-debug/core/src/libcore.a
 
+# Extra target to copy .ini and rom files
+
+
 unix:!macx {
     CONFIG_FILE = $$PWD/../data/configs/spectrum128/unreal.ini
     ROM_PATH = $$PWD/../data/rom/
@@ -105,10 +111,15 @@ unix:!macx {
 macx: {
     CONFIG_FILE = $$PWD/../data/configs/spectrum128/unreal.ini
     ROM_PATH = $$PWD/../data/rom/
-    MACOS_PACKAGE_CONTENTS_PATH = $$OUT_PWD/unreal-qt.app/Contents/MacOS/
+    MACOS_PACKAGE_CONTENTS_PATH = $$OUT_PWD/unreal-qt.app/Contents/MacOS
 
-    COPY_CONFIG_COMMAND = $$quote(cp $$CONFIG_FILE $$MACOS_PACKAGE_CONTENTS_PATH$$escape_expand(\n\t))
-    COPY_ROM_COMMAND = $$quote(cp -R $$ROM_PATH $$MACOS_PACKAGE_CONTENTS_PATH$$/rom/$$escape_expand(\n\t))
+    # Normalize paths (use system delimiters + convert paths to absolute)
+    CONFIG_FILE_NORMALIZED = $$absolute_path($$system_path($$CONFIG_FILE))
+    ROM_PATH_NORMALIZED = $$absolute_path($$system_path($$ROM_PATH))
+    MACOS_PACKAGE_CONTENTS_PATH_NORMALIZED = $$absolute_path($$system_path($$MACOS_PACKAGE_CONTENTS_PATH))
+
+    COPY_CONFIG_COMMAND = $$quote(cp $$CONFIG_FILE_NORMALIZED $$MACOS_PACKAGE_CONTENTS_PATH_NORMALIZED $$escape_expand(\n\t))
+    COPY_ROM_COMMAND = $$quote(cp -R $$ROM_PATH_NORMALIZED $$MACOS_PACKAGE_CONTENTS_PATH_NORMALIZED$$/rom/ $$escape_expand(\n\t))
     message($$COPY_CONFIG_COMMAND)
     message($$COPY_ROM_COMMAND)
 

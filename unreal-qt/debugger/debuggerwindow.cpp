@@ -51,6 +51,11 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
 
+    // Init child controls
+    ui->disassemblerWidget->init(_emulator->GetContext());
+
+    pauseAction->setEnabled(true);
+
     updateState();
 }
 
@@ -70,10 +75,14 @@ void DebuggerWindow::reset()
  {
     if (_emulator)
     {
-        ui->registersWidget->setZ80State(_emulator->GetZ80State());
+        Z80State* state = _emulator->GetZ80State();
+
+        // Refresh registers widget
+        ui->registersWidget->setZ80State(state);
         ui->registersWidget->refresh();
 
-        pauseAction->setEnabled(true);
+        // Update disassembler widget
+        ui->disassemblerWidget->setDisassemblerAddress((uint16_t)state->Z80Registers::pc);
     }
     else
     {
@@ -117,10 +126,7 @@ void DebuggerWindow::pauseExecution()
         frameStepAction->setEnabled(true);
         waitInterruptAction->setEnabled(true);
 
-
-        // Refresh registers widget
-        ui->registersWidget->setZ80State(_emulator->GetZ80State());
-        ui->registersWidget->refresh();
+        updateState();
     }
 }
 
@@ -133,9 +139,7 @@ void DebuggerWindow::cpuStep()
         // Execute single Z80 command
         _emulator->RunSingleCPUCycle();
 
-        // Refresh registers widget
-        ui->registersWidget->setZ80State(_emulator->GetZ80State());
-        ui->registersWidget->refresh();
+        updateState();
     }
 }
 
@@ -143,16 +147,12 @@ void DebuggerWindow::frameStep()
 {
     qDebug() << "DebuggerWindow::frameStep()";
 
-    // Refresh registers widget
-    ui->registersWidget->setZ80State(_emulator->GetZ80State());
-    ui->registersWidget->refresh();
+    updateState();
 }
 
 void DebuggerWindow::waitInterrupt()
 {
     qDebug() << "DebuggerWindow::waitInterrupt()";
 
-    // Refresh registers widget
-    ui->registersWidget->setZ80State(_emulator->GetZ80State());
-    ui->registersWidget->refresh();
+    updateState();
 }
