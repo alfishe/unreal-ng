@@ -23,6 +23,7 @@ SOURCES += \
     debugger/disassemblertextview.cpp \
     debugger/disassemblerview.cpp \
     debugger/disassemblerwidget.cpp \
+    debugger/memorypageswidget.cpp \
     debugger/registerswidget.cpp \
     emulator/emulatormanager.cpp \
     emulator/guiemulatorcontext.cpp \
@@ -42,6 +43,7 @@ HEADERS += \
     debugger/disassemblertextview.h \
     debugger/disassemblerview.h \
     debugger/disassemblerwidget.h \
+    debugger/memorypageswidget.h \
     debugger/registerswidget.h \
     emulator/emulatormanager.h \
     emulator/guiemulatorcontext.h \
@@ -65,6 +67,7 @@ FORMS += \
     ui/memorymap.ui \
     ui/ula.ui \
     ui/widgets/disassemblerwidget.ui \
+    ui/widgets/memorypageswidget.ui \
     ui/widgets/registerswidget.ui
 
 TRANSLATIONS += \

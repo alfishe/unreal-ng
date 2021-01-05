@@ -3,15 +3,18 @@
 
 #include <cstring>
 #include <QMetaObject>
+#include "debuggerwindow.h"
 
 RegistersWidget::RegistersWidget(QWidget *parent) : QWidget(parent), ui(new Ui::RegistersWidget)
 {
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
 
-    memset(&m_z80Registers, 0x00, sizeof(Z80Registers));
+    //memset(&m_z80Registers, 0x00, sizeof(Z80Registers));
 
     m_mainThread = QApplication::instance()->thread();
+
+    m_debuggerWindow = static_cast<DebuggerWindow*>(parent);
 }
 
 RegistersWidget::~RegistersWidget()
@@ -27,8 +30,20 @@ void RegistersWidget::setZ80State(Z80State* state)
 {
     if (state != nullptr)
     {
-        memcpy(&m_z80Registers, static_cast<Z80Registers*>(state), sizeof(Z80Registers));
+        m_z80Registers = static_cast<Z80Registers*>(state);
+        //memcpy(&m_z80Registers, static_cast<Z80Registers*>(state), sizeof(Z80Registers));
     }
+}
+
+// Helper methods
+Emulator* RegistersWidget::getEmulator()
+{
+    return m_debuggerWindow->getEmulator();
+}
+
+EmulatorContext* RegistersWidget::getEmulatorContext()
+{
+    return m_debuggerWindow->getEmulator()->GetContext();
 }
 
 void RegistersWidget::reset()
@@ -77,24 +92,24 @@ void RegistersWidget::refresh()
     }
     else
     {
-        ui->valAF->setText(QStringLiteral("%1").arg(m_z80Registers.af, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valBC->setText(QStringLiteral("%1").arg(m_z80Registers.bc, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valDE->setText(QStringLiteral("%1").arg(m_z80Registers.de, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valHL->setText(QStringLiteral("%1").arg(m_z80Registers.hl, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valAF->setText(QStringLiteral("%1").arg(m_z80Registers->af, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valBC->setText(QStringLiteral("%1").arg(m_z80Registers->bc, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valDE->setText(QStringLiteral("%1").arg(m_z80Registers->de, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valHL->setText(QStringLiteral("%1").arg(m_z80Registers->hl, 4, 16, QLatin1Char('0')).toUpper());
 
-        ui->valAF1->setText(QStringLiteral("%1").arg(m_z80Registers.alt.af, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valBC1->setText(QStringLiteral("%1").arg(m_z80Registers.alt.bc, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valDE1->setText(QStringLiteral("%1").arg(m_z80Registers.alt.de, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valHL1->setText(QStringLiteral("%1").arg(m_z80Registers.alt.hl, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valAF1->setText(QStringLiteral("%1").arg(m_z80Registers->alt.af, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valBC1->setText(QStringLiteral("%1").arg(m_z80Registers->alt.bc, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valDE1->setText(QStringLiteral("%1").arg(m_z80Registers->alt.de, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valHL1->setText(QStringLiteral("%1").arg(m_z80Registers->alt.hl, 4, 16, QLatin1Char('0')).toUpper());
 
-        ui->valSP->setText(QStringLiteral("%1").arg(m_z80Registers.sp, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valPC->setText(QStringLiteral("%1").arg(m_z80Registers.pc, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valIX->setText(QStringLiteral("%1").arg(m_z80Registers.ix, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valIY->setText(QStringLiteral("%1").arg(m_z80Registers.iy, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valSP->setText(QStringLiteral("%1").arg(m_z80Registers->sp, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valPC->setText(QStringLiteral("%1").arg(m_z80Registers->pc, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valIX->setText(QStringLiteral("%1").arg(m_z80Registers->ix, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valIY->setText(QStringLiteral("%1").arg(m_z80Registers->iy, 4, 16, QLatin1Char('0')).toUpper());
 
         //ui->valIR->setText(QStringLiteral("%1").arg(m_z80Registers.i, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers.t, 4, 16, QLatin1Char('0')).toUpper());
-        ui->valINT->setText(QStringLiteral("%1").arg(m_z80Registers.im, 2, 16, QLatin1Char('0')).toUpper());
+        ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valINT->setText(QStringLiteral("%1").arg(m_z80Registers->im, 2, 16, QLatin1Char('0')).toUpper());
         //ui->valFlags->setText(QStringLiteral("%1").arg(m_z80Registers.iy, 4, 16, QLatin1Char('0')).toUpper());
 
         update();

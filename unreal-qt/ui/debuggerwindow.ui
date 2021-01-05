@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>879</width>
-    <height>190</height>
+    <height>283</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -30,12 +30,15 @@
     <layout class="QVBoxLayout" name="verticalLayout_2">
      <item>
       <layout class="QHBoxLayout" name="horizontalLayout">
+       <property name="sizeConstraint">
+        <enum>QLayout::SetDefaultConstraint</enum>
+       </property>
        <item>
         <widget class="RegistersWidget" name="registersWidget" native="true">
          <property name="minimumSize">
           <size>
-           <width>400</width>
-           <height>120</height>
+           <width>360</width>
+           <height>100</height>
           </size>
          </property>
          <property name="maximumSize">
@@ -63,8 +66,8 @@
         <widget class="DisassemblerWidget" name="disassemblerWidget" native="true">
          <property name="minimumSize">
           <size>
-           <width>400</width>
-           <height>120</height>
+           <width>360</width>
+           <height>100</height>
           </size>
          </property>
         </widget>
@@ -72,7 +75,31 @@
       </layout>
      </item>
      <item>
-      <layout class="QHBoxLayout" name="horizontalLayout_2"/>
+      <layout class="QHBoxLayout" name="horizontalLayout_2">
+       <item>
+        <widget class="MemoryPagesWidget" name="memorypagesWidget" native="true">
+         <property name="minimumSize">
+          <size>
+           <width>120</width>
+           <height>100</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_2">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
      </item>
     </layout>
    </item>
@@ -89,6 +116,12 @@
    <class>DisassemblerWidget</class>
    <extends>QWidget</extends>
    <header>debugger/disassemblerwidget.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>MemoryPagesWidget</class>
+   <extends>QWidget</extends>
+   <header>debugger/memorypageswidget.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

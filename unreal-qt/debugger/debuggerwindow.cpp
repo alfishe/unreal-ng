@@ -82,7 +82,10 @@ void DebuggerWindow::reset()
         ui->registersWidget->refresh();
 
         // Update disassembler widget
-        ui->disassemblerWidget->setDisassemblerAddress((uint16_t)state->Z80Registers::pc);
+        ui->disassemblerWidget->setDisassemblerAddress(static_cast<uint16_t>(state->Z80Registers::pc));
+
+        // Update memory banks widget
+        ui->memorypagesWidget->refresh();
     }
     else
     {

@@ -17,7 +17,7 @@ class DebuggerWindow : public QWidget
     Q_OBJECT
 public:
     explicit DebuggerWindow(Emulator* emulator = nullptr, QWidget *parent = nullptr);
-    virtual ~DebuggerWindow();
+    virtual ~DebuggerWindow() override;
 
     void setEmulator(Emulator* emulator);
     Emulator* getEmulator();

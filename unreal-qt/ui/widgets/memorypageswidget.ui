@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MemoryPagesWidget</class>
+ <widget class="QWidget" name="MemoryPagesWidget">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>164</width>
+    <height>146</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>164</width>
+    <height>146</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>164</width>
+    <height>146</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <layout class="QHBoxLayout" name="horizontalLayout">
+   <item>
+    <layout class="QVBoxLayout" name="verticalLayout">
+     <item>
+      <layout class="QHBoxLayout" name="line_0_hotizontal_layout">
+       <item>
+        <widget class="QLabel" name="page_0_title_label">
+         <property name="minimumSize">
+          <size>
+           <width>48</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>Page 0:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="page_0_value_label">
+         <property name="minimumSize">
+          <size>
+           <width>60</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>&lt;Page0&gt;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="page_0_spacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="line_1_horizontal_layout">
+       <item>
+        <widget class="QLabel" name="page_1_title_label">
+         <property name="minimumSize">
+          <size>
+           <width>48</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>Page 1:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="page_1_value_label">
+         <property name="minimumSize">
+          <size>
+           <width>60</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>&lt;Page1&gt;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="page_1_spacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="line_2_horizontal_layout">
+       <item>
+        <widget class="QLabel" name="page_2_title_label">
+         <property name="minimumSize">
+          <size>
+           <width>48</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>Page 2:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="page_2_value_label">
+         <property name="minimumSize">
+          <size>
+           <width>60</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>&lt;Page2&gt;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="page_2_spacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="line_3_horizontal_layout">
+       <item>
+        <widget class="QLabel" name="page_3_title_label">
+         <property name="minimumSize">
+          <size>
+           <width>48</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>Page 3:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="page_3_value_label">
+         <property name="minimumSize">
+          <size>
+           <width>60</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="text">
+          <string>&lt;Page3&gt;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="page_3_spacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
