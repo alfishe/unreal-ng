@@ -2,6 +2,8 @@
 
 #include "ui_disassemblerwidget.h"
 
+#include "debuggerwindow.h"
+
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -16,6 +18,8 @@ DisassemblerWidget::DisassemblerWidget(QWidget *parent) : QWidget(parent), ui(ne
 
     m_mainThread = QApplication::instance()->thread();
 
+    m_debuggerWindow = static_cast<DebuggerWindow*>(parent);
+
     m_disassemblyTextEdit = ui->disassemblyTextEdit;
 }
 
@@ -24,29 +28,36 @@ DisassemblerWidget::~DisassemblerWidget()
     //detach();
 }
 
-
-void DisassemblerWidget::init(EmulatorContext* context)
+// Helper methods
+Emulator* DisassemblerWidget::getEmulator()
 {
-    m_emulatorContext = context;
+    return m_debuggerWindow->getEmulator();
 }
 
-void DisassemblerWidget::detach()
+EmulatorContext* DisassemblerWidget::getEmulatorContext()
 {
-    m_emulatorContext = nullptr;
+    return m_debuggerWindow->getEmulator()->GetContext();
+}
+
+Memory* DisassemblerWidget::getMemory()
+{
+    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+}
+
+Z80Disassembler* DisassemblerWidget::getDisassembler()
+{
+    return m_debuggerWindow->getEmulator()->GetContext()->pDisassembler;
 }
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
-    if (m_emulatorContext == nullptr)
-        return;
 
-    Z80& z80 = *m_emulatorContext->pCPU->GetZ80();
-    Memory& memory = *m_emulatorContext->pMemory;
-    Z80Disassembler& disassembler = *m_emulatorContext->pDisassembler;
+    Memory& memory = *getMemory();
+    Z80Disassembler& disassembler = *getDisassembler();
 
-    uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(z80.m1_pc);
+    uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(pc);
     uint8_t commandLen = 0;
-    std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(z80.m1_pc, ""));
+    std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
     std::string command = disassembler.disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);
     std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
 

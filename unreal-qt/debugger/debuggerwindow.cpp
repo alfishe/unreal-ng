@@ -51,9 +51,6 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
 
-    // Init child controls
-    ui->disassemblerWidget->init(_emulator->GetContext());
-
     pauseAction->setEnabled(true);
 
     updateState();

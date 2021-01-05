@@ -5,11 +5,15 @@
 #include <QWidget>
 #include <QPlainTextEdit>
 
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class DisassemblerWidget; }
 QT_END_NAMESPACE
+
+class DebuggerWindow;
 
 class DisassemblerWidget : public QWidget
 {
@@ -18,10 +22,14 @@ public:
     explicit DisassemblerWidget(QWidget *parent = nullptr);
     virtual ~DisassemblerWidget() override;
 
-    void init(EmulatorContext* context);
-    void detach();
-
     void setDisassemblerAddress(uint16_t pc);
+
+    // Helper methods
+protected:
+    Emulator* getEmulator();
+    EmulatorContext* getEmulatorContext();
+    Memory* getMemory();
+    Z80Disassembler* getDisassembler();
 
 public slots:
     void reset();
@@ -34,7 +42,7 @@ private:
     QThread* m_mainThread;
     QPlainTextEdit* m_disassemblyTextEdit;
 
-    EmulatorContext* m_emulatorContext;
+    DebuggerWindow* m_debuggerWindow;
 };
 
 #endif // DISASSEMBLERWIDGET_H

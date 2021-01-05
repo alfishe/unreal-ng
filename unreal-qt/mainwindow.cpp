@@ -231,12 +231,15 @@ void MainWindow::handleStartButton()
         if (_emulator->Init())
         {
             // Redirect all module logger output to LogWindow
-            ModuleLogger* logger = _emulator->GetLogger();
-            ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
-            ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogWindow::Out);
-            logger->SetLoggerOut(loggerObserverInstance, loggerCallback);
-            logWindow->reset();
-            logWindow->show();
+            if (false)
+            {
+                ModuleLogger* logger = _emulator->GetLogger();
+                ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
+                ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogWindow::Out);
+                logger->SetLoggerOut(loggerObserverInstance, loggerCallback);
+                logWindow->reset();
+                logWindow->show();
+            }
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
