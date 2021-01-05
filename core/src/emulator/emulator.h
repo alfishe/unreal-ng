@@ -6,14 +6,22 @@
 #include "stdafx.h"
 #include "common/logger.h"
 
+#include "emulatorcontext.h"
 #include "emulator/config.h"
 #include "emulator/mainloop.h"
 #include "cpu/cpu.h"
 #include "cpu/z80.h"
-#include "emulatorcontext.h"
+#include "debugger/disassembler/z80disasm.h"
+
 
 class Emulator
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
+    const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
 protected:
     bool _initialized = false;
     std::mutex _mutexInitialization;
@@ -21,6 +29,8 @@ protected:
     std::thread* _asyncThread = nullptr;
 
 	EmulatorContext* _context = nullptr;
+	ModuleLogger* _logger = nullptr;
+
 	Config* _config = nullptr;
 	CPU* _cpu = nullptr;
 	Z80* _z80 = nullptr;

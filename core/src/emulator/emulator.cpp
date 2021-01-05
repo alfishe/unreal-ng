@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "emulator.h"
+#include "common/dumphelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
@@ -64,6 +65,7 @@ bool Emulator::Init()
         if (moduleLogger != nullptr)
         {
             _context->pModuleLogger = moduleLogger;
+            _logger = moduleLogger;
 
             moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG, "Emulator - ModuleLogger initialized");
             result = true;
@@ -242,6 +244,9 @@ bool Emulator::Init()
 
 		// Mark as initialized at the very last moment
 		_initialized = true;
+
+		// Optional disassembler init step
+		_context->pDisassembler = new Z80Disassembler();
 	}
 
 	// Release all created resources if any of initialization steps failed
@@ -271,6 +276,12 @@ void Emulator::ReleaseNoGuard()
 
         delete _mainloop;
         _mainloop = nullptr;
+    }
+
+    if (_context->pDisassembler != nullptr)
+    {
+        delete _context->pDisassembler;
+        _context->pDisassembler = nullptr;
     }
 
     // Release additional peripheral devices
@@ -452,6 +463,13 @@ bool Emulator::LoadSnapshot(std::string &path)
 {
     bool result = false;
 
+    /// region <Info logging>
+
+    MLOGEMPTY();
+    MLOGINFO("Loading snapshot from file: '%s'", path.c_str());
+
+    /// endregion </Info logging>
+
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
@@ -462,6 +480,15 @@ bool Emulator::LoadSnapshot(std::string &path)
 
     LoaderSNA loaderSna(_context, path);
     result = loaderSna.load();
+
+    /// region <Info logging>
+    if (result)
+    {
+        MLOGINFO("SNA file loaded successfully, executing it...");
+    }
+
+    MLOGEMPTY();
+    /// endregion </Info logging>
 
     // Resume execution
     if (wasRunning)
@@ -481,6 +508,7 @@ void Emulator::RunSingleCPUCycle()
 {
     CONFIG& config = _context->config;
     Z80& z80 = *_cpu->GetZ80();
+    Memory& memory = *_context->pMemory;
 
 	// TODO: synchronize with all timings within frame and I/O
 
@@ -496,8 +524,16 @@ void Emulator::RunSingleCPUCycle()
 #ifdef _DEBUG
 	// Use static buffer to save on strings reallocation. CPU cycle is most frequently called functionality.
 	static char buffer[1024];
-	_cpu->GetZ80()->DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-	LOGINFO(buffer);
+	z80.DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+	MLOGINFO(buffer);
+
+	uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(z80.m1_pc);
+	uint8_t commandLen = 0;
+	std:: string pc = StringHelper::ToHexWithPrefix(z80.m1_pc, "");
+    std::string command = _context->pDisassembler->disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);
+    std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
+
+    MLOGINFO("$%s: %s   %s", pc.c_str(), hex.c_str(), command.c_str());
 #endif
 }
 
