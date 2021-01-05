@@ -63,8 +63,9 @@ void DeviceScreen::paintEvent(QPaintEvent *event)
 
     if (devicePixels != nullptr)
     {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
         painter.setRenderHint(QPainter::LosslessImageRendering);
-
+#endif
         int newWidth = event->rect().width();
         int newHeight = event->rect().height();
 
