@@ -13,6 +13,7 @@ static void BM_CalculateXYAddress(benchmark::State& state)
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
+    cpu->Init();
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
     /// endregion </Setup>
 
@@ -53,6 +54,7 @@ static void BM_CalculateXYAddressOptimized(benchmark::State& state)
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
+    cpu->Init();
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
     /// endregion </Setup>
 
@@ -93,6 +95,7 @@ static void BM_CalculateXYColorAttrAddress(benchmark::State& state)
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
+    cpu->Init();
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
     /// endregion </Setup>
 
@@ -134,6 +137,7 @@ static void BM_CalculateXYColorAttrAddressOptimized(benchmark::State& state)
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
     CPU* cpu = new CPU(context);
+    cpu->Init();
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
     /// endregion </Setup>
 
@@ -174,8 +178,8 @@ static void BM_RenderOnlyMainScreen(benchmark::State& state)
 
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext();
-
     CPU* cpu = new CPU(context);
+    cpu->Init();
     // Use Spectrum48K / Pentagon memory layout
     cpu->GetMemory()->InternalSetBanks();
 
