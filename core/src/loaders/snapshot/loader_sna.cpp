@@ -10,6 +10,7 @@
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/portdecoder.h"
 
 /// region <Constructors / destructors>
 
@@ -268,12 +269,13 @@ bool LoaderSNA::applySnapshotFromStaging()
 {
     bool result = false;
 
+    Memory& memory = *_context->pMemory;
+    CPU& cpu = *_context->pCPU;
+    Z80& z80 = *_context->pCPU->GetZ80();
+    int ramPagesLoaded = 0;
+
     if (_stagingLoaded)
     {
-        Memory& memory = *_context->pMemory;
-        CPU& cpu = *_context->pCPU;
-        Z80& z80 = *_context->pCPU->GetZ80();
-
         // Reset Z80 and all peripherals
         cpu.Reset();
 
@@ -283,6 +285,8 @@ bool LoaderSNA::applySnapshotFromStaging()
             if (_memoryPagesUsed[pageNum])
             {
                 memory.LoadRAMPageData(pageNum, _memoryPages[pageNum], PAGE_SIZE);
+
+                ramPagesLoaded++;
             }
         }
 
@@ -346,10 +350,35 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank3(currentTopPage);
 
             z80.pc = _ext128Header.reg_PC;
+
+            // Switch to proper RAM/ROM pages configuration
+            _context->pPortDecoder->DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc);
         }
 
         result = true;
     }
+
+    /// region <Info logging>
+    std::string version = "UNKNOWN";
+    if (_snapshotMode == SNA_48)
+    {
+        version = "SNA48";
+    }
+    if (_snapshotMode == SNA_128)
+    {
+        version = "SNA128";
+    }
+
+    if (result)
+    {
+        std::string pcAddress = StringHelper::ToHexWithPrefix((uint16_t)z80.pc, "$");
+        MLOGINFO("%s, %d RAM pages loaded, PC=%s", version.c_str(), ramPagesLoaded, pcAddress.c_str());
+    }
+    else
+    {
+        MLOGWARNING("Unable to apply loaded SNA data, type: %s, size: %d '%s'", version.c_str(), _fileSize, _path.c_str());
+    }
+    /// endregion </Info logging>
 
     return result;
 }
