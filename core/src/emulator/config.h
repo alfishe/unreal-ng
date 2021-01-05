@@ -58,7 +58,7 @@ private:
 protected:
 	EmulatorContext* _context;
 	ModuleLogger* _logger;
-	string _configFilePath;
+    std::string _configFilePath;
 
 public:
 	static const char* GetDefaultConfig();
@@ -69,11 +69,11 @@ public:
 	virtual ~Config();
 
 public:
-	string GetScreenshotsFolder();
+    std::string GetScreenshotsFolder();
 
 public:
 	[[nodiscard]] bool LoadConfig();
-	[[nodiscard]] bool LoadConfig(string& filename);
+	[[nodiscard]] bool LoadConfig(std::string& filename);
 	[[nodiscard]] bool ParseConfig(CSimpleIniA& inimanager);
 
 	[[nodiscard]] bool DetermineModel(const char* model, uint32_t ramsize);
@@ -81,6 +81,6 @@ public:
 	// Helper methods
 protected:
 	void CopyStringValue(const char* src, char* dst, size_t dst_len);
-	string StripComment(const char* src);
-	string PrintModelAvailableRAM(uint32_t availRAM);
+    std::string StripComment(const char* src);
+    std::string PrintModelAvailableRAM(uint32_t availRAM);
 };

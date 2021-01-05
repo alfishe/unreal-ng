@@ -281,13 +281,13 @@ void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)
 	}
 }
 
-string Config::StripComment(const char* src)
+std::string Config::StripComment(const char* src)
 {
-	string result;
+    std::string result;
 
 	if (src != nullptr && *src != '\0')
 	{
-		string strSource = src;
+        std::string strSource = src;
 
 		// Strip comments
 		size_t pos = strSource.find_first_of(';');
