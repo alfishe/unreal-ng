@@ -373,8 +373,8 @@ public:
 protected:
 	constexpr void MakeADC();
 	constexpr void MakeSBC();
-	constexpr void MakeLog();
-	constexpr void MakeRot();
+	constexpr void MakeLogicTable();
+	constexpr void MakeRotationsTables();
 
 public:
 	CPUTables();

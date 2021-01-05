@@ -79,7 +79,7 @@ constexpr void CPUTables::MakeSBC()
 	}
 }
 
-constexpr void CPUTables::MakeLog()
+constexpr void CPUTables::MakeLogicTable()
 {
 	for (int x = 0; x < 0x100; x++)
 	{
@@ -98,7 +98,7 @@ constexpr void CPUTables::MakeLog()
 	logic_flags[0] |= ZF;
 }
 
-constexpr void CPUTables::MakeRot()
+constexpr void CPUTables::MakeRotationsTables()
 {
 	for (int i = 0; i < 0x100; i++)
 	{
@@ -124,6 +124,6 @@ void CPUTables::InitCPUTables()
 {
 	MakeADC();
 	MakeSBC();
-	MakeLog();
-	MakeRot();
+    MakeLogicTable();
+    MakeRotationsTables();
 }
