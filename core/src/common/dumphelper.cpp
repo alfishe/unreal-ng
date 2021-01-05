@@ -54,7 +54,11 @@ std::string DumpHelper::HexDumpBuffer(uint8_t* buffer, size_t size, const std::s
     const int bufferSize = size * (2 + delimiter.size() + prefix.size()); // Byte of data printed as hex with spaces between and line feeds takes more 2 x symbols per each data byte + delimiters + prefixes
     result.resize(bufferSize);
 
-    DumpHelper::HexDumpBuffer(result.data(), result.length(), buffer, size, delimiter, prefix);
+    size_t realDumpLen = DumpHelper::HexDumpBuffer(result.data(), result.length(), buffer, size, delimiter, prefix);
+    if (realDumpLen <= bufferSize)
+    {
+        result.resize(realDumpLen);
+    }
 
     return result;
 }
@@ -64,8 +68,13 @@ std::string DumpHelper::HexDumpBuffer(uint8_t* buffer, size_t size, const std::s
 /// \param outSize
 /// \param buffer
 /// \param size
-void DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter, const std::string& prefix)
+/// \param delimiter
+/// \param prefix
+/// \return
+size_t DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter, const std::string& prefix)
 {
+    size_t result = 0;
+
     int outPos = 0;
     int symbolsPrinted = 0;
     int fullLines = size / width;
@@ -117,5 +126,9 @@ void DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer,
             *(outBuffer + outPos) = '\n';
             outPos++;
         }
+
+        result = outPos;
     }
+
+    return result;
 }

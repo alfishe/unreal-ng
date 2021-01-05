@@ -14,6 +14,6 @@ public:
     static void SaveHexDumpToFile(std::string& filePath, uint8_t* buffer, size_t size);
 
     static std::string HexDumpBuffer(uint8_t* buffer, size_t size, const std::string& delimiter = " ", const std::string& prefix = "");
-    static void HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter = " ", const std::string& prefix = "");
+    static size_t HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter = " ", const std::string& prefix = "");
 
 };
