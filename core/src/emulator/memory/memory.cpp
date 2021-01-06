@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "memory.h"
 
@@ -15,13 +15,14 @@ Memory::Memory(EmulatorContext* context)
 {
 	_context = context;
     _state = &context->state;
+    _logger = context->pModuleLogger;
 
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
 
 #ifdef _DEBUG
     // Dump information about all memory regions
-    LOGDEBUG(DumpAllMemoryRegions());
+    MLOGDEBUG(DumpAllMemoryRegions());
 #endif // _DEBUG
 
 	// Initialize with default (non-platform specific)
@@ -36,7 +37,7 @@ Memory::~Memory()
 {
 	_context = nullptr;
 
-	LOGDEBUG("Memory::~Memory()");
+	MLOGDEBUG("Memory::~Memory()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -239,6 +240,8 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
 // Address space: [0x0000 - 0x3FFF]
 void Memory::SetROMMode(ROMModeEnum mode)
 {
+    throw std::runtime_error("SetROMMode is deprecated");
+
     State& state = _context->state;
     const CONFIG& config = _context->config;
     const PortDecoder& portDecoder = *_context->pPortDecoder;
@@ -297,6 +300,10 @@ void Memory::SetROMMode(ROMModeEnum mode)
 /// \param page ROM page number
 void Memory::SetROMPage(uint8_t page, bool updatePorts)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
+    /// endregion </Override submodule>
+
     if (page >= MAX_ROM_PAGES)
     {
         LOGERROR("Memory::SetROMPage - invalid ROM page specified: %d. Only %d pages allowed", page, MAX_ROM_PAGES);
@@ -310,6 +317,10 @@ void Memory::SetROMPage(uint8_t page, bool updatePorts)
 
     if (updatePorts)
         _context->pPortDecoder->SetROMPage(page);
+
+    /// region <Debug info>
+    MLOGDEBUG("ROM page %d activated", page);
+    /// endregion </Debug info>
 }
 
 /// Switch to specified RAM Bank in RAM Page 3
@@ -317,6 +328,10 @@ void Memory::SetROMPage(uint8_t page, bool updatePorts)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
 }
@@ -326,6 +341,10 @@ void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank1(uint8_t page)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
 }
 
@@ -334,6 +353,10 @@ void Memory::SetRAMPageToBank1(uint8_t page)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank2(uint8_t page)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
 }
 
@@ -342,6 +365,10 @@ void Memory::SetRAMPageToBank2(uint8_t page)
 /// \param page Page number (in 16KiB pages)
 void Memory::SetRAMPageToBank3(uint8_t page, bool updatePorts)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
 
     if (updatePorts)
@@ -387,6 +414,10 @@ uint8_t Memory::GetRAMPageForBank3()
 /// \return RAM page number relative to RAMBase() or MEMORY_UNMAPPABLE =0xFF if address is outside emulated RAM space
 uint8_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     uint8_t result = MEMORY_UNMAPPABLE;
 
     if (hostAddress >= RAMBase() && hostAddress < RAMBase() + MAX_RAM_PAGES * PAGE_SIZE)
@@ -395,7 +426,7 @@ uint8_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
     }
     else
     {
-        LOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, RAMBase(), RAMBase() + MAX_RAM_PAGES * PAGE_SIZE - 1);
+        MLOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, RAMBase(), RAMBase() + MAX_RAM_PAGES * PAGE_SIZE - 1);
     }
 
     return result;
@@ -406,6 +437,10 @@ uint8_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
 /// \return ROM page number relative to ROMBase() or MEMORY_UNMAPPABLE =0xFF if address is outside emulated RAM space
 uint8_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
+    /// endregion </Override submodule>
+
     uint8_t result = MEMORY_UNMAPPABLE;
 
     if (hostAddress >= ROMBase() && hostAddress < ROMBase() + MAX_ROM_PAGES * PAGE_SIZE)
@@ -414,7 +449,7 @@ uint8_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
     }
     else
     {
-        LOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, ROMBase(), ROMBase() + MAX_ROM_PAGES * PAGE_SIZE - 1);
+        MLOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, ROMBase(), ROMBase() + MAX_ROM_PAGES * PAGE_SIZE - 1);
     }
 
     return result;
@@ -488,9 +523,13 @@ void Memory::SetROMSystem(bool updatePorts)
 /// \param z80address
 void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     if (contentBuffer == nullptr || size <= 0)
     {
-        LOGWARNING("Memory::LoadContentToMemory: Nothing to load");
+        MLOGWARNING("Memory::LoadContentToMemory: Nothing to load");
         return;
     }
 
@@ -513,6 +552,10 @@ void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z
 ///       if source buffer size < 16k - all it's data will be copied to RAM page, remaining memory kept untouched
 void Memory::LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize)
 {
+    /// region <Override submodule>
+    static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
+    /// endregion </Override submodule>
+
     if (fromBuffer != nullptr && bufferSize > 0)
     {
         if (bufferSize > PAGE_SIZE)

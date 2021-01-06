@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 
+#include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_profi.h"
@@ -112,7 +113,17 @@ bool PortDecoder::PortFE_Out(uint16_t port, uint8_t value, uint16_t pc)
 
     _screen->SetBorderColor(borderColor);
 
-    MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
+    /// region <Debug logging>
+
+    // Treat all FE ports as one
+    if ((port & 0x00FE) == 0x00FE)
+        port = 0x00FE;
+
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
+    }
+    /// endregion </Debug logging>
 
     return result;
 }
@@ -146,6 +157,21 @@ std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 /// endregion </Interface methods>
 
 /// region <Debug information>
+
+void PortDecoder::MuteLoggingForPort(uint16_t port)
+{
+    _loggingMutePorts.insert(port);
+}
+
+void PortDecoder::UnmuteLoggingForPort(uint16_t port)
+{
+    auto item = _loggingMutePorts.find(port);
+
+    if (item != _loggingMutePorts.end())
+    {
+        _loggingMutePorts.erase(item);
+    }
+}
 
 std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment)
 {

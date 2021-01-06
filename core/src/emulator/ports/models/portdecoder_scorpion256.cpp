@@ -4,6 +4,8 @@
 
 #include "portdecoder_scorpion256.h"
 
+#include "common/collectionhelper.h"
+
 /// region <Constructors / Destructors>
 
 PortDecoder_Scorpion256::PortDecoder_Scorpion256(EmulatorContext* context) : PortDecoder(context)
@@ -33,6 +35,17 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
 
+    /// region <Debug logging>
+
+    // Check if port was not explicitly muted
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+    }
+    /// endregion </Debug logging>
+
     return result;
 }
 
@@ -57,6 +70,17 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         Port_1FFD(value, pc);
     }
+
+    /// region <Debug logging>
+
+    // Check if port was not explicitly muted
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+    }
+    /// endregion </Debug logging>
 }
 
 void PortDecoder_Scorpion256::SetRAMPage(uint8_t page)
@@ -124,6 +148,7 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
     //      D6 = unused
     //      D7 = unused
 
+    static const uint16_t port = 0x7FFD;
     Memory& memory = *_context->pMemory;
     Screen& screen = *_context->pScreen;
 
@@ -143,7 +168,18 @@ void PortDecoder_Scorpion256::Port_7FFD(uint8_t value, uint16_t pc)
 
     screen.SetActiveScreen(screenNumber);
 
-    LOGDEBUG(memory.DumpMemoryBankInfo());
+    MLOGDEBUG(memory.DumpMemoryBankInfo());
+
+    /// region <Debug logging>
+
+    // Check if port was not explicitly muted
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        MLOGDEBUG(DumpPortValue(0x7FFD, port, value, pc));
+        MLOGDEBUG(memory.DumpMemoryBankInfo());
+    }
+
+    /// endregion </Debug logging>
 }
 
 /// Port #1FFD (Memory) handler

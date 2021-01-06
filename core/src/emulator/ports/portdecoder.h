@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include <set>
 
 class ModuleLogger;
 class EmulatorContext;
@@ -34,6 +35,8 @@ protected:
     Screen* _screen = nullptr;
     ModuleLogger* _logger = nullptr;
 
+    std::set<uint16_t> _loggingMutePorts;
+
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -61,6 +64,10 @@ protected:
 
 
     /// region <Debug information>
+public:
+    void MuteLoggingForPort(uint16_t port);
+    void UnmuteLoggingForPort(uint16_t port);
+
 protected:
     virtual std::string DumpPortValue(uint16_t refPort, uint16_t port, uint8_t value, uint16_t pc, const char* comment = nullptr);
     virtual std::string Dump_FE_value(uint8_t value);

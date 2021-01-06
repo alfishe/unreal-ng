@@ -4,6 +4,7 @@
 
 #include "portdecoder_spectrum128.h"
 
+#include "common/collectionhelper.h"
 #include "common/stringhelper.h"
 #include <map>
 #include <vector>
@@ -60,10 +61,16 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
         result = _keyboard->HandlePort(port);
     }
 
-    // Determine RAM/ROM page where code executed from
-    std::string currentMemoryPage = GetPCAddressLocator(pc);
+    /// region <Debug logging>
 
-    MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+    // Check if port was not explicitly muted
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGINFO("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+    }
+    /// endregion </Debug logging>
 
     return result;
 }
@@ -99,6 +106,17 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
         std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
+
+    /// region <Debug logging>
+
+    // Check if port was not explicitly muted
+    if (!key_exists(_loggingMutePorts, port))
+    {
+        // Determine RAM/ROM page where code executed from
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+    }
+    /// endregion </Debug logging>
 }
 
 void PortDecoder_Spectrum128::SetRAMPage(uint8_t page)
@@ -220,7 +238,6 @@ void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     _state->p7FFD = value;
 
     MLOGWARNING(DumpPortValue(0x7FFD, port, value, pc, Dump_7FFD_value(value).c_str()));
-    MLOGDEBUG(memory.DumpMemoryBankInfo());
 }
 
 void PortDecoder_Spectrum128::Port_BFFD_Out(uint16_t port, uint8_t value, uint16_t pc)
