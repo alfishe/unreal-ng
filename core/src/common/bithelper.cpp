@@ -119,3 +119,29 @@ uint8_t BitHelper::GetLastSetBitPosition(uint16_t value)
 
     return result;
 }
+
+uint8_t BitHelper::CountSetBits(uint8_t value)
+{
+    uint8_t result = 0;
+
+    while (value)
+    {
+        result += value & 0x01;
+        value >>= 1;
+    }
+
+    return result;
+}
+
+uint8_t BitHelper::CountSetBits(uint16_t value)
+{
+    uint8_t result = 0;
+
+    while (value)
+    {
+        result += value & 0x0001;
+        value >>= 1;
+    }
+
+    return result;
+}

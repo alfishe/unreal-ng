@@ -79,3 +79,49 @@ TEST_F(BitHelper_Test, GetLastSetBitPosition16)
         EXPECT_EQ(resultValue, i);
     }
 }
+
+TEST_F(BitHelper_Test, CountSetBits8)
+{
+    uint8_t resultValue = 0;
+
+    // Single bit set
+    for (uint16_t i = 0x0001; i < 0x0100; i <<= 1)
+    {
+        uint8_t value = static_cast<uint8_t>(i);
+        resultValue = BitHelper::CountSetBits(value);
+
+        EXPECT_EQ(resultValue, 1);
+    }
+
+    // All except single bit
+    for (uint16_t i = 0x0001; i < 0x0100; i <<= 1)
+    {
+        uint8_t value = static_cast<uint8_t>(~i);
+        resultValue = BitHelper::CountSetBits(value);
+
+        EXPECT_EQ(resultValue, 7);
+    }
+}
+
+TEST_F(BitHelper_Test, CountSetBits16)
+{
+    uint8_t resultValue = 0;
+
+    // Single bit set
+    for (uint32_t i = 0x0000'0001; i < 0x0001'0000; i <<= 1)
+    {
+        uint16_t value = static_cast<uint16_t>(i);
+        resultValue = BitHelper::CountSetBits(value);
+
+        EXPECT_EQ(resultValue, 1);
+    }
+
+    // All except single bit
+    for (uint32_t i = 0x0000'0001; i < 0x0001'0000; i <<= 1)
+    {
+        uint16_t value = static_cast<uint16_t>(~i);
+        resultValue = BitHelper::CountSetBits(value);
+
+        EXPECT_EQ(resultValue, 15);
+    }
+}
