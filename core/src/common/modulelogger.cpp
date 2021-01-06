@@ -79,12 +79,91 @@ ModuleLogger::~ModuleLogger()
 
 /// endregion </Constructors / Destructors>
 
-/// region <Methods>
+/// region <Configuration methods>
 
 void ModuleLogger::SetLoggingSettings(LoggerSettings& settings)
 {
     // Copy new settings to the context
     memcpy((void *)&_settings, (const void *)&settings, sizeof(LoggerSettings));
+}
+
+void ModuleLogger::Mute()
+{
+    _mute = true;
+}
+
+void ModuleLogger::Unmute()
+{
+    _mute = false;
+}
+
+void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule)
+{
+    /// region <Sanity checks>
+    if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
+    {
+        std::string message = StringHelper::Format("Module cannot have id > %d. Found %d", PlatformModulesEnum::MODULE_DISASSEMBLER, module);
+        throw std::logic_error(message);
+    }
+
+    if (submodule == 0x00)
+    {
+        std::string message = StringHelper::Format("No sense to pass NONE module");
+        throw std::logic_error(message);
+    }
+
+    if (submodule != 0xFF && BitHelper::CountSetBits(submodule) > 1)
+    {
+        std::string message = StringHelper::Format("Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
+        throw std::logic_error(message);
+    }
+
+
+    /// endregion </Sanity checks>
+
+    if (submodule == 0xFF)
+    {
+        // Disable the whole module
+        _settings.modules &= ~(1 << module);
+    }
+    else
+    {
+        _settings.submodules[module] &= ~submodule;
+    }
+}
+
+void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t submodule)
+{
+    /// region <Sanity checks>
+    if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
+    {
+        std::string message = StringHelper::Format("Module cannot have id > %d. Found %d", PlatformModulesEnum::MODULE_DISASSEMBLER, module);
+        throw std::logic_error(message);
+    }
+
+    if (submodule == 0x00)
+    {
+        std::string message = StringHelper::Format("No sense to pass NONE module");
+        throw std::logic_error(message);
+    }
+
+    if (submodule != 0xFF && BitHelper::CountSetBits(submodule) > 1)
+    {
+        std::string message = StringHelper::Format("Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
+        throw std::logic_error(message);
+    }
+
+    /// endregion </Sanity checks>
+
+    if (submodule == 0xFF)
+    {
+        // Disable the whole module
+        _settings.modules |= module;
+    }
+    else
+    {
+        _settings.submodules[module] |= (1 << submodule);
+    }
 }
 
 void ModuleLogger::SetLoggerOut(ModuleLoggerOutCallback callback)
@@ -110,6 +189,10 @@ void ModuleLogger::ResetLoggerOut()
     _observerInstance = nullptr;
     _callbackMethod = nullptr;
 }
+
+/// endregion </Configuration methods>
+
+/// region <Methods>
 
 void ModuleLogger::EmptyLine()
 {
@@ -270,9 +353,14 @@ void ModuleLogger::Flush()
 /// endregion </Methods>
 
 /// region <Helper methods>
+
 bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule)
 {
     bool result = false;
+
+    // Skip all checks if muted
+    if (_mute)
+        return result;
 
     uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
 
@@ -291,9 +379,9 @@ bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodu
     return result;
 }
 
-std::string ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule)
+const char* ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule)
 {
-    std::string result;
+    const char* result = "<UNRESOLVED>";
 
     const char** submoduleNames;
     size_t len;
@@ -310,10 +398,10 @@ std::string ModuleLogger::GetModuleSubmoduleBriefString(PlatformModulesEnum modu
     // Resolve submodule bitmask representation to index
     uint16_t submoduleNum = BitHelper::GetFirstSetBitPosition(submodule);
 
-    std::string moduleName = moduleNames[module];
-    std::string submoduleName = GetSubmoduleName(module, submoduleNum);
+    const char* moduleName = moduleNames[module];
+    const char* submoduleName = GetSubmoduleName(module, submoduleNum);
 
-    std::string result = StringHelper::Format("%s_%s", moduleName.c_str(), submoduleName.c_str());
+    std::string result = StringHelper::Format("%s_%s", moduleName, submoduleName);
 
     return result;
 }

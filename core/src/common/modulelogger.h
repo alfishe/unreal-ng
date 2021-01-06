@@ -47,7 +47,7 @@ struct LoggerSettings
     {
         // Indexed access array
         // Allow all modules logging by default
-        uint16_t submodules[10] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+        uint16_t submodules[12] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
 
         struct
         {
@@ -60,7 +60,9 @@ struct LoggerSettings
             uint16_t soundSubmodules;       // Sound submodules on/off flags
             uint16_t videoSubmodules;       // Video submodules on/off flags
             uint16_t dmaSubmodules;         // DMA submodules on/off flags
+            uint16_t loaderSubmodules;      // Loader submodules on/off flags
             uint16_t debuggerSubmodules;    // Memory submodules on/off flags
+            uint16_t disassemblerSubmodules;// Disassembler submodules on/off flags
         };
     };
 };
@@ -198,6 +200,7 @@ class ModuleLogger : public Observer
     /// region <Fields>
 protected:
     LoggerSettings _settings;
+    volatile bool _mute = false;
 
     EmulatorContext* _context = nullptr;
     ModuleLoggerOutCallback* _outCallback = nullptr;
@@ -213,13 +216,23 @@ public:
     virtual ~ModuleLogger();
     /// endregion </Constructors / Destructors>
 
-    /// region <Methods>
+    /// region <Configuration methods>
 public:
     void SetLoggingSettings(LoggerSettings& settings);
+
+    void Mute();
+    void Unmute();
+    void TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
+    void TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
+
     void SetLoggerOut(ModuleLoggerOutCallback callback);
     void SetLoggerOut(ModuleLoggerObserver* instance, ModuleObserverObserverCallbackMethod callback);
     void ResetLoggerOut();
 
+    /// endregion </Configuration methods>
+
+    /// region <Methods>
+public:
     template<typename Fmt, typename... Args>
     void Trace(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
@@ -281,7 +294,7 @@ public:
 protected:
     bool IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule);
 
-    std::string GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule);
+    const char* GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule);
     std::string GetModuleSubmoduleBriefString(PlatformModulesEnum module, uint16_t submodule);
     std::string GetModuleSubmoduleHexString(PlatformModulesEnum module, uint16_t submodule);
     /// endregion </Helper methods>
