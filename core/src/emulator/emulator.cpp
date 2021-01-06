@@ -68,6 +68,7 @@ bool Emulator::Init()
             _logger = moduleLogger;
 
             moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG, "Emulator - ModuleLogger initialized");
+
             result = true;
         }
         else
@@ -138,12 +139,12 @@ bool Emulator::Init()
 			// Calculate ROM segment signatures
 			rom.CalculateSignatures();
 
-			LOGDEBUG("Emulator::Init - ROM data successfully loaded");
+			MLOGDEBUG("Emulator::Init - ROM data successfully loaded");
 			result = true;
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - ROM load failed");
+			MLOGERROR("Emulator::Init - ROM load failed");
 			result = false;
 		}
 	}
@@ -169,13 +170,13 @@ bool Emulator::Init()
 		_mainloop = new MainLoop(_context);
 		if (_mainloop != nullptr)
 		{
-			LOGDEBUG("Emulator::Init - mainloop created");
+			MLOGDEBUG("Emulator::Init - mainloop created");
 
 			result = true;
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - mainloop creation failed");
+			MLOGERROR("Emulator::Init - mainloop creation failed");
 		}
 	}
 
@@ -378,8 +379,13 @@ void Emulator::Start()
 	_isPaused = false;
 	_isRunning = true;
 
-	std::string snapshotPath = "/Volumes/SSDData/LocalGit/unreal/tests/loaders/sna/multifix.sna";
-	LoadSnapshot(snapshotPath);
+//	ModuleLogger& logger = *_context->pModuleLogger;
+//	logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80, PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
+//  logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
+//  logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
+
+	//std::string snapshotPath = "/Volumes/SSDData/LocalGit/unreal/tests/loaders/sna/multifix.sna";
+	//LoadSnapshot(snapshotPath);
 
 	_mainloop->Run(_stopRequested);
 }
