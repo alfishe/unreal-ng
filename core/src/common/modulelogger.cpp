@@ -49,7 +49,7 @@ ModuleLogger::ModuleLogger(EmulatorContext* context)
 
     //_settings.modules &= ~PlatformModulesEnum::MODULE_IO;
     //_settings.modules &= ~PlatformModulesEnum::MODULE_Z80;
-    _settings.submodules[PlatformModulesEnum::MODULE_IO] &= ~PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
+    //_settings.submodules[PlatformModulesEnum::MODULE_IO] &= ~PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
 
     // Ensure auto-flushing for default streams
     std::cout << std::unitbuf;
@@ -581,21 +581,33 @@ std::string ModuleLogger::DumpSettings()
     std::string result;
     std::stringstream ss;
 
+    ss << "Module logger settings dump:" << std::endl;
 
-    for (int i = 0; i < sizeof(moduleNames) / sizeof(moduleNames[0]); i++)
+    for (int i = 1; i < sizeof(moduleNames) / sizeof(moduleNames[0]); i++)
     {
+        std::string moduleName = DumpModuleName(i);
+        std::string moduleStatus = "off";
+
         if (_settings.modules & 1 << i)
         {
-            ss << DumpModuleName(i);
+            moduleStatus = "on";
+
+            ss << StringHelper::Format("%s: %s", moduleName.c_str(), moduleStatus.c_str()) << std::endl;
 
             const char** submoduleNames;
             size_t submoduleNamesSize = 0;
             if (DumpResolveSubmodule(i, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
             {
-                ss << StringHelper::Format("Submodules: %s", DumpResolveFlags(_settings.submodules[i], submoduleNames, submoduleNamesSize).c_str());
+                ss << DumpResolveFlags(_settings.submodules[i], submoduleNames, submoduleNamesSize) << std::endl;
             }
         }
+        else
+        {
+            ss << StringHelper::Format("%s: %s", moduleName.c_str(), moduleStatus.c_str()) << std::endl;
+        }
     }
+
+    result = ss.str();
 
     return result;
 }
@@ -617,31 +629,34 @@ std::string ModuleLogger::DumpResolveFlags(uint16_t flags, const char* names[], 
     std::string result;
     std::stringstream  ss;
 
-    if (flags == 0)
-    {
-        ss << NONE;
-    }
-    else if (flags == 0xFFFF)
-    {
-        ss << ALL;
-    }
-    else
-    {
-        bool isFirst = true;
+//    if (flags == 0)
+//    {
+//        ss << NONE;
+//    }
+//    else if (flags == 0xFFFF)
+//    {
+//        ss << ALL;
+//    }
+//    else
+//    {
+//    }
 
-        for (int i = 0; i < nameSize; i++)
+    for (int i = 0; i < nameSize; i++)
+    {
+        std::string submoduleName = names[i];
+        std::string submoduleStatus = "off";
+
+        uint16_t mask = 1 << i;
+        if (flags & mask)
         {
-            uint16_t mask = 1 << i;
-            if (flags & mask)
-            {
-                if (!isFirst)
-                    ss << " | ";
-                else
-                    isFirst = false;
-
-                ss << names[i];
-            }
+            submoduleStatus = "on";
         }
+        else
+        {
+            submoduleStatus = "off";
+        }
+
+        ss << StringHelper::Format("  %s: %s", submoduleName.c_str(), submoduleStatus.c_str()) << std::endl;
     }
 
     result = ss.str();

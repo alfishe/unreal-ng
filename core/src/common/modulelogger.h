@@ -7,7 +7,7 @@
 #include "emulator/platform.h"
 #include <cstring>
 
-#ifndef _CODE_UNDER_TEST
+#if !defined(_CODE_UNDER_TEST)
 
 // Write all Debug / Info logs if not under unit testing / benchmarking
 #define MLOGDEBUG(format, ...) _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
@@ -179,7 +179,7 @@ class ModuleLogger : public Observer
         "Generic",
     };
 
-    const char* submoduleLoaderNames[3] =
+    const char* submoduleLoaderNames[2] =
     {
         "SNA",
         "Z80"
