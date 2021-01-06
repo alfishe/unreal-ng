@@ -219,7 +219,8 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	}
 	else
 	{
-		LOGERROR("Unable to recognize ZX-Spectrum model selected in config");
+	    std::string message = StringHelper::Format("Unable to recognize ZX-Spectrum model selected in config. Model: %s, mem: %d", line, config.ramsize);
+		MLOGERROR(message.c_str());
 	}
 
 	return result;
@@ -252,7 +253,7 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	{
 		if (ramsize & maxMemory) // Bit in mem_model.AvailRAMs will be set if available. All possible RAM size combinations [128:4096] are correspondent to bits. If 16Kb or 48Kb are planned - extended check logic required
 		{
-			LOGINFO("Model '%s' (HIMEM=%s) with RAM Size: %dKb selected", fullModelName, model, ramsize);
+			MLOGINFO("Model '%s' (HIMEM=%s) with RAM Size: %dKb selected", fullModelName, model, ramsize);
 			result = true;
 		}
 		else
@@ -260,12 +261,12 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 			result = false;
 
 			string availableRAM;
-			LOGERROR("Requested RAM size: %dKb is not available for the model with HIMEM='%s' selected. Available size(s): %s", ramsize, model, availableRAM.c_str());
+			MLOGERROR("Requested RAM size: %dKb is not available for the model with HIMEM='%s' selected. Available size(s): %s", ramsize, model, availableRAM.c_str());
 		}
 	}
 	else
 	{
-		LOGERROR("Unknown model specified in config with HIMEM=%s", model);
+		MLOGERROR("Unknown model specified in config with HIMEM=%s and ramsize=%d", model, ramsize);
 	}
 
 	return result;
