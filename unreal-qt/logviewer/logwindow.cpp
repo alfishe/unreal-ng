@@ -19,7 +19,6 @@ LogWindow::LogWindow() : QWidget(), ui(new Ui::LogWindow)
 
 LogWindow::~LogWindow()
 {
-    delete ui;
 }
 
 void LogWindow::init()
