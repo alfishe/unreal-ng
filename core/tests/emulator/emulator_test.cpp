@@ -75,7 +75,7 @@ TEST_F(Emulator_Test, MultiInstanceRun)
     int successCounter = 0;
     for (int i = 0; i < iterations; i++)
     {
-        Emulator* emulator = new Emulator(LoggerLevel::LogDebug);
+        Emulator* emulator = new Emulator(LoggerLevel::LogError);
         if (emulator)
         {
             if (i == 1)
