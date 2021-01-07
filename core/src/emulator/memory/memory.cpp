@@ -13,31 +13,41 @@
 
 Memory::Memory(EmulatorContext* context)
 {
-	_context = context;
+    _context = context;
     _state = &context->state;
     _logger = context->pModuleLogger;
 
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
 
+    // Initialize with default (non-platform specific)
+    // base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
+    base_sos_rom = ROMPageAddress(0);
+    base_dos_rom = ROMPageAddress(1);
+    base_128_rom = ROMPageAddress(2);
+    base_sys_rom = ROMPageAddress(3);
+
+    // Set default memory banks mode
+    _bank_mode[0] = BANK_ROM;
+    _bank_mode[1] = BANK_RAM;
+    _bank_mode[2] = BANK_RAM;
+    _bank_mode[3] = BANK_RAM;
+
+    /// region <Debug info>
+
 #ifdef _DEBUG
     // Dump information about all memory regions
     MLOGDEBUG(DumpAllMemoryRegions());
 #endif // _DEBUG
 
-	// Initialize with default (non-platform specific)
-	// base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
-	base_sos_rom = ROMPageAddress(0);
-	base_dos_rom = ROMPageAddress(1);
-	base_128_rom = ROMPageAddress(2);
-	base_sys_rom = ROMPageAddress(3);
+    /// endregion </Debug info>
 }
 
 Memory::~Memory()
 {
-	_context = nullptr;
+    _context = nullptr;
 
-	MLOGDEBUG("Memory::~Memory()");
+    MLOGDEBUG("Memory::~Memory()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -345,6 +355,7 @@ void Memory::SetRAMPageToBank1(uint8_t page)
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
+    _bank_mode[1] = BANK_RAM;
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
 }
 
@@ -357,6 +368,7 @@ void Memory::SetRAMPageToBank2(uint8_t page)
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
+    _bank_mode[2] = BANK_RAM;
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
 }
 
@@ -369,6 +381,7 @@ void Memory::SetRAMPageToBank3(uint8_t page, bool updatePorts)
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
+    _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
 
     if (updatePorts)
