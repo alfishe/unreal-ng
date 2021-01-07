@@ -47,9 +47,8 @@ public:
 	// Video controller parameters and logic
 	Screen* pScreen;
 
+	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager;
-
-    Z80Disassembler* pDisassembler;
 
     /// region <Constructors / destructors>
 public:

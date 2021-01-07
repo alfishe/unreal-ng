@@ -11,10 +11,23 @@ DebugManager::DebugManager(EmulatorContext* context)
     _context = context;
 
     _breakpoints = new BreakpointManager(context);
+    _labels = new LabelManager(context);
 }
 
 DebugManager::~DebugManager()
 {
+    if (_disassembler)
+    {
+        delete _disassembler;
+        _disassembler = nullptr;
+    }
+
+    if (_labels)
+    {
+        delete _labels;
+        _labels = nullptr;
+    }
+
     if (_breakpoints)
     {
         delete _breakpoints;
@@ -25,6 +38,25 @@ DebugManager::~DebugManager()
 }
 
 /// endregion </Constructors / Destructors>
+
+/// region <Properties>
+
+BreakpointManager* DebugManager::GetBreakpointsManager()
+{
+    return _breakpoints;
+}
+
+LabelManager* DebugManager::GetLabelManager()
+{
+    return _labels;
+}
+
+Z80Disassembler* DebugManager::GetDisassembler()
+{
+    return _disassembler;
+}
+
+/// endregion </Properties>
 
 /// region <Breakpoint management>
 

@@ -2233,7 +2233,7 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
 #ifdef _DEBUG
             {
                 std::string prefixValue = StringHelper::FormatBinary(prefix);
-                std::string message = StringHelper::Format("Unknown prefix: 0x%s", prefixValue.c_str());
+                std::string message = StringHelper::Format("Unknown prefix: 0x%X (%s)", prefix, prefixValue.c_str());
                 throw logic_error(message);
             }
 #endif

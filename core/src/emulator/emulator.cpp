@@ -1,11 +1,13 @@
 #include "stdafx.h"
 
 #include "emulator.h"
+
+#include "3rdparty/message-center/messagecenter.h"
 #include "common/dumphelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
-#include "3rdparty/message-center/messagecenter.h"
+#include "debugger/debugmanager.h"
 #include "loaders/snapshot/loader_sna.h"
 
 /// region <Constructors / Destructors>
@@ -169,6 +171,22 @@ bool Emulator::Init()
 		}
 	}
 
+	// Create and initialized debug manager (including breakpoint, label managers and disassembler)
+	if (result)
+    {
+	    result = false;
+
+	    DebugManager* manager = new DebugManager(_context);
+	    if (manager != nullptr)
+        {
+            MLOGDEBUG("Emulator::Init - debug manager created");
+
+            _context->pDebugManager = manager;
+
+            result = true;
+        }
+    }
+
 	/// region <Sanity checks>
 
     if (!_context)
@@ -219,6 +237,12 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
+    if (!_context->pDebugManager)
+    {
+        std::string error = "_context->pDebugManager not available";
+        throw std::logic_error(error);
+    }
+
 	/// endregion </Sanity checks>
 
 	// Reset CPU and set-up all ports / ROM and RAM pages
@@ -234,9 +258,6 @@ bool Emulator::Init()
 
 		// Mark as initialized at the very last moment
 		_initialized = true;
-
-		// Optional disassembler init step
-		_context->pDisassembler = new Z80Disassembler();
 	}
 
 	// Release all created resources if any of initialization steps failed
@@ -259,6 +280,13 @@ void Emulator::Release()
 
 void Emulator::ReleaseNoGuard()
 {
+    // Release debug manager (and related components)
+    if (_context->pDebugManager)
+    {
+        delete _context->pDebugManager;
+        _context->pDebugManager = nullptr;
+    }
+
     // Stop and release main loop
     if (_mainloop != nullptr)
     {
@@ -266,12 +294,6 @@ void Emulator::ReleaseNoGuard()
 
         delete _mainloop;
         _mainloop = nullptr;
-    }
-
-    if (_context->pDisassembler != nullptr)
-    {
-        delete _context->pDisassembler;
-        _context->pDisassembler = nullptr;
     }
 
     // Release additional peripheral devices
@@ -525,7 +547,7 @@ void Emulator::RunSingleCPUCycle()
 	uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(z80.m1_pc);
 	uint8_t commandLen = 0;
 	std:: string pc = StringHelper::ToHexWithPrefix(z80.m1_pc, "");
-    std::string command = _context->pDisassembler->disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);
+    std::string command = _context->pDebugManager->GetDisassembler()->disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);
     std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
 
     MLOGINFO("$%s: %s   %s", pc.c_str(), hex.c_str(), command.c_str());

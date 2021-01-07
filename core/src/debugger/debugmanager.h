@@ -1,16 +1,20 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulatorcontext.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
+#include "emulator/emulatorcontext.h"
 #include <map>
 
 class DebugManager
 {
     /// region <Fields>
 protected:
-    EmulatorContext* _context;
-    BreakpointManager* _breakpoints;
+    EmulatorContext* _context = nullptr;
+    BreakpointManager* _breakpoints = nullptr;
+    LabelManager* _labels = nullptr;
+    Z80Disassembler* _disassembler = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -20,6 +24,14 @@ public:
     virtual ~DebugManager();
 
     /// endregion </Constructors / Destructors>
+
+    /// region <Properties>
+
+    BreakpointManager* GetBreakpointsManager();
+    LabelManager* GetLabelManager();
+    Z80Disassembler* GetDisassembler();
+
+    /// endregion </Properties>
 
     /// region <CPU registers>
     /// endregion <CPU registers>

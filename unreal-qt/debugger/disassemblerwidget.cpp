@@ -6,6 +6,7 @@
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
+#include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "emulator/cpu/cpu.h"
 #include "emulator/cpu/z80.h"
@@ -46,7 +47,7 @@ Memory* DisassemblerWidget::getMemory()
 
 Z80Disassembler* DisassemblerWidget::getDisassembler()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pDisassembler;
+    return m_debuggerWindow->getEmulator()->GetContext()->pDebugManager->GetDisassembler();
 }
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
