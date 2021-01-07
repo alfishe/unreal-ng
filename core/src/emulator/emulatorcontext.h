@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "common/modulelogger.h"
 #include "emulator/platform.h"
 
 class ModuleLogger;
@@ -52,7 +53,8 @@ public:
 
     /// region <Constructors / destructors>
 public:
-    EmulatorContext();
+    EmulatorContext();                      // Default constructor with LogTrace default logging level
+    EmulatorContext(LoggerLevel level);     // Constructor allowing to specify default logging level
     virtual ~EmulatorContext();
     /// endregion </Constructors / destructors>
 };

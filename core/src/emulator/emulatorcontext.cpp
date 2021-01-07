@@ -5,15 +5,24 @@
 #include "common/modulelogger.h"
 
 /// region <Constructors / destructors>
-EmulatorContext::EmulatorContext()
+
+/// Default constructor with LogTrace default logging level
+EmulatorContext::EmulatorContext() : EmulatorContext(LoggerLevel::LogTrace)
+{
+}
+
+/// Constructor allowing to specify default logging level
+EmulatorContext::EmulatorContext(LoggerLevel level)
 {
     // Create advanced logging
     ModuleLogger* moduleLogger = new ModuleLogger(this);
     if (moduleLogger)
     {
-        pModuleLogger = moduleLogger;
+        moduleLogger->SetLoggingLevel(level);
 
         moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG, "Emulator - ModuleLogger initialized");
+
+        pModuleLogger = moduleLogger;
     }
     else
     {
