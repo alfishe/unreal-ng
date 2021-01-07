@@ -391,7 +391,7 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		return result;
 	}
 
-	string resolvedPath = FileHelper::NormalizePath(path);
+	std::string resolvedPath = FileHelper::NormalizePath(path);
 	if (!FileHelper::FileExists(resolvedPath))
 	{
 		// Try to use as relative path if not found using original path
