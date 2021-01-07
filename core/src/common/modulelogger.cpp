@@ -166,6 +166,11 @@ void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t su
     }
 }
 
+void ModuleLogger::SetLoggingLevel(LoggerLevel level)
+{
+    _level = level;
+}
+
 void ModuleLogger::SetLoggerOut(ModuleLoggerOutCallback callback)
 {
     if (callback != nullptr)
@@ -214,6 +219,48 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
 
 void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const char* fmt, ...)
 {
+    // Skip messages with level below allowed (message has more details than we want)
+    if (level < _level)
+        return;
+
+    /// region <Sanity checks>
+#ifdef _DEBUG
+    if (module > MODULE_DISASSEMBLER)
+    {
+        std::string error = StringHelper::Format("LogModuleMessage - invalid module %d", module);
+        throw std::logic_error(error);
+    }
+
+    switch (module)
+    {
+        case MODULE_CORE:
+            if (submodule > SUBMODULE_CORE_FILES)
+            {
+                std::string error = StringHelper::Format("LogModuleMessage - module Core, invalid submodule %d", submodule);
+                throw std::logic_error(error);
+            }
+            break;
+        case MODULE_Z80:
+            if (submodule > SUBMODULE_Z80_IO)
+            {
+                std::string error = StringHelper::Format("LogModuleMessage - module Z80, invalid submodule %d", submodule);
+                throw std::logic_error(error);
+            }
+            break;
+        case MODULE_MEMORY:
+            if (submodule > SUBMODULE_MEM_RAM)
+            {
+                std::string error = StringHelper::Format("LogModuleMessage - module Memory, invalid submodule %d", submodule);
+                throw std::logic_error(error);
+            }
+            break;
+        default:
+            break;
+    }
+#endif // _DEBUG
+
+    /// endregion </Sanity checks>
+
     char buffer[1024];
     size_t time_len = 0;
     struct tm *tm_info;
@@ -264,48 +311,6 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
     /// endregion </Print formatted value>
 
     va_end(args);
-}
-
-void ModuleLogger::LogModuleMessage(PlatformModulesEnum module, uint16_t submodule, const std::string& message)
-{
-    /// region <Sanity checks>
-#ifdef _DEBUG
-    if (module > MODULE_DEBUGGER)
-    {
-        std::string error = StringHelper::Format("LogModuleMessage - invalid module %d", module);
-        throw std::logic_error(error);
-    }
-
-    switch (module)
-    {
-        case MODULE_CORE:
-            if (submodule > SUBMODULE_CORE_FILES)
-            {
-                std::string error = StringHelper::Format("LogModuleMessage - module Core, invalid submodule %d", submodule);
-                throw std::logic_error(error);
-            }
-            break;
-        case MODULE_Z80:
-            if (submodule > SUBMODULE_Z80_IO)
-            {
-                std::string error = StringHelper::Format("LogModuleMessage - module Z80, invalid submodule %d", submodule);
-                throw std::logic_error(error);
-            }
-            break;
-        case MODULE_MEMORY:
-            if (submodule > SUBMODULE_MEM_RAM)
-            {
-                std::string error = StringHelper::Format("LogModuleMessage - module Memory, invalid submodule %d", submodule);
-                throw std::logic_error(error);
-            }
-            break;
-        default:
-            break;
-    }
-#endif // _DEBUG
-
-    /// endregion </Sanity checks>
-
 }
 
 void ModuleLogger::OutLine(const char* buffer, size_t len)

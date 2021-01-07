@@ -29,14 +29,20 @@
 
 /// region <Structures>
 
+/// All levels of logging
+/// Trace - most detailed information, error - least
+/// Examples of use:
+///     LogError level set - only error messages will be accepted
+//      LogDebug level set - LogDebug, LogInfo, LogWarning, LogError messages will be accepted. But not LogTrace.
 enum LoggerLevel : uint8_t
 {
-    LogNone = 0,
-    LogTrace,
+    LogUnknown = 0,     // Uninitialized state
+    LogTrace = 1,
     LogDebug,
     LogInfo,
     LogWarning,
-    LogError
+    LogError,
+    LogNone
 };
 
 struct LoggerSettings
@@ -201,6 +207,7 @@ class ModuleLogger : public Observer
 protected:
     LoggerSettings _settings;
     volatile bool _mute = false;
+    LoggerLevel _level = LoggerLevel::LogTrace;                      // Allow all types of logging messages by default
 
     EmulatorContext* _context = nullptr;
     ModuleLoggerOutCallback* _outCallback = nullptr;
@@ -224,6 +231,7 @@ public:
     void Unmute();
     void TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
     void TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
+    void SetLoggingLevel(LoggerLevel level);
 
     void SetLoggerOut(ModuleLoggerOutCallback callback);
     void SetLoggerOut(ModuleLoggerObserver* instance, ModuleObserverObserverCallbackMethod callback);
@@ -282,7 +290,6 @@ public:
 
     void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string fmt, ...);
     void LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const char* fmt, ...);
-    void LogModuleMessage(PlatformModulesEnum module, uint16_t submodule, const std::string& message);
 
     void OutLine(const char* buffer, size_t len);
     void Out(const char* buffer, size_t len);
