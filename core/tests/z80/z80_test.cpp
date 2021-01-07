@@ -1,6 +1,8 @@
 #include "pch.h"
 
 #include "z80_test.h"
+
+#include "common/modulelogger.h"
 #include <string>
 
 /// region <SetUp / TearDown>
@@ -8,20 +10,31 @@
 void Z80_Test::SetUp()
 {
 	// Instantiate emulator with all peripherals, but no configuration loaded
-	_context = new EmulatorContext();
+	_context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error
 
 	_cpu = new CPU(_context);
-	_cpu->Init();
+	if (_cpu->Init())
+	{
+        // Use Spectrum48K / Pentagon memory layout
+        _cpu->GetMemory()->InternalSetBanks();
 
-	// Use Spectrum48K / Pentagon memory layout
-	_cpu->GetMemory()->InternalSetBanks();
-
-	// Instantiate opcode test helper
-	_opcode = new OpcodeTest();
+        // Instantiate opcode test helper
+        _opcode = new OpcodeTest();
+    }
+	else
+    {
+	    throw std::logic_error("Z80_Test::SetUp - _cpu->Init() failed");
+    }
 }
 
 void Z80_Test::TearDown()
 {
+    if (_opcode != nullptr)
+    {
+        delete _opcode;
+        _opcode = nullptr;
+    }
+
 	if (_cpu != nullptr)
 	{
 		delete _cpu;
@@ -32,12 +45,6 @@ void Z80_Test::TearDown()
 	{
 		delete _context;
 		_context = nullptr;
-	}
-
-	if (_opcode != nullptr)
-	{
-		delete _opcode;
-		_opcode = nullptr;
 	}
 }
 
