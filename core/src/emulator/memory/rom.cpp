@@ -31,7 +31,7 @@ ROM::~ROM()
 {
 	_context = nullptr;
 
-	LOGDEBUG("ROM::~ROM()");
+	MLOGDEBUG("ROM::~ROM()");
 }
 
 /// Load single ROM file based on information from config file and information about selected model
@@ -192,7 +192,7 @@ bool ROM::LoadROM()
 			{
 				if (loadedBanks != 4 || loadedBanks != 8 || loadedBanks != 32 || loadedBanks != 64)
 				{
-					LOGERROR("Incorrect ROM size for ATM3/7.10. Should be 64|128|512|1024 KB. Found %d", loadedBanks * PAGE_SIZE);
+					MLOGERROR("Incorrect ROM size for ATM3/7.10. Should be 64|128|512|1024 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 				else
@@ -209,7 +209,7 @@ bool ROM::LoadROM()
 			{
 				if (loadedBanks != 32)
 				{
-					LOGERROR("Incorrect ROM size for GMX. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
+					MLOGERROR("Incorrect ROM size for GMX. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
@@ -217,7 +217,7 @@ bool ROM::LoadROM()
 			{
 				if (loadedBanks != 32)
 				{
-					LOGERROR("Incorrect ROM size for TS-Conf. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
+					MLOGERROR("Incorrect ROM size for TS-Conf. Should be 512 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
@@ -225,7 +225,7 @@ bool ROM::LoadROM()
             {
                 if (loadedBanks != 1)
                 {
-                    LOGERROR("Incorrect ROM size. Should be 16 KB. Found %d", loadedBanks * PAGE_SIZE);
+                    MLOGERROR("Incorrect ROM size. Should be 16 KB. Found %d", loadedBanks * PAGE_SIZE);
                     result = false;
                 }
             }
@@ -233,7 +233,7 @@ bool ROM::LoadROM()
             {
 			    if (loadedBanks != 2)
                 {
-                    LOGERROR("Incorrect ROM size. Should be 32 KB. Found %d", loadedBanks * PAGE_SIZE);
+                    MLOGERROR("Incorrect ROM size. Should be 32 KB. Found %d", loadedBanks * PAGE_SIZE);
                     result = false;
                 }
             }
@@ -242,14 +242,14 @@ bool ROM::LoadROM()
 				// All other models have 64KB (4 banks) ROM chips
 				if (loadedBanks != 4)
 				{
-					LOGERROR("Incorrect ROM size. Should be 64 KB. Found %d", loadedBanks * PAGE_SIZE);
+					MLOGERROR("Incorrect ROM size. Should be 64 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
 			}
 
 			if (result)
 			{
-				LOGDEBUG("ROM successully loaded from file '%s'", romname.c_str());
+				MLOGDEBUG("ROM successully loaded from file '%s'", romname.c_str());
 			}
 		}
 		else
@@ -273,7 +273,7 @@ bool ROM::LoadROMSet()
 	bool result1 = LoadROM(rompath, memory.base_sos_rom);
 	if (!result1)
 	{
-		LOGERROR("Unable to load BASIC48 (SOS) ROM from file: '%s'", config.sos_rom_path);
+		MLOGERROR("Unable to load BASIC48 (SOS) ROM from file: '%s'", config.sos_rom_path);
 	}
 
 	// BASIC128
@@ -281,7 +281,7 @@ bool ROM::LoadROMSet()
 	bool result2 = LoadROM(rompath, memory.base_128_rom);
 	if (!result2)
 	{
-		LOGERROR("Unable to load BASIC128 ROM from file: '%s'", config.zx128_rom_path);
+		MLOGERROR("Unable to load BASIC128 ROM from file: '%s'", config.zx128_rom_path);
 	}
 
 	// DOS (TR-DOS)
@@ -289,7 +289,7 @@ bool ROM::LoadROMSet()
 	bool result3 = LoadROM(rompath, memory.base_dos_rom);
 	if (!result3)
 	{
-		LOGERROR("Unable to load DOS (TR-DOS) ROM from file: '%s'", config.dos_rom_path);
+		MLOGERROR("Unable to load DOS (TR-DOS) ROM from file: '%s'", config.dos_rom_path);
 	}
 
 	// Shadow (SYS)
@@ -297,7 +297,7 @@ bool ROM::LoadROMSet()
 	bool result4 = LoadROM(rompath, memory.base_sys_rom);
 	if (!result4)
 	{
-		LOGERROR("Unable to load Shadow (SYS) ROM from file: '%s'", config.sys_rom_path);
+		MLOGERROR("Unable to load Shadow (SYS) ROM from file: '%s'", config.sys_rom_path);
 	}
 
 	result = result1 & result2 & result3 & result4;
@@ -319,7 +319,7 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 
 	if (path.empty())
 	{
-		LOGERROR("ROM::LoadROM - Empty ROM path supplied");
+		MLOGERROR("ROM::LoadROM - Empty ROM path supplied");
 		return result;
 	}
 
@@ -332,7 +332,7 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 
 		if (!FileHelper::FileExists(resolvedPath))
 		{
-			LOGERROR("ROM::LoadROM - file %s not found", FileHelper::PrintablePath(resolvedPath).c_str());
+			MLOGERROR("ROM::LoadROM - file %s not found", FileHelper::PrintablePath(resolvedPath).c_str());
 			return result;
 		}
 	}
@@ -348,14 +348,14 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 		}
 		else
 		{
-			LOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE_SIZE, size);
+			MLOGERROR("ROM::LoadROM - Incorrect ROM file size. Expected: %d, found %d", max_banks * PAGE_SIZE, size);
 		}
 
 		fclose(romfile);
 	}
 	else
 	{
-		LOGERROR("ROM::LoadROM - unable to read from file %s", FileHelper::PrintablePath(resolvedPath).c_str());
+		MLOGERROR("ROM::LoadROM - unable to read from file %s", FileHelper::PrintablePath(resolvedPath).c_str());
 	}
 
 
@@ -369,11 +369,11 @@ void ROM::CalculateSignatures()
 
 	if (_ROMBanksLoaded == 0)
 	{
-		LOGERROR("ROM::CalculateSignatures - no ROM loaded. Unable to calculate ROM signatures");
+		MLOGERROR("ROM::CalculateSignatures - no ROM loaded. Unable to calculate ROM signatures");
 		return;
 	}
 
-	LOGINFO("ROM Banks info (as loaded):");
+	MLOGINFO("ROM Banks info (as loaded):");
 	for (int i = 0; i < _ROMBanksLoaded; i++)
     {
 	    std::string signature = CalculateSignature(memory.ROMPageAddress(i), 0x4000);
@@ -412,7 +412,7 @@ string ROM::CalculateSignature(uint8_t* buffer, size_t length)
 
 	if (buffer == nullptr || length == 0)
 	{
-		LOGERROR("ROM::CalculateSignature - buffer shouldn't be nullptr and length needs to be > 0");
+		MLOGERROR("ROM::CalculateSignature - buffer shouldn't be nullptr and length needs to be > 0");
 		return result;
 	}
 

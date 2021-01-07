@@ -20,6 +20,13 @@ typedef pair<string, string> ROMSignature;
 
 class ROM
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+protected:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_MEMORY;
+    const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
+    ModuleLogger* _logger = nullptr;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
 protected:
 	EmulatorContext* _context = nullptr;
 	std::string _activeROMFile;
