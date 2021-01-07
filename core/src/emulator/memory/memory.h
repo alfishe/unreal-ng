@@ -67,9 +67,10 @@ struct MemoryInterface
 class Memory
 {
     /// region <ModuleLogger definitions for Module/Submodule>
-public:
+protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_MEMORY;
     const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_GENERIC;
+    ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Fields>
@@ -81,7 +82,6 @@ protected:
     // Context passed during initialization
     EmulatorContext* _context = nullptr;
     State* _state = nullptr;
-    ModuleLogger* _logger = nullptr;
 
 protected:
 #if defined CACHE_ALIGNED
