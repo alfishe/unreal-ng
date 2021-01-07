@@ -186,8 +186,8 @@ public:
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 
-    uint8_t DirectReadFromZ80Memory(uint16_t address);
-    void DirectWriteToZ80Memory(uint16_t address, uint8_t value);
+    uint8_t DirectReadFromZ80Memory(uint16_t address);                      // Read from Z80 memory (actual pages config) without triggering any debug logic
+    void DirectWriteToZ80Memory(uint16_t address, uint8_t value);           // Write to Z80 memory (actual pages config) without triggering any debug logic
 
     /// endregion  </Address helper methods>
 
