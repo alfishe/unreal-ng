@@ -78,7 +78,7 @@ TEST_F(Disassembler_Test, parseOperands)
         catch (std::logic_error e)
         {
 #ifdef _DEBUG
-            std::cout << e.what() << std::endl;
+            std::cout << e.what();
 #endif // _DEBUG
             resultValue = ERROR_OPERANDS;
         }
@@ -97,7 +97,16 @@ TEST_F(Disassembler_Test, parseOperands)
                          mnemonic.c_str(), referenceOperandNumber, resultValue);
             }
 
-            EXPECT_EQ(referenceOperandNumber, resultValue) << message << std::endl;
+            FAIL() << message << std::endl;
+        }
+        else
+        {
+#ifdef _DEBUG
+            if (referenceOperandNumber == ERROR_OPERANDS)
+            {
+                std::cout << "    => OK - it was negative scenario test" << std::endl;
+            }
+#endif // _DEBUG
         }
 
         i++;
@@ -169,15 +178,17 @@ TEST_F(Disassembler_Test, formatOperandString)
         vector<uint16_t> values = testValues[i];
         std::string referenceResult = referenceResults[i];
 
+        DecodedInstruction decoded;
+
         try
         {
             // Probe method under test and get result
-            result = _disasm->formatOperandString(mnemonic, values);
+            result = _disasm->formatOperandString(decoded, mnemonic, values);
         }
         catch (std::logic_error e)
         {
 #ifdef _DEBUG
-            std::cout << e.what() << std::endl;
+            std::cout << e.what();
 #endif // _DEBUG
 
             result = ERROR_OPERANDS;
@@ -196,9 +207,17 @@ TEST_F(Disassembler_Test, formatOperandString)
                          mnemonic.c_str(), referenceResult.c_str(), result.c_str());
             }
 
-            EXPECT_EQ(referenceResult, result) << message << std::endl;
+            FAIL() << message << std::endl;
         }
-
+        else
+        {
+#ifdef _DEBUG
+            if (referenceResult == ERROR_OPERANDS)
+            {
+                std::cout << "    => OK - it was negative scenario test" << std::endl;
+            }
+#endif // _DEBUG
+        }
 
         i++;
     }
