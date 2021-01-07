@@ -118,6 +118,7 @@ TEST_F(Disassembler_Test, formatOperandString)
     static char message[256];
     static constexpr const char* ERROR_OPERANDS = "<FAIL>";
 
+    // Pre-parsed mnemonics to use during Z80Disassembler::FormatOperand() method testing. Contain template errors to catch.
     std::vector<std::string> testMnemonics =
     {
             "ld a,:1",
@@ -130,6 +131,7 @@ TEST_F(Disassembler_Test, formatOperandString)
             "ld de,:2",
     };
 
+    // Test values to pass as operands
     std::vector<std::vector<uint16_t>> testValues =
     {
         { 0xBEEF },
@@ -142,6 +144,7 @@ TEST_F(Disassembler_Test, formatOperandString)
         { 0xEDD0 },
     };
 
+    // Expected reference results
     std::vector<std::string> referenceResults =
     {
         "ld a,#EF",
