@@ -29,6 +29,7 @@ protected:
 
     std::thread* _asyncThread = nullptr;
 
+    LoggerLevel _loggerLevel = LoggerLevel::LogTrace;
 	EmulatorContext* _context = nullptr;
 
 	Config* _config = nullptr;
@@ -48,6 +49,7 @@ protected:
 	// Constructors / destructors
 public:
 	Emulator();
+	Emulator(LoggerLevel level);
 	virtual ~Emulator();
 
 private:

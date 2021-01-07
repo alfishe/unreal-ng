@@ -15,6 +15,13 @@ Emulator::Emulator()
     LOGDEBUG("Emulator::Emulator()");
 }
 
+Emulator::Emulator(LoggerLevel level)
+{
+    LOGDEBUG("Emulator::Emulator()");
+
+    _loggerLevel = level;
+}
+
 Emulator::~Emulator()
 {
 	LOGDEBUG("Emulator::~Emulator()");
@@ -43,7 +50,7 @@ bool Emulator::Init()
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
 
 	// Create and initialize emulator context. ModuleLogger will be initialized as well.
-	_context = new EmulatorContext();
+	_context = new EmulatorContext(_loggerLevel);
 	if (_context != nullptr)
 	{
         _logger = _context->pModuleLogger;
@@ -71,16 +78,16 @@ bool Emulator::Init()
 
 			if (result)
 			{
-				LOGDEBUG("Emulator::Init - Config file successfully loaded");
+				MLOGDEBUG("Emulator::Init - Config file successfully loaded");
 			}
 			else
 			{
-				LOGERROR("Emulator::Init - Config load failed");
+				MLOGERROR("Emulator::Init - Config load failed");
 			}
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - config manager creation failed");
+			MLOGERROR("Emulator::Init - config manager creation failed");
 			result = false;
 		}
 	}
@@ -104,7 +111,7 @@ bool Emulator::Init()
 		}
 		else
 		{
-			LOGERROR("Emulator::Init - CPU system (or main peripheral devices) creation failed");
+			MLOGERROR("Emulator::Init - CPU system (or main peripheral devices) creation failed");
 		}
 	}
 
@@ -113,7 +120,9 @@ bool Emulator::Init()
 	{
 		ROM& rom = *_cpu->GetROM();
 
+		//std::string rompath = rom.GetROMFilename();
 		result = rom.LoadROM();
+
 		if (result)
 		{
 			// Calculate ROM segment signatures
@@ -316,10 +325,10 @@ void Emulator::GetSystemInfo()
 	host.mmx = (features >> 23) & 1;
 	host.sse = (features >> 25) & 1;
 	host.sse2 = (features >> 26) & 1;
-	LOGINFO("MMX:%s, SSE:%s, SSE2:%s", host.mmx ? "YES" : "NO", host.sse ? "YES" : "NO", host.sse2 ? "YES" : "NO");
+	MLOGINFO("MMX:%s, SSE:%s, SSE2:%s", host.mmx ? "YES" : "NO", host.sse ? "YES" : "NO", host.sse2 ? "YES" : "NO");
 
 	host.cpufq = SystemHelper::GetCPUFrequency();
-	LOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
+	MLOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
 }
 
 ///region <Integration interfaces>
