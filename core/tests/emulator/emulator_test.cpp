@@ -3,6 +3,7 @@
 
 #include "emulator_test.h"
 
+#include "common/modulelogger.h"
 #include "common/timehelper.h"
 #include "emulator/emulator.h"
 
@@ -45,7 +46,7 @@ TEST_F(Emulator_Test, MultiInstance)
     int successCounter = 0;
     for (int i = 0; i < iterations; i++)
     {
-        Emulator* emulator = new Emulator();
+        Emulator* emulator = new Emulator(LoggerLevel::LogError);
         if (emulator)
         {
             if (emulator->Init())
@@ -74,7 +75,7 @@ TEST_F(Emulator_Test, MultiInstanceRun)
     int successCounter = 0;
     for (int i = 0; i < iterations; i++)
     {
-        Emulator* emulator = new Emulator();
+        Emulator* emulator = new Emulator(LoggerLevel::LogDebug);
         if (emulator)
         {
             if (i == 1)

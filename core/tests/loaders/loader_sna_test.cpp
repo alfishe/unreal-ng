@@ -3,6 +3,7 @@
 #include "loader_sna_test.h"
 
 #include "common/filehelper.h"
+#include "common/modulelogger.h"
 #include "common/stringhelper.h"
 
 /// region <SetUp / TearDown>
@@ -10,7 +11,7 @@
 void LoaderSNA_Test::SetUp()
 {
     // Instantiate emulator with all peripherals, but no configuration loaded
-    _context = new EmulatorContext();
+    _context = new EmulatorContext(LoggerLevel::LogError);
 
     _cpu = new CPU(_context);
     if (_cpu->Init())

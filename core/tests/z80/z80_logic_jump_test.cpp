@@ -2,6 +2,8 @@
 
 #include "z80_logic_jump_test.h"
 #include "opcode_test.h"
+
+#include "common/modulelogger.h"
 #include <string>
 
 /// region <SetUp / TearDown>
@@ -9,7 +11,7 @@
 void Z80_Logic_Jump_Test::SetUp()
 {
     // Instantiate emulator with all peripherals, but no configuration loaded
-    _context = new EmulatorContext();
+    _context = new EmulatorContext(LoggerLevel::LogError);
 
     _cpu = new CPU(_context);
     _cpu->Init();
