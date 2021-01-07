@@ -14,9 +14,12 @@
 using digestpp::md5;
 using digestpp::sha256;
 
+/// region <Constructors / destructors>
+
 ROM::ROM(EmulatorContext* context)
 {
 	_context = context;
+	_logger = _context->pModuleLogger;
 
 	// TODO: load known ROM signatures from file
     _signatures.insert({ "d55daa439b673b0e3f5897f99ac37ecb45f974d1862b4dadb85dec34af99cb42", "Original 48K ROM" });
@@ -34,6 +37,71 @@ ROM::~ROM()
 	MLOGDEBUG("ROM::~ROM()");
 }
 
+// endregion </Constructors / destructors>
+
+std::string ROM::GetROMFilename()
+{
+    std::string result;
+
+    const CONFIG& config = _context->config;
+
+    switch (config.mem_model)
+    {
+        case MM_PENTAGON:
+            result = config.pent_rom_path;
+            break;
+        case MM_SPECTRUM48:
+            result = config.zx48_rom_path;
+            break;
+        case MM_SPECTRUM128:
+            result = config.zx128_rom_path;
+            break;
+        case MM_PLUS3:
+            result = config.plus3_rom_path;
+            break;
+        case MM_PROFI:
+            result = config.profi_rom_path;
+            break;
+        case MM_SCORP:
+            result = config.scorp_rom_path;
+            break;
+        case MM_PROFSCORP:
+            result = config.prof_rom_path;
+            break;
+        case MM_KAY:
+            result = config.kay_rom_path;
+            break;
+        case MM_ATM3:
+            result = config.atm3_rom_path;					// TODO: Correct?
+            break;
+        case MM_ATM450:
+            result = config.atm1_rom_path;
+            break;
+        case MM_ATM710:
+            result = config.atm2_rom_path;					// TODO: Correct?
+            break;
+        case MM_QUORUM:
+            result = config.quorum_rom_path;
+            break;
+        case MM_TSL:
+            result = config.tsl_rom_path;
+            break;
+        case MM_LSY256:
+            result = config.lsy_rom_path;
+            break;
+        case MM_PHOENIX:
+            result = config.phoenix_rom_path;
+            break;
+        case MM_GMX:
+            assert("Not implemented");
+            break;
+        default:
+            break;
+    };
+
+    return result;
+}
+
 /// Load single ROM file based on information from config file and information about selected model
 /// \return Result whether ROM file load was successful
 bool ROM::LoadROM()
@@ -43,7 +111,7 @@ bool ROM::LoadROM()
     const CONFIG& config = _context->config;
     Memory& memory = *_context->pMemory;
 	
-	string romname;
+	std::string romname;
 
 	switch (config.mem_model)
 	{

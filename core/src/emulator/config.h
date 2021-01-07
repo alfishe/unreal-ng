@@ -11,9 +11,10 @@ class ModuleLogger;
 class Config
 {
     /// region <ModuleLogger definitions for Module/Submodule>
-public:
+protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
     const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG;
+    ModuleLogger* _logger;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
 	// Ini file section names
@@ -57,7 +58,6 @@ private:
 
 protected:
 	EmulatorContext* _context;
-	ModuleLogger* _logger;
     std::string _configFilePath;
 
 public:

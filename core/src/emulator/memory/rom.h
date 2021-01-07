@@ -27,19 +27,24 @@ protected:
     ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
+    /// region <Fields>
 protected:
 	EmulatorContext* _context = nullptr;
 	std::string _activeROMFile;
 	uint8_t _ROMBanksLoaded = 0;
 
-
 	ROMSMap _signatures;
 
+	///endregion </Fields>
+
+	/// region <Constructors / destructors>
 public:
 	ROM() = delete;		// Disable default constructor. C++ 11 feature
 	ROM(EmulatorContext* context);
 	virtual ~ROM();
+    /// endregion </Constructors / destructors>
 
+    std::string GetROMFilename();
 	[[nodiscard]] bool LoadROM();
 
 	[[nodiscard]] bool LoadROMSet();
