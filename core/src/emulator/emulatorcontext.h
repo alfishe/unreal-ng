@@ -49,4 +49,10 @@ public:
 	DebugManager* pDebugManager;
 
     Z80Disassembler* pDisassembler;
+
+    /// region <Constructors / destructors>
+public:
+    EmulatorContext();
+    virtual ~EmulatorContext();
+    /// endregion </Constructors / destructors>
 };

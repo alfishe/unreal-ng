@@ -17,9 +17,10 @@
 class Emulator
 {
     /// region <ModuleLogger definitions for Module/Submodule>
-public:
+protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
     const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
+    ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
 protected:
@@ -29,7 +30,6 @@ protected:
     std::thread* _asyncThread = nullptr;
 
 	EmulatorContext* _context = nullptr;
-	ModuleLogger* _logger = nullptr;
 
 	Config* _config = nullptr;
 	CPU* _cpu = nullptr;

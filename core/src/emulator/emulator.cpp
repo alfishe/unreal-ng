@@ -42,11 +42,13 @@ bool Emulator::Init()
 	// Ensure that MessageCenter instance is up and running
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
 
-	// Create and initialize emulator context
+	// Create and initialize emulator context. ModuleLogger will be initialized as well.
 	_context = new EmulatorContext();
 	if (_context != nullptr)
 	{
-		LOGDEBUG("Emulator::Init - context created");
+        _logger = _context->pModuleLogger;
+
+		MLOGDEBUG("Emulator::Init - context created");
 
 		result = true;
 	}
@@ -55,28 +57,6 @@ bool Emulator::Init()
 		LOGERROR("Emulator::Init - context creation failed");
 		result = false;
 	}
-
-	// Create advanced logging
-	if (result)
-	{
-	    result = false;
-
-        ModuleLogger* moduleLogger = new ModuleLogger(_context);
-        if (moduleLogger != nullptr)
-        {
-            _context->pModuleLogger = moduleLogger;
-            _logger = moduleLogger;
-
-            moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_CONFIG, "Emulator - ModuleLogger initialized");
-
-            result = true;
-        }
-        else
-        {
-            LOGERROR("Emulator::Init - Unable to initialize ModuleLogger");
-        }
-    }
-
 
 	// Get host system info
 	GetSystemInfo();
