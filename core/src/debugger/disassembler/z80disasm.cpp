@@ -5,6 +5,8 @@
 #include "z80disasm.h"
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 
 /// region <Information>
 
@@ -17,281 +19,287 @@
 
 /// region <Static>
 
+// Operands
+// :1 - 1 byte
+// :2 - 2 bytes
+// :1 and OF_RELJUMP - relative jump offset 1 byte
+// :1 and OF_DISP - index register (IX or IY) displacement, 1 byte
+
 /// region <No prefix opcodes>
 
 OpCode Z80Disassembler::noprefixOpcodes[256] =
 {
-    { OF_NONE,  4, 0, 0, "nop" },                           // 0x00
-    { OF_MWORD, 10, 0, 0, "ld bc,:2" },                     // 0x01
-    { OF_NONE,  7, 0, 0, "ld bc,(a)" },                     // 0x02
-    { OF_NONE,  6, 0, 0, "inc bc" },                        // 0x03
-    { OF_NONE,  4, 0, 0, "inc b" },                         // 0x04
-    { OF_NONE,  4, 0, 0, "dec b" },                         // 0x05
-    { OF_MBYTE,  7, 0, 0, "ld b,:1" },                      // 0x06
-    { OF_NONE,  4, 0, 0, "rlca" },                          // 0x07
-    { OF_NONE,  4, 0, 0, "ex af,af'" },                     // 0x08
-    { OF_NONE, 11, 0, 0, "add hl,bc" },                     // 0x09
-    { OF_NONE,  7, 0, 0, "ld a,(bc)" },                     // 0x0A
-    { OF_NONE,  6, 0, 0, "dec bc" },                        // 0x0B
-    { OF_NONE,  4, 0, 0, "inc c" },                         // 0x0C
-    { OF_NONE,  4, 0, 0, "dec c" },                         // 0x0D
-    { OF_MBYTE,  7, 0, 0, "ld c,:1" },                      // 0x0E
-    { OF_NONE,  4, 0, 0, "rrca" },                          // 0x0F
+    { OF_NONE,   4, 0, 0, "nop" },                                  // 0x00
+    { OF_MWORD, 10, 0, 0, "ld bc,:2" },                             // 0x01
+    { OF_NONE,   7, 0, 0, "ld bc,(a)" },                            // 0x02
+    { OF_NONE,   6, 0, 0, "inc bc" },                               // 0x03
+    { OF_NONE,   4, 0, 0, "inc b" },                                // 0x04
+    { OF_NONE,   4, 0, 0, "dec b" },                                // 0x05
+    { OF_MBYTE,  7, 0, 0, "ld b,:1" },                              // 0x06
+    { OF_NONE,   4, 0, 0, "rlca" },                                 // 0x07
+    { OF_NONE,   4, 0, 0, "ex af,af'" },                            // 0x08
+    { OF_NONE,  11, 0, 0, "add hl,bc" },                            // 0x09
+    { OF_NONE,   7, 0, 0, "ld a,(bc)" },                            // 0x0A
+    { OF_NONE,   6, 0, 0, "dec bc" },                               // 0x0B
+    { OF_NONE,   4, 0, 0, "inc c" },                                // 0x0C
+    { OF_NONE,   4, 0, 0, "dec c" },                                // 0x0D
+    { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
+    { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 13, 8, "djnz :1" },     // 0x10
-    { OF_MWORD, 10, 0, 0, "ld de,:2" },                     // 0x11
-    { OF_MWORD,  7, 0, 0, "ld (de),:2" },                   // 0x12
-    { OF_NONE,  6, 0, 0, "inc de" },                        // 0x13
-    { OF_NONE,  4, 0, 0, "inc d" },                         // 0x14
-    { OF_NONE,  4, 0, 0, "dec d" },                         // 0x15
-    { OF_MBYTE,  7, 0, 0, "ld d,:1" },                      // 0x16
-    { OF_NONE,  4, 0, 0, "rla" },                           // 0x17
-    { OF_RELJUMP,  12, 0, 0, "jr :1" },                     // 0x18
-    { OF_NONE,  11, 0, 0, "add hl,de" },                    // 0x19
-    { OF_NONE,   7, 0, 0, "ld a,(de)" },                    // 0x1A
-    { OF_NONE,   6, 0, 0, "dec de" },                       // 0x1B
-    { OF_NONE,   4, 0, 0, "inc e" },                        // 0x1C
-    { OF_NONE,   4, 0, 0, "dec e" },                        // 0x1D
-    { OF_MBYTE,   7, 0, 0, "ld e,:1" },                     // 0x1E
-    { OF_NONE,   4, 0, 0, "rra" },                          // 0x1F
+    { OF_CONDITION | OF_RELJUMP, 0, 13, 8, "djnz :1" },             // 0x10
+    { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
+    { OF_MWORD,  7, 0, 0, "ld (de),:2" },                           // 0x12
+    { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
+    { OF_NONE,   4, 0, 0, "inc d" },                                // 0x14
+    { OF_NONE,   4, 0, 0, "dec d" },                                // 0x15
+    { OF_MBYTE,  7, 0, 0, "ld d,:1" },                              // 0x16
+    { OF_NONE,   4, 0, 0, "rla" },                                  // 0x17
+    { OF_RELJUMP, 12, 0, 0, "jr :1" },                              // 0x18
+    { OF_NONE,  11, 0, 0, "add hl,de" },                            // 0x19
+    { OF_NONE,   7, 0, 0, "ld a,(de)" },                            // 0x1A
+    { OF_NONE,   6, 0, 0, "dec de" },                               // 0x1B
+    { OF_NONE,   4, 0, 0, "inc e" },                                // 0x1C
+    { OF_NONE,   4, 0, 0, "dec e" },                                // 0x1D
+    { OF_MBYTE,  7, 0, 0, "ld e,:1" },                              // 0x1E
+    { OF_NONE,   4, 0, 0, "rra" },                                  // 0x1F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr nz,:1" },    // 0x20
-    { OF_MWORD, 10, 0, 0, "ld hl,:2" },                     // 0x21
-    { OF_MWORD, 16, 0, 0, "ld (:2),hl" },                   // 0x22
-    { OF_NONE,  6, 0, 0, "inc hl" },                        // 0x23
-    { OF_NONE,  4, 0, 0, "inc h" },                         // 0x24
-    { OF_NONE,  4, 0, 0, "dec h" },                         // 0x25
-    { OF_MBYTE,  7, 0, 0, "ld l,:1" },                      // 0x26
-    { OF_NONE,  4, 0, 0, "daa" },                           // 0x27
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr z,:1" },     // 0x28
-    { OF_NONE, 11, 0, 0, "add hl,hl" },                     // 0x29
-    { OF_MWORD, 16, 0, 0, "ld hl,(:2)" },                   // 0x2A
-    { OF_NONE,  6, 0, 0, "dec hl" },                        // 0x2B
-    { OF_NONE,  4, 0, 0, "inc l" },                         // 0x2C
-    { OF_NONE,  4, 0, 0, "dec l" },                         // 0x2D
-    { OF_MBYTE,  7, 0, 0, "ld l,:1" },                      // 0x2E
-    { OF_NONE,  4, 0, 0, "cpl" },                           // 0x2F
+    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr nz,:1" },            // 0x20
+    { OF_MWORD, 10, 0, 0, "ld hl,:2" },                             // 0x21
+    { OF_MWORD, 16, 0, 0, "ld (:2),hl" },                           // 0x22
+    { OF_NONE,   6, 0, 0, "inc hl" },                               // 0x23
+    { OF_NONE,   4, 0, 0, "inc h" },                                // 0x24
+    { OF_NONE,   4, 0, 0, "dec h" },                                // 0x25
+    { OF_MBYTE,  7, 0, 0, "ld l,:1" },                              // 0x26
+    { OF_NONE,   4, 0, 0, "daa" },                                  // 0x27
+    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr z,:1" },             // 0x28
+    { OF_NONE,  11, 0, 0, "add hl,hl" },                            // 0x29
+    { OF_MWORD, 16, 0, 0, "ld hl,(:2)" },                           // 0x2A
+    { OF_NONE,   6, 0, 0, "dec hl" },                               // 0x2B
+    { OF_NONE,   4, 0, 0, "inc l" },                                // 0x2C
+    { OF_NONE,   4, 0, 0, "dec l" },                                // 0x2D
+    { OF_MBYTE,  7, 0, 0, "ld l,:1" },                              // 0x2E
+    { OF_NONE,   4, 0, 0, "cpl" },                                  // 0x2F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr nc,:1" },    // 0x30
-    { OF_MWORD, 10, 0, 0, "ld sp,:2" },                     // 0x31
-    { OF_MWORD, 13, 0, 0, "ld (:2),a" },                    // 0x32
-    { OF_NONE,  6, 0, 0, "inc sp" },                        // 0x33
-    { OF_NONE, 11, 0, 0, "inc (hl)" },                      // 0x34
-    { OF_NONE, 11, 0, 0, "dec (hl)" },                      // 0x35
-    { OF_MBYTE,  7, 0, 0, "ld (hl),:1" },                   // 0x36
-    { OF_NONE,  4, 0, 0, "scf" },                           // 0x37
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr c,:1" },     // 0x38
-    { OF_NONE, 11, 0, 0, "add hl,sp" },                     // 0x39
-    { OF_MWORD, 13, 0, 0, "ld a,(:2)" },                    // 0x3A
-    { OF_NONE,  6, 0, 0, "dec sp" },                        // 0x3B
-    { OF_NONE,  4, 0, 0, "inc a" },                         // 0x3C
-    { OF_NONE,  4, 0, 0, "dec a" },                         // 0x3D
-    { OF_MBYTE,  7, 0, 0, "ld a,:1" },                      // 0x3E
-    { OF_NONE,  4, 0, 0, "ccf" },                           // 0x3F
+    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr nc,:1" },            // 0x30
+    { OF_MWORD, 10, 0, 0, "ld sp,:2" },                             // 0x31
+    { OF_MWORD, 13, 0, 0, "ld (:2),a" },                            // 0x32
+    { OF_NONE,   6, 0, 0, "inc sp" },                               // 0x33
+    { OF_NONE,  11, 0, 0, "inc (hl)" },                             // 0x34
+    { OF_NONE,  11, 0, 0, "dec (hl)" },                             // 0x35
+    { OF_MBYTE,  7, 0, 0, "ld (hl),:1" },                           // 0x36
+    { OF_NONE,   4, 0, 0, "scf" },                                  // 0x37
+    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr c,:1" },             // 0x38
+    { OF_NONE,  11, 0, 0, "add hl,sp" },                            // 0x39
+    { OF_MWORD, 13, 0, 0, "ld a,(:2)" },                            // 0x3A
+    { OF_NONE,   6, 0, 0, "dec sp" },                               // 0x3B
+    { OF_NONE,   4, 0, 0, "inc a" },                                // 0x3C
+    { OF_NONE,   4, 0, 0, "dec a" },                                // 0x3D
+    { OF_MBYTE,  7, 0, 0, "ld a,:1" },                              // 0x3E
+    { OF_NONE,   4, 0, 0, "ccf" },                                  // 0x3F
 
-    { OF_NONE,  4, 0, 0, "ld b,b" },                        // 0x40
-    { OF_NONE,  4, 0, 0, "ld b,c" },                        // 0x41
-    { OF_NONE,  4, 0, 0, "ld b,d" },                        // 0x42
-    { OF_NONE,  4, 0, 0, "ld b,e" },                        // 0x43
-    { OF_NONE,  4, 0, 0, "ld b,h" },                        // 0x44
-    { OF_NONE,  4, 0, 0, "ld b,l" },                        // 0x45
-    { OF_NONE,  7, 0, 0, "ld b,(hl)" },                     // 0x46
-    { OF_NONE,  4, 0, 0, "ld b,a" },                        // 0x47
-    { OF_NONE,  4, 0, 0, "ld c,b" },                        // 0x48
-    { OF_NONE,  4, 0, 0, "ld c,c" },                        // 0x49
-    { OF_NONE,  4, 0, 0, "ld c,d" },                        // 0x4A
-    { OF_NONE,  4, 0, 0, "ld c,e" },                        // 0x4B
-    { OF_NONE,  4, 0, 0, "ld c,h" },                        // 0x4C
-    { OF_NONE,  4, 0, 0, "lc c,l" },                        // 0x4D
-    { OF_NONE,  7, 0, 0, "lc c,(hl)" },                     // 0x4E
-    { OF_NONE,  4, 0, 0, "ld c,a" },                        // 0x4F
+    { OF_NONE,   4, 0, 0, "ld b,b" },                               // 0x40
+    { OF_NONE,   4, 0, 0, "ld b,c" },                               // 0x41
+    { OF_NONE,   4, 0, 0, "ld b,d" },                               // 0x42
+    { OF_NONE,   4, 0, 0, "ld b,e" },                               // 0x43
+    { OF_NONE,   4, 0, 0, "ld b,h" },                               // 0x44
+    { OF_NONE,   4, 0, 0, "ld b,l" },                               // 0x45
+    { OF_NONE,   7, 0, 0, "ld b,(hl)" },                            // 0x46
+    { OF_NONE,   4, 0, 0, "ld b,a" },                               // 0x47
+    { OF_NONE,   4, 0, 0, "ld c,b" },                               // 0x48
+    { OF_NONE,   4, 0, 0, "ld c,c" },                               // 0x49
+    { OF_NONE,   4, 0, 0, "ld c,d" },                               // 0x4A
+    { OF_NONE,   4, 0, 0, "ld c,e" },                               // 0x4B
+    { OF_NONE,   4, 0, 0, "ld c,h" },                               // 0x4C
+    { OF_NONE,   4, 0, 0, "lc c,l" },                               // 0x4D
+    { OF_NONE,   7, 0, 0, "lc c,(hl)" },                            // 0x4E
+    { OF_NONE,   4, 0, 0, "ld c,a" },                               // 0x4F
 
-    { OF_NONE,  4, 0, 0, "ld d,b" },                        // 0x50
-    { OF_NONE,  4, 0, 0, "ld d,c" },                        // 0x51
-    { OF_NONE,  4, 0, 0, "ld d,d" },                        // 0x52
-    { OF_NONE,  4, 0, 0, "ld d,e" },                        // 0x53
-    { OF_NONE,  4, 0, 0, "ld d,h" },                        // 0x54
-    { OF_NONE,  4, 0, 0, "ld d,l" },                        // 0x55
-    { OF_NONE,  7, 0, 0, "ld d,(hl)" },                     // 0x56
-    { OF_NONE,  4, 0, 0, "ld d,a" },                        // 0x57
-    { OF_NONE,  4, 0, 0, "ld e,b" },                        // 0x58
-    { OF_NONE,  4, 0, 0, "ld e,c" },                        // 0x59
-    { OF_NONE,  4, 0, 0, "ld e,d" },                        // 0x5A
-    { OF_NONE,  4, 0, 0, "ld e,e" },                        // 0x5B
-    { OF_NONE,  4, 0, 0, "ld e,h" },                        // 0x5C
-    { OF_NONE,  4, 0, 0, "ld e,l" },                        // 0x5D
-    { OF_NONE,  7, 0, 0, "ld e,(hl)" },                     // 0x5E
-    { OF_NONE,  4, 0, 0, "ld e,a" },                        // 0x5F
+    { OF_NONE,  4, 0, 0, "ld d,b" },                                // 0x50
+    { OF_NONE,  4, 0, 0, "ld d,c" },                                // 0x51
+    { OF_NONE,  4, 0, 0, "ld d,d" },                                // 0x52
+    { OF_NONE,  4, 0, 0, "ld d,e" },                                // 0x53
+    { OF_NONE,  4, 0, 0, "ld d,h" },                                // 0x54
+    { OF_NONE,  4, 0, 0, "ld d,l" },                                // 0x55
+    { OF_NONE,  7, 0, 0, "ld d,(hl)" },                             // 0x56
+    { OF_NONE,  4, 0, 0, "ld d,a" },                                // 0x57
+    { OF_NONE,  4, 0, 0, "ld e,b" },                                // 0x58
+    { OF_NONE,  4, 0, 0, "ld e,c" },                                // 0x59
+    { OF_NONE,  4, 0, 0, "ld e,d" },                                // 0x5A
+    { OF_NONE,  4, 0, 0, "ld e,e" },                                // 0x5B
+    { OF_NONE,  4, 0, 0, "ld e,h" },                                // 0x5C
+    { OF_NONE,  4, 0, 0, "ld e,l" },                                // 0x5D
+    { OF_NONE,  7, 0, 0, "ld e,(hl)" },                             // 0x5E
+    { OF_NONE,  4, 0, 0, "ld e,a" },                                // 0x5F
 
-    { OF_NONE, 4, 0, 0, "ld h,b" },                         // 0x60
-    { OF_NONE, 4, 0, 0, "ld h,c" },                         // 0x61
-    { OF_NONE, 4, 0, 0, "ld h,d" },                         // 0x62
-    { OF_NONE, 4, 0, 0, "ld h,e" },                         // 0x63
-    { OF_NONE, 4, 0, 0, "ld h,h" },                         // 0x64
-    { OF_NONE, 4, 0, 0, "ld h,l" },                         // 0x65
-    { OF_NONE, 7, 0, 0, "ld h,(hl)" },                      // 0x66
-    { OF_NONE, 4, 0, 0, "ld h,a" },                         // 0x67
-    { OF_NONE, 4, 0, 0, "ld l,b" },                         // 0x68
-    { OF_NONE, 4, 0, 0, "ld l,c" },                         // 0x69
-    { OF_NONE, 4, 0, 0, "ld l,d" },                         // 0x6A
-    { OF_NONE, 4, 0, 0, "ld l,e" },                         // 0x6B
-    { OF_NONE, 4, 0, 0, "ld l,h" },                         // 0x6C
-    { OF_NONE, 4, 0, 0, "ld l,l" },                         // 0x6D
-    { OF_NONE, 7, 0, 0, "ld l,(hl)" },                      // 0x6E
-    { OF_NONE, 4, 0, 0, "ld l,a" },                         // 0x6F
+    { OF_NONE, 4, 0, 0, "ld h,b" },                                 // 0x60
+    { OF_NONE, 4, 0, 0, "ld h,c" },                                 // 0x61
+    { OF_NONE, 4, 0, 0, "ld h,d" },                                 // 0x62
+    { OF_NONE, 4, 0, 0, "ld h,e" },                                 // 0x63
+    { OF_NONE, 4, 0, 0, "ld h,h" },                                 // 0x64
+    { OF_NONE, 4, 0, 0, "ld h,l" },                                 // 0x65
+    { OF_NONE, 7, 0, 0, "ld h,(hl)" },                              // 0x66
+    { OF_NONE, 4, 0, 0, "ld h,a" },                                 // 0x67
+    { OF_NONE, 4, 0, 0, "ld l,b" },                                 // 0x68
+    { OF_NONE, 4, 0, 0, "ld l,c" },                                 // 0x69
+    { OF_NONE, 4, 0, 0, "ld l,d" },                                 // 0x6A
+    { OF_NONE, 4, 0, 0, "ld l,e" },                                 // 0x6B
+    { OF_NONE, 4, 0, 0, "ld l,h" },                                 // 0x6C
+    { OF_NONE, 4, 0, 0, "ld l,l" },                                 // 0x6D
+    { OF_NONE, 7, 0, 0, "ld l,(hl)" },                              // 0x6E
+    { OF_NONE, 4, 0, 0, "ld l,a" },                                 // 0x6F
 
-    { OF_NONE, 7, 0, 0, "ld (hl),b" },                      // 0x70
-    { OF_NONE, 7, 0, 0, "ld (hl),c" },                      // 0x71
-    { OF_NONE, 7, 0, 0, "ld (hl),d" },                      // 0x72
-    { OF_NONE, 7, 0, 0, "ld (hl),e" },                      // 0x73
-    { OF_NONE, 7, 0, 0, "ld (hl),h" },                      // 0x74
-    { OF_NONE, 7, 0, 0, "ld (hl),l" },                      // 0x75
-    { OF_NONE, 4, 0, 0, "halt" },                           // 0x76
-    { OF_NONE, 7, 0, 0, "ld (hl),a" },                      // 0x77
-    { OF_NONE, 4, 0, 0, "ld a,b" },                         // 0x78
-    { OF_NONE, 4, 0, 0, "ld a,c" },                         // 0x79
-    { OF_NONE, 4, 0, 0, "ld a,d" },                         // 0x7A
-    { OF_NONE, 4, 0, 0, "ld a,e" },                         // 0x7B
-    { OF_NONE, 4, 0, 0, "ld a,h" },                         // 0x7C
-    { OF_NONE, 4, 0, 0, "ld a,l" },                         // 0x7D
-    { OF_NONE, 7, 0, 0, "ld a,(hl)" },                      // 0x7E
-    { OF_NONE, 4, 0, 0, "ld a,a" },                         // 0x7F
+    { OF_NONE, 7, 0, 0, "ld (hl),b" },                              // 0x70
+    { OF_NONE, 7, 0, 0, "ld (hl),c" },                              // 0x71
+    { OF_NONE, 7, 0, 0, "ld (hl),d" },                              // 0x72
+    { OF_NONE, 7, 0, 0, "ld (hl),e" },                              // 0x73
+    { OF_NONE, 7, 0, 0, "ld (hl),h" },                              // 0x74
+    { OF_NONE, 7, 0, 0, "ld (hl),l" },                              // 0x75
+    { OF_NONE, 4, 0, 0, "halt" },                                   // 0x76
+    { OF_NONE, 7, 0, 0, "ld (hl),a" },                              // 0x77
+    { OF_NONE, 4, 0, 0, "ld a,b" },                                 // 0x78
+    { OF_NONE, 4, 0, 0, "ld a,c" },                                 // 0x79
+    { OF_NONE, 4, 0, 0, "ld a,d" },                                 // 0x7A
+    { OF_NONE, 4, 0, 0, "ld a,e" },                                 // 0x7B
+    { OF_NONE, 4, 0, 0, "ld a,h" },                                 // 0x7C
+    { OF_NONE, 4, 0, 0, "ld a,l" },                                 // 0x7D
+    { OF_NONE, 7, 0, 0, "ld a,(hl)" },                              // 0x7E
+    { OF_NONE, 4, 0, 0, "ld a,a" },                                 // 0x7F
 
-    { OF_NONE, 4, 0, 0, "add a,b" },                        // 0x80
-    { OF_NONE, 4, 0, 0, "add a,c" },                        // 0x81
-    { OF_NONE, 4, 0, 0, "add a,d" },                        // 0x82
-    { OF_NONE, 4, 0, 0, "add a,e" },                        // 0x83
-    { OF_NONE, 4, 0, 0, "add a,h" },                        // 0x84
-    { OF_NONE, 4, 0, 0, "add a,l" },                        // 0x85
-    { OF_NONE, 7, 0, 0, "add a,(hl)" },                     // 0x86
-    { OF_NONE, 4, 0, 0, "add a,a" },                        // 0x87
-    { OF_NONE, 4, 0, 0, "adc a,b" },                        // 0x88
-    { OF_NONE, 4, 0, 0, "adc a,c" },                        // 0x89
-    { OF_NONE, 4, 0, 0, "adc a,d" },                        // 0x8A
-    { OF_NONE, 4, 0, 0, "adc a,e" },                        // 0x8B
-    { OF_NONE, 4, 0, 0, "adc a,h" },                        // 0x8C
-    { OF_NONE, 4, 0, 0, "adc a,l" },                        // 0x8D
-    { OF_NONE, 7, 0, 0, "adc a,(hl)" },                     // 0x8E
-    { OF_NONE, 4, 0, 0, "adc a,a" },                        // 0x8F
+    { OF_NONE, 4, 0, 0, "add a,b" },                                // 0x80
+    { OF_NONE, 4, 0, 0, "add a,c" },                                // 0x81
+    { OF_NONE, 4, 0, 0, "add a,d" },                                // 0x82
+    { OF_NONE, 4, 0, 0, "add a,e" },                                // 0x83
+    { OF_NONE, 4, 0, 0, "add a,h" },                                // 0x84
+    { OF_NONE, 4, 0, 0, "add a,l" },                                // 0x85
+    { OF_NONE, 7, 0, 0, "add a,(hl)" },                             // 0x86
+    { OF_NONE, 4, 0, 0, "add a,a" },                                // 0x87
+    { OF_NONE, 4, 0, 0, "adc a,b" },                                // 0x88
+    { OF_NONE, 4, 0, 0, "adc a,c" },                                // 0x89
+    { OF_NONE, 4, 0, 0, "adc a,d" },                                // 0x8A
+    { OF_NONE, 4, 0, 0, "adc a,e" },                                // 0x8B
+    { OF_NONE, 4, 0, 0, "adc a,h" },                                // 0x8C
+    { OF_NONE, 4, 0, 0, "adc a,l" },                                // 0x8D
+    { OF_NONE, 7, 0, 0, "adc a,(hl)" },                             // 0x8E
+    { OF_NONE, 4, 0, 0, "adc a,a" },                                // 0x8F
 
-    { OF_NONE, 4, 0, 0, "sub b" },                          // 0x90
-    { OF_NONE, 4, 0, 0, "sub c" },                          // 0x91
-    { OF_NONE, 4, 0, 0, "sub d" },                          // 0x92
-    { OF_NONE, 4, 0, 0, "sub e" },                          // 0x93
-    { OF_NONE, 4, 0, 0, "sub h" },                          // 0x94
-    { OF_NONE, 4, 0, 0, "sub l" },                          // 0x95
-    { OF_NONE, 7, 0, 0, "sub (hl)" },                       // 0x96
-    { OF_NONE, 4, 0, 0, "sub a" },                          // 0x97
-    { OF_NONE, 4, 0, 0, "sbc a,b" },                        // 0x98
-    { OF_NONE, 4, 0, 0, "sbc a,c" },                        // 0x99
-    { OF_NONE, 4, 0, 0, "sbc a,d" },                        // 0x9A
-    { OF_NONE, 4, 0, 0, "sbc a,e" },                        // 0x9B
-    { OF_NONE, 4, 0, 0, "sbc a,h" },                        // 0x9C
-    { OF_NONE, 4, 0, 0, "sbc a,l" },                        // 0x9D
-    { OF_NONE, 7, 0, 0, "sbc (hl)" },                       // 0x9E
-    { OF_NONE, 4, 0, 0, "sbc a,a" },                        // 0x9F
+    { OF_NONE, 4, 0, 0, "sub b" },                                  // 0x90
+    { OF_NONE, 4, 0, 0, "sub c" },                                  // 0x91
+    { OF_NONE, 4, 0, 0, "sub d" },                                  // 0x92
+    { OF_NONE, 4, 0, 0, "sub e" },                                  // 0x93
+    { OF_NONE, 4, 0, 0, "sub h" },                                  // 0x94
+    { OF_NONE, 4, 0, 0, "sub l" },                                  // 0x95
+    { OF_NONE, 7, 0, 0, "sub (hl)" },                               // 0x96
+    { OF_NONE, 4, 0, 0, "sub a" },                                  // 0x97
+    { OF_NONE, 4, 0, 0, "sbc a,b" },                                // 0x98
+    { OF_NONE, 4, 0, 0, "sbc a,c" },                                // 0x99
+    { OF_NONE, 4, 0, 0, "sbc a,d" },                                // 0x9A
+    { OF_NONE, 4, 0, 0, "sbc a,e" },                                // 0x9B
+    { OF_NONE, 4, 0, 0, "sbc a,h" },                                // 0x9C
+    { OF_NONE, 4, 0, 0, "sbc a,l" },                                // 0x9D
+    { OF_NONE, 7, 0, 0, "sbc (hl)" },                               // 0x9E
+    { OF_NONE, 4, 0, 0, "sbc a,a" },                                // 0x9F
 
-    { OF_NONE, 4, 0, 0, "and b" },                          // 0xA0
-    { OF_NONE, 4, 0, 0, "and c" },                          // 0xA1
-    { OF_NONE, 4, 0, 0, "and d" },                          // 0xA2
-    { OF_NONE, 4, 0, 0, "and e" },                          // 0xA3
-    { OF_NONE, 4, 0, 0, "and h" },                          // 0xA4
-    { OF_NONE, 4, 0, 0, "and l" },                          // 0xA5
-    { OF_NONE, 7, 0, 0, "and (hl)" },                       // 0xA6
-    { OF_NONE, 4, 0, 0, "and a" },                          // 0xA7
-    { OF_NONE, 4, 0, 0, "xor b" },                          // 0xA8
-    { OF_NONE, 4, 0, 0, "xor c" },                          // 0xA9
-    { OF_NONE, 4, 0, 0, "xor d" },                          // 0xAA
-    { OF_NONE, 4, 0, 0, "xor e" },                          // 0xAB
-    { OF_NONE, 4, 0, 0, "xor h" },                          // 0xAC
-    { OF_NONE, 4, 0, 0, "xor l" },                          // 0xAD
-    { OF_NONE, 7, 0, 0, "xor (hl)" },                       // 0xAE
-    { OF_NONE, 4, 0, 0, "xor a" },                          // 0xAF
+    { OF_NONE, 4, 0, 0, "and b" },                                  // 0xA0
+    { OF_NONE, 4, 0, 0, "and c" },                                  // 0xA1
+    { OF_NONE, 4, 0, 0, "and d" },                                  // 0xA2
+    { OF_NONE, 4, 0, 0, "and e" },                                  // 0xA3
+    { OF_NONE, 4, 0, 0, "and h" },                                  // 0xA4
+    { OF_NONE, 4, 0, 0, "and l" },                                  // 0xA5
+    { OF_NONE, 7, 0, 0, "and (hl)" },                               // 0xA6
+    { OF_NONE, 4, 0, 0, "and a" },                                  // 0xA7
+    { OF_NONE, 4, 0, 0, "xor b" },                                  // 0xA8
+    { OF_NONE, 4, 0, 0, "xor c" },                                  // 0xA9
+    { OF_NONE, 4, 0, 0, "xor d" },                                  // 0xAA
+    { OF_NONE, 4, 0, 0, "xor e" },                                  // 0xAB
+    { OF_NONE, 4, 0, 0, "xor h" },                                  // 0xAC
+    { OF_NONE, 4, 0, 0, "xor l" },                                  // 0xAD
+    { OF_NONE, 7, 0, 0, "xor (hl)" },                               // 0xAE
+    { OF_NONE, 4, 0, 0, "xor a" },                                  // 0xAF
 
-    { OF_NONE, 4, 0, 0, "or b" },                           // 0xB0
-    { OF_NONE, 4, 0, 0, "or c" },                           // 0xB1
-    { OF_NONE, 4, 0, 0, "or d" },                           // 0xB2
-    { OF_NONE, 4, 0, 0, "or e" },                           // 0xB3
-    { OF_NONE, 4, 0, 0, "or h" },                           // 0xB4
-    { OF_NONE, 4, 0, 0, "or l" },                           // 0xB5
-    { OF_NONE, 7, 0, 0, "or (hl)" },                        // 0xB6
-    { OF_NONE, 4, 0, 0, "or a" },                           // 0xB7
-    { OF_NONE, 4, 0, 0, "cp b" },                           // 0xB8
-    { OF_NONE, 4, 0, 0, "cp c" },                           // 0xB9
-    { OF_NONE, 4, 0, 0, "cp d" },                           // 0xBA
-    { OF_NONE, 4, 0, 0, "cp e" },                           // 0xBB
-    { OF_NONE, 4, 0, 0, "cp h" },                           // 0xBC
-    { OF_NONE, 4, 0, 0, "cp l" },                           // 0xBD
-    { OF_NONE, 7, 0, 0, "cp (hl)" },                        // 0xBE
-    { OF_NONE, 4, 0, 0, "cp a" },                           // 0xBF
+    { OF_NONE, 4, 0, 0, "or b" },                                   // 0xB0
+    { OF_NONE, 4, 0, 0, "or c" },                                   // 0xB1
+    { OF_NONE, 4, 0, 0, "or d" },                                   // 0xB2
+    { OF_NONE, 4, 0, 0, "or e" },                                   // 0xB3
+    { OF_NONE, 4, 0, 0, "or h" },                                   // 0xB4
+    { OF_NONE, 4, 0, 0, "or l" },                                   // 0xB5
+    { OF_NONE, 7, 0, 0, "or (hl)" },                                // 0xB6
+    { OF_NONE, 4, 0, 0, "or a" },                                   // 0xB7
+    { OF_NONE, 4, 0, 0, "cp b" },                                   // 0xB8
+    { OF_NONE, 4, 0, 0, "cp c" },                                   // 0xB9
+    { OF_NONE, 4, 0, 0, "cp d" },                                   // 0xBA
+    { OF_NONE, 4, 0, 0, "cp e" },                                   // 0xBB
+    { OF_NONE, 4, 0, 0, "cp h" },                                   // 0xBC
+    { OF_NONE, 4, 0, 0, "cp l" },                                   // 0xBD
+{ OF_NONE, 7, 0, 0, "cp (hl)" },                                    // 0xBE
+    { OF_NONE, 4, 0, 0, "cp a" },                                   // 0xBF
 
-    { OF_CONDITION,  0, 11, 5, "ret nz" },                  // 0xC0
-    { OF_NONE, 10, 0, 0, "pop bc" },                        // 0xC1
-    { OF_CONDITION | OF_MWORD,  0, 10, 10, "jp nz,:2" },    // 0xC2
-    { OF_MWORD, 10, 0, 0, "jp.:2" },                        // 0xC3
-    { OF_CONDITION | OF_MWORD, 0, 17, 10, "call nz,:2" },   // 0xC4
-    { OF_NONE, 11, 0, 0, "push bc" },                       // 0xC5
-    { OF_MBYTE,  7, 0, 0, "add a,:1" },                     // 0xC6
-    { OF_NONE, 11, 0, 0, "rst #00" },                       // 0xC7
-    { OF_CONDITION, 0, 11, 5, "ret z" },                    // 0xC8
-    { OF_NONE, 10, 0, 0, "ret" },                           // 0xC9
-    { OF_CONDITION | OF_MWORD, 0, 10, 10, "jp z,:2" },      // 0xCA
-    { OF_PREFIX,  4, 0, 0, "#CB" },                         // 0xCB - Prefix
-    { OF_CONDITION | OF_MWORD, 0, 17, 10, "call z,:2" },    // 0xCC
-    { OF_MWORD, 17, 0, 0, "call :2" },                      // 0xCD
-    { OF_MBYTE,  7, 0, 0, "adc a,:1" },                     // 0xCE
-    { OF_NONE, 11, 0, 0, "rst #08" },                       // 0xCF
+    { OF_CONDITION | OF_RET,  0, 11, 5, "ret nz" },                 // 0xC0
+    { OF_NONE, 10, 0, 0, "pop bc" },                                // 0xC1
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp nz,:2" },   // 0xC2
+    { OF_MWORD, 10, 0, 0, "jp.:2" },                                // 0xC3
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call nz,:2" }, // 0xC4
+    { OF_NONE, 11, 0, 0, "push bc" },                               // 0xC5
+    { OF_MBYTE,  7, 0, 0, "add a,:1" },                             // 0xC6
+    { OF_RST, 11, 0, 0, "rst #00" },                                // 0xC7
+    { OF_CONDITION | OF_RET, 0, 11, 5, "ret z" },                   // 0xC8
+    { OF_NONE | OF_RET, 10, 0, 0, "ret" },                          // 0xC9
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp z,:2" },    // 0xCA
+    { OF_PREFIX,  4, 0, 0, "#CB" },                                 // 0xCB - Prefix
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call z,:2" },  // 0xCC
+    { OF_MWORD | OF_JUMP, 17, 0, 0, "call :2" },                    // 0xCD
+    { OF_MBYTE,  7, 0, 0, "adc a,:1" },                             // 0xCE
+    { OF_RST, 11, 0, 0, "rst #08" },                                // 0xCF
 
-    { OF_CONDITION,  0, 11, 5, "ret nc" },                  // 0xD0
-    { OF_NONE, 10, 0, 0, "pop de" },                        // 0xD1
-    { OF_CONDITION |  OF_MWORD,  0, 10, 10, "jp nc,:2" },   // 0xD2
-    { OF_MBYTE, 11, 0, 0, "out (:1),a" },                   // 0xD3
-    { OF_CONDITION |  OF_MWORD, 0, 17, 10, "call nc,:2" },  // 0xD4
-    { OF_NONE, 11, 0, 0, "push de" },                       // 0xD5
-    { OF_MBYTE,  7, 0, 0, "sub :1" },                       // 0xD6
-    { OF_NONE, 11, 0, 0, "rst #10" },                       // 0xD7
-    { OF_CONDITION,  0, 11, 5, "ret c" },                   // 0xD8
-    { OF_NONE,  4, 0, 0, "exx" },                           // 0xD9
-    { OF_CONDITION | OF_MWORD,  0, 10, 10, "jp c,:2" },     // 0xDA
-    { OF_MBYTE, 11, 0, 0, "in a,(:1)" },                    // 0xDB
-    { OF_CONDITION | OF_MWORD, 0, 17, 10, "call c,:2" },    // 0xDC
-    { OF_PREFIX, 4, 0, 0, "#DD" },                          // 0xDD - Prefix
-    { OF_MBYTE,  7, 0, 0, "sbc a,:1" },                     // 0xDE
-    { OF_NONE, 11, 0, 0, "rst #18" },                       // 0xDF
+    { OF_CONDITION | OF_RET,  0, 11, 5, "ret nc" },                 // 0xD0
+    { OF_NONE, 10, 0, 0, "pop de" },                                // 0xD1
+    { OF_CONDITION | OF_MWORD | OF_JUMP,  0, 10, 10, "jp nc,:2" },  // 0xD2
+    { OF_MBYTE, 11, 0, 0, "out (:1),a" },                           // 0xD3
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call nc,:2" }, // 0xD4
+    { OF_NONE, 11, 0, 0, "push de" },                               // 0xD5
+    { OF_MBYTE,  7, 0, 0, "sub :1" },                               // 0xD6
+    { OF_NONE | OF_RST, 11, 0, 0, "rst #10" },                      // 0xD7
+    { OF_CONDITION | OF_RET,  0, 11, 5, "ret c" },                  // 0xD8
+    { OF_NONE,  4, 0, 0, "exx" },                                   // 0xD9
+    { OF_CONDITION | OF_MWORD | OF_JUMP,  0, 10, 10, "jp c,:2" },   // 0xDA
+    { OF_MBYTE, 11, 0, 0, "in a,(:1)" },                            // 0xDB
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call c,:2" },  // 0xDC
+    { OF_PREFIX, 4, 0, 0, "#DD" },                                  // 0xDD - Prefix
+    { OF_MBYTE,  7, 0, 0, "sbc a,:1" },                             // 0xDE
+    { OF_RST, 11, 0, 0, "rst #18" },                                // 0xDF
 
-    { OF_CONDITION,  0, 11, 5, "ret po" },                  // 0xE0
-    { OF_NONE, 10, 0, 0, "pop hl" },                        // 0xE1
-    { OF_CONDITION | OF_MWORD,  0, 10, 10, "jp po,:2" },    // 0xE2
-    { OF_NONE, 19, 0, 0, "ex (sp),hl" },                    // 0xE3
-    { OF_CONDITION | OF_MWORD,  0, 17, 10, "call po,:2" },  // 0xE4
-    { OF_NONE, 11, 0, 0, "push hl" },                       // 0xE5
-    { OF_MBYTE,  7, 0, 0, "and :1" },                       // 0xE6
-    { OF_NONE, 11, 0, 0, "rst #20" },                       // 0xE7
-    { OF_CONDITION,  0, 11, 5, "ret pe" },                  // 0xE8
-    { OF_NONE, 4, 0, 0, "jp (hl)" },                        // 0xE9
-    { OF_CONDITION | OF_MWORD,  0, 10, 10, "jp pe,:2" },    // 0xEA
-    { OF_NONE, 4, 0, 0, "ex de,hl" },                       // 0xEB
-    { OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },   // 0xEC
-    { OF_PREFIX, 4, 0, 0, "#ED" },                          // 0xED - Prefix
-    { OF_MBYTE,  7, 0, 0, "xor :1" },                       // 0xEE
-    { OF_NONE, 11, 0, 0, "rst #28" },                       // 0xEF
+    { OF_CONDITION | OF_RET,  0, 11, 5, "ret po" },                 // 0xE0
+    { OF_NONE, 10, 0, 0, "pop hl" },                                // 0xE1
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp po,:2" },   // 0xE2
+    { OF_NONE, 19, 0, 0, "ex (sp),hl" },                            // 0xE3
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call po,:2" }, // 0xE4
+    { OF_NONE, 11, 0, 0, "push hl" },                               // 0xE5
+    { OF_MBYTE,  7, 0, 0, "and :1" },                               // 0xE6
+    { OF_RST, 11, 0, 0, "rst #20" },                                // 0xE7
+    { OF_CONDITION | OF_RET,  0, 11, 5, "ret pe" },                 // 0xE8
+    { OF_JUMP, 4, 0, 0, "jp (hl)" },                                // 0xE9
+    { OF_CONDITION | OF_MWORD | OF_JUMP,  0, 10, 10, "jp pe,:2" },  // 0xEA
+    { OF_NONE, 4, 0, 0, "ex de,hl" },                               // 0xEB
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call pe,:2" }, // 0xEC
+    { OF_PREFIX, 4, 0, 0, "#ED" },                                  // 0xED - Prefix
+    { OF_MBYTE,  7, 0, 0, "xor :1" },                               // 0xEE
+    { OF_RST, 11, 0, 0, "rst #28" },                                // 0xEF
 
-    { OF_CONDITION,  0, 11, 5, "ret p" },                   // 0xF0
-    { OF_NONE, 10, 0, 0, "pop af" },                        // 0xF1
-    { OF_CONDITION | OF_MWORD,  0, 10, 10, "jp p,:2" },     // 0xF2
-    { OF_NONE,  4, 0, 0, "di" },                            // 0xF3
-    { OF_CONDITION | OF_MWORD,  0, 17, 10, "call p,:2" },   // 0xF4
-    { OF_NONE, 11, 0, 0, "push af" },                       // 0xF5
-    { OF_MBYTE,  7, 0, 0, "or :1" },                        // 0xF6
-    { OF_NONE, 11, 0, 0, "rst #30" },                       // 0xF7
-    { OF_CONDITION,  0, 11, 5, "ret m" },                   // 0xF8
-    { OF_NONE,  6, 0, 0, "ld sp,hl" },                      // 0xF9
-    { OF_CONDITION | OF_MWORD, 10, 0, 0, "jp m,:2" } ,      // 0xFA
-    { OF_NONE,  4, 0, 0, "ei" },                            // 0xFB
-    { OF_MWORD,  0, 17, 10, "call m,:2" },                  // 0xFC
-    { OF_PREFIX,  4, 0, 0, "#FD" },                         // 0xFD - Prefix
-    { OF_MBYTE,  7, 0, 0, "cp :1" },                        // 0xFE
-    { OF_NONE, 11, 0, 0, "rst #38" },                       // 0xFF
+    { OF_CONDITION | OF_RET, 0, 11, 5, "ret p" },                   // 0xF0
+    { OF_NONE, 10, 0, 0, "pop af" },                                // 0xF1
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp p,:2" },    // 0xF2
+    { OF_NONE,  4, 0, 0, "di" },                                    // 0xF3
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call p,:2" },  // 0xF4
+    { OF_NONE, 11, 0, 0, "push af" },                               // 0xF5
+    { OF_MBYTE,  7, 0, 0, "or :1" },                                // 0xF6
+    { OF_RST, 11, 0, 0, "rst #30" },                                // 0xF7
+    { OF_CONDITION | OF_RET,  0, 11, 5, "ret m" },                  // 0xF8
+    { OF_NONE,  6, 0, 0, "ld sp,hl" },                              // 0xF9
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 10, 0, 0, "jp m,:2" },     // 0xFA
+    { OF_NONE,  4, 0, 0, "ei" },                                    // 0xFB
+    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call m,:2" },  // 0xFC
+    { OF_PREFIX,  4, 0, 0, "#FD" },                                 // 0xFD - Prefix
+    { OF_MBYTE,  7, 0, 0, "cp :1" },                                // 0xFE
+    { OF_RST, 11, 0, 0, "rst #38" },                                // 0xFF
 };
 
 /// endregion </No prefix opcodes>
@@ -1993,6 +2001,9 @@ std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, siz
     if (decoded.isValid)
     {
         result = decoded.mnemonic;
+
+        if (commandLen)
+            *commandLen = decoded.fullCommandLen;
     }
 
     return result;
@@ -2000,7 +2011,7 @@ std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, siz
 
 /// region <Helper methods>
 
-DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len)
+DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers, Memory* memory)
 {
     DecodedInstruction result;
 
@@ -2036,7 +2047,9 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         opcode = getOpcode(prefix, fetchByte);
         bool isPrefix = opcode.flags & OF_PREFIX;
         bool isDisplacement = opcode.flags & OF_DISP;
+        bool isJump = opcode.flags & OF_JUMP;
         bool isRelativeJump = opcode.flags & OF_RELJUMP;
+        bool isReturn = opcode.flags & OF_RET;
         bool isByteArgument = opcode.flags & OF_MBYTE;
         bool isWordArgument = opcode.flags & OF_MWORD;
 
@@ -2099,7 +2112,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                     // DD CB <dd> E1 - set 4,(ix+dd),c
                     operandsLen = 1;                    // DDCB and FDCB prefixed instructions are always have just single displacement
                     displacement = fetchByte;
-                    result.hasDisplacement = true;
+                    result.hasDisplacement = isDisplacement;
                     result.displacement = displacement;
                     result.instructionBytes.push_back(displacement);
                     result.operandBytes.push_back(displacement);
@@ -2124,6 +2137,64 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     result.fullCommandLen = result.instructionBytes.size();
     result.operandsLen = operandsLen;
     result.opcode = opcode;
+
+    // Populate runtime information if available
+    if (registers != nullptr)
+    {
+        bool isJump = result.opcode.flags & OF_JUMP;
+        bool isRelativeJump = result.opcode.flags & OF_RELJUMP;
+        bool isDisplacement = result.opcode.flags & OF_DISP;
+        bool isReturn = result.opcode.flags * OF_RET;
+
+        // Populate information for jumps / calls (trivial)
+        if (isJump)
+        {
+            result.jumpAddr = result.wordOperand;
+        }
+        // Populate runtime information for relative jumps (JR e; JR z, xx; JR c, xx; JR nz, xx; JR c, xx)
+        else if (isRelativeJump)
+        {
+            // Offset is signed 8-bit integer [-128..+127]
+            result.relJumpOffset = static_cast<int8_t>(result.byteOperand);
+            result.instructionAddr = registers->pc;
+            result.relJumpAddr = result.instructionAddr + result.relJumpOffset;
+        }
+        // Populate runtime information for displacement operation
+        else if (isDisplacement)
+        {
+            // Displacement is signed 8-bit integer [-128..+127]
+            result.displacement = static_cast<int8_t>(result.byteOperand);
+
+            uint16_t baseAddr = 0x0000;
+
+            // All commands with DD and DDCB prefixes are IX-indexed operations
+            if (result.prefix == 0x00DD || result.prefix == 0xDDCB)
+            {
+                baseAddr = registers->ix;
+            }
+
+            // All commands with FD and FDCB prefixes are IX-indexed operations
+            if (result.prefix == 0x00FD || result.prefix == 0xFDCB)
+            {
+                baseAddr = registers->iy;
+            }
+
+            result.displacementAddr = baseAddr + result.displacement;
+        }
+        // Populate runtime information for returns - requires access to stack memory
+        else if (isReturn)
+        {
+            if (memory != nullptr && registers != nullptr)
+            {
+                uint16_t sp = registers->sp;
+                uint16_t hiRet = memory->DirectReadFromZ80Memory(sp--);
+                uint8_t loRet = memory->DirectReadFromZ80Memory(sp);
+                result.returnAddr = (hiRet << 8) | loRet;
+            }
+        }
+    }
+
+    // Format text representation of mnemonic
     std::string mnemonic = formatMnemonic(result);
 
     // Populate all decoded instruction fields
@@ -2159,7 +2230,13 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
         case 0xFDCB:
             opcode = fdcbOpcodes[fetchByte];
         default:
-            throw logic_error("Unknown prefix");
+#ifdef _DEBUG
+            {
+                std::string prefixValue = StringHelper::FormatBinary(prefix);
+                std::string message = StringHelper::Format("Unknown prefix: 0x%s", prefixValue.c_str());
+                throw logic_error(message);
+            }
+#endif
             break;
     }
 
@@ -2263,7 +2340,7 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
             }
         }
 
-        result = formatOperandString(mnemonic, values);
+        result = formatOperandString(decoded, mnemonic, values);
     }
 
     /// endregion </Operands exist>
@@ -2338,7 +2415,7 @@ std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic, uint8
     return result;
 }
 
-std::string Z80Disassembler::formatOperandString(std::string& mnemonic, std::vector<uint16_t>& values)
+std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic, std::vector<uint16_t>& values)
 {
     static const char* HEX_PREFIX = "#";
 
@@ -2395,7 +2472,10 @@ std::string Z80Disassembler::formatOperandString(std::string& mnemonic, std::vec
             switch (operandSize)
             {
                 case 1:
-                    operand = StringHelper::ToHexWithPrefix(static_cast<uint8_t>(values[i]), HEX_PREFIX);
+                    if (decoded.hasRelativeJump)
+                        operand = StringHelper::ToHexWithPrefix(static_cast<int8_t>(values[i]), HEX_PREFIX);
+                    else
+                        operand = StringHelper::ToHexWithPrefix(static_cast<uint8_t>(values[i]), HEX_PREFIX);
                     break;
                 case 2:
                     operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
