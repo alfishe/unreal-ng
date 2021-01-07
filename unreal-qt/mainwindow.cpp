@@ -8,6 +8,7 @@
 #include <QTimer>
 
 #include "common/modulelogger.h"
+#include "emulator/ports/portdecoder.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
@@ -231,12 +232,26 @@ void MainWindow::handleStartButton()
         if (_emulator->Init())
         {
             // Redirect all module logger output to LogWindow
-            if (false)
+            if (true)
             {
-                ModuleLogger* logger = _emulator->GetLogger();
+                ModuleLogger& logger = *_emulator->GetLogger();
+
+                // Mute frequently firing events
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80, PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
+
+                std::string dumpSettings = logger.DumpSettings();
+                qDebug(dumpSettings.c_str());
+
+                // Mute I/O outs to frequently used ports
+                PortDecoder& portDecoder = *_emulator->GetContext()->pPortDecoder;
+                portDecoder.MuteLoggingForPort(0x00FE);
+
+
                 ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
                 ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogWindow::Out);
-                logger->SetLoggerOut(loggerObserverInstance, loggerCallback);
+                logger.SetLoggerOut(loggerObserverInstance, loggerCallback);
                 logWindow->reset();
                 logWindow->show();
             }

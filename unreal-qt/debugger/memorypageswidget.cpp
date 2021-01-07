@@ -72,11 +72,11 @@ void MemoryPagesWidget::refresh()
     }
     else
     {
-        Memory& memory = *getMemory();
-        QString page0Name = memory.GetCurrentBankName(0).c_str();
-        QString page1Name = memory.GetCurrentBankName(1).c_str();
-        QString page2Name = memory.GetCurrentBankName(2).c_str();
-        QString page3Name = memory.GetCurrentBankName(3).c_str();
+        Memory* memory = getMemory();
+        QString page0Name = memory->GetCurrentBankName(0).c_str();
+        QString page1Name = memory->GetCurrentBankName(1).c_str();
+        QString page2Name = memory->GetCurrentBankName(2).c_str();
+        QString page3Name = memory->GetCurrentBankName(3).c_str();
 
         page0Value->setText(page0Name);
         page1Value->setText(page1Name);
