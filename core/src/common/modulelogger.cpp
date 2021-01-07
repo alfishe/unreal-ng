@@ -234,7 +234,7 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
     switch (module)
     {
         case MODULE_CORE:
-            if (submodule > SUBMODULE_CORE_FILES)
+            if (submodule > SUBMODULE_CORE_MAINLOOP)
             {
                 std::string error = StringHelper::Format("LogModuleMessage - module Core, invalid submodule %d", submodule);
                 throw std::logic_error(error);
