@@ -14,10 +14,9 @@
 
 Emulator::Emulator()
 {
-    LOGDEBUG("Emulator::Emulator()");
 }
 
-Emulator::Emulator(LoggerLevel level)
+Emulator::Emulator(LoggerLevel level) : Emulator()
 {
     LOGDEBUG("Emulator::Emulator()");
 
@@ -263,7 +262,7 @@ bool Emulator::Init()
 	// Release all created resources if any of initialization steps failed
 	if (!result)
     {
-	    // Important!: ReleaseNoGuard() only since we're already locked mutex
+	    // Important!: use ReleaseNoGuard() only since we're already locked mutex
         ReleaseNoGuard();
     }
 
@@ -567,12 +566,12 @@ void Emulator::RunNCPUCycles(unsigned cycles)
 
 void Emulator::RunUntilInterrupt()
 {
-
+    throw std::logic_error("Not implemented");
 }
 
 void Emulator::RunUntilCondition()
 {
-    throw "Not implemented";
+    throw std::logic_error("Not implemented");
 }
 
 /// Load ROM file (up to 64 banks to ROM area)
@@ -593,6 +592,7 @@ void Emulator::DebugOn()
     // Switch to slow but instrumented memory interface
     _cpu->UseDebugMemoryInterface();
 
+    _isDebug = true;
     _z80->dbgchk = true;
 }
 
@@ -601,6 +601,7 @@ void Emulator::DebugOff()
     // Switch to fast memory interface
     _cpu->UseFastMemoryInterface();
 
+    _isDebug = true;
     _z80->dbgchk = false;
 }
 

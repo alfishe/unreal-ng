@@ -43,6 +43,12 @@ enum MemoryBitsEnum : uint8_t
     MEMBITS_BPC = 0x80		// Breakpoint Conditional
 };
 
+struct MemoryPageDescriptor
+{
+    MemoryBankModeEnum mode;
+    uint8_t page;
+    uint16_t addressInPage;
+};
 
 // Memory interface descriptor
 //  Read callback to access memory cell (byte)
@@ -54,8 +60,8 @@ struct MemoryInterface
     MemoryInterface() = delete;			// Disable default constructor. C++ 11 feature
     MemoryInterface(MemoryReadCallback read, MemoryWriteCallback write)
     {
-            MemoryRead = read;
-            MemoryWrite = write;
+        MemoryRead = read;
+        MemoryWrite = write;
     };
 
     MemoryReadCallback MemoryRead;
@@ -183,6 +189,7 @@ public:
     uint8_t GetROMPageFromAddress(uint8_t* hostAddress);
 
     uint8_t* RemapAddressToCurrentBank(uint16_t address);					// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
+    MemoryPageDescriptor GetCurrentPageFromAddress(uint16_t address);             // Determines current bank for Z80 address specified
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 

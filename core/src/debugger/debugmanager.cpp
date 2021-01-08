@@ -1,7 +1,5 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
-
 #include "debugmanager.h"
 
 /// region <Constructors / Destructors>
@@ -9,6 +7,7 @@
 DebugManager::DebugManager(EmulatorContext* context)
 {
     _context = context;
+    _logger = _context->pModuleLogger;
 
     _breakpoints = new BreakpointManager(context);
     _labels = new LabelManager(context);

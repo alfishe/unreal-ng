@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
+#include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
@@ -9,6 +10,13 @@
 
 class DebugManager
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+protected:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
+    const uint16_t _SUBMODULE = PlatformDebuggerSubmodulesEnum::SUBMODULE_DEBUG_GENERIC;
+    ModuleLogger* _logger = nullptr;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;

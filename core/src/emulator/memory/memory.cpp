@@ -481,6 +481,33 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
     return result;
 }
 
+/// Returns MemoryPageDescriptor filled with information about memory page corresponding to specified Z80 address
+/// \param address Z80 space address
+/// \return memory page descriptor
+MemoryPageDescriptor Memory::GetCurrentPageFromAddress(uint16_t address)
+{
+    MemoryPageDescriptor result;
+
+    uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
+    uint16_t addressInBank = address & 0b0011'1111'1111'1111;
+
+    result.mode = _bank_mode[bank];
+    switch (result.mode)
+    {
+        case BANK_ROM:
+            result.page = GetROMPageFromAddress(_bank_read[bank]);
+            break;
+        case BANK_RAM:
+            result.page = GetRAMPageFromAddress(_bank_read[bank]);
+            break;
+        default:
+            break;
+    }
+    result.addressInPage = addressInBank;
+
+    return result;
+}
+
 /// endregion </Address helper methods>
 
 /// region <Debug methods>
