@@ -77,7 +77,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 		sleep_us(15000U - std::min(duration1, 15000U));
 	}
 
-	LOGINFO("Stop requested, exiting main loop");
+	MLOGINFO("Stop requested, exiting main loop");
 
     // Stop animation recording and finalize the file
     //gifAnimationHelper.StopAnimation();
@@ -104,7 +104,6 @@ void MainLoop::RunFrame()
 {
     Screen& screen = *_context->pScreen;
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    const std::string topic = "FRAME_REFRESH";
 
 	// Prepare sound and video for next cycle
 	InitSoundFrame();
@@ -152,7 +151,7 @@ void MainLoop::RunFrame()
 	// DEBUG: save frame to disk as image
 
 	// Notify that frame is composed and ready for rendering
-    messageCenter.Post(topic);
+    messageCenter.Post(NC_LOGGER_FRAME_REFRESH);
 }
 
 //

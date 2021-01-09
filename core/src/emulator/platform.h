@@ -8,10 +8,20 @@
 #define EMUL_DEBUG
 #define TRASH_PAGE
 
-/// region <Logging / Tracing data>
+/// region <Notification center events>
+constexpr char const* NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODULES";
+constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
 
-constexpr char const * NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODULES";
-constexpr char const * NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
+
+constexpr char const* NC_LOGGER_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE"; // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
+
+constexpr char const* NC_LOGGER_CPU_STEP = "CPU_STEP";    // Event fired when one single CPU step performed. Active in debug mode only.
+
+constexpr char const* NC_LOGGER_FRAME_REFRESH = "LOGGER_FRAME_REFRESH";
+
+/// endregion </Notification center events>
+
+/// region <Logging / Tracing data>
 
 // High level modules
 enum PlatformModulesEnum : uint8_t
@@ -163,7 +173,6 @@ enum PlatformDisassemblerSubmodulesEnum : uint16_t
 /// endregion </Logging / Tracing data>
 
 /// region <CPU runtime>
-constexpr char const * NC_CPU_STEP = "CPU_STEP";    // Event fired when one single CPU step performed. Active in debug mode only.
 
 /// endregion </CPU runtime>
 

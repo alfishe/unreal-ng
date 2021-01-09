@@ -262,10 +262,9 @@ void MainWindow::handleStartButton()
 
             // Subscribe to frame refresh events
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            std::string topic = "FRAME_REFRESH";
             Observer* observerInstance = static_cast<Observer*>(this);
             ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-            messageCenter.AddObserver(topic, observerInstance, callback);
+            messageCenter.AddObserver(NC_LOGGER_FRAME_REFRESH, observerInstance, callback);
 
             // Start in async own thread
             _emulator->StartAsync();
