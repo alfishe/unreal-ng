@@ -14,7 +14,7 @@ void Z80_Logic_Jump_Test::SetUp()
     _context = new EmulatorContext(LoggerLevel::LogError);
 
     _cpu = new CPU(_context);
-    _cpu->Init();
+    bool init = _cpu->Init();
 
     // Use Spectrum48K / Pentagon memory layout
     _cpu->GetMemory()->InternalSetBanks();
