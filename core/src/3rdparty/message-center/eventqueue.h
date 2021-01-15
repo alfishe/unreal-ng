@@ -164,8 +164,8 @@ public:
     std::string GetTopicByID(int id);
     void ClearTopics();
 
-    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
-    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = false);
+    void Post(int id, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
+    void Post(std::string topic, MessagePayload* obj = nullptr, bool autoCleanupPayload = true);
 
 protected:
     Message* GetQueueMessage();
