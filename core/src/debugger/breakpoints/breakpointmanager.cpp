@@ -108,16 +108,16 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
 /// endregion </Management methods>
 
 /// region <Runtime methods>
-bool BreakpointManager::HandlePCChange(uint16_t pc)
+uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
 {
-    bool result = false;
+    uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindAddressBreakpoint(pc);
     if (breakpoint)
     {
         if (breakpoint->memoryType & BRK_MEM_EXECUTE)
         {
-            result = true;
+            result = breakpoint->breakpointID;
 
             /// region <Debug info>
 #ifdef _DEBUG
@@ -151,64 +151,64 @@ bool BreakpointManager::HandlePCChange(uint16_t pc)
     return result;
 }
 
-bool BreakpointManager::HandleMemoryRead(uint16_t readAddress)
+uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
 {
-    bool result = false;
+    uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindAddressBreakpoint(readAddress);
     if (breakpoint)
     {
         if (breakpoint->memoryType & BRK_MEM_READ)
         {
-            result = true;
+            result = breakpoint->breakpointID;
         }
     }
 
     return result;
 }
 
-bool BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
+uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
 {
-    bool result = false;
+    uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindAddressBreakpoint(writeAddress);
     if (breakpoint)
     {
         if (breakpoint->memoryType & BRK_MEM_WRITE)
         {
-            result = true;
+            result = breakpoint->breakpointID;
         }
     }
 
     return result;
 }
 
-bool BreakpointManager::HandlePortIn(uint16_t portAddress)
+uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
 {
-    bool result = false;
+    uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindPortBreakpoint(portAddress);
     if (breakpoint)
     {
         if (breakpoint->ioType & BRK_IO_IN)
         {
-            result = true;
+            result = breakpoint->breakpointID;
         }
     }
 
     return result;
 }
 
-bool BreakpointManager::HandlePortOut(uint16_t portAddress)
+uint16_t BreakpointManager::HandlePortOut(uint16_t portAddress)
 {
-    bool result = false;
+    uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindPortBreakpoint(portAddress);
     if (breakpoint)
     {
         if (breakpoint->ioType & BRK_IO_OUT)
         {
-            result = true;
+            result = breakpoint->breakpointID;
         }
     }
 
@@ -312,7 +312,7 @@ BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
         // Address in any bank matching
     else if (key_exists(_breakpointMapByAddress, wildcardKey))
     {
-        result = _breakpointMapByAddress[fullKey];
+        result = _breakpointMapByAddress[wildcardKey];
     }
 
     return result;

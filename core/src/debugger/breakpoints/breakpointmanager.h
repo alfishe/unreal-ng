@@ -129,11 +129,11 @@ public:
 
     /// region <Runtime methods>
 public:
-    bool HandlePCChange(uint16_t pc);
-    bool HandleMemoryRead(uint16_t readAddress);
-    bool HandleMemoryWrite(uint16_t writeAddress);
-    bool HandlePortIn(uint16_t portAddress);
-    bool HandlePortOut(uint16_t portAddress);
+    uint16_t HandlePCChange(uint16_t pc);
+    uint16_t HandleMemoryRead(uint16_t readAddress);
+    uint16_t HandleMemoryWrite(uint16_t writeAddress);
+    uint16_t HandlePortIn(uint16_t portAddress);
+    uint16_t HandlePortOut(uint16_t portAddress);
     /// endregion </Runtime methods>
 
     /// region <Helper methods>

@@ -6,7 +6,9 @@
 
 class ModuleLogger;
 class CPU;
+class Emulator;
 class Keyboard;
+class MainLoop;
 class Memory;
 class PortDecoder;
 class Screen;
@@ -15,6 +17,7 @@ class Z80Disassembler;
 
 class EmulatorContext
 {
+    /// region <Child object references>
 public:
     // Advanced logger instance
     ModuleLogger* pModuleLogger;
@@ -49,11 +52,18 @@ public:
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager;
+    /// endregion </Child object references>
+
+    /// region <Parent object references>
+public:
+    Emulator* pEmulator;
+    /// endregion </Parent object refereces>
 
     /// region <Constructors / destructors>
 public:
     EmulatorContext();                      // Default constructor with LogTrace default logging level
     EmulatorContext(LoggerLevel level);     // Constructor allowing to specify default logging level
+    EmulatorContext(Emulator* emulator, LoggerLevel level = LoggerLevel::LogTrace);    // Constructor registering reference to parent Emulator object
     virtual ~EmulatorContext();
     /// endregion </Constructors / destructors>
 };

@@ -152,8 +152,8 @@ bool CPU::Init()
         result = false;
 
         // Create main CPU core instance (Z80)
-        _cpu = new Z80(_context);
-        if (_cpu)
+        _z80 = new Z80(_context);
+        if (_z80)
         {
             UseFastMemoryInterface();    // Use fast memory interface by default
 
@@ -258,10 +258,10 @@ void CPU::Release()
         _memory = nullptr;
     }
 
-    if (_cpu != nullptr)
+    if (_z80 != nullptr)
     {
-        delete _cpu;
-        _cpu = nullptr;
+        delete _z80;
+        _z80 = nullptr;
     }
 }
 /// endregion </Initialization>
@@ -269,14 +269,13 @@ void CPU::Release()
 // Configuration methods
 void CPU::UseFastMemoryInterface()
 {
-	_cpu->MemIf = _cpu->FastMemIf;
+    _z80->MemIf = _z80->FastMemIf;
 }
 
 void CPU::UseDebugMemoryInterface()
 {
-	_cpu->MemIf = _cpu->DbgMemIf;
+    _z80->MemIf = _z80->DbgMemIf;
 }
-
 
 void CPU::Reset()
 {
@@ -288,7 +287,7 @@ void CPU::Reset()
 	_mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
 	// Reset main Z80 CPU and all peripherals
-	_cpu->Reset();					// Main Z80
+	_z80->Reset();					// Main Z80
 	_memory->Reset();               // Memory
 	_keyboard->Reset();             // Keyboard
 	_sound->Reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
@@ -308,6 +307,20 @@ void CPU::Reset()
 	messageCenter.Post(topicID, new SimpleTextPayload("CPU reset finished"));
 }
 
+void CPU::Pause()
+{
+    _pauseRequested = true;
+
+    _z80->Pause();
+}
+
+void CPU::Resume()
+{
+    _pauseRequested = false;
+
+    _z80->Resume();
+}
+
 //
 // Set main Z80 CPU clock speed
 // Multplier from 3.5MHz
@@ -320,23 +333,23 @@ void CPU::SetCPUClockSpeed(uint8_t multiplier)
 		assert(false);
 	}
 
-	_cpu->rate = (256 / multiplier);
+    _z80->rate = (256 / multiplier);
 }
 
 void CPU::CPUFrameCycle()
 {
 	// Execute Z80 cycle
-	if (_cpu->dbgchk)
+	if (_z80->isDebugMode)
 	{
 		// Use advanced (but slow) memory access interface when Debugger is on
 		UseDebugMemoryInterface();
-		_cpu->Z80FrameCycle();
+		_z80->Z80FrameCycle();
 	}
 	else
 	{
 		// Use fast memory access when no Debugger used
 		UseFastMemoryInterface();
-		_cpu->Z80FrameCycle();
+		_z80->Z80FrameCycle();
 	}
 
     AdjustFrameCounters();
@@ -346,7 +359,7 @@ void CPU::CPUFrameCycle()
 void CPU::AdjustFrameCounters()
 {
     /// region <Input parameters validation>
-    if (_cpu->t < _config->frame)
+    if (_z80->t < _config->frame)
         return;
     /// endregion </Input parameters validation>
 
@@ -357,8 +370,8 @@ void CPU::AdjustFrameCounters()
     _state->t_states += _config->frame;
 
     // Re-adjust CPU frame t-state counter and interrupt position
-    _cpu->t -= _config->frame;
-    _cpu->eipos -= _config->frame;
+    _z80->t -= _config->frame;
+    _z80->eipos -= _config->frame;
 
     /// region <TSConf only>
 

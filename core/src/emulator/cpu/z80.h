@@ -239,7 +239,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	uint16_t nextpc;
 
 	// Debugger related
-	uint8_t dbgchk;									// Active breakpoints
+	uint8_t isDebugMode;									// Active breakpoints
 	uint8_t dbgbreak;
 	unsigned dbg_stophere;
 	unsigned dbg_stopsp;
@@ -292,13 +292,20 @@ protected:
 
 	uint8_t _trashRegister;        // Redirect DDCB operation writes with no destination registers here (related to op_ddcb.cpp and direct_registers[6] unused pointer)
 
+    bool _pauseRequested = false;
+
 protected:
 	int _nmi_pending_count = 0;
     /// endregion </Fields>
 
+    /// region <Properties>
+public:
+    bool IsPaused();
+    /// endregion </Properties>
+
 	/// region <Constructors / Destructors>
 public:
-	Z80() = delete;					// Disable default constuctor. C++ 11 feature
+	Z80() = delete;					// Disable default constructor. C++ 11 feature
 	Z80(EmulatorContext* context);	// Only constructor with context param is allowed
 	virtual ~Z80();
     /// endregion </Constructors / Destructors>
@@ -322,6 +329,9 @@ public:
 
 	// Z80 CPU control methods
 	void Reset();		// Z80 chip reset
+	void Pause();
+	void Resume();
+
 	void Z80Step();		// Single opcode execution
 
 public:
@@ -345,6 +355,7 @@ public:
 	// Debugger interfacing
 public:
 	void ProcessDebuggerEvents();
+	void WaitUntilResumed();
 	void (* callbackM1_Prefetch)();
 	void (* callbackM1_Postfetch());
 

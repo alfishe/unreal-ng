@@ -39,7 +39,7 @@ protected:
     const CONFIG* _config = nullptr;
     ModuleLogger* _logger = nullptr;
 
-    Z80* _cpu = nullptr;
+    Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
     Ports* _ports = nullptr;
     PortDecoder* _portDecoder = nullptr;
@@ -51,6 +51,7 @@ protected:
     Screen* _screen = nullptr;
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
+    bool _pauseRequested = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -66,7 +67,7 @@ public:
     /// endregion </Initialization>
 
     /// region <Properties>
-    Z80* GetZ80() { return _cpu; }
+    Z80* GetZ80() { return _z80; }
     Memory* GetMemory() { return _memory; }
     Ports* GetPorts() { return _ports; }
     ROM* GetROM() { return _rom; }
@@ -81,6 +82,9 @@ public:
     // Z80 CPU-related methods
 public:
     void Reset();
+    void Pause();
+    void Resume();
+
     void SetCPUClockSpeed(uint8_t);
     void CPUFrameCycle();
     void AdjustFrameCounters();

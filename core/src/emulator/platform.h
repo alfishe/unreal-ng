@@ -15,7 +15,8 @@ constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SU
 
 constexpr char const* NC_LOGGER_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE"; // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
 
-constexpr char const* NC_LOGGER_CPU_STEP = "CPU_STEP";    // Event fired when one single CPU step performed. Active in debug mode only.
+constexpr char const* NC_LOGGER_CPU_STEP = "LOGGER_CPU_STEP";                    // Event fired when one single CPU step performed. Active in debug mode only.
+constexpr char const* NC_LOGGER_BREAKPOINT = "LOGGER_BREAKPOINT";                // Breakpoint fired
 
 constexpr char const* NC_LOGGER_FRAME_REFRESH = "LOGGER_FRAME_REFRESH";
 

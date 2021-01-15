@@ -8,6 +8,7 @@
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
 #include "debugger/debugmanager.h"
+#include "emulator/memory/memory.h"
 #include "loaders/snapshot/loader_sna.h"
 
 /// region <Constructors / Destructors>
@@ -55,6 +56,7 @@ bool Emulator::Init()
 	if (_context != nullptr)
 	{
         _logger = _context->pModuleLogger;
+        _context->pEmulator = this;
 
 		MLOGDEBUG("Emulator::Init - context created");
 
@@ -179,6 +181,9 @@ bool Emulator::Init()
 	    if (manager != nullptr)
         {
             MLOGDEBUG("Emulator::Init - debug manager created");
+
+            _debugManager = manager;
+            _breakpointManager = manager->GetBreakpointsManager();
 
             _context->pDebugManager = manager;
 
@@ -364,6 +369,26 @@ ModuleLogger* Emulator::GetLogger()
     return _context->pModuleLogger;
 }
 
+MainLoop* Emulator::GetMainLoop()
+{
+    return _mainloop;
+}
+
+Memory* Emulator::GetMemory()
+{
+    return _context->pMemory;
+}
+
+DebugManager* Emulator::GetDebugManager()
+{
+    return _debugManager;
+}
+
+BreakpointManager* Emulator::GetBreakpointManager()
+{
+    return _breakpointManager;
+}
+
 FramebufferDescriptor Emulator::GetFramebuffer()
 {
     return _context->pScreen->GetFramebufferDescriptor();
@@ -522,7 +547,7 @@ bool Emulator::LoadSnapshot(std::string &path)
 
 void Emulator::RunSingleCPUCycle()
 {
-    CONFIG& config = _context->config;
+    const CONFIG& config = _context->config;
     Z80& z80 = *_cpu->GetZ80();
     Memory& memory = *_context->pMemory;
 
@@ -593,7 +618,7 @@ void Emulator::DebugOn()
     _cpu->UseDebugMemoryInterface();
 
     _isDebug = true;
-    _z80->dbgchk = true;
+    _z80->isDebugMode = true;
 }
 
 void Emulator::DebugOff()
@@ -602,7 +627,7 @@ void Emulator::DebugOff()
     _cpu->UseFastMemoryInterface();
 
     _isDebug = true;
-    _z80->dbgchk = false;
+    _z80->isDebugMode = false;
 }
 
 Z80State* Emulator::GetZ80State()

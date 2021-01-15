@@ -58,11 +58,10 @@ void MainLoop::Run(volatile bool& stopRequested)
 	{
 		unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
 
-
 		/// region <Handle Pause>
 		if (_pauseRequested)
         {
-		    LOGINFO("Pause requested");
+		    MLOGINFO("Pause requested");
 
 		    while (_pauseRequested)
             {
@@ -93,11 +92,15 @@ void MainLoop::Stop()
 void MainLoop::Pause()
 {
     _pauseRequested = true;
+
+    _cpu->Pause();
 }
 
 void MainLoop::Resume()
 {
     _pauseRequested = false;
+
+    _cpu->Resume();
 }
 
 void MainLoop::RunFrame()
@@ -137,7 +140,7 @@ void MainLoop::RunFrame()
         uint32_t* buffer;
         size_t size;
         screen.GetFramebufferData(&buffer, &size);
-        //gifAnimationHelper.WriteFrame(buffer, size);
+        gifAnimationHelper.WriteFrame(buffer, size);
     }
 	i++;
 
@@ -177,10 +180,9 @@ void MainLoop::ExecuteCPUFrameCycle()
 	_cpu->CPUFrameCycle();
 }
 
-//
-// Holds execution of current thread until next frame
-// Note: uses SSE2 pause CPU instruction (_mm_pause instrinc) to achieve ultimate time resolution at the cost of CPU core utilization (although with low power consumption)
-//
+
+/// Holds execution of current thread until next frame
+/// Note: uses SSE2 pause CPU instruction (_mm_pause instrinc) to achieve ultimate time resolution at the cost of CPU core utilization (although with low power consumption)
 void MainLoop::DoIdle()
 {
 	const CONFIG& config = _context->config;

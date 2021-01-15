@@ -13,6 +13,7 @@
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
 
+class BreakpointManager;
 
 class Emulator
 {
@@ -37,6 +38,8 @@ protected:
 	Z80* _z80 = nullptr;
 	Memory* _memory = nullptr;
 	MainLoop* _mainloop = nullptr;
+	DebugManager* _debugManager = nullptr;
+    BreakpointManager* _breakpointManager = nullptr;
 
 	// Control flow
 	volatile bool _stopRequested = false;
@@ -66,6 +69,10 @@ public:
 	// Integration interfaces
 	EmulatorContext* GetContext();
     ModuleLogger* GetLogger();
+    MainLoop* GetMainLoop();
+    Memory* GetMemory();
+    DebugManager* GetDebugManager();
+    BreakpointManager* GetBreakpointManager();
     FramebufferDescriptor GetFramebuffer();
 
 	// Emulator control cycle

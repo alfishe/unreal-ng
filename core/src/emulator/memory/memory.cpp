@@ -5,6 +5,10 @@
 #include "memory.h"
 
 #include "common/stringhelper.h"
+#include "common/timehelper.h"
+#include "debugger/debugmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "emulator/emulator.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include <cassert>
@@ -118,6 +122,36 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr)
     //debug_cond_check(&cpu);		// Debug conditions check is very slow
     /// endregion </Refactor>
 
+    /// region <Read breakpoint logic>
+
+    Emulator& emulator = *_context->pEmulator;
+    Z80& z80 = *_context->pCPU->GetZ80();
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    uint16_t breakpointID = brk.HandleMemoryRead(addr);
+    if (breakpointID != BRK_INVALID)
+    {
+        // Request to pause emulator
+        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+        emulator.Pause();
+
+        // Broadcast notification - breakpoint triggered
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+        messageCenter.Post(NC_LOGGER_BREAKPOINT, payload);
+
+        // Wait until emulator resumed externally (by debugger or scripting engine)
+        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+        if (z80.IsPaused())
+        {
+            while (z80.IsPaused())
+            {
+                sleep_ms(20);
+            }
+        }
+
+        /// endregion </Read breakpoint logic>
+    }
+
     return result;
 }
 
@@ -134,6 +168,30 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     // Write byte to correspondent memory bank cell
     uint8_t* bank_addr = _bank_write[bank];
     *(bank_addr + addressInBank) = value;
+
+    /// region <Write breakpoint logic>
+
+    Emulator& emulator = *_context->pEmulator;
+    Z80& z80 = *_context->pCPU->GetZ80();
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    uint16_t breakpointID = brk.HandleMemoryWrite(addr);
+    if (breakpointID != BRK_INVALID)
+    {
+        // Request to pause emulator
+        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+        emulator.Pause();
+
+        // Broadcast notification - breakpoint triggered
+        MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
+        messageCenter.Post(NC_LOGGER_BREAKPOINT, payload);
+
+        // Wait until emulator resumed externally (by debugger or scripting engine)
+        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+        z80.WaitUntilResumed();
+    }
+
+    /// endregion </Write breakpoint logic>
 }
 
 /// Implementation memory write method
@@ -650,7 +708,18 @@ void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
     // Address bits 14 and 15 contain bank number
     uint8_t bank = (address >> 14) & 0b0000000000000011;
     address = address & 0b0011'1111'1111'1111;
-    *(_bank_write[bank] + address) = value;
+    uint8_t* baseAddress = nullptr;
+
+    if (_bank_mode[bank] == BANK_ROM)
+    {
+        baseAddress = _bank_read[bank];     // Usually ROM is blocked from write so _bank_write[<bank>] pointer is set to fake region. Use read address
+    }
+    else
+    {
+        baseAddress = _bank_write[bank];
+    }
+
+    *(baseAddress + address) = value;
 }
 
 //

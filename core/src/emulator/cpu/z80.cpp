@@ -3,7 +3,12 @@
 #include "common/modulelogger.h"
 
 #include "z80.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "common/stringhelper.h"
+#include "common/timehelper.h"
+#include "debugger/debugmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "emulator/emulator.h"
 #include "emulator/cpu/op_noprefix.h"
 #include "emulator/video/screen.h"
 
@@ -16,8 +21,6 @@ Z80::Z80(EmulatorContext* context)
 	_context = context;
     _logger = context->pModuleLogger;
     _memory = context->pMemory;
-
-    //
 
     // Initialize memory access interfaces
     FastMemIf = Memory::GetFastMemoryInterface();
@@ -46,7 +49,7 @@ Z80::Z80(EmulatorContext* context)
 	tpi = 0;
 	rate = (1 << 8);
 	dbgbreak = 0;
-	dbgchk = 0;
+    isDebugMode = 0;
 	debug_last_t = 0;
 	trace_curs = trace_top = (unsigned)-1;
 	trace_mode = 0;
@@ -100,6 +103,234 @@ Z80::~Z80()
 
 /// endregion </Constructors / Destructors>
 
+/// region <Properties>
+bool Z80::IsPaused()
+{
+    return _pauseRequested;
+}
+/// endregion </Properties
+
+/// region <Methods>
+
+/// Handle Z80 reset signal
+void Z80::Reset()
+{
+    // Emulation state
+    last_branch = 0x0000;	        // Address of last branch (in Z80 address space)
+    int_pending = false;	        // No interrupts pending
+    int_gate = true;		        // Allow external interrupts
+    cycle_count = 0;		        // Cycle counter
+    tt = 0;					        // Scaled to CPU frequency multiplier cycle count
+
+    // Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
+    int_flags = 0;					// Set interrupt mode 0
+    ir_ = 0;						// Reset IR (Instruction Register)
+    pc = 0x0000;					// Reset PC (Program Counter)
+    im = 0;							// IM0 mode is set by default
+    sp = 0xFFFF;					// Stack pointer set to the end of memory address space
+    af = 0xFFFF;					// Real chip behavior
+
+    // All that takes 3 clock cycles
+    IncrementCPUCyclesCounter(3);
+}
+
+void Z80::Pause()
+{
+    _pauseRequested = true;
+}
+
+void Z80::Resume()
+{
+    _pauseRequested = false;
+}
+
+/// Single CPU command cycle (non-interruptable)
+void Z80::Z80Step()
+{
+    Z80& cpu = *this;
+    const CONFIG& config = _context->config;
+    State& state = _context->state;
+    TEMP& temporary = _context->temporary;
+    Memory& memory = *_context->pMemory;
+    Emulator& emulator = *_context->pEmulator;
+
+    // Let debugger process step event
+    if (cpu.isDebugMode)
+    {
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandlePCChange(pc);
+        if (breakpointID != BRK_INVALID)
+        {
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
+
+            // Broadcast notification - breakpoint triggered
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_LOGGER_BREAKPOINT, payload);
+
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            WaitUntilResumed();
+        }
+    }
+
+    /// region  <Ports logic>
+    /* TODO: move to Ports class
+    if (state.flags & CF_SETDOSROM)
+    {
+        if (cpu.pch == 0x3D)
+        {
+            state.flags |= CF_TRDOS;  // !!! add here TS memconf behaviour !!!
+            SetBanks();
+        }
+    }
+    else if (state.flags & CF_LEAVEDOSADR)
+    {
+        if (cpu.pch & 0xC0) // PC > 3FFF closes TR-DOS
+        {
+            state.flags &= ~CF_TRDOS;
+            SetBanks();
+        }
+
+        //if (config.trdos_traps)
+        //	state.wd.trdos_traps();
+    }
+    else if (state.flags & CF_LEAVEDOSRAM)
+    {
+        // Execution code from RAM address - disables TR-DOS ROM
+        uint8_t bank = (cpu.pc >> 14) & 3;
+        if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
+        {
+            state.flags &= ~CF_TRDOS;
+            SetBanks();
+        }
+
+        // WD93 logic
+        //if (config.trdos_traps)
+        //	state.wd.trdos_traps();
+    }
+     */
+    /// endregion  </Ports logic>
+
+    /// region <Tape related>
+    // Tape related IO
+    // TODO: Move to io/tape
+    /*
+    if (state.tape.play_pointer && config.tape_traps && (cpu.pc & 0xFFFF) == 0x056B)
+        tape_traps();
+
+    if (state.tape.play_pointer && !config.sound.enabled)
+        fast_tape();
+    */
+
+    /// endregion </Tape related>
+
+    if (cpu.vm1 && cpu.halted)
+    {
+        // Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
+        cpu.tt += cpu.rate * 1;
+
+        if (++cpu.halt_cycle == 4)
+        {
+            cpu.r_low += 1;
+            cpu.halt_cycle = 0;
+        }
+    }
+    else
+    {
+        // Some counter correction for <???>
+        if (cpu.pch & temporary.evenM1_C0)
+            cpu.tt += (cpu.tt & cpu.rate);
+
+        // Preserve previous PC register state
+        cpu.prev_pc = m1_pc;
+
+        // Regular Z80 bus cycle
+        // 1. Fetch opcode (Z80 M1 bus cycle)
+        cpu.prefix = 0x0000;
+        cpu.opcode = m1_cycle();
+
+        // 2. Emulate fetched Z80 opcode
+        (normal_opcode[opcode])(&cpu);
+    }
+
+    /// region <Debug trace capture>
+
+    // Trace CPU for all duration of cycles requested
+    if (cycles_to_capture > 0)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+        LOGINFO(buffer);
+    }
+
+    /// endregion </Debug trace capture>
+
+    /// region <Extra debug validations
+#ifdef _DEBUG
+    // Sanity check for register corruption
+    if (bc > 0xFFFF || de > 0xFFFF || hl > 0xFFFF || ix > 0xFFFF || iy > 0xFFFF || sp > 0xFFFF)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+        LOGERROR(buffer);
+        LOGERROR("Main register(s) corrupted");
+        exit(1);
+    }
+
+    if (alt.bc > 0xFFFF || alt.de > 0xFFFF || alt.hl > 0xFFFF)
+    {
+        static char buffer[1024];
+        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
+        LOGERROR(buffer);
+        LOGERROR("Alternative register(s) corrupted");
+        exit(1);
+    }
+#endif // _DEBUG
+    /// endregion </Extra debug validations
+}
+
+/// Execute number of cpu cycles equivalent to full frame screen render
+void Z80::Z80FrameCycle()
+{
+    const CONFIG& config = _context->config;
+    Z80& cpu = *this;
+    State& state = _context->state;
+
+
+    // Video Interrupt position calculation
+    bool int_occurred = false;
+    unsigned int_start = config.intstart;
+    unsigned int_end = config.intstart + config.intlen;
+
+    cpu.haltpos = 0;
+
+    // INT interrupt handling lasts for more than 1 frame
+    if (int_end >= config.frame)
+    {
+        int_end -= config.frame;
+        cpu.int_pending = true;
+        int_occurred = true;
+    }
+
+    // Cover whole frame (control by clock cycles)
+    while (cpu.t < config.frame)
+    {
+        // Handle interrupts if arrived
+        ProcessInterrupts(int_occurred, int_start, int_end);
+
+        // Perform single Z80 command cycle
+        Z80Step();
+
+        // Update screen buffer (including border draw)
+        UpdateScreen();
+    }
+}
+
+
+/// endregion </Methods>
+
 /// region <Z80 lifecycle>
 
 uint8_t Z80::m1_cycle()
@@ -113,25 +344,6 @@ uint8_t Z80::m1_cycle()
     State& state = _context->state;
     const TEMP& temporary = _context->temporary;
     const PortDecoder& portDecoder = *_context->pPortDecoder;
-
-	/// region TODO: move to Ports class
-	/*
-	if ((config.mem_model == MM_PENTAGON) &&
-		((state.pEFF7 & (EFF7_CMOS | EFF7_4BPP)) == (EFF7_CMOS | EFF7_4BPP)))
-		temporary.offset_vscroll++;
-	
-	if ((config.mem_model == MM_PENTAGON) &&
-		((state.pEFF7 & (EFF7_384 | EFF7_4BPP)) == (EFF7_384 | EFF7_4BPP)))
-		temporary.offset_hscroll++;
-	
-	if (config.mem_model == MM_TSL && state.ts.vdos_m1)
-	{
-		state.ts.vdos = 1;
-		state.ts.vdos_m1 = 0;
-		SetBanks();
-	}
-	 */
-	/// endregion TODO: move to Ports class
 
 	/// region <Test>
 
@@ -414,260 +626,7 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
     }
 }
 
-void Z80::Z80FrameCycle()
-{
-	Z80& cpu = *this;
-	State& state = _context->state;
-	CONFIG& config = _context->config;
-	VideoControl& video = _context->pScreen->_vid;
 
-	/// region <TSConf only>
-
-	// TODO: Move to platform plugin
-	// Was:
-	// void z80loop()
-	// {
-	//	if (conf.mem_model == MM_TSL)
-	//		z80loop_TSL();
-	//	else
-	//		z80loop_other();
-	// }
-	if (config.mem_model == MM_TSL)
-	{
-		cpu.haltpos = 0;
-		// comp.ts.intctrl.line_t = comp.ts.intline ? 0 : VID_TACTS;
-		state.ts.intctrl.line_t = 0;
-
-		while (cpu.t < config.frame)
-		{
-			bool vdos = state.ts.vdos || state.ts.vdos_m1;
-
-			ts_frame_int(vdos);
-			ts_line_int(vdos);
-			ts_dma_int(vdos);
-
-			video.memcyc_lcmd = 0; // new command, start accumulate number of busy memcycles
-
-			if (state.ts.intctrl.pend && cpu.iff1 && (cpu.t != cpu.eipos) && !vdos) // int disabled in vdos after r/w vg ports
-			{
-				HandleINT(GetTSConfInterruptVector());
-			}
-
-			Z80Step();
-			UpdateScreen(); // Reflect state changes on screen, TSU, DMA
-		}
-
-		return;
-	}
-
-	/// endregion </TSConf only>
-
-	// All non-TSConf platforms behavior
-
-	// Video Interrupt position calculation
-	bool int_occurred = false;
-	unsigned int_start = config.intstart;
-	unsigned int_end = config.intstart + config.intlen;
-
-	cpu.haltpos = 0;
-
-	// INT interrupt handling lasts for more than 1 frame
-	if (int_end >= config.frame)
-	{
-		int_end -= config.frame;
-		cpu.int_pending = true;
-		int_occurred = true;
-	}
-
-	// Cover whole frame (control by clock cycles)
-	while (cpu.t < config.frame)
-	{
-		// Handle interrupts if arrived
-		ProcessInterrupts(int_occurred, int_start, int_end);
-
-		// Perform single Z80 command cycle
-		Z80Step();
-
-		// Update screen buffer (including border draw)
-		UpdateScreen();
-	}
-}
-
-//
-// Handle Z80 reset signal
-//
-void Z80::Reset()
-{
-	// Emulation state
-	last_branch = 0x0000;	        // Address of last branch (in Z80 address space)
-	int_pending = false;	        // No interrupts pending
-	int_gate = true;		        // Allow external interrupts
-	cycle_count = 0;		        // Cycle counter
-	tt = 0;					        // Scaled to CPU frequency multiplier cycle count
-
-	// Z80 chip reset sequence. See: http://www.z80.info/interrup.htm (Reset Timing section)
-	int_flags = 0;					// Set interrupt mode 0
-	ir_ = 0;						// Reset IR (Instruction Register)
-	pc = 0x0000;					// Reset PC (Program Counter)
-	im = 0;							// IM0 mode is set by default
-	sp = 0xFFFF;					// Stack pointer set to the end of memory address space
-	af = 0xFFFF;					// Real chip behavior
-
-    // All that takes 3 clock cycles
-	IncrementCPUCyclesCounter(3);
-}
-
-//
-// Single CPU command cycle (non-interruptable)
-//
-void Z80::Z80Step()
-{
-	Z80& cpu = *this;
-	CONFIG& config = _context->config;
-	State& state = _context->state;
-	TEMP& temporary = _context->temporary;
-	Memory& memory = *_context->pMemory;
-
-	// Let debugger process step event
-	ProcessDebuggerEvents();
-
-	/// region  <Ports logic>
-	/* TODO: move to Ports class
-	if (state.flags & CF_SETDOSROM)
-	{
-		if (cpu.pch == 0x3D)
-		{
-			state.flags |= CF_TRDOS;  // !!! add here TS memconf behaviour !!!
-			SetBanks();
-		}
-	}
-	else if (state.flags & CF_LEAVEDOSADR)
-	{
-		if (cpu.pch & 0xC0) // PC > 3FFF closes TR-DOS
-		{
-			state.flags &= ~CF_TRDOS;
-			SetBanks();
-		}
-
-		//if (config.trdos_traps)
-		//	state.wd.trdos_traps();
-	}
-	else if (state.flags & CF_LEAVEDOSRAM)
-	{
-		// Execution code from RAM address - disables TR-DOS ROM
-		uint8_t bank = (cpu.pc >> 14) & 3;
-		if (memory.GetMemoryBankMode(bank) == MemoryBankModeEnum::BANK_RAM)
-		{
-			state.flags &= ~CF_TRDOS;
-			SetBanks();
-		}
-
-		// WD93 logic
-		//if (config.trdos_traps)
-		//	state.wd.trdos_traps();
-	}
-	 */
-    /// endregion  </Ports logic>
-
-
-    /// region <Tape related>
-	// Tape related IO
-	// TODO: Move to io/tape
-	/*
-	if (state.tape.play_pointer && config.tape_traps && (cpu.pc & 0xFFFF) == 0x056B)
-		tape_traps();
-
-	if (state.tape.play_pointer && !config.sound.enabled)
-		fast_tape();
-	*/
-
-    /// endregion </Tape related>
-
-	if (cpu.vm1 && cpu.halted)
-	{
-		// Z80 in HALT state. No further opcode processing will be done until INT or NMI arrives
-		cpu.tt += cpu.rate * 1;
-
-		if (++cpu.halt_cycle == 4)
-		{
-			cpu.r_low += 1;
-			cpu.halt_cycle = 0;
-		}
-	}
-	else
-	{
-		// Some counter correction for <???>
-		if (cpu.pch & temporary.evenM1_C0)
-			cpu.tt += (cpu.tt & cpu.rate);
-
-		// Preserve previous PC register state
-		cpu.prev_pc = m1_pc;
-
-		// Regular Z80 bus cycle
-		// 1. Fetch opcode (Z80 M1 bus cycle)
-        cpu.prefix = 0x0000;
-        cpu.opcode = m1_cycle();
-
-		// 2. Emulate fetched Z80 opcode
-		(normal_opcode[opcode])(&cpu);
-	}
-
-	/// region <Debug trace capture>
-
-	// Trace CPU for all duration of cycles requested
-	if (cycles_to_capture > 0)
-    {
-        static char buffer[1024];
-        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-        LOGINFO(buffer);
-    }
-
-    /// endregion </Debug trace capture>
-
-	/// region <Extra debug validations
-#ifdef _DEBUG
-	// Sanity check for register corruption
-	if (bc > 0xFFFF || de > 0xFFFF || hl > 0xFFFF || ix > 0xFFFF || iy > 0xFFFF || sp > 0xFFFF)
-    {
-        static char buffer[1024];
-        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-        LOGERROR(buffer);
-	    LOGERROR("Main register(s) corrupted");
-	    exit(1);
-    }
-
-	if (alt.bc > 0xFFFF || alt.de > 0xFFFF || alt.hl > 0xFFFF)
-    {
-        static char buffer[1024];
-        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-        LOGERROR(buffer);
-        LOGERROR("Alternative register(s) corrupted");
-        exit(1);
-    }
-#endif // _DEBUG
-    /// endregion </Extra debug validations
-
-	/* [vv]
-	//todo if (comp.turbo)cpu.t-=tbias[cpu.t-oldt]
-	   if ( ((conf.mem_model == MM_PENTAGON) && ((comp.pEFF7 & EFF7_GIGASCREEN)==0)) ||
-		   ((conf.mem_model == MM_ATM710) && (comp.pFF77 & 8)))
-		   cpu.t -= (cpu.t-oldt) >> 1; //0.37
-	//~todo
-	*/
-#ifdef Z80_DBG
-	if ((comp.flags & CF_PROFROM) && ((membits[0x100] | membits[0x104] | membits[0x108] | membits[0x10C]) & MEMBITS_R))
-	{
-		if (membits[0x100] & MEMBITS_R)
-			set_scorp_profrom(0);
-		if (membits[0x104] & MEMBITS_R)
-			set_scorp_profrom(1);
-		if (membits[0x108] & MEMBITS_R) 
-			set_scorp_profrom(2);
-		if (membits[0x10C] & MEMBITS_R)
-			set_scorp_profrom(3);
-	}
-#endif
-}
 
 ///
 /// Simulate Z80 INT pin signal raising
@@ -859,11 +818,16 @@ void Z80::HandleINT(uint8_t vector)
 	/// endregion </TSConf>
 }
 
-// Debugger trigger updates
-void Z80::ProcessDebuggerEvents()
+void Z80::WaitUntilResumed()
 {
-	// TODO: integrate with CPUDebugger class
-	// If in debug session - call it's callback. Debugger should handle all events / breakpoints by itself
+    // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+    if (_pauseRequested)
+    {
+        while (_pauseRequested)
+        {
+            sleep_ms(20);
+        }
+    }
 }
 
 //

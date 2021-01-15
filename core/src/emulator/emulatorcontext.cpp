@@ -33,6 +33,12 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     }
 }
 
+/// Constructor registering reference to parent Emulator object
+EmulatorContext::EmulatorContext(Emulator* emulator, LoggerLevel level) : EmulatorContext(level)
+{
+    pEmulator = emulator;
+}
+
 EmulatorContext::~EmulatorContext()
 {
     if (pModuleLogger != nullptr)
