@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
+#include "common/modulelogger.h"
 
 #include "keyboard.h"
 #include "common/bithelper.h"
@@ -338,7 +338,7 @@ uint8_t Keyboard::HandlePort(uint16_t port)
     }
     else
     {
-        LOGERROR("Keyboard cannot handle non #FE port");
+        MLOGERROR("Keyboard cannot handle non #FE port");
         assert("Keyboard non-#FE port");
     }
 
@@ -396,13 +396,13 @@ void Keyboard::OnKeyPressed(int id, Message* message)
         IncreaseKeyPressCounter(zxBase);
         PressKey(zxBase);
 
-        LOGINFO("OnKeyPressed: 0x%02X", zxKey);
-        printf("OnKeyPressed: 0x%02X\n", zxKey);
+        MLOGINFO("OnKeyPressed: 0x%02X", zxKey);
+        //printf("OnKeyPressed: 0x%02X\n", zxKey);
 
 #ifdef _DEBUG
-        LOGDEBUG("%s", DumpKeyboardState().c_str());
-        printf("%s\n", DumpKeyboardState().c_str());
-        fflush(stdout);
+        MLOGDEBUG("%s", DumpKeyboardState().c_str());
+        //printf("%s\n", DumpKeyboardState().c_str());
+        //fflush(stdout);
 #endif
     }
 }
@@ -441,13 +441,13 @@ void Keyboard::OnKeyReleased(int id, Message* message)
             ReleaseKey(zxBase);
         }
 
-        LOGINFO("OnKeyReleased: 0x%02X", zxKey);
-        printf("OnKeyReleased: 0x%02X\n", zxKey);
+        MLOGINFO("OnKeyReleased: 0x%02X", zxKey);
+        //printf("OnKeyReleased: 0x%02X\n", zxKey);
 
 #ifdef _DEBUG
-        LOGDEBUG("%s", DumpKeyboardState().c_str());
-        printf("%s\n", DumpKeyboardState().c_str());
-        fflush(stdout);
+        MLOGDEBUG("%s", DumpKeyboardState().c_str());
+        //printf("%s\n", DumpKeyboardState().c_str());
+        //fflush(stdout);
 #endif
     }
 }

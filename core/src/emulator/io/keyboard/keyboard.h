@@ -2,8 +2,10 @@
 #include "stdafx.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/platform.h"
 
 class EmulatorContext;
+class ModuleLogger;
 
 /// region <Structs and Enums>
 
@@ -137,6 +139,13 @@ public:
 /// See: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
 class Keyboard : public Observer
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_IO;
+    const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_KEYBOARD;
+    ModuleLogger* _logger;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
     /// region <Constants>
 
     //    Port	    Dec	    Bin	                    Address line	D0	        D1	        D2	D3	D4
