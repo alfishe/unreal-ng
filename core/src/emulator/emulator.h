@@ -87,8 +87,8 @@ public:
 	bool LoadSnapshot(std::string& path);
 
 	// Controlled emulator behavior
-	void RunSingleCPUCycle();
-	void RunNCPUCycles(unsigned cycles);
+	void RunSingleCPUCycle(bool skipBreakpoints = true);
+	void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
 	void RunUntilInterrupt();
 	void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
 

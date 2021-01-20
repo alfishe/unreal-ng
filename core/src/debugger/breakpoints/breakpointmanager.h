@@ -127,6 +127,17 @@ public:
     bool RemoveBreakpointByID(uint16_t breakpointID);
     /// endregion </Management methods>
 
+    /// region <Management assistance methods>
+
+    // Shortcuts for breakpoint creation
+    uint16_t AddExecutionBreakpoint(uint16_t z80address);
+    uint16_t AddMemReadBreakpoint(uint16_t z80address);
+    uint16_t AddMemWriteBreakpoint(uint16_t z80address);
+    uint16_t AddPortInBreakpoint(uint16_t port);
+    uint16_t AddPortOutBreakpoint(uint16_t port);
+
+    /// endregion </Management assistance methods>
+
     /// region <Runtime methods>
 public:
     uint16_t HandlePCChange(uint16_t pc);

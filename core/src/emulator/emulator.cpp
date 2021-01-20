@@ -545,7 +545,7 @@ bool Emulator::LoadSnapshot(std::string &path)
 
 //region Controlled flow
 
-void Emulator::RunSingleCPUCycle()
+void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
     const CONFIG& config = _context->config;
     Z80& z80 = *_cpu->GetZ80();
@@ -553,7 +553,7 @@ void Emulator::RunSingleCPUCycle()
 
 	// TODO: synchronize with all timings within frame and I/O
 
-    z80.Z80Step();
+    z80.Z80Step(skipBreakpoints);
     z80.UpdateScreen();
 
     // New frame to be started
@@ -578,11 +578,11 @@ void Emulator::RunSingleCPUCycle()
 #endif
 }
 
-void Emulator::RunNCPUCycles(unsigned cycles)
+void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
 	for (unsigned i = 0; i < cycles; i++)
 	{
-		RunSingleCPUCycle();
+		RunSingleCPUCycle(skipBreakpoints);
 
 		if (_stopRequested)
 		    break;

@@ -43,14 +43,14 @@ protected:
 public:
     PortDecoder() = delete;     // Disable default constructor; C++ 11 feature
     PortDecoder(EmulatorContext* context);
-    virtual ~PortDecoder() {};
+    virtual ~PortDecoder();
     /// endregion </Constructors / destructors>
 
     /// region <Interface methods>
 public:
     virtual void Reset() = 0;
-    virtual uint8_t DecodePortIn(uint16_t addr, uint16_t pc) = 0;
-    virtual void DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc) = 0;
+    virtual uint8_t DecodePortIn(uint16_t addr, uint16_t pc);
+    virtual void DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc);
 
     virtual void SetRAMPage(uint8_t oage) = 0;
     virtual void SetROMPage(uint8_t page) = 0;

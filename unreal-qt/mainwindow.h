@@ -25,7 +25,7 @@ class MainWindow : public QMainWindow, public Observer
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+    ~MainWindow() override;
 
 private slots:
     void handleStartButton();
@@ -33,13 +33,13 @@ private slots:
     void resetEmulator();
 
 protected:
-    void showEvent(QShowEvent *event);
-    void closeEvent(QCloseEvent *event);
-    void resizeEvent(QResizeEvent *event);
+    void showEvent(QShowEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
-    void keyPressEvent(QKeyEvent *event);
-    void mousePressEvent(QMouseEvent *event);
-    bool eventFilter(QObject* watched, QEvent* event);
+    void keyPressEvent(QKeyEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
     void updatePosition(QWidget *widget, QWidget *parent, float xscale, float yscale)
     {

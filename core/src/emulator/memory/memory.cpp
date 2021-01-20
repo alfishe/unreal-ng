@@ -168,6 +168,71 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     // Write byte to correspondent memory bank cell
     uint8_t* bank_addr = _bank_write[bank];
     *(bank_addr + addressInBank) = value;
+}
+
+/// Implementation memory write method
+/// Used from Z80::DbgMemIf
+/// \param addr 16-bit address in Z80 memory space
+/// \param value 8-bit value to write into Z80 memory
+void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
+{
+    // Write data to memory
+    MemoryWriteFast(addr, value);
+
+    // Raise flag that video memory was changed
+    if (addr >= 0x4000 && addr <= 0x5B00)
+    {
+        _state->video_memory_changed = true;
+    }
+
+    /// region <Test>
+    /*
+    if (addr >= 0x4000 && addr <= 0x57FF && value != 0x00)
+    {
+        Logger::UnmuteSilent();
+        uint32_t frame = _state->frame_counter;
+        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
+        uint8_t bank = GetRAMPageFromAddress(accessAddress);
+        LOGINFO("Pixel write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)", frame, bank, addr, value, accessAddress);
+        Logger::MuteSilent();
+    }
+
+    if (addr >= 0x5800 && addr <= 0x5AFF && value != 0x00)
+    {
+        Logger::UnmuteSilent();
+        uint32_t frame = _state->frame_counter;
+        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
+        uint8_t bank = GetRAMPageFromAddress(accessAddress);
+        LOGINFO("Attributes write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)",frame, bank, addr, value, accessAddress);
+        Logger::MuteSilent();
+    }
+     */
+
+/*
+if (addr == 0x4000 && val == 0x02)
+{
+   // Flush current screen state to framebuffer
+   _context->pScreen->RenderOnlyMainScreen();
+
+   // Save to disk in native and png formats
+   _context->pScreen->SaveZXSpectrumNativeScreen();
+   _context->pScreen->SaveScreen();
+}
+*/
+    /// endregion </Test>
+
+    /// region <Refactor>
+    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
+    // Mark memory cell as accessed on write
+    uint8_t* membit = _membits + addr;
+    *membit |= MEMBITS_W;
+    //dbgbreak |= (*membit & MEMBITS_BPW);
+
+    // Check for breakpoint conditions
+    //brk_mem_wr = addr;
+    //brk_mem_val = val;
+    //debug_cond_check(&cpu);		// Debug conditions check is very slow
+    /// endregion </Refactor>
 
     /// region <Write breakpoint logic>
 
@@ -192,69 +257,6 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     }
 
     /// endregion </Write breakpoint logic>
-}
-
-/// Implementation memory write method
-/// Used from Z80::DbgMemIf
-/// \param addr 16-bit address in Z80 memory space
-/// \param value 8-bit value to write into Z80 memory
-void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
-{
-    // Write data to memory
-    MemoryWriteFast(addr, value);
-
-    // Raise flag that video memory was changed
-    if (addr >= 0x4000 && addr <= 0x5B00)
-    {
-        _state->video_memory_changed = true;
-    }
-
-    /// region <Test>
-    if (addr >= 0x4000 && addr <= 0x57FF && value != 0x00)
-    {
-        Logger::UnmuteSilent();
-        uint32_t frame = _state->frame_counter;
-        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
-        uint8_t bank = GetRAMPageFromAddress(accessAddress);
-        LOGINFO("Pixel write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)", frame, bank, addr, value, accessAddress);
-        Logger::MuteSilent();
-    }
-
-    if (addr >= 0x5800 && addr <= 0x5AFF && value != 0x00)
-    {
-        Logger::UnmuteSilent();
-        uint32_t frame = _state->frame_counter;
-        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
-        uint8_t bank = GetRAMPageFromAddress(accessAddress);
-        LOGINFO("Attributes write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)",frame, bank, addr, value, accessAddress);
-        Logger::MuteSilent();
-    }
-
-/*
-if (addr == 0x4000 && val == 0x02)
-{
-   // Flush current screen state to framebuffer
-   _context->pScreen->RenderOnlyMainScreen();
-
-   // Save to disk in native and png formats
-   _context->pScreen->SaveZXSpectrumNativeScreen();
-   _context->pScreen->SaveScreen();
-}
-*/
-    /// endregion </Test>
-
-    /// region <Refactor>
-    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
-    // Mark memory cell as accessed on write
-    uint8_t* membit = _membits + (addr & 0xFFFF);
-    *membit |= MEMBITS_W;
-    //dbgbreak |= (*membit & MEMBITS_BPW);
-
-    // Check for breakpoint conditions
-    //brk_mem_wr = addr;
-    //brk_mem_val = val;
-    //debug_cond_check(&cpu);		// Debug conditions check is very slow
-    /// endregion </Refactor>
 }
 
 /// endregion /<Memory access implementation methods>

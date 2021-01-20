@@ -332,7 +332,7 @@ public:
 	void Pause();
 	void Resume();
 
-	void Z80Step();		// Single opcode execution
+	void Z80Step(bool skipBreakpoints = false);		// Single opcode execution
 
 public:
     void CheckNextFrame();

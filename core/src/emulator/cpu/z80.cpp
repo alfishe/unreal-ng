@@ -145,7 +145,7 @@ void Z80::Resume()
 }
 
 /// Single CPU command cycle (non-interruptable)
-void Z80::Z80Step()
+void Z80::Z80Step(bool skipBreakpoints)
 {
     Z80& cpu = *this;
     const CONFIG& config = _context->config;
@@ -155,7 +155,7 @@ void Z80::Z80Step()
     Emulator& emulator = *_context->pEmulator;
 
     // Let debugger process step event
-    if (cpu.isDebugMode)
+    if (cpu.isDebugMode && skipBreakpoints == false)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         uint16_t breakpointID = brk.HandlePCChange(pc);

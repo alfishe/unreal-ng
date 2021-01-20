@@ -4,6 +4,8 @@
 
 #include <QBoxLayout>
 
+#include "debugger/debugmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/emulator.h"
 
 DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
@@ -40,16 +42,31 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
+
+    // Subscribe to breakpoint trigger messages
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, observerInstance, callback);
 }
 
 DebuggerWindow::~DebuggerWindow()
 {
     qDebug() << "DebuggerWindow::~DebuggerWindow()";
+
+    // Unsubscribe from breakpoint trigger messages
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    messageCenter.RemoveObserver(NC_LOGGER_BREAKPOINT, observerInstance, callback);
 }
 
 void DebuggerWindow::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
+
+    // Load debugger state from disk
+    loadState();
 
     pauseAction->setEnabled(true);
 
@@ -95,9 +112,55 @@ void DebuggerWindow::reset()
     }
  }
 
+ ///
+ /// \brief DebuggerWindow::loadState
+ /// Loads up debugger state (including breakpoints)
+ void DebuggerWindow::loadState()
+ {
+    DebugManager& dbgManager = *_emulator->GetDebugManager();
+    BreakpointManager& brkManager = *_emulator->GetBreakpointManager();
+
+    /// <Test>
+    _emulator->DebugOn();
+    brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
+    brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
+    /// </Test>
+ }
+
+ ///
+ /// \brief DebuggerWindow::saveState
+ /// Persists debugger state (including breakpoints)
+ void DebuggerWindow::saveState()
+ {
+
+ }
+
+void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
+{
+    if (message == nullptr || message->obj == nullptr)
+        return;
+
+    qDebug() << "DebuggerWindow::handleMessageBreakpointTriggered()";
+
+    _breakpointTriggered = true;
+
+    SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
+    uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+
+    continueAction->setEnabled(true);
+    pauseAction->setEnabled(false);
+    cpuStepAction->setEnabled(true);
+    frameStepAction->setEnabled(true);
+    waitInterruptAction->setEnabled(true);
+
+    updateState();
+}
+
 void DebuggerWindow::continueExecution()
 {
     qDebug() << "DebuggerWindow::continueExecution()";
+
+    _breakpointTriggered = false;
 
     if (_emulator && _emulator->IsPaused())
     {
@@ -134,10 +197,13 @@ void DebuggerWindow::cpuStep()
 {
     qDebug() << "DebuggerWindow::cpuStep()";
 
+    _breakpointTriggered = false;
+
     if (_emulator)
     {
-        // Execute single Z80 command
-        _emulator->RunSingleCPUCycle();
+        // Execute single Z80 command (Step execution does not trigger any breakpoints)
+        bool skipBreakpoints = true;
+        _emulator->RunSingleCPUCycle(skipBreakpoints);
 
         updateState();
     }
@@ -147,12 +213,16 @@ void DebuggerWindow::frameStep()
 {
     qDebug() << "DebuggerWindow::frameStep()";
 
+    _breakpointTriggered = false;
+
     updateState();
 }
 
 void DebuggerWindow::waitInterrupt()
 {
     qDebug() << "DebuggerWindow::waitInterrupt()";
+
+    _breakpointTriggered = false;
 
     updateState();
 }

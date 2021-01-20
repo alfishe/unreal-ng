@@ -107,6 +107,79 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
 
 /// endregion </Management methods>
 
+/// region <Management assistance methods>
+uint16_t BreakpointManager::AddExecutionBreakpoint(uint16_t z80address)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->memoryType = BRK_MEM_EXECUTE;
+    breakpoint->z80address = z80address;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+uint16_t BreakpointManager::AddMemReadBreakpoint(uint16_t z80address)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->memoryType = BRK_MEM_READ;
+    breakpoint->z80address = z80address;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+uint16_t BreakpointManager::AddMemWriteBreakpoint(uint16_t z80address)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->memoryType = BRK_MEM_WRITE;
+    breakpoint->z80address = z80address;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+uint16_t BreakpointManager::AddPortInBreakpoint(uint16_t port)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_IN;
+    breakpoint->z80address = port;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+uint16_t BreakpointManager::AddPortOutBreakpoint(uint16_t port)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_OUT;
+    breakpoint->z80address = port;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+/// endregion </Management assistance methods>
+
 /// region <Runtime methods>
 uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
 {

@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QToolBar>
 #include <QWidget>
+#include "3rdparty/message-center/messagecenter.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class DebuggerWindow; }
@@ -12,7 +13,7 @@ QT_END_NAMESPACE
 
 class Emulator;
 
-class DebuggerWindow : public QWidget
+class DebuggerWindow : public QWidget, public Observer
 {
     Q_OBJECT
 public:
@@ -27,8 +28,12 @@ public:
     // Helper methods
 protected:
     void updateState();
+    void loadState();
+    void saveState();
 
 private slots:
+    void handleMessageBreakpointTriggered(int id, Message* message);
+
     void continueExecution();
     void pauseExecution();
     void cpuStep();
@@ -40,6 +45,7 @@ signals:
     // Fields
 protected:
     Emulator* _emulator = nullptr;
+    bool _breakpointTriggered = false;
 
     // UI fields
 private:
