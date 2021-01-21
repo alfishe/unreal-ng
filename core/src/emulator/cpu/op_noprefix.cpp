@@ -1099,19 +1099,19 @@ Z80OPCODE op_C1(Z80 *cpu) { // pop bc
 
 Z80OPCODE op_C2(Z80 *cpu) { // jp nz,nnnn
     uint16_t pc = cpu->pc;
-	uint16_t addr = cpu->rd(pc++);
-	addr += 0x100 * cpu->rd(pc++);
+    uint16_t addr = cpu->rd(pc++);
+    addr += 0x100 * cpu->rd(pc++);
 
-	cpu->memptr = addr;
+    cpu->memptr = addr;
 
-	// Branch taken
-	if (!(cpu->f & ZF))
-	{
-		cpu->last_branch = cpu->pc - 1;
-		pc = addr;
-	}
+    // Branch taken
+    if (!(cpu->f & ZF))
+    {
+        cpu->last_branch = cpu->pc - 1;
+        pc = addr;
+    }
 
-	cpu->pc = pc;
+    cpu->pc = pc;
 }
 
 Z80OPCODE op_C3(Z80 *cpu) { // jp nnnn
@@ -1208,8 +1208,9 @@ Z80OPCODE op_C8(Z80 *cpu) { // ret z
 Z80OPCODE op_C9(Z80 *cpu) { // ret
     uint16_t sp = cpu->sp;
 
-    uint16_t addr = cpu->rd(sp++);
-    addr += 0x100 * cpu->rd(sp++);
+    uint8_t loAddr = cpu->rd(sp++);
+    uint8_t hiAddr = cpu->rd(sp++);
+    uint16_t addr = (hiAddr << 8) | loAddr;
 
     cpu->sp = sp;
 
@@ -1366,8 +1367,9 @@ Z80OPCODE op_D3(Z80 *cpu) { // out (nn),a
 Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
     uint16_t pc = cpu->pc;
 
-    uint16_t addr = cpu->rd(pc++);
-    addr += 0x100 * cpu->rd(pc++);
+    uint8_t loAddr = cpu->rd(pc++);
+    uint8_t hiAddr = cpu->rd(pc++);
+    uint16_t addr = (hiAddr << 8) | loAddr;
 
     cpu->memptr = addr;
 
@@ -1487,8 +1489,10 @@ Z80OPCODE op_DB(Z80 *cpu) { // in a,(nn)
 
 Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
     uint16_t pc = cpu->pc;
-    uint16_t addr = cpu->rd(pc++);
-    addr += 0x100 * cpu->rd(pc++);
+
+    uint8_t loAddr = cpu->rd(pc++);
+    uint8_t hiAddr = cpu->rd(pc++);
+    uint16_t addr = (hiAddr << 8) | loAddr;
 
     cpu->memptr = addr;
 
@@ -1505,7 +1509,7 @@ Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
         cpu->sp = sp;
 
         cpu->last_branch = cpu->pc - 1;
-        cpu->pc = addr;
+        pc = addr;
     };
 
     cpu->pc = pc;
@@ -1573,7 +1577,7 @@ Z80OPCODE op_E2(Z80 *cpu) { // jp po,nnnn
     if (!(cpu->f & PV))
     {
         cpu->last_branch = cpu->pc - 1;
-        cpu->pc = addr;
+        pc = addr;
     }
 
     cpu->pc = pc;
