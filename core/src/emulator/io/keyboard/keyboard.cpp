@@ -96,6 +96,7 @@ ZXExtendedKeyMap Keyboard::_zxExtendedKeyMap(
 Keyboard::Keyboard(EmulatorContext *context)
 {
     _context = context;
+    _logger = _context->pModuleLogger;
 
     // Do explicit state reset on instantiation
     Reset();
