@@ -17,6 +17,19 @@ DEFINES += QT_DEPRECATED_WARNINGS
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    3rdparty/qhexview/document/buffer/qfilebuffer.cpp \
+    3rdparty/qhexview/document/buffer/qhexbuffer.cpp \
+    3rdparty/qhexview/document/buffer/qmemorybuffer.cpp \
+    3rdparty/qhexview/document/buffer/qmemoryrefbuffer.cpp \
+    3rdparty/qhexview/document/commands/hexcommand.cpp \
+    3rdparty/qhexview/document/commands/insertcommand.cpp \
+    3rdparty/qhexview/document/commands/removecommand.cpp \
+    3rdparty/qhexview/document/commands/replacecommand.cpp \
+    3rdparty/qhexview/document/qhexcursor.cpp \
+    3rdparty/qhexview/document/qhexdocument.cpp \
+    3rdparty/qhexview/document/qhexmetadata.cpp \
+    3rdparty/qhexview/document/qhexrenderer.cpp \
+    3rdparty/qhexview/qhexview.cpp \
     debugger/debuggerwindow.cpp \
     debugger/disassemblercolumnview.cpp \
     debugger/disassemblerlistingview.cpp \
@@ -25,6 +38,7 @@ SOURCES += \
     debugger/disassemblerwidget.cpp \
     debugger/memorypageswidget.cpp \
     debugger/registerswidget.cpp \
+    debugger/stackwidget.cpp \
     emulator/emulatormanager.cpp \
     emulator/guiemulatorcontext.cpp \
     emulator/keyboardmanager.cpp \
@@ -37,6 +51,19 @@ SOURCES += \
     widgets/verticallabel.cpp
 
 HEADERS += \
+    3rdparty/qhexview/document/buffer/qfilebuffer.h \
+    3rdparty/qhexview/document/buffer/qhexbuffer.h \
+    3rdparty/qhexview/document/buffer/qmemorybuffer.h \
+    3rdparty/qhexview/document/buffer/qmemoryrefbuffer.h \
+    3rdparty/qhexview/document/commands/hexcommand.h \
+    3rdparty/qhexview/document/commands/insertcommand.h \
+    3rdparty/qhexview/document/commands/removecommand.h \
+    3rdparty/qhexview/document/commands/replacecommand.h \
+    3rdparty/qhexview/document/qhexcursor.h \
+    3rdparty/qhexview/document/qhexdocument.h \
+    3rdparty/qhexview/document/qhexmetadata.h \
+    3rdparty/qhexview/document/qhexrenderer.h \
+    3rdparty/qhexview/qhexview.h \
     debugger/debuggerwindow.h \
     debugger/disassemblercolumnview.h \
     debugger/disassemblerlistingview.h \
@@ -45,6 +72,7 @@ HEADERS += \
     debugger/disassemblerwidget.h \
     debugger/memorypageswidget.h \
     debugger/registerswidget.h \
+    debugger/stackwidget.h \
     emulator/emulatormanager.h \
     emulator/guiemulatorcontext.h \
     emulator/keyboardmanager.h \
@@ -68,7 +96,8 @@ FORMS += \
     ui/ula.ui \
     ui/widgets/disassemblerwidget.ui \
     ui/widgets/memorypageswidget.ui \
-    ui/widgets/registerswidget.ui
+    ui/widgets/registerswidget.ui \
+    ui/widgets/stackwidget.ui
 
 TRANSLATIONS += \
     unreal-qt_en_US.ts
@@ -77,8 +106,6 @@ TRANSLATIONS += \
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
-
-DISTFILES +=
 
 win32:CONFIG(release, debug|release): LIBS += -L$$PWD/../cmake-build-release/core/src/ -lcore -lshlwapi
 else:win32:CONFIG(debug, debug|release): LIBS += -L$$PWD/../cmake-build-debug/core/src/ -lcore -lshlwapi
@@ -134,3 +161,4 @@ win32: {
     CONFIG_FILE = $$PWD\..\data\configs\spectrum128\unreal.ini
     QMAKE_POST_LINK += $$quote(cmd /c copy /y $$CONFIG_FILE $$OUT_PWD$$escape_expand(\n\t))
 }
+

@@ -6,6 +6,8 @@
 #include <QToolBar>
 #include <QWidget>
 #include "3rdparty/message-center/messagecenter.h"
+#include "3rdparty/qhexview/qhexview.h"
+#include "3rdparty/qhexview/document/buffer/qmemorybuffer.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class DebuggerWindow; }

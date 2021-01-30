@@ -82,6 +82,9 @@ void DebuggerWindow::reset()
 {
     ui->registersWidget->reset();
 
+    ui->memorypagesWidget->reset();
+    ui->stackWidget->reset();
+
     updateState();
 }
 
@@ -100,6 +103,16 @@ void DebuggerWindow::reset()
 
         // Update memory banks widget
         ui->memorypagesWidget->refresh();
+
+        // Update stack widget
+        ui->stackWidget->refresh();
+
+        // Update hex viewer widget
+        QByteArray data((const char*)state, sizeof(state));
+        QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
+        //QHexEditData* hexeditdata = QHexEditData::fromMemory(data);
+        ui->hexView->setDocument(document);
+        ui->hexView->update();
     }
     else
     {
@@ -122,8 +135,11 @@ void DebuggerWindow::reset()
 
     /// <Test>
     _emulator->DebugOn();
-    brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
-    brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
+    //brkManager.AddExecutionBreakpoint(0x272E);  // ROM128K::$272E - MENU_MOVE_UP
+    //brkManager.AddExecutionBreakpoint(0x2731);  // ROM128K::$2731 - MENU_MOVE_DOWN
+
+    //brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
+    //brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
     /// </Test>
  }
 

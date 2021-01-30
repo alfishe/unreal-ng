@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>879</width>
-    <height>283</height>
+    <height>593</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -87,6 +87,16 @@
         </widget>
        </item>
        <item>
+        <widget class="StackWidget" name="stackWidget" native="true">
+         <property name="minimumSize">
+          <size>
+           <width>120</width>
+           <height>100</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
         <spacer name="horizontalSpacer_2">
          <property name="orientation">
           <enum>Qt::Horizontal</enum>
@@ -100,6 +110,45 @@
         </spacer>
        </item>
       </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_3">
+     <item>
+      <widget class="QHexView" name="hexView">
+       <property name="minimumSize">
+        <size>
+         <width>500</width>
+         <height>300</height>
+        </size>
+       </property>
+       <property name="font">
+        <font>
+         <family>Consolas</family>
+         <pointsize>14</pointsize>
+        </font>
+       </property>
+       <property name="frameShape">
+        <enum>QFrame::StyledPanel</enum>
+       </property>
+       <property name="frameShadow">
+        <enum>QFrame::Raised</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacer_3">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
      </item>
     </layout>
    </item>
@@ -122,6 +171,18 @@
    <class>MemoryPagesWidget</class>
    <extends>QWidget</extends>
    <header>debugger/memorypageswidget.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>StackWidget</class>
+   <extends>QWidget</extends>
+   <header>debugger/stackwidget.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>QHexView</class>
+   <extends>QFrame</extends>
+   <header>3rdparty/qhexview/qhexview.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>
