@@ -378,6 +378,9 @@ public:
     std::string DumpZ80State();
 	void DumpZ80State(char* buffer, size_t len);
 
+	std::string DumpCurrentFlags();
+	static std::string DumpFlags(uint8_t flags);
+
 	/// endregion </Debug methods>
 };
 

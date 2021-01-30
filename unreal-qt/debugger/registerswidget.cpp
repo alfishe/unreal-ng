@@ -92,6 +92,8 @@ void RegistersWidget::refresh()
     }
     else
     {
+        QString flagString = Z80::DumpFlags(m_z80Registers->f).c_str();
+
         ui->valAF->setText(QStringLiteral("%1").arg(m_z80Registers->af, 4, 16, QLatin1Char('0')).toUpper());
         ui->valBC->setText(QStringLiteral("%1").arg(m_z80Registers->bc, 4, 16, QLatin1Char('0')).toUpper());
         ui->valDE->setText(QStringLiteral("%1").arg(m_z80Registers->de, 4, 16, QLatin1Char('0')).toUpper());
@@ -110,7 +112,7 @@ void RegistersWidget::refresh()
         //ui->valIR->setText(QStringLiteral("%1").arg(m_z80Registers.i, 4, 16, QLatin1Char('0')).toUpper());
         ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
         ui->valINT->setText(QStringLiteral("%1").arg(m_z80Registers->im, 2, 16, QLatin1Char('0')).toUpper());
-        //ui->valFlags->setText(QStringLiteral("%1").arg(m_z80Registers.iy, 4, 16, QLatin1Char('0')).toUpper());
+        ui->valFlags->setText(flagString);
 
         update();
     }

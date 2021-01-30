@@ -1029,4 +1029,45 @@ void Z80::DumpZ80State(char* buffer, size_t len)
     }
 }
 
+std::string Z80::DumpCurrentFlags()
+{
+    return DumpFlags(Z80Registers::f);
+}
+
+std::string Z80::DumpFlags(uint8_t flags)
+{
+    const char flagNames[8] =
+    {
+        'C',    // Carry
+        'N',    // Subtract
+        'P',    // P/V - parity / overflow
+        '3',    // Undocumented F3
+        'H',    // Half-carry
+        '5',    // Undocumented F5
+        'Z',    // Zero
+        'S'     // Sign
+    };
+
+    std::string result;
+    std::stringstream ss;
+
+    for (int i = 7; i >= 0; i--)
+    {
+        bool flagSet = flags & (1 << i);
+
+        if (flagSet)
+        {
+            ss << flagNames[i];
+        }
+        else
+        {
+            ss << "_";
+        }
+    }
+
+    result = ss.str();
+
+    return result;
+}
+
 /// endregion </Debug methods>
