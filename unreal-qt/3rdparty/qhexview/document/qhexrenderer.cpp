@@ -126,13 +126,40 @@ int QHexRenderer::hitTestArea(const QPoint &pt) const
     return QHexRenderer::ExtraArea;
 }
 
-int QHexRenderer::selectedArea() const { return m_selectedarea; }
-bool QHexRenderer::editableArea(int area) const { return (area == QHexRenderer::HexArea || area == QHexRenderer::AsciiArea); }
-quint64 QHexRenderer::documentLastLine() const { return this->documentLines() - 1; }
-quint8 QHexRenderer::documentLastColumn() const { return this->getLine(this->documentLastLine()).length(); }
-quint64 QHexRenderer::documentLines() const { return std::ceil(this->rendererLength() / static_cast<float>(hexLineWidth()));  }
-quint64 QHexRenderer::documentWidth() const { return this->getEndColumnX(); }
-quint64 QHexRenderer::lineHeight() const { return m_fontmetrics.height(); }
+int QHexRenderer::selectedArea() const
+{
+    return m_selectedarea;
+}
+
+bool QHexRenderer::editableArea(int area) const
+{
+    return (area == QHexRenderer::HexArea || area == QHexRenderer::AsciiArea);
+}
+
+quint64 QHexRenderer::documentLastLine() const
+{
+    return this->documentLines() - 1;
+}
+
+quint8 QHexRenderer::documentLastColumn() const
+{
+    return this->getLine(this->documentLastLine()).length();
+}
+
+quint64 QHexRenderer::documentLines() const
+{
+    return m_document->dataLines();
+}
+
+quint64 QHexRenderer::documentWidth() const
+{
+    return this->getEndColumnX();
+}
+
+quint64 QHexRenderer::lineHeight() const
+{
+    return m_fontmetrics.height();
+}
 
 QRect QHexRenderer::getLineRect(quint64 line, quint64 firstline) const
 {

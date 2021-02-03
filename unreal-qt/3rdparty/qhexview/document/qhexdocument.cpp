@@ -6,6 +6,7 @@
 #include <QClipboard>
 #include <QBuffer>
 #include <QFile>
+#include <cmath>
 
 QHexDocument::QHexDocument(QHexBuffer *buffer, QObject *parent): QObject(parent), m_baseaddress(0)
 {
@@ -30,7 +31,19 @@ bool QHexDocument::isEmpty() const { return m_buffer->isEmpty(); }
 bool QHexDocument::atEnd() const { return m_cursor->position().offset() >= m_buffer->length(); }
 bool QHexDocument::canUndo() const { return m_undostack.canUndo(); }
 bool QHexDocument::canRedo() const { return m_undostack.canRedo(); }
-qint64 QHexDocument::length() const { return m_buffer->length(); }
+
+qint64 QHexDocument::dataLength() const
+{
+    return m_buffer->length();
+}
+
+qint64 QHexDocument::dataLines() const
+{
+    qint64 result = ceil(dataLength() / m_hexLineWidth);
+
+    return result;
+}
+
 quint64 QHexDocument::baseAddress() const { return m_baseaddress; }
 QHexCursor *QHexDocument::cursor() const { return m_cursor; }
 
@@ -49,7 +62,7 @@ QByteArray QHexDocument::read(qint64 offset, int len) { return m_buffer->read(of
 
 void QHexDocument::removeSelection()
 {
-    if(!m_cursor->hasSelection())
+    if (!m_cursor->hasSelection())
         return;
 
     this->remove(m_cursor->selectionStart().offset(), m_cursor->selectionLength());
@@ -58,24 +71,47 @@ void QHexDocument::removeSelection()
 
 QByteArray QHexDocument::selectedBytes() const
 {
-    if(!m_cursor->hasSelection())
+    if (!m_cursor->hasSelection())
         return QByteArray();
 
     return m_buffer->read(m_cursor->selectionStart().offset(), m_cursor->selectionLength());
 }
 
-char QHexDocument::at(int offset) const { return m_buffer->at(offset); }
+char QHexDocument::at(int offset) const
+{
+    return m_buffer->at(offset);
+}
 
 void QHexDocument::setBaseAddress(quint64 baseaddress)
 {
-    if(m_baseaddress == baseaddress)
+    if (m_baseaddress == baseaddress)
         return;
 
     m_baseaddress = baseaddress;
     emit documentChanged();
 }
 
-void QHexDocument::sync() { emit documentChanged(); }
+void QHexDocument::sync()
+{
+    emit documentChanged();
+}
+
+// Programmatic navigation with visual position update
+void QHexDocument::gotoOffset(quint64 offset)
+{
+    quint64 jumpOffset = offset;
+    quint64 length = static_cast<quint64>(dataLength());
+
+    if (jumpOffset > length)
+    {
+        jumpOffset = length - 1;
+    }
+
+    QHexPosition newPosition;
+    newPosition.line = jumpOffset / hexLineWidth();
+    newPosition.column = jumpOffset % hexLineWidth();
+    m_cursor->moveTo(newPosition);
+}
 
 void QHexDocument::undo()
 {
@@ -91,7 +127,7 @@ void QHexDocument::redo()
 
 void QHexDocument::cut(bool hex)
 {
-    if(!m_cursor->hasSelection())
+    if (!m_cursor->hasSelection())
         return;
 
     this->copy(hex);
@@ -100,13 +136,13 @@ void QHexDocument::cut(bool hex)
 
 void QHexDocument::copy(bool hex)
 {
-    if(!m_cursor->hasSelection())
+    if (!m_cursor->hasSelection())
         return;
 
     QClipboard* c = qApp->clipboard();
     QByteArray bytes = this->selectedBytes();
 
-    if(hex)
+    if (hex)
         bytes = bytes.toHex(' ').toUpper();
 
     c->setText(bytes);
@@ -117,15 +153,15 @@ void QHexDocument::paste(bool hex)
     QClipboard* c = qApp->clipboard();
     QByteArray data = c->text().toUtf8();
 
-    if(data.isEmpty())
+    if (data.isEmpty())
         return;
 
     this->removeSelection();
 
-    if(hex)
+    if (hex)
         data = QByteArray::fromHex(data);
 
-    if(m_cursor->insertionMode() == QHexCursor::InsertMode)
+    if (m_cursor->insertionMode() == QHexCursor::InsertMode)
         this->insert(m_cursor->position().offset(), data);
     else
         this->replace(m_cursor->position().offset(), data);
@@ -163,7 +199,7 @@ QByteArray QHexDocument::read(qint64 offset, int len) const { return m_buffer->r
 
 bool QHexDocument::saveTo(QIODevice *device)
 {
-    if(!device->isWritable())
+    if (!device->isWritable())
         return false;
 
     m_buffer->write(device);
@@ -174,26 +210,34 @@ qint64 QHexDocument::searchForward(const QByteArray &ba)
 {
     qint64 startPos = m_cursor->position().offset();
     qint64 findPos = m_buffer->indexOf(ba, startPos);
-    if (findPos > -1) {
+
+    if (findPos > -1)
+    {
         m_cursor->clearSelection();
         m_cursor->moveTo(findPos);
         m_cursor->select(ba.length());
     }
+
     return findPos;
 }
 
 qint64 QHexDocument::searchBackward(const QByteArray &ba)
 {
     qint64 startPos = m_cursor->position().offset() - 1;
-    if (m_cursor->hasSelection()) {
+
+    if (m_cursor->hasSelection())
+    {
         startPos = m_cursor->selectionStart().offset() - 1;
     }
+
     qint64 findPos = m_buffer->lastIndexOf(ba, startPos);
-    if (findPos > -1) {
+    if (findPos > -1)
+    {
         m_cursor->clearSelection();
         m_cursor->moveTo(findPos);
         m_cursor->select(ba.length());
     }
+
     return findPos;
 }
 
@@ -205,7 +249,9 @@ QHexDocument* QHexDocument::fromLargeFile(QString filename, QObject *parent)
     if (hexbuffer->read(f))
     {
         return new QHexDocument(hexbuffer, parent);
-    } else {
+    }
+    else
+    {
         delete hexbuffer;
     }
 
