@@ -7,6 +7,7 @@
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
+#include "common/threadhelper.h"
 #include "debugger/debugmanager.h"
 #include "emulator/memory/memory.h"
 #include "loaders/snapshot/loader_sna.h"
@@ -433,6 +434,8 @@ void Emulator::StartAsync()
 
     _asyncThread = new std::thread([this]()
     {
+        ThreadHelper::setThreadName("emulator");
+
         this->Start();
     });
 }

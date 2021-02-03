@@ -6,7 +6,8 @@
 
 class ThreadHelper
 {
-
+public:
+   static void setThreadName(const char* name);
 };
 
 
