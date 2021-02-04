@@ -1,9 +1,10 @@
 #include "qhexview.h"
+
 #include "document/buffer/qmemorybuffer.h"
+
 #include <QFontDatabase>
 #include <QApplication>
 #include <QPaintEvent>
-#include <QHelpEvent>
 #include <QScrollBar>
 #include <QPainter>
 #include <QToolTip>
@@ -73,6 +74,8 @@ bool QHexView::event(QEvent *e)
 {
     if (m_document && m_renderer && (e->type() == QEvent::ToolTip))
     {
+        // Show comments as tooltip (if exist)
+
         QHelpEvent* helpevent = static_cast<QHelpEvent*>(e);
         QHexPosition position;
         QPoint abspos = absolutePosition(helpevent->pos());
@@ -131,19 +134,22 @@ void QHexView::mousePressEvent(QMouseEvent *e)
     if (!m_renderer || (e->buttons() != Qt::LeftButton))
         return;
 
-    QHexPosition position;
+    // Translate viewport coordinates to global view coordinates (adding scroll shift)
     QPoint abspos = absolutePosition(e->pos());
 
-    if (!m_renderer->hitTest(abspos, &position, this->firstVisibleLine()))
-        return;
-
-    m_renderer->selectArea(abspos);
-    if (m_renderer->editableArea(m_renderer->selectedArea()))
+    QHexPosition position;
+    if (m_renderer->hitTest(abspos, &position, this->firstVisibleLine()))
     {
-        m_document->cursor()->moveTo(position);
-    }
+        // Switch area type (activate the area)
+        m_renderer->selectArea(abspos);
 
-    e->accept();
+        if (m_renderer->editableArea(m_renderer->selectedArea()))
+        {
+            m_document->cursor()->moveTo(position);
+        }
+
+        e->accept();
+    }
 }
 
 void QHexView::mouseMoveEvent(QMouseEvent *e)
@@ -153,8 +159,13 @@ void QHexView::mouseMoveEvent(QMouseEvent *e)
     if (!m_renderer || !m_document)
         return;
 
+    QHexRenderer::AreaTypeEnum currentArea = m_renderer->hitDetectArea(e->pos());
+
+    // User selects area with LMB pressed
     if (e->buttons() == Qt::LeftButton)
     {
+        // Don't clutter selection area with blinking cursor
+        // Disable it until area selection process finishes
         if (m_blinktimer->isActive())
         {
             m_blinktimer->stop();
@@ -162,22 +173,29 @@ void QHexView::mouseMoveEvent(QMouseEvent *e)
         }
 
         QHexCursor* cursor = m_document->cursor();
-        QHexPosition position;
         QPoint abspos = absolutePosition(e->pos());
 
-        if (!m_renderer->hitTest(abspos, &position, this->firstVisibleLine()))
-            return;
+        // Adjust selection only if mouse cursor is in the same area (Hex or ASCII)
+        // where selection was started
+        if (m_renderer->selectedArea() == currentArea)
+        {
+            QHexPosition position;
+            if (m_renderer->hitTest(abspos, &position, this->firstVisibleLine()))
+            {
+                // Update cursor selection
+                cursor->select(position.line, position.column, 0);
 
-        cursor->select(position.line, position.column, 0);
-        e->accept();
+                e->accept();
+            }
+        }
+
+        return;
     }
 
     if (e->buttons() != Qt::NoButton)
         return;
 
-    int hittest = m_renderer->hitTestArea(e->pos());
-
-    if (m_renderer->editableArea(hittest))
+    if (m_renderer->editableArea(currentArea))
         this->setCursor(Qt::IBeamCursor);
     else
         this->setCursor(Qt::ArrowCursor);
@@ -190,6 +208,7 @@ void QHexView::mouseReleaseEvent(QMouseEvent *e)
    if (e->button() != Qt::LeftButton)
        return;
 
+   // Restart cursor blinking timer once LMB released
    if (!m_blinktimer->isActive())
        m_blinktimer->start();
 
@@ -263,14 +282,14 @@ void QHexView::paintEvent(QPaintEvent *e)
     // these are lines from the point of view of the visible rect
     // where the first "headerCount" are taken by the header
     const int first = (r.top() / lineHeight);  // included
-    const int lastPlusOne = (r.bottom() / lineHeight) + 1;  // excluded
+    const int lastPlusOne = (r.bottom() / lineHeight);// + 1;  // excluded
 
     // compute document lines, adding firstVisible and removing the header
     // the max is necessary if the rect covers the header
-    const quint64 begin = firstVisible + std::max(first - headerCount, 0);
-    const quint64 end = firstVisible + std::max(lastPlusOne - headerCount, 0) ;
+    const quint64 beginLine = firstVisible + std::max(first - headerCount, 0);
+    const quint64 endLine = firstVisible + std::max(lastPlusOne - headerCount, 0) ;
 
-    m_renderer->render(&painter, begin, end, firstVisible);
+    m_renderer->render(&painter, beginLine, endLine, firstVisible);
     m_renderer->renderFrame(&painter);
 }
 
@@ -314,7 +333,7 @@ void QHexView::moveNext(bool select)
         if(lastcell && !nibbleindex)
             return;
 
-        if(cur->position().offset() >= m_document->length() && nibbleindex)
+        if(cur->position().offset() >= m_document->dataLength() && nibbleindex)
             return;
     }
 
@@ -407,15 +426,15 @@ bool QHexView::processAction(QHexCursor *cur, QKeyEvent *e)
            m_document->cursor()->moveTo(0, 0);
            m_document->cursor()->select(m_renderer->documentLastLine(), m_renderer->documentLastColumn() - 1);
        }
-       else if(e->matches(QKeySequence::Undo))
+       else if (e->matches(QKeySequence::Undo))
            m_document->undo();
-       else if(e->matches(QKeySequence::Redo))
+       else if (e->matches(QKeySequence::Redo))
            m_document->redo();
-       else if(e->matches(QKeySequence::Cut))
+       else if (e->matches(QKeySequence::Cut))
            m_document->cut((m_renderer->selectedArea() == QHexRenderer::HexArea));
-       else if(e->matches(QKeySequence::Copy))
+       else if (e->matches(QKeySequence::Copy))
            m_document->copy((m_renderer->selectedArea() == QHexRenderer::HexArea));
-       else if(e->matches(QKeySequence::Paste))
+       else if (e->matches(QKeySequence::Paste))
            m_document->paste((m_renderer->selectedArea() == QHexRenderer::HexArea));
        else
            return false;
@@ -460,11 +479,15 @@ bool QHexView::processAction(QHexCursor *cur, QKeyEvent *e)
    return true;
 }
 
+/// Handle keyboard cursor buttons
+/// \param cur Cursor object pointer
+/// \param e Keyboard event
+/// \return
 bool QHexView::processMove(QHexCursor *cur, QKeyEvent *e)
 {
     if (e->matches(QKeySequence::MoveToNextChar) || e->matches(QKeySequence::SelectNextChar))
         this->moveNext(e->matches(QKeySequence::SelectNextChar));
-    else if(e->matches(QKeySequence::MoveToPreviousChar) || e->matches(QKeySequence::SelectPreviousChar))
+    else if (e->matches(QKeySequence::MoveToPreviousChar) || e->matches(QKeySequence::SelectPreviousChar))
         this->movePrevious(e->matches(QKeySequence::SelectPreviousChar));
     else if (e->matches(QKeySequence::MoveToNextLine) || e->matches(QKeySequence::SelectNextLine))
     {
@@ -564,6 +587,10 @@ bool QHexView::processMove(QHexCursor *cur, QKeyEvent *e)
     return true;
 }
 
+/// Handle keyboard typing in Hex or ASCII areas
+/// \param cur
+/// \param e
+/// \return
 bool QHexView::processTextInput(QHexCursor *cur, QKeyEvent *e)
 {
     if (m_readonly || (e->modifiers() & Qt::ControlModifier))
@@ -701,6 +728,9 @@ int QHexView::documentSizeFactor() const
     return factor;
 }
 
+/// Calculate position in view based on mouse cursor and scroll positions
+/// \param pos
+/// \return
 QPoint QHexView::absolutePosition(const QPoint & pos) const
 {
     QPoint shift(horizontalScrollBar()->value(), 0);

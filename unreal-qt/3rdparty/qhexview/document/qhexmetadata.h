@@ -9,17 +9,21 @@
 
 struct QHexMetadataAbsoluteItem
 {
-    qint64 begin;
-    qint64 end;
-    QColor foreground, background;
+    quint64 begin;
+    quint64 end;
+    QColor foreground;
+    QColor background;
     QString comment;
 };
 
 struct QHexMetadataItem
 {
     quint64 line;
-    int start, length;
-    QColor foreground, background;
+
+    quint64 start;
+    quint64 length;
+    QColor foreground;
+    QColor background;
     QString comment;
 };
 
@@ -36,7 +40,7 @@ class QHexMetadata : public QObject
     public:
         explicit QHexMetadata(QObject *parent = nullptr);
         const QHexLineMetadata& get(quint64 line) const;
-        QString comments(quint64 line, int column) const;
+        QString comments(quint64 line, quint8 column) const;
         bool hasMetadata(quint64 line) const;
 
         void clear(quint64 line); // this is transient till next call to setLineWidth()
@@ -46,7 +50,7 @@ class QHexMetadata : public QObject
 
     public:
         // new interface with begin, end
-        void metadata(qint64 begin, qint64 end, const QColor &fgcolor, const QColor &bgcolor, const QString &comment);
+        void metadata(quint64 begin, quint64 end, const QColor &fgcolor, const QColor &bgcolor, const QString &comment);
 
         // old interface with line, start, length
         void metadata(quint64 line, int start, int length, const QColor& fgcolor, const QColor& bgcolor, const QString& comment);

@@ -1,6 +1,8 @@
 #include "qhexmetadata.h"
 
-QHexMetadata::QHexMetadata(QObject *parent) : QObject(parent) { }
+QHexMetadata::QHexMetadata(QObject *parent) : QObject(parent)
+{
+}
 
 const QHexLineMetadata &QHexMetadata::get(quint64 line) const
 {
@@ -8,23 +10,23 @@ const QHexLineMetadata &QHexMetadata::get(quint64 line) const
     return it.value();
 }
 
-QString QHexMetadata::comments(quint64 line, int column) const
+QString QHexMetadata::comments(quint64 line, quint8 column) const
 {
-    if(!this->hasMetadata(line))
+    if (!this->hasMetadata(line))
         return QString();
 
     QString s;
 
     const auto& linemetadata = this->get(line);
 
-    for(auto& mi : linemetadata)
+    for (auto& mi : linemetadata)
     {
-        if(!(mi.start <= column && column < mi.start + mi.length))
+        if (!(mi.start <= column && column < mi.start + mi.length))
             continue;
-        if(mi.comment.isEmpty())
+        if (mi.comment.isEmpty())
             continue;
 
-        if(!s.isEmpty())
+        if (!s.isEmpty())
             s += "\n";
 
         s += mi.comment;
@@ -39,7 +41,7 @@ void QHexMetadata::clear(quint64 line)
 {
     auto it = m_metadata.find(line);
 
-    if(it == m_metadata.end())
+    if (it == m_metadata.end())
         return;
 
     m_metadata.erase(it);
@@ -53,7 +55,7 @@ void QHexMetadata::clear()
     emit metadataCleared();
 }
 
-void QHexMetadata::metadata(qint64 begin, qint64 end, const QColor &fgcolor, const QColor &bgcolor, const QString &comment)
+void QHexMetadata::metadata(quint64 begin, quint64 end, const QColor &fgcolor, const QColor &bgcolor, const QString &comment)
 {
     m_absoluteMetadata.append({ begin, end, fgcolor, bgcolor, comment});
     setAbsoluteMetadata(m_absoluteMetadata.back());
@@ -66,7 +68,9 @@ void QHexMetadata::setAbsoluteMetadata(const QHexMetadataAbsoluteItem& mai)
 
     for (quint64 row = firstRow; row <= lastRow; ++row)
     {
-        int start, length;
+        quint64 start;
+        quint64 length;
+
         if (row == firstRow)
         {
             start = mai.begin % m_lineWidth;
@@ -75,6 +79,7 @@ void QHexMetadata::setAbsoluteMetadata(const QHexMetadataAbsoluteItem& mai)
         {
             start = 0;
         }
+
         if (row == lastRow)
         {
             const int lastChar = mai.end % m_lineWidth;
@@ -84,6 +89,7 @@ void QHexMetadata::setAbsoluteMetadata(const QHexMetadataAbsoluteItem& mai)
         {
             length = m_lineWidth;
         }
+
         if (length > 0)
         {
             setMetadata({row, start, length, mai.foreground, mai.background, mai.comment});
@@ -108,8 +114,8 @@ void QHexMetadata::setLineWidth(quint8 width)
 
 void QHexMetadata::metadata(quint64 line, int start, int length, const QColor &fgcolor, const QColor &bgcolor, const QString &comment)
 {
-    const qint64 begin = line * m_lineWidth + start;
-    const qint64 end = begin + length;
+    const quint64 begin = line * m_lineWidth + start;
+    const quint64 end = begin + length;
     // delegate to the new interface
     this->metadata(begin, end, fgcolor, bgcolor, comment);
 }

@@ -19,17 +19,17 @@ class QHexView : public QAbstractScrollArea
         void setReadOnly(bool b);
 
     protected:
-        virtual bool event(QEvent* e);
-        virtual void scrollContentsBy(int dx, int dy);
-        virtual void keyPressEvent(QKeyEvent *e);
-        virtual void mousePressEvent(QMouseEvent* e);
-        virtual void mouseMoveEvent(QMouseEvent* e);
-        virtual void mouseReleaseEvent(QMouseEvent* e);
-        virtual void focusInEvent(QFocusEvent* e);
-        virtual void focusOutEvent(QFocusEvent* e);
-        virtual void wheelEvent(QWheelEvent* e);
-        virtual void resizeEvent(QResizeEvent* e);
-        virtual void paintEvent(QPaintEvent* e);
+        virtual bool event(QEvent* e) override;
+        virtual void scrollContentsBy(int dx, int dy) override;
+        virtual void keyPressEvent(QKeyEvent *e) override;
+        virtual void mousePressEvent(QMouseEvent* e) override;
+        virtual void mouseMoveEvent(QMouseEvent* e) override;
+        virtual void mouseReleaseEvent(QMouseEvent* e) override;
+        virtual void focusInEvent(QFocusEvent* e) override;
+        virtual void focusOutEvent(QFocusEvent* e) override;
+        virtual void wheelEvent(QWheelEvent* e) override;
+        virtual void resizeEvent(QResizeEvent* e) override;
+        virtual void paintEvent(QPaintEvent* e) override;
 
     private slots:
         void renderCurrentLine();
@@ -59,6 +59,8 @@ class QHexView : public QAbstractScrollArea
         QHexRenderer* m_renderer;
         QTimer* m_blinktimer;
         bool m_readonly;
+
+        QHexRenderer::AreaTypeEnum m_selectionArea;
 };
 
 #endif // QHEXVIEW_H

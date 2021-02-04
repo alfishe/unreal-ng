@@ -16,21 +16,21 @@ class QHexRenderer : public QObject
     Q_OBJECT
 
     public:
-        enum { HeaderArea, AddressArea, HexArea, AsciiArea, ExtraArea };
+        enum AreaTypeEnum { HeaderArea, AddressArea, HexArea, AsciiArea, ExtraArea };
 
     public:
         explicit QHexRenderer(QHexDocument* document, const QFontMetrics& fontmetrics, QObject *parent = nullptr);
         void renderFrame(QPainter* painter);
-        void render(QPainter* painter, quint64 start, quint64 end, quint64 firstline);  // begin included, end excluded
+        void render(QPainter* painter, quint64 startLine, quint64 endLine, quint64 firstline);  // begin included, end excluded
         void enableCursor(bool b = true);
         void selectArea(const QPoint& pt);
 
     public:
         void blinkCursor();
         bool hitTest(const QPoint& pt, QHexPosition* position, quint64 firstline) const;
-        int hitTestArea(const QPoint& pt) const;
-        int selectedArea() const;
-        bool editableArea(int area) const;
+        QHexRenderer::AreaTypeEnum hitDetectArea(const QPoint& pt) const;
+        QHexRenderer::AreaTypeEnum selectedArea() const;
+        bool editableArea(QHexRenderer::AreaTypeEnum area) const;
         quint64 documentLastLine() const;
         quint8 documentLastColumn() const;
         quint64 documentLines() const;
@@ -46,12 +46,12 @@ class QHexRenderer : public QObject
         QString asciiString(quint64 line, QByteArray *rawline = nullptr) const;
         QByteArray getLine(quint64 line) const;
         quint64 rendererLength() const;
-        int getAddressWidth() const;
-        int getHexColumnX() const;
-        int getAsciiColumnX() const;
-        int getEndColumnX() const;
-        int getCellWidth() const;
-        int getNibbleIndex(int line, int relx) const;
+        quint64 getAddressWidth() const;
+        quint64 getHexColumnX() const;
+        quint64 getAsciiColumnX() const;
+        quint64 getEndColumnX() const;
+        quint64 getCellWidth() const;
+        quint64 getNibbleIndex(int line, int relx) const;
         void unprintableChars(QByteArray &ascii) const;
 
     private:
@@ -69,7 +69,7 @@ class QHexRenderer : public QObject
     private:
         QHexDocument* m_document;
         QFontMetrics m_fontmetrics;
-        int m_selectedarea;
+        QHexRenderer::AreaTypeEnum m_selectedArea;
         bool m_cursorenabled;
 };
 

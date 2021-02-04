@@ -9,7 +9,7 @@
 
 QHexRenderer::QHexRenderer(QHexDocument* document, const QFontMetrics &fontmetrics, QObject *parent) : QObject(parent), m_document(document), m_fontmetrics(fontmetrics)
 {
-    m_selectedarea = QHexRenderer::HexArea;
+    m_selectedArea = QHexRenderer::HexArea;
     m_cursorenabled = false;
 }
 
@@ -41,75 +41,97 @@ void QHexRenderer::renderFrame(QPainter *painter)
                       rect.bottom());
 }
 
-void QHexRenderer::render(QPainter *painter, quint64 begin, quint64 end, quint64 firstline)
+/// Render content line by line
+/// \param painter
+/// \param startLine
+/// \param endLine
+/// \param firstline Index of first visible line in viewport (offset)
+void QHexRenderer::render(QPainter *painter, quint64 startLine, quint64 endLine, quint64 firstline)
 {
     QPalette palette = qApp->palette();
 
     drawHeader(painter, palette);
 
     quint64 documentLines = this->documentLines();
-    for(quint64 line = begin; line < std::min(end, documentLines); line++)
+    for (quint64 line = startLine; line < std::min(endLine, documentLines); line++)
     {
-        QRect linerect = this->getLineRect(line, firstline);
+        QRect lineRect = this->getLineRect(line, firstline);
 
+        // Draw stripes on the background to distinct even and odd lines
         if (line % 2)
-            painter->fillRect(linerect, palette.brush(QPalette::Window));
+            painter->fillRect(lineRect, palette.brush(QPalette::Window));
         else
-            painter->fillRect(linerect, palette.brush(QPalette::Base));
+            painter->fillRect(lineRect, palette.brush(QPalette::Base));
 
-        this->drawAddress(painter, palette, linerect, line);
-        this->drawHex(painter, palette, linerect, line);
-        this->drawAscii(painter, palette, linerect, line);
+        this->drawAddress(painter, palette, lineRect, line);
+        this->drawHex(painter, palette, lineRect, line);
+        this->drawAscii(painter, palette, lineRect, line);
     }
 }
 
-void QHexRenderer::enableCursor(bool b) { m_cursorenabled = b; }
+void QHexRenderer::enableCursor(bool b)
+{
+    m_cursorenabled = b;
+}
 
 void QHexRenderer::selectArea(const QPoint &pt)
 {
-    int area = this->hitTestArea(pt);
+    QHexRenderer::AreaTypeEnum area = this->hitDetectArea(pt);
 
-    if (!editableArea(area))
-        return;
-
-    m_selectedarea = area;
+    if (editableArea(area))
+    {
+        m_selectedArea = area;
+    }
 }
 
+///
+/// \param pt
+/// \param position
+/// \param firstline First visible line index in viewport (line offset)
+/// \return
 bool QHexRenderer::hitTest(const QPoint &pt, QHexPosition *position, quint64 firstline) const
 {
-    int area = this->hitTestArea(pt);
-
+    // 1. Determine area type
+    QHexRenderer::AreaTypeEnum area = this->hitDetectArea(pt);
     if (!editableArea(area))
         return false;
 
+    // 2. Calculate line, column positions within editable area
     position->line = std::min(firstline + (pt.y() / this->lineHeight()) - headerLineCount(), this->documentLastLine());
     position->lineWidth = this->hexLineWidth();
 
-    if (area == QHexRenderer::HexArea)
+    if (area == QHexRenderer::HexArea)  // Mouse cursor is within hex area
     {
         int relx = pt.x() - this->getHexColumnX() - this->borderSize();
-        position->column = relx / (this->getCellWidth() * 3);
-        position->nibbleindex = this->getNibbleIndex(position->line, relx);
-    }
-    else
+        quint8 symbolPositionX = ceil(relx / this->getCellWidth());
+        position->column = ceil(symbolPositionX / 3);
+        // First half-byte/tetrade/nibble has index 1, second - 0
+        // 0xFA: F - 1, A - 0
+        position->nibbleindex = (symbolPositionX % 3 == 0) ? 1 : 0;
+     }
+    else                                // Mouse cursor is within ASCII area
     {
         int relx = pt.x() - this->getAsciiColumnX() - this->borderSize();
-        position->column = relx / this->getCellWidth();
+        position->column = ceil(relx / this->getCellWidth());
         position->nibbleindex = 1;
     }
 
-    if (position->line == this->documentLastLine()) // Check last line's columns
+    if (position->line == this->documentLastLine())
     {
+        // For very last document line - ensure that last column is not exceeding document end
         QByteArray ba = this->getLine(position->line);
-        position->column = std::min(position->column, static_cast<qint8>(ba.length()));
+        position->column = std::min(position->column, static_cast<quint8>(ba.length()));
     }
     else
-        position->column = std::min(position->column, static_cast<qint8>(hexLineWidth() - 1));
+    {
+        // For every other line it's simple
+        position->column = std::min(position->column, static_cast<quint8>(hexLineWidth() - 1));
+    }
 
     return true;
 }
 
-int QHexRenderer::hitTestArea(const QPoint &pt) const
+QHexRenderer::AreaTypeEnum QHexRenderer::hitDetectArea(const QPoint &pt) const
 {
     if (pt.y() < headerLineCount() * lineHeight())
         return QHexRenderer::HeaderArea;
@@ -126,12 +148,12 @@ int QHexRenderer::hitTestArea(const QPoint &pt) const
     return QHexRenderer::ExtraArea;
 }
 
-int QHexRenderer::selectedArea() const
+QHexRenderer::AreaTypeEnum QHexRenderer::selectedArea() const
 {
-    return m_selectedarea;
+    return m_selectedArea;
 }
 
-bool QHexRenderer::editableArea(int area) const
+bool QHexRenderer::editableArea(QHexRenderer::AreaTypeEnum area) const
 {
     return (area == QHexRenderer::HexArea || area == QHexRenderer::AsciiArea);
 }
@@ -174,21 +196,26 @@ quint64 QHexRenderer::headerLineCount() const
 
 quint64 QHexRenderer::borderSize() const
 {
+    quint64 result = DEFAULT_AREA_IDENTATION * this->getCellWidth();
+
     if (m_document)
     {
-        return m_document->areaIdent() * this->getCellWidth();
+        result = m_document->areaIdent() * this->getCellWidth();
     }
 
-    return DEFAULT_AREA_IDENTATION * this->getCellWidth();
+    return result;
 }
 
 quint8 QHexRenderer::hexLineWidth() const
 {
+    quint8 result = DEFAULT_HEX_LINE_LENGTH;
+
     if (m_document)
     {
-        return m_document->hexLineWidth();
+        result = m_document->hexLineWidth();
     }
-    return DEFAULT_HEX_LINE_LENGTH;
+
+    return result;
 }
 
 QString QHexRenderer::hexString(quint64 line, QByteArray* rawline) const
@@ -205,7 +232,7 @@ QString QHexRenderer::asciiString(quint64 line, QByteArray* rawline) const
 {
     QByteArray lrawline = this->getLine(line);
 
-    if(rawline)
+    if (rawline)
         *rawline = lrawline;
 
     QByteArray ascii = lrawline;
@@ -213,11 +240,24 @@ QString QHexRenderer::asciiString(quint64 line, QByteArray* rawline) const
     return ascii;
 }
 
-QByteArray QHexRenderer::getLine(quint64 line) const { return m_document->read(line * hexLineWidth(), hexLineWidth()); }
-void QHexRenderer::blinkCursor() { m_cursorenabled = !m_cursorenabled; }
-quint64 QHexRenderer::rendererLength() const { return m_document->length() + 1; }
+QByteArray QHexRenderer::getLine(quint64 line) const
+{
+    return m_document->read(line * hexLineWidth(), hexLineWidth());
+}
 
-int QHexRenderer::getAddressWidth() const
+void QHexRenderer::blinkCursor()
+{
+    m_cursorenabled = !m_cursorenabled;
+}
+
+quint64 QHexRenderer::rendererLength() const
+{
+    quint64 result = m_document->dataLength() + 1UL;
+
+    return result;
+}
+
+quint64 QHexRenderer::getAddressWidth() const
 {
     quint64 maxAddr = m_document->baseAddress() + this->rendererLength();
     if (maxAddr <= 0xFFFF)
@@ -229,34 +269,59 @@ int QHexRenderer::getAddressWidth() const
     return QString::number(maxAddr, 16).length();
 }
 
-int QHexRenderer::getHexColumnX() const { return this->getCellWidth() * this->getAddressWidth() + 2 * this->borderSize(); }
-int QHexRenderer::getAsciiColumnX() const { return this->getHexColumnX() + this->getCellWidth() * (hexLineWidth() * 3) + 2 * this->borderSize(); }
-int QHexRenderer::getEndColumnX() const { return this->getAsciiColumnX() + this->getCellWidth() * hexLineWidth() + 2 * this->borderSize(); }
-
-int QHexRenderer::getCellWidth() const
+quint64 QHexRenderer::getHexColumnX() const
 {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
-    return m_fontmetrics.horizontalAdvance(" ");
-#else
-    return m_fontmetrics.width(" ");
-#endif
+    quint64 result =  this->getCellWidth() * this->getAddressWidth() + 2 * this->borderSize();
+
+    return result;
 }
 
-int QHexRenderer::getNibbleIndex(int line, int relx) const
+quint64 QHexRenderer::getAsciiColumnX() const
 {
-    QString hexstring = this->hexString(line);
+    quint64 result = this->getHexColumnX() + this->getCellWidth() * (hexLineWidth() * 3) + 2 * this->borderSize();
 
-    for(int i = 0; i < hexstring.size(); i++)
+    return result;
+}
+
+quint64 QHexRenderer::getEndColumnX() const
+{
+    quint64 result = this->getAsciiColumnX() + this->getCellWidth() * hexLineWidth() + 2 * this->borderSize();
+
+    return result;
+}
+
+quint64 QHexRenderer::getCellWidth() const
+{
+    quint64 result = 0;
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+    result = static_cast<quint64>(m_fontmetrics.horizontalAdvance(" "));
+#else
+    result = m_fontmetrics.width(" ");
+#endif
+
+    return result;
+}
+
+/// Get half-byte index based on mouse cursor coordinates
+/// \param line
+/// \param relx
+/// \return
+quint64 QHexRenderer::getNibbleIndex(int line, int relx) const
+{
+    QString hexValue = this->hexString(line);
+
+    for (int i = 0; i < hexValue.size(); i++)
     {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
-        int x = m_fontmetrics.horizontalAdvance(hexstring, i + 1);
+        int x = m_fontmetrics.horizontalAdvance(hexValue, i + 1);
 #else
         int x = m_fontmetrics.width(hexstring, i + 1);
 #endif
-        if(x < relx)
+        if (x < relx)
             continue;
 
-        if((i == (hexstring.size() - 1)) || (hexstring[i + 1] == ' '))
+        if ((i == (hexValue.size() - 1)) || (hexValue[i + 1] == ' '))
             return 0;
 
         break;
@@ -267,9 +332,9 @@ int QHexRenderer::getNibbleIndex(int line, int relx) const
 
 void QHexRenderer::unprintableChars(QByteArray &ascii) const
 {
-    for(char& ch : ascii)
+    for (char& ch : ascii)
     {
-        if(std::isprint(static_cast<unsigned char>(ch)))
+        if (std::isprint(static_cast<int>(ch)))
             continue;
 
         ch = HEX_UNPRINTABLE_CHAR;
@@ -288,9 +353,9 @@ void QHexRenderer::applyBasicStyle(QTextCursor &textcursor, const QByteArray &ra
     QPalette palette = qApp->palette();
     QColor color = palette.color(QPalette::WindowText);
 
-    if(color.lightness() < 50)
+    if (color.lightness() < 50)
     {
-        if(color == Qt::black)
+        if (color == Qt::black)
             color = Qt::gray;
         else
             color = color.lighter();
@@ -301,9 +366,9 @@ void QHexRenderer::applyBasicStyle(QTextCursor &textcursor, const QByteArray &ra
     QTextCharFormat charformat;
     charformat.setForeground(color);
 
-    for(int i = 0; i < rawline.length(); i++)
+    for (int i = 0; i < rawline.length(); i++)
     {
-        if((rawline[i] != 0x00) && (static_cast<uchar>(rawline[i]) != 0xFF))
+        if ((rawline[i] != 0x00) && (static_cast<uchar>(rawline[i]) != 0xFF))
             continue;
 
         textcursor.setPosition(i * factor);
@@ -316,22 +381,22 @@ void QHexRenderer::applyMetadata(QTextCursor &textcursor, quint64 line, int fact
 {
     QHexMetadata* metadata = m_document->metadata();
 
-    if(!metadata->hasMetadata(line))
+    if (!metadata->hasMetadata(line))
         return;
 
     const QHexLineMetadata& linemetadata = metadata->get(line);
 
-    for(const QHexMetadataItem& mi : linemetadata)
+    for (const QHexMetadataItem& mi : linemetadata)
     {
         QTextCharFormat charformat;
 
-        if(mi.background.isValid())
+        if (mi.background.isValid())
             charformat.setBackground(mi.background);
 
-        if(mi.foreground.isValid())
+        if (mi.foreground.isValid())
             charformat.setForeground(mi.foreground);
 
-        if(!mi.comment.isEmpty())
+        if (!mi.comment.isEmpty())
             charformat.setUnderlineStyle(QTextCharFormat::SingleUnderline);
 
         textcursor.setPosition(mi.start * factor);
@@ -344,26 +409,52 @@ void QHexRenderer::applySelection(QTextCursor &textcursor, quint64 line, int fac
 {
     QHexCursor* cursor = m_document->cursor();
 
-    if(!cursor->isLineSelected(line))
+    if (!cursor->isLineSelected(line))
         return;
 
     const QHexPosition& startsel = cursor->selectionStart();
     const QHexPosition& endsel = cursor->selectionEnd();
 
-    if(startsel.line == endsel.line)
+    if (startsel.line == endsel.line)
     {
-        textcursor.setPosition(startsel.column * factor);
-        textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, ((endsel.column - startsel.column + 1) * factor) - 1);
+        // If both start and end of selection located on the same line
+        int startPos;
+        int endPos;
+
+        if (factor > 1)
+        {
+            // Hex area - don't include trailing space (for each byte representation) into selection
+            startPos = startsel.column * factor;
+            endPos = (endsel.column + 1) * factor - 1;
+        }
+        else
+        {
+            // ASCII area - make fair selection according cursor data
+            startPos = startsel.column;
+            endPos = endsel.column + 1;
+        }
+
+        if (endsel.column > 7)
+        {
+            assert(false);
+        }
+
+        textcursor.setPosition(startPos);
+        textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, endPos);
     }
     else
     {
-        if(line == startsel.line)
-            textcursor.setPosition(startsel.column * factor);
+        // Multi-line selection
+        int startPos = startsel.column * factor;
+        int endPos = (endsel.column + 1) * factor;
+
+        if (line == startsel.line)
+            textcursor.setPosition(startPos);
         else
             textcursor.setPosition(0);
 
-        if(line == endsel.line)
-            textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, ((endsel.column + 1) * factor) - 1);
+        if (line == endsel.line)
+            textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, endPos);
         else
             textcursor.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
     }
@@ -380,7 +471,7 @@ void QHexRenderer::applyCursorAscii(QTextCursor &textcursor, quint64 line) const
 {
     QHexCursor* cursor = m_document->cursor();
 
-    if((line != cursor->currentLine()) || !m_cursorenabled)
+    if ((line != cursor->currentLine()) || !m_cursorenabled)
         return;
 
     textcursor.clearSelection();
@@ -391,11 +482,11 @@ void QHexRenderer::applyCursorAscii(QTextCursor &textcursor, quint64 line) const
 
     QTextCharFormat charformat;
 
-    if((cursor->insertionMode() == QHexCursor::OverwriteMode) || (m_selectedarea != QHexRenderer::AsciiArea))
+    if ((cursor->insertionMode() == QHexCursor::OverwriteMode) || (m_selectedArea != QHexRenderer::AsciiArea))
     {
         charformat.setForeground(palette.color(QPalette::Window));
 
-        if(m_selectedarea == QHexRenderer::AsciiArea)
+        if (m_selectedArea == QHexRenderer::AsciiArea)
             charformat.setBackground(palette.color(QPalette::WindowText));
         else
             charformat.setBackground(palette.color(QPalette::WindowText).lighter(250));
@@ -412,28 +503,28 @@ void QHexRenderer::applyCursorHex(QTextCursor &textcursor, quint64 line) const
 {
     QHexCursor* cursor = m_document->cursor();
 
-    if((line != cursor->currentLine()) || !m_cursorenabled)
+    if ((line != cursor->currentLine()) || !m_cursorenabled)
         return;
 
     textcursor.clearSelection();
     textcursor.setPosition(m_document->cursor()->currentColumn() * 3);
 
-    if((m_selectedarea == QHexRenderer::HexArea) && !m_document->cursor()->currentNibble())
+    if ((m_selectedArea == QHexRenderer::HexArea) && !m_document->cursor()->currentNibble())
         textcursor.movePosition(QTextCursor::Right, QTextCursor::MoveAnchor);
 
     textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor);
 
-    if(m_selectedarea == QHexRenderer::AsciiArea)
+    if (m_selectedArea == QHexRenderer::AsciiArea)
         textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor);
 
     QPalette palette = qApp->palette();
     QTextCharFormat charformat;
 
-    if((cursor->insertionMode() == QHexCursor::OverwriteMode) || (m_selectedarea != QHexRenderer::HexArea))
+    if ((cursor->insertionMode() == QHexCursor::OverwriteMode) || (m_selectedArea != QHexRenderer::HexArea))
     {
         charformat.setForeground(palette.color(QPalette::Window));
 
-        if(m_selectedarea == QHexRenderer::HexArea)
+        if (m_selectedArea == QHexRenderer::HexArea)
             charformat.setBackground(palette.color(QPalette::WindowText));
         else
             charformat.setBackground(palette.color(QPalette::WindowText).lighter(250));
@@ -467,7 +558,7 @@ void QHexRenderer::drawHex(QPainter *painter, const QPalette &palette, const QRe
 
     textcursor.insertText(this->hexString(line, &rawline));
 
-    if(line == this->documentLastLine())
+    if (line == this->documentLastLine())
         textcursor.insertText(" ");
 
     QRect hexrect = linerect;
@@ -493,7 +584,7 @@ void QHexRenderer::drawAscii(QPainter *painter, const QPalette &palette, const Q
     QByteArray rawline;
     textcursor.insertText(this->asciiString(line, &rawline));
 
-    if(line == this->documentLastLine())
+    if (line == this->documentLastLine())
         textcursor.insertText(" ");
 
     QRect asciirect = linerect;

@@ -1,5 +1,7 @@
 #include "qhexcursor.h"
+
 #include <QWidget>
+#include <algorithm>
 
 QHexCursor::QHexCursor(QObject *parent) : QObject(parent), m_insertionmode(QHexCursor::OverwriteMode)
 {
@@ -15,12 +17,12 @@ QHexCursor::QHexCursor(QObject *parent) : QObject(parent), m_insertionmode(QHexC
 
 const QHexPosition &QHexCursor::selectionStart() const
 {
-    if(m_position.line < m_selection.line)
+    if (m_position.line < m_selection.line)
         return m_position;
 
-    if(m_position.line == m_selection.line)
+    if (m_position.line == m_selection.line)
     {
-        if(m_position.column < m_selection.column)
+        if (m_position.column < m_selection.column)
             return m_position;
     }
 
@@ -29,12 +31,12 @@ const QHexPosition &QHexCursor::selectionStart() const
 
 const QHexPosition &QHexCursor::selectionEnd() const
 {
-    if(m_position.line > m_selection.line)
+    if (m_position.line > m_selection.line)
         return m_position;
 
-    if(m_position.line == m_selection.line)
+    if (m_position.line == m_selection.line)
     {
-        if(m_position.column > m_selection.column)
+        if (m_position.column > m_selection.column)
             return m_position;
     }
 
@@ -53,19 +55,24 @@ int QHexCursor::selectionNibble() const { return m_selection.nibbleindex;  }
 
 bool QHexCursor::isLineSelected(quint64 line) const
 {
-    if(!this->hasSelection())
-        return false;
+    bool result = false;
 
-    quint64 first = std::min(m_position.line, m_selection.line);
-    quint64 last = std::max(m_position.line, m_selection.line);
+    if (this->hasSelection())
+    {
+        quint64 first = std::min(m_position.line, m_selection.line);
+        quint64 last = std::max(m_position.line, m_selection.line);
 
-    if((line < first) || (line > last))
-        return false;
+        if ((line >= first) && (line <= last))
+            result = true;
+    }
 
-    return true;
+    return result;
 }
 
-bool QHexCursor::hasSelection() const { return m_position != m_selection; }
+bool QHexCursor::hasSelection() const
+{
+    return m_position != m_selection;
+}
 
 void QHexCursor::clearSelection()
 {
@@ -73,10 +80,17 @@ void QHexCursor::clearSelection()
     emit positionChanged();
 }
 
-void QHexCursor::moveTo(const QHexPosition &pos) { this->moveTo(pos.line, pos.column, pos.nibbleindex); }
-void QHexCursor::select(const QHexPosition &pos) { this->select(pos.line, pos.column, pos.nibbleindex); }
+void QHexCursor::moveTo(const QHexPosition &pos)
+{
+    this->moveTo(pos.line, pos.column, pos.nibbleindex);
+}
 
-void QHexCursor::moveTo(quint64 line, qint8 column, int nibbleindex)
+void QHexCursor::select(const QHexPosition &pos)
+{
+    this->select(pos.line, pos.column, pos.nibbleindex);
+}
+
+void QHexCursor::moveTo(quint64 line, quint8 column, int nibbleindex)
 {
     m_selection.line = line;
     m_selection.column = column;
@@ -85,7 +99,7 @@ void QHexCursor::moveTo(quint64 line, qint8 column, int nibbleindex)
     this->select(line, column, nibbleindex);
 }
 
-void QHexCursor::select(quint64 line, qint8 column, int nibbleindex)
+void QHexCursor::select(quint64 line, quint8 column, int nibbleindex)
 {
     m_position.line = line;
     m_position.column = column;
@@ -94,15 +108,23 @@ void QHexCursor::select(quint64 line, qint8 column, int nibbleindex)
     emit positionChanged();
 }
 
-void QHexCursor::moveTo(qint64 offset)
+void QHexCursor::moveTo(quint64 offset)
 {
     quint64 line = offset / m_lineWidth;
-    this->moveTo(line, offset - (line * m_lineWidth));
+    quint8 column = offset % m_lineWidth;
+
+    this->moveTo(line, column);
 }
 
-void QHexCursor::select(int length) { this->select(m_position.line, std::min(m_lineWidth - 1, m_position.column + length - 1)); }
+void QHexCursor::select(int length)
+{
+    quint64 line = m_position.line;
+    quint8 column = std::min(m_lineWidth - 1, m_position.column + length - 1);
 
-void QHexCursor::selectOffset(qint64 offset, int length)
+    this->select(line, column);
+}
+
+void QHexCursor::selectOffset(quint64 offset, int length)
 {
     this->moveTo(offset);
     this->select(length);
@@ -126,7 +148,7 @@ void QHexCursor::setLineWidth(quint8 width)
 
 void QHexCursor::switchInsertionMode()
 {
-    if(m_insertionmode == QHexCursor::OverwriteMode)
+    if (m_insertionmode == QHexCursor::OverwriteMode)
         m_insertionmode = QHexCursor::InsertMode;
     else
         m_insertionmode = QHexCursor::OverwriteMode;
