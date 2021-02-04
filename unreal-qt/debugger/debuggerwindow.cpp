@@ -2,7 +2,9 @@
 
 #include "ui_debuggerwindow.h"
 
+#include <Qt>
 #include <QBoxLayout>
+#include <QColor>
 
 #include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -42,6 +44,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
+
+    // Set hex memory viewer to readonly mode
+    ui->hexView->setReadOnly(true);
 
     // Subscribe to breakpoint trigger messages
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -108,10 +113,31 @@ void DebuggerWindow::reset()
         ui->stackWidget->refresh();
 
         // Update hex viewer widget
-        QByteArray data((const char*)state, sizeof(state));
-        QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
-        //QHexEditData* hexeditdata = QHexEditData::fromMemory(data);
-        ui->hexView->setDocument(document);
+        if (true)
+        {
+            // Getting address of current ROM page
+            Memory* memory = _emulator->GetMemory();
+            uint8_t romPage = memory->GetROMPage();
+            uint8_t* addr = memory->ROMPageAddress(romPage);
+
+            QByteArray data((const char*)addr, 16384);
+            QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
+            document->setHexLineWidth(8);   // Display 8 hex bytes per line
+            ui->hexView->setDocument(document);
+
+            uint16_t pc = state->Z80Registers::pc;
+            if (pc < 0x4000)
+            {
+                document->gotoOffset(pc);
+                document->cursor()->selectOffset(pc, 1);
+
+                QHexMetadata* hexmetadata = document->metadata();
+                hexmetadata->metadata(pc, pc + 1, Qt::black, Qt::blue, "JR Z,xx");
+                hexmetadata->metadata(pc + 1, pc + 2, Qt::black, Qt::green, "");
+                hexmetadata->background(0, 0, 3, Qt::blue);
+
+            }
+        }
         ui->hexView->update();
     }
     else

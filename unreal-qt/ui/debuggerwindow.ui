@@ -119,7 +119,7 @@
       <widget class="QHexView" name="hexView">
        <property name="minimumSize">
         <size>
-         <width>500</width>
+         <width>360</width>
          <height>300</height>
         </size>
        </property>
