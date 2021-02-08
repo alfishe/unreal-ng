@@ -2229,6 +2229,7 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
             break;
         case 0xFDCB:
             opcode = fdcbOpcodes[fetchByte];
+            break;
         default:
 #ifdef _DEBUG
             {
