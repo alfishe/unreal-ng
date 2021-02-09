@@ -83,7 +83,7 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
     breakpoint->z80address = breakpointAddress;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunSingleCPUCycle();
+    emulator->RunSingleCPUCycle(false);
 
     if (!breakpointTriggered)
     {
@@ -224,10 +224,10 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
 TEST_F(BreakpointManager_test, portInBreakpoint)
 {
-    throw std::logic_error("Not implemented yet");
+    FAIL() << "Not implemented yet";
 }
 
 TEST_F(BreakpointManager_test, portOutBreakpoint)
 {
-    throw std::logic_error("Not implemented yet");
+    FAIL() << "Not implemented yet";
 }
