@@ -12,6 +12,7 @@ void ScreenZX_Test::SetUp()
     // Instantiate emulator with all peripherals, but no configuration loaded
     _context = new EmulatorContext();
     _cpu = new CPU(_context);
+    bool initialized = _cpu->Init();
     _screenzx = new ScreenZXCUT(_context);
 }
 
