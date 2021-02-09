@@ -342,7 +342,7 @@ void QHexView::moveNext(bool select)
         nibbleindex++;
         nibbleindex %= 2;
 
-        if(nibbleindex)
+        if (nibbleindex)
             column++;
     }
     else
@@ -728,9 +728,9 @@ int QHexView::documentSizeFactor() const
     return factor;
 }
 
-/// Calculate position in view based on mouse cursor and scroll positions
-/// \param pos
-/// \return
+/// Calculate absolute position in document view, based on viewport and scroll positions
+/// \param pos Position in viewport
+/// \return Position in document view
 QPoint QHexView::absolutePosition(const QPoint & pos) const
 {
     QPoint shift(horizontalScrollBar()->value(), 0);

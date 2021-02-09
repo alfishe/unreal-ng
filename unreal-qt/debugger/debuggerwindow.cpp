@@ -138,6 +138,7 @@ void DebuggerWindow::reset()
 
             }
         }
+
         ui->hexView->update();
     }
     else

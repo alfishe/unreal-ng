@@ -341,14 +341,14 @@ void QHexRenderer::unprintableChars(QByteArray &ascii) const
     }
 }
 
-void QHexRenderer::applyDocumentStyles(QPainter *painter, QTextDocument* textdocument) const
+void QHexRenderer::renderDocumentStyles(QPainter *painter, QTextDocument* textdocument) const
 {
     textdocument->setDocumentMargin(0);
     textdocument->setUndoRedoEnabled(false);
     textdocument->setDefaultFont(painter->font());
 }
 
-void QHexRenderer::applyBasicStyle(QTextCursor &textcursor, const QByteArray &rawline, int factor) const
+void QHexRenderer::renderBasicStyle(QTextCursor &textcursor, const QByteArray &rawline, int factor) const
 {
     QPalette palette = qApp->palette();
     QColor color = palette.color(QPalette::WindowText);
@@ -377,7 +377,7 @@ void QHexRenderer::applyBasicStyle(QTextCursor &textcursor, const QByteArray &ra
     }
 }
 
-void QHexRenderer::applyMetadata(QTextCursor &textcursor, quint64 line, int factor) const
+void QHexRenderer::renderMetadata(QTextCursor &textcursor, quint64 line, int factor) const
 {
     QHexMetadata* metadata = m_document->metadata();
 
@@ -405,7 +405,7 @@ void QHexRenderer::applyMetadata(QTextCursor &textcursor, quint64 line, int fact
     }
 }
 
-void QHexRenderer::applySelection(QTextCursor &textcursor, quint64 line, int factor) const
+void QHexRenderer::renderSelectionAscii(QTextCursor& textcursor, quint64 line) const
 {
     QHexCursor* cursor = m_document->cursor();
 
@@ -414,30 +414,15 @@ void QHexRenderer::applySelection(QTextCursor &textcursor, quint64 line, int fac
 
     const QHexPosition& startsel = cursor->selectionStart();
     const QHexPosition& endsel = cursor->selectionEnd();
+    const quint8 maxLineWidth = m_document->hexLineWidth();
+    int startPos;
+    int endPos;
 
     if (startsel.line == endsel.line)
     {
         // If both start and end of selection located on the same line
-        int startPos;
-        int endPos;
-
-        if (factor > 1)
-        {
-            // Hex area - don't include trailing space (for each byte representation) into selection
-            startPos = startsel.column * factor;
-            endPos = (endsel.column + 1) * factor - 1;
-        }
-        else
-        {
-            // ASCII area - make fair selection according cursor data
-            startPos = startsel.column;
-            endPos = endsel.column + 1;
-        }
-
-        if (endsel.column > 7)
-        {
-            assert(false);
-        }
+        startPos = startsel.column;
+        endPos = endsel.column + 1;
 
         textcursor.setPosition(startPos);
         textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, endPos);
@@ -445,19 +430,23 @@ void QHexRenderer::applySelection(QTextCursor &textcursor, quint64 line, int fac
     else
     {
         // Multi-line selection
-        int startPos = startsel.column * factor;
-        int endPos = (endsel.column + 1) * factor;
+        startPos = startsel.column;
+        endPos = endsel.column + 1;
 
-        if (line == startsel.line)
-            textcursor.setPosition(startPos);
-        else
-            textcursor.setPosition(0);
+        // For all intermediary lines (non-start, non-end):
+        // They should cover all width with selection
+        {
+            if (line != startsel.line)
+                startPos = 0;
 
-        if (line == endsel.line)
-            textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, endPos);
-        else
-            textcursor.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+            if (line != endsel.line)
+                endPos = maxLineWidth;
+        }
     }
+
+    // Apply selection to text cursor
+    textcursor.setPosition(startPos);
+    textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, endPos);
 
     QPalette palette = qApp->palette();
 
@@ -467,7 +456,57 @@ void QHexRenderer::applySelection(QTextCursor &textcursor, quint64 line, int fac
     textcursor.setCharFormat(charformat);
 }
 
-void QHexRenderer::applyCursorAscii(QTextCursor &textcursor, quint64 line) const
+void QHexRenderer::renderSelectionHex(QTextCursor& textcursor, quint64 line) const
+{
+    QHexCursor* cursor = m_document->cursor();
+
+    if (!cursor->isLineSelected(line))
+        return;
+
+    const QHexPosition& startsel = cursor->selectionStart();
+    const QHexPosition& endsel = cursor->selectionEnd();
+    const quint8 maxLineWidth = m_document->hexLineWidth();
+    const int factor = 3; // Each hex byte is represented by 2xNumbers + 1xSpace symbols
+    int startPos;
+    int endPos;
+
+    if (startsel.line == endsel.line)
+    {
+        // If both start and end of selection located on the same line
+        startPos = startsel.column * factor;
+        endPos = (endsel.column + 1) * factor - 1;
+    }
+    else
+    {
+        // Multi-line selection
+        startPos = startsel.column * factor;
+        endPos = (endsel.column + 1) * factor - 1;
+
+
+        // For all intermediary lines (non-start, non-end):
+        // They should cover all width with selection
+        {
+            if (line != startsel.line)
+                startPos = 0;
+
+            if (line != endsel.line)
+                endPos = maxLineWidth * factor - 1;
+        }
+    }
+
+    // Apply selection to text cursor
+    textcursor.setPosition(startPos);
+    textcursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, endPos);
+
+    QPalette palette = qApp->palette();
+
+    QTextCharFormat charformat;
+    charformat.setBackground(palette.color(QPalette::Highlight));
+    charformat.setForeground(palette.color(QPalette::HighlightedText));
+    textcursor.setCharFormat(charformat);
+}
+
+void QHexRenderer::renderCursorAscii(QTextCursor &textcursor, quint64 line) const
 {
     QHexCursor* cursor = m_document->cursor();
 
@@ -499,7 +538,7 @@ void QHexRenderer::applyCursorAscii(QTextCursor &textcursor, quint64 line) const
     textcursor.setCharFormat(charformat);
 }
 
-void QHexRenderer::applyCursorHex(QTextCursor &textcursor, quint64 line) const
+void QHexRenderer::renderCursorHex(QTextCursor &textcursor, quint64 line) const
 {
     QHexCursor* cursor = m_document->cursor();
 
@@ -564,11 +603,11 @@ void QHexRenderer::drawHex(QPainter *painter, const QPalette &palette, const QRe
     QRect hexrect = linerect;
     hexrect.setX(this->getHexColumnX() + this->borderSize());
 
-    this->applyDocumentStyles(painter, &textdocument);
-    this->applyBasicStyle(textcursor, rawline, 3);
-    this->applyMetadata(textcursor, line, 3);
-    this->applySelection(textcursor, line, 3);
-    this->applyCursorHex(textcursor, line);
+    this->renderDocumentStyles(painter, &textdocument);
+    this->renderBasicStyle(textcursor, rawline, 3);
+    this->renderMetadata(textcursor, line, 3);
+    this->renderSelectionHex(textcursor, line);
+    this->renderCursorHex(textcursor, line);
 
     painter->save();
     painter->translate(hexrect.topLeft());
@@ -590,11 +629,11 @@ void QHexRenderer::drawAscii(QPainter *painter, const QPalette &palette, const Q
     QRect asciirect = linerect;
     asciirect.setX(this->getAsciiColumnX() + this->borderSize());
 
-    this->applyDocumentStyles(painter, &textdocument);
-    this->applyBasicStyle(textcursor, rawline);
-    this->applyMetadata(textcursor, line);
-    this->applySelection(textcursor, line);
-    this->applyCursorAscii(textcursor, line);
+    this->renderDocumentStyles(painter, &textdocument);
+    this->renderBasicStyle(textcursor, rawline);
+    this->renderMetadata(textcursor, line);
+    this->renderSelectionAscii(textcursor, line);
+    this->renderCursorAscii(textcursor, line);
 
     painter->save();
     painter->translate(asciirect.topLeft());
