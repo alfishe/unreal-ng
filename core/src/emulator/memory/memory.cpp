@@ -688,7 +688,7 @@ MemoryBankModeEnum Memory::GetMemoryBankMode(uint8_t bank)
 /// Read single byte from address mapped to Z80 address space
 /// Note: Direct access method. Not shown in any traces, memory counters are not incremented
 /// \param address - Z80 space address
-/// \return
+/// \return 8-bit value from memory on specified address
 uint8_t Memory::DirectReadFromZ80Memory(uint16_t address)
 {
     uint8_t result = 0x00;
