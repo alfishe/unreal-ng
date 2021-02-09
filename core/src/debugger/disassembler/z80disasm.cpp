@@ -2062,7 +2062,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
             }
             else
             {
-                prefix = (static_cast<uint16_t>(fetchByte) << 8) | (prefix & 0x00FF);
+                prefix = (static_cast<uint16_t>(prefix) << 8) | (fetchByte & 0x00FF);
             }
 
             continue;
@@ -2114,11 +2114,11 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                     displacement = fetchByte;
                     result.hasDisplacement = isDisplacement;
                     result.displacement = displacement;
-                    result.instructionBytes.push_back(displacement);
                     result.operandBytes.push_back(displacement);
 
-                    result.command = *(buffer + pos++);
-                    result.opcode = getOpcode(prefix, command);
+                    command = *(buffer + pos++);
+                    result.command = command;
+                    opcode = getOpcode(prefix, command);
                     result.instructionBytes.push_back(command);
 
                     break;
@@ -2234,7 +2234,7 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
 #ifdef _DEBUG
             {
                 std::string prefixValue = StringHelper::FormatBinary(prefix);
-                std::string message = StringHelper::Format("Unknown prefix: 0x%X (%s)", prefix, prefixValue.c_str());
+                std::string message = StringHelper::Format("Unknown prefix: 0x%04X (%s), Instruction: 0x%02X", prefix, prefixValue.c_str(), fetchByte);
                 throw logic_error(message);
             }
 #endif
