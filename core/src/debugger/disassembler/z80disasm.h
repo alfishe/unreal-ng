@@ -21,6 +21,7 @@ struct OpCode
 struct DecodedInstruction
 {
     bool isValid = false;
+    bool hasRuntime = false;
 
     /// region <Raw data>
 
@@ -62,6 +63,62 @@ struct DecodedInstruction
     std::string hexDump;
     std::string mnemonic;
     std::string mnemonicWithLabel;
+
+    /// region <Constructors / Destructors>
+
+    /// Default constructor
+    DecodedInstruction() {};
+
+    /// Copy constructor - used during full struct copy operations
+    /// \param source
+    DecodedInstruction(const DecodedInstruction& source)
+    {
+        isValid = source.isValid;
+        hasRuntime = source.hasRuntime;
+
+        /// region <Raw data>
+
+        opcode = source.opcode;
+        instructionBytes = source.instructionBytes;
+        operandBytes = source.operandBytes;
+
+        fullCommandLen = source.fullCommandLen;
+        operandsLen = source.operandsLen;
+
+        prefix = source.prefix;
+        command = source.command;
+
+        hasJump = source.hasJump;
+        hasRelativeJump = source.hasRelativeJump;
+        hasDisplacement = source.hasDisplacement;
+        hasReturn = source.hasReturn;
+        hasByteOperand = source.hasByteOperand;
+        hasWordOperand = source.hasWordOperand;
+
+        hasCondition = source.hasCondition;
+        hasVariableCycles = source.hasVariableCycles;
+
+        displacement = source.displacement;
+        relJumpOffset = source.relJumpOffset;
+        byteOperand = source.byteOperand;
+        wordOperand = source.wordOperand;
+
+        /// endregion </Raw data>
+
+        /// region <Runtime data>
+        instructionAddr = source.instructionAddr;
+        jumpAddr = source.jumpAddr;
+        relJumpAddr = source.relJumpAddr;
+        displacementAddr = source.displacementAddr;
+        returnAddr = source.returnAddr;
+        /// endregion </Runtime data>
+
+        hexDump = source.hexDump;
+        mnemonic = source.mnemonic;
+        mnemonicWithLabel = source.mnemonicWithLabel;
+    }
+
+    /// endregion </Constructors / Destructors>
 };
 
 constexpr uint16_t OF_NONE = 0;
@@ -114,7 +171,10 @@ protected:
     /// endregion </Fields>
 
 public:
-    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr);
+    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
+
+    std::string getRuntimeHints(DecodedInstruction& decoded);
 
     /// region <Helper methods>
 protected:

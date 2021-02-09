@@ -45,6 +45,11 @@ Memory* DisassemblerWidget::getMemory()
     return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
 }
 
+Z80Registers* DisassemblerWidget::getZ80Registers()
+{
+    return m_debuggerWindow->getEmulator()->GetContext()->pCPU->GetZ80();
+}
+
 Z80Disassembler* DisassemblerWidget::getDisassembler()
 {
     return m_debuggerWindow->getEmulator()->GetContext()->pDebugManager->GetDisassembler();
@@ -54,15 +59,29 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
 
     Memory& memory = *getMemory();
+    Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
 
     uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(pc);
     uint8_t commandLen = 0;
-    std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
-    std::string command = disassembler.disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);
-    std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
+    DecodedInstruction decoded;
 
-    std::string value = StringHelper::Format("$%s: %s   %s", pcAddress.c_str(), hex.c_str(), command.c_str());
+    std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
+    std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen, registers, &memory, &decoded);
+    std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
+    std::string runtime;
+
+    if (decoded.hasRuntime)
+    {
+        runtime = disassembler.getRuntimeHints(decoded);
+        if (runtime.size() > 0)
+        {
+            runtime = " " + runtime;
+        }
+    }
+
+    // Format value like: $15FB: CD 2C 16   call #162C
+    std::string value = StringHelper::Format("$%s: %s   %s%s", pcAddress.c_str(), hex.c_str(), command.c_str(), runtime.c_str());
     m_disassemblyTextEdit->setPlainText(value.c_str());
 }
 

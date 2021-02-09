@@ -29,7 +29,10 @@ protected:
     Emulator* getEmulator();
     EmulatorContext* getEmulatorContext();
     Memory* getMemory();
+    Z80Registers* getZ80Registers();
     Z80Disassembler* getDisassembler();
+
+    std::string formatRuntimeInformation();
 
 public slots:
     void reset();

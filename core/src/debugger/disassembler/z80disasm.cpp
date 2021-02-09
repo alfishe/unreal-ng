@@ -7,6 +7,7 @@
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include <cstring>
 
 /// region <Information>
 
@@ -1984,7 +1985,14 @@ std::regex Z80Disassembler::regexOpcodeOperands(":\\d+");
 
 /// endregion </Static>
 
-std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen)
+std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen, DecodedInstruction* decoded)
+{
+    std::string result = disassembleSingleCommandWithRuntime(buffer, len, commandLen, nullptr, nullptr, decoded);
+
+    return result;
+}
+
+std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded)
 {
     std::string result;
 
@@ -1997,13 +2005,43 @@ std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, siz
     }
     /// endregion </Sanity check>
 
-    DecodedInstruction decoded = decodeInstruction(buffer, len);
-    if (decoded.isValid)
+    DecodedInstruction decodedInstruction = decodeInstruction(buffer, len, registers, memory);
+    if (decodedInstruction.isValid)
     {
-        result = decoded.mnemonic;
+        result = decodedInstruction.mnemonic;
 
         if (commandLen)
-            *commandLen = decoded.fullCommandLen;
+            *commandLen = decodedInstruction.fullCommandLen;
+
+        // Populate 'decoded' output param if available
+        if (decoded != nullptr)
+        {
+            // Transfer all decoded information via copy-constructor
+            *decoded = decodedInstruction;
+        }
+    }
+
+    return result;
+}
+
+std::string Z80Disassembler::getRuntimeHints(DecodedInstruction& decoded)
+{
+    std::string result;
+
+    // No runtime information available
+    if (!decoded.hasRuntime)
+    {
+        return result;
+    }
+
+    if (decoded.hasRelativeJump)
+    {
+        result = StringHelper::Format("(#%04X)", decoded.relJumpAddr);
+    }
+
+    if (decoded.hasReturn)
+    {
+        result = StringHelper::Format("(#%04X)", decoded.returnAddr);
     }
 
     return result;
@@ -2035,6 +2073,13 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     uint8_t jumpOffset = 0x00;
     uint16_t wordOperand = 0x0000;
     uint8_t byteOperand = 0x00;
+    bool hasDisplacement = false;
+    bool hasJump = false;
+    bool hasRelativeJump = false;
+    bool hasReturn = false;
+    bool hasByteArgument = false;
+    bool hasWordArgument = false;
+
     bool commandDecoded = false;
 
     // Fetch longest possible prefixed command
@@ -2046,12 +2091,12 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         // Decode current byte
         opcode = getOpcode(prefix, fetchByte);
         bool isPrefix = opcode.flags & OF_PREFIX;
-        bool isDisplacement = opcode.flags & OF_DISP;
-        bool isJump = opcode.flags & OF_JUMP;
-        bool isRelativeJump = opcode.flags & OF_RELJUMP;
-        bool isReturn = opcode.flags & OF_RET;
-        bool isByteArgument = opcode.flags & OF_MBYTE;
-        bool isWordArgument = opcode.flags & OF_MWORD;
+        hasDisplacement = opcode.flags & OF_DISP;
+        hasJump = opcode.flags & OF_JUMP;
+        hasRelativeJump = opcode.flags & OF_RELJUMP;
+        hasReturn = opcode.flags & OF_RET;
+        hasByteArgument = opcode.flags & OF_MBYTE;
+        hasWordArgument = opcode.flags & OF_MWORD;
 
         // Update effective prefix (for prefix chains like DD FD FD DD DD ...)
         if (isPrefix)
@@ -2112,7 +2157,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                     // DD CB <dd> E1 - set 4,(ix+dd),c
                     operandsLen = 1;                    // DDCB and FDCB prefixed instructions are always have just single displacement
                     displacement = fetchByte;
-                    result.hasDisplacement = isDisplacement;
+                    result.hasDisplacement = hasDisplacement;
                     result.displacement = displacement;
                     result.operandBytes.push_back(displacement);
 
@@ -2138,29 +2183,48 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     result.operandsLen = operandsLen;
     result.opcode = opcode;
 
-    // Populate runtime information if available
-    if (registers != nullptr)
+    result.hasJump = hasJump;
+    result.hasRelativeJump = hasRelativeJump;
+    result.hasReturn = hasReturn;
+    result.hasByteOperand = hasByteArgument;
+    result.hasWordOperand = hasWordArgument;
+
+    /// region <Actualize values according flags>
+    if (hasByteArgument)
     {
-        bool isJump = result.opcode.flags & OF_JUMP;
-        bool isRelativeJump = result.opcode.flags & OF_RELJUMP;
-        bool isDisplacement = result.opcode.flags & OF_DISP;
-        bool isReturn = result.opcode.flags * OF_RET;
+        result.byteOperand = result.operandBytes[0];
+    }
+
+    if (hasWordArgument)
+    {
+        result.wordOperand = (result.operandBytes[0] << 8) | result.operandBytes[1];
+    }
+
+    if (hasRelativeJump)
+    {
+        result.relJumpOffset = result.operandBytes[0];
+    }
+    /// endregion </Actualize values according flags>
+
+    // Populate runtime information if available
+    if (registers != nullptr && memory != nullptr)
+    {
+        result.hasRuntime = true;
 
         // Populate information for jumps / calls (trivial)
-        if (isJump)
+        if (hasJump)
         {
             result.jumpAddr = result.wordOperand;
         }
         // Populate runtime information for relative jumps (JR e; JR z, xx; JR c, xx; JR nz, xx; JR c, xx)
-        else if (isRelativeJump)
+        else if (hasRelativeJump)
         {
-            // Offset is signed 8-bit integer [-128..+127]
-            result.relJumpOffset = static_cast<int8_t>(result.byteOperand);
+            // Offset is signed 8-bit integer [-128..+127]. Calculated from next instruction after JR ...
             result.instructionAddr = registers->pc;
-            result.relJumpAddr = result.instructionAddr + result.relJumpOffset;
+            result.relJumpAddr = result.instructionAddr + result.relJumpOffset + 2;
         }
         // Populate runtime information for displacement operation
-        else if (isDisplacement)
+        else if (hasDisplacement)
         {
             // Displacement is signed 8-bit integer [-128..+127]
             result.displacement = static_cast<int8_t>(result.byteOperand);
@@ -2182,7 +2246,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
             result.displacementAddr = baseAddr + result.displacement;
         }
         // Populate runtime information for returns - requires access to stack memory
-        else if (isReturn)
+        else if (hasReturn)
         {
             if (memory != nullptr && registers != nullptr)
             {
