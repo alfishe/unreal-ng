@@ -571,7 +571,7 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 	z80.DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
 	MLOGINFO(buffer);
 
-	uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(z80.m1_pc);
+	uint8_t* pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(z80.m1_pc);
 	uint8_t commandLen = 0;
 	std:: string pc = StringHelper::ToHexWithPrefix(z80.m1_pc, "");
     std::string command = _context->pDebugManager->GetDisassembler()->disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);

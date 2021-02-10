@@ -18,7 +18,7 @@ void LoaderSNA_Test::SetUp()
     {
 
         // Use Spectrum48K / Pentagon memory layout
-        _cpu->GetMemory()->InternalSetBanks();
+        _cpu->GetMemory()->DefaultBanksFor48k();
     }
     else
     {

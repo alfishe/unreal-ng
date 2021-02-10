@@ -344,7 +344,7 @@ void Screen::SaveScreen()
 
 void Screen::SaveZXSpectrumNativeScreen()
 {
-    uint8_t* buffer = _memory->RemapAddressToCurrentBank(0x4000);
+    uint8_t* buffer = _memory->MapZ80AddressToPhysicalAddress(0x4000);
     uint8_t bank = _memory->GetRAMPageFromAddress(buffer);
     int frameNumber = _state->frame_counter;
 

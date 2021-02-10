@@ -105,6 +105,11 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
     return result;
 }
 
+size_t BreakpointManager::GetBreakpointsCount()
+{
+    return _breakpointMapByID.size();
+}
+
 /// endregion </Management methods>
 
 /// region <Management assistance methods>
@@ -195,7 +200,7 @@ uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
             /// region <Debug info>
 #ifdef _DEBUG
             Memory& memory = *_context->pMemory;
-            MemoryPageDescriptor page = memory.GetCurrentPageFromAddress(pc);
+            MemoryPageDescriptor page = memory.MapZ80AddressToPhysicalPage(pc);
 
             // Precise bank + address
             if (breakpoint->matchType == BRK_MATCH_BANK_ADDR)
@@ -373,7 +378,7 @@ BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
     Memory& memory = *_context->pMemory;
 
     // Determine memory page for address
-    MemoryPageDescriptor page = memory.GetCurrentPageFromAddress(address);
+    MemoryPageDescriptor page = memory.MapZ80AddressToPhysicalPage(address);
     uint32_t fullKey = (page.page << 16) | page.addressInPage;
     uint32_t wildcardKey = 0xFFFF'0000 | address;
 

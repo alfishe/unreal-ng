@@ -17,7 +17,7 @@ void Z80_Logic_Jump_Test::SetUp()
     bool init = _cpu->Init();
 
     // Use Spectrum48K / Pentagon memory layout
-    _cpu->GetMemory()->InternalSetBanks();
+    _cpu->GetMemory()->DefaultBanksFor48k();
 
     // Instantiate opcode test helper
     _opcode = new OpcodeTest();
@@ -461,4 +461,21 @@ TEST_F(Z80_Logic_Jump_Test, Z80RelativeJumps)
     }
 
     /// endregion </Test JR c,x - 0x38 <xx>>
+}
+
+
+TEST_F(Z80_Logic_Jump_Test, Z80ConditionalJumps)
+{
+    /// region <Initialization>
+    Z80 &z80 = *_cpu->GetZ80();
+
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t *memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
+    /// endregion </Initialization>
+
+    FAIL() << "Not implemented yet";
 }

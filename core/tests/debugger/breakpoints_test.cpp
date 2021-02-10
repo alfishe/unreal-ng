@@ -39,16 +39,32 @@ void BreakpointManager_test::TearDown()
 
 TEST_F(BreakpointManager_test, addMemoryBreakpoint)
 {
+    const size_t initialCount = _brkManager->GetBreakpointsCount();
+    const size_t expectedCount = initialCount + 1;
+
     BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
     breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
     breakpoint->memoryType = BRK_MEM_EXECUTE;
     breakpoint->z80address = 0x0000;
-    _brkManager->AddBreakpoint(breakpoint);
+    uint16_t brkID = _brkManager->AddBreakpoint(breakpoint);
+
+    if (brkID == BRK_INVALID)
+    {
+        FAIL() << "BRK_INVALID issued as breakpoint ID";
+    }
+
+    const size_t finalCount = _brkManager->GetBreakpointsCount();
+
+    if (finalCount != expectedCount)
+    {
+        std::string message = StringHelper::Format("Add breakpoint failed. Expected %d breakpoints after add, detected %d", expectedCount, finalCount);
+        FAIL() << message;
+    }
 }
 
 TEST_F(BreakpointManager_test, addPortBreakpoint)
 {
-
+    FAIL() << "Not implemented yet";
 }
 
 TEST_F(BreakpointManager_test, executionBreakpoint)

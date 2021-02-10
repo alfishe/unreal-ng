@@ -16,7 +16,7 @@ void Z80_Test::SetUp()
 	if (_cpu->Init())
 	{
         // Use Spectrum48K / Pentagon memory layout
-        _cpu->GetMemory()->InternalSetBanks();
+        _cpu->GetMemory()->DefaultBanksFor48k();
 
         // Instantiate opcode test helper
         _opcode = new OpcodeTest();

@@ -276,3 +276,9 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
         i++;
     }
 }
+
+/// Test how disassembler sets support flags in DecodedInstruction structure
+TEST_F(Disassembler_Test, commandType)
+{
+    FAIL() << "Not implemented yet";
+}

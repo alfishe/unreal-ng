@@ -600,7 +600,7 @@ void Z80::retn()
 //
 uint8_t Z80::DirectRead(uint16_t addr)
 {
-	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
+	uint8_t* remap_addr = _context->pMemory->MapZ80AddressToPhysicalAddress(addr);
 	
 	return *remap_addr;
 }
@@ -612,7 +612,7 @@ uint8_t Z80::DirectRead(uint16_t addr)
 //
 void Z80::DirectWrite(uint16_t addr, uint8_t val)
 {
-	uint8_t* remap_addr = _context->pMemory->RemapAddressToCurrentBank(addr);
+	uint8_t* remap_addr = _context->pMemory->MapZ80AddressToPhysicalAddress(addr);
 	*remap_addr = val;
 
 	// Update TSConf cache data
@@ -1012,7 +1012,8 @@ void Z80::DumpZ80State(char* buffer, size_t len)
     }
     else if (prev_pc < 0x4000 && m1_pc >= 0x4000)
     {
-        annotation = StringHelper::Format(" <-- RAM%d", _context->pMemory->GetRAMPageFromAddress(_context->pMemory->RemapAddressToCurrentBank(m1_pc)));
+        annotation = StringHelper::Format(" <-- RAM%d", _context->pMemory->GetRAMPageFromAddress(
+                _context->pMemory->MapZ80AddressToPhysicalAddress(m1_pc)));
     }
 
     if (prefix > 0)

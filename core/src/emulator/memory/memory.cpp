@@ -4,6 +4,7 @@
 
 #include "memory.h"
 
+#include "common/bithelper.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
 #include "debugger/debugmanager.h"
@@ -23,6 +24,9 @@ Memory::Memory(EmulatorContext* context)
 
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
+
+    // Reset counters
+    ResetCounters();
 
     // Initialize with default (non-platform specific)
     // base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
@@ -78,23 +82,12 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
 /// \return Byte read from Z80 memory
 uint8_t Memory::MemoryReadFast(uint16_t addr)
 {
-
-    uint8_t result = 0xFF;
-
     // Determine CPU bank (from address bits 14 and 15)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
     // Read byte from correspondent memory bank mapped to global memory buffer
-    result = *(_bank_read[bank] + addressInBank);
-
-    // Update per-line access counter
-    /*
-    if (_bank_mode[bank] == MemoryBankModeEnum::BANK_RAM)
-    {
-        //video.memcpucyc[t % 224]++;
-    }
-    */
+    uint8_t result = *(_bank_read[bank] + addressInBank);
 
     return result;
 }
@@ -108,19 +101,29 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr)
     // Fetch data from memory
     uint8_t result = MemoryReadFast(addr);
 
-    /// region <Refactor>
-    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
-    // Mark memory cell as accessed on read
-    uint8_t* membit = _membits + (unsigned)addr;
-    *membit |= MEMBITS_R;
-    //_context->pCPU->dbgbreak |= (*membit & MEMBITS_BPR);
+    /// region  <Update counters>
 
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+    uint8_t physicalPage = MapZ80AddressToPhysicalPage(addr).page;
 
-    // Check for breakpoint conditions
-    //brk_mem_rd = addr;
-    //brk_mem_val = result;
-    //debug_cond_check(&cpu);		// Debug conditions check is very slow
-    /// endregion </Refactor>
+    // Mark Z80 bank as accessed for read
+    _memZ80BankReadMarks |= (1 << bank);
+
+    // Mark bank as accessed for read
+    uint8_t pageReadMarksByte = physicalPage >> 3;
+    uint8_t pageReadMarksBit = physicalPage & 0b0000'0111;
+    _memPageReadMarks[pageReadMarksByte] |= (1 << pageReadMarksBit);
+
+    // Increment read access counter for Z80 address
+    _memZ80ReadCounters[addr] += 1;
+
+    // Increment read access counter for physical address
+    uint8_t physicalAddress = _bank_read[bank] - _memory + addressInBank;
+    _memAccessReadCounters[physicalAddress] += 1;
+
+    /// endregion </Update counters>
 
     /// region <Read breakpoint logic>
 
@@ -179,60 +182,38 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // Write data to memory
     MemoryWriteFast(addr, value);
 
+    /// region  <Update counters>
+
+    // Determine CPU bank (from address bits 14 and 15)
+    uint8_t bank = (addr >> 14) & 0b0000'0011;
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+    uint8_t physicalPage = MapZ80AddressToPhysicalPage(addr).page;
+
+    // Mark Z80 bank as accessed for read
+    _memZ80BankWriteMarks |= (1 << bank);
+
+    // Mark page as accessed for read
+    uint8_t pageWriteMarksByte = physicalPage >> 3;
+    uint8_t pageWriteMarksBit = physicalPage & 0b0000'0111;
+    _memPageWriteMarks[pageWriteMarksByte] |= (1 << pageWriteMarksBit);
+
+    // Increment read access counter for Z80 address
+    _memZ80WriteCounters[addr] += 1;
+
+    // Increment read access counter for physical page
+    _memPageWriteCounters[physicalPage] += 1;
+
+    // Increment read access counter for physical address
+    uint8_t physicalAddress = _bank_read[bank] - _memory + addressInBank;
+    _memAccessWriteCounters[physicalAddress] += 1;
+
+    /// endregion </Update counters>
+
     // Raise flag that video memory was changed
     if (addr >= 0x4000 && addr <= 0x5B00)
     {
         _state->video_memory_changed = true;
     }
-
-    /// region <Test>
-    /*
-    if (addr >= 0x4000 && addr <= 0x57FF && value != 0x00)
-    {
-        Logger::UnmuteSilent();
-        uint32_t frame = _state->frame_counter;
-        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
-        uint8_t bank = GetRAMPageFromAddress(accessAddress);
-        LOGINFO("Pixel write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)", frame, bank, addr, value, accessAddress);
-        Logger::MuteSilent();
-    }
-
-    if (addr >= 0x5800 && addr <= 0x5AFF && value != 0x00)
-    {
-        Logger::UnmuteSilent();
-        uint32_t frame = _state->frame_counter;
-        uint8_t* accessAddress = RemapAddressToCurrentBank(addr);
-        uint8_t bank = GetRAMPageFromAddress(accessAddress);
-        LOGINFO("Attributes write - frame: %03d, addr: RAM%d:0x%04X, val: 0x%02X (0x%08x)",frame, bank, addr, value, accessAddress);
-        Logger::MuteSilent();
-    }
-     */
-
-/*
-if (addr == 0x4000 && val == 0x02)
-{
-   // Flush current screen state to framebuffer
-   _context->pScreen->RenderOnlyMainScreen();
-
-   // Save to disk in native and png formats
-   _context->pScreen->SaveZXSpectrumNativeScreen();
-   _context->pScreen->SaveScreen();
-}
-*/
-    /// endregion </Test>
-
-    /// region <Refactor>
-    static uint8_t* _membits = _context->pMemory->MemoryAccessCounters();
-    // Mark memory cell as accessed on write
-    uint8_t* membit = _membits + addr;
-    *membit |= MEMBITS_W;
-    //dbgbreak |= (*membit & MEMBITS_BPW);
-
-    // Check for breakpoint conditions
-    //brk_mem_wr = addr;
-    //brk_mem_val = val;
-    //debug_cond_check(&cpu);		// Debug conditions check is very slow
-    /// endregion </Refactor>
 
     /// region <Write breakpoint logic>
 
@@ -270,7 +251,10 @@ void Memory::Reset()
     // Bank 1 [4000:7FFF] - RAM
     // Bank 2 [8000:BFFF] - RAM
     // Bank 3 [C000:FFFF] - RAM
-    InternalSetBanks();
+    DefaultBanksFor48k();
+
+    // Reset counters
+    ResetCounters();
 }
 
 /// Fill whole physical RAM with random values
@@ -383,7 +367,7 @@ void Memory::SetROMPage(uint8_t page, bool updatePorts)
 
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = ROMPageAddress(page);
-    _bank_write[0] = TRASH_MEMORY_PAGE;
+    _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
 
     if (updatePorts)
         _context->pPortDecoder->SetROMPage(page);
@@ -482,16 +466,46 @@ uint8_t Memory::GetRAMPageForBank3()
 
 /// region  <Address helper methods>
 
+/// Up to MAX_RAM_PAGES 256 pages
+/// \param page
+/// \return
+uint8_t* Memory::RAMPageAddress(uint16_t page)
+{
+    uint8_t* result = nullptr;
+
+    if (page < MAX_RAM_PAGES)
+    {
+        result = _ramBase + (PAGE_SIZE * page);
+    }
+
+    return result;
+}
+
+/// Up to MAX_ROM_PAGES 64 pages
+/// \param page
+/// \return
+uint8_t* Memory::ROMPageAddress(uint8_t page)
+{
+    uint8_t* result = nullptr;
+
+    if (page < MAX_ROM_PAGES)
+    {
+        result = _romBase + (PAGE_SIZE * page);
+    }
+
+    return result;
+}
+
 /// Returns RAM page number (16KiB page size) for the specified host address if mapping is available
 /// \param hostAddress Host address
 /// \return RAM page number relative to RAMBase() or MEMORY_UNMAPPABLE =0xFF if address is outside emulated RAM space
-uint8_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
+uint16_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
-    uint8_t result = MEMORY_UNMAPPABLE;
+    uint16_t result = MEMORY_UNMAPPABLE;
 
     if (hostAddress >= RAMBase() && hostAddress < RAMBase() + MAX_RAM_PAGES * PAGE_SIZE)
     {
@@ -508,13 +522,13 @@ uint8_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
 /// Returns ROM page number (16KiB page size) for the specified host address if mapping is available
 /// \param hostAddress Host address
 /// \return ROM page number relative to ROMBase() or MEMORY_UNMAPPABLE =0xFF if address is outside emulated RAM space
-uint8_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
+uint16_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
     /// endregion </Override submodule>
 
-    uint8_t result = MEMORY_UNMAPPABLE;
+    uint16_t result = MEMORY_UNMAPPABLE;
 
     if (hostAddress >= ROMBase() && hostAddress < ROMBase() + MAX_ROM_PAGES * PAGE_SIZE)
     {
@@ -528,10 +542,34 @@ uint8_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
     return result;
 }
 
+/// Get offset in physical memory area for Z80 address
+/// \param address Z80 space adress
+/// \return Offset in '_memory' array
+size_t Memory::GetPhysicalOffsetForZ80Address(uint16_t address)
+{
+    uint8_t* physicalAddress = MapZ80AddressToPhysicalAddress(address);
+
+    size_t result = physicalAddress - _memory;
+
+    return result;
+}
+
+/// Get offset in physical memory area for Z80 bank start address
+/// \param bank Z80 bank index [0:3]
+/// \return Offset in '_memory' array
+size_t Memory::GetPhysicalOffsetForZ80Bank(uint8_t bank)
+{
+    bank = bank & 0b0000'0011;
+
+    size_t result = GetPhysicalOffsetForZ80Address(bank * 0x4000);
+
+    return result;
+}
+
 /// Returns pointer in Host memory for the address in Z80 space mapped to current bank configuration
 /// \param address Z80 space address
 /// \return Pointer to Host memory mapped
-uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
+uint8_t* Memory::MapZ80AddressToPhysicalAddress(uint16_t address)
 {
     uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
     uint16_t addressInBank = address & 0b0011'1111'1111'1111;
@@ -544,7 +582,7 @@ uint8_t* Memory::RemapAddressToCurrentBank(uint16_t address)
 /// Returns MemoryPageDescriptor filled with information about memory page corresponding to specified Z80 address
 /// \param address Z80 space address
 /// \return memory page descriptor
-MemoryPageDescriptor Memory::GetCurrentPageFromAddress(uint16_t address)
+MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
 {
     MemoryPageDescriptor result;
 
@@ -563,12 +601,271 @@ MemoryPageDescriptor Memory::GetCurrentPageFromAddress(uint16_t address)
         default:
             break;
     }
+
     result.addressInPage = addressInBank;
 
     return result;
 }
 
 /// endregion </Address helper methods>
+
+/// region <Counters>
+
+void Memory::ResetCounters()
+{
+    memset(_memZ80ReadCounters, 0, sizeof(_memZ80ReadCounters));
+    memset(_memZ80WriteCounters, 0, sizeof(_memZ80WriteCounters));
+    memset(_memAccessReadCounters, 0, sizeof(_memAccessReadCounters));
+    memset(_memAccessWriteCounters, 0, sizeof(_memAccessWriteCounters));
+
+    memset(_memPageReadCounters, 0, sizeof(_memPageReadCounters));
+    memset(_memPageWriteCounters, 0, sizeof(_memPageWriteCounters));
+
+    _memZ80BankReadMarks = 0;
+    _memZ80BankWriteMarks = 0;
+    memset(_memPageReadMarks, 0, sizeof(_memPageReadMarks));
+    memset(_memPageWriteMarks, 0, sizeof(_memPageWriteMarks));
+}
+
+size_t Memory::GetZ80BankTotalAccessCount(uint8_t bank)
+{
+    size_t result = 0;
+
+    /// region <Sanity checks>
+
+#ifdef _DEBUG
+    if (bank > 3)
+        throw std::logic_error("Invalid Z80 bank");
+#endif
+
+    bank = bank & 0b0000'0011;
+
+    /// endregion </Sanity checks>
+
+    uint8_t bankBit = 1 << bank;
+    bool bankWasRead = _memZ80BankReadMarks & bankBit;
+    bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
+    if (bankWasRead || bankWasWritten)
+    {
+        if (bankWasRead)
+        {
+            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+            for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
+            {
+                result += _memAccessReadCounters[i];
+            }
+        }
+
+        if (bankWasWritten)
+        {
+            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+            for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
+            {
+                result += _memAccessWriteCounters[i];
+            }
+        }
+    }
+
+    return result;
+}
+
+size_t Memory::GetZ80BankReadAccessCount(uint8_t bank)
+{
+    size_t result = 0;
+
+    /// region <Sanity checks>
+
+#ifdef _DEBUG
+    if (bank > 3)
+        throw std::logic_error("Invalid Z80 bank");
+#endif
+
+    bank = bank & 0b0000'0011;
+
+    /// endregion </Sanity checks>
+
+    uint8_t bankBit = 1 << bank;
+    bool bankWasRead = _memZ80BankReadMarks & bankBit;
+
+    if (bankWasRead)
+    {
+        size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+        for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
+        {
+            result += _memAccessReadCounters[i];
+        }
+    }
+
+    return result;
+}
+
+size_t Memory::GetZ80BankWriteAccessCount(uint8_t bank)
+{
+    size_t result = 0;
+
+    /// region <Sanity checks>
+
+#ifdef _DEBUG
+    if (bank > 3)
+        throw std::logic_error("Invalid Z80 bank");
+#endif
+
+    bank = bank & 0b0000'0011;
+
+    /// endregion </Sanity checks>
+
+    uint8_t bankBit = 1 << bank;
+    bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
+
+    if (bankWasWritten)
+    {
+        size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+        for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
+        {
+            result += _memAccessWriteCounters[i];
+        }
+    }
+
+    return result;
+}
+
+size_t Memory::GetZ80BankTotalAccessCountExclScreen(uint8_t bank)
+{
+    size_t result = 0;
+
+    /// region <Sanity checks>
+
+#ifdef _DEBUG
+    if (bank > 3)
+        throw std::logic_error("Invalid Z80 bank");
+#endif
+
+    bank = bank & 0b0000'0011;
+
+    /// endregion </Sanity checks>
+
+    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
+    {
+        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
+
+        uint8_t bankBit = 1 << bank;
+        bool bankWasRead = _memZ80BankReadMarks & bankBit;
+        bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
+        if (bankWasRead || bankWasWritten)
+        {
+            if (bankWasRead)
+            {
+                size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+                for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
+                {
+                    result += _memAccessReadCounters[i];
+                }
+            }
+
+            if (bankWasWritten)
+            {
+                size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+                for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
+                {
+                    result += _memAccessWriteCounters[i];
+                }
+            }
+        }
+    }
+    else
+    {
+        result = GetZ80BankTotalAccessCount(bank);
+    }
+
+    return result;
+}
+
+size_t Memory::GetZ80BankReadAccessCountExclScreen(uint8_t bank)
+{
+    size_t result = 0;
+
+    /// region <Sanity checks>
+
+#ifdef _DEBUG
+    if (bank > 3)
+        throw std::logic_error("Invalid Z80 bank");
+#endif
+
+    bank = bank & 0b0000'0011;
+
+    /// endregion </Sanity checks>
+
+    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
+    {
+        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
+
+        uint8_t bankBit = 1 << bank;
+        bool bankWasRead = _memZ80BankReadMarks & bankBit;
+        if (bankWasRead)
+        {
+            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+            for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
+            {
+                result += _memAccessReadCounters[i];
+            }
+        }
+    }
+    else
+    {
+        result = GetZ80BankReadAccessCount(bank);
+    }
+
+    return result;
+}
+
+size_t Memory::GetZ80BankWriteAccessCountExclScreen(uint8_t bank)
+{
+    size_t result = 0;
+
+    /// region <Sanity checks>
+
+#ifdef _DEBUG
+    if (bank > 3)
+        throw std::logic_error("Invalid Z80 bank");
+#endif
+
+    bank = bank & 0b0000'0011;
+
+    /// endregion </Sanity checks>
+
+    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
+    {
+        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
+
+        uint8_t bankBit = 1 << bank;
+        bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
+        if (bankWasWritten)
+        {
+            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
+
+            for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
+            {
+                result += _memAccessWriteCounters[i];
+            }
+        }
+    }
+    else
+    {
+        result = GetZ80BankWriteAccessCount(bank);
+    }
+
+    return result;
+}
+
+/// endregion </Counters>
+
 
 /// region <Debug methods>
 
@@ -579,7 +876,7 @@ void Memory::SetROM48k(bool updatePorts)
 
     // Switch to 48k ROM page
     _bank_read[0] = base_sos_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
+    _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
 }
 
 void Memory::SetROM128k(bool updatePorts)
@@ -589,7 +886,7 @@ void Memory::SetROM128k(bool updatePorts)
 
     // Switch to 128k ROM page
     _bank_read[0] = base_128_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
+    _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
 }
 
 void Memory::SetROMDOS(bool updatePorts)
@@ -599,7 +896,7 @@ void Memory::SetROMDOS(bool updatePorts)
 
     // Switch to DOS ROM page
     _bank_read[0] = base_dos_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
+    _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
 }
 
 void Memory::SetROMSystem(bool updatePorts)
@@ -609,7 +906,7 @@ void Memory::SetROMSystem(bool updatePorts)
 
     // Switch to DOS ROM page
     _bank_read[0] = base_sys_rom;
-    _bank_write[0] = TRASH_MEMORY_PAGE;
+    _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
 }
 
 /// endregion </Debug methods>
@@ -727,13 +1024,10 @@ void Memory::DirectWriteToZ80Memory(uint16_t address, uint8_t value)
 //
 // Initialize according Spectrum 48K standard address space settings
 //
-void Memory::InternalSetBanks()
+void Memory::DefaultBanksFor48k()
 {
-	State& state = _context->state;
-	CONFIG& config = _context->config;
-
 	// Initialize according Spectrum 128K standard address space settings
-	_bank_write[0] = TRASH_MEMORY_PAGE;                         // ROM is not writable - redirect such requests to unused memory bank
+	_bank_write[0] = _memory + TRASH_MEMORY_OFFSET;             // ROM is not writable - redirect such requests to unused memory bank
 	_bank_read[0] = base_sos_rom;                 		        // 48K (SOS) ROM					for [0x0000 - 0x3FFF]
 	_bank_write[1] = _bank_read[1] = RAMPageAddress(5);	        // Set Screen 1 (page 5) as default	for [0x4000 - 0x7FFF]
 	_bank_write[2] = _bank_read[2] = RAMPageAddress(2);	        // Set page 2 as default			for [0x8000 - 0xBFFF]
@@ -743,9 +1037,6 @@ void Memory::InternalSetBanks()
 	_bank_mode[1] = MemoryBankModeEnum::BANK_RAM;		        // Bank 1 is RAM [0x4000 - 0x7FFF]
 	_bank_mode[2] = MemoryBankModeEnum::BANK_RAM;		        // Bank 2 is RAM [0x8000 - 0xBFFF]
 	_bank_mode[3] = MemoryBankModeEnum::BANK_RAM;		        // Bank 3 is RAM [0xC000 - 0xFFFF]
-
-	// Reset all address defining flags/signals (they'll be recalculated later in logic)
-	state.flags &= ~(CF_DOSPORTS | CF_Z80FBUS | CF_LEAVEDOSRAM | CF_LEAVEDOSADR | CF_SETDOSROM);
 }
 
 /// endregion </Helper methods>
@@ -762,7 +1053,7 @@ std::string Memory::GetCurrentBankName(uint8_t bank)
     }
 
     bool isROM = _bank_mode[bank] == BANK_ROM;
-    uint8_t bankPage = 0;
+    uint16_t bankPage = 0;
 
     if (isROM)
     {

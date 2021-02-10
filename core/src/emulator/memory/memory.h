@@ -8,10 +8,10 @@ class Z80;
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
 // MAX_RAM_PAGES and PAGE defined in platform.h
-#define MAX_RAM_SIZE (MAX_RAM_PAGES * PAGE_SIZE)
+const size_t MAX_RAM_SIZE = MAX_RAM_PAGES * PAGE_SIZE;
 
 /// Return code when host memory address cannot be mapped to any RAM/ROM page
-#define MEMORY_UNMAPPABLE 0xFF
+const uint16_t MEMORY_UNMAPPABLE = 0xFFFF;
 
 /// region <Structures>
 
@@ -80,10 +80,6 @@ protected:
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Fields>
-    friend class Z80;
-    friend class PortDecoder;
-    friend class ROM;
-
 protected:
     // Context passed during initialization
     EmulatorContext* _context = nullptr;
@@ -98,8 +94,6 @@ protected:
     uint8_t* const memory = (uint8_t*)memory__;
 #endif
 
-    uint8_t _membits[0x10000];			// Access counters for CPU memory address space (64KiB)
-
     // Derived addresses
     uint8_t* _ramBase = _memory;
     uint8_t* _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
@@ -110,14 +104,26 @@ protected:
     uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
     uint8_t* _bank_write[4];			// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
 
+    // Access flags / Counters
+    size_t _memZ80ReadCounters[PAGE_SIZE * 4];
+    size_t _memZ80WriteCounters[PAGE_SIZE * 4];
+    size_t _memAccessReadCounters[PAGE_SIZE * MAX_PAGES];   // Read access counters for all memory available
+    size_t _memAccessWriteCounters[PAGE_SIZE * MAX_PAGES];  // Write access counters for all memory available
+
+    size_t _memPageReadCounters[MAX_PAGES];                 // Read access counters aggregated per each memory page
+    size_t _memPageWriteCounters[MAX_PAGES];                // Write accessc counters aggregated per each memory page
+
+    uint8_t _memZ80BankReadMarks;                           // Per-Z80-bank read access flags
+    uint8_t _memZ80BankWriteMarks;                          // Per-Z80-bank write access flags
+    uint8_t _memPageReadMarks[MAX_PAGES / 8];               // Per-page read access flags
+    uint8_t _memPageWriteMarks[MAX_PAGES / 8];              // Per-page write access flags
+
 public:
     // Base addresses for memory classes
     inline uint8_t* RAMBase() { return _ramBase; };			// Get starting address for RAM
     inline uint8_t* CacheBase() { return _cacheBase; };		// Get starting address for Cache
     inline uint8_t* MiscBase() { return _miscBase; };
     inline uint8_t* ROMBase() { return _romBase; };			// Get starting address for ROM
-
-    inline uint8_t* MemoryAccessCounters() { return _membits; };
 
     // Shortcuts to ROM pages
     uint8_t* base_sos_rom;
@@ -141,7 +147,7 @@ public:
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
     /// endregion </Initialization>
 
-    /// region <Emulation memory access methods>
+    /// region <Emulation memory interface methods>
 public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
@@ -152,10 +158,10 @@ public:
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
-    /// endregion </Emulation memory access methods>
+    /// endregion </Emulation memory interface methods>
 
+    /// region <Runtime methods>
 public:
-    // Runtime methods
     void SetROMMode(ROMModeEnum mode);
 
     void SetROMPage(uint8_t page, bool updatePorts = false);
@@ -171,25 +177,26 @@ public:
     uint8_t GetRAMPageForBank2();
     uint8_t GetRAMPageForBank3();
 
-    // Debug methods
-    void SetROM48k(bool updatePorts = false);
-    void SetROM128k(bool updatePorts = false);
-    void SetROMDOS(bool updatePorts = false);
-    void SetROMSystem(bool updatePorts = false);
+    /// endregion </Runtime methods>
 
-    // Service methods
+    /// region <Service methods>
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
     void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
+    /// endregion </Service methods>
 
     /// region  <Address helper methods>
-    inline uint8_t* RAMPageAddress(uint16_t page) { return _ramBase + (PAGE_SIZE * page); }	// Up to MAX_RAM_PAGES 256 pages
-    inline uint8_t* ROMPageAddress(uint8_t page) { return _romBase + (PAGE_SIZE * page); }	// Up to MAX_ROM_PAGES 64 pages
 
-    uint8_t GetRAMPageFromAddress(uint8_t* hostAddress);
-    uint8_t GetROMPageFromAddress(uint8_t* hostAddress);
+    uint8_t* RAMPageAddress(uint16_t page);
+    uint8_t* ROMPageAddress(uint8_t page);
 
-    uint8_t* RemapAddressToCurrentBank(uint16_t address);					// Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
-    MemoryPageDescriptor GetCurrentPageFromAddress(uint16_t address);             // Determines current bank for Z80 address specified
+    uint16_t GetRAMPageFromAddress(uint8_t* hostAddress);
+    uint16_t GetROMPageFromAddress(uint8_t* hostAddress);
+
+    size_t GetPhysicalOffsetForZ80Address(uint16_t address);
+    size_t GetPhysicalOffsetForZ80Bank(uint8_t bank);
+
+    uint8_t* MapZ80AddressToPhysicalAddress(uint16_t address);			    // Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
+    MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address);     // Determines current bank for Z80 address specified
 
     MemoryBankModeEnum GetMemoryBankMode(uint8_t bank);
 
@@ -198,15 +205,52 @@ public:
 
     /// endregion  </Address helper methods>
 
+    /// region <Counters>
+public:
+    void ResetCounters();
+
+    size_t GetZ80BankTotalAccessCount(uint8_t bank);
+    size_t GetZ80BankReadAccessCount(uint8_t bank);
+    size_t GetZ80BankWriteAccessCount(uint8_t bank);
+
+    size_t GetZ80BankTotalAccessCountExclScreen(uint8_t bank);
+    size_t GetZ80BankReadAccessCountExclScreen(uint8_t bank);
+    size_t GetZ80BankWriteAccessCountExclScreen(uint8_t bank);
+
+    /// endregion </Counters>
+
     // Atomic internal methods (but accessible for testing purposes)
 public:
-    void InternalSetBanks();
+    void DefaultBanksFor48k();
 
     /// region <Debug methods>
 public:
+    void SetROM48k(bool updatePorts = false);
+    void SetROM128k(bool updatePorts = false);
+    void SetROMDOS(bool updatePorts = false);
+    void SetROMSystem(bool updatePorts = false);
+
     std::string GetCurrentBankName(uint8_t bank);
     std::string DumpMemoryBankInfo();
     std::string DumpAllMemoryRegions();
     /// endregion <Debug methods>
 };
 
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class MemoryCUT : public Memory
+{
+public:
+    MemoryCUT(EmulatorContext* context) : Memory(context) {};
+
+public:
+    using Memory::_memory;
+    using Memory::_ramBase;
+    using Memory::_cacheBase;
+    using Memory::_miscBase;
+    using Memory::_romBase;
+};
+#endif // _CODE_UNDER_TEST

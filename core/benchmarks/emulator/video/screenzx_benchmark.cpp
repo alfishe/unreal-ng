@@ -181,7 +181,7 @@ static void BM_RenderOnlyMainScreen(benchmark::State& state)
     CPU* cpu = new CPU(context);
     cpu->Init();
     // Use Spectrum48K / Pentagon memory layout
-    cpu->GetMemory()->InternalSetBanks();
+    cpu->GetMemory()->DefaultBanksFor48k();
 
     ScreenZXCUT* screenzx = new ScreenZXCUT(context);
     screenzx->InitFrame();

@@ -49,7 +49,8 @@ enum PlatformCoreSubmodulesEnum : uint16_t
     SUBMODULE_CORE_GENERIC      = 0x0001,
     SUBMODULE_CORE_CONFIG       = 0x0002,
     SUBMODULE_CORE_FILES        = 0x0004,
-    SUBMODULE_CORE_MAINLOOP     = 0x0008,
+    SUBMODULE_CORE_COUNTERS     = 0x0008,
+    SUBMODULE_CORE_MAINLOOP     = 0x0010,
 
     SUBMODULE_CORE_ALL          = 0xFFFF
 };
@@ -178,12 +179,12 @@ enum PlatformDisassemblerSubmodulesEnum : uint16_t
 /// endregion </CPU runtime>
 
 #undef PAGE_SIZE
-#define PAGE_SIZE 0x4000U		// Spectrum memory page size is 16Kb (0x4000 or 16384)
+const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x4000 or 16384)
 
-#define MAX_RAM_PAGES 256       // 4Mb RAM
-#define MAX_CACHE_PAGES 2       // 32K cache
-#define MAX_MISC_PAGES 1        // trash page
-#define MAX_ROM_PAGES 64        // 1Mb
+const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
+const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
+const uint16_t MAX_MISC_PAGES = 1;      // trash page
+const uint16_t MAX_ROM_PAGES = 64;      // 1Mb
 
 // TS-conf specific settings
 #define TS_CACHE_SIZE 512
@@ -201,12 +202,16 @@ enum PlatformDisassemblerSubmodulesEnum : uint16_t
 	#define MAX_GSRAM_PAGES 0
 #endif
 
-#define MAX_PAGES (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES + MAX_GSROM_PAGES + MAX_GSRAM_PAGES)
+const uint16_t MAX_PAGES = (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES);
+const uint16_t MAX_PERIPHERAL_PAGES = (MAX_GSRAM_PAGES + MAX_GSROM_PAGES);
 
-#define RAM_BASE_M  _memory
-#define CACHE_M     (RAM_BASE_M + MAX_RAM_PAGES * PAGE_SIZE)
-#define MISC_BASE_M (CACHE_M + MAX_CACHE_PAGES * PAGE_SIZE)
-#define ROM_BASE_M  (MISC_BASE_M + MAX_MISC_PAGES * PAGE_SIZE)
+const size_t RAM_OFFSET = 0;
+const size_t CACHE_OFFSET = RAM_OFFSET + MAX_RAM_PAGES * PAGE_SIZE;
+const size_t MISC_OFFSET = CACHE_OFFSET + MAX_CACHE_PAGES * PAGE_SIZE;
+const size_t ROM_OFFSET = MISC_OFFSET + MAX_MISC_PAGES * PAGE_SIZE;
+
+// Special memory page to collect writes to ROM
+const size_t TRASH_MEMORY_OFFSET =  MISC_OFFSET;
 
 // Byte-size for RGBA pixel
 #define RGBA_SIZE 4
@@ -215,9 +220,6 @@ enum PlatformDisassemblerSubmodulesEnum : uint16_t
 	#define ROM_GS_M    (ROM_BASE_M + MAX_ROM_PAGES * PAGE)
 	#define GSRAM_M     (ROM_GS_M + MAX_GSROM_PAGES * PAGE)
 #endif
-
-// Special memory page to collect writes to ROM
-#define TRASH_MEMORY_PAGE     (MISC_BASE_M + 0 * PAGE_SIZE)
 
 enum IDE_SCHEME
 {

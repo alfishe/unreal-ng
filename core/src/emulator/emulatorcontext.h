@@ -4,7 +4,6 @@
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
 
-class ModuleLogger;
 class CPU;
 class Emulator;
 class Keyboard;

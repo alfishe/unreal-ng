@@ -62,7 +62,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
 
-    uint8_t* pcPhysicalAddress = memory.RemapAddressToCurrentBank(pc);
+    uint8_t* pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(pc);
     uint8_t commandLen = 0;
     DecodedInstruction decoded;
 
@@ -83,6 +83,12 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     // Format value like: $15FB: CD 2C 16   call #162C
     std::string value = StringHelper::Format("$%s: %s   %s%s", pcAddress.c_str(), hex.c_str(), command.c_str(), runtime.c_str());
     m_disassemblyTextEdit->setPlainText(value.c_str());
+
+
+    // DEBUG
+    size_t accessed = memory.GetZ80BankTotalAccessCount(1);
+    std::string accessedValue = StringHelper::Format("%s\nBank 1 accessed %d times", value.c_str(), accessed);
+    m_disassemblyTextEdit->setPlainText(accessedValue.c_str());
 }
 
 void DisassemblerWidget::reset()

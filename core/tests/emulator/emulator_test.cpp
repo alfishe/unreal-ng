@@ -35,7 +35,7 @@ void Emulator_Test::DestroyEmulator()
         _context = nullptr;
     }
 }
-/// endergion </Helper methods>
+/// endregion </Helper methods>
 
 /// region <Emulator re-entrability tests>
 TEST_F(Emulator_Test, MultiInstance)
