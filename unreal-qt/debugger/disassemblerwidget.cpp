@@ -86,8 +86,11 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
 
     // DEBUG
-    size_t accessed = memory.GetZ80BankTotalAccessCount(1);
-    std::string accessedValue = StringHelper::Format("%s\nBank 1 accessed %d times", value.c_str(), accessed);
+    uint8_t z80Bank = 0;
+    size_t read = memory.GetZ80BankReadAccessCount(z80Bank);
+    size_t write = memory.GetZ80BankWriteAccessCount(z80Bank);
+    size_t execute = memory.GetZ80BankExecuteAccessCount(z80Bank);
+    std::string accessedValue = StringHelper::Format("%s\nBank 1:  read: %d\n         write: %d\n         execute: %d", value.c_str(), read, write, execute);
     m_disassemblyTextEdit->setPlainText(accessedValue.c_str());
 }
 

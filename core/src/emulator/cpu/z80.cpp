@@ -104,10 +104,12 @@ Z80::~Z80()
 /// endregion </Constructors / Destructors>
 
 /// region <Properties>
+
 bool Z80::IsPaused()
 {
     return _pauseRequested;
 }
+
 /// endregion </Properties
 
 /// region <Methods>
@@ -345,192 +347,13 @@ uint8_t Z80::m1_cycle()
     const TEMP& temporary = _context->temporary;
     const PortDecoder& portDecoder = *_context->pPortDecoder;
 
-	/// region <Test>
-
-	/*
-    if (cpu.pc == 0x11DC)
-    {
-        Logger::Unmute();
-        LOGINFO("RAM-FILL is executed");
-        Logger::Mute();
-    }
-
-    if (cpu.pc == 0x11E2)
-    {
-        Logger::Unmute();
-        LOGINFO("RAM-READ is executed");
-        Logger::Mute();
-    }
-
-    if (cpu.pc == 0x11EF)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("RAM-DONE is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x1219)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("RAM-SET is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x12A2)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("MAIN-EXEC is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x0D6B)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("CLS is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x0DAF)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("CL-ALL is executed. PC: %04X", cpu.pc);
-        //Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x0D6E)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("CLS-LOWER is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x0ADC)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("PO-STORE is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x0C0A)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("PO-MSG is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x12A9)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("MAIN-1 is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x1303)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("MAIN-4 is executed. PC: %04X", cpu.pc);
-        LOGWARNING("HALT!!!");
-    }
-
-    if (cpu.pc == 0x1634)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("CHAN-K is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-
-    if (cpu.pc == 0x0C0A)
-    {
-        Logger::UnmuteSilent();
-        LOGINFO("PO-MSG is executed. PC: %04X", cpu.pc);
-        Logger::MuteSilent();
-    }
-    */
-
-	/// Spectrum 128K names
-	if (cpu.pc == 0x0000)
-    {
-        cycles_to_capture = -1;
-    }
-
-	if (cpu.pc == 0x1F20)
-    {
-        MLOGINFO("USE_NORMAL_RAM_CONFIG is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x00C7)
-    {
-        MLOGINFO("INIT1 is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x0137)
-    {
-        MLOGINFO("INIT2 is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x019D)
-    {
-        MLOGINFO("NEW is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x1C64)
-    {
-        MLOGINFO("SET_RAM_PAGE is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x018A)
-    {
-        MLOGWARNING("RST #28 call! PC: %04X", cpu.pc);
-        MLOGWARNING("CPU cycles: %d", cpu.cycle_count);
-    }
-
-    if (cpu.pc == 0x5B00)
-    {
-        //cycles_to_capture = 400;
-
-        MLOGINFO("RAM_SWAP_5B00 is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x259F)
-    {
-        //cycles_to_capture = 400;
-
-        MLOGINFO("MAINMENU is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cpu.pc == 0x36A8)
-    {
-        //cycles_to_capture = 400;
-
-        MLOGINFO("DISPLAY_MENU is executed. Frame: %03d, PC: %04X", state.frame_counter, cpu.pc);
-    }
-
-    if (cpu.pc == 0x3719)
-    {
-        //cycles_to_capture = 400;
-
-        MLOGINFO("PLOT_LINE is executed. PC: %04X", cpu.pc);
-    }
-
-    if (cycles_to_capture > 0)
-    {
-        cycles_to_capture--;
-    }
-    else if (cycles_to_capture == 0)
-    {
-        Logger::MuteSilent();
-        //exit(1);
-    }
-
-	/// endregion </Test>
-
 	// Record PC for current opcode (prefixes should not alter original PC)
 	if (prefix == 0x0000)
         m1_pc = cpu.pc;
 
 	// Z80 CPU M1 cycle logic
 	r_low++;
-	opcode = rd(cpu.pc);                      // Keep opcode copy for trace / debug purposes
+	opcode = rd(cpu.pc, true);          // Keep opcode copy for trace / debug purposes
 
 	// Point PC to next byte
 	cpu.pc++;
@@ -552,11 +375,11 @@ uint8_t Z80::m1_cycle()
 /// Read access to memory takes 3 clock cycles
 /// \param addr
 /// \return
-uint8_t Z80::rd(uint16_t addr)
+uint8_t Z80::rd(uint16_t addr, bool isExecution)
 {
 	IncrementCPUCyclesCounter(3);
 
-	return (_memory->*MemIf->MemoryRead)(addr);
+	return (_memory->*MemIf->MemoryRead)(addr, isExecution);
 }
 
 /// Dispatching memory write method. Used directly from Z80 microcode (CPULogic and opcode)

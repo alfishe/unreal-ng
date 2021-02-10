@@ -124,13 +124,17 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
 }
 
 Z80OPCODE ope_43(Z80 *cpu) { // ld (nnnn),bc
-    uint16_t addr = cpu->rd(cpu->pc++);
-    addr += cpu->rd(cpu->pc++) * 0x100;
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
 
     cpu->memptr = addr + 1;
 
     cpu->wd(addr, cpu->c);
     cpu->wd(addr + 1, cpu->b);
+
+    cpu->pc = pc;
 }
 
 Z80OPCODE ope_44(Z80 *cpu) { // neg
@@ -214,13 +218,17 @@ Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
 }
 
 Z80OPCODE ope_4B(Z80 *cpu) { // ld bc,(nnnn)
-    uint16_t addr = cpu->rd(cpu->pc++);
-    addr += cpu->rd(cpu->pc++) * 0x100;
+    uint16_t pc = cpu->pc;
+
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
 
     cpu->memptr = addr + 1;
 
     cpu->c = cpu->rd(addr);
     cpu->b = cpu->rd(addr + 1);
+
+    cpu->pc = pc;
 }
 
 #define ope_4C ope_44   // neg
@@ -297,15 +305,19 @@ Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
 }
 
 Z80OPCODE ope_53(Z80 *cpu) { // ld (nnnn),de
+    uint16_t pc = cpu->pc;
+
     // Read 2 bytes of address from memory
-    uint16_t adr = cpu->rd(cpu->pc++);
-    adr += cpu->rd(cpu->pc++) * 0x100;
+    uint16_t adr = cpu->rd(pc++, true);
+    adr += cpu->rd(pc++, true) * 0x100;
 
     cpu->memptr = adr + 1;
 
     // Write 2 bytes from DE to memory using fetched address
     cpu->wd(adr, cpu->e);
     cpu->wd(adr + 1, cpu->d);
+
+    cpu->pc = pc;
 }
 
 #define ope_54 ope_44 // neg
@@ -371,13 +383,17 @@ Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
 }
 
 Z80OPCODE ope_5B(Z80 *cpu) { // ld de,(nnnn)
-   uint16_t addr = cpu->rd(cpu->pc++);
-    addr += cpu->rd(cpu->pc++) * 0x100;
+    uint16_t pc = cpu->pc;
 
-   cpu->memptr = addr + 1;
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
 
-   cpu->e = cpu->rd(addr);
-   cpu->d = cpu->rd(addr + 1);
+    cpu->memptr = addr + 1;
+
+    cpu->e = cpu->rd(addr);
+    cpu->d = cpu->rd(addr + 1);
+
+    cpu->pc = pc;
 }
 
 #define ope_5C ope_44   // neg
@@ -557,8 +573,8 @@ Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
 Z80OPCODE ope_73(Z80 *cpu) { // ld (nnnn),sp
     uint16_t pc = cpu->pc;
 
-    uint16_t addr = cpu->rd(pc++);
-    addr += cpu->rd(pc++) * 0x100;
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
 
     cpu->memptr = addr + 1;
 
@@ -626,8 +642,8 @@ Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
 Z80OPCODE ope_7B(Z80 *cpu) { // ld sp,(nnnn)
     uint16_t pc = cpu->pc;
 
-    uint16_t addr = cpu->rd(pc++);
-    addr += cpu->rd(pc++) * 0x100;
+    uint16_t addr = cpu->rd(pc++, true);
+    addr += cpu->rd(pc++, true) * 0x100;
 
     cpu->memptr = addr + 1;
 

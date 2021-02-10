@@ -53,11 +53,13 @@ struct MemoryPageDescriptor
 // Memory interface descriptor
 //  Read callback to access memory cell (byte)
 //  Write callback - to MemoryWrite data into memory cell (byte)
-typedef uint8_t (Memory::* MemoryReadCallback)(uint16_t addr);
+typedef uint8_t (Memory::* MemoryReadCallback)(uint16_t addr, bool isExecution);
 typedef void (Memory::* MemoryWriteCallback)(uint16_t addr, uint8_t val);
 struct MemoryInterface
 {
-    MemoryInterface() = delete;			// Disable default constructor. C++ 11 feature
+    MemoryInterface() = delete;			                // Disable default constructor. C++ 11 feature
+    MemoryInterface(const MemoryInterface&) = delete;   // Disable copy constructor. C++ 11 feature
+
     MemoryInterface(MemoryReadCallback read, MemoryWriteCallback write)
     {
         MemoryRead = read;
@@ -105,18 +107,25 @@ protected:
     uint8_t* _bank_write[4];			// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
 
     // Access flags / Counters
-    size_t _memZ80ReadCounters[PAGE_SIZE * 4];
-    size_t _memZ80WriteCounters[PAGE_SIZE * 4];
+    size_t _memZ80ReadCounters[PAGE_SIZE * 4];              // Read access counters for each Z80 address
+    size_t _memZ80WriteCounters[PAGE_SIZE * 4];             // Write access counters for each Z80 address
+    size_t _memZ80ExecuteCounters[PAGE_SIZE * 4];           // Execute access counters for each Z80 address
+
     size_t _memAccessReadCounters[PAGE_SIZE * MAX_PAGES];   // Read access counters for all memory available
     size_t _memAccessWriteCounters[PAGE_SIZE * MAX_PAGES];  // Write access counters for all memory available
+    size_t _memAccessExecuteCounters[PAGE_SIZE * MAX_PAGES];// Execute access counters for all memory available
 
     size_t _memPageReadCounters[MAX_PAGES];                 // Read access counters aggregated per each memory page
-    size_t _memPageWriteCounters[MAX_PAGES];                // Write accessc counters aggregated per each memory page
+    size_t _memPageWriteCounters[MAX_PAGES];                // Write access counters aggregated per each memory page
+    size_t _memPageExecuteCounters[MAX_PAGES];              // Execute access counters aggregated per each memory page
 
     uint8_t _memZ80BankReadMarks;                           // Per-Z80-bank read access flags
     uint8_t _memZ80BankWriteMarks;                          // Per-Z80-bank write access flags
+    uint8_t _memZ80BankExecuteMarks;                        // Per-Z80-bank execute access flags
+
     uint8_t _memPageReadMarks[MAX_PAGES / 8];               // Per-page read access flags
     uint8_t _memPageWriteMarks[MAX_PAGES / 8];              // Per-page write access flags
+    uint8_t _memPageExecuteMarks[MAX_PAGES / 8];            // Per-page execute access flags
 
 public:
     // Base addresses for memory classes
@@ -153,8 +162,8 @@ public:
     static MemoryInterface* GetDebugMemoryInterface();
 
 public:
-    uint8_t MemoryReadFast(uint16_t addr);
-    uint8_t MemoryReadDebug(uint16_t addr);
+    uint8_t MemoryReadFast(uint16_t addr, bool isExecution);
+    uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
     void MemoryWriteDebug(uint16_t addr, uint8_t value);
 
@@ -216,10 +225,12 @@ public:
     size_t GetZ80BankTotalAccessCount(uint8_t bank);
     size_t GetZ80BankReadAccessCount(uint8_t bank);
     size_t GetZ80BankWriteAccessCount(uint8_t bank);
+    size_t GetZ80BankExecuteAccessCount(uint8_t bank);
 
     size_t GetZ80BankTotalAccessCountExclScreen(uint8_t bank);
     size_t GetZ80BankReadAccessCountExclScreen(uint8_t bank);
     size_t GetZ80BankWriteAccessCountExclScreen(uint8_t bank);
+    size_t GetZ80BankExecuteAccessCountExclScreen(uint8_t bank);
 
     /// endregion </Counters>
 

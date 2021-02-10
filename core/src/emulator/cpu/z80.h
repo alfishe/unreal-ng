@@ -231,7 +231,6 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	bool vm1;										// Halt handling type (True - ...; False - ...)
 	uint8_t outc0;                                  // What to use when 'out (c), 0' is called
 
-	uint8_t tmp0, tmp1, tmp3;
 	uint16_t last_branch;
 	unsigned trace_curs, trace_top, trace_mode;
 	unsigned mem_curs, mem_top, mem_second;
@@ -255,7 +254,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 
 
 	// Interrupts / HALT
-	bool int_pending;									// INT pending
+	bool int_pending;							    // INT pending
 	bool int_gate;									// External interrupts gate (True - enabled; False - disabled)
 	unsigned halt_cycle;
 
@@ -318,7 +317,7 @@ public:
 	void retn();
 
 	// Memory access dispatching methods
-	uint8_t rd(uint16_t addr);
+	uint8_t rd(uint16_t addr, bool isExecution = false);
 	void wd(uint16_t addr, uint8_t val);
     /// endregion </Z80 lifecycle>
 

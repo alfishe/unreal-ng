@@ -105,6 +105,16 @@ void MainLoop::Resume()
 
 void MainLoop::RunFrame()
 {
+    /// region <Sanity checks>
+#ifdef _DEBUG
+    if (!_context)
+        throw std::logic_error("MainLoop::RunFrame - context undefined");
+
+    if (!_context->pScreen)
+        throw std::logic_error("MainLoop::RunFrame - screen not initialized");
+#endif
+    /// endregion <Sanity checks>
+
     Screen& screen = *_context->pScreen;
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 

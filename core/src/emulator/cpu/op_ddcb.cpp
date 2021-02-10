@@ -229,7 +229,8 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         cpu->prefix = op1 * 0x100 + 0xCB;
 
         uint16_t ptr; // pointer to DDCB operand
-        ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + (char)cpu->rd(cpu->pc++);
+        int8_t displacement = cpu->rd(cpu->pc++, true);
+        ptr = ((op1 == 0xDD) ? cpu->ix:cpu->iy) + displacement;
         cpu->memptr = ptr;
 
         // DDCBnnXX,FDCBnnXX increment R by 2, not 3!
@@ -238,7 +239,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
 
         cputact(1);
 
-        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));
+        uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr, true));
 
         cputact(1);
 
