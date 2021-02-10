@@ -58,7 +58,7 @@ int LogViewer::lineNumberAreaWidth()
     }
 
     const int leftMargin = LINENUMBER_AREA_LEFT_MARGIN;
-    int space = 3 + fontMetrics().width(QLatin1Char('9')) * (digits + leftMargin);
+    int space = 3 + fontMetrics().horizontalAdvance(QLatin1Char('9')) * (digits + leftMargin);
 
     return space;
 }
@@ -267,6 +267,6 @@ void LogViewer::paintEvent(QPaintEvent* e)
     if (backgroundVisible() && !block.isValid() && offset.y() <= er.bottom()
         && (centerOnScroll() || verticalScrollBar()->maximum() == verticalScrollBar()->minimum()))
     {
-        painter.fillRect(QRect(QPoint((int)er.left(), (int)offset.y()), er.bottomRight()), palette().background());
+        painter.fillRect(QRect(QPoint((int)er.left(), (int)offset.y()), er.bottomRight()), palette().window());
     }
 }
