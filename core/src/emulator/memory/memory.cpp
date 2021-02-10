@@ -106,7 +106,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr)
     // Determine CPU bank (from address bits 14 and 15)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-    uint8_t physicalPage = MapZ80AddressToPhysicalPage(addr).page;
+    uint16_t physicalPage = GetPageForBank(bank);
+    size_t physicalOffset = GetPhysicalOffsetForZ80Address(addr);
 
     // Mark Z80 bank as accessed for read
     _memZ80BankReadMarks |= (1 << bank);
@@ -119,9 +120,11 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr)
     // Increment read access counter for Z80 address
     _memZ80ReadCounters[addr] += 1;
 
+    // Increment read access counter for physical page
+    _memPageReadCounters[physicalPage] += 1;
+
     // Increment read access counter for physical address
-    uint8_t physicalAddress = _bank_read[bank] - _memory + addressInBank;
-    _memAccessReadCounters[physicalAddress] += 1;
+    _memAccessReadCounters[physicalOffset] += 1;
 
     /// endregion </Update counters>
 
@@ -151,9 +154,9 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr)
                 sleep_ms(20);
             }
         }
-
-        /// endregion </Read breakpoint logic>
     }
+
+    /// endregion </Read breakpoint logic>
 
     return result;
 }
@@ -187,25 +190,25 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     // Determine CPU bank (from address bits 14 and 15)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-    uint8_t physicalPage = MapZ80AddressToPhysicalPage(addr).page;
+    uint16_t physicalPage = GetPageForBank(bank);
+    size_t physicalOffset = GetPhysicalOffsetForZ80Address(addr);
 
-    // Mark Z80 bank as accessed for read
+    // Mark Z80 bank as accessed for write
     _memZ80BankWriteMarks |= (1 << bank);
 
-    // Mark page as accessed for read
+    // Mark page as accessed for write
     uint8_t pageWriteMarksByte = physicalPage >> 3;
     uint8_t pageWriteMarksBit = physicalPage & 0b0000'0111;
     _memPageWriteMarks[pageWriteMarksByte] |= (1 << pageWriteMarksBit);
 
-    // Increment read access counter for Z80 address
+    // Increment write access counter for Z80 address
     _memZ80WriteCounters[addr] += 1;
 
-    // Increment read access counter for physical page
+    // Increment write access counter for physical page
     _memPageWriteCounters[physicalPage] += 1;
 
-    // Increment read access counter for physical address
-    uint8_t physicalAddress = _bank_read[bank] - _memory + addressInBank;
-    _memAccessWriteCounters[physicalAddress] += 1;
+    // Increment write access counter for physical address
+    _memAccessWriteCounters[physicalOffset] += 1;
 
     /// endregion </Update counters>
 
@@ -352,18 +355,19 @@ void Memory::SetROMMode(ROMModeEnum mode)
 /// Set ROM page
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page ROM page number
-void Memory::SetROMPage(uint8_t page, bool updatePorts)
+void Memory::SetROMPage(uint16_t page, bool updatePorts)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
     /// endregion </Override submodule>
 
-    if (page >= MAX_ROM_PAGES)
+    /// region <Sanity check>
+    if (page == MEMORY_UNMAPPABLE || page >= MAX_RAM_PAGES)
     {
-        LOGERROR("Memory::SetROMPage - invalid ROM page specified: %d. Only %d pages allowed", page, MAX_ROM_PAGES);
-        assert("Invalid ROM page");
-        return;
+        std::string message = StringHelper::Format("Memory::SetROMPage - Invalid bank: %04X provided. MAX_ROM_PAGES: %04X", page, MAX_ROM_PAGES);
+        throw std::logic_error(message);
     }
+    /// endregion </Sanity check>
 
     _bank_mode[0] = BANK_ROM;
     _bank_read[0] = ROMPageAddress(page);
@@ -380,11 +384,19 @@ void Memory::SetROMPage(uint8_t page, bool updatePorts)
 /// Switch to specified RAM Bank in RAM Page 3
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
+void Memory::SetRAMPageToBank0(uint16_t page, bool updatePorts)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
+
+    /// region <Sanity check>
+    if (page == MEMORY_UNMAPPABLE || page >= MAX_RAM_PAGES)
+    {
+        std::string message = StringHelper::Format("Memory::SetRAMPageToBank0 - Invalid bank: %04X provided. MAX_RAM_PAGES: %04X", page, MAX_RAM_PAGES);
+        throw std::logic_error(message);
+    }
+    /// endregion </Sanity check>
 
     _bank_mode[0] = BANK_RAM;
     _bank_write[0] = _bank_read[0] = RAMPageAddress(page);
@@ -393,11 +405,19 @@ void Memory::SetRAMPageToBank0(uint8_t page, bool updatePorts)
 /// Switch to specified RAM Bank in RAM Page 1
 /// Address space: [0x4000 - 0x7FFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank1(uint8_t page)
+void Memory::SetRAMPageToBank1(uint16_t page)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
+
+    /// region <Sanity check>
+    if (page == MEMORY_UNMAPPABLE || page >= MAX_RAM_PAGES)
+    {
+        std::string message = StringHelper::Format("Memory::SetRAMPageToBank1 - Invalid bank: %04X provided. MAX_RAM_PAGES: %04X", page, MAX_RAM_PAGES);
+        throw std::logic_error(message);
+    }
+    /// endregion </Sanity check>
 
     _bank_mode[1] = BANK_RAM;
     _bank_write[1] = _bank_read[1] = RAMPageAddress(page);
@@ -406,11 +426,19 @@ void Memory::SetRAMPageToBank1(uint8_t page)
 /// Switch to specified RAM Bank in RAM Page 2
 /// Address space: [0x8000 - 0xBFFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank2(uint8_t page)
+void Memory::SetRAMPageToBank2(uint16_t page)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
+
+    /// region <Sanity check>
+    if (page == MEMORY_UNMAPPABLE || page >= MAX_RAM_PAGES)
+    {
+        std::string message = StringHelper::Format("Memory::SetRAMPageToBank2 - Invalid bank: %04X provided. MAX_RAM_PAGES: %04X", page, MAX_RAM_PAGES);
+        throw std::logic_error(message);
+    }
+    /// endregion </Sanity check>
 
     _bank_mode[2] = BANK_RAM;
     _bank_write[2] = _bank_read[2] = RAMPageAddress(page);
@@ -419,11 +447,19 @@ void Memory::SetRAMPageToBank2(uint8_t page)
 /// Switch to specified RAM Bank in RAM Page 3
 /// Address space: [0xC000 - 0xFFFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank3(uint8_t page, bool updatePorts)
+void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
+
+    /// region <Sanity check>
+    if (page == MEMORY_UNMAPPABLE || page >= MAX_RAM_PAGES)
+    {
+        std::string message = StringHelper::Format("Memory::SetRAMPageToBank3 - Invalid bank: %04X provided. MAX_RAM_PAGES: %04X", page, MAX_RAM_PAGES);
+        throw std::logic_error(message);
+    }
+    /// endregion </Sanity check>
 
     _bank_mode[3] = BANK_RAM;
     _bank_write[3] = _bank_read[3] = RAMPageAddress(page);
@@ -437,29 +473,89 @@ bool Memory::IsBank0ROM()
     return _bank_mode[0] == BANK_ROM;
 }
 
-uint8_t Memory::GetROMPage()
+uint16_t Memory::GetROMPage()
 {
     return GetROMPageFromAddress(_bank_read[0]);
 }
 
-uint8_t Memory::GetRAMPageForBank0()
+uint16_t Memory::GetRAMPageForBank0()
 {
     return GetRAMPageFromAddress(_bank_read[0]);
 }
 
-uint8_t Memory::GetRAMPageForBank1()
+uint16_t Memory::GetRAMPageForBank1()
 {
     return GetRAMPageFromAddress(_bank_read[1]);
 }
 
-uint8_t Memory::GetRAMPageForBank2()
+uint16_t Memory::GetRAMPageForBank2()
 {
     return GetRAMPageFromAddress(_bank_read[2]);
 }
 
-uint8_t Memory::GetRAMPageForBank3()
+uint16_t Memory::GetRAMPageForBank3()
 {
     return GetRAMPageFromAddress(_bank_read[3]);
+}
+
+///
+/// \param bank Z80 bank [0:3]
+/// \return
+uint16_t Memory::GetROMPageForBank(uint8_t bank)
+{
+    uint16_t result = MEMORY_UNMAPPABLE;
+    bank = bank & 0b0000'0011;
+
+    if (_bank_mode[bank] == BANK_ROM)
+    {
+        result = GetROMPageFromAddress(_bank_read[bank]);
+    }
+
+    return result;
+}
+
+///
+/// \param bank Z80 bank [0:3]
+/// \return
+uint16_t Memory::GetRAMPageForBank(uint8_t bank)
+{
+    uint16_t result = MEMORY_UNMAPPABLE;
+    bank = bank & 0b0000'0011;
+
+    if (_bank_mode[bank] == BANK_RAM)
+    {
+        result = GetRAMPageFromAddress(_bank_read[bank]);
+    }
+
+    return result;
+}
+
+/// Returns absolute page number without distinction to RAM/Cache/Misc/ROM - since they all located in the same block
+/// \param bank Z80 bank [0:3]
+/// \return
+uint16_t Memory::GetPageForBank(uint8_t bank)
+{
+    uint16_t result = MEMORY_UNMAPPABLE;
+    bank = bank & 0b0000'0011;
+
+    uint8_t* bankPageAddress = _bank_read[bank];
+    if (bankPageAddress && bankPageAddress > _memory)
+    {
+        size_t page = (bankPageAddress - _memory) / PAGE_SIZE;
+        if (page < MAX_PAGES)
+        {
+            result = page;
+        }
+#ifdef _DEBUG
+        else
+        {
+            std::string message = StringHelper::Format("Memory::GetPageForBank - invalid page %04X detected for bank: %d", page, bank);
+            throw std::logic_error(message);
+        }
+#endif
+    }
+
+    return result;
 }
 
 /// endregion </Runtime methods>
@@ -642,6 +738,7 @@ size_t Memory::GetZ80BankTotalAccessCount(uint8_t bank)
 
     /// endregion </Sanity checks>
 
+    uint16_t absolutePage = GetPageForBank(bank);
     uint8_t bankBit = 1 << bank;
     bool bankWasRead = _memZ80BankReadMarks & bankBit;
     bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
@@ -654,6 +751,12 @@ size_t Memory::GetZ80BankTotalAccessCount(uint8_t bank)
             for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
             {
                 result += _memAccessReadCounters[i];
+            }
+
+            if (result != _memPageReadCounters[absolutePage])
+            {
+                std::string message = StringHelper::Format("Memory::GetZ80BankTotalAccessCount - _memPageReadCounters[%d]: %d <> calculated: %d", absolutePage, _memPageReadCounters[absolutePage], result);
+                throw std::logic_error(message);
             }
         }
 

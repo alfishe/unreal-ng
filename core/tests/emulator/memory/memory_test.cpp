@@ -2,6 +2,7 @@
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
+#include <cstdlib>  // For abs(int)
 
 /// region <SetUp / TearDown>
 
@@ -161,4 +162,59 @@ TEST_F(Memory_Test, GetROMPageFromAddress)
         uint16_t detectedPage =  _memory->GetRAMPageFromAddress(addressAfterROM);
         EXPECT_EQ(detectedPage, MEMORY_UNMAPPABLE);
     }
+}
+
+TEST_F(Memory_Test, GetPhysicalOffsetForZ80Address)
+{
+    // Use default 48k memory bank layout (ROM, RAM5, RAM2, RAM0)
+    _memory->DefaultBanksFor48k();
+    const uint8_t* rom0Page = _memory->ROMBase() + PAGE_SIZE * 0;
+    const uint8_t* ram0Page = _memory->RAMBase() + PAGE_SIZE * 0;
+    const uint8_t* ram2Page = _memory->RAMBase() + PAGE_SIZE * 2;
+    const uint8_t* ram5Page = _memory->RAMBase() + PAGE_SIZE * 5;
+
+    // Positive cases
+    for (uint32_t i = 0; i <= 0xFFFF; i++)
+    {
+        uint16_t addr = static_cast<uint16_t>(i);
+        uint16_t addressInPage = addr & 0b0011'1111'1111'1111;
+        size_t offsetReference;
+
+        if (i >= 0 && i < 0x4000)
+        {
+            uint16_t romPage = _memory->GetROMPage();
+            offsetReference = (_memory->ROMBase() - _memory->RAMBase()) + PAGE_SIZE * romPage + addressInPage;
+        }
+        else if (i >= 0x4000 && i < 0x8000)
+        {
+
+            uint16_t ramPage = _memory->GetRAMPageForBank1();
+            offsetReference = PAGE_SIZE * ramPage + addressInPage;
+        }
+        else if (i >= 0x8000 && i < 0xC000)
+        {
+            uint16_t ramPage = _memory->GetRAMPageForBank2();
+            offsetReference = PAGE_SIZE * ramPage + addressInPage;
+        }
+        else
+        {
+            uint16_t ramPage = _memory->GetRAMPageForBank3();
+            offsetReference = PAGE_SIZE * ramPage + addressInPage;
+        }
+
+        size_t offsetValue = _memory->GetPhysicalOffsetForZ80Address(addr);
+
+        if (offsetValue != offsetReference)
+        {
+            size_t diff = abs(static_cast<long>(offsetValue - offsetReference));
+
+            std::string message = StringHelper::Format("[#%04X]Expected offset:%X, found:%X, diff:%X", addr, offsetValue, offsetReference, diff);
+            FAIL() << message;
+        }
+    }
+}
+
+TEST_F(Memory_Test, GetPhysicalOffsetForZ80Bank)
+{
+
 }

@@ -8,7 +8,7 @@ class Z80;
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
 // MAX_RAM_PAGES and PAGE defined in platform.h
-const size_t MAX_RAM_SIZE = MAX_RAM_PAGES * PAGE_SIZE;
+constexpr size_t MAX_RAM_SIZE = MAX_RAM_PAGES * PAGE_SIZE;
 
 /// Return code when host memory address cannot be mapped to any RAM/ROM page
 const uint16_t MEMORY_UNMAPPABLE = 0xFFFF;
@@ -164,18 +164,22 @@ public:
 public:
     void SetROMMode(ROMModeEnum mode);
 
-    void SetROMPage(uint8_t page, bool updatePorts = false);
-    void SetRAMPageToBank0(uint8_t page, bool updatePorts = false);
-    void SetRAMPageToBank1(uint8_t page);
-    void SetRAMPageToBank2(uint8_t page);
-    void SetRAMPageToBank3(uint8_t page, bool updatePorts = false);
+    void SetROMPage(uint16_t page, bool updatePorts = false);
+    void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);
+    void SetRAMPageToBank1(uint16_t page);
+    void SetRAMPageToBank2(uint16_t page);
+    void SetRAMPageToBank3(uint16_t page, bool updatePorts = false);
 
     bool IsBank0ROM();
-    uint8_t GetROMPage();
-    uint8_t GetRAMPageForBank0();
-    uint8_t GetRAMPageForBank1();
-    uint8_t GetRAMPageForBank2();
-    uint8_t GetRAMPageForBank3();
+    uint16_t GetROMPage();
+    uint16_t GetRAMPageForBank0();
+    uint16_t GetRAMPageForBank1();
+    uint16_t GetRAMPageForBank2();
+    uint16_t GetRAMPageForBank3();
+
+    uint16_t GetROMPageForBank(uint8_t bank);
+    uint16_t GetRAMPageForBank(uint8_t bank);
+    uint16_t GetPageForBank(uint8_t bank);      // Returns absolute page number without distinction to RAM/Cache/Misc/ROM - since they all located in the same block
 
     /// endregion </Runtime methods>
 
