@@ -285,24 +285,24 @@ std::string PortDecoder_Pentagon128::Dump_BFFD_value(uint8_t value)
     // See: http://cpctech.cpc-live.com/docs/ay38912/psgspec.htm
     // See: http://f.rdw.se/AY-3-8910-datasheet.pdf - Incorrect command register enumeration here
     static const char* AYCommandData[] =
-            {
-                    "[Data] R0 - Channel A - fine tune (8-bit)",        // R0
-                    "[Data] R1 - Channel A - coarse tune (4-bit)",      // R1
-                    "[Data] R2 - Channel B - fine tune (8-bit)",        // R2
-                    "[Data] R3 - Channel B - coarse tune (4-bit)",      // R3
-                    "[Data] R4 - Channel C - fine tune (8-bit)",        // R4
-                    "[Data] R5 - Channel C - coarse tune (4-bit)",      // R5
-                    "[Data] R6 - Noise period (5-bit)",                 // R6
-                    "[Data] R7 - Mixer control Enable",                 // R7
-                    "[Data] R8 - Channel A - Amplitude (5-bit)",        // R8
-                    "[Data] R9 - Channel B - Amplitude (5-bit)",        // R9
-                    "[Data] R10 - Channel C - Amplitude (5-bit)",       // R10
-                    "[Data] R11 - Envelope period - fine (8-bit)",      // R11
-                    "[Data] R12 - Envelope period - coarse (8-bit)",    // R12
-                    "[Data] R13 - Envelope shape/cycle",                // R13
-                    "[Data] R14 - I/O Port A data store (8-bit)",       // R14
-                    "[Data] R15 - I/O Port B data store (8-bit)"        // R15
-            };
+    {
+        "[Data] R0 - Channel A - fine tune (8-bit)",        // R0
+        "[Data] R1 - Channel A - coarse tune (4-bit)",      // R1
+        "[Data] R2 - Channel B - fine tune (8-bit)",        // R2
+        "[Data] R3 - Channel B - coarse tune (4-bit)",      // R3
+        "[Data] R4 - Channel C - fine tune (8-bit)",        // R4
+        "[Data] R5 - Channel C - coarse tune (4-bit)",      // R5
+        "[Data] R6 - Noise period (5-bit)",                 // R6
+        "[Data] R7 - Mixer control Enable",                 // R7
+        "[Data] R8 - Channel A - Amplitude (5-bit)",        // R8
+        "[Data] R9 - Channel B - Amplitude (5-bit)",        // R9
+        "[Data] R10 - Channel C - Amplitude (5-bit)",       // R10
+        "[Data] R11 - Envelope period - fine (8-bit)",      // R11
+        "[Data] R12 - Envelope period - coarse (8-bit)",    // R12
+        "[Data] R13 - Envelope shape/cycle",                // R13
+        "[Data] R14 - I/O Port A data store (8-bit)",       // R14
+        "[Data] R15 - I/O Port B data store (8-bit)"        // R15
+    };
 
     std::string result;
 
@@ -394,9 +394,9 @@ std::string PortDecoder_Pentagon128::Dump_BFFD_value(uint8_t value)
     {
         switch (ayRegister)
         {
-            case 254:   // Select AY1 chip
+            case 0xFE:   // Select AY1 chip
                 break;
-            case 255:   // Select AY0 chip
+            case 0xFF:   // Select AY0 chip
                 break;
         };
     }
@@ -412,24 +412,24 @@ std::string PortDecoder_Pentagon128::Dump_BFFD_value(uint8_t value)
 std::string PortDecoder_Pentagon128::Dump_FFFD_value(uint8_t value)
 {
     static const char* AYRegisterNames[] =
-            {
-                    "[Reg]  R0 - Channel A - fine tune",        // R0
-                    "[Reg]  R1 - Channel A - coarse tune",      // R1
-                    "[Reg]  R2 - Channel B - fine tune",        // R2
-                    "[Reg]  R3 - Channel B - coarse tune",      // R3
-                    "[Reg]  R4 - Channel C - fine tune",        // R4
-                    "[Reg]  R5 - Channel C - coarse tune",      // R5
-                    "[Reg]  R6 - Noise period",                 // R6
-                    "[Reg]  R7 - Mixer Control Enable",         // R7
-                    "[Reg]  R8 - Channel A - Amplitude",        // R8
-                    "[Reg]  R9 - Channel B - Amplitude",        // R9
-                    "[Reg]  R10 - Channel C - Amplitude",       // R10
-                    "[Reg]  R11 - Envelope period - fine",      // R11
-                    "[Reg]  R12 - Envelope period - coarse",    // R12
-                    "[Reg]  R13 - Envelope shape",              // R13
-                    "[Reg]  R14 - I/O Port A data store",       // R14
-                    "[Reg]  R15 - I/O Port B data store"        // R15
-            };
+    {
+        "[Reg]  R0 - Channel A - fine tune",        // R0
+        "[Reg]  R1 - Channel A - coarse tune",      // R1
+        "[Reg]  R2 - Channel B - fine tune",        // R2
+        "[Reg]  R3 - Channel B - coarse tune",      // R3
+        "[Reg]  R4 - Channel C - fine tune",        // R4
+        "[Reg]  R5 - Channel C - coarse tune",      // R5
+        "[Reg]  R6 - Noise period",                 // R6
+        "[Reg]  R7 - Mixer Control Enable",         // R7
+        "[Reg]  R8 - Channel A - Amplitude",        // R8
+        "[Reg]  R9 - Channel B - Amplitude",        // R9
+        "[Reg]  R10 - Channel C - Amplitude",       // R10
+        "[Reg]  R11 - Envelope period - fine",      // R11
+        "[Reg]  R12 - Envelope period - coarse",    // R12
+        "[Reg]  R13 - Envelope shape",              // R13
+        "[Reg]  R14 - I/O Port A data store",       // R14
+        "[Reg]  R15 - I/O Port B data store"        // R15
+    };
 
     std::string result;
 
