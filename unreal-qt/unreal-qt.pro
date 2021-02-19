@@ -1,4 +1,4 @@
-QT += core gui
+QT += core gui multimedia
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -30,6 +30,7 @@ SOURCES += \
     3rdparty/qhexview/document/qhexmetadata.cpp \
     3rdparty/qhexview/document/qhexrenderer.cpp \
     3rdparty/qhexview/qhexview.cpp \
+    common/widgets/qclickablelabel.cpp \
     debugger/debuggerwindow.cpp \
     debugger/disassemblercolumnview.cpp \
     debugger/disassemblerlistingview.cpp \
@@ -40,8 +41,10 @@ SOURCES += \
     debugger/registerswidget.cpp \
     debugger/stackwidget.cpp \
     emulator/emulatormanager.cpp \
+    emulator/filemanager.cpp \
     emulator/guiemulatorcontext.cpp \
     emulator/keyboardmanager.cpp \
+    emulator/soundmanager.cpp \
     logviewer/logstatusbar.cpp \
     logviewer/logviewer.cpp \
     logviewer/logwindow.cpp \
@@ -64,6 +67,7 @@ HEADERS += \
     3rdparty/qhexview/document/qhexmetadata.h \
     3rdparty/qhexview/document/qhexrenderer.h \
     3rdparty/qhexview/qhexview.h \
+    common/widgets/qclickablelabel.h \
     debugger/debuggerwindow.h \
     debugger/disassemblercolumnview.h \
     debugger/disassemblerlistingview.h \
@@ -74,8 +78,10 @@ HEADERS += \
     debugger/registerswidget.h \
     debugger/stackwidget.h \
     emulator/emulatormanager.h \
+    emulator/filemanager.h \
     emulator/guiemulatorcontext.h \
     emulator/keyboardmanager.h \
+    emulator/soundmanager.h \
     logviewer/logstatusbar.h \
     logviewer/logviewer.h \
     logviewer/logwindow.h \
