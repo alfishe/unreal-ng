@@ -42,6 +42,10 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
 
+    // Subscribe to events leading to MemoryView changes
+    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewPage(uint8_t)), this, SLOT(changeMemoryViewPage(uint8_t)));
+    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)));
+
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
 
@@ -178,6 +182,8 @@ void DebuggerWindow::reset()
 
  }
 
+/// region <Event handlers / Slots>
+
 void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 {
     if (message == nullptr || message->obj == nullptr)
@@ -269,3 +275,47 @@ void DebuggerWindow::waitInterrupt()
 
     updateState();
 }
+
+/// Event to change Memory View to one of 4 Z80 memory pages
+/// \param page
+void DebuggerWindow::changeMemoryViewPage(uint8_t page)
+{
+    qDebug("DebuggerWindow::changeMemoryViewPage");
+
+    // Only 4 pages are available (4 x 16Kb pages in Z80 address space)
+    page &= 0b0000'0011;
+
+    // Getting address of specified memory page
+    Memory* memory = _emulator->GetMemory();
+    uint8_t* pageAddress = memory->MapZ80AddressToPhysicalAddress(page * 0x4000);
+    size_t size = 0x4000;
+    uint16_t offset = page * 0x4000;
+
+    changeMemoryViewAddress(pageAddress, size, offset);
+}
+
+/// Event to change Memory View
+/// \param address Physical address - start of memory view
+/// \param size Size of memory view in bytes
+/// \param offset Base offset for memory view display
+void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset)
+{
+    if (!address || !size)
+    {
+        qDebug("DebuggerWindow::changeMemoryViewAddress - invalid parameters");
+        throw std::logic_error("DebuggerWindow::changeMemoryViewAddress - invalid parameters");
+    }
+
+    qDebug("DebuggerWindow::changeMemoryViewAddress");
+
+    QByteArray data((const char*)address, size);
+    QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
+    document->setHexLineWidth(8);   // Display 8 hex bytes per line
+    document->setBaseAddress(offset);
+    ui->hexView->setDocument(document);
+    document->gotoOffset(0);
+
+    ui->hexView->update();
+}
+
+/// endregion </Event handlers / Slots>

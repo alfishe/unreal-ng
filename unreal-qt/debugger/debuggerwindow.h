@@ -33,14 +33,21 @@ protected:
     void loadState();
     void saveState();
 
+    /// region <Event handlers / Slots>
 private slots:
     void handleMessageBreakpointTriggered(int id, Message* message);
 
+    // Debug toolbar actions
     void continueExecution();
     void pauseExecution();
     void cpuStep();
     void frameStep();
     void waitInterrupt();
+
+    void changeMemoryViewPage(uint8_t page);
+    void changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset);
+
+    /// endregion </Event handlers / Slots>
 
 signals:
 

@@ -33,6 +33,7 @@ public slots:
     void refresh();
 
 signals:
+    void bank0LabelClicked();
 
 private:
     Ui::RegistersWidget* ui;

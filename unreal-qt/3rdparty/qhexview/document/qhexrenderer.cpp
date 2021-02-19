@@ -252,14 +252,14 @@ void QHexRenderer::blinkCursor()
 
 quint64 QHexRenderer::rendererLength() const
 {
-    quint64 result = m_document->dataLength() + 1UL;
+    quint64 result = m_document->dataLength();
 
     return result;
 }
 
 quint64 QHexRenderer::getAddressWidth() const
 {
-    quint64 maxAddr = m_document->baseAddress() + this->rendererLength();
+    quint64 maxAddr = m_document->baseAddress() + this->rendererLength() - 1;
     if (maxAddr <= 0xFFFF)
         return 4;
 

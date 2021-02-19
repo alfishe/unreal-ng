@@ -44,7 +44,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QLabel" name="page_0_value_label">
+        <widget class="QClickableLabel" name="page_0_value_label">
          <property name="minimumSize">
           <size>
            <width>60</width>
@@ -87,7 +87,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QLabel" name="page_1_value_label">
+        <widget class="QClickableLabel" name="page_1_value_label">
          <property name="minimumSize">
           <size>
            <width>60</width>
@@ -130,7 +130,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QLabel" name="page_2_value_label">
+        <widget class="QClickableLabel" name="page_2_value_label">
          <property name="minimumSize">
           <size>
            <width>60</width>
@@ -173,7 +173,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QLabel" name="page_3_value_label">
+        <widget class="QClickableLabel" name="page_3_value_label">
          <property name="minimumSize">
           <size>
            <width>60</width>
@@ -204,6 +204,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QClickableLabel</class>
+   <extends>QLabel</extends>
+   <header>common/widgets/qclickablelabel.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

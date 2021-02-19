@@ -22,6 +22,7 @@ set(CMAKE_PREFIX_PATH /Volumes/NVMeData1/Qt/5.14.2/clang_64)
 
 # Qt specific settings
 find_package(Qt5 COMPONENTS Gui REQUIRED)
+find_package(Qt5 COMPONENTS Multimedia REQUIRED)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC OFF)
@@ -99,6 +100,7 @@ endif (UNIX AND NOT APPLE)
 target_link_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/cmake-build-debug/core/src)
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Multimedia)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 # Copy default config file to binary folder after successful compilation

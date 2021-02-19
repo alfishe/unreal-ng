@@ -40,7 +40,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valAF">
+          <widget class="QClickableLabel" name="valAF">
            <property name="text">
             <string>0044</string>
            </property>
@@ -71,7 +71,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valBC">
+          <widget class="QClickableLabel" name="valBC">
            <property name="text">
             <string>0AFE</string>
            </property>
@@ -102,7 +102,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valDE">
+          <widget class="QClickableLabel" name="valDE">
            <property name="text">
             <string>FB15</string>
            </property>
@@ -133,7 +133,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valHL">
+          <widget class="QClickableLabel" name="valHL">
            <property name="text">
             <string>FB14</string>
            </property>
@@ -168,7 +168,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valAF1">
+          <widget class="QClickableLabel" name="valAF1">
            <property name="text">
             <string>0000</string>
            </property>
@@ -199,7 +199,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valBC1">
+          <widget class="QClickableLabel" name="valBC1">
            <property name="text">
             <string>0700</string>
            </property>
@@ -230,7 +230,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valDE1">
+          <widget class="QClickableLabel" name="valDE1">
            <property name="text">
             <string>0000</string>
            </property>
@@ -261,7 +261,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valHL1">
+          <widget class="QClickableLabel" name="valHL1">
            <property name="text">
             <string>FFFF</string>
            </property>
@@ -296,7 +296,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valSP">
+          <widget class="QClickableLabel" name="valSP">
            <property name="text">
             <string>FFFE</string>
            </property>
@@ -327,7 +327,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valPC">
+          <widget class="QClickableLabel" name="valPC">
            <property name="text">
             <string>00E5</string>
            </property>
@@ -358,7 +358,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valIX">
+          <widget class="QClickableLabel" name="valIX">
            <property name="text">
             <string>8080</string>
            </property>
@@ -389,7 +389,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="valIY">
+          <widget class="QClickableLabel" name="valIY">
            <property name="text">
             <string>6000</string>
            </property>
@@ -544,6 +544,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QClickableLabel</class>
+   <extends>QLabel</extends>
+   <header>common/widgets/qclickablelabel.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

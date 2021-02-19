@@ -4,6 +4,8 @@
 
 #include "debuggerwindow.h"
 
+/// region <Constructors / Destructors>
+
 MemoryPagesWidget::MemoryPagesWidget(QWidget *parent) : QWidget(parent), ui(new Ui::MemoryPagesWidget)
 {
     // Instantiate all child widgets (UI form auto-generated)
@@ -18,12 +20,20 @@ MemoryPagesWidget::MemoryPagesWidget(QWidget *parent) : QWidget(parent), ui(new 
     page1Value = ui->page_1_value_label;
     page2Value = ui->page_2_value_label;
     page3Value = ui->page_3_value_label;
+
+    // Subscribe to double clicks on bank labels
+    connect(page0Value, SIGNAL(doubleClicked()), this, SLOT(page0_doubleClicked()));
+    connect(page1Value, SIGNAL(doubleClicked()), this, SLOT(page1_doubleClicked()));
+    connect(page2Value, SIGNAL(doubleClicked()), this, SLOT(page2_doubleClicked()));
+    connect(page3Value, SIGNAL(doubleClicked()), this, SLOT(page3_doubleClicked()));
 }
 
 MemoryPagesWidget::~MemoryPagesWidget()
 {
 
 }
+
+/// endregion </Constructors / Destructors>
 
 // Helper methods
 Emulator* MemoryPagesWidget::getEmulator()
@@ -40,6 +50,8 @@ Memory* MemoryPagesWidget::getMemory()
 {
     return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
 }
+
+/// region <Event handlers / Slots>
 
 void MemoryPagesWidget::reset()
 {
@@ -86,3 +98,33 @@ void MemoryPagesWidget::refresh()
         update();
     }
 }
+
+void MemoryPagesWidget::page0_doubleClicked()
+{
+    qDebug("MemoryPagesWidget::page0_doubleClicked()");
+
+    emit changeMemoryViewPage(0);
+}
+
+void MemoryPagesWidget::page1_doubleClicked()
+{
+    qDebug("MemoryPagesWidget::page1_doubleClicked()");
+
+    emit changeMemoryViewPage(1);
+}
+
+void MemoryPagesWidget::page2_doubleClicked()
+{
+    qDebug("MemoryPagesWidget::page2_doubleClicked()");
+
+    emit changeMemoryViewPage(2);
+}
+
+void MemoryPagesWidget::page3_doubleClicked()
+{
+    qDebug("MemoryPagesWidget::page3_doubleClicked()");
+
+    emit changeMemoryViewPage(3);
+}
+
+/// endregion </Event handlers / Slots>

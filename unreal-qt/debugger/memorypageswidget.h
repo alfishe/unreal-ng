@@ -28,11 +28,22 @@ protected:
     EmulatorContext* getEmulatorContext();
     Memory* getMemory();
 
+signals:
+    void changeMemoryViewPage(uint8_t page);
+    void changeMemoryViewAddress(uint8_t* addr, size_t size, uint16_t offset);
+
+
+    /// region <Event handlers / Slots>
 public slots:
     void reset();
     void refresh();
 
-signals:
+    void page0_doubleClicked();
+    void page1_doubleClicked();
+    void page2_doubleClicked();
+    void page3_doubleClicked();
+    /// endregion </Event handlers / Slots>
+
 
 private:
     Ui::MemoryPagesWidget* ui;
