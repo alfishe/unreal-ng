@@ -43,8 +43,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
 
     // Subscribe to events leading to MemoryView changes
-    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewPage(uint8_t)), this, SLOT(changeMemoryViewPage(uint8_t)));
-    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)));
+    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewBank(uint8_t)), this, SLOT(changeMemoryViewBank(uint8_t)));
+    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t, uint16_t)));
+    connect(ui->stackWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
@@ -121,26 +122,33 @@ void DebuggerWindow::reset()
         {
             // Getting address of current ROM page
             Memory* memory = _emulator->GetMemory();
-            uint8_t romPage = memory->GetROMPage();
-            uint8_t* addr = memory->ROMPageAddress(romPage);
-
-            QByteArray data((const char*)addr, 16384);
-            QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
-            document->setHexLineWidth(8);   // Display 8 hex bytes per line
-            ui->hexView->setDocument(document);
-
             uint16_t pc = state->Z80Registers::pc;
-            if (pc < 0x4000)
+            uint8_t bank = memory->GetZ80BankFromAddress(pc);
+            uint16_t addressInBank = pc & 0b0011'1111'1111'1111;
+            size_t pageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
+            uint8_t* pagePhysicalAddress = memory->GetPhysicalAddressForZ80Bank(bank);
+
+            QHexDocument* document;
+            if (pageOffset != _curPageOffset)
             {
-                document->gotoOffset(pc);
-                document->cursor()->selectOffset(pc, 1);
+                _curPageOffset = pageOffset;
 
-                QHexMetadata* hexmetadata = document->metadata();
-                hexmetadata->metadata(pc, pc + 1, Qt::black, Qt::blue, "JR Z,xx");
-                hexmetadata->metadata(pc + 1, pc + 2, Qt::black, Qt::green, "");
-                hexmetadata->background(0, 0, 3, Qt::blue);
-
+                QByteArray data((const char*)pagePhysicalAddress, 0x4000);
+                document = QHexDocument::fromMemory<QMemoryBuffer>(data);
+                document->setHexLineWidth(8);   // Display 8 hex bytes per line
+                ui->hexView->setDocument(document);
             }
+            else
+            {
+                document = ui->hexView->document();
+            }
+
+            document->gotoOffset(addressInBank);
+            document->cursor()->selectOffset(addressInBank, 1);
+            QHexMetadata* hexmetadata = document->metadata();
+            hexmetadata->clear();
+            hexmetadata->metadata(addressInBank, addressInBank + 1, Qt::black, Qt::blue, "JR Z,xx");
+            hexmetadata->metadata(addressInBank + 1, addressInBank + 2, Qt::black, Qt::green, "");
         }
 
         ui->hexView->update();
@@ -171,6 +179,8 @@ void DebuggerWindow::reset()
 
     //brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
     //brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
+
+    brkManager.AddExecutionBreakpoint(0x38A2);    // ROM48K:$38A2
     /// </Test>
  }
 
@@ -276,20 +286,36 @@ void DebuggerWindow::waitInterrupt()
     updateState();
 }
 
+void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
+{
+    qDebug("DebuggerWindow::changeMemoryViewZ80Address");
+
+    Memory* memory = _emulator->GetMemory();
+    uint8_t bank = memory->GetZ80BankFromAddress(addr);
+    _curPageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
+    uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
+    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Bank(bank);
+    size_t size = 0x4000;
+    uint16_t offset = bank * 0x4000;
+
+    changeMemoryViewAddress(pageAddress, size, offset, addressInBank);
+}
+
 /// Event to change Memory View to one of 4 Z80 memory pages
 /// \param page
-void DebuggerWindow::changeMemoryViewPage(uint8_t page)
+void DebuggerWindow::changeMemoryViewBank(uint8_t bank)
 {
-    qDebug("DebuggerWindow::changeMemoryViewPage");
+    qDebug("DebuggerWindow::changeMemoryViewBank");
 
     // Only 4 pages are available (4 x 16Kb pages in Z80 address space)
-    page &= 0b0000'0011;
+    bank &= 0b0000'0011;
 
     // Getting address of specified memory page
     Memory* memory = _emulator->GetMemory();
-    uint8_t* pageAddress = memory->MapZ80AddressToPhysicalAddress(page * 0x4000);
+    _curPageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
+    uint8_t* pageAddress = memory->MapZ80AddressToPhysicalAddress(bank * 0x4000);
     size_t size = 0x4000;
-    uint16_t offset = page * 0x4000;
+    uint16_t offset = bank * 0x4000;
 
     changeMemoryViewAddress(pageAddress, size, offset);
 }
@@ -298,7 +324,7 @@ void DebuggerWindow::changeMemoryViewPage(uint8_t page)
 /// \param address Physical address - start of memory view
 /// \param size Size of memory view in bytes
 /// \param offset Base offset for memory view display
-void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset)
+void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset, uint16_t currentAddress)
 {
     if (!address || !size)
     {
@@ -310,10 +336,13 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
 
     QByteArray data((const char*)address, size);
     QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
-    document->setHexLineWidth(8);   // Display 8 hex bytes per line
-    document->setBaseAddress(offset);
+    document->setHexLineWidth(8);               // Display 8 hex bytes per line
+    document->setBaseAddress(offset);           // Set base offset for the whole hex view
     ui->hexView->setDocument(document);
-    document->gotoOffset(0);
+
+    // Note: change offset position only after assigning document to HexView
+    // otherwise widget is unaware of the document and where to jump so just skipping the request
+    document->gotoOffset(currentAddress);       // Position cursor on the byte with offset
 
     ui->hexView->update();
 }

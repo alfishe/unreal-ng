@@ -103,28 +103,28 @@ void MemoryPagesWidget::page0_doubleClicked()
 {
     qDebug("MemoryPagesWidget::page0_doubleClicked()");
 
-    emit changeMemoryViewPage(0);
+    emit changeMemoryViewBank(0);
 }
 
 void MemoryPagesWidget::page1_doubleClicked()
 {
     qDebug("MemoryPagesWidget::page1_doubleClicked()");
 
-    emit changeMemoryViewPage(1);
+    emit changeMemoryViewBank(1);
 }
 
 void MemoryPagesWidget::page2_doubleClicked()
 {
     qDebug("MemoryPagesWidget::page2_doubleClicked()");
 
-    emit changeMemoryViewPage(2);
+    emit changeMemoryViewBank(2);
 }
 
 void MemoryPagesWidget::page3_doubleClicked()
 {
     qDebug("MemoryPagesWidget::page3_doubleClicked()");
 
-    emit changeMemoryViewPage(3);
+    emit changeMemoryViewBank(3);
 }
 
 /// endregion </Event handlers / Slots>

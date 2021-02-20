@@ -27,11 +27,26 @@ protected:
     EmulatorContext* getEmulatorContext();
     Memory* getMemory();
 
+signals:
+    void changeMemoryViewZ80Address(uint16_t addr);
+    void changeMemoryViewAddress(uint8_t* addr, size_t size, uint16_t offset, uint16_t curaddr);
+
+    /// region <Event handlers / Slots>
 public slots:
     void reset();
     void refresh();
 
-signals:
+    void sp0Value_doubleClicked();
+    void sp1Value_doubleClicked();
+    void sp2Value_doubleClicked();
+    void sp3Value_doubleClicked();
+
+    /// region </Event handlers / Slots>
+
+    /// region <Helper methods>
+protected:
+    void readStackIntoArray(uint16_t* outArray, uint16_t depth);
+    /// endregion </Helper methods>
 
 private:
     Ui::StackWidget* ui;

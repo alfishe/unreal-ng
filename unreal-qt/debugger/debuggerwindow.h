@@ -44,8 +44,9 @@ private slots:
     void frameStep();
     void waitInterrupt();
 
-    void changeMemoryViewPage(uint8_t page);
-    void changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset);
+    void changeMemoryViewZ80Address(uint16_t addr);
+    void changeMemoryViewBank(uint8_t bank);
+    void changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset = 0, uint16_t currentAddress = 0);
 
     /// endregion </Event handlers / Slots>
 
@@ -55,6 +56,7 @@ signals:
 protected:
     Emulator* _emulator = nullptr;
     bool _breakpointTriggered = false;
+    size_t _curPageOffset;  // Currently displayed in hex view memory page offset
 
     // UI fields
 private:

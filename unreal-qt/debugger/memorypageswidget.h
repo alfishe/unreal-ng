@@ -29,7 +29,7 @@ protected:
     Memory* getMemory();
 
 signals:
-    void changeMemoryViewPage(uint8_t page);
+    void changeMemoryViewBank(uint8_t bank);
     void changeMemoryViewAddress(uint8_t* addr, size_t size, uint16_t offset);
 
 
