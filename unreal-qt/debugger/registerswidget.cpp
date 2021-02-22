@@ -15,6 +15,18 @@ RegistersWidget::RegistersWidget(QWidget *parent) : QWidget(parent), ui(new Ui::
     m_mainThread = QApplication::instance()->thread();
 
     m_debuggerWindow = static_cast<DebuggerWindow*>(parent);
+
+    // Subscribe to double clicks on register values
+    connect(ui->valBC, SIGNAL(doubleClicked()), this, SLOT(bc_doubleClicked()));
+    connect(ui->valDE, SIGNAL(doubleClicked()), this, SLOT(de_doubleClicked()));
+    connect(ui->valHL, SIGNAL(doubleClicked()), this, SLOT(hl_doubleClicked()));
+    connect(ui->valBC1, SIGNAL(doubleClicked()), this, SLOT(bc1_doubleClicked()));
+    connect(ui->valDE1, SIGNAL(doubleClicked()), this, SLOT(de1_doubleClicked()));
+    connect(ui->valHL1, SIGNAL(doubleClicked()), this, SLOT(hl1_doubleClicked()));
+    connect(ui->valSP, SIGNAL(doubleClicked()), this, SLOT(sp_doubleClicked()));
+    connect(ui->valPC, SIGNAL(doubleClicked()), this, SLOT(pc_doubleClicked()));
+    connect(ui->valIX, SIGNAL(doubleClicked()), this, SLOT(ix_doubleClicked()));
+    connect(ui->valIY, SIGNAL(doubleClicked()), this, SLOT(iy_doubleClicked()));
 }
 
 RegistersWidget::~RegistersWidget()
@@ -45,6 +57,18 @@ EmulatorContext* RegistersWidget::getEmulatorContext()
 {
     return m_debuggerWindow->getEmulator()->GetContext();
 }
+
+Memory* RegistersWidget::getMemory()
+{
+    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+}
+
+Z80Registers* RegistersWidget::getRegisters()
+{
+    return m_debuggerWindow->getEmulator()->GetContext()->pCPU->GetZ80();
+}
+
+/// region <Event handlers / Slots>
 
 void RegistersWidget::reset()
 {
@@ -117,3 +141,55 @@ void RegistersWidget::refresh()
         update();
     }
 }
+
+void RegistersWidget::bc_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->bc);
+}
+
+void RegistersWidget::de_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->de);
+}
+
+void RegistersWidget::hl_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->hl);
+}
+
+void RegistersWidget::bc1_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->alt.bc);
+}
+
+void RegistersWidget::de1_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->alt.de);
+}
+
+void RegistersWidget::hl1_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->alt.hl);
+}
+
+void RegistersWidget::sp_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->sp);
+}
+
+void RegistersWidget::pc_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->pc);
+}
+
+void RegistersWidget::ix_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->ix);
+}
+
+void RegistersWidget::iy_doubleClicked()
+{
+    emit changeMemoryViewZ80Address(m_z80Registers->iy);
+}
+
+/// endregion </Event handlers / Slots>
