@@ -50,11 +50,14 @@ QHexCursor *QHexDocument::cursor() const { return m_cursor; }
 quint8 QHexDocument::areaIdent() const { return m_areaIdent;}
 void QHexDocument::setAreaIdent(quint8 value) { m_areaIdent = value; }
 quint8 QHexDocument::hexLineWidth() const { return m_hexLineWidth; }
+
 void QHexDocument::setHexLineWidth(quint8 value)
 {
     m_hexLineWidth = value;
     m_cursor->setLineWidth(value);
     m_metadata->setLineWidth(value);
+
+    emit layoutChanged();
 }
 
 QHexMetadata *QHexDocument::metadata() const { return m_metadata; }

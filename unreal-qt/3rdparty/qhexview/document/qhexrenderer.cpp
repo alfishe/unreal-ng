@@ -11,6 +11,10 @@ QHexRenderer::QHexRenderer(QHexDocument* document, const QFontMetrics &fontmetri
 {
     m_selectedArea = QHexRenderer::HexArea;
     m_cursorenabled = false;
+
+    // Subscribe to document / layout changes
+    connect(m_document, SIGNAL(documentChanged()), this, SLOT(onDocumentChanged()));
+    connect(parent, SIGNAL(layoutChanged()), this, SLOT(onLayoutChanged()));
 }
 
 void QHexRenderer::renderFrame(QPainter *painter)
@@ -196,26 +200,89 @@ quint64 QHexRenderer::headerLineCount() const
 
 quint64 QHexRenderer::borderSize() const
 {
-    quint64 result = DEFAULT_AREA_IDENTATION * this->getCellWidth();
-
-    if (m_document)
-    {
-        result = m_document->areaIdent() * this->getCellWidth();
-    }
-
-    return result;
+    return m_borderSize;
 }
 
 quint8 QHexRenderer::hexLineWidth() const
 {
-    quint8 result = DEFAULT_HEX_LINE_LENGTH;
+    return m_hexLineWidthSymbols;
+}
+
+/// region <Event handlers / Slots>
+
+void QHexRenderer::onDocumentChanged()
+{
+    recalculateRenderParameters();
+}
+
+void QHexRenderer::onLayoutChanged()
+{
+    recalculateRenderParameters();
+}
+
+/// endregion <Event handlers / Slots>
+
+void QHexRenderer::recalculateRenderParameters()
+{
+    /// region <Cell width>
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+    m_cellWidth = static_cast<quint64>(m_fontmetrics.horizontalAdvance(" "));
+#else
+    m_cellWidth = m_fontmetrics.width(" ");
+#endif
+    /// endregion </Cell width>
+
+    /// region <Border size>
+
+    m_borderSize = DEFAULT_AREA_IDENTATION * this->getCellWidth();
 
     if (m_document)
     {
-        result = m_document->hexLineWidth();
+        m_borderSize = m_document->areaIdent() * m_cellWidth;
     }
 
-    return result;
+    /// endregion </Border size>
+
+    /// region <Address area width>
+
+    quint64 addressWidth = 0;
+    quint64 maxAddr = m_document->baseAddress() + this->rendererLength() - 1;
+    if (maxAddr <= 0xFFFF)
+    {
+        addressWidth = 4;
+    }
+    else if (maxAddr <= 0xFFFFFFFF)
+    {
+        addressWidth = 8;
+    }
+    else
+    {
+        addressWidth = QString::number(maxAddr, 16).length();
+    }
+
+    m_addressWidthSymbols = addressWidth;
+
+    /// endregion </Address area width>
+
+    /// region <Hex line width>
+
+    m_hexLineWidthSymbols = DEFAULT_HEX_LINE_LENGTH;
+
+    if (m_document)
+    {
+        m_hexLineWidthSymbols = m_document->hexLineWidth();
+    }
+
+    /// endregion </Hex line width>
+
+    m_addressColumnWidth = m_cellWidth * m_addressWidthSymbols;
+    m_hexColumnWidth = m_cellWidth * (hexLineWidth() * 3);
+    n_asciiColumnWidth =  m_cellWidth * hexLineWidth();
+
+    m_addressColumnX = 0;
+    m_hexColumnX = m_cellWidth * m_addressWidthSymbols + 2 * m_borderSize;
+    m_asciiColumnX = m_hexColumnX + m_cellWidth * (hexLineWidth() * 3) + 2 * m_borderSize;
+    m_endColumnX = m_asciiColumnX + m_cellWidth * hexLineWidth() + 2 * m_borderSize;
 }
 
 QString QHexRenderer::hexString(quint64 line, QByteArray* rawline) const
@@ -257,50 +324,29 @@ quint64 QHexRenderer::rendererLength() const
     return result;
 }
 
-quint64 QHexRenderer::getAddressWidth() const
+quint64 QHexRenderer::getAddressWidthSymbols() const
 {
-    quint64 maxAddr = m_document->baseAddress() + this->rendererLength() - 1;
-    if (maxAddr <= 0xFFFF)
-        return 4;
-
-    if (maxAddr <= 0xFFFFFFFF)
-         return 8;
-
-    return QString::number(maxAddr, 16).length();
+    return m_addressWidthSymbols;
 }
 
 quint64 QHexRenderer::getHexColumnX() const
 {
-    quint64 result =  this->getCellWidth() * this->getAddressWidth() + 2 * this->borderSize();
-
-    return result;
+    return m_hexColumnX;
 }
 
 quint64 QHexRenderer::getAsciiColumnX() const
 {
-    quint64 result = this->getHexColumnX() + this->getCellWidth() * (hexLineWidth() * 3) + 2 * this->borderSize();
-
-    return result;
+    return m_asciiColumnX;
 }
 
 quint64 QHexRenderer::getEndColumnX() const
 {
-    quint64 result = this->getAsciiColumnX() + this->getCellWidth() * hexLineWidth() + 2 * this->borderSize();
-
-    return result;
+    return m_endColumnX;
 }
 
 quint64 QHexRenderer::getCellWidth() const
 {
-    quint64 result = 0;
-
-#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
-    result = static_cast<quint64>(m_fontmetrics.horizontalAdvance(" "));
-#else
-    result = m_fontmetrics.width(" ");
-#endif
-
-    return result;
+    return m_cellWidth;
 }
 
 /// Get half-byte index based on mouse cursor coordinates
@@ -577,7 +623,7 @@ void QHexRenderer::renderCursorHex(QTextCursor &textcursor, quint64 line) const
 void QHexRenderer::drawAddress(QPainter* painter, const QPalette& palette, const QRect& linerect, quint64 line)
 {
     quint64 addr = line * hexLineWidth() + m_document->baseAddress();
-    QString addrStr = QString::number(addr, 16).rightJustified(this->getAddressWidth(), QLatin1Char('0')).toUpper();
+    QString addrStr = QString::number(addr, 16).rightJustified(this->getAddressWidthSymbols(), QLatin1Char('0')).toUpper();
 
     QRect addressrect = linerect;
     addressrect.setWidth(this->getHexColumnX());

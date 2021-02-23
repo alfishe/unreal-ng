@@ -41,12 +41,24 @@ public:
     quint64 borderSize() const;
     quint8 hexLineWidth() const;
 
+signals:
+
+
+    /// region <Event handlers / Slots>
+public slots:
+    void onDocumentChanged();
+    void onLayoutChanged();
+    /// endregion <Event handlers / Slots>
+
+private:
+    void recalculateRenderParameters();
+
 private:
     QString hexString(quint64 line, QByteArray *rawline = nullptr) const;
     QString asciiString(quint64 line, QByteArray *rawline = nullptr) const;
     QByteArray getLine(quint64 line) const;
     quint64 rendererLength() const;
-    quint64 getAddressWidth() const;
+    quint64 getAddressWidthSymbols() const;
     quint64 getHexColumnX() const;
     quint64 getAsciiColumnX() const;
     quint64 getEndColumnX() const;
@@ -73,6 +85,22 @@ private:
     QFontMetrics m_fontmetrics;
     QHexRenderer::AreaTypeEnum m_selectedArea;
     bool m_cursorenabled;
+
+    // Pre-calculated values. Kept until data or layout changed
+    quint64 m_borderSize;
+    quint64 m_cellWidth;
+    quint64 m_addressWidthSymbols;
+    quint8 m_hexLineWidthSymbols;
+
+    quint64 m_addressColumnWidth;
+    quint64 m_hexColumnWidth;
+    quint64 n_asciiColumnWidth;
+
+    quint64 m_addressColumnX;
+    quint64 m_hexColumnX;
+    quint64 m_asciiColumnX;
+    quint64 m_endColumnX;
+
 };
 
 #endif // QHEXRENDERER_H

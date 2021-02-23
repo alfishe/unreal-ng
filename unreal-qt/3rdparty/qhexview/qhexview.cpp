@@ -60,6 +60,9 @@ void QHexView::setDocument(QHexDocument *document)
 
     this->adjustScrollBars();
     this->viewport()->update();
+
+    // Trigger signal chain to handle document changes
+    m_document->documentChanged();
 }
 
 void QHexView::setReadOnly(bool b)

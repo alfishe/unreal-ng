@@ -70,6 +70,7 @@ signals:
     void canUndoChanged();
     void canRedoChanged();
     void documentChanged();
+    void layoutChanged();
     void lineChanged(quint64 line);
 
 private:
