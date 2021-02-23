@@ -125,6 +125,8 @@ public:
     uint16_t AddBreakpoint(BreakpointDescriptor* descriptor);
     bool RemoveBreakpoint(BreakpointDescriptor* descriptor);
     bool RemoveBreakpointByID(uint16_t breakpointID);
+
+    size_t GetBreakpointsCount();
     /// endregion </Management methods>
 
     /// region <Management assistance methods>
