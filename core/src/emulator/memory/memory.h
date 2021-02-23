@@ -199,6 +199,8 @@ public:
 
     /// region  <Address helper methods>
 
+    uint8_t GetZ80BankFromAddress(uint16_t address);
+
     uint8_t* RAMPageAddress(uint16_t page);
     uint8_t* ROMPageAddress(uint8_t page);
 
@@ -207,6 +209,8 @@ public:
 
     size_t GetPhysicalOffsetForZ80Address(uint16_t address);
     size_t GetPhysicalOffsetForZ80Bank(uint8_t bank);
+
+    uint8_t* GetPhysicalAddressForZ80Bank(uint8_t bank);
 
     uint8_t* MapZ80AddressToPhysicalAddress(uint16_t address);			    // Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
     MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address);     // Determines current bank for Z80 address specified

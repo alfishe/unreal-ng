@@ -45,7 +45,7 @@ void PortDecoder_Pentagon128::Reset()
     _7FFD_Locked = false;
 
     // Set default memory paging state: RAM bank: 0; Screen: Normal (bank 5); ROM bank: 0; Disable paging: No
-    Port_7FFD(0x7FFD, 0x00, 0x0000);
+    Port_7FFD_Out(0x7FFD, 0x00, 0x0000);
 }
 
 uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
@@ -93,18 +93,17 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     if (isPort_7FFD)
     {
         decodedPort = 0x7FFD;
-        Port_7FFD(port, value, pc);
+        Port_7FFD_Out(port, value, pc);
     }
     else if (IsPort_FE(port))
     {
         decodedPort = 0x00FE;
-        PortFE_Out(port, value, pc);
+        Port_FE_Out(port, value, pc);
     }
     else
     {
-        // Determine RAM/ROM page where code executed from
-        std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
+        // Allow registered peripheral device to handle port OUT
+        PeripheralPortOut(port, value);
     }
 
     /// region <Debug logging>
@@ -219,7 +218,7 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Pentagon128::Port_7FFD(uint16_t port, uint8_t value, uint16_t pc)
+void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;

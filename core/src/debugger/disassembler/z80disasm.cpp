@@ -2251,8 +2251,8 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
             if (memory != nullptr && registers != nullptr)
             {
                 uint16_t sp = registers->sp;
-                uint16_t hiRet = memory->DirectReadFromZ80Memory(sp--);
-                uint8_t loRet = memory->DirectReadFromZ80Memory(sp);
+                uint8_t loRet = memory->DirectReadFromZ80Memory(sp++);
+                uint16_t hiRet = memory->DirectReadFromZ80Memory(sp);
                 result.returnAddr = (hiRet << 8) | loRet;
             }
         }

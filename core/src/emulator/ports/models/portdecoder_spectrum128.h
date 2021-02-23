@@ -54,9 +54,12 @@ public:
     /// endregion <Helper methods>
 
 protected:
-    void Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
+
+    uint8_t Port_BFFD_In(uint16_t port, uint16_t pc);
     void Port_BFFD_Out(uint16_t port, uint8_t value, uint16_t pc);
+
+    uint8_t Port_FFFD_In(uint16_t port, uint16_t pc);
     void Port_FFFD_Out(uint16_t port, uint8_t value, uint16_t pc);
 
     std::string Dump_7FFD_value(uint8_t value);

@@ -31,6 +31,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
 
 PortDecoder::~PortDecoder()
 {
+    _portDevices.clear();
 }
 /// endregion </Constructors / Destructors>
 
@@ -166,7 +167,7 @@ bool PortDecoder::IsFEPort(uint16_t port)
 /// \param value
 /// \param pc
 /// \return
-bool PortDecoder::PortFE_Out(uint16_t port, uint8_t value, uint16_t pc)
+void PortDecoder::Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
@@ -190,8 +191,6 @@ bool PortDecoder::PortFE_Out(uint16_t port, uint8_t value, uint16_t pc)
         MLOGDEBUG(DumpPortValue(0xFE, port, value, pc, Dump_FE_value(value).c_str()));
     }
     /// endregion </Debug logging>
-
-    return result;
 }
 
 std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
@@ -221,6 +220,90 @@ std::string PortDecoder::GetPCAddressLocator(uint16_t pc)
 }
 
 /// endregion </Interface methods>
+
+/// region <Interaction with peripherals>
+bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device)
+{
+    bool result = false;
+
+    if (device)
+    {
+        if (!key_exists(_portDevices, port))
+        {
+            _portDevices.insert( { port, device });
+        }
+        else
+        {
+            MLOGWARNING("PortDecoder::registerPortHandler - handler for port: #%04X already registered", port);
+        }
+    }
+
+    return result;
+}
+
+void PortDecoder::UnregisterPortHandler(uint16_t port)
+{
+    if (key_exists(_portDevices, port))
+    {
+        _portDevices.erase(port);
+    }
+}
+
+/// Pass port IN operation to the peripheral device registered to handle specified port
+/// \param port Specified port address
+/// \return Value for the specified port returned by peripheral device (if exists). Otherwise #FF
+uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
+{
+    uint8_t result = 0xFF;
+
+    if (key_exists(_portDevices, port))
+    {
+        // Peripheral registered to handle port event found
+        PortDevice* device = _portDevices.at(port);
+        if (device)
+        {
+            result = device->PortDeviceInMethod(port);
+        }
+    }
+    else
+    {
+        // No peripheral to handle this port IN available
+
+        // Determine RAM/ROM page where code executed from
+        uint16_t pc = _context->pCPU->GetZ80()->m1_pc;  // Use IN command PC, not the next one (z80->pc)
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(), port);
+    }
+
+    return result;
+}
+
+/// Pass port OUT operation to the peripheral device registered to handle specified port
+/// \param port Specified port address
+/// \param value Value to output into specified port
+void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
+{
+    if (key_exists(_portDevices, port))
+    {
+        // Peripheral registered to handle port event found
+        PortDevice* device = _portDevices.at(port);
+        if (device)
+        {
+            device->PortDeviceOutMethod(port, value);
+        }
+    }
+    else
+    {
+        // No peripheral to handle this port OUT available
+
+        // Determine RAM/ROM page where code executed from
+        uint16_t pc = _context->pCPU->GetZ80()->m1_pc;  // Use OUT command PC, not the next one (z80->pc)
+        std::string currentMemoryPage = GetPCAddressLocator(pc);
+        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(), port, value);
+    }
+}
+
+/// endregion </Interaction with peripherals>
 
 /// region <Debug information>
 

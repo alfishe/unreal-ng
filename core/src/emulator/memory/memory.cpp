@@ -606,6 +606,13 @@ uint16_t Memory::GetPageForBank(uint8_t bank)
 
 /// region  <Address helper methods>
 
+uint8_t Memory::GetZ80BankFromAddress(uint16_t address)
+{
+    uint8_t bank = (address >> 14) & 0b0000'0000'0000'0011;
+
+    return bank;
+}
+
 /// Up to MAX_RAM_PAGES 256 pages
 /// \param page
 /// \return
@@ -702,6 +709,13 @@ size_t Memory::GetPhysicalOffsetForZ80Bank(uint8_t bank)
     bank = bank & 0b0000'0011;
 
     size_t result = GetPhysicalOffsetForZ80Address(bank * 0x4000);
+
+    return result;
+}
+
+uint8_t* Memory::GetPhysicalAddressForZ80Bank(uint8_t bank)
+{
+    uint8_t* result = RAMBase() + GetPhysicalOffsetForZ80Bank(bank);
 
     return result;
 }

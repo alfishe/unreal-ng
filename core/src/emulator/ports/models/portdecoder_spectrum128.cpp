@@ -98,7 +98,7 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     }
     else if (IsPort_FE(port))
     {
-        PortFE_Out(port, value, pc);
+        Port_FE_Out(port, value, pc);
     }
     else
     {
