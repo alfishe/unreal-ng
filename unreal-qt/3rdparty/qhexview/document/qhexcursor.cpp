@@ -132,10 +132,10 @@ void QHexCursor::selectOffset(quint64 offset, int length)
 
 void QHexCursor::setInsertionMode(QHexCursor::InsertionMode mode)
 {
-    bool differentmode = (m_insertionmode != mode);
+    bool modeChanged = (m_insertionmode != mode);
     m_insertionmode = mode;
 
-	if (differentmode)
+	if (modeChanged)
 		emit insertionModeChanged();
 }
 

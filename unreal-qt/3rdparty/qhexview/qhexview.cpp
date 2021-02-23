@@ -330,10 +330,10 @@ void QHexView::moveNext(bool select)
 
     if (m_renderer->selectedArea() == QHexRenderer::HexArea)
     {
-        if(lastcell && !nibbleindex)
+        if (lastcell && !nibbleindex)
             return;
 
-        if(cur->position().offset() >= m_document->dataLength() && nibbleindex)
+        if (cur->position().offset() >= m_document->dataLength() && nibbleindex)
             return;
     }
 
@@ -532,7 +532,7 @@ bool QHexView::processMove(QHexCursor *cur, QKeyEvent *e)
 
         quint64 pageline = std::max(quint64(0), cur->currentLine() - this->visibleLines());
 
-        if(e->matches(QKeySequence::MoveToPreviousPage))
+        if (e->matches(QKeySequence::MoveToPreviousPage))
             cur->moveTo(pageline, cur->currentColumn());
         else
             cur->select(pageline, cur->currentColumn());
@@ -568,14 +568,14 @@ bool QHexView::processMove(QHexCursor *cur, QKeyEvent *e)
     {
         if (e->matches(QKeySequence::MoveToEndOfLine))
         {
-            if(cur->currentLine() == m_renderer->documentLastLine())
+            if (cur->currentLine() == m_renderer->documentLastLine())
                 cur->moveTo(cur->currentLine(), m_renderer->documentLastColumn());
             else
                 cur->moveTo(cur->currentLine(), m_renderer->hexLineWidth() - 1, 0);
         }
         else
         {
-            if(cur->currentLine() == m_renderer->documentLastLine())
+            if (cur->currentLine() == m_renderer->documentLastLine())
                 cur->select(cur->currentLine(), m_renderer->documentLastColumn());
             else
                 cur->select(cur->currentLine(), m_renderer->hexLineWidth() - 1, 0);
@@ -627,7 +627,7 @@ bool QHexView::processTextInput(QHexCursor *cur, QKeyEvent *e)
 
     if ((m_renderer->selectedArea() == QHexRenderer::AsciiArea))
     {
-        if(!(key >= 0x20 && key <= 0x7E)) // Check if is a Printable Char
+        if (!(key >= 0x20 && key <= 0x7E)) // Check if is a Printable Char
             return false;
 
         m_document->removeSelection();
@@ -639,6 +639,7 @@ bool QHexView::processTextInput(QHexCursor *cur, QKeyEvent *e)
 
         QKeyEvent keyevent(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
         qApp->sendEvent(this, &keyevent);
+
         return true;
     }
 

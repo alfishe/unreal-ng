@@ -142,7 +142,7 @@ void QHexMetadata::comment(quint64 line, int start, int length, const QString &c
 
 void QHexMetadata::setMetadata(const QHexMetadataItem &mi)
 {
-    if(!m_metadata.contains(mi.line))
+    if (!m_metadata.contains(mi.line))
     {
         QHexLineMetadata linemetadata;
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
