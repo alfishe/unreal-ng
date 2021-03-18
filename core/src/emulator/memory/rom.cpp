@@ -22,11 +22,35 @@ ROM::ROM(EmulatorContext* context)
 	_logger = _context->pModuleLogger;
 
 	// TODO: load known ROM signatures from file
+
+	// ZX-Spectrum 128K (Toaster)
     _signatures.insert({ "d55daa439b673b0e3f5897f99ac37ecb45f974d1862b4dadb85dec34af99cb42", "Original 48K ROM" });
-	_signatures.insert({ "8d93c3342321e9d1e51d60afcd7d15f6a7afd978c231b43435a7c0757c60b9a3", "128k ROM 1 (48k BASIC)" });
-	_signatures.insert({ "3ba308f23b9471d13d9ba30c23030059a9ce5d4b317b85b86274b132651d1425", "128k ROM 0 (128k editor & menu)" });
-	_signatures.insert({ "1ef928538972ed8f0425c4469f3f471267393f7635b813f000de0fec4ea39fa3", "TR-DOS v5.04TM ROM" });
-	_signatures.insert({ "9d4bf28f2d1a9acac9907c918be3c3070f7250bc677919cface5e253a199fc7a", "HRom boot" });
+    _signatures.insert({ "3ba308f23b9471d13d9ba30c23030059a9ce5d4b317b85b86274b132651d1425", "128k ROM 0 (128k editor & menu)" }); // 16Kb
+	_signatures.insert({ "8d93c3342321e9d1e51d60afcd7d15f6a7afd978c231b43435a7c0757c60b9a3", "128k ROM 1 (48k BASIC)" });          // 16Kb
+    _signatures.insert({ "c1ff621d7910105d4ee45c31e9fd8fd0d79a545c78b66c69a562ee1ffbae8d72", "128k ROM (Toaster)" });                        // 32Kb
+
+    // ZX-Spectrum 128K +2
+    _signatures.insert({ "dae0690d8b433ea22b76b62520341f784071dbde0d02f50af0e3fd20fc6bca4a", "128k +2 ROM" });                     // 32Kb
+
+    // ZX-Spectrum 128K +3
+    _signatures.insert({ "ee8218fa43ecb672ed45370114294228213a82318c6d1b007ec86bee3293d1f2", "128k +3 ROM" });                     // 32Kb
+
+    _signatures.insert({ "39973c2ca4f573cf6188f8eb16338d669c8fd0a78d2683fe059ce56002e7b246", "Gluck service ROM" });    // 16Kb
+    _signatures.insert({ "9d4bf28f2d1a9acac9907c918be3c3070f7250bc677919cface5e253a199fc7a", "HRom boot" });            // 16Kb
+
+	// Pentagon-specific
+    _signatures.insert({ "7b88abff5964f0cf38481ac51bf035be2c01b8827569876b3d15eb3ac340fef3", "Pentagon 128k ROM"} );    // 32Kb
+	_signatures.insert({ "633343620691a592c706d18c927fd539b7069a5d0fb7011bcd3bfc94be418681", "Pentagon 128k ROM 0 (128k with TR-DOS in menu)"} );   // 16Kb
+    // "128k ROM 1 (48k BASIC)" for Pentagon 128K is the same as for original ZX-Spectrum 128k
+
+    // Scorpion ZX-256
+    _signatures.insert({ "07c190ae55887b73916526e49919f2b4a4e6acd68212fdd374e3cf1f7dd5225d", "Scorpion ZS256 ROM (Non-Prof)"} );    // 64Kb
+
+    // TR-DOS
+    _signatures.insert({ "91259fca6a8ded428cc24046f5b48b31d4043f2afbd9087d8946eaf4e10d71a5", "TR-DOS v5.03 ROM" });     // 16Kb
+    _signatures.insert({ "e21d37271d087eab5ef8f88d8f3a58c8c19da1fa857b9790eaa974b231db9e13", "TR-DOS v5.04T ROM" });    // 16Kb
+    _signatures.insert({ "1ef928538972ed8f0425c4469f3f471267393f7635b813f000de0fec4ea39fa3", "TR-DOS v5.04TM ROM" });   // 16Kb
+    _signatures.insert({ "075c87ddb55a2fb633373e2d7c834f03e5d44b9b70889499ece732f377f5d224", "TR-DOS v5.13f ROM" });    // 16Kb
 	//_signatures.insert({ "", "" });
 }
 
