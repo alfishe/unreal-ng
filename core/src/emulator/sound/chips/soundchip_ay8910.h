@@ -1,7 +1,13 @@
 #pragma once
-
-#include <cmath>
 #include "stdafx.h"
+
+#include "common/modulelogger.h"
+
+#include "emulator/ports/portdecoder.h"
+#include <cmath>
+
+
+class PortDecoder;
 
 /// Information:
 /// See:
@@ -52,18 +58,24 @@ enum AYChannelsEnum : uint8_t
 
 /// endregion </Types>
 
-class SoundChip_AY8910
+class SoundChip_AY8910 : public PortDevice
 {
     /// region <Constants>
 protected:
-    // Pentagon 128K/1024K has 1.75MHz AY frequency
-    // ZX-Spectrum 128K, +2, +3 has 1.7734MHz AY frequency
-    static constexpr int AY_BASE_FREQUENCY = 1.75 * 1000000;
-    //static constexpr int AY_BASE_FREQUENCY = 1.7734 * 1000000;
-
-
     // Audio sampling rate is 44100Hz
     static const int AY_SAMPLING_RATE = 44100;
+
+    // Oversampling factor (we'll be generating at that much higher sampling rate for better resolution)
+    static const int AY_OVERSAMPLING_FACTOR = 64;   // For 44100 base sampling rate we'll have 44100 * 64 = 2.822MHz
+
+    // Pentagon 128K/1024K has 1.75MHz AY frequency
+    // ZX-Spectrum 128K, +2, +3 has 1.7734MHz AY frequency
+    static constexpr int AY_BASE_FREQUENCY = 1.75 * 1'000'000;
+    //static constexpr int AY_BASE_FREQUENCY = 1.7734 * 1'000'000;
+
+    static constexpr int CPU_BASE_FREQUENCY = 3.5 * 1'000'000;
+    static constexpr int CPU_CYCLES_PER_SAMPLE = CPU_BASE_FREQUENCY / AY_SAMPLING_RATE;
+
 
     // How many AY cycles in each audio sample (at selected sampling rate / frequency)
     static constexpr double CYCLES_PER_SAMPLE = AY_BASE_FREQUENCY / AY_SAMPLING_RATE;
@@ -283,6 +295,19 @@ protected:
     NoiseGenerator _noiseGenerator;
     EnvelopeGenerator _envelopeGenerator;
 
+    // Currently selected register (#BFFD)
+    uint8_t _currentRegister;
+
+    // Indicator - chip attached to port decoder
+    bool _chipAttachedToPortDecoder = false;
+
+    // Port decoder chip attached to - reference
+    PortDecoder* _portDecoder = nullptr;
+
+    size_t _startFrameCPUCounter;
+    size_t _prevCallCPUCounter;
+    size_t _endFrameCPUCounter;
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -295,11 +320,39 @@ public:
 public:
     void reset();
 
+    // Emulate physical interface with ports #BFFD, #FFFD)
+    void setRegister(uint8_t regAddr);
+    uint8_t readCurrentRegister();
+    void writeCurrentRegister(uint8_t value, size_t time);
+
+    // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
     void writeRegister(uint8_t regAddr, uint8_t value, size_t time);
 
-    void render();
+    void startFrame(size_t tstateCounter);
+    void endFrame(size_t tstateCounter);
+    void render(size_t tstateCounter);
     /// endregion </Methods>
+
+    /// region <Ports interaction>
+public:
+    bool attachToPorts(PortDecoder* decoder);
+    void detachFromPorts();
+    /// endregion </Ports interaction>
+
+    /// region <PortDevice interface methods>
+    uint8_t PortDeviceInMethod(uint16_t port) override;
+    void PortDeviceOutMethod(uint16_t port, uint8_t value) override;
+    /// endregion </PortDevice interface methods>
+
+    /// region <Debug methods>
+public:
+    uint32_t getToneGeneratorDivisor(uint8_t fine, uint8_t coarse);
+    double getToneGeneratorFrequency(uint8_t fine, uint8_t coarse);
+    double getNoiseGeneratorFrequency(uint8_t divisor);
+
+    std::string printFrequency(double frequency);
+    /// endregion <Debug methods>
 };
 
 //
@@ -311,6 +364,9 @@ public:
 class SoundChip_AY8910CUT : public SoundChip_AY8910
 {
 public:
+    using SoundChip_AY8910::AY_BASE_FREQUENCY;
+    using SoundChip_AY8910::CPU_BASE_FREQUENCY;
+
     using SoundChip_AY8910::AYRegisters;
     using SoundChip_AY8910::ToneGenerator;
     using SoundChip_AY8910::NoiseGenerator;

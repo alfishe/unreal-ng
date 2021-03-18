@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "soundchip_ay8910.h"
 
+#include "common/stringhelper.h"
+#include "emulator/ports/portdecoder.h"
+
 /// region <Constants>
 
 // Volume->voltage amplitude conversion table
@@ -305,12 +308,16 @@ void SoundChip_AY8910::EnvelopeGenerator::generateEnvelopeShapes()
 
 SoundChip_AY8910::SoundChip_AY8910() : _decoder(_registers)
 {
-
+    _chipAttachedToPortDecoder = false;
+    _portDecoder = nullptr;
 }
 
 SoundChip_AY8910::~SoundChip_AY8910()
 {
-
+    if (_chipAttachedToPortDecoder)
+    {
+        detachFromPorts();
+    }
 }
 /// endregion </Constructors / Destructors>
 
@@ -327,6 +334,25 @@ void SoundChip_AY8910::reset()
     _toneGenerators[AY_CHANNEL_C].reset();
     _noiseGenerator.reset();
     _envelopeGenerator.reset();
+}
+
+void SoundChip_AY8910::setRegister(uint8_t regAddr)
+{
+    // Only valid register can be selected
+    if (regAddr <= 0x0F)
+        _currentRegister = regAddr;
+}
+
+uint8_t SoundChip_AY8910::readCurrentRegister()
+{
+    uint8_t result = readRegister(_currentRegister);
+
+    return result;
+}
+
+void SoundChip_AY8910::writeCurrentRegister(uint8_t value, size_t time)
+{
+    writeRegister(_currentRegister, value, time);
 }
 
 uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
@@ -406,9 +432,131 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, size_t time
 }
 
 /// Generate PSG output as PCM data into the buffer
-void SoundChip_AY8910::render()
+void SoundChip_AY8910::render(size_t tstateCounter)
 {
 
 }
 
 /// endregion </Methods>
+
+/// region <Ports interaction>
+
+bool SoundChip_AY8910::attachToPorts(PortDecoder* decoder)
+{
+    bool result = false;
+
+    if (decoder)
+    {
+        _portDecoder = decoder;
+
+        bool result = decoder->RegisterPortHandler(0xBFFD, this);
+        result &= decoder->RegisterPortHandler(0xFFFD, this);
+
+        if (result)
+        {
+            _chipAttachedToPortDecoder = true;
+            result = true;
+        }
+        else
+        {
+            // TODO: Log error
+        }
+    }
+
+    return result;
+}
+
+void SoundChip_AY8910::detachFromPorts()
+{
+    if (_portDecoder && _chipAttachedToPortDecoder)
+    {
+        _portDecoder->UnregisterPortHandler(0xBFFD);
+        _portDecoder->UnregisterPortHandler(0xFFFD);
+
+        _chipAttachedToPortDecoder = false;
+    }
+}
+
+/// endregion </Ports interaction>
+
+/// region <PortDevice interface methods>
+
+uint8_t SoundChip_AY8910::PortDeviceInMethod(uint16_t port)
+{
+    uint8_t result = 0xFF;
+
+    return result;
+}
+void SoundChip_AY8910::PortDeviceOutMethod(uint16_t port, uint8_t value)
+{
+
+}
+
+/// endregion </PortDevice interface methods>
+
+/// region <Debug methods>
+
+uint32_t SoundChip_AY8910::getToneGeneratorDivisor(uint8_t fine, uint8_t coarse)
+{
+    uint32_t result = (coarse & 0b0000'1111) << 8 | fine;
+
+    // Period cannot be infinite so divisor cannot be zero. AY sets minimally acceptable value = 1
+    if (result == 0)
+        result = 1;
+
+    result *= 16;
+
+    return result;
+}
+
+double SoundChip_AY8910::getToneGeneratorFrequency(uint8_t fine, uint8_t coarse)
+{
+    uint16_t divisor = (coarse & 0b0000'1111) << 8 | fine;
+
+    // Period cannot be infinite so divisor cannot be zero. AY sets minimally acceptable value = 1
+    if (divisor == 0)
+        divisor = 1;
+
+    double result = static_cast<double>(AY_BASE_FREQUENCY) / (divisor * 16);
+
+    return result;
+}
+
+double SoundChip_AY8910::getNoiseGeneratorFrequency(uint8_t divisor)
+{
+    // Only lowest 5 bits contain divisor
+    uint8_t normalizedDivisor = divisor & 0b0001'1111;
+
+    // Period cannot be infinite so divisor cannot be zero. AY sets minimally acceptable value = 1
+    if (normalizedDivisor == 0)
+        normalizedDivisor = 1;
+
+    double result = static_cast<double>(AY_BASE_FREQUENCY) / (normalizedDivisor * 16);
+
+    return result;
+}
+
+std::string SoundChip_AY8910::printFrequency(double frequency)
+{
+    std::string result = "<Invalid frequency>";
+
+    if (frequency >= 0.0)
+    {
+        if (frequency < 1000.0)
+        {
+            result = StringHelper::Format("%.1lfHz", frequency);
+        }
+        else if  (frequency < 1'000'000.0)
+        {
+            result = StringHelper::Format("%.2lfkHz", frequency / 1'000.0);
+        }
+        else
+        {
+            result = StringHelper::Format("%.3lfMHz", frequency / 1'000'000.0);
+        }
+    }
+
+    return result;
+}
+
+/// endregion <Debug methods>
