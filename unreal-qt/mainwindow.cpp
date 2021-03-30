@@ -5,7 +5,10 @@
 #include <QVBoxLayout>
 #include <QCloseEvent>
 #include <QDebug>
+#include <QMimeData>
 #include <QTimer>
+
+#include "emulator/filemanager.h"
 
 #include "common/modulelogger.h"
 #include "emulator/ports/portdecoder.h"
@@ -55,10 +58,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->reset();
     debuggerWindow->show();
+
+    // Enable Drag'n'Drop
+    setAcceptDrops(true);
 }
 
 MainWindow::~MainWindow()
 {
+    setAcceptDrops(false);
+
     if (debuggerWindow != nullptr)
     {
         debuggerWindow->hide();
@@ -157,6 +165,65 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
 }
 
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event)
+{
+    // Highlight drop area when mouse enters the window
+    ui->contentFrame->setStyleSheet("border: 1px solid red;");
+
+    // Allow dropping files into window
+    event->acceptProposedAction();
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent* event)
+{
+    // Remove drop area highlight when cursor left the window area
+    ui->contentFrame->setStyleSheet("border: none;");
+}
+
+void MainWindow::dropEvent(QDropEvent* event)
+{
+    const QMimeData* mimeData = event->mimeData();
+
+    if (mimeData->hasUrls())
+    {
+        QStringList pathList;
+        QList<QUrl> urlList = mimeData->urls();
+
+        // extract the local paths of the files
+        for (int i = 0; i < urlList.size() && i < 32; i++)
+        {
+            pathList.append(urlList.at(i).toLocalFile());
+        }
+
+        qDebug() << pathList.size() << "files dropped";
+        qDebug() << pathList.join(",");
+
+        // TODO:
+        //  1. Pass file(s) to file loader
+        //  2. Detect file type
+        //  3. Issue proper command to emulator instance
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(pathList.first());
+
+        switch (category)
+        {
+            case ROM:
+                break;
+            case Snapshot:
+                break;
+            case Tape:
+                break;
+            case Disk:
+                break;
+            default:
+                break;
+        };
+    }
+
+    // Remove drop area highlight
+    ui->contentFrame->setStyleSheet("border: none;");
+}
+
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
     event->accept();
@@ -231,6 +298,8 @@ void MainWindow::handleStartButton()
         _emulator = new Emulator();
         if (_emulator->Init())
         {
+            _emulator->DebugOff();
+
             // Redirect all module logger output to LogWindow
             if (true)
             {
@@ -239,6 +308,8 @@ void MainWindow::handleStartButton()
                 // Mute frequently firing events
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80, PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_MEMORY, PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM);
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
 
                 std::string dumpSettings = logger.DumpSettings();
