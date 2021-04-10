@@ -29,10 +29,10 @@ void ThreadHelper::setThreadName(const char* name)
             GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
     if (setThreadDescription == nullptr)
     {
-        wchar_t wname[24];
+        wchar_t wname[128];
         size_t retval;
-        mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof (wname) / sizeof (wname[0])), &name, len), &conversion);
+        mbstowcs_s(&retval, wname, sizeof(wname) / sizeof(wname[0]), name, len);
+        setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
 }

@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "soundmanager.h"
 
-#include "3rdparty/audiofile/AudioFile.h"
+//#include "3rdparty/audiofile/AudioFile.h"
 #include "emulator/emulatorcontext.h"
 
 /// region <Constructors / Destructors>
@@ -48,11 +48,15 @@ void SoundManager::unmute()
 /// region <Wave file export>
 bool SoundManager::openWaveFile(std::string& path)
 {
-    AudioFile<float> audioFile;
-    audioFile.setNumChannels(2);
-    audioFile.setSampleRate(44100);
+    bool result = false;
 
-    audioFile.samples.resize(2 * 44100);
+    //AudioFile<float> audioFile;
+    //audioFile.setNumChannels(2);
+    //audioFile.setSampleRate(44100);
+
+    //audioFile.samples.resize(2 * 44100);
+
+    return result;
 }
 
 void SoundManager::closeWaveFile()
