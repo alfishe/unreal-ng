@@ -720,7 +720,8 @@ void QHexRenderer::drawHeader(QPainter *painter, const QPalette &palette)
     painter->setPen(palette.color(QPalette::Highlight));
 
     painter->drawText(addressRect, Qt::AlignHCenter | Qt::AlignVCenter, QString("Offset"));
-    // align left for maximum consistency with drawHex() which prints from the left.
+
+    // Align left for maximum consistency with drawHex() which prints from the left.
     // so hex and positions are aligned vertically
     painter->drawText(hexRect, Qt::AlignLeft | Qt::AlignVCenter, hexHeader);
     painter->drawText(asciiRect, Qt::AlignHCenter | Qt::AlignVCenter, QString("Ascii"));

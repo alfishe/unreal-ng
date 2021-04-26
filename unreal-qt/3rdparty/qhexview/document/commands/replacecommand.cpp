@@ -6,7 +6,10 @@ ReplaceCommand::ReplaceCommand(QHexBuffer *buffer, qint64 offset, const QByteArr
     m_data = data;
 }
 
-void ReplaceCommand::undo() { m_buffer->replace(m_offset, m_olddata); }
+void ReplaceCommand::undo()
+{
+    m_buffer->replace(m_offset, m_olddata);
+}
 
 void ReplaceCommand::redo()
 {

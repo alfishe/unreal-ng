@@ -102,8 +102,10 @@ void QHexMetadata::setLineWidth(quint8 width)
     if (width != m_lineWidth)
     {
         m_lineWidth = width;
+
         // clean m_metadata
         m_metadata.clear();
+
         // and regenerate with new line width size
         for (int i = 0; i < m_absoluteMetadata.size(); ++i)
         {

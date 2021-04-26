@@ -12,6 +12,7 @@ bool QMemoryBuffer::read(QIODevice *device)
     m_buffer = device->readAll();
     return true;
 }
+
 void QMemoryBuffer::write(QIODevice *device) { device->write(m_buffer); }
 
 qint64 QMemoryBuffer::indexOf(const QByteArray& ba, qint64 from) { return m_buffer.indexOf(ba, static_cast<int>(from)); }

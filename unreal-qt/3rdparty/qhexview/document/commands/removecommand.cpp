@@ -6,7 +6,10 @@ RemoveCommand::RemoveCommand(QHexBuffer *buffer, qint64 offset, int length, QUnd
     m_length = length;
 }
 
-void RemoveCommand::undo() { m_buffer->insert(m_offset, m_data); }
+void RemoveCommand::undo()
+{
+    m_buffer->insert(m_offset, m_data);
+}
 
 void RemoveCommand::redo()
 {
