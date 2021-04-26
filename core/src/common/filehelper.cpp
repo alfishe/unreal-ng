@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "filehelper.h"
+#include "common/stringhelper.h"
 #include <algorithm>
 
 char FileHelper::GetPathSeparator()
