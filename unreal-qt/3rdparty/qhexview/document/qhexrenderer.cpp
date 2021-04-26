@@ -7,6 +7,8 @@
 
 #define HEX_UNPRINTABLE_CHAR '.'
 
+/// region <Constructors / Destructors>
+
 QHexRenderer::QHexRenderer(QHexDocument* document, const QFontMetrics &fontmetrics, QObject *parent) : QObject(parent), m_document(document), m_fontmetrics(fontmetrics)
 {
     m_selectedArea = QHexRenderer::HexArea;
@@ -17,6 +19,10 @@ QHexRenderer::QHexRenderer(QHexDocument* document, const QFontMetrics &fontmetri
     connect(parent, SIGNAL(layoutChanged()), this, SLOT(onLayoutChanged()));
 }
 
+/// endregion </Constructors / Destructors>
+
+/// Draw column delimiter lines / frames based on each column widths
+/// \param painter
 void QHexRenderer::renderFrame(QPainter *painter)
 {
     QRect rect = painter->window();
@@ -54,8 +60,10 @@ void QHexRenderer::render(QPainter *painter, quint64 startLine, quint64 endLine,
 {
     QPalette palette = qApp->palette();
 
+    // Render view header titles
     drawHeader(painter, palette);
 
+    // Render data records
     quint64 documentLines = this->documentLines();
     for (quint64 line = startLine; line < std::min(endLine, documentLines); line++)
     {
@@ -226,7 +234,8 @@ void QHexRenderer::recalculateRenderParameters()
 {
     /// region <Cell width>
 #if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
-    m_cellWidth = static_cast<quint64>(m_fontmetrics.horizontalAdvance(" "));
+    // Do not rely that we have monospace font, get average from all font symbols
+    m_cellWidth = static_cast<quint64>(m_fontmetrics.averageCharWidth());
 #else
     m_cellWidth = m_fontmetrics.width(" ");
 #endif

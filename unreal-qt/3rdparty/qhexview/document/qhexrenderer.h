@@ -41,8 +41,9 @@ public:
     quint64 borderSize() const;
     quint8 hexLineWidth() const;
 
+    /// region <Signals>
 signals:
-
+    /// endregion </Signals>
 
     /// region <Event handlers / Slots>
 public slots:

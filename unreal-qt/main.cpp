@@ -1,13 +1,61 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include <QFontDatabase>
+#include <QDebug>
+#include <QDir>
 
 int main(int argc, char *argv[])
 {
+    int fontID = -1;
+
     QApplication app(argc, argv);
     MainWindow window;
 
+    /// region <Load monospace font>
+
+    // Load custom monospace font from TTF file
+    QString appPath = app.applicationDirPath();
+    QDir filePath(appPath);
+    QString fontPath = filePath.filePath("fonts/consolas.ttf");
+    qDebug() << fontPath;
+
+    QFontDatabase fontDatabase;
+    QFile fontFile(fontPath);
+    if (fontFile.exists())
+    {
+        fontFile.open(QIODevice::ReadOnly);
+        QByteArray fontdata = fontFile.readAll();
+        if (!fontdata.isEmpty())
+        {
+            int fontID = QFontDatabase::addApplicationFontFromData(fontdata);
+            if (fontID == -1)
+            {
+                qCritical() << "Unable to load fonts/consolas.ttf";
+                exit(1);
+            }
+        }
+
+        fontFile.close();
+    }
+
+    QStringList fontFamilies = fontDatabase.families();
+
+#ifdef _DEBUG
+
+#endif
+    /// endregion </Load monospace font>
+
     window.show();
 
-    return app.exec();
+    int result =  app.exec();
+
+    /// region <De-register font>
+    if (fontID != -1)
+    {
+        fontDatabase.removeApplicationFont(fontID);
+    }
+    /// endregion </De-register font>
+
+    return result;
 }

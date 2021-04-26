@@ -18,7 +18,7 @@ get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR
 set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Hint to CMake where to find Qt
-set(CMAKE_PREFIX_PATH /Volumes/NVMeData1/Qt/5.14.2/clang_64)
+set(CMAKE_PREFIX_PATH /Users/dev/Qt/5.15.2/clang_64)
 
 # Qt specific settings
 find_package(Qt5 COMPONENTS Gui REQUIRED)
@@ -103,6 +103,14 @@ target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets)
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Multimedia)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
+
+# Copy font file(s) to /fonts subfolder
+add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/fonts ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts
+)
+
 # Copy default config file to binary folder after successful compilation
 SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
@@ -113,7 +121,7 @@ add_custom_command(
         copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
 )
 
-# Copy all ROM files
+# Copy all ROM files to /rom subfolder
 add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E
