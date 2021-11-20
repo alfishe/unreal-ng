@@ -17,5 +17,7 @@ DocumentDisasm::~DocumentDisasm()
 
 DisplayInstruction DocumentDisasm::getInstructionForZ80Address(uint16_t address)
 {
+    DisplayInstruction result;
 
+    return result;
 }

@@ -141,11 +141,16 @@
 
     static inline uint64_t rdtsc()
     {
-        unsigned tsc;
         uint64_t final_tsc;
 
+#if __aarch64__
+        // AARCH64 has CNTPCT register for incrementing clock counter
+        asm volatile("mrs %0, cntpct_el0" : "=r" (final_tsc));
+#else
         // Read PMCCNTR co-processor register
         asm volatile("mrc p15, 0, %0, c9, c13, 0" : "=r"(tsc));
+#endif // __aarch64__
+
         return (uint64_t)final_tsc;
     }
 
