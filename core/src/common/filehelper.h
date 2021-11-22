@@ -14,7 +14,7 @@ using namespace std::string_literals; // Enables s-suffix for std::string litera
 class FileHelper
 {
 public:
-    static char GetPathSeparator();
+    static const char GetPathSeparator();
 
 	static std::string GetExecutablePath();
 	static std::string NormalizePath(std::string& path, char separator);

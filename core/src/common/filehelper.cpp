@@ -4,7 +4,7 @@
 #include "common/stringhelper.h"
 #include <algorithm>
 
-char FileHelper::GetPathSeparator()
+const char FileHelper::GetPathSeparator()
 {
 #ifdef _WIN32
     return '\\';
@@ -22,22 +22,23 @@ std::string FileHelper::GetExecutablePath()
 
 	#if defined _WIN32
 		char buffer[MAX_PATH] = { '\0' };
-		GetModuleFileNameA(NULL, buffer, MAX_PATH);
+		GetModuleFileNameA(NULL, buffer, MAX_PATH - 1);
 		result = buffer;
     #endif
 
     #ifdef __linux__
-		char buffer[PATH_MAX];
-		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX);
+		char buffer[PATH_MAX]  = { '\0' };
+		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX - 1);
 		buffer[count] = '\0';
 		result = buffer;
     #endif
 
     #ifdef __APPLE__
-        char buffer[PATH_MAX];
-        uint32_t size = sizeof(buffer);
+        char buffer[PATH_MAX] = { '\0' };;
+        uint32_t size = PATH_MAX - 1;
         if (_NSGetExecutablePath(buffer, &size) == 0)
         {
+            size = strnlen(buffer, size);
 			buffer[size] = '\0';
             result = buffer;
         }
