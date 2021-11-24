@@ -20,7 +20,6 @@ int main(int argc, char *argv[])
     QString fontPath = filePath.filePath("fonts/consolas.ttf");
     qDebug() << fontPath;
 
-    QFontDatabase fontDatabase;
     QFile fontFile(fontPath);
     if (fontFile.exists())
     {
@@ -39,7 +38,7 @@ int main(int argc, char *argv[])
         fontFile.close();
     }
 
-    QStringList fontFamilies = fontDatabase.families();
+    QStringList fontFamilies = QFontDatabase::families();
 
 #ifdef _DEBUG
 
@@ -53,7 +52,7 @@ int main(int argc, char *argv[])
     /// region <De-register font>
     if (fontID != -1)
     {
-        fontDatabase.removeApplicationFont(fontID);
+        QFontDatabase::removeApplicationFont(fontID);
     }
     /// endregion </De-register font>
 

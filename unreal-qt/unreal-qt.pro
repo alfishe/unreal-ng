@@ -2,6 +2,9 @@ QT += core gui multimedia
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
+# Qt5 compatibility mode for Qt6
+greaterThan(QT_MAJOR_VERSION, 6): QT += core5compat
+
 CONFIG += c++17
 QMAKE_CXXFLAGS += -std=c++17
 

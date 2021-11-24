@@ -28,7 +28,7 @@ QHexDocument::QHexDocument(QHexBuffer *buffer, QObject *parent): QObject(parent)
 }
 
 bool QHexDocument::isEmpty() const { return m_buffer->isEmpty(); }
-bool QHexDocument::atEnd() const { return m_cursor->position().offset() >= m_buffer->length(); }
+bool QHexDocument::atEnd() const { return m_cursor->position().offset() >= (quint64)m_buffer->length(); }
 bool QHexDocument::canUndo() const { return m_undostack.canUndo(); }
 bool QHexDocument::canRedo() const { return m_undostack.canRedo(); }
 
@@ -218,7 +218,7 @@ qint64 QHexDocument::searchForward(const QByteArray &ba)
     {
         m_cursor->clearSelection();
         m_cursor->moveTo(findPos);
-        m_cursor->select(ba.length());
+        m_cursor->select((int)ba.length());
     }
 
     return findPos;
@@ -238,7 +238,7 @@ qint64 QHexDocument::searchBackward(const QByteArray &ba)
     {
         m_cursor->clearSelection();
         m_cursor->moveTo(findPos);
-        m_cursor->select(ba.length());
+        m_cursor->select((int)ba.length());
     }
 
     return findPos;

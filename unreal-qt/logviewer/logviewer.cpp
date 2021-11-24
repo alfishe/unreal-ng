@@ -8,11 +8,18 @@
 #include <QButtonGroup>
 #include <QAbstractButton>
 #include <QThread>
-#include <QtCore/QRegExp>
 #include <QtCore/QUrl>
 #include <QtCore/QFile>
 #include <QtCore/QTextStream>
-#include <QtCore/QTextCodec>
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    #include <QtCore/QRegExp>
+    #include <QtCore/QTextCodec>
+#else
+    #include <QtCore5Compat/QRegExp>
+    #include <QtCore5Compat/QTextCodec>
+#endif
+
 
 LogViewer::LogViewer(QWidget* parent, bool showLineNumber) : QPlainTextEdit(parent)
 {
@@ -21,7 +28,7 @@ LogViewer::LogViewer(QWidget* parent, bool showLineNumber) : QPlainTextEdit(pare
     m_showLineNumber = showLineNumber;
     m_isZoomMode = false;
 
-    m_textCodec = QTextCodec::codecForLocale();
+    //m_textCodec = QTextCodec::codecForLocale();
     m_lineNumberArea = new LineNumberArea(this);
 }
 
@@ -118,7 +125,7 @@ void LogViewer::resizeEvent(QResizeEvent* event)
 
 void LogViewer::wheelEvent(QWheelEvent* event)
 {
-    int degrees = event->delta() / 8;
+    int degrees = event->angleDelta().y() / 8;
     int steps = degrees / 15;
 
     if (event->modifiers() == Qt::ControlModifier)

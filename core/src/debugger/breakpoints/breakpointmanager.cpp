@@ -387,7 +387,7 @@ BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
     {
         result = _breakpointMapByAddress[fullKey];
     }
-        // Address in any bank matching
+    // Address in any bank matching
     else if (key_exists(_breakpointMapByAddress, wildcardKey))
     {
         result = _breakpointMapByAddress[wildcardKey];

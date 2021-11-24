@@ -224,15 +224,15 @@ void DisassemblerTextView::mouseDoubleClickEvent(QMouseEvent *e)
 
 void DisassemblerTextView::wheelEvent(QWheelEvent *e)
 {
-    if (e->orientation() == Qt::Vertical)
+    if (e->angleDelta().y() != 0)
     {
         int value = this->verticalScrollBar()->value();
 
-        if (e->delta() < 0) // Scroll Down
+        if (e->angleDelta().y() < 0) // Scroll Down
         {
             this->verticalScrollBar()->setValue(value + DOCUMENT_WHEEL_LINES);
         }
-        else if (e->delta() > 0) // Scroll Up
+        else if (e->angleDelta().y() > 0) // Scroll Up
         {
             this->verticalScrollBar()->setValue(value - DOCUMENT_WHEEL_LINES);
         }

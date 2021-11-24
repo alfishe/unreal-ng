@@ -1,7 +1,6 @@
 #ifndef QHEXMETADATA_H
 #define QHEXMETADATA_H
 
-#include <QLinkedList>
 #include <QObject>
 #include <QColor>
 #include <QHash>

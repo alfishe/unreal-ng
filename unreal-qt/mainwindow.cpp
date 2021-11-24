@@ -313,7 +313,7 @@ void MainWindow::handleStartButton()
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
 
                 std::string dumpSettings = logger.DumpSettings();
-                qDebug(dumpSettings.c_str());
+                qDebug("%s", dumpSettings.c_str());
 
                 // Mute I/O outs to frequently used ports
                 PortDecoder& portDecoder = *_emulator->GetContext()->pPortDecoder;

@@ -18,12 +18,15 @@ get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR
 set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Hint to CMake where to find Qt
-set(CMAKE_PREFIX_PATH /Users/dev/Qt/5.15.2/clang_64)
+#set(CMAKE_PREFIX_PATH /Users/dev/Qt/5.15.2/clang_64)
+set(CMAKE_PREFIX_PATH /Users/dev/Qt/6.2.1/macos)
+set(CMAKE_MODULE_PATH /Users/dev/Qt/6.2.1/macos)
 
 # Qt specific settings
-find_package(Qt5 COMPONENTS Gui REQUIRED)
-find_package(Qt5 COMPONENTS Multimedia REQUIRED)
-find_package(Qt5 COMPONENTS Widgets REQUIRED)
+find_package(Qt6 REQUIRED)
+find_package(Qt6 COMPONENTS Gui REQUIRED)
+find_package(Qt6 COMPONENTS Multimedia REQUIRED)
+find_package(Qt6 COMPONENTS Widgets REQUIRED)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC OFF)
 set(CMAKE_AUTOUIC OFF)
@@ -68,7 +71,7 @@ message("CPP_FILES:${CPP_FILES}")
 # UI files
 file (GLOB_RECURSE UI_FILES ${SOURCE_DIR}/*.ui)
 message("UI_FILES:${UI_FILES}")
-QT5_WRAP_UI(UI_HEADERS ${UI_FILES})
+QT6_WRAP_UI(UI_HEADERS ${UI_FILES})
 message("UI_HEADERS:${UI_HEADERS}")
 
 # Put binary and configuration files to /bin subfolder
@@ -99,8 +102,8 @@ endif (UNIX AND NOT APPLE)
 # Link with Qt5, emulator core and C++ common libraries
 target_link_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/cmake-build-debug/core/src)
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets)
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Multimedia)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Multimedia)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 
