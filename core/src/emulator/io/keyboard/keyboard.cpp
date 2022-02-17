@@ -86,6 +86,8 @@ ZXExtendedKeyMap Keyboard::_zxExtendedKeyMap(
     { ZXKEY_EXT_EQUAL, { ZXKEY_EXT_EQUAL, ZXKEY_SYM_SHIFT, ZXKEY_L } },
     { ZXKEY_EXT_BAR, { ZXKEY_EXT_BAR, ZXKEY_SYM_SHIFT, ZXKEY_S } },
     { ZXKEY_EXT_BACKSLASH, { ZXKEY_EXT_BACKSLASH, ZXKEY_SYM_SHIFT, ZXKEY_D } },
+
+    { ZXKEY_EXT_DBLQUOTE, { ZXKEY_EXT_DBLQUOTE, ZXKEY_SYM_SHIFT, ZXKEY_P } },
 });
 
 /// endregion </Static>
@@ -101,7 +103,7 @@ Keyboard::Keyboard(EmulatorContext *context)
     // Do explicit state reset on instantiation
     Reset();
 
-    // Subscribe on MessageCenter events
+    // Subscribe to MessageCenter events
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
     ObserverCallbackMethod callbackOnKeyPressed = static_cast<ObserverCallbackMethod>(&Keyboard::OnKeyPressed);
@@ -136,7 +138,7 @@ void Keyboard::Reset()
 }
 
 /// Register key press in keyboard matrix state
-/// \param key ZX Spectrum key pressed
+/// @param key ZX Spectrum key pressed
 void Keyboard::PressKey(ZXKeysEnum key)
 {
     KeyDescriptor keyDescriptor = _zxKeyMap[key];
@@ -147,6 +149,8 @@ void Keyboard::PressKey(ZXKeysEnum key)
     _keyboardMatrixState[matrixIndex] &= keyBits;
 }
 
+/// Unregister key in keyboard matrix state on release
+/// @param key ZX Spectrum key released
 void Keyboard::ReleaseKey(ZXKeysEnum key)
 {
     KeyDescriptor keyDescriptor = _zxKeyMap[key];
@@ -171,18 +175,18 @@ void Keyboard::SendKeyCombination()
 
 /// region <Helper methods>
 
-bool Keyboard::IsExtendedKey(ZXKeysEnum key)
+bool Keyboard::isExtendedKey(ZXKeysEnum key)
 {
     bool result = key >= ZXKEY_EXT_CTRL;
 
     return result;
 }
 
-ZXKeysEnum Keyboard::GetExtendedKeyBase(ZXKeysEnum key)
+ZXKeysEnum Keyboard::getExtendedKeyBase(ZXKeysEnum key)
 {
     ZXKeysEnum result = ZXKEY_NONE;
 
-    if (IsExtendedKey(key))
+    if (isExtendedKey(key))
     {
         if (key_exists(_zxExtendedKeyMap, key))
         {
@@ -199,12 +203,12 @@ ZXKeysEnum Keyboard::GetExtendedKeyBase(ZXKeysEnum key)
     return result;
 }
 
-ZXKeysEnum Keyboard::GetExtendedKeyModifier(ZXKeysEnum key)
+ZXKeysEnum Keyboard::getExtendedKeyModifier(ZXKeysEnum key)
 {
     ZXKeysEnum result = ZXKEY_NONE;
 
     // Check extended keys - they all have modifiers
-    if (IsExtendedKey(key) && key_exists(_zxExtendedKeyMap, key))
+    if (isExtendedKey(key) && key_exists(_zxExtendedKeyMap, key))
     {
         KeyMapper mapper = _zxExtendedKeyMap[key];
         result = mapper.modifier;
@@ -221,11 +225,11 @@ ZXKeysEnum Keyboard::GetExtendedKeyModifier(ZXKeysEnum key)
     return result;
 }
 
-uint8_t Keyboard::IncreaseKeyPressCounter(ZXKeysEnum key)
+uint8_t Keyboard::increaseKeyPressCounter(ZXKeysEnum key)
 {
     uint8_t result = 0;
 
-    if (IsExtendedKey(key))
+    if (isExtendedKey(key))
     {
         throw std::logic_error("Only base keys can be processed. Split extended key to combination of base key + modifier key");
     }
@@ -241,11 +245,11 @@ uint8_t Keyboard::IncreaseKeyPressCounter(ZXKeysEnum key)
     return result;
 }
 
-uint8_t Keyboard::DecreaseKeyPressCounter(ZXKeysEnum key)
+uint8_t Keyboard::decreaseKeyPressCounter(ZXKeysEnum key)
 {
     uint8_t result = 0;
 
-    if (IsExtendedKey(key))
+    if (isExtendedKey(key))
     {
         throw std::logic_error("Only base keys can be processed. Split extended key to combination of base key + modifier key");
     }
@@ -268,21 +272,21 @@ uint8_t Keyboard::DecreaseKeyPressCounter(ZXKeysEnum key)
     return result;
 }
 
-bool Keyboard::AnyKeyWithSimilarModifier(ZXKeysEnum key)
+bool Keyboard::anyKeyWithSimilarModifier(ZXKeysEnum key)
 {
     bool result = false;
 
     // If no keys pressed - no chance to collide anyway
     if (_keyboardPressedKeys.size() > 0)
     {
-        ZXKeysEnum modifier = GetExtendedKeyModifier(key);
+        ZXKeysEnum modifier = getExtendedKeyModifier(key);
 
         if (modifier != ZXKEY_NONE)
         {
             std::map<ZXKeysEnum, uint8_t>::iterator it;
             for (it = _keyboardPressedKeys.begin(); it != _keyboardPressedKeys.end(); it++) {
                 ZXKeysEnum curKey = it->first;
-                ZXKeysEnum curModifier = GetExtendedKeyModifier(curKey);
+                ZXKeysEnum curModifier = getExtendedKeyModifier(curKey);
 
                 if (curModifier == modifier)
                 {
@@ -377,8 +381,8 @@ void Keyboard::OnKeyPressed(int id, Message* message)
     if (event && event->eventType == KEY_PRESSED)
     {
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
-        ZXKeysEnum zxBase = GetExtendedKeyBase(zxKey);
-        ZXKeysEnum zxModifier = GetExtendedKeyModifier(zxKey);
+        ZXKeysEnum zxBase = getExtendedKeyBase(zxKey);
+        ZXKeysEnum zxModifier = getExtendedKeyModifier(zxKey);
 
         // Incorrect constant dictionary data
         if (zxBase == ZXKEY_NONE)
@@ -389,12 +393,12 @@ void Keyboard::OnKeyPressed(int id, Message* message)
         // Modifier first
         if (zxModifier != ZXKEY_NONE)
         {
-            IncreaseKeyPressCounter(zxModifier);
+            increaseKeyPressCounter(zxModifier);
             PressKey(zxModifier);
         }
 
         // Base key afterwards
-        IncreaseKeyPressCounter(zxBase);
+        increaseKeyPressCounter(zxBase);
         PressKey(zxBase);
 
         MLOGINFO("OnKeyPressed: 0x%02X", zxKey);
@@ -417,8 +421,8 @@ void Keyboard::OnKeyReleased(int id, Message* message)
     if (event && event->eventType == KEY_RELEASED)
     {
         ZXKeysEnum zxKey = static_cast<ZXKeysEnum>(event->zxKeyCode);
-        ZXKeysEnum zxBase = GetExtendedKeyBase(zxKey);
-        ZXKeysEnum zxModifier = GetExtendedKeyModifier(zxKey);
+        ZXKeysEnum zxBase = getExtendedKeyBase(zxKey);
+        ZXKeysEnum zxModifier = getExtendedKeyModifier(zxKey);
 
         // Incorrect constant dictionary data
         if (zxBase == ZXKEY_NONE)
@@ -430,14 +434,14 @@ void Keyboard::OnKeyReleased(int id, Message* message)
         // Modifier first
         if (zxModifier != ZXKEY_NONE)
         {
-            if (DecreaseKeyPressCounter(zxModifier) == 0)
+            if (decreaseKeyPressCounter(zxModifier) == 0)
             {
                 ReleaseKey(zxModifier);
             }
         }
 
         // Base key afterwards
-        if (DecreaseKeyPressCounter(zxBase) == 0)
+        if (decreaseKeyPressCounter(zxBase) == 0)
         {
             ReleaseKey(zxBase);
         }

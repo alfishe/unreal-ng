@@ -87,6 +87,8 @@ enum ZXKeysEnum : uint8_t
     ZXKEY_EXT_BAR,                  // ZXKEY_SYM_SHIFT  + ZXKEY_S       '|'
     ZXKEY_EXT_BACKSLASH,            // ZXKEY_SYM_SHIFT  + ZXKEY_D       '\'
     ZXKEY_EXT_CAPSLOCK,             // ZXKEY_CAPS_SHIFT + ZXKEY_2
+
+    ZXKEY_EXT_DBLQUOTE,             // ZXKEY_SYM_SHIFT + ZXKEY_P        '"'
 };
 
 // Standardized keys to map host input events
@@ -290,14 +292,14 @@ public:
 
     /// region <Helper methods>
 protected:
-    bool IsExtendedKey(ZXKeysEnum key);
-    ZXKeysEnum GetExtendedKeyBase(ZXKeysEnum key);
-    ZXKeysEnum GetExtendedKeyModifier(ZXKeysEnum key);
+    bool isExtendedKey(ZXKeysEnum key);
+    ZXKeysEnum getExtendedKeyBase(ZXKeysEnum key);
+    ZXKeysEnum getExtendedKeyModifier(ZXKeysEnum key);
 
-    uint8_t IncreaseKeyPressCounter(ZXKeysEnum key);
-    uint8_t DecreaseKeyPressCounter(ZXKeysEnum key);
+    uint8_t increaseKeyPressCounter(ZXKeysEnum key);
+    uint8_t decreaseKeyPressCounter(ZXKeysEnum key);
 
-    bool AnyKeyWithSimilarModifier(ZXKeysEnum key);
+    bool anyKeyWithSimilarModifier(ZXKeysEnum key);
 
     /// endregion </Helper methods>
 
@@ -320,3 +322,31 @@ public:
 #endif
     /// endregion </Debug>
 };
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class KeyboardCUT : public Keyboard
+{
+public:
+    KeyboardCUT(EmulatorContext* context) : Keyboard(context) {};
+
+    using Keyboard::_zxKeyMap;
+    using Keyboard::_zxExtendedKeyMap;
+    using Keyboard::_context;
+    using Keyboard::_keyboardMatrixState;
+    using Keyboard::_keyboardPressedKeys;
+
+    using Keyboard::isExtendedKey;
+    using Keyboard::getExtendedKeyBase;
+    using Keyboard::getExtendedKeyModifier;
+
+    using Keyboard::increaseKeyPressCounter;
+    using Keyboard::decreaseKeyPressCounter;
+
+    using Keyboard::anyKeyWithSimilarModifier;
+};
+
+#endif // _CODE_UNDER_TEST
