@@ -10,6 +10,8 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/emulator.h"
 
+/// region <Constructor / destructors>
+
 DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
@@ -72,6 +74,8 @@ DebuggerWindow::~DebuggerWindow()
     messageCenter.RemoveObserver(NC_LOGGER_BREAKPOINT, observerInstance, callback);
 }
 
+/// endregion </Constructor / destructors>
+
 void DebuggerWindow::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
@@ -98,6 +102,8 @@ void DebuggerWindow::reset()
 
     updateState();
 }
+
+/// region <Helper methods>
 
  void DebuggerWindow::updateState()
  {
@@ -193,6 +199,49 @@ void DebuggerWindow::reset()
 
  }
 
+ /// endregion </Helper methods>
+
+/// region <QT Helper methods>
+
+/// Dispatch callback execution in QT main thread (GUI rendering)
+/// @param callback
+void DebuggerWindow::dispatchToMainThread(std::function<void()> callback)
+{
+    QThread *mainThread = qApp->thread();
+    QThread *currentThread = QThread::currentThread();
+
+    if (currentThread == mainThread)
+    {
+        callback();
+    }
+    else
+    {
+        QTimer *timer = new QTimer();
+        timer->moveToThread(qApp->thread());
+        timer->setSingleShot(true);
+
+        // This lambda will be called from main thread
+        QObject::connect(timer, &QTimer::timeout, [=]()
+        {
+            // Execution will be done in main thread
+            try
+            {
+                callback();
+            }
+            catch (...)
+            {
+                // Just to prevent main thread from crashing
+            }
+
+            timer->deleteLater();
+        });
+
+        // Schedule lambda execution during very next context switching
+        QMetaObject::invokeMethod(timer, "start", Qt::QueuedConnection, Q_ARG(int, 0));
+    }
+}
+/// endregion <QT Helper methods>
+
 /// region <Event handlers / Slots>
 
 void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
@@ -204,16 +253,19 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
     _breakpointTriggered = true;
 
-    SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
+    SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
     uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
 
-    continueAction->setEnabled(true);
-    pauseAction->setEnabled(false);
-    cpuStepAction->setEnabled(true);
-    frameStepAction->setEnabled(true);
-    waitInterruptAction->setEnabled(true);
+    dispatchToMainThread([this]()
+    {
+        continueAction->setEnabled(true);
+        pauseAction->setEnabled(false);
+        cpuStepAction->setEnabled(true);
+        frameStepAction->setEnabled(true);
+        waitInterruptAction->setEnabled(true);
 
-    updateState();
+        updateState();
+    });
 }
 
 void DebuggerWindow::continueExecution()

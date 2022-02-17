@@ -27,11 +27,17 @@ public:
 
     void reset();
 
-    // Helper methods
+    /// region <Helper methods>
 protected:
     void updateState();
     void loadState();
     void saveState();
+    /// endregion <Helper methods>
+
+    /// region <QT Helper methods>
+protected:
+    void dispatchToMainThread(std::function<void()> callback);
+    /// endregion <QT Helper methods>
 
     /// region <Event handlers / Slots>
 private slots:

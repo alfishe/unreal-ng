@@ -395,7 +395,7 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     if (deviceScreen)
     {
         // Invoke deviceScreen->refresh() in main thread
-        QMetaObject::invokeMethod(deviceScreen,"refresh", Qt::QueuedConnection);
+        QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
     }
 }
 
