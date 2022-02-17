@@ -9,7 +9,7 @@
 void SoundChip_AY8910_Test::SetUp()
 {
     // Instantiate emulator with all peripherals, but no configuration loaded
-    _context = new EmulatorContext();
+    _context = new EmulatorContext(LoggerLevel::LogError);
     _soundChip = new SoundChip_AY8910CUT();
 }
 

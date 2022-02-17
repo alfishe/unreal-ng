@@ -8,7 +8,7 @@
 void PortDecoder_Spectrum128_Test::SetUp()
 {
     // Instantiate emulator with all peripherals, but no configuration loaded
-    _context = new EmulatorContext();
+    _context = new EmulatorContext(LoggerLevel::LogError);
     _portDecoder = new PortDecoder_Spectrum128(_context);
 }
 

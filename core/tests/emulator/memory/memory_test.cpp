@@ -8,7 +8,7 @@
 
 void Memory_Test::SetUp()
 {
-    _context = new EmulatorContext();
+    _context = new EmulatorContext(LoggerLevel::LogError);
     _memory = new MemoryCUT(_context);
 }
 

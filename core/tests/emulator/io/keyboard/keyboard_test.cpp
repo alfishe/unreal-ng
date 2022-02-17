@@ -7,7 +7,7 @@
 
 void Keyboard_Test::SetUp()
 {
-    _context = new EmulatorContext();
+    _context = new EmulatorContext(LoggerLevel::LogError);
     _keyboard = new KeyboardCUT(_context);
 }
 
