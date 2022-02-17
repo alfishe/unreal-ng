@@ -224,7 +224,7 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
     Screen& screen = *_context->pScreen;
 

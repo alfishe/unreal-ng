@@ -22,7 +22,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
 {
     _context = context;
 
-    _state = &context->state;
+    _state = &context->emulatorState;
     _keyboard = context->pKeyboard;
     _memory = context->pMemory;
     _screen = context->pScreen;

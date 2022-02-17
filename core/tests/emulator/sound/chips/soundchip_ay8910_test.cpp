@@ -62,6 +62,8 @@ TEST_F(SoundChip_AY8910_Test, EnvelopeGenerator)
     }
 }
 
+/// region <Generators period/frequency tests>
+
 TEST_F(SoundChip_AY8910_Test, GetToneGeneratorDivisor)
 {
     uint32_t minDivisor = 0xFFFF'FFFF;
@@ -94,7 +96,7 @@ TEST_F(SoundChip_AY8910_Test, GetToneGeneratorDivisor)
     cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lfHz", baseFrequency / maxDivisor, baseFrequency / (minDivisor + 1));
 }
 
-TEST_F(SoundChip_AY8910_Test, getToneGeneratorFrequency)
+TEST_F(SoundChip_AY8910_Test, GetToneGeneratorFrequency)
 {
     double minFrequency = 100'000'000.0;
     double maxFrequency = 0.0;
@@ -136,7 +138,7 @@ TEST_F(SoundChip_AY8910_Test, getToneGeneratorFrequency)
     }
 }
 
-TEST_F(SoundChip_AY8910_Test, getNoiseGeneratorFrequency)
+TEST_F(SoundChip_AY8910_Test, GetNoiseGeneratorFrequency)
 {
     double minFrequency = 100'000'000.0;
     double maxFrequency = 0.0;
@@ -174,3 +176,12 @@ TEST_F(SoundChip_AY8910_Test, getNoiseGeneratorFrequency)
         ASSERT_NEAR(maxFrequency, 110837.5, 0.01);
     }
 }
+
+/// endregion </Generators period/frequency tests>
+
+/// region <Timings tests>
+TEST_F(SoundChip_AY8910_Test, GetAYClockStateCounter)
+{
+
+}
+/// endregion </Timings tests>

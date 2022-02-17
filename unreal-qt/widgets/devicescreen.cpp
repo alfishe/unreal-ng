@@ -98,7 +98,8 @@ void DeviceScreen::keyPressEvent(QKeyEvent *event)
             messageCenter.Post(MC_KEY_PRESSED, event);
         }
 
-        qDebug() << "DeviceScreen : keyPressEvent , key : " << event->key();
+        QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2)").arg(event->key(), 2, 16).arg(event->key());
+        qDebug() << message;
     }
 }
 
@@ -122,7 +123,8 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent *event)
         }
     }
 
-    qDebug() << "DeviceScreen : keyReleaseEvent , key : " << event->key();
+    QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2)").arg(event->key(), 2, 16).arg(event->key());
+    qDebug() << message;
 }
 
 void DeviceScreen::mousePressEvent(QMouseEvent *event)

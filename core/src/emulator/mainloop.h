@@ -18,7 +18,7 @@ protected:
     EmulatorContext* _context = nullptr;
     ModuleLogger* _logger;
 
-    State* _state = nullptr;
+    EmulatorState* _state = nullptr;
     CPU* _cpu = nullptr;
     Screen* _screen = nullptr;
 

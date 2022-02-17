@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
+#include "state.h"
 
 class CPU;
 class Emulator;
@@ -24,8 +25,11 @@ public:
 	// Global emulator configuration (MemoryRead from ini file)
 	CONFIG config;
 
+    // Runtime state
+    State state;
+
 	// Emulated system state (ports, flags including peripheral devices)
-	State state;
+	EmulatorState emulatorState;
 
 	// Temporary state for all extended platform features
 	// TODO: rework and put into appropriate platform / state classes

@@ -17,8 +17,12 @@ endif ()
 # Diagnostics
 message("CMAKE_BUILD_TYPE: '${CMAKE_BUILD_TYPE}'")
 
+# Set paths
+get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Include CMake helper functions file
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/func.cmake)
+include(${ROOT_DIR}/cmake/func.cmake)
 
 # Use /src as root for include files
 include_directories(
@@ -80,24 +84,24 @@ if (WIN32 AND MINGW)
 endif (WIN32 AND MINGW)
 
 # Link with core library
-#target_link_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/build)
+target_link_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/cmake-build-debug/core/src)
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
 
 
 # Copy default config file to binary folder after successful compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/spectrum128/unreal.ini)
+SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
 message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy ${CONFIG_FILE} "${CMAKE_BINARY_DIR}/${PROJECT_NAME}/unreal.ini"
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E
+    copy ${CONFIG_FILE} "${CMAKE_BINARY_DIR}/unreal.ini"
 )
 
 add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/rom ${CMAKE_BINARY_DIR}/${PROJECT_NAME}/rom
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E
+    copy_directory ${DATA_PATH}/rom ${CMAKE_BINARY_DIR}/rom
 )

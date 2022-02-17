@@ -11,7 +11,7 @@ HDD::HDD(EmulatorContext* context)
 
 void HDD::Reset()
 {
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 
 	state.ide_hi_byte_r = 0;
 	state.ide_hi_byte_w = 0;

@@ -46,7 +46,7 @@ void Ports::Out(uint16_t port, uint8_t val)
 
 uint8_t Ports::In(uint16_t port)
 {
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
 
 	uint8_t result = 0xFF;

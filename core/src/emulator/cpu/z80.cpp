@@ -151,7 +151,7 @@ void Z80::Z80Step(bool skipBreakpoints)
 {
     Z80& cpu = *this;
     const CONFIG& config = _context->config;
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     TEMP& temporary = _context->temporary;
     Memory& memory = *_context->pMemory;
     Emulator& emulator = *_context->pEmulator;
@@ -298,7 +298,7 @@ void Z80::Z80FrameCycle()
 {
     const CONFIG& config = _context->config;
     Z80& cpu = *this;
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
 
 
     // Video Interrupt position calculation
@@ -343,7 +343,7 @@ uint8_t Z80::m1_cycle()
 
 	Z80& cpu = *this;
     const CONFIG& config = _context->config;
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     const TEMP& temporary = _context->temporary;
     const PortDecoder& portDecoder = *_context->pPortDecoder;
 
@@ -478,7 +478,7 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 {
 	Z80& cpu = *this;
 	CONFIG& config = _context->config;
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	VideoControl& video = _context->pScreen->_vid;
 
 	// Baseconf NMI trap
@@ -563,7 +563,7 @@ void Z80::HandleINT(uint8_t vector)
 {
 	Z80& cpu = *this;
 	CONFIG& config = _context->config;
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 
     /// region <CPU is stopped on HALT (opcode 0x76) command>
 
@@ -671,7 +671,7 @@ uint8_t Z80::GetTSConfInterruptVector()
 {
     Z80& _cpu_state = *this;
     const CONFIG& config = _context->config;
-    const State& state = _context->state;
+    const EmulatorState& state = _context->emulatorState;
 
     uint8_t result = 0xFF;
 
@@ -719,7 +719,7 @@ void Z80::ts_frame_int(bool vdos)
 {
     Z80& _cpu_state = *this;
     const CONFIG& config = _context->config;
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
 
 	if (!state.ts.intctrl.frame_pend)
 	{
@@ -747,7 +747,7 @@ void Z80::ts_frame_int(bool vdos)
 void Z80::ts_line_int(bool vdos)
 {
 	Z80& _cpu_state = *this;
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 
 	if (_cpu_state.t >= state.ts.intctrl.line_t)
 	{
@@ -767,7 +767,7 @@ void Z80::ts_line_int(bool vdos)
 
 void Z80::ts_dma_int(bool vdos)
 {
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 
 	if (state.ts.intctrl.new_dma)
 	{

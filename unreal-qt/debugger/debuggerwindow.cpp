@@ -187,7 +187,7 @@ void DebuggerWindow::reset()
     //brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
     //brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
 
-    brkManager.AddExecutionBreakpoint(0x38A2);    // ROM48K:$38A2
+    //brkManager.AddExecutionBreakpoint(0x38A2);    // ROM48K:$38A2
     /// </Test>
  }
 

@@ -18,7 +18,7 @@ CPUTables CPU::_cpuTables;
 CPU::CPU(EmulatorContext* context)
 {
 	_context = context;
-    _state = &_context->state;
+    _state = &_context->emulatorState;
     _config = &_context->config;
     _logger = _context->pModuleLogger;
 }
@@ -45,6 +45,31 @@ bool CPU::Init()
 
     // Register itself in context
     _context->pCPU = this;
+
+    /// region <Frequency>
+
+    uint32_t baseFrequency = 3'500'000; // Make 3.5MHz by default
+
+    // See: https://k1.spdns.de/Develop/Projects/zxsp-osx/Info/nocash%20Sinclair%20ZX%20Specs.html
+    // See: https://worldofspectrum.org/faq/reference/128kreference.htm
+    switch (_context->config.mem_model)
+    {
+        MM_SPECTRUM48:
+            baseFrequency = 3'500'000;
+            break;
+        MM_SPECTRUM128:
+            baseFrequency = 3'546'900;
+            break;
+        default:
+            baseFrequency = 3'500'000;
+            break;
+    }
+
+    _state->base_z80_frequency = baseFrequency;
+    _state->current_z80_frequency = baseFrequency;
+    _state->current_z80_frequency_multiplier = 1;
+
+    /// endregion </Frequency>
 
     /// region <Memory>
 
@@ -335,6 +360,21 @@ void CPU::SetCPUClockSpeed(uint8_t multiplier)
 
     _z80->rate = (256 / multiplier);
 }
+
+uint32_t CPU::GetBaseCPUFrequency()
+{
+    return _state->base_z80_frequency;
+}
+
+uint32_t CPU::GetCPUFrequency()
+{
+    return _state->current_z80_frequency;
+}
+
+uint16_t CPU::GetCPUFrequencyMultiplier()
+{
+    return _state->current_z80_frequency_multiplier;
+};
 
 void CPU::CPUFrameCycle()
 {

@@ -37,7 +37,7 @@ std::string Screen::GetColorName(uint8_t color)
 Screen::Screen(EmulatorContext* context)
 {
     _context = context;
-    _state = &_context->state;
+    _state = &_context->emulatorState;
 	_system = _context->pCPU;
 	_cpu = _system->GetZ80();
 	_memory = _context->pMemory;
@@ -98,7 +98,7 @@ void Screen::InitFrame()
 //
 void Screen::InitRaster()
 {
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
     VideoControl& video = _vid;
 
@@ -504,7 +504,7 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
 void Screen::DrawScreenBorder(uint32_t n)
 {
     Z80& cpu = *_cpu;
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     CONFIG& config = _context->config;
     VideoControl& video = _context->pScreen->_vid;
 
@@ -530,7 +530,7 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     /// region <Sanity checks>
     constexpr int MAX_FRAME_DURATION_TOLERANCE = 100;   // We can allow up to 100 t-state cycles after frame ends since CPU can be in the middle of current command proceesing
 
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     CONFIG& config = _context->config;
     uint32_t maxFrameDuration = config.frame + MAX_FRAME_DURATION_TOLERANCE;
 
@@ -609,7 +609,7 @@ void Screen::DrawZX(uint32_t n)
 		}
 	};
 
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 	VideoControl& video = _vid;
 
@@ -749,7 +749,7 @@ void Screen::DrawGMX(uint32_t n)
 
 void Screen::DrawBorder(uint32_t n)
 {
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
     VideoControl& video = _context->pScreen->_vid;
 

@@ -12,7 +12,7 @@
 void WD1793::process()
 {
 	Z80& cpu = *_context->pCPU->GetZ80();
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
    time = state.t_states + cpu.t;
@@ -80,27 +80,31 @@ void WD1793::process()
          // ----------------------------------------------------
 
          case S_DELAY_BEFORE_CMD:
-            if (!config.wd93_nodelay && (cmd & CMD_DELAY)) next += (Z80FQ*15/1000); // 15ms delay
+            if (!config.wd93_nodelay && (cmd & CMD_DELAY))
+                next += (Z80FQ*15/1000); // 15ms delay
 			status = (status | WDS_BUSY) & ~(WDS_DRQ | WDS_LOST | WDS_NOTFOUND | WDS_RECORDT | WDS_WRITEP);
 			wd_state2 = S_CMD_RW;
 			wd_state = S_WAIT;
             break;
 
          case S_CMD_RW:
-            if (((cmd & 0xE0) == 0xA0 || (cmd & 0xF0) == 0xF0) && config.trdos_wp[drive]) {
+            if (((cmd & 0xE0) == 0xA0 || (cmd & 0xF0) == 0xF0) && config.trdos_wp[drive])
+            {
                status |= WDS_WRITEP;
 			   wd_state = S_IDLE;
                break;
             }
 
-            if ((cmd & 0xC0) == 0x80 || (cmd & 0xF8) == 0xC0) {
+            if ((cmd & 0xC0) == 0x80 || (cmd & 0xF8) == 0xC0)
+            {
                // read/write sectors or read am - find next AM
                end_waiting_am = next + 5*Z80FQ/FDD_RPS; // max wait disk 5 turns
                find_marker();
                break;
             }
 
-            if ((cmd & 0xF8) == 0xF0) { // write track
+            if ((cmd & 0xF8) == 0xF0)
+            { // write track
                rqs = DRQ; status |= WDS_DRQ;
                next += 3*seldrive->t.ts_byte;
 			   wd_state2 = S_WRTRACK;
@@ -108,7 +112,8 @@ void WD1793::process()
                break;
             }
 
-            if ((cmd & 0xF8) == 0xE0) { // read track
+            if ((cmd & 0xF8) == 0xE0)
+            { // read track
                load(); rwptr = 0;
 			   rwlen = seldrive->t.trklen;
 			   wd_state2 = S_READ;
@@ -141,14 +146,16 @@ void WD1793::process()
             status &= ~WDS_CRCERR;
             load();
 
-            if (!(cmd & 0x80)) { // verify after seek
+            if (!(cmd & 0x80))
+            { // verify after seek
                if (seldrive->t.hdr[foundid].c != track) goto nextmk;
                if (!seldrive->t.hdr[foundid].c1) { status |= WDS_CRCERR; goto nextmk; }
 			   wd_state = S_IDLE;
 			   break;
             }
 
-            if ((cmd & 0xF0) == 0xC0) { // read AM
+            if ((cmd & 0xF0) == 0xC0)
+            { // read AM
                rwptr = (unsigned int)(seldrive->t.hdr[foundid].id - seldrive->t.trkd);
                rwlen = 6;
          read_first_byte:
@@ -165,7 +172,8 @@ void WD1793::process()
             if ((cmd & CMD_SIDE_CMP_FLAG) && (((cmd >> CMD_SIDE_SHIFT) ^ seldrive->t.hdr[foundid].s) & 1)) goto nextmk;
             if (!seldrive->t.hdr[foundid].c1) { status |= WDS_CRCERR; goto nextmk; }
 
-            if (cmd & 0x20) { // write sector(s)
+            if (cmd & 0x20)
+            { // write sector(s)
                rqs = DRQ; status |= WDS_DRQ;
                next += seldrive->t.ts_byte*9;
 			   wd_state = S_WAIT;
@@ -182,7 +190,10 @@ void WD1793::process()
             break;
 
          case S_RDSEC:
-            if (seldrive->t.hdr[foundid].data[-1] == 0xF8) status |= WDS_RECORDT; else status &= ~WDS_RECORDT;
+            if (seldrive->t.hdr[foundid].data[-1] == 0xF8)
+                status |= WDS_RECORDT;
+            else
+                status &= ~WDS_RECORDT;
             rwptr = (unsigned int)(seldrive->t.hdr[foundid].data - seldrive->t.trkd); // �������� ���� ������ ������� (� ������) ������������ ������ �����
             rwlen = 128 << (seldrive->t.hdr[foundid].l & 3); // [vv]
             goto read_first_byte;
@@ -251,10 +262,14 @@ void WD1793::process()
 				wd_state = S_IDLE;
 				break;
 			}
+
             seldrive->optype |= 1;
             rwptr = (unsigned int)(seldrive->t.hdr[foundid].id + 6 + 11 + 11 - seldrive->t.trkd);
-            for (rwlen = 0; rwlen < 12; rwlen++) seldrive->t.write(rwptr++, 0, 0);
-            for (rwlen = 0; rwlen < 3; rwlen++)  seldrive->t.write(rwptr++, 0xA1, 1);
+            for (rwlen = 0; rwlen < 12; rwlen++)
+                seldrive->t.write(rwptr++, 0, 0);
+
+            for (rwlen = 0; rwlen < 3; rwlen++)
+                seldrive->t.write(rwptr++, 0xA1, 1);
             seldrive->t.write(rwptr++, (cmd & CMD_WRITE_DEL)? 0xF8 : 0xFB, 0);
             rwlen = 128 << (seldrive->t.hdr[foundid].l & 3); // [vv]
 			wd_state = S_WRITE;
@@ -493,7 +508,7 @@ void WD1793::process()
 void WD1793::find_marker()
 {
 	Z80& cpu = *_context->pCPU->GetZ80();
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
    if (config.wd93_nodelay && seldrive->track != track)
@@ -550,7 +565,7 @@ void WD1793::find_marker()
 
 char WD1793::notready()
 {
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
    // fdc is too fast in no-delay mode, wait until cpu handles DRQ, but not more 'end_waiting_am'
@@ -566,7 +581,7 @@ char WD1793::notready()
 
 void WD1793::getindex()
 {
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
    unsigned trlen = seldrive->t.trklen*seldrive->t.ts_byte;
@@ -617,7 +632,7 @@ uint8_t WD1793::in(uint8_t port)
 void WD1793::out(uint8_t port, uint8_t val)
 {
 	Z80& cpu = *_context->pCPU->GetZ80();
-	State& state = _context->state;
+	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
    process();

@@ -14,19 +14,26 @@ class SoundManager
 {
     /// region <Constants>
 public:
-    static const int CHANNELS = 2;
-    static const int SAMPLING_RATE = 44100;
-    static constexpr double SAMPLES_PER_FRAME = SAMPLING_RATE / 50.0;   // 882 audio samples per frame @44100
+    static const int OUTPUT_CHANNELS = 2;
+    static const int AUDIO_SAMPLING_RATE = 44100;
+    static constexpr double SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / 50.0;   // 882 audio samples per frame @44100
 
     /// endregion </Constants>
+
+    /// region <Types>
+public:
+    typedef std::vector<std::vector<uint16_t>> AudioBuffer_t;
+    /// endregion </Types>
 
     /// region <Fields>
 protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
 
-    typedef std::vector<std::vector<uint16_t>> AudioBufferType;
-    AudioBufferType _outBuffer;         // Final rendered stereo PCM samples @44100
+
+    AudioBuffer_t _outBufferLeft;           // Final rendered PCM samples, left channel, @44100
+    AudioBuffer_t _outBufferRight;          // Final rendered PCM samples, right channel, @44100
+
     size_t _outBufferReadOffset;
     size_t _outBufferWriteOffset;
 

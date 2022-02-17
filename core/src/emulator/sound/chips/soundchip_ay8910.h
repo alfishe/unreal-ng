@@ -174,7 +174,7 @@ protected:
         void reset();
         void setPeriod(uint8_t fine, uint8_t coarse);
         void setVolume(uint8_t amplitude);
-        uint16_t render(size_t time);
+        uint16_t render(size_t cpu_clock_time);
         /// endregion </Methods>
     };
 
@@ -304,8 +304,13 @@ protected:
     // Port decoder chip attached to - reference
     PortDecoder* _portDecoder = nullptr;
 
+    // Internal AY timings
+    uint8_t _ayClockDivisor;        // 2 for Z80 @ 3.5Mhz, 4 for @7.0MHz, 8 for @14MHz, 16 for @28MHz, 32 for @56MHz
+    size_t _ayClockCounter;         // CPU clock / ayClockDivider
+
+    // Z80 timings
     size_t _startFrameCPUCounter;
-    size_t _prevCallCPUCounter;
+    size_t _prevCallCPUCounter;     // t-state counter captured on previous render call
     size_t _endFrameCPUCounter;
 
     /// endregion </Fields>
@@ -332,6 +337,7 @@ public:
     void startFrame(size_t tstateCounter);
     void endFrame(size_t tstateCounter);
     void render(size_t tstateCounter);
+
     /// endregion </Methods>
 
     /// region <Ports interaction>

@@ -123,7 +123,7 @@ void SoundChip_AY8910::ToneGenerator::setVolume(uint8_t amplitude)
     _amplitude = amplitude & 0b0001'1111;
 }
 
-uint16_t SoundChip_AY8910::ToneGenerator::render(size_t time)
+uint16_t SoundChip_AY8910::ToneGenerator::render(size_t tstateCounter)
 {
     uint16_t result= 0x0000;
 

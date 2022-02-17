@@ -17,7 +17,9 @@ constexpr uint16_t BRK_INVALID = 0xFFFF;
 enum BreakpointTypeEnum : uint8_t
 {
     BRK_MEMORY = 0,
-    BRK_IO
+    BRK_IO,
+    BRK_KEYBOARD,
+    //BRK_INTERRUPT
 };
 
 constexpr uint8_t BRK_MEM_NONE = 0x00;
@@ -31,6 +33,11 @@ constexpr uint8_t BRK_IO_IN = 0x01;
 constexpr uint8_t BRK_IO_OUT = 0x02;
 constexpr uint8_t BRK_IO_ALL = 0xFF;
 
+constexpr uint8_t BRK_KEY_NONE = 0x00;
+constexpr uint8_t BRK_KEY_PRESS = 0x01;
+constexpr uint8_t BRK_KEY_RELEASE = 0x02;
+constexpr uint8_t BRK_KEY_ALL = 0xFF;
+
 enum BreakpointAddressMatchEnum : uint8_t
 {
     BRK_MATCH_ADDR = 0,     // Match Z80 space address (no distinction between banks)
@@ -42,8 +49,8 @@ enum BreakpointAddressMatchEnum : uint8_t
 ///
 struct BreakpointDescriptor
 {
-    uint16_t breakpointID;      // Unique breakpoint ID (sequence is shared across all memory and IO breakpoints)
-    uint32_t keyAddress;        // Composite bank + address key for fast lookup
+    uint16_t breakpointID = BRK_INVALID;      // Unique breakpoint ID (sequence is shared across all memory and IO breakpoints)
+    uint32_t keyAddress = 0xFFFF'FFFF;        // Composite bank + address key for fast lookup
 
     BreakpointTypeEnum type = BRK_MEMORY;
     BreakpointAddressMatchEnum matchType = BRK_MATCH_ADDR;
@@ -51,11 +58,13 @@ struct BreakpointDescriptor
     uint8_t memoryType = BRK_MEM_READ | BRK_MEM_WRITE | BRK_MEM_EXECUTE;
     uint8_t ioType = BRK_IO_IN | BRK_IO_OUT;
 
-    uint16_t z80address = 0x0000;
+    uint8_t keyType = BRK_KEY_PRESS | BRK_KEY_RELEASE;
+
+    uint16_t z80address = 0xFFFF;
     uint8_t bank = 0xFF;
     uint16_t bankAddress = 0xFFFF;
 
-    bool active;
+    bool active = true;
 };
 
 ///

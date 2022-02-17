@@ -85,7 +85,7 @@ protected:
 protected:
     // Context passed during initialization
     EmulatorContext* _context = nullptr;
-    State* _state = nullptr;
+    EmulatorState* _state = nullptr;
 
 protected:
 #if defined CACHE_ALIGNED

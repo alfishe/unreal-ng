@@ -19,7 +19,7 @@
 Memory::Memory(EmulatorContext* context)
 {
     _context = context;
-    _state = &context->state;
+    _state = &context->emulatorState;
     _logger = context->pModuleLogger;
 
     // Make power turn-on behavior realistic: all memory cells contain random values
@@ -330,7 +330,7 @@ void Memory::SetROMMode(ROMModeEnum mode)
 {
     throw std::runtime_error("SetROMMode is deprecated");
 
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
     const PortDecoder& portDecoder = *_context->pPortDecoder;
 
@@ -2206,7 +2206,7 @@ void Memory::SetBanks()
 			 used_banks[bank] = 1;
       }
    }
-
+*/
 /*
     if ((unsigned)(bankr[0] - ROM_BASE_M) < PAGE*MAX_ROM_PAGES)
     {

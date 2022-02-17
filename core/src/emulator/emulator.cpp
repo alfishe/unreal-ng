@@ -358,6 +358,17 @@ void Emulator::GetSystemInfo()
 	MLOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
 }
 
+// Performance management
+BaseFrequency_t Emulator::GetSpeed()
+{
+    return (BaseFrequency_t)_context->state.baseFreqMultiplier;
+}
+
+void Emulator::SetSpeed(BaseFrequency_t speed)
+{
+    _context->state.baseFreqMultiplier = speed;
+}
+
 ///region <Integration interfaces>
 
 EmulatorContext* Emulator::GetContext()
@@ -659,7 +670,7 @@ bool Emulator::IsDebug()
 
 std::string Emulator::GetStatistics()
 {
-    State& state = _context->state;
+    EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
     Z80& z80 = *_context->pCPU->GetZ80();
 

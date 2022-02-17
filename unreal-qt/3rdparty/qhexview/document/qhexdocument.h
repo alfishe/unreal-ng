@@ -96,7 +96,7 @@ template<typename T> QHexDocument* QHexDocument::fromDevice(QIODevice* iodevice,
     QHexBuffer* hexbuffer = new T();
     if (hexbuffer->read(iodevice))
     {
-        if(needsclose)
+        if (needsclose)
             iodevice->close();
 
         return new QHexDocument(hexbuffer, parent);

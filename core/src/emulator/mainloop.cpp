@@ -11,7 +11,7 @@ MainLoop::MainLoop(EmulatorContext* context)
 	_context = context;
     _logger = context->pModuleLogger;
 
-	_state = &_context->state;
+	_state = &_context->emulatorState;
 	_cpu = _context->pCPU;
     _screen = _context->pScreen;
 

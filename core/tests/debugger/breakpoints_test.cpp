@@ -75,6 +75,7 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
     bool init = emulator->Init();
+    EXPECT_EQ(init, true) << "Unable to initialize emulator instance";
     emulator->DebugOn();
 
     EmulatorContext* context = emulator->GetContext();

@@ -696,6 +696,9 @@ void QHexRenderer::drawAscii(QPainter *painter, const QPalette &palette, const Q
     painter->restore();
 }
 
+/// Draw hex viewer header (Offset | 00 ... 07 | ASCII)
+/// \param painter
+/// \param palette
 void QHexRenderer::drawHeader(QPainter *painter, const QPalette &palette)
 {
     QRect rect = QRect(0, 0, this->getEndColumnX(), headerLineCount() * lineHeight());

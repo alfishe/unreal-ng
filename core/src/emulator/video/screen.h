@@ -360,7 +360,7 @@ public:
 
 protected:
 	EmulatorContext* _context = nullptr;
-	State* _state = nullptr;
+	EmulatorState* _state = nullptr;
 	CPU* _system = nullptr;
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;

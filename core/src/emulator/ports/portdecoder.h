@@ -43,7 +43,7 @@ public:
 protected:
     EmulatorContext* _context = nullptr;
 
-    State* _state = nullptr;
+    EmulatorState* _state = nullptr;
     Keyboard* _keyboard = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;

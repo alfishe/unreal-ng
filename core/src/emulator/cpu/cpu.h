@@ -35,7 +35,7 @@ public:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
-    State* _state = nullptr;
+    EmulatorState* _state = nullptr;
     const CONFIG* _config = nullptr;
     ModuleLogger* _logger = nullptr;
 
@@ -57,7 +57,7 @@ protected:
     /// region <Constructors / Destructors>
 public:
     CPU() = delete;			        // Disable default constructor. C++ 11 feature
-    CPU(EmulatorContext* context);              // Only constructor with context param is allowed
+    CPU(EmulatorContext* context);  // Only constructor with context param is allowed
     virtual ~CPU();
     /// endregion </Constructors / Destructors
 
@@ -86,6 +86,10 @@ public:
     void Resume();
 
     void SetCPUClockSpeed(uint8_t);
+    uint32_t GetBaseCPUFrequency();
+    uint32_t GetCPUFrequency();
+    uint16_t GetCPUFrequencyMultiplier();
+
     void CPUFrameCycle();
     void AdjustFrameCounters();
 

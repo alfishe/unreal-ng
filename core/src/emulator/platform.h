@@ -687,8 +687,28 @@ struct NVRAM
 	void MemoryWrite(uint8_t val);
 };
 
-struct State
+struct EmulatorState
 {
+    /// region <Counters>
+
+    uint64_t t_states;      // inc with conf.frame by each frame
+    unsigned frame_counter; // Counting each video frame displayed
+
+    /// endregion </Counters>
+
+    /// region <Runtime CPU parameters>
+
+    // Example:
+    // base_z80_frequency = 3'500'000;          - Base Z80 frequency is 3.5MHz
+    // current_z80_frequency = 14'000'000;      - Current Z80 frequency is 14Mhz
+    // current_z80_frequency_multiplier = 4;    - Current frequency multiplier is x4
+    uint32_t base_z80_frequency;                // x1 base CPU clock generator (in Hz)
+    uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
+    uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
+
+    /// endregion </Runtime CPU parameters
+
+
     /// region <Port state>
 	uint8_t p7FFD, pFE, pEFF7, pXXXX;   // Common ports
 	uint8_t pBFFD, pFFFD;               // AY sound-specific
@@ -696,13 +716,6 @@ struct State
 	uint8_t p7EFD, p78FD, p7AFD, p7CFD, gmx_config, gmx_magic_shift; // GMX specific
 	uint8_t p00, p80FD; // Quorum specific
 	/// endregion </Port state>
-
-	/// region <Counters>
-
-	uint64_t t_states; // inc with conf.frame by each frame
-    unsigned frame_counter; // Counting each video frame displayed
-
-	/// endregion </Counters>
 
 	/// region <Access flags>
 	bool video_memory_changed;  // [Debug mode only] Indicates if video memory was changed

@@ -70,7 +70,9 @@ std::map<quint32, ZXKeysEnum> KeyboardManager::_keyMap =
     { Qt::Key_division, ZXKEY_EXT_DIVIDE },
     { Qt::Key_Equal, ZXKEY_EXT_EQUAL },
     // { Qt::Key_division, ZXKEY_EXT_BAR }, '|'
-    { Qt::Key_Backslash, ZXKEY_EXT_BACKSLASH }
+    { Qt::Key_Backslash, ZXKEY_EXT_BACKSLASH },
+
+    { Qt::Key_QuoteDbl, ZXKEY_EXT_DBLQUOTE },
 };
 
 KeyboardManager::KeyboardManager()
@@ -94,7 +96,8 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKey(int qtKey)
     }
     else
     {
-        qDebug() << "mapQtKeyToEmulatorKey: unknown mapping for qtKey: " << qtKey;
+        QString message = QString("mapQtKeyToEmulatorKey: unknown mapping for qtKey: 0x%1 (%2)").arg(qtKey, 2, 16).arg(qtKey, 2);
+        qDebug() << message;
     }
 
     return result;

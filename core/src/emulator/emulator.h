@@ -7,6 +7,7 @@
 #include "common/logger.h"
 
 #include "emulatorcontext.h"
+#include "state.h"
 #include "emulator/config.h"
 #include "emulator/mainloop.h"
 #include "cpu/cpu.h"
@@ -24,6 +25,7 @@ protected:
     ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
+    /// region <Fields>
 protected:
     bool _initialized = false;
     std::mutex _mutexInitialization;
@@ -48,12 +50,14 @@ protected:
 	volatile bool _isPaused = false;
 	volatile bool _isRunning = false;
 	volatile bool _isDebug = false;
+    /// endregion </Fields>
 
-	// Constructors / destructors
+	/// region <Constructors / destructors>
 public:
 	Emulator();
 	Emulator(LoggerLevel level);
 	virtual ~Emulator();
+    /// endregion </Constructors / destructors>
 
 private:
     void ReleaseNoGuard();
@@ -65,6 +69,10 @@ public:
 
 	// Info methods
 	void GetSystemInfo();
+
+    // Performance management
+    BaseFrequency_t GetSpeed();
+    void SetSpeed(BaseFrequency_t speed);
 
 	// Integration interfaces
 	EmulatorContext* GetContext();

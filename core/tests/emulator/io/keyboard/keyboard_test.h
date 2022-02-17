@@ -1,8 +1,17 @@
-//
-// Created by Dev on 2/17/22.
-//
+#pragma once
+#include "stdafx.h"
+#include "pch.h"
 
-#ifndef UNREAL_KEYBOARD_TEST_H
-#define UNREAL_KEYBOARD_TEST_H
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/keyboard/keyboard.h"
 
-#endif //UNREAL_KEYBOARD_TEST_H
+class Keyboard_Test : public ::testing::Test
+{
+protected:
+    EmulatorContext* _context = nullptr;
+    KeyboardCUT* _keyboard = nullptr;
+
+protected:
+    void SetUp() override;
+    void TearDown() override;
+};

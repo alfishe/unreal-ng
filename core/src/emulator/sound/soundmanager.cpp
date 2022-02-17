@@ -12,13 +12,14 @@ SoundManager::SoundManager(EmulatorContext *context)
     _logger = context->pModuleLogger;
 
     // Reserve buffer capacity for 1 second of stereo PCM samples @44100
-    _outBuffer[0].resize(SAMPLING_RATE * sizeof(uint16_t));
-    _outBuffer[1].resize(SAMPLING_RATE * sizeof(uint16_t));
+    _outBufferLeft.resize(AUDIO_SAMPLING_RATE);
+    _outBufferRight.resize(AUDIO_SAMPLING_RATE);
 }
 
 SoundManager::~SoundManager()
 {
-
+    _outBufferLeft.clear();
+    _outBufferRight.clear();
 }
 
 /// endregion </Constructors / Destructors>
