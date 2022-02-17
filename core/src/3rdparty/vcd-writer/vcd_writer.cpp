@@ -6,10 +6,13 @@
 #include "vcd_writer.h"
 
 
-namespace vcd {
+namespace vcd
+{
 
 // -----------------------------
-namespace utils {
+namespace utils
+
+{
 void replace_new_lines(std::string &str, const std::string &sub);
 }
 using namespace utils;
@@ -47,7 +50,9 @@ struct VCDHeader
 // -----------------------------
 HeadPtr makeVCDHeader(TimeScale timescale_quan, TimeScaleUnit timescale_unit, const std::string &date,
                       const std::string &comment, const std::string &version)
-{ return HeadPtr{ new VCDHeader(timescale_quan, timescale_unit, date, comment, version) }; }
+{
+    return HeadPtr{ new VCDHeader(timescale_quan, timescale_unit, date, comment, version) };
+}
 
 // -----------------------------
 const std::string VCDHeader::kw_names[VCDHeader::kws] = { "$timescale", "$date", "$comment", "$version" };
@@ -68,7 +73,9 @@ struct VCDScope
 
 // -----------------------------
 bool ScopePtrHash::operator()(const ScopePtr &l, const ScopePtr &r) const
-{ return (l->name < r->name); }
+{
+    return (l->name < r->name);
+}
 
 // -----------------------------
 // VCD variable details needed to call :meth:`VCDWriter.change()`.
@@ -261,7 +268,8 @@ VarPtr VCDWriter::register_var(const std::string &scope, const std::string &name
             if (init_value.size() == 1 && init_value[0] == VCDValues::UNDEF)
                 init_value = std::string(size, VCDValues::UNDEF);
             break;
-    }     
+    }
+
     if (type != VariableType::event)
         _change(pvar, _timestamp, init_value, true);
     
@@ -272,6 +280,7 @@ VarPtr VCDWriter::register_var(const std::string &scope, const std::string &name
     (**cur_scope).vars.push_back(pvar);
     // Only alter state after change_func() succeeds
     _next_var_id++;
+
     return pvar;
 }
 
@@ -310,6 +319,7 @@ bool VCDWriter::_change(VarPtr var, TimeStamp timestamp, const VarValue &value, 
     // dump it into file
     if (_dumping && !_registering)
         fprintf(_ofile, "%s%s\n", change_value.c_str(), var->_ident.c_str());
+
     return true;
 }
 
@@ -341,6 +351,7 @@ void VCDWriter::set_scope_type(std::string &scope, ScopeType scope_type)
     auto it = _scopes.find(pscope);
     if (it == _scopes.end())
         throw VCDPhaseException{ utils::format("Such scope '%s' does not exist", scope.c_str()) };
+
     (**it).type = scope_type;
 }
 
@@ -350,6 +361,7 @@ void VCDWriter::_dump_off(TimeStamp timestamp)
 {
     fprintf(_ofile, "#%d\n", timestamp);
     fprintf(_ofile, "$dumpoff\n");
+
     for (const auto &p : _vars_prevs)
     {
         const char *ident = p.first->_ident.c_str();
@@ -369,7 +381,8 @@ void VCDWriter::_dump_off(TimeStamp timestamp)
 
 void VCDWriter::_dump_values(const std::string &keyword)
 {
-    fprintf(_ofile, (keyword + "\n").c_str());
+    fputs((keyword + "\n").c_str(), _ofile);
+
     // TODO : events should be excluded
     for (const auto &p : _vars_prevs)
     {
@@ -377,6 +390,7 @@ void VCDWriter::_dump_values(const std::string &keyword)
         const char *value = p.second.c_str();
         fprintf(_ofile, "%s%s\n", value, ident);
     }
+
     fprintf(_ofile, "$end\n");
 }
 
@@ -526,6 +540,7 @@ VarValue VCDVectorVariable::change_record(const VarValue &value) const
         for (auto i = 1u; i <= k; ++i)
             val[i] = VCDValues::ZERO;
     }
+
     return val;
 }
 
