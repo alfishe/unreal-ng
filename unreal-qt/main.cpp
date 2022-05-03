@@ -10,7 +10,6 @@ int main(int argc, char *argv[])
     int fontID = -1;
 
     QApplication app(argc, argv);
-    MainWindow window;
 
     /// region <Load monospace font>
 
@@ -41,9 +40,18 @@ int main(int argc, char *argv[])
     QStringList fontFamilies = QFontDatabase::families();
 
 #ifdef _DEBUG
-
+    for (int i = 0; i < fontFamilies.length(); i++)
+    {
+        if (fontFamilies.at(i) == "Consolas")
+        {
+            qDebug() << "Consolas font family registered";
+            break;
+        }
+    }
 #endif
     /// endregion </Load monospace font>
+
+    MainWindow window;
 
     window.show();
 
