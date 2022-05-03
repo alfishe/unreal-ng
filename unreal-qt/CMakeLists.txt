@@ -115,7 +115,7 @@ add_custom_command(
 )
 
 # Copy default config file to binary folder after successful compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
+SET (CONFIG_FILE ${DATA_PATH}/configs/zx-diagnostics/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
 message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 add_custom_command(
@@ -131,7 +131,7 @@ add_custom_command(
         copy_directory ${DATA_PATH}/rom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
 )
 
-// Copy all test ROM files to /rom sub-folder
+# Copy all test ROM files to /rom sub-folder
 add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E
