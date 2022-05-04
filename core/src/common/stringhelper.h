@@ -70,6 +70,11 @@ public:
         return result;
     }
 
+    /// Format string using std::string primitives only
+    /// @tparam Args Variadic argument(s)
+    /// @param format Format string as std::string object reference
+    /// @param args Format arguments
+    /// @return Formatted string as std::string object
     template<typename ... Args>
     static std::string Format(const std::string& format, Args ... args)
     {
@@ -83,7 +88,7 @@ public:
         size_t size = snprintf(nullptr, 0, format.c_str(), args ...) + 1;
         if (size > 0)
         {
-            std::unique_ptr<char[]> buf(new char[ size ]);
+            std::unique_ptr<char[]> buf(new char[size]);
             snprintf(buf.get(), size, format.c_str(), args ...);
 
             // Create output string (without trailing '\0')
