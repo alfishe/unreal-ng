@@ -175,15 +175,15 @@ void Screen::InitRaster()
         SetVideoMode(video.mode);
 
         /// region <Sanity checks>
-
+#ifdef _DEBUG
         // 1. Frame duration from config should be longer than raster-defined frame duration
         if (_rasterState.configFrameDuration < _rasterState.maxFrameTiming)
         {
             std::string error = StringHelper::Format("Screen::SetVideoMode config.frame: %d cannot be less than _rasterState.maxFrameTiming: %d", _rasterState.configFrameDuration, _rasterState.maxFrameTiming);
             throw logic_error(error);
         }
-
-        /// endergion </Sanity checks>
+#endif // _DEBUG
+        /// endregion </Sanity checks>
     }
 
 }
