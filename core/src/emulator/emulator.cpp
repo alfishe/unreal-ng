@@ -640,7 +640,7 @@ void Emulator::DebugOff()
     // Switch to fast memory interface
     _cpu->UseFastMemoryInterface();
 
-    _isDebug = true;
+    _isDebug = false;
     _z80->isDebugMode = false;
 }
 
