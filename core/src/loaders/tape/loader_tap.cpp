@@ -104,19 +104,34 @@ bool LoaderTAP::parseTAP()
     uint8_t* ptr = buffer;
     close();
 
+    // Read all blocks from TAP file
+    // Each block is represented by:
+    //   block length - 2 bytes
+    //   block body - <block length> bytes
     while (ptr < buffer + _fileSize)
     {
+        // Get block length
         uint16_t blockSize = *(uint16_t*)ptr;
+        ptr += 2;
 
+        // Get block itself
         if (blockSize > 0)
         {
             TapeBlock block;
-            block.data_len = 
-            TapeBlockWithHeader* block = (TapeBlockWithHeader*)ptr;
+            block.data_len = blockSize;
+            block.data.insert(block.data.end(), ptr, ptr + blockSize);
+            block.name = getBlockName(block.data);
+            block.description = getBlockDescription(block.data);
+            _tapeBlocks.push_back(block);
+
+            TapeBlockWithHeader* blockHeader = (TapeBlockWithHeader*)ptr;
 
             ptr += blockSize;
         }
     }
+
+    int blocks = _tapeBlocks.size();
+    int a = 2;
 
     /*
     unsigned char *ptr = snbuf;
@@ -136,6 +151,49 @@ bool LoaderTAP::parseTAP()
     find_tape_sizes();
     result = (ptr == snbuf+snapsize);
 */
+
+    return result;
+}
+
+std::string LoaderTAP::getBlockName(vector<uint8_t>& blockData)
+{
+    std::string result;
+
+    uint32_t size = blockData.size();
+    uint8_t flag = blockData[0];
+
+    if (flag == TAP_BLOCK_FLAG_HEADER && size == 19)
+    {
+        TapeHeader* header = (TapeHeader*)&blockData[1];
+        result = string(header->filename, 10);
+    }
+
+    return result;
+}
+
+std::string LoaderTAP::getBlockDescription(vector<uint8_t>& blockData)
+{
+    std::string result;
+
+    uint32_t size = blockData.size();
+    uint8_t flag = blockData[0];
+
+    if (flag == TAP_BLOCK_FLAG_HEADER)
+    {
+        TapeHeader* header = (TapeHeader*)&blockData[1];
+        std::string name = string(header->filename, 10);
+        TapeBlockTypeEnum type = header->headerType;
+
+        result = StringHelper::Format("Header");
+    }
+    else if (flag == TAP_BLOCK_FLAG_DATA)
+    {
+        result = StringHelper::Format("Data");
+    }
+    else
+    {
+        result = "<Invalid>";
+    }
 
     return result;
 }

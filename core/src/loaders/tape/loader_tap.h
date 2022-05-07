@@ -36,13 +36,21 @@ constexpr int MAX_TAPE_PULSES = 0x100;
 /// endregion </Constants>
 
 /// region <Types>
-struct TapeState
+
+/// region <TAP parsing structures>
+
+enum TapeBlockTypeEnum : uint8_t
 {
-    int64_t edge_change     = 0x7FFF'FFFF'FFFF'FFFFLL;
-    int32_t tape_bit        = -1;
-    uint8_t* play_pointer   = nullptr;      // or NULL if tape stopped
-    uint8_t* end_of_tape    = nullptr;     // where to stop tape
-    int32_t index           = 0;           // current tape block
+    TAP_BLOCK_PROGRAM = 0,          // Block contains BASIC program
+    TAP_BLOCK_NUM_ARRAY,            // Block contains numeric array
+    TAP_BLOCK_CHAR_ARRAY,           // Block contains symbolic array
+    TAP_BLOCK_CODE                  // Block contains code
+};
+
+enum TapeBlockFlagEnum : uint64_t
+{
+    TAP_BLOCK_FLAG_HEADER = 0x00,
+    TAP_BLOCK_FLAG_DATA = 0xFF
 };
 
 /// Tape information (header)
@@ -51,14 +59,6 @@ struct TapeInfo
     char desc[280];     // Tape name
     uint32_t pos;       // Data start offset
     uint32_t t_size;    // Data size
-};
-
-enum TapeBlockTypeEnum : uint8_t
-{
-    TAP_BLOCK_PROGRAM = 0,          // Block contains BASIC program
-    TAP_BLOCK_NUM_ARRAY,            // Block contains numeric array
-    TAP_BLOCK_CHAR_ARRAY,           // Block contains symbolic array
-    TAP_BLOCK_CODE                  // Block contains code
 };
 
 struct TapeProgramParams
@@ -104,23 +104,37 @@ struct TapeHeader
 
 struct TapeBlockWithHeader
 {
-    uint16_t len_block;
     uint8_t flag;
     TapeHeader header;
 } __attribute__((packed));
 
-struct TapeHeaderlessBlock
+struct TapeBlockDescriptor
 {
     uint16_t len_block;
     uint8_t flag;
 };
 
+/// endregion </TAP parsing structures>
+
+/// region <Emulator-specific structures>
 struct TapeBlock
 {
     std::string name;
+    std::string description;
     uint32_t data_len;
     std::vector<uint8_t> data;
 };
+
+struct TapeState
+{
+    int64_t edge_change     = 0x7FFF'FFFF'FFFF'FFFFLL;
+    int32_t tape_bit        = -1;
+    uint8_t* play_pointer   = nullptr;      // or NULL if tape stopped
+    uint8_t* end_of_tape    = nullptr;     // where to stop tape
+    int32_t index           = 0;           // current tape block
+};
+
+/// endregion </Emulator-specific structures>
 
 /// endregion </Types>
 
@@ -175,6 +189,9 @@ public:
 protected:
     bool validateFile();
     bool parseTAP();
+
+    std::string getBlockName(vector<uint8_t>& blockData);
+    std::string getBlockDescription(vector<uint8_t>& blockData);
 
     void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
               unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
