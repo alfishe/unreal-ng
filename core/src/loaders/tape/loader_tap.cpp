@@ -122,6 +122,7 @@ bool LoaderTAP::parseTAP()
             block.data.insert(block.data.end(), ptr, ptr + blockSize);
             block.name = getBlockName(block.data);
             block.description = getBlockDescription(block.data);
+            block.data_checksum = getBlockChecksum(block.data);
             _tapeBlocks.push_back(block);
 
             TapeBlockWithHeader* blockHeader = (TapeBlockWithHeader*)ptr;
@@ -194,6 +195,40 @@ std::string LoaderTAP::getBlockDescription(vector<uint8_t>& blockData)
     {
         result = "<Invalid>";
     }
+
+    return result;
+}
+
+/// Calculate checksum for the tape block
+/// @note The checksum is the bitwise XOR of all bytes including the flag byte
+/// @see http://fizyka.umk.pl/~jacek/zx/faq/reference/formats.htm
+/// @param blockData
+/// @return
+uint8_t LoaderTAP::getBlockChecksum(vector<uint8_t>& blockData)
+{
+    uint8_t result = 0;
+
+    uint32_t size = blockData.size();
+
+    if (size > 0)
+    {
+        result = blockData[0];
+
+        for (uint32_t i = 1; i < size -1; i++)
+        {
+            result ^= blockData[i];
+        }
+    }
+
+#ifdef _DEBUG
+    // Get checksum saved in a last block byte to compare with calculated
+    uint8_t savedChecksum = blockData[size - 1];
+
+    if (savedChecksum != result)
+    {
+
+    }
+#endif // _DEBUG
 
     return result;
 }

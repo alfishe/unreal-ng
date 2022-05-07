@@ -122,6 +122,7 @@ struct TapeBlock
     std::string name;
     std::string description;
     uint32_t data_len;
+    uint8_t data_checksum;
     std::vector<uint8_t> data;
 };
 
@@ -192,6 +193,7 @@ protected:
 
     std::string getBlockName(vector<uint8_t>& blockData);
     std::string getBlockDescription(vector<uint8_t>& blockData);
+    uint8_t getBlockChecksum(vector<uint8_t>& blockData);
 
     void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
               unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
