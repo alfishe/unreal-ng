@@ -1,6 +1,4 @@
-#include "pch.h"
-
-#include "loader_tap_test.h"
+#include "loader_tzx_test.h"
 
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
@@ -8,7 +6,7 @@
 
 /// region <SetUp / TearDown>
 
-void LoaderTAP_Test::SetUp()
+void LoaderTZX_Test::SetUp()
 {
     // Instantiate emulator with all peripherals, but no configuration loaded
     _context = new EmulatorContext(LoggerLevel::LogError);
@@ -26,7 +24,7 @@ void LoaderTAP_Test::SetUp()
     }
 }
 
-void LoaderTAP_Test::TearDown()
+void LoaderTZX_Test::TearDown()
 {
     if (_cpu != nullptr)
     {
@@ -43,13 +41,13 @@ void LoaderTAP_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
-TEST_F(LoaderTAP_Test, read)
+TEST_F(LoaderTZX_Test, parseHardware)
 {
     static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
 
-    LoaderTAPCUT loader(_context, testTapePath);
-    bool result = loader.read();
-    EXPECT_EQ(result, true);
-}
+    LoaderTZXCUT loader(_context, testTapePath);
+    uint8_t data[] = { 0x1, };
 
+    loader.parseHardware(data);
+}
