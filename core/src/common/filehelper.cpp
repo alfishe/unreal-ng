@@ -234,6 +234,11 @@ void FileHelper::CloseFile(FILE* file)
     }
 }
 
+/// Load file content to buffer provided (up to @refitem size bytes)
+/// @param file File handle
+/// @param buffer Buffer
+/// @param size Buffer size
+/// @return Number of bytes loaded from file to the buffer
 size_t FileHelper::ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size)
 {
     size_t result = 0;
@@ -243,7 +248,7 @@ size_t FileHelper::ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size)
         return result;
     }
 
-    result = fread(buffer, size, 1, file);
+    result = fread(buffer, 1, size, file);
 
     return result;
 }

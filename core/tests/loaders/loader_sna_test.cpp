@@ -1,5 +1,3 @@
-#include "pch.h"
-
 #include "loader_sna_test.h"
 
 #include "common/filehelper.h"

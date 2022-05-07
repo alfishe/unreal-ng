@@ -242,7 +242,7 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
-    if (!_context->pDebugManager)
+    if (_isDebug && !_context->pDebugManager)
     {
         std::string error = "_context->pDebugManager not available";
         throw std::logic_error(error);

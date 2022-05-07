@@ -7,6 +7,7 @@
 /// region <Info>
 
 /// See: https://worldofspectrum.org/faq/reference/z80format.htm
+/// See: https://k1.spdns.de/Develop/Projects/zasm/Info/z80format.htm
 /// Glossary:
 ///     M.G.T. - Miles Gordon Technology. British company specializing in high-quality add-ons for ZX-Spectrum. More: https://en.wikipedia.org/wiki/Miles_Gordon_Technology
 ///     IF1 = Interface 1 - More: https://en.wikipedia.org/wiki/ZX_Interface_1

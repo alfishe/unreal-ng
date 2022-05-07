@@ -1,1 +1,0 @@
-cmake -G "Visual Studio 15 2017" -T v141,host=x64 -S ./src -B ./build

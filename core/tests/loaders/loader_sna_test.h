@@ -1,6 +1,6 @@
 #pragma once
-#include "pch.h"
 
+#include <gtest/gtest.h>
 #include "loaders/snapshot/loader_sna.h"
 
 #include "emulator/cpu/cpu.h"

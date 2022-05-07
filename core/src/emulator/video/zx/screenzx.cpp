@@ -247,10 +247,10 @@ uint16_t ScreenZX::CalculateXYColorAttrAddressOptimized(uint8_t x, uint8_t y, ui
 /// \return RGbA color for the pixel
 uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPixelSet)
 {
-    // ABGR32 (Little-endian) or RGBA32 (Bit-endian)
+    // ABGR32 (Little-endian) or RGBA32 (Big-endian)
     // Alpha - #FF - opaque, #00 - transparent
     static uint32_t palette[2][8] =
-    { // LSB ABGR encoded colors
+    {   // LSB ABGR encoded colors
         //     Black,       Blue,        Red,    Magenta,      Green,       Cyan,     Yellow,      White
         { 0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA },  // Brightness = 0
         { 0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF }   // Brightness = 1

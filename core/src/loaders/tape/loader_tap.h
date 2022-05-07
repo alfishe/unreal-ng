@@ -3,8 +3,9 @@
 #include "stdafx.h"
 
 /// region <Documentation>
-// TAP format: https://faqwiki.zxnet.co.uk/wiki/TAP_format
-// TAP structures: https://formats.kaitai.io/zx_spectrum_tap/index.html
+// @see TAP format: https://faqwiki.zxnet.co.uk/wiki/TAP_format
+// @see: https://k1.spdns.de/Develop/Projects/zasm/Info/tap.txt
+// @see TAP structures: https://formats.kaitai.io/zx_spectrum_tap/index.html
 
 //    The .TAP files contain blocks of tape-saved data.
 //    All blocks start with two bytes specifying how many bytes will follow (not counting the two length bytes).
@@ -35,84 +36,114 @@ constexpr int MAX_TAPE_PULSES = 0x100;
 /// endregion </Constants>
 
 /// region <Types>
-struct TAPEINFO
+struct TapeState
 {
-    char desc[280];
-    uint32_t pos;
-    uint32_t t_size;
+    int64_t edge_change     = 0x7FFF'FFFF'FFFF'FFFFLL;
+    int32_t tape_bit        = -1;
+    uint8_t* play_pointer   = nullptr;      // or NULL if tape stopped
+    uint8_t* end_of_tape    = nullptr;     // where to stop tape
+    int32_t index           = 0;           // current tape block
 };
 
-enum TAP_BLOCK_TYPE : uint8_t
+/// Tape information (header)
+struct TapeInfo
 {
-    TAP_BLOCK_PROGRAM = 0,
-    TAP_BLOCK_NUM_ARRAY,
-    TAP_BLOCK_CHAR_ARRAY,
-    TAP_BLOCK_CODE
+    char desc[280];     // Tape name
+    uint32_t pos;       // Data start offset
+    uint32_t t_size;    // Data size
 };
 
-struct TAP_PROGRAM_PARAMS
+enum TapeBlockTypeEnum : uint8_t
+{
+    TAP_BLOCK_PROGRAM = 0,          // Block contains BASIC program
+    TAP_BLOCK_NUM_ARRAY,            // Block contains numeric array
+    TAP_BLOCK_CHAR_ARRAY,           // Block contains symbolic array
+    TAP_BLOCK_CODE                  // Block contains code
+};
+
+struct TapeProgramParams
 {
     uint16_t autostart_line;
     uint16_t len_program;
 };
 
-struct TAP_ARRAY_PARAMS
+struct TapeArrayParams
 {
     uint8_t reserved;
     uint8_t var_name;
     uint16_t reserved1 = 0x8000;
 };
 
-struct TAP_CODE_PARAMS
+struct TapeBytesParams
 {
     uint16_t start_address;
     uint16_t reserved;
 };
 
-struct TAP_HEADER
+struct TapeHeader
 {
-    TAP_BLOCK_TYPE header_type;
+    union
+    {
+        TapeBlockTypeEnum headerType;
+        uint8_t uHeaderType;
+    };
+
     char filename[10];
     uint16_t len_data;
+    
     union
     {
         uint8_t bytes[4];
-        TAP_PROGRAM_PARAMS program_params;
-        TAP_ARRAY_PARAMS array_params;
-        TAP_CODE_PARAMS code_params;
+        TapeProgramParams program_params;
+        TapeArrayParams array_params;
+        TapeBytesParams code_params;
     };
-    uint8_t checksum;
-};
 
-struct TAP_BLOCK
+    uint8_t checksum;
+} __attribute__((packed));
+
+struct TapeBlockWithHeader
 {
     uint16_t len_block;
     uint8_t flag;
-    TAP_HEADER header;
+    TapeHeader header;
+} __attribute__((packed));
+
+struct TapeHeaderlessBlock
+{
+    uint16_t len_block;
+    uint8_t flag;
+};
+
+struct TapeBlock
+{
+    std::string name;
+    uint32_t data_len;
+    std::vector<uint8_t> data;
 };
 
 /// endregion </Types>
 
+class EmulatorContext;
+class ModuleLogger;
+
 class LoaderTAP
 {
-public:
-    void reset();
-    void start();
-    void stop();
-    int read();
-    void close();
-
+    /// region <Fields>
 protected:
-    void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
-              unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
-              unsigned pilot_len, unsigned pause, uint8_t last = 8);
-    uint16_t findPulse(uint32_t t);
-    void findTapeIndex();
-    void findTapeSizes();
+    EmulatorContext* _context;
+    ModuleLogger* _logger;
 
-    void allocTapeBuffer();
+    // File-related fields
+    std::string _path;
+    FILE* _file = nullptr;
+    bool _fileValidated = false;
+    size_t _fileSize = 0;
+    void* _buffer = nullptr;
 
-protected:
+    // Parsed blocks-related fields
+    std::list<TapeBlock> _tapeBlocks;
+
     uint32_t tape_pulse[MAX_TAPE_PULSES];
     uint32_t max_pulses = 0;
     uint32_t tape_err = 0;
@@ -120,10 +151,61 @@ protected:
     uint8_t* tape_image = 0;
     uint32_t tape_imagesize = 0;
 
-    int64_t _edge_change = 0x7FFF'FFFF'FFFF'FFFF;
-    uint8_t* _playPointer = nullptr;
-    uint8_t* _endOfTape = nullptr;
-    uint32_t _index = 0;
-    uint32_t _tapeBit = 0;
+    TapeInfo* tapeinfo;
+    uint32_t tape_infosize;
+
+    TapeState _tapeState;
+    /// endregion </Fields>
+
+    /// region <Constructors / destructors>
+public:
+    LoaderTAP(EmulatorContext* context, std::string path);
+    virtual ~LoaderTAP();
+    /// endregion </Constructors / destructors>
+
+    /// region <Methods>
+public:
+    void reset();
+    void start();
+    void stop();
+    int read();
+    void close();
+    /// endregion </Methods>
+
+protected:
+    bool validateFile();
+    bool parseTAP();
+
+    void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
+              unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
+              unsigned pilot_len, unsigned pause, uint8_t last = 8);
+    uint16_t findPulse(uint32_t t);
+    void findTapeIndex();
+    void findTapeSizes();
+
+
+    void parseHardware(uint8_t* data);
+
+    void allocTapeBuffer();
 };
 
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class LoaderTAPCUT : public LoaderTAP
+{
+public:
+    LoaderTAPCUT(EmulatorContext* context, std::string path) : LoaderTAP(context, path) {};
+
+public:
+    using LoaderTAP::_context;
+    using LoaderTAP::_logger;
+    using LoaderTAP::_path;
+    using LoaderTAP::_file;
+
+    using LoaderTAP::validateFile;
+    using LoaderTAP::parseHardware;
+};
+#endif // _CODE_UNDER_TEST
