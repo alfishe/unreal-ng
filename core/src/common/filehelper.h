@@ -37,6 +37,7 @@ public:
 	static void CloseFile(FILE* file);
 
 	static size_t ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size);
+    static size_t ReadFileToBuffer(std::string& filePath, uint8_t* buffer, size_t size);
 	static bool SaveBufferToFile(std::string& filePath, uint8_t* buffer, size_t size);
 
 private:

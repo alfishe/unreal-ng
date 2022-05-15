@@ -1,7 +1,6 @@
 #include "stdafx.h"
 
 #include "filehelper.h"
-#include "common/stringhelper.h"
 #include <algorithm>
 
 const char FileHelper::GetPathSeparator()
@@ -62,7 +61,6 @@ string FileHelper::NormalizePath(std::string& path, char separator)
 
 	string result = path;
 
-	// Important note: std::filesystem::path::make_preferred() does not convert windows separators to linux preferred so we have to care about that (if configs are created with backslashes)
 	replace(result.begin(), result.end(), '/', separator);
 	replace(result.begin(), result.end(), '\\', separator);
 
@@ -249,6 +247,26 @@ size_t FileHelper::ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size)
     }
 
     result = fread(buffer, 1, size, file);
+
+    return result;
+}
+
+/// Load file content to buffer provided (up to @refitem size bytes)
+/// @param filePath File path
+/// @param buffer Buffer
+/// @param size Buffer size
+/// @return Number of bytes loaded from file to the buffer
+size_t FileHelper::ReadFileToBuffer(std::string& filePath, uint8_t* buffer, size_t size)
+{
+    size_t result = 0;
+
+    FILE* file = FileHelper::OpenFile(filePath, "r");
+    if (file != nullptr)
+    {
+        result = FileHelper::ReadFileToBuffer(file, buffer, size);
+
+        FileHelper::CloseFile(file);
+    }
 
     return result;
 }
