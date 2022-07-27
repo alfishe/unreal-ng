@@ -12,6 +12,7 @@ Modular architecture:
 
 Pre-requisites:
 - CMake v3.16 or newer
+- QT 6.x with 5.x compatibility installed if you want to use GUI
 
 Submodules:
 - Google Test
