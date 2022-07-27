@@ -19,11 +19,11 @@ Submodules:
 
 # How to start:
 
-    git clone --recurse-submodules http://172.16.21.25/emulators/unreal.git
+    git clone --recurse-submodules https://github.com/alfishe/unreal-ng
 
 or
 
-    git clone http://172.16.21.25/emulators/unreal.git
+    git clone https://github.com/alfishe/unreal-ng
     git submodule init
     git submodule update
 
