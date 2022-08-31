@@ -28,7 +28,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     toolBar = new QToolBar("Debugger toolbar");
 
     // Set toolbar size
-    QSize toolbarSize = QSize(300, 32);
+    QSize toolbarSize = QSize(360, 32);
     toolBar->resize(toolbarSize);
 
     // Populate actions
@@ -344,7 +344,6 @@ void DebuggerWindow::waitInterrupt()
 void DebuggerWindow::resetEmulator()
 {
     qDebug() << "DebuggerWindow::resetEmulator()";
-
 
     if (_emulator)
     {

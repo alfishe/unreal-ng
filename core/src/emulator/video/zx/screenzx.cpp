@@ -287,7 +287,7 @@ uint32_t ScreenZX::GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress
     uint32_t result = 0x00000000;
 
     // Pixel bit index is in lowest 3 bits of address [0:2]
-    uint8_t pixelIndex = baseAddress & 0b0000000000000111;
+    uint8_t pixelIndex = baseAddress & 0b0000'0000'0000'0111;
     uint16_t pixelAddress = CalculateXYScreenAddress(x, y, baseAddress);
     uint16_t colorAddress = CalculateXYColorAttrAddress(x, y, baseAddress);
 
@@ -314,7 +314,7 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
     uint32_t result = 0x00000000;
 
     // Pixel bit index is in lowest 3 bits of address [0:2]
-    uint8_t pixelIndex = baseAddress & 0b0000000000000111;
+    uint8_t pixelIndex = baseAddress & 0b0000'0000'0000'0111;
     uint16_t pixelAddress = CalculateXYScreenAddressOptimized(x, y, baseAddress);
     uint16_t colorAddress = CalculateXYColorAttrAddressOptimized(x, y, baseAddress);
 

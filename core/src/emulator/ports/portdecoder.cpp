@@ -112,6 +112,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc)
     Emulator& emulator = *_context->pEmulator;
     Z80& z80 = *_context->pCPU->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+
     uint16_t breakpointID = brk.HandlePortIn(addr);
     if (breakpointID != BRK_INVALID)
     {

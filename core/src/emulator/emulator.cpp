@@ -443,6 +443,7 @@ void Emulator::StartAsync()
     if (_asyncThread)
         Stop();
 
+    // Start new thread with name 'emulator' and execute Start() method from it
     _asyncThread = new std::thread([this]()
     {
         ThreadHelper::setThreadName("emulator");

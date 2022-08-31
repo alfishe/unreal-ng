@@ -449,13 +449,12 @@ bool SoundChip_AY8910::attachToPorts(PortDecoder* decoder)
     {
         _portDecoder = decoder;
 
-        bool result = decoder->RegisterPortHandler(0xBFFD, this);
+        result = decoder->RegisterPortHandler(0xBFFD, this);
         result &= decoder->RegisterPortHandler(0xFFFD, this);
 
         if (result)
         {
             _chipAttachedToPortDecoder = true;
-            result = true;
         }
         else
         {
