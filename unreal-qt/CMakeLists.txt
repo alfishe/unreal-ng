@@ -17,6 +17,10 @@ endif ()
 get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Build all dependency libraries
+add_subdirectory("${ROOT_DIR}/core/src" core)
+
+
 # Hint to CMake where to find Qt
 #set(CMAKE_PREFIX_PATH /Users/dev/Qt/5.15.2/clang_64)
 set(CMAKE_PREFIX_PATH /Users/dev/Qt/6.2.1/macos)
@@ -100,11 +104,14 @@ if (UNIX AND NOT APPLE)
 endif (UNIX AND NOT APPLE)
 
 # Link with Qt5, emulator core and C++ common libraries
-target_link_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/cmake-build-debug/core/src)
-target_link_libraries(${PROJECT_NAME} PRIVATE core)
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets)
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Multimedia)
-target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
+target_link_libraries(
+    ${PROJECT_NAME} PRIVATE
+
+    unrealng::core
+    Qt6::Widgets
+    Qt6::Multimedia
+    ${common_libraries}
+)
 
 
 # Copy font file(s) to /fonts subfolder
@@ -115,7 +122,7 @@ add_custom_command(
 )
 
 # Copy default config file to binary folder after successful compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unrdeal.ini)
+SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
 message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 add_custom_command(
@@ -137,3 +144,18 @@ add_custom_command(
         COMMAND ${CMAKE_COMMAND} -E
         copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
 )
+
+# <Diagnostics>
+message(STATUS "<unreal-qt diagnostics>")
+message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
+message(STATUS "  SRC_DIR:             ${SRC_DIR}")
+message(STATUS "  LIB_DIR:             ${LIB_DIR}")
+
+message(STATUS "  INCLUDE_DIRECTORIES:")
+get_property(include_dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+foreach (dir ${include_dirs})
+    message(STATUS "                       ${dir}")
+endforeach ()
+
+message(STATUS "</unreal-qt diagnostics>")
+# </Diagnostics>

@@ -37,8 +37,9 @@ set (SOURCES ${CPP_FILES})
 
 message("CPP_FILES:${CPP_FILES}")
 
-# Produce static library
+# Produce static library;  Make unrealng::core alias for the target
 add_library(${PROJECT_NAME} STATIC ${CPP_FILES})
+add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
 # Declare _DEBUG symbol for compiler
 if (CMAKE_BUILD_TYPE MATCHES Debug)
@@ -59,5 +60,10 @@ if (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++ pthread)
 endif (UNIX AND NOT APPLE)
 
-target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
+# Link all components into target binary
+target_link_libraries(
+    ${PROJECT_NAME} PRIVATE
+
+    ${common_libraries}
+)
 
