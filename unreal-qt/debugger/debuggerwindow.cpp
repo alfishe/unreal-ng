@@ -37,12 +37,14 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     cpuStepAction = toolBar->addAction("CPU step");
     frameStepAction = toolBar->addAction("Frame step");
     waitInterruptAction = toolBar->addAction("Wait INT");
+    resetAction = toolBar->addAction("Reset");
 
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
     connect(cpuStepAction, &QAction::triggered, this, &DebuggerWindow::cpuStep);
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
+    connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
 
     // Subscribe to events leading to MemoryView changes
     connect(ui->registersWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
@@ -337,6 +339,17 @@ void DebuggerWindow::waitInterrupt()
     _breakpointTriggered = false;
 
     updateState();
+}
+
+void DebuggerWindow::resetEmulator()
+{
+    qDebug() << "DebuggerWindow::resetEmulator()";
+
+
+    if (_emulator)
+    {
+        _emulator->Reset();
+    }
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)

@@ -1,3 +1,4 @@
+#include <climits>
 #include "qfilebuffer.h"
 
 QFileBuffer::QFileBuffer(QObject *parent) : QHexBuffer(parent) { }

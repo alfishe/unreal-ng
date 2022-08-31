@@ -49,6 +49,7 @@ private slots:
     void cpuStep();
     void frameStep();
     void waitInterrupt();
+    void resetEmulator();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -74,6 +75,7 @@ private:
     QAction* cpuStepAction;
     QAction* frameStepAction;
     QAction* waitInterruptAction;
+    QAction* resetAction;
 };
 
 #endif // DEBUGGERWINDOW_H
