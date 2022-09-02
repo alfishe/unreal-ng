@@ -22,14 +22,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->setupUi(this);
     startButton = ui->startEmulator;
 
-    // Create layout
-    if (this->layout() == nullptr)
-    {
-        //QHBoxLayout* boxLayout = new QHBoxLayout();
-
-        //window()->setLayout(boxLayout);
-    }
-
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
@@ -87,13 +79,6 @@ MainWindow::~MainWindow()
 
     if (_guiContext)
         delete _guiContext;
-
-    QLayout* ptrLayout = layout();
-    if (ptrLayout != nullptr)
-    {
-        window()->setLayout(nullptr);
-        delete ptrLayout;
-    }
 
     delete ui;
 }
