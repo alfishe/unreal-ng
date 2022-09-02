@@ -123,21 +123,21 @@ string FileHelper::PathCombine(std::string& path1, const char* path2)
 	return PathCombine(path1, pathPart2);
 }
 
-bool FileHelper::IsFile(std::string& path)
+bool FileHelper::IsFile(const std::string& path)
 {
 	bool result = FileExists(path);
 
 	return result;
 }
 
-bool FileHelper::IsFolder(std::string& path)
+bool FileHelper::IsFolder(const std::string& path)
 {
 	bool result = FolderExists(path);
 
 	return result;
 }
 
-bool FileHelper::FileExists(std::string& path)
+bool FileHelper::FileExists(const std::string& path)
 {
 	bool result = false;
 	Pathie::Path basePath(path);
@@ -150,7 +150,7 @@ bool FileHelper::FileExists(std::string& path)
 	return result;
 }
 
-bool FileHelper::FolderExists(std::string& path)
+bool FileHelper::FolderExists(const std::string& path)
 {
 	bool result = false;
     Pathie::Path basePath(path);

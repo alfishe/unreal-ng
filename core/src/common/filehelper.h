@@ -23,10 +23,10 @@ public:
 	static std::string PathCombine(std::string& path1, string& path2);
 	static std::string PathCombine(std::string& path1, const char* path2);
 
-	static bool IsFile(std::string& path);
-	static bool IsFolder(std::string& path);
-	static bool FileExists(std::string& path);
-	static bool FolderExists(std::string& path);
+	static bool IsFile(const std::string& path);
+	static bool IsFolder(const std::string& path);
+	static bool FileExists(const std::string& path);
+	static bool FolderExists(const std::string& path);
 
 	static size_t GetFileSize(std::string& path);
     static size_t GetFileSize(FILE* file);
