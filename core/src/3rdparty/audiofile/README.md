@@ -1,11 +1,11 @@
 # AudioFile
 
 <!-- Version and License Badges -->
-![Version](https://img.shields.io/badge/version-1.0.9-green.svg?style=flat-square) 
-![License](https://img.shields.io/badge/license-GPL-blue.svg?style=flat-square) 
-![Language](https://img.shields.io/badge/language-C++-yellow.svg?style=flat-square) 
+![Version](https://img.shields.io/badge/version-1.1.0-green.svg?style=flat-square)
+![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)
+![Language](https://img.shields.io/badge/language-C++-yellow.svg?style=flat-square)
 
-A simple header-only C++ library for reading and writing audio files. 
+A simple header-only C++ library for reading and writing audio files.
 
 Current supported formats:
 
@@ -27,11 +27,11 @@ Usage
 	#include "AudioFile.h"
 
 	AudioFile<double> audioFile;
-		
+
 ### Load an audio file:
 
 	audioFile.load ("/path/to/my/audiofile.wav");
-	
+
 ### Get some information about the loaded audio:
 
 	int sampleRate = audioFile.getSampleRate();
@@ -46,7 +46,7 @@ Usage
 	
 	// or, just use this quick shortcut to print a summary to the console
 	audioFile.printSummary();
-	
+
 ### Access the samples directly:
 
 	int channel = 0;
@@ -92,9 +92,9 @@ Usage
 	
 	// 5. Put into the AudioFile object
 	bool ok = audioFile.setAudioBuffer (buffer);
-	
-	
-### Resize the audio buffer	
+
+
+### Resize the audio buffer
 
 	// Set both the number of channels and number of samples per channel
 	audioFile.setAudioBufferSize (numChannels, numSamples);
@@ -104,14 +104,14 @@ Usage
 	
 	// Set the number of channels
 	audioFile.setNumChannels (int numChannels);
-	
+
 ### Set bit depth and sample rate
-	
+
 	audioFile.setBitDepth (24);
 	audioFile.setSampleRate (44100);
-	
+
 ### Save the audio file to disk
-	
+
 	// Wave file (implicit)
 	audioFile.save ("path/to/desired/audioFile.wav");
 	
@@ -125,7 +125,7 @@ Usage
 Examples
 -----------------
 
-Please see the `examples` folder for some examples on library usage. 
+Please see the `examples` folder for some examples on library usage.
 
 
 A Note On Types
@@ -138,7 +138,7 @@ AudioFile is a template class and so it can be instantiated using floating point
 ...or double precision:
 
 	AudioFile<double> audioFile;
-	
+
 This simply reflects the data type you would like to use to store the underlying audio samples. You can still read or write 8, 16 or 24-bit audio files, regardless of the type that you use (unless your system uses a precision for floats less than your desired bit depth).
 
 I have heard of people using the library with other types, but I have not designed for those cases. Let me know if you are interested in this supporting a specific type more formally.
@@ -146,7 +146,7 @@ I have heard of people using the library with other types, but I have not design
 Error Messages
 -----------------
 
-By default, the library logs error messages to the console to provide information on what has gone wrong (e.g. a file we tried to load didn't exist). 
+By default, the library logs error messages to the console to provide information on what has gone wrong (e.g. a file we tried to load didn't exist).
 
 If you prefer not to see these messages, you can disable this error logging behaviour using:
 
@@ -155,6 +155,12 @@ If you prefer not to see these messages, you can disable this error logging beha
 
 Versions
 -------
+
+##### 1.1.0 - 15th January 2022
+
+- Moved project to MIT licence
+- Added option to load an audio file already in memory
+- CI Workflow improvements and bug fixes
 
 ##### 1.0.9 - 23rd January 2021
 
@@ -176,7 +182,7 @@ Versions
 ##### 1.0.6 - 29th February 2020
 
 - Made error logging to the console optional
-- Fixed lots of compiler warnings 
+- Fixed lots of compiler warnings
 
 ##### 1.0.5 - 14th October 2019
 
@@ -204,6 +210,8 @@ Contributions
 * Remove warnings ([Abhinav1997](https://github.com/Abhinav1997))
 * Better support on Ubuntu ([BenjaminHinchliff](https://github.com/BenjaminHinchliff))
 * Faster loading of audio files ([helloimmatt](https://github.com/helloimmatt/))
+* Improvements to Github Actions workflow ([emiro85](https://github.com/emiro85))
+* Pull request review ([MatthieuHernandez](https://github.com/MatthieuHernandez))
 
 Want to Contribute?
 -------
@@ -217,17 +225,12 @@ If you would like to submit a pull request for this library, please do! But kind
 License
 -------
 
+MIT License
+
 Copyright (c) 2017 Adam Stark
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
