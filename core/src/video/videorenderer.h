@@ -6,14 +6,12 @@
 #include "interfaces/interfaces.h"
 #include <thread>
 
-using namespace std;
-
 class VideoRenderer
 {
 private:
-	atomic<bool> _stopFlag;
+    std::atomic<bool> _stopFlag;
 	AutoResetEvent _waitForRender;
-	unique_ptr<std::thread> _renderThread;
+    std::unique_ptr<std::thread> _renderThread;
 	IRenderer* _renderer = nullptr;
 
 	void RenderThread();

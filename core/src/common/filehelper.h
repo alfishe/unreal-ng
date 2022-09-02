@@ -7,10 +7,6 @@
 #include "3rdparty/pathie-cpp/path.hpp"
 #include <string>
 
-using namespace std;
-using namespace std::string_literals; // Enables s-suffix for std::string literals
-
-
 class FileHelper
 {
 public:

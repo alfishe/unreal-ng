@@ -8,8 +8,6 @@
 #include <iostream>
 #include <exception>
 
-using namespace std;
-
 /// region <SetUp / TearDown>
 
 void BitHelper_Test::SetUp()

@@ -13,8 +13,8 @@ struct KnownROM
 	const char* Hash_SHA256;
 };
 
-typedef map<string, string> ROMSMap;
-typedef pair<string, string> ROMSignature;
+typedef std::map<std::string, std::string> ROMSMap;
+typedef std::pair<std::string, std::string> ROMSignature;
 
 /// endregion </Structures and type>
 

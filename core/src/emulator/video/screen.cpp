@@ -180,7 +180,7 @@ void Screen::InitRaster()
         if (_rasterState.configFrameDuration < _rasterState.maxFrameTiming)
         {
             std::string error = StringHelper::Format("Screen::SetVideoMode config.frame: %d cannot be less than _rasterState.maxFrameTiming: %d", _rasterState.configFrameDuration, _rasterState.maxFrameTiming);
-            throw logic_error(error);
+            throw std::logic_error(error);
         }
 #endif // _DEBUG
         /// endregion </Sanity checks>

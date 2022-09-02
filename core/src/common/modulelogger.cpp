@@ -327,7 +327,7 @@ void ModuleLogger::OutLine(const char* buffer, size_t len)
     else
     {
         // Default out
-        cout << buffer << std::endl;
+        std::cout << buffer << std::endl;
     }
 }
 
@@ -345,7 +345,7 @@ void ModuleLogger::Out(const char* buffer, size_t len)
     else
     {
         // Default out
-        cout << buffer;
+        std::cout << buffer;
     }
 }
 

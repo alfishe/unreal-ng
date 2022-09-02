@@ -54,12 +54,12 @@ std::string FileHelper::GetExecutablePath()
 	return result;
 }
 
-string FileHelper::NormalizePath(std::string& path, char separator)
+std::string FileHelper::NormalizePath(std::string& path, char separator)
 {
 	if (separator == L'\0')
 		separator = GetPathSeparator();
 
-	string result = path;
+	std::string result = path;
 
 	replace(result.begin(), result.end(), '/', separator);
 	replace(result.begin(), result.end(), '\\', separator);
@@ -67,11 +67,11 @@ string FileHelper::NormalizePath(std::string& path, char separator)
 	return result;
 }
 
-string FileHelper::NormalizePath(std::string& path)
+std::string FileHelper::NormalizePath(std::string& path)
 {
-	static char systemSeparator = GetPathSeparator();
+	const char systemSeparator = GetPathSeparator();
 
-	string result = NormalizePath(path, systemSeparator);
+    std::string result = NormalizePath(path, systemSeparator);
 
 	return result;
 }
@@ -98,7 +98,7 @@ std::string FileHelper::AbsolutePath(std::string& path)
     return result;
 }
 
-string FileHelper::PathCombine(std::string& path1, string& path2)
+std::string FileHelper::PathCombine(std::string& path1, std::string& path2)
 {
 #ifdef _WIN32
     Pathie::Path basePath = Pathie::Path::from_native(StringHelper::StringToWideString(path1));
@@ -111,13 +111,13 @@ string FileHelper::PathCombine(std::string& path1, string& path2)
     basePath.expand();
     basePath /= path2;
 
-	string result = basePath.str();
+    std::string result = basePath.str();
 	result = NormalizePath(result);
 
 	return result;
 }
 
-string FileHelper::PathCombine(std::string& path1, const char* path2)
+std::string FileHelper::PathCombine(std::string& path1, const char* path2)
 {
 	string pathPart2 = path2;
 	return PathCombine(path1, pathPart2);
@@ -205,7 +205,7 @@ size_t FileHelper::GetFileSize(FILE* file)
     return result;
 }
 
-string FileHelper::PrintablePath(std::string path)
+std::string FileHelper::PrintablePath(std::string path)
 {
 	string result = path;
 

@@ -16,6 +16,7 @@ class SoundManager
 public:
     static const int OUTPUT_CHANNELS = 2;
     static const int AUDIO_SAMPLING_RATE = 44100;
+    static const int AUDIO_BUFFER_DURATION_MILLISEC = 5000;
     static constexpr double SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / 50.0;   // 882 audio samples per frame @44100
 
     /// endregion </Constants>

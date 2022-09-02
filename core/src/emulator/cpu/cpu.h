@@ -8,8 +8,8 @@
 #include "emulator/memory/memory.h"
 #include "emulator/ports/ports.h"
 #include "emulator/memory/rom.h"
-#include "emulator/sound/sound.h"
 #include "emulator/io/hdd/hdd.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "emulator/emulatorcontext.h"
 
@@ -45,7 +45,7 @@ protected:
     PortDecoder* _portDecoder = nullptr;
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
-    Sound* _sound = nullptr;
+    SoundManager* _sound = nullptr;
     HDD* _hdd = nullptr;
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;

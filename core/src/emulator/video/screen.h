@@ -6,8 +6,6 @@
 
 #include <algorithm>
 
-using namespace std;
-
 class Z80;
 class Renderers;
 
