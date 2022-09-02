@@ -5,7 +5,7 @@
 
 using namespace std;
 
-/// region <Helper fprmatters>
+/// region <Helper formatters>
 class ThousandsDelimiterPunct : public std::numpunct<char>
 {
 protected:
