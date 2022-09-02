@@ -5,15 +5,15 @@
 #include <QDebug>
 #include <QDir>
 
-int main(int argc, char *argv[])
-{
-    QApplication app(argc, argv);
+int fontID = -1;
 
+void registerFonts(QApplication& app)
+{
     /// region <Load monospace font>
     // Note: All fonts and resources used on windows must be loaded before window object(s) instantiated
 
     // Load custom monospace font from TTF file
-    int fontID = -1;
+
     QString appPath = app.applicationDirPath();
     QDir filePath(appPath);
     QString fontPath = filePath.filePath("fonts/consolas.ttf");
@@ -50,6 +50,22 @@ int main(int argc, char *argv[])
     }
 #endif
     /// endregion </Load monospace font>
+}
+
+void unregisterFonts()
+{
+    if (fontID != -1)
+    {
+        QFontDatabase::removeApplicationFont(fontID);
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    QApplication app(argc, argv);
+
+    // Load non-system fonts before any GUI rendered
+    registerFonts(app);
 
     // Instantiate main application window
     MainWindow window;
@@ -58,12 +74,8 @@ int main(int argc, char *argv[])
     // Start application main loop
     int result =  app.exec();
 
-    /// region <Unregister font>
-    if (fontID != -1)
-    {
-        QFontDatabase::removeApplicationFont(fontID);
-    }
-    /// endregion </Unregister font>
+    // Unload non-system fonts
+    unregisterFonts();
 
     return result;
 }
