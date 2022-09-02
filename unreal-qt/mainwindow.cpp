@@ -22,7 +22,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->setupUi(this);
     startButton = ui->startEmulator;
 
-    // Create layoyt
+    // Create layout
     if (this->layout() == nullptr)
     {
         //QHBoxLayout* boxLayout = new QHBoxLayout();
