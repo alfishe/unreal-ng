@@ -1,7 +1,7 @@
 #include "stdafx.h"
 #include "soundmanager.h"
 
-//#include "3rdparty/audiofile/AudioFile.h"
+#include "common/sound/audiofilehelper.h"
 #include "emulator/emulatorcontext.h"
 
 /// region <Constructors / Destructors>
