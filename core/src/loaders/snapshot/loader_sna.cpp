@@ -14,7 +14,7 @@
 
 /// region <Constructors / destructors>
 
-LoaderSNA::LoaderSNA(EmulatorContext* context, std::string path)
+LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
 {
     _context = context;
     _logger = context->pModuleLogger;
@@ -45,7 +45,7 @@ bool LoaderSNA::load()
 {
     bool result = false;
 
-    if (validateSnapshotFile())
+    if (validate())
     {
         if (loadToStaging())
         {
@@ -59,7 +59,7 @@ bool LoaderSNA::load()
 /// endregion </Public methods>
 
 /// region <Helper methods>
-bool LoaderSNA::validateSnapshotFile()
+bool LoaderSNA::validate()
 {
     bool result = false;
 
