@@ -231,7 +231,8 @@ void PortDecoder_Spectrum128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
     if (prevScreenNumber != screenNumber)
     {
-        _screen->SetActiveScreen(screenNumber);
+        SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
+        _screen->SetActiveScreen(screen);
     }
 
     // Cache out port value in state

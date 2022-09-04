@@ -28,6 +28,12 @@ class Renderers;
 
 /// region <Enumerations>
 
+enum SpectrumScreenEnum : uint8_t
+{
+    SCREEN_NORMAL = 0,
+    SCREEN_SHADOW = 1
+};
+
 enum VideoModeEnum : uint8_t
 {
     M_NUL = 0,	// Non-existing mode / headless
@@ -431,7 +437,7 @@ public:
 
 public:
 	virtual void SetVideoMode(VideoModeEnum mode);
-	virtual void SetActiveScreen(uint8_t screen);
+	virtual void SetActiveScreen(SpectrumScreenEnum screen);
     virtual void SetBorderColor(uint8_t color);
 
     virtual VideoModeEnum GetVideoMode();
