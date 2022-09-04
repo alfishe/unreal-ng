@@ -75,3 +75,13 @@ TEST_F(LoaderZ80_Test, stageLoad)
     result = loader.stageLoad();
     EXPECT_EQ(result, true) << "Unable to load '" << absoluteSnapshotPath << "' snapshot";
 }
+
+TEST_F(LoaderZ80_Test, load)
+{
+    static std::string testSnapshotPath = "../../../tests/loaders/z80/newbench.z80";
+    std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testSnapshotPath);
+
+    LoaderZ80CUT loader(_context, testSnapshotPath);
+    bool result = loader.load();
+    EXPECT_EQ(result, true) << "Unable to load '" << absoluteSnapshotPath << "' snapshot";
+}
