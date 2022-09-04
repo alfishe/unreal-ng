@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include <emulator/memory/memory.h>
+#include <emulator/cpu/z80.h>
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 
@@ -31,7 +32,8 @@ enum Z80MemoryMode : uint8_t
 {
     Z80_48K = 0,
     Z80_128K = 1,
-    Z80_SAMCOUPE = 2
+    Z80_SAMCOUPE = 2,
+    Z80_256K = 3
 };
 
 #pragma pack(push, 1)
@@ -68,7 +70,15 @@ enum Z80_Models_v2 : uint8_t
     Z80_MODEL2_128K     = 3,    // Genuine ZX-Spectrum 128k
     Z80_MODEL2_128K_IF1 = 4,    // ZX-Spectrum 128k + Interface 1
     Z80_MODEL2_UNUSED1  = 5,
-    Z80_MODEL2_UNUSED2  = 6
+    Z80_MODEL2_UNUSED2  = 6,
+
+    Z80_MODEL2_128K_3   = 7,    // Spectrum +3
+    Z80_MODEL2_128k_3_1 = 8,    // Same Spectrum +3
+    Z80_MODEL2_P128K    = 9,    // Pentagon 128K
+    Z80_MODEL2_ZS256K   = 10,   // Scorpion ZS 256K
+    Z80_MODEL2_DIDAKTIK = 11,   // Didaktik-Kompakt
+    Z80_MODEL2_128K_2   = 12,   // Spectrum +2
+    Z80_MODEL2_128K_2A  = 13,   // Spectrum +2A
 };
 
 enum Z80_Models_v3 : uint8_t
@@ -154,6 +164,11 @@ protected:
     bool _stagingLoaded = false;
 
     Z80SnapshotVersion _snapshotVersion = Unknown;
+
+    uint8_t* _stagingROMPages[MAX_ROM_PAGES] = {};
+    uint8_t* _stagingRAMPages[MAX_RAM_PAGES] = {};
+    Z80MemoryMode _memoryMode = Z80_48K;
+    Z80Registers _z80Registers = {};
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -177,6 +192,10 @@ protected:
     bool loadZ80v2();
     bool loadZ80v3();
 
+    Z80Registers getZ80Registers(const Z80Header_v1& header, uint16_t pc);
+    Z80MemoryMode getMemoryMode(const Z80Header_v2& header);
+    void applyPeripheralState(const Z80Header_v2& header);
+
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
     // The compression method is very simple:
     //      it replaces repetitions of at least five equal bytes by a four-byte code ED ED xx yy,
@@ -195,11 +214,14 @@ protected:
 
     MemoryPageDescriptor resolveSnapshotPage(uint8_t page, Z80MemoryMode mode);
 
+    void freeStagingMemory();
+
     /// endregion </Helper methods>
 
     /// region <Debug methods>
 public:
     std::string dumpSnapshotInfo();
+    std::string dumpSnapshotMemoryInfo();
     /// endregion </Debug methods>
 };
 

@@ -1,9 +1,11 @@
+#include <loaders/snapshot/loader_z80.h>
 #include "stdafx.h"
 
 #include "emulator.h"
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/dumphelper.h"
+#include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
@@ -534,17 +536,43 @@ bool Emulator::LoadSnapshot(std::string &path)
         wasRunning = true;
     }
 
-    LoaderSNA loaderSna(_context, path);
-    result = loaderSna.load();
-
-    /// region <Info logging>
-    if (result)
+    std::string ext = FileHelper::GetFileExtension(path);
+    if (ext == "sna")
     {
-        MLOGINFO("SNA file loaded successfully, executing it...");
+        /// region <Load SNA snapshot>
+        LoaderSNA loaderSna(_context, path);
+        result = loaderSna.load();
+
+        /// region <Info logging>
+        if (result)
+        {
+            MLOGINFO("SNA file loaded successfully, executing it...");
+        }
+
+        MLOGEMPTY();
+        /// endregion </Info logging>
+
+        /// endregion </Load SNA snapshot>
+    }
+    else if (ext == "z80")
+    {
+        /// region <Load Z80 snapshot>
+        LoaderZ80 loaderZ80(_context, path);
+        result = loaderZ80.load();
+
+        /// region <Info logging>
+        if (result)
+        {
+            MLOGINFO("Z80 file loaded successfully, executing it...");
+        }
+
+        MLOGEMPTY();
+        /// endregion </Info logging>
+
+        /// endregion </Load Z80 snapshot>
     }
 
-    MLOGEMPTY();
-    /// endregion </Info logging>
+
 
     // Resume execution
     if (wasRunning)
