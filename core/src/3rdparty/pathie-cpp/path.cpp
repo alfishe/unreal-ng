@@ -379,24 +379,27 @@ void Path::split(Path& dname, Path& bname) const
  */
 std::string Path::extension() const
 {
-  if (m_path == ".")
-    return "";
-  else if (m_path == "..")
-    return "";
+    std::string result;
 
-  size_t pos = 0;
-  if ((pos = m_path.rfind(".")) != std::string::npos) { // assignment intended
-    if (pos == 0 || pos == m_path.length() - 1) // .foo and foo.
-      return "";
-    else {
-      if (m_path[pos - 1] == '/') // foo/.txt
-	return "";
-      else
-	return m_path.substr(pos);
+    if (m_path != "." && m_path != "..")
+    {
+        size_t pos = m_path.rfind(".");
+
+        if (pos != std::string::npos)
+        {
+            // Exclude .foo and foo. cases
+            if (pos > 0 && pos != m_path.length() - 1)
+            {
+                // Exclude foo/.txt case
+                if (m_path[pos - 1] != '/')
+                {
+                    result = m_path.substr(pos + 1);
+                }
+            }
+        }
     }
-  }
-  else
-    return "";
+
+    return result;
 }
 
 /**

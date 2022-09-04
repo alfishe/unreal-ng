@@ -54,7 +54,7 @@ std::string FileHelper::GetExecutablePath()
 	return result;
 }
 
-std::string FileHelper::NormalizePath(std::string& path, char separator)
+std::string FileHelper::NormalizePath(const std::string& path, char separator)
 {
 	if (separator == L'\0')
 		separator = GetPathSeparator();
@@ -67,7 +67,7 @@ std::string FileHelper::NormalizePath(std::string& path, char separator)
 	return result;
 }
 
-std::string FileHelper::NormalizePath(std::string& path)
+std::string FileHelper::NormalizePath(const std::string& path)
 {
 	const char systemSeparator = GetPathSeparator();
 
@@ -76,7 +76,7 @@ std::string FileHelper::NormalizePath(std::string& path)
 	return result;
 }
 
-std::string FileHelper::AbsolutePath(std::string& path)
+std::string FileHelper::AbsolutePath(const std::string& path)
 {
     std::string result;
 
@@ -98,7 +98,7 @@ std::string FileHelper::AbsolutePath(std::string& path)
     return result;
 }
 
-std::string FileHelper::PathCombine(std::string& path1, std::string& path2)
+std::string FileHelper::PathCombine(const std::string& path1, const std::string& path2)
 {
 #ifdef _WIN32
     Pathie::Path basePath = Pathie::Path::from_native(StringHelper::StringToWideString(path1));
@@ -117,7 +117,7 @@ std::string FileHelper::PathCombine(std::string& path1, std::string& path2)
 	return result;
 }
 
-std::string FileHelper::PathCombine(std::string& path1, const char* path2)
+std::string FileHelper::PathCombine(const std::string& path1, const char* path2)
 {
 	string pathPart2 = path2;
 	return PathCombine(path1, pathPart2);
@@ -163,7 +163,7 @@ bool FileHelper::FolderExists(const std::string& path)
 	return result;
 }
 
-size_t FileHelper::GetFileSize(std::string& path)
+size_t FileHelper::GetFileSize(const std::string& path)
 {
     size_t result = -1;
 
@@ -205,14 +205,24 @@ size_t FileHelper::GetFileSize(FILE* file)
     return result;
 }
 
-std::string FileHelper::PrintablePath(std::string path)
+std::string FileHelper::GetFileExtension(const std::string& path)
+{
+    std::string result;
+
+    Pathie::Path filepath(path);
+    result = filepath.extension();
+
+    return result;
+}
+
+std::string FileHelper::PrintablePath(const std::string& path)
 {
 	string result = path;
 
 	return result;
 }
 
-FILE* FileHelper::OpenFile(std::string& path, const char* mode)
+FILE* FileHelper::OpenFile(const std::string& path, const char* mode)
 {
     FILE* result = nullptr;
 
@@ -256,7 +266,7 @@ size_t FileHelper::ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size)
 /// @param buffer Buffer
 /// @param size Buffer size
 /// @return Number of bytes loaded from file to the buffer
-size_t FileHelper::ReadFileToBuffer(std::string& filePath, uint8_t* buffer, size_t size)
+size_t FileHelper::ReadFileToBuffer(const std::string& filePath, uint8_t* buffer, size_t size)
 {
     size_t result = 0;
 
@@ -271,7 +281,7 @@ size_t FileHelper::ReadFileToBuffer(std::string& filePath, uint8_t* buffer, size
     return result;
 }
 
-bool FileHelper::SaveBufferToFile(std::string& filePath, uint8_t* buffer, size_t size)
+bool FileHelper::SaveBufferToFile(const std::string& filePath, uint8_t* buffer, size_t size)
 {
     bool result = false;
 
