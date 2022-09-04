@@ -16,6 +16,18 @@
 
 class BreakpointManager;
 
+/// region <Types>
+enum EmulatorStateEnum : uint8_t
+{
+    StateUnknown = 0,
+    StateInitialized,
+    StateRun,
+    StatePaused,
+    StateResumed,
+    StateStopped
+};
+/// endregion </Types>
+
 class Emulator
 {
     /// region <ModuleLogger definitions for Module/Submodule>

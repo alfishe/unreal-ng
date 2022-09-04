@@ -10,6 +10,31 @@ class Memory;
 class Screen;
 class Keyboard;
 
+/// region <Constants>
+
+// Port 0x7FFD bits
+constexpr uint8_t PORT_7FFD_RAM_BANK_BITMASK    = 0b0000'0111;
+constexpr uint8_t PORT_7FFD_SCREEN              = (1u << 3);
+constexpr uint8_t PORT_7FFD_ROM_BANK            = (1u << 4);
+constexpr uint8_t PORT_7FFD_LOCK                = (1u << 5);
+
+constexpr uint8_t PORT_7FFD_SCREEN_NORMAL       = 0;
+constexpr uint8_t PORT_7FFD_SCREEN_SHADOW       = (1u << 3);
+
+constexpr uint8_t PORT_7FFD_ROM_BANK_0          = 0;
+constexpr uint8_t PORT_7FFD_ROM_BANK_1          = (1u << 4);
+
+constexpr uint8_t PORT_7FFD_RAM_BANK_0          = 0;
+constexpr uint8_t PORT_7FFD_RAM_BANK_1          = 0b0000'0001;
+constexpr uint8_t PORT_7FFD_RAM_BANK_2          = 0b0000'0010;
+constexpr uint8_t PORT_7FFD_RAM_BANK_3          = 0b0000'0011;
+constexpr uint8_t PORT_7FFD_RAM_BANK_4          = 0b0000'0100;
+constexpr uint8_t PORT_7FFD_RAM_BANK_5          = 0b0000'0101;
+constexpr uint8_t PORT_7FFD_RAM_BANK_6          = 0b0000'0110;
+constexpr uint8_t PORT_7FFD_RAM_BANK_7          = 0b0000'0111;
+
+/// endregion <Constants>
+
 /// region <Types>
 
 /// Base class to mark all devices connected to port decoder

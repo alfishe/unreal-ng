@@ -417,10 +417,8 @@ void Z80::retn()
 
 /// endregion </Z80 lifecycle>
 
-//
-// Read byte directly from ZX-Spectrum memory (current memory bank setup used)
-// No cycle counters will be incremented
-//
+/// Read byte directly from ZX-Spectrum memory (current memory bank setup used)
+/// No cycle counters will be incremented
 uint8_t Z80::DirectRead(uint16_t addr)
 {
 	uint8_t* remap_addr = _context->pMemory->MapZ80AddressToPhysicalAddress(addr);

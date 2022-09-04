@@ -41,6 +41,7 @@ protected:
 
     /// region <Event handlers / Slots>
 private slots:
+    void handleEmulatorStateChanged(int id, Message* message);
     void handleMessageBreakpointTriggered(int id, Message* message);
 
     // Debug toolbar actions

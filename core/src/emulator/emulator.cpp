@@ -437,6 +437,11 @@ void Emulator::Start()
 	//LoadSnapshot(snapshotPath);
 
 	_mainloop->Run(_stopRequested);
+
+    // Broadcast notification - Emulator paused
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::StartAsync()
@@ -463,6 +468,11 @@ void Emulator::Pause()
     _isRunning = false;
 
     _mainloop->Pause();
+
+    // Broadcast notification - Emulator paused
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Resume()
@@ -476,6 +486,11 @@ void Emulator::Resume()
 	_mainloop->Resume();
 
 	_isRunning = true;
+
+    // Broadcast notification - Emulator execution resumed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Stop()
@@ -511,6 +526,11 @@ void Emulator::Stop()
     _isRunning = false;
 	_stopRequested = false;
 	_isPaused = false;
+
+    // Broadcast notification - Emulator execution resumed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 //endregion
@@ -536,7 +556,7 @@ bool Emulator::LoadSnapshot(std::string &path)
         wasRunning = true;
     }
 
-    std::string ext = FileHelper::GetFileExtension(path);
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
     if (ext == "sna")
     {
         /// region <Load SNA snapshot>
@@ -572,12 +592,10 @@ bool Emulator::LoadSnapshot(std::string &path)
         /// endregion </Load Z80 snapshot>
     }
 
-
-
     // Resume execution
     if (wasRunning)
     {
-        Resume();
+        //Resume();
     }
 
     return result;

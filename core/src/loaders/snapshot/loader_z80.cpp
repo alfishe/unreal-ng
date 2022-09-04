@@ -125,20 +125,21 @@ void LoaderZ80::commitFromStage()
     if (_stagingLoaded)
     {
         Memory& memory = *_context->pMemory;
+        PortDecoder& ports = *_context->pPortDecoder;
 
         /// region <Apply port configuration>
         switch (_memoryMode)
         {
             case Z80_48K:
             {
-                uint8_t romPage48k = memory.GetROMPageFromAddress(memory.base_sos_rom);
-                memory.SetROMPage(romPage48k);
-
-                Screen& screen = *_context->pScreen;
-                screen.SetActiveScreen(SCREEN_NORMAL);
+                uint8_t port7FFD = PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
+                ports.PeripheralPortOut(0x7FFD, port7FFD);
+                ports.PeripheralPortOut(0xFFFD, _portFFFD);
             }
                 break;
             case Z80_128K:
+                ports.PeripheralPortOut(0x7FFD, _port7FFD);
+                ports.PeripheralPortOut(0xFFFD, _portFFFD);
                 break;
             case Z80_256K:
                 break;
@@ -181,9 +182,6 @@ void LoaderZ80::commitFromStage()
         Z80Registers* actualRegisters = static_cast<Z80Registers*>(_context->pCPU->GetZ80());
         memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
         /// endregion </Transfer Z80 registers>
-
-        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        brk.AddExecutionBreakpoint(_z80Registers.pc);
     }
 }
 
@@ -200,9 +198,9 @@ Z80SnapshotVersion LoaderZ80::getSnapshotFileVersion()
         rewind(_file);
 
         // Read Z80 common header
-        size_t headerRead = fread(&header, sizeof(header), 1, _file);
+        size_t headerRead = FileHelper::ReadFileToBuffer(_file, (uint8_t*)&header, sizeof(header));
 
-        if (headerRead == 1)
+        if (headerRead == sizeof(header))
         {
             if (header.reg_PC == 0x0000)
             {
@@ -299,6 +297,10 @@ bool LoaderZ80::loadZ80v2()
 
         // Determine snapshot memory model based on model
         _memoryMode = getMemoryMode(headerV2);
+
+        // Retrieve ports configuration
+        _port7FFD = headerV2.p7FFD;
+        _portFFFD = headerV2.pFFFD;
 
         // Start memory blocks processing after all headers
         uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV2.extended_header_len + 2;
@@ -426,7 +428,7 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
     result.i = header.reg_I;
     result.r_low = header.reg_R;
     result.r_hi = header.reg_R & 0x80;
-    result.im = header.im;
+    result.im = header.im & 0x03;
 
     result.pc = pc;
 

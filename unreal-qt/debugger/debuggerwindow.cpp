@@ -58,11 +58,20 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     // Set hex memory viewer to readonly mode
     ui->hexView->setReadOnly(true);
 
-    // Subscribe to breakpoint trigger messages
+
+    /// region <Subscribe to events>
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, observerInstance, callback);
+
+    // Subscribe to emulator state changes
+    ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
+    messageCenter.AddObserver(NC_LOGGER_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    // Subscribe to breakpoint trigger messages
+    ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, observerInstance, breakpointCallback);
+
+    /// endregion </Subscribe to events>
 }
 
 DebuggerWindow::~DebuggerWindow()
@@ -245,6 +254,55 @@ void DebuggerWindow::dispatchToMainThread(std::function<void()> callback)
 /// endregion <QT Helper methods>
 
 /// region <Event handlers / Slots>
+
+void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
+{
+    if (message == nullptr || message->obj == nullptr)
+        return;
+
+    qDebug() << "DebuggerWindow::handleEmulatorStateChanged()";
+
+    SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
+    EmulatorStateEnum emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
+
+    dispatchToMainThread([this, emulatorState]()
+    {
+        switch (emulatorState)
+        {
+            case StateInitialized:
+            case StateStopped:
+            default:
+                continueAction->setEnabled(false);
+                pauseAction->setEnabled(true);
+                cpuStepAction->setEnabled(false);
+                frameStepAction->setEnabled(false);
+                waitInterruptAction->setEnabled(false);
+                resetAction->setEnabled(false);
+                break;
+            case StateRun:
+            case StateResumed:
+                continueAction->setEnabled(false);
+                pauseAction->setEnabled(true);
+                cpuStepAction->setEnabled(false);
+                frameStepAction->setEnabled(false);
+                waitInterruptAction->setEnabled(false);
+                resetAction->setEnabled(true);
+                break;
+            case StatePaused:
+                continueAction->setEnabled(true);
+                pauseAction->setEnabled(false);
+                cpuStepAction->setEnabled(true);
+                frameStepAction->setEnabled(true);
+                waitInterruptAction->setEnabled(true);
+                resetAction->setEnabled(true);
+                break;
+        }
+
+
+
+        updateState();
+    });
+}
 
 void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 {

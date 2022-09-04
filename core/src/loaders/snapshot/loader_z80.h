@@ -169,6 +169,8 @@ protected:
     uint8_t* _stagingRAMPages[MAX_RAM_PAGES] = {};
     Z80MemoryMode _memoryMode = Z80_48K;
     Z80Registers _z80Registers = {};
+    uint8_t _port7FFD = 0x00;
+    uint8_t _portFFFD = 0x00;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
