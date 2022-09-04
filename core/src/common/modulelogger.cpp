@@ -513,6 +513,8 @@ std::string ModuleLogger::DumpRequestedSettingsChange(uint32_t change)
          ss << StringHelper::Format("Submodules: %s", DumpResolveFlags(moduleSettings, submoduleNames, submoduleNamesSize).c_str());
      }
 
+     result = ss.str();
+
     return result;
 }
 
