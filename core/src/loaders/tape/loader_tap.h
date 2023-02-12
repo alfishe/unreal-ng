@@ -3,6 +3,8 @@
 #include "stdafx.h"
 
 /// region <Documentation>
+
+/// region <TAP format>
 // @see TAP format: https://faqwiki.zxnet.co.uk/wiki/TAP_format
 // @see: https://k1.spdns.de/Develop/Projects/zasm/Info/tap.txt
 // @see TAP structures: https://formats.kaitai.io/zx_spectrum_tap/index.html
@@ -28,11 +30,32 @@
 //    flag byte ...........................................^^
 //    first two bytes of rom .................................^^_^^
 //    checksum ......................................................^^
+/// endregion </TAP format>
+
+/// region <ZX-Spectrum tape timings>
+
+/// Tape signal is frequency-modulation encoded
+/// Signal types:
+/// 1. Pilot tone - 807Hz (2168 high + 2168 low Z80 t-states @3.5MHz). Pilot Freq = 3500000 / (2168 + 2168) = 887Hz
+/// 2. Synchronization signal - asymmetrical: 668 t-states high (190.6 uS) and 735 t-states low (210 uS)
+/// 3. Data: 0-encoding - 2047Hz (855 high + 855 low t-states). Zero Freq = 3500000 / (855 + 855) = 2047Hz
+/// 4. Data: 1-encoding - 1023Hz (1710 high + 1710 low t-states). One Freq = 3500000 / (1710 + 1710) = 1023Hz
+
+/// endregion </ZX-Spectrum tape timings>
 
 /// endregion </Documentation
 
 /// region <Constants>
 constexpr int MAX_TAPE_PULSES = 0x100;
+constexpr uint16_t PILOT_TONE_HALF_PERIOD = 2168;
+constexpr uint16_t SYNCHO1 = 667;
+constexpr uint16_t SYNCHRO2 = 735;
+constexpr uint16_t ZERO_ENCODE_HALF_PERIOD = 855;
+constexpr uint16_t ONE_ENCODE_HALF_PERIOD = 1710;
+
+
+//2168, 667, 735, 855, 1710, (*ptr < 4) ? 8064 : 3220, 1000
+
 /// endregion </Constants>
 
 /// region <Types>

@@ -172,6 +172,7 @@ void MainLoop::RunFrame()
 //
 void MainLoop::InitSoundFrame()
 {
+    _soundManager->initFrame();
 }
 
 //

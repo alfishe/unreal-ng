@@ -17,6 +17,8 @@ BreakpointManager::BreakpointManager(EmulatorContext* context)
 
 BreakpointManager::~BreakpointManager()
 {
+    ClearBreakpoints();
+
     _context = nullptr;
 }
 

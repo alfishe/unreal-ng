@@ -19,6 +19,7 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Build all dependency libraries
 add_subdirectory("${ROOT_DIR}/core/src" core)
+add_subdirectory("${ROOT_DIR}/core/tests" tests)
 
 
 # Hint to CMake where to find Qt

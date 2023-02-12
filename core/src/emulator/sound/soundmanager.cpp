@@ -11,8 +11,10 @@ SoundManager::SoundManager(EmulatorContext *context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    // Reserve buffer capacity for 1 second of stereo PCM samples @44100
-    int bufferSize = AUDIO_SAMPLING_RATE * AUDIO_BUFFER_DURATION_MILLISEC / 1000;
+    _beeper = new Beeper(1500000, AUDIO_SAMPLING_RATE);
+
+    // Reserve buffer capacity for 1 second of stereo PCM samples at selected sampling rate
+    constexpr int bufferSize = AUDIO_SAMPLING_RATE * AUDIO_BUFFER_DURATION_MILLISEC / 1000;
     _outBufferLeft.resize(bufferSize);
     _outBufferRight.resize(bufferSize);
 }
@@ -30,7 +32,7 @@ SoundManager::~SoundManager()
 void SoundManager::reset()
 {
     // Reset all chips state
-    _ay8910.reset();
+    _ay8910->reset();
 
     // Reset sound rendering state
 }
@@ -43,6 +45,11 @@ void SoundManager::mute()
 void SoundManager::unmute()
 {
 
+}
+
+void SoundManager::initFrame()
+{
+    //_beeper->frameStart();
 }
 
 /// endregion </Methods>
@@ -74,16 +81,16 @@ bool SoundManager::attachAY8910ToPorts()
 {
     bool result = false;
 
-    _ay8910.attachToPorts(_context->pPortDecoder);
+    _ay8910->attachToPorts(_context->pPortDecoder);
 
     return result;
 }
 
-bool SoundManager::detachAY810FromPorts()
+bool SoundManager::detachAY8910FromPorts()
 {
     bool result = false;
 
-    _ay8910.detachFromPorts();
+    _ay8910->detachFromPorts();
 
     return result;
 }

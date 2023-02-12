@@ -8,6 +8,7 @@ class ModuleLogger;
 class EmulatorContext;
 class Memory;
 class Screen;
+class SoundManager;
 class Keyboard;
 
 /// region <Constants>
@@ -72,6 +73,7 @@ protected:
     Keyboard* _keyboard = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
+    SoundManager* _soundManager = nullptr;
     ModuleLogger* _logger = nullptr;
 
     // Registered port handlers from peripheral devices

@@ -211,7 +211,7 @@ Z80SnapshotVersion LoaderZ80::getSnapshotFileVersion()
 
                 if (headerRead == 1)
                 {
-                    uint16_t extendedHeaderSize = headerV2.extended_header_len;
+                    uint16_t extendedHeaderSize = headerV2.extendedHeaderLen;
 
                     switch (extendedHeaderSize)
                     {
@@ -293,7 +293,7 @@ bool LoaderZ80::loadZ80v2()
         Z80Header_v2& headerV2 = *(Z80Header_v2*)pBuffer;
 
         // Extract Z80 registers information
-        _z80Registers = getZ80Registers(headerV1, headerV2.new_PC);
+        _z80Registers = getZ80Registers(headerV1, headerV2.newPC);
 
         // Determine snapshot memory model based on model
         _memoryMode = getMemoryMode(headerV2);
@@ -303,7 +303,7 @@ bool LoaderZ80::loadZ80v2()
         _portFFFD = headerV2.pFFFD;
 
         // Start memory blocks processing after all headers
-        uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV2.extended_header_len + 2;
+        uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV2.extendedHeaderLen + 2;
         size_t processedBytes = memBlock - pBuffer;
 
         while (memBlock)
@@ -366,7 +366,7 @@ bool LoaderZ80::loadZ80v3()
 
     if (_fileValidated && _snapshotVersion == Z80v3)
     {
-        throw std::logic_error("Not supported yet");
+        throw std::logic_error("Z80 v3 snapshots are not supported yet");
     }
 
     return result;

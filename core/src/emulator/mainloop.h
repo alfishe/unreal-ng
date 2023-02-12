@@ -21,6 +21,7 @@ protected:
     EmulatorState* _state = nullptr;
     CPU* _cpu = nullptr;
     Screen* _screen = nullptr;
+    SoundManager* _soundManager = nullptr;
 
 
 	volatile bool _isRunning = false;
@@ -34,6 +35,7 @@ public:
 	MainLoop(EmulatorContext* context);
 	virtual ~MainLoop();
 
+public:
 	void Run(volatile bool& exit);
 	void Stop();
 

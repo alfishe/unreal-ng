@@ -107,8 +107,8 @@ enum Z80_Models_v3 : uint8_t
 
 struct Z80Header_v2 : public Z80Header_v1
 {
-    uint16_t extended_header_len;
-    uint16_t new_PC;            // Z80Header_v1.PC = 0 for v2 and v3. PC value stored here
+    uint16_t extendedHeaderLen;
+    uint16_t newPC;             // Z80Header_v1.PC = 0 for v2 and v3. PC value stored here
     Z80_Models_v2 model;        // Hardware platform
     uint8_t p7FFD;
     uint8_t r1;
@@ -119,19 +119,19 @@ struct Z80Header_v2 : public Z80Header_v1
 
 struct Z80Header_v3 : public Z80Header_v2
 {
-    uint16_t lowTCounter;
-    uint8_t highTCounter;
-    uint8_t qlFlag;
-    uint8_t mgtROM;
-    uint8_t multifaceROM;
-    uint8_t isROM1;
-    uint8_t isROM2;
-    uint8_t joystickMapping[10];
-    uint8_t keyMappings[10];
-    uint8_t mgtType;
-    uint8_t inhibitButtonStatus;
-    uint8_t inhibitFlag;
-    uint8_t p1FFD;
+    uint16_t lowTCounter;           // [55]
+    uint8_t highTCounter;           // [57]
+    uint8_t qlFlag;                 // [58]
+    uint8_t mgtROM;                 // [59]
+    uint8_t multifaceROM;           // [60]
+    uint8_t isROM1;                 // [61]
+    uint8_t isROM2;                 // [62]
+    uint8_t joystickMapping[10];    // [63]
+    uint8_t keyMappings[10];        // [73]
+    uint8_t mgtType;                // [83]
+    uint8_t inhibitButtonStatus;    // [84]
+    uint8_t inhibitFlag;            // [85]
+    uint8_t p1FFD;                  // [86]
 };
 
 struct MemoryBlockDescriptor
