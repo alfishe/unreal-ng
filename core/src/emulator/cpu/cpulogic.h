@@ -126,7 +126,7 @@ extern void (&and8)(Z80* cpu, uint8_t src);
 extern void (&or8)(Z80* cpu, uint8_t src);
 extern void (&xor8)(Z80* cpu, uint8_t src);
 extern void (&bitmem)(Z80* cpu, uint8_t src, uint8_t bit);
-extern void (&set)(uint8_t& src, uint8_t bit);
+extern void (&op_set)(uint8_t& src, uint8_t bit);
 extern void (&res)(uint8_t& src, uint8_t bit);
 extern void (&bit)(Z80* cpu, uint8_t src, uint8_t bit);
 extern uint8_t (&resbyte)(uint8_t src, uint8_t bit);
