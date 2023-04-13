@@ -107,6 +107,7 @@ Emulator* DebuggerWindow::getEmulator()
 void DebuggerWindow::reset()
 {
     ui->registersWidget->reset();
+    ui->hexView->
 
     ui->memorypagesWidget->reset();
     ui->stackWidget->reset();
@@ -263,14 +264,27 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
     qDebug() << "DebuggerWindow::handleEmulatorStateChanged()";
 
     SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
-    EmulatorStateEnum emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
+    _emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
 
-    dispatchToMainThread([this, emulatorState]()
+    dispatchToMainThread([this]()
     {
-        switch (emulatorState)
+        switch (_emulatorState)
         {
-            case StateInitialized:
+            case StateUnknown:
             case StateStopped:
+                continueAction->setEnabled(false);
+                pauseAction->setEnabled(false);
+                cpuStepAction->setEnabled(false);
+                frameStepAction->setEnabled(false);
+                waitInterruptAction->setEnabled(false);
+                resetAction->setEnabled(false);
+
+                // Emulator already stopped working.
+                // Time to disable all rendering activities and set controls to initial inactive state
+                _emulator = nullptr;
+                reset();
+                break;
+            case StateInitialized:
             default:
                 continueAction->setEnabled(false);
                 pauseAction->setEnabled(true);
@@ -297,8 +311,6 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 resetAction->setEnabled(true);
                 break;
         }
-
-
 
         updateState();
     });

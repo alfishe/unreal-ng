@@ -1,3 +1,4 @@
+#pragma once
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
@@ -5,6 +6,7 @@
 #include <QDebug>
 #include <QToolBar>
 #include <QWidget>
+#include <emulator/emulator.h>
 #include "3rdparty/message-center/messagecenter.h"
 #include "3rdparty/qhexview/qhexview.h"
 #include "3rdparty/qhexview/document/buffer/qmemorybuffer.h"
@@ -63,6 +65,7 @@ signals:
     // Fields
 protected:
     Emulator* _emulator = nullptr;
+    EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
     size_t _curPageOffset;  // Currently displayed in hex view memory page offset
 
