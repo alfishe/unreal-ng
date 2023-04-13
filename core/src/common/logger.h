@@ -9,8 +9,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-using namespace std;
-
 #ifndef _CODE_UNDER_TEST
 
 // Write all Debug / Info logs if not under unit testing / benchmarking
@@ -86,6 +84,6 @@ public:
 protected:
     static void OutEnriched(const char* fmt);
     static void OutEnriched(const char* fmt, va_list args);
-	static void OutEnriched(string fmt, va_list args);
+	static void OutEnriched(std::string fmt, va_list args);
 	static void Out(const char* value);
 };

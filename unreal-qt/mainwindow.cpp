@@ -7,28 +7,26 @@
 #include <QDebug>
 #include <QMimeData>
 #include <QTimer>
+#include <QFileInfo>
 
 #include "emulator/filemanager.h"
+#include "emulator/soundmanager.h"
 
 #include "common/modulelogger.h"
 #include "emulator/ports/portdecoder.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
+    /// region <Debug>
+    AppSoundManager::getDefaultAudioDeviceInfo();
+    /// endregion </Debug>
+
     // Intercept all keyboard and mouse events
     //qApp->installEventFilter(this);
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
     startButton = ui->startEmulator;
-
-    // Create layoyt
-    if (this->layout() == nullptr)
-    {
-        //QHBoxLayout* boxLayout = new QHBoxLayout();
-
-        //window()->setLayout(boxLayout);
-    }
 
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
@@ -87,13 +85,6 @@ MainWindow::~MainWindow()
 
     if (_guiContext)
         delete _guiContext;
-
-    QLayout* ptrLayout = layout();
-    if (ptrLayout != nullptr)
-    {
-        window()->setLayout(nullptr);
-        delete ptrLayout;
-    }
 
     delete ui;
 }
@@ -203,17 +194,24 @@ void MainWindow::dropEvent(QDropEvent* event)
         //  1. Pass file(s) to file loader
         //  2. Detect file type
         //  3. Issue proper command to emulator instance
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(pathList.first());
+        QString filepath = pathList.first();
+        std::string file = filepath.toStdString();
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepath);
+        QFileInfo fileInfo(filepath);
+        QString ext = fileInfo.suffix();
 
         switch (category)
         {
             case ROM:
                 break;
             case Snapshot:
+                _emulator->LoadSnapshot(file);
                 break;
             case Tape:
+                //_emulator->LoadTape(file);
                 break;
             case Disk:
+                //_emulator->LoadDisk(file);
                 break;
             default:
                 break;
@@ -330,6 +328,15 @@ void MainWindow::handleStartButton()
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
             this->deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+            /*
+            int scale = 8;
+            int width = framebufferDesc.width * scale;
+            int height = framebufferDesc.height * scale;
+            this->deviceScreen->resize(width, height);
+            this->deviceScreen->setMinimumSize(width, height);
+            this->adjustSize();
+             */
 
             // Subscribe to frame refresh events
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();

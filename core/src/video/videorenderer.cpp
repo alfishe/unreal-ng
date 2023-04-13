@@ -22,7 +22,7 @@ void VideoRenderer::StartThread()
 		_stopFlag = false;
 		_waitForRender.Reset();
 
-		_renderThread.reset(new thread(&VideoRenderer::RenderThread, this));
+		_renderThread.reset(new std::thread(&VideoRenderer::RenderThread, this));
 	}
 }
 

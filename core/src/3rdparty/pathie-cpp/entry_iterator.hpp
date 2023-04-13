@@ -88,9 +88,15 @@ namespace Pathie {
    * This example does compile, but `iter` will be unusable after
    * `iter2` has been constructed.
    */
-  class entry_iterator: public std::iterator<std::input_iterator_tag, Path, int>
+  class entry_iterator
   {
   public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type = Path;
+    using difference_type = int;
+    using pointer = Path*;
+    using reference = Path&;
+
     entry_iterator();
     entry_iterator(const Path* p_top);
     ~entry_iterator();

@@ -125,7 +125,7 @@ protected:
 
     /// region <Constructors / destructors>
 public:
-    LoaderSNA(EmulatorContext* context, std::string path);
+    LoaderSNA(EmulatorContext* context, const std::string& path);
     virtual ~LoaderSNA();
     /// region </Constructors / destructors>
 
@@ -137,7 +137,7 @@ public:
 
     /// region <Helper methods>
 protected:
-    bool validateSnapshotFile();
+    bool validate();
 
     bool is48kSnapshot(FILE* file);
     bool is128kSnapshot(FILE* file);
@@ -179,7 +179,7 @@ public:
     using LoaderSNA::_memoryPages;
     using LoaderSNA::_memoryPagesUsed;
 
-    using LoaderSNA::validateSnapshotFile;
+    using LoaderSNA::validate;
 
     using LoaderSNA::is48kSnapshot;
     using LoaderSNA::is128kSnapshot;

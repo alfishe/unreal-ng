@@ -137,7 +137,6 @@ void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
 {
     static const uint16_t port = 0x7FFD;
     Memory& memory = *_context->pMemory;
-    Screen& screen = *_context->pScreen;
 
     uint8_t bankRAM = value & 0b00000111;
     uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
@@ -153,8 +152,8 @@ void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
         _7FFD_Locked = isPagingDisabled;
     }
 
-    screen.SetActiveScreen(screenNumber);
-
+    SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
+    _screen->SetActiveScreen(screen);
 
     /// region <Debug logging>
 

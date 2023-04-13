@@ -8,8 +8,6 @@
 #include <iostream>
 #include <exception>
 
-using namespace std;
-
 /// region <SetUp / TearDown>
 
 void StringHelper_Test::SetUp()
@@ -24,7 +22,7 @@ void StringHelper_Test::TearDown()
 
 TEST_F(StringHelper_Test, Compare)
 {
-	wstring test[2][4] =
+    std::wstring test[2][4] =
 	{
 		{
 			L"TestString1",
@@ -57,11 +55,11 @@ TEST_F(StringHelper_Test, Compare)
 TEST_F(StringHelper_Test, LTrim)
 {
     // Original string contains both spaces and tabs
-    string original = " \t    test string \t  ";
-    string reference = "test string \t  ";
+    std::string original = " \t    test string \t  ";
+    std::string reference = "test string \t  ";
 
-    string_view trimView = StringHelper::LTrim(original);
-    string result = string(trimView);
+    std::string_view trimView = StringHelper::LTrim(original);
+    std::string result = std::string(trimView);
 
     EXPECT_EQ(result, reference);
 
@@ -74,11 +72,11 @@ TEST_F(StringHelper_Test, LTrim)
 TEST_F(StringHelper_Test, RTrim)
 {
     // Original string contains both spaces and tabs
-    string original = " \t    test string \t  ";
-    string reference = " \t    test string";
+    std::string original = " \t    test string \t  ";
+    std::string reference = " \t    test string";
 
-    string_view trimView = StringHelper::RTrim(original);
-    string result = string(trimView);
+    std::string_view trimView = StringHelper::RTrim(original);
+    std::string result = std::string(trimView);
 
     EXPECT_EQ(result, reference);
 
@@ -91,11 +89,11 @@ TEST_F(StringHelper_Test, RTrim)
 TEST_F(StringHelper_Test, Trim)
 {
     // Original string contains both spaces and tabs
-    string original = " \t    test string \t  ";
-    string reference = "test string";
+    std::string original = " \t    test string \t  ";
+    std::string reference = "test string";
 
-    string_view trimView = StringHelper::Trim(original);
-    string result = string(trimView);
+    std::string_view trimView = StringHelper::Trim(original);
+    std::string result = std::string(trimView);
 
     EXPECT_EQ(result, reference);
 
@@ -108,9 +106,9 @@ TEST_F(StringHelper_Test, Trim)
 TEST_F(StringHelper_Test, FormatWithThousandsDelimiter)
 {
     int64_t original = 123456789012;
-    string reference = "123,456,789,012";
+    std::string reference = "123,456,789,012";
 
-    string result = StringHelper::FormatWithThousandsDelimiter(original);
+    std::string result = StringHelper::FormatWithThousandsDelimiter(original);
 
     EXPECT_EQ(result, reference);
 

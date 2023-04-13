@@ -4,19 +4,17 @@
 
 #include "common/stringhelper.h"
 
-using namespace std;
-
-namespace utf8 
+namespace utf8
 {
-	wstring utf8::decode(const string &str)
+	std::wstring utf8::decode(const std::string &str)
 	{
-		wstring result = StringHelper::StringToWideString(str);
+        std::wstring result = StringHelper::StringToWideString(str);
 		return result;
 	}
 
-	string utf8::encode(const wstring &wstr)
+    std::string utf8::encode(const std::wstring &wstr)
 	{
-		string result = StringHelper::WideStringToString(wstr);
+        std::string result = StringHelper::WideStringToString(wstr);
 		return result;
 	}
 }

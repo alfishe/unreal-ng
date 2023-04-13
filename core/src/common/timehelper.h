@@ -121,14 +121,11 @@ To round_down(const std::chrono::duration<Rep, Period>& d)
 template <class Duration>
 std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration> tp)
 {
-    using namespace std;
-    using namespace std::chrono;
-
 	typedef unsigned int timeRepresentation;
-	typedef duration<timeRepresentation> seconds;
-	typedef duration<timeRepresentation, ratio<60>> minutes;
-	typedef duration<timeRepresentation, ratio<3600>> hours;
-    typedef duration<timeRepresentation, ratio_multiply<hours::period, ratio<24>>> days;
+	typedef std::chrono::duration<timeRepresentation> seconds;
+	typedef std::chrono::duration<timeRepresentation, std::ratio<60>> minutes;
+	typedef std::chrono::duration<timeRepresentation, std::ratio<3600>> hours;
+    typedef std::chrono::duration<timeRepresentation, std::ratio_multiply<hours::period, std::ratio<24>>> days;
 
     // t is time duration since 1970-01-01
     Duration t = tp.time_since_epoch();
@@ -143,7 +140,7 @@ std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration>
     int year;
     unsigned month;
     unsigned day;
-    tie(year, month, day) = civil_from_days(d.count());
+    std::tie(year, month, day) = civil_from_days(d.count());
 
     // start filling in the tm with calendar info
     std::tm tm = {0};
@@ -153,11 +150,11 @@ std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration>
     tm.tm_wday = weekday_from_days(d.count());
     tm.tm_yday = d.count() - days_from_civil(year, 1, 1);
     // Fill in the time
-    tm.tm_hour = duration_cast<hours>(t).count();
+    tm.tm_hour = std::chrono::duration_cast<hours>(t).count();
     t -= hours(tm.tm_hour);
-    tm.tm_min = duration_cast<minutes>(t).count();
+    tm.tm_min = std::chrono::duration_cast<minutes>(t).count();
     t -= minutes(tm.tm_min);
-    tm.tm_sec = duration_cast<seconds>(t).count();
+    tm.tm_sec = std::chrono::duration_cast<seconds>(t).count();
 
     return tm;
 }

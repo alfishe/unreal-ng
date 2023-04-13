@@ -12,6 +12,7 @@ class MainLoop;
 class Memory;
 class PortDecoder;
 class Screen;
+class SoundManager;
 class DebugManager;
 class Z80Disassembler;
 
@@ -52,6 +53,9 @@ public:
 
 	// Video controller parameters and logic
 	Screen* pScreen;
+
+    // Sound manager
+    SoundManager* pSoundManager;
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager;

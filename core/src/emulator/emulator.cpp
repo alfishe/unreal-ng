@@ -1,9 +1,11 @@
+#include <loaders/snapshot/loader_z80.h>
 #include "stdafx.h"
 
 #include "emulator.h"
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/dumphelper.h"
+#include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/systemhelper.h"
@@ -435,6 +437,11 @@ void Emulator::Start()
 	//LoadSnapshot(snapshotPath);
 
 	_mainloop->Run(_stopRequested);
+
+    // Broadcast notification - Emulator paused
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::StartAsync()
@@ -443,6 +450,7 @@ void Emulator::StartAsync()
     if (_asyncThread)
         Stop();
 
+    // Start new thread with name 'emulator' and execute Start() method from it
     _asyncThread = new std::thread([this]()
     {
         ThreadHelper::setThreadName("emulator");
@@ -460,6 +468,11 @@ void Emulator::Pause()
     _isRunning = false;
 
     _mainloop->Pause();
+
+    // Broadcast notification - Emulator paused
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Resume()
@@ -473,6 +486,11 @@ void Emulator::Resume()
 	_mainloop->Resume();
 
 	_isRunning = true;
+
+    // Broadcast notification - Emulator execution resumed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Stop()
@@ -508,6 +526,11 @@ void Emulator::Stop()
     _isRunning = false;
 	_stopRequested = false;
 	_isPaused = false;
+
+    // Broadcast notification - Emulator execution resumed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
+    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
 }
 
 //endregion
@@ -533,22 +556,46 @@ bool Emulator::LoadSnapshot(std::string &path)
         wasRunning = true;
     }
 
-    LoaderSNA loaderSna(_context, path);
-    result = loaderSna.load();
-
-    /// region <Info logging>
-    if (result)
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
+    if (ext == "sna")
     {
-        MLOGINFO("SNA file loaded successfully, executing it...");
-    }
+        /// region <Load SNA snapshot>
+        LoaderSNA loaderSna(_context, path);
+        result = loaderSna.load();
 
-    MLOGEMPTY();
-    /// endregion </Info logging>
+        /// region <Info logging>
+        if (result)
+        {
+            MLOGINFO("SNA file loaded successfully, executing it...");
+        }
+
+        MLOGEMPTY();
+        /// endregion </Info logging>
+
+        /// endregion </Load SNA snapshot>
+    }
+    else if (ext == "z80")
+    {
+        /// region <Load Z80 snapshot>
+        LoaderZ80 loaderZ80(_context, path);
+        result = loaderZ80.load();
+
+        /// region <Info logging>
+        if (result)
+        {
+            MLOGINFO("Z80 file loaded successfully, executing it...");
+        }
+
+        MLOGEMPTY();
+        /// endregion </Info logging>
+
+        /// endregion </Load Z80 snapshot>
+    }
 
     // Resume execution
     if (wasRunning)
     {
-        Resume();
+        //Resume();
     }
 
     return result;

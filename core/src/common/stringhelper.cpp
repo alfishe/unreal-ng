@@ -15,7 +15,7 @@ bool StringHelper::IsHex(uint8_t val)
 	return (isdigit(val) || (tolower(val) >= 'a' && tolower(val) <= 'f'));
 }
 
-int StringHelper::Compare(wstring& wstr1, wstring& wstr2)
+int StringHelper::Compare(std::wstring& wstr1, std::wstring& wstr2)
 {
 	int result = -1;
 
@@ -104,10 +104,10 @@ int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, siz
 	return result;
 }
 
-wstring StringHelper::StringToWideString(const string& str)
+std::wstring StringHelper::StringToWideString(const std::string& str)
 {
 	size_t len = str.length() + 1;
-	wstring result = wstring(len, 0);
+    std::wstring result = std::wstring(len, 0);
 
 	#if defined _WIN32 && defined MSVC
 		// Optimized Windows API conversion
@@ -116,14 +116,14 @@ wstring StringHelper::StringToWideString(const string& str)
 		MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), (LPWSTR)result.c_str(), size_needed);
 	#else
 		// Generic cross-platform conversion
-		wstring_convert<codecvt_utf8_utf16<wchar_t>> converter;
+        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 		result = converter.from_bytes(str);
 	#endif
 
 	return result;
 }
 
-string StringHelper::WideStringToString(const wstring& wstr)
+std::string StringHelper::WideStringToString(const std::wstring& wstr)
 {
 	string result;
 
@@ -134,21 +134,21 @@ string StringHelper::WideStringToString(const wstring& wstr)
 	WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, &wstr[0],(int) wstr.size(), (LPSTR)result.c_str(), size, NULL, NULL);
 #else
 	// Generic cross-platform conversion
-	wstring_convert<codecvt_utf8<wchar_t>> converter;
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
 	result = converter.to_bytes(wstr);
 #endif
 
 	return result;
 }
 
-string StringHelper::ReplaceAll(string& str, string from, string to)
+std::string StringHelper::ReplaceAll(std::string& str, std::string from, std::string to)
 {
-	string result = str;
+    std::string result = str;
 
 	if (!from.empty())
 	{
 		size_t start_pos = 0;
-		while ((start_pos = str.find(from, start_pos)) != string::npos)
+		while ((start_pos = str.find(from, start_pos)) != std::string::npos)
 		{
 			str.replace(start_pos, from.length(), to);
 			start_pos += to.length();
@@ -158,9 +158,9 @@ string StringHelper::ReplaceAll(string& str, string from, string to)
 	return result;
 }
 
-wstring StringHelper::ReplaceAll(wstring& wstr, wstring wfrom, wstring wto)
+std::wstring StringHelper::ReplaceAll(std::wstring& wstr, std::wstring wfrom, std::wstring wto)
 {
-	wstring result = wstr;
+    std::wstring result = wstr;
 
 	if (!wfrom.empty())
 	{
@@ -175,7 +175,7 @@ wstring StringHelper::ReplaceAll(wstring& wstr, wstring wfrom, wstring wto)
 	return result;
 }
 
-string_view StringHelper::LTrim(string_view str)
+std::string_view StringHelper::LTrim(std::string_view str)
 {
     str.remove_prefix(std::distance(str.cbegin(), std::find_if(str.cbegin(), str.cend(),
                                                            [](int c) {return !std::isspace(c);})));
@@ -183,7 +183,7 @@ string_view StringHelper::LTrim(string_view str)
     return str;
 }
 
-string_view StringHelper::RTrim(string_view str)
+std::string_view StringHelper::RTrim(std::string_view str)
 {
     str.remove_suffix(std::distance(str.crbegin(), std::find_if(str.crbegin(), str.crend(),
                                                             [](int c) {return !std::isspace(c);})));
@@ -191,7 +191,7 @@ string_view StringHelper::RTrim(string_view str)
     return str;
 }
 
-string_view StringHelper::Trim(string_view str)
+std::string_view StringHelper::Trim(std::string_view str)
 {
     return LTrim(RTrim(str));
 }
@@ -241,7 +241,7 @@ std::string StringHelper::ToLower(const string& str)
 std::string StringHelper::FormatWithThousandsDelimiter(int64_t n)
 {
     std::stringstream ss;
-    ss.imbue(std::locale( std::locale::classic(), new ThousandsDelimiterPunct ) );
+    ss.imbue(std::locale(std::locale::classic(), new ThousandsDelimiterPunct));
     ss << n;
 
     std::string result = ss.str();

@@ -2299,7 +2299,7 @@ OpCode Z80Disassembler::getOpcode(uint16_t prefix, uint8_t fetchByte)
             {
                 std::string prefixValue = StringHelper::FormatBinary(prefix);
                 std::string message = StringHelper::Format("Unknown prefix: 0x%04X (%s), Instruction: 0x%02X", prefix, prefixValue.c_str(), fetchByte);
-                throw logic_error(message);
+                throw std::logic_error(message);
             }
 #endif
             break;

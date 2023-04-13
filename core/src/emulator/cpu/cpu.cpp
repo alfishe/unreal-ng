@@ -125,7 +125,7 @@ bool CPU::Init()
         result = false;
 
         // Instantiate sound manager
-        _sound = new Sound(_context);
+        _sound = new SoundManager(_context);
 
         if (_sound)
         {
@@ -315,7 +315,7 @@ void CPU::Reset()
 	_z80->Reset();					// Main Z80
 	_memory->Reset();               // Memory
 	_keyboard->Reset();             // Keyboard
-	_sound->Reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
+	_sound->reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
 	_screen->Reset();               // Reset all video subsystem
 	//reset_tape();					// Reset tape loader state
 	_hdd->Reset();					// Reset IDE controller

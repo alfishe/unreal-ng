@@ -47,19 +47,17 @@ int LoaderTAP::read()
 
     if (validateFile())
     {
-        FILE* file = FileHelper::OpenFile(_path, "r");
-        if (file != nullptr)
+        _buffer = malloc(_fileSize);
+
+        if (_buffer)
         {
-            _buffer = malloc(_fileSize);
-            if (FileHelper::ReadFileToBuffer(file, (uint8_t *)_buffer, _fileSize) == _fileSize)
+            if (FileHelper::ReadFileToBuffer(_path, (uint8_t *)_buffer, _fileSize) == _fileSize)
             {
                 result = parseTAP();
             }
 
             free(_buffer);
             _buffer = nullptr;
-
-            FileHelper::CloseFile(file);
         }
     }
 
@@ -68,7 +66,6 @@ int LoaderTAP::read()
 
 void LoaderTAP::close()
 {
-
 }
 
 /// endregion </Methods>
@@ -114,7 +111,7 @@ bool LoaderTAP::parseTAP()
         uint16_t blockSize = *(uint16_t*)ptr;
         ptr += 2;
 
-        // Get block itself
+        // Parse block
         if (blockSize > 0)
         {
             TapeBlock block;
@@ -123,9 +120,9 @@ bool LoaderTAP::parseTAP()
             block.name = getBlockName(block.data);
             block.description = getBlockDescription(block.data);
             block.data_checksum = getBlockChecksum(block.data);
-            _tapeBlocks.push_back(block);
 
-            TapeBlockWithHeader* blockHeader = (TapeBlockWithHeader*)ptr;
+            // Add block to block list
+            _tapeBlocks.push_back(block);
 
             ptr += blockSize;
         }

@@ -4,9 +4,6 @@
 #include <ctime>
 #include <chrono>
 
-using namespace std;
-using namespace std::chrono;
-
 enum CMOSTypeEnum
 {
 	None = 0,

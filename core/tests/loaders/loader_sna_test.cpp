@@ -41,14 +41,14 @@ void LoaderSNA_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
-TEST_F(LoaderSNA_Test, validateSnapshotFile)
+TEST_F(LoaderSNA_Test, validate)
 {
     static std::string testSnapshotPath = "../../../tests/loaders/sna/multifix.sna";
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testSnapshotPath);
 
     LoaderSNACUT loader(_context, testSnapshotPath);
 
-    bool result = loader.validateSnapshotFile();
+    bool result = loader.validate();
     if (result != true)
     {
         std::string message = StringHelper::Format("Validation FAILED for file '%s'", absoluteSnapshotPath.c_str());
@@ -57,7 +57,7 @@ TEST_F(LoaderSNA_Test, validateSnapshotFile)
 
     if (loader._fileValidated != true)
     {
-        std::string message = "LoaderSNA::_fileValidated was not set during LoaderSNA::validateSnapshotFile() call";
+        std::string message = "LoaderSNA::_fileValidated was not set during LoaderSNA::validate() call";
         FAIL() << message << std::endl;
     }
 }
@@ -152,7 +152,7 @@ TEST_F(LoaderSNA_Test, load128kToStaging)
     std::string absolute128kSnapshotPath = FileHelper::AbsolutePath(test128kSnapshotPath);
 
     LoaderSNACUT loader(_context, absolute128kSnapshotPath);
-    if (loader.validateSnapshotFile())
+    if (loader.validate())
     {
         bool result = loader.load128kToStaging();
 
@@ -182,7 +182,7 @@ TEST_F(LoaderSNA_Test, applySnapshotFromStaging)
     //cout << absolute128kSnapshotPath << endl;
 
     LoaderSNACUT loader(_context, absolute128kSnapshotPath);
-    if (!loader.validateSnapshotFile())
+    if (!loader.validate())
     {
         std::string message = StringHelper::Format("Invalid 128K snapshot: '%s'", absolute128kSnapshotPath.c_str());
         FAIL() << message << std::endl;

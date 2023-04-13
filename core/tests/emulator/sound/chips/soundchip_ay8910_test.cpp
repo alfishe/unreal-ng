@@ -39,7 +39,7 @@ TEST_F(SoundChip_AY8910_Test, NoiseGenerator)
         sample = noiseGenerator.getNextRandom();
 
         std::string message = StringHelper::Format("[%d] %04X", i, sample);
-        cout << message << std::endl;
+        std::cout << message << std::endl;
     }
 
 }
@@ -57,7 +57,7 @@ TEST_F(SoundChip_AY8910_Test, EnvelopeGenerator)
         std::string header = StringHelper::Format("");
         for (int j = 0; j < 3; j++)
         {
-            cout << envelopeGenerator._envelopeWaves[i][j] << std::endl;
+            std::cout << envelopeGenerator._envelopeWaves[i][j] << std::endl;
         }
     }
 }
@@ -92,8 +92,8 @@ TEST_F(SoundChip_AY8910_Test, GetToneGeneratorDivisor)
     }
 
     double baseFrequency = static_cast<double>(_soundChip->AY_BASE_FREQUENCY) / 16.0;
-    cout << StringHelper::Format("minDivisor: 0x%08X  maxDivisor: 0x%08X", minDivisor, maxDivisor) << std::endl;
-    cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lfHz", baseFrequency / maxDivisor, baseFrequency / (minDivisor + 1));
+    std::cout << StringHelper::Format("minDivisor: 0x%08X  maxDivisor: 0x%08X", minDivisor, maxDivisor) << std::endl;
+    std::cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lfHz", baseFrequency / maxDivisor, baseFrequency / (minDivisor + 1));
 }
 
 TEST_F(SoundChip_AY8910_Test, GetToneGeneratorFrequency)
@@ -124,7 +124,7 @@ TEST_F(SoundChip_AY8910_Test, GetToneGeneratorFrequency)
             maxFrequency = frequency;
     }
 
-    cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lf    @%s", minFrequency, maxFrequency, _soundChip->printFrequency(_soundChip->AY_BASE_FREQUENCY).c_str());
+    std::cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lf    @%s", minFrequency, maxFrequency, _soundChip->printFrequency(_soundChip->AY_BASE_FREQUENCY).c_str());
 
     if (_soundChip->AY_BASE_FREQUENCY == 1.75 * 1'000'000)
     {
@@ -163,7 +163,7 @@ TEST_F(SoundChip_AY8910_Test, GetNoiseGeneratorFrequency)
             maxFrequency = frequency;
     }
 
-    cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lf    @%s", minFrequency, maxFrequency, _soundChip->printFrequency(_soundChip->AY_BASE_FREQUENCY).c_str());
+    std::cout << StringHelper::Format("minFreq:    %.2lfHz      maxFreq:    %.02lf    @%s", minFrequency, maxFrequency, _soundChip->printFrequency(_soundChip->AY_BASE_FREQUENCY).c_str());
 
     if (_soundChip->AY_BASE_FREQUENCY == 1.75 * 1'000'000)
     {

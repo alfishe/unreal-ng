@@ -222,7 +222,8 @@ void LoaderTZX::parseHardware(uint8_t* data)
             default: value = "??";
         }
 
-        char bf[512]; sprintf(bf, "%s %s: %s", value, type, ptrID);
+        char bf[512];
+        snprintf(bf, sizeof(bf), "%s %s: %s", value, type, ptrID);
         //named_cell(bf);
     }
     //named_cell("-");

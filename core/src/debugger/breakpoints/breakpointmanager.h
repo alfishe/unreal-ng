@@ -16,10 +16,10 @@ constexpr uint16_t BRK_INVALID = 0xFFFF;
 
 enum BreakpointTypeEnum : uint8_t
 {
-    BRK_MEMORY = 0,
-    BRK_IO,
-    BRK_KEYBOARD,
-    //BRK_INTERRUPT
+    BRK_MEMORY = 0,     // Memory access (Read | Write | Execution)
+    BRK_IO,             // I/O port access (Read | Write)
+    BRK_KEYBOARD,       // Key press event
+    //BRK_INTERRUPT     // Interrupt event
 };
 
 constexpr uint8_t BRK_MEM_NONE = 0x00;

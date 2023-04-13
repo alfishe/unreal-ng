@@ -65,7 +65,7 @@ uint8_t NVRAM::ReadCMOS()
 	// If Time/Date values requested from CMOS - provide current Host system values
 	if ((1 << cur_addr) & ((1 << 0) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 12)))
 	{
-		time = make_utc_tm(system_clock::now());
+		time = make_utc_tm(std::chrono::system_clock::now());
 	}
 
 	switch (cur_addr)

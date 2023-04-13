@@ -14,7 +14,7 @@ void CallbackCollection::Add(const string& tag, CallbackFunction func)
 	}
 
 	// Lock parallel threads to access (active till return from method and lock destruction)
-	lock_guard<mutex> lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
 	// Add observer with correspondent tag into forward map
 	if (!key_exists(_callbacks, tag))
@@ -47,7 +47,7 @@ void CallbackCollection::Remove(const string&  tag)
 	}
 
 	// Lock parallel threads to access (active till return from method and lock destruction)
-	lock_guard<mutex> lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
 	// Perform observer lookup in forward map
 	if (key_exists(_callbacks, tag))
@@ -73,7 +73,7 @@ void CallbackCollection::Remove(CallbackFunction func)
 	}
 
 	// Lock parallel threads to access (active till return from method and lock destruction)
-	lock_guard<mutex> lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
 	// Perform observer lookup in reverse map
 	if (key_exists(_callbacksReverse, func))
@@ -90,7 +90,7 @@ void CallbackCollection::Remove(CallbackFunction func)
 void CallbackCollection::RemoveAll()
 {
 	// Lock parallel threads to access (active till return from method and lock destruction)
-	lock_guard<mutex> lock(_mutex);
+    std::lock_guard<std::mutex> lock(_mutex);
 
 	_callbacks.clear();
 	_callbacksReverse.clear();

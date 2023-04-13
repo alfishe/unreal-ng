@@ -8,8 +8,6 @@
 #include <iostream>
 #include <exception>
 
-using namespace std;
-
 /// region <SetUp / TearDown>
 
 void FileHelper_Test::SetUp()
@@ -26,16 +24,15 @@ void FileHelper_Test::TearDown()
 
 TEST_F(FileHelper_Test, NormalizePath)
 {
-	string testPaths[4] =
+	std::string testPaths[4] =
 	{
-
 		"C:\\Program Files\\Unreal\\unreal.exe",
 		"/opt/local/unreal/unreal",
 		"/Volumes/Disk/Applications/Unreal.app/Contents/MacOS/unreal",
 		"/opt/mixed\\path/folder\\subfolder"
 	};
 
-	string referenceWindows[4] =
+    std::string referenceWindows[4] =
 	{
 		"C:\\Program Files\\Unreal\\unreal.exe",
 		"\\opt\\local\\unreal\\unreal",
@@ -43,7 +40,7 @@ TEST_F(FileHelper_Test, NormalizePath)
 		"\\opt\\mixed\\path\\folder\\subfolder"
 	};
 
-	string referenceUnix[4] =
+    std::string referenceUnix[4] =
 	{
 		"C:/Program Files/Unreal/unreal.exe",
 		"/opt/local/unreal/unreal",

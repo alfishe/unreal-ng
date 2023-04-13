@@ -6,8 +6,6 @@
 
 #include <algorithm>
 
-using namespace std;
-
 class Z80;
 class Renderers;
 
@@ -29,6 +27,12 @@ class Renderers;
 /// endregion </Constants>
 
 /// region <Enumerations>
+
+enum SpectrumScreenEnum : uint8_t
+{
+    SCREEN_NORMAL = 0,
+    SCREEN_SHADOW = 1
+};
 
 enum VideoModeEnum : uint8_t
 {
@@ -433,7 +437,7 @@ public:
 
 public:
 	virtual void SetVideoMode(VideoModeEnum mode);
-	virtual void SetActiveScreen(uint8_t screen);
+	virtual void SetActiveScreen(SpectrumScreenEnum screen);
     virtual void SetBorderColor(uint8_t color);
 
     virtual VideoModeEnum GetVideoMode();

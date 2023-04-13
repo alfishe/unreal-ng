@@ -3,9 +3,7 @@
 
 #include <string>
 
-using namespace std;
-
-/// region <Helper fprmatters>
+/// region <Helper formatters>
 class ThousandsDelimiterPunct : public std::numpunct<char>
 {
 protected:
@@ -19,22 +17,22 @@ class StringHelper
 public:
 	static uint8_t Hex(uint8_t val);
 	static bool IsHex(uint8_t val);
-	static int Compare(wstring& wstr1, wstring& wstr2);
-    static int Compare(string& str1, string& wstr2);
+	static int Compare(std::wstring& wstr1, std::wstring& wstr2);
+    static int Compare(std::string& str1, std::string& wstr2);
 	static int CompareCaseInsensitive(const char* str1, const char* str2, size_t len);
 
-	static wstring StringToWideString(const string& str);
-	static string WideStringToString(const wstring& wideString);
+	static std::wstring StringToWideString(const std::string& str);
+	static std::string WideStringToString(const std::wstring& wideString);
 
-	string ReplaceAll(string& str, string from, string to);
-	static wstring ReplaceAll(wstring& wstr, wstring wfrom, wstring wto);
+	string ReplaceAll(std::string& str, std::string from, std::string to);
+	static std::wstring ReplaceAll(std::wstring& wstr, std::wstring wfrom, std::wstring wto);
 
-    static string_view LTrim(string_view str);
-    static string_view RTrim(string_view str);
-    static string_view Trim(string_view str);
+    static std::string_view LTrim(std::string_view str);
+    static std::string_view RTrim(std::string_view str);
+    static std::string_view Trim(std::string_view str);
 
-    static string ToUpper(const string& str);
-    static string ToLower(const string& str);
+    static std::string ToUpper(const std::string& str);
+    static std::string ToLower(const std::string& str);
 
     template <typename T>
     static std::string ToHex(T n)

@@ -269,7 +269,7 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
         else
         {
 #ifdef _DEBUG
-            cout << left << setw(16) << hexCommand << setw(0) << result << std::endl;
+            std::cout << std::left << std::setw(16) << hexCommand << std::setw(0) << result << std::endl;
 #endif // _DEBUG
         }
 

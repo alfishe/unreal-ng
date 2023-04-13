@@ -3,8 +3,6 @@
 
 #include "screenzx_test.h"
 
-using namespace std;
-
 /// region <SetUp / TearDown>
 
 void ScreenZX_Test::SetUp()

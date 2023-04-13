@@ -332,14 +332,14 @@ uint8_t *Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
                 case _cb: // all CB-opcodes
                 {
                     if (!z80p) {
-                        sprintf(ln, "%s%s", cbtab + (*cm >> 3) * 7, z80r8_1 + (*cm & 7) * 5);
+                        snprintf(ln, sizeof(ln), "%s%s", cbtab + (*cm >> 3) * 7, z80r8_1 + (*cm & 7) * 5);
                         cm++;
                     } else {
                         if ((cm[1] & 7) != 6 && ((cm[1] & 0xC0) != 0x40)) // operand is reg,(ix+nn)
-                            sprintf(ln, "%s%s,(i%c%c%02X)", cbtab + (cm[1] >> 3) * 7, z80r8_1 + (cm[1] & 7) * 5,
+                            snprintf(ln, sizeof(ln), "%s%s,(i%c%c%02X)", cbtab + (cm[1] >> 3) * 7, z80r8_1 + (cm[1] & 7) * 5,
                                     z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-', abs(*(char *) cm));
                         else // only (ix+nn)
-                            sprintf(ln, "%s(i%c%c%02X)", cbtab + (cm[1] >> 3) * 7, z80p == 0xDD ? 'x' : 'y',
+                            snprintf(ln, sizeof(ln), "%s(i%c%c%02X)", cbtab + (cm[1] >> 3) * 7, z80p == 0xDD ? 'x' : 'y',
                                     *(char *) cm >= 0 ? '+' : '-', abs(*(char *) cm));
                         cm += 2;
                     }
@@ -347,7 +347,7 @@ uint8_t *Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
                 }
                 case _zr8: // in rcmd & 0x38
                     if (z80p && ((*rcmd & 0x38) == 0x30)) {
-                        sprintf(ln, "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
+                        snprintf(ln, sizeof(ln), "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
                                 abs(*(char *) cm));
                         cm++;
                     } else l1 = z80r8 + 5 * ((*rcmd >> 3) & 7);
@@ -358,14 +358,14 @@ uint8_t *Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
                         break;
                     }
                     if ((*rcmd & 0x38) == 0x30) {
-                        sprintf(ln, "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
+                        snprintf(ln, sizeof(ln), "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
                                 abs(*(char *) cm));
                         cm++;
                     } else l1 = z80r8 + 5 * ((*rcmd >> 3) & 7);
                     break;
                 case _zr81: // in rcmd & 7
                     if (z80p && (*rcmd & 7) == 6) {
-                        sprintf(ln, "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
+                        snprintf(ln, sizeof(ln), "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
                                 abs(*(char *) cm));
                         cm++;
                     } else l1 = z80r8 + 5 * (*rcmd & 7);
@@ -376,7 +376,7 @@ uint8_t *Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
                         break;
                     }
                     if ((*rcmd & 7) == 6) {
-                        sprintf(ln, "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
+                        snprintf(ln, sizeof(ln), "(i%c%c%02X)", z80p == 0xDD ? 'x' : 'y', *(char *) cm >= 0 ? '+' : '-',
                                 abs(*(char *) cm));
                         cm++;
                     } else l1 = z80r8 + 5 * (*rcmd & 7);
@@ -389,7 +389,7 @@ uint8_t *Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
                     cm++;
                     break;
                 case _ib: // immediate byte at cm
-                    sprintf(ln, "%02X", *cm++);
+                    snprintf(ln, sizeof(ln), "%02X", *cm++);
                     break;
                 case _iw: // immediate word at cm
                     //disasm_address(ln, *(uint16_t*)cm, labels); cm += 2;

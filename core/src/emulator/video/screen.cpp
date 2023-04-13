@@ -180,7 +180,7 @@ void Screen::InitRaster()
         if (_rasterState.configFrameDuration < _rasterState.maxFrameTiming)
         {
             std::string error = StringHelper::Format("Screen::SetVideoMode config.frame: %d cannot be less than _rasterState.maxFrameTiming: %d", _rasterState.configFrameDuration, _rasterState.maxFrameTiming);
-            throw logic_error(error);
+            throw std::logic_error(error);
         }
 #endif // _DEBUG
         /// endregion </Sanity checks>
@@ -274,18 +274,18 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 }
 
 /// Set active ZX-Spectrum screen
-/// \param screen
-void Screen::SetActiveScreen(uint8_t screen)
+/// @param screen Normal screen (RAM page 5) or Shadow screen (RAM page 7)
+void Screen::SetActiveScreen(SpectrumScreenEnum screen)
 {
     Memory& memory = *_context->pMemory;
 
     uint8_t* activeScreenMemoryOffset = memory.RAMPageAddress(5);   // RAM Page 5 is used for default / normal screen
     switch (screen)
     {
-        case 0:     // Normal screen (Bank 5)
+        case SCREEN_NORMAL:     // Normal screen (RAM Page 5)
             activeScreenMemoryOffset = memory.RAMPageAddress(5);
             break;
-        case 1:     // Shadow screen (Bank 7)
+        case SCREEN_SHADOW:     // Shadow screen (RAM Page 7)
             activeScreenMemoryOffset = memory.RAMPageAddress(7);
             break;
         default:

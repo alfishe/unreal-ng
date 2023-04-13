@@ -298,10 +298,10 @@ protected:
     // Currently selected register (#BFFD)
     uint8_t _currentRegister;
 
-    // Indicator - chip attached to port decoder
+    // Indicator - chip attached to system port decoder
     bool _chipAttachedToPortDecoder = false;
 
-    // Port decoder chip attached to - reference
+    // Port decoder chip attached to - instance reference
     PortDecoder* _portDecoder = nullptr;
 
     // Internal AY timings
@@ -362,7 +362,7 @@ public:
 };
 
 //
-// Code Under Test (CUT) wrappers to allow access to protected and private properties and methods for unit testing / benchmark purposes
+// Code Under Test (CUT) wrappers to allow access protected and private properties and methods for unit testing / benchmark purposes
 //
 #ifdef _CODE_UNDER_TEST
 

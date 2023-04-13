@@ -10,7 +10,7 @@ extern uint8_t* direct_registers[8];
 
 /// region <Structures>
 
-// Turn on padding to align members within each structure
+// Disable compiler alignment for packed structures
 #pragma pack(push, 1)
 
 struct Z80Registers

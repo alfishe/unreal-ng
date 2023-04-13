@@ -248,7 +248,8 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
     if (prevScreenNumber != screenNumber)
     {
-        _screen->SetActiveScreen(screenNumber);
+        SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
+        _screen->SetActiveScreen(screen);
     }
 
     // Cache out port value in state
@@ -269,10 +270,10 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
 
 std::string PortDecoder_Pentagon128::Dump_7FFD_value(uint8_t value)
 {
-    uint8_t bankRAM = value & 0b00000111;
-    uint8_t screenNumber = (value & 0b00001000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    uint8_t romPage = (value & 0b00010000) >> 4;
-    bool isPagingDisabled = value & 0b00100000;
+    uint8_t bankRAM = value & 0b0000'0111;
+    uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
+    uint8_t romPage = (value & 0b0001'0000) >> 4;
+    bool isPagingDisabled = value & 0b0010'0000;
 
     std::string result = StringHelper::Format("RAM bank3 page: %d; Screen: %d; ROM: %d; #7FFD lock: %d", bankRAM, screenNumber, romPage, isPagingDisabled);
 

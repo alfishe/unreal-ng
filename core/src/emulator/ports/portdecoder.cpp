@@ -26,6 +26,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _keyboard = context->pKeyboard;
     _memory = context->pMemory;
     _screen = context->pScreen;
+    _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
 }
 
@@ -112,6 +113,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc)
     Emulator& emulator = *_context->pEmulator;
     Z80& z80 = *_context->pCPU->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+
     uint16_t breakpointID = brk.HandlePortIn(addr);
     if (breakpointID != BRK_INVALID)
     {
@@ -176,7 +178,8 @@ void PortDecoder::Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     bool result = false;
 
     uint8_t borderColor = value & 0b000'00111;
-    bool beeperBit = value & 0b0001'0000;
+    bool micBit = (value & 0b0000'1000) > 0;
+    bool beeperBit = (value & 0b0001'0000) > 0;
 
     _screen->SetBorderColor(borderColor);
 

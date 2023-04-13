@@ -85,7 +85,6 @@
 #endif
 
 using namespace Pathie;
-using namespace std;
 
 Path::localpathtype Path::c_localdefault = LOCALPATH_LOCAL;
 
@@ -177,15 +176,15 @@ void Path::sanitize()
 #endif
 
   // Replace any backslashes \ with forward slashes /.
-  size_t cur = string::npos;
-  while ((cur = m_path.find("\\")) != string::npos) { // assignment intended
+  size_t cur = std::string::npos;
+  while ((cur = m_path.find("\\")) != std::string::npos) { // assignment intended
     m_path.replace(cur, 1, "/");
   }
 
   // Replace all double slashes // with a single one,
   // except for UNC pathes on Windows.
-  cur = string::npos;
-  while ((cur = m_path.find("//", is_unc ? 1 : 0)) != string::npos) { // assignment intended
+  cur = std::string::npos;
+  while ((cur = m_path.find("//", is_unc ? 1 : 0)) != std::string::npos) { // assignment intended
     m_path.replace(cur, 2, "/");
   }
 
@@ -315,7 +314,7 @@ Path Path::basename() const
     return Path(m_path);
 
   size_t pos = 0;
-  if ((pos = m_path.rfind("/")) != string::npos) // Single = intended
+  if ((pos = m_path.rfind("/")) != std::string::npos) // Single = intended
     return Path(m_path.substr(pos + 1));
   else
     return Path(m_path);
@@ -342,7 +341,7 @@ Path Path::dirname() const
     return Path(m_path);
 
   size_t pos = 0;
-  if ((pos = m_path.rfind("/")) != string::npos) { // Single = intended
+  if ((pos = m_path.rfind("/")) != std::string::npos) { // Single = intended
     if (pos == 0) { // /usr
       return root();
     }
@@ -380,24 +379,27 @@ void Path::split(Path& dname, Path& bname) const
  */
 std::string Path::extension() const
 {
-  if (m_path == ".")
-    return "";
-  else if (m_path == "..")
-    return "";
+    std::string result;
 
-  size_t pos = 0;
-  if ((pos = m_path.rfind(".")) != string::npos) { // assignment intended
-    if (pos == 0 || pos == m_path.length() - 1) // .foo and foo.
-      return "";
-    else {
-      if (m_path[pos - 1] == '/') // foo/.txt
-	return "";
-      else
-	return m_path.substr(pos);
+    if (m_path != "." && m_path != "..")
+    {
+        size_t pos = m_path.rfind(".");
+
+        if (pos != std::string::npos)
+        {
+            // Exclude .foo and foo. cases
+            if (pos > 0 && pos != m_path.length() - 1)
+            {
+                // Exclude foo/.txt case
+                if (m_path[pos - 1] != '/')
+                {
+                    result = m_path.substr(pos + 1);
+                }
+            }
+        }
     }
-  }
-  else
-    return "";
+
+    return result;
 }
 
 /**
@@ -426,7 +428,7 @@ size_t Path::component_count() const
 
   size_t result = 0;
   size_t pos = 0;
-  while ((pos = m_path.find("/", pos)) != string::npos) { // Assignment intended
+  while ((pos = m_path.find("/", pos)) != std::string::npos) { // Assignment intended
     result++;
     pos++;
   }
@@ -494,7 +496,7 @@ std::vector<Path> Path::burst(bool descend /* = false */) const
     lastpos++;
   }
 
-  while((pos = m_path.find("/", pos)) != string::npos) {
+  while((pos = m_path.find("/", pos)) != std::string::npos) {
     std::string component = m_path.substr(lastpos, pos - lastpos);
 
     if (descend) {
@@ -555,7 +557,7 @@ Path Path::prune() const
 {
   std::string newpath(m_path); // copy
   size_t pos = 0;
-  while((pos = newpath.find("/.", pos)) != string::npos) { // assignment intended
+  while((pos = newpath.find("/.", pos)) != std::string::npos) { // assignment intended
     if (newpath.substr(pos, 3) == "/..") {
 
       // Weird path like /..foo or foo/..bar, which are NOT relative paths
@@ -601,7 +603,7 @@ Path Path::prune() const
 #endif
       else {
         size_t pos2 = 0;
-        if ((pos2 = newpath.rfind("/", pos - 1)) != string::npos) { // assignment intended
+        if ((pos2 = newpath.rfind("/", pos - 1)) != std::string::npos) { // assignment intended
           // Remove parent directory.
           newpath.erase(pos2, pos - pos2 + 3);
         }
@@ -2139,7 +2141,7 @@ Path Path::operator[](size_t index) const
   size_t pos     = 0;
   size_t lastpos = 0;
   size_t i       = 0;
-  while ((pos = m_path.find("/", pos)) != string::npos) { // Assignment intended
+  while ((pos = m_path.find("/", pos)) != std::string::npos) { // Assignment intended
     if (i == index)
       return Path(m_path.substr(lastpos, pos - lastpos));
 
@@ -2257,7 +2259,7 @@ std::vector<Path> Path::get_xdg_dirlist(const std::string& envvarname, const std
   size_t pos = 0;
   size_t lastpos = 0;
   std::vector<Path> results;
-  while ((pos = envstr.find(":")) != string::npos) {
+  while ((pos = envstr.find(":")) != std::string::npos) {
     results.push_back(Path(envstr.substr(lastpos, pos))); // envstr is already UTF-8
 
     lastpos = pos + 1;
@@ -3361,7 +3363,7 @@ Path Path::join(std::string str) const
 Path Path::sub_ext(std::string new_extension) const
 {
   // If the point is missing, add it to the beginning.
-  if (new_extension.find(".") == string::npos)
+  if (new_extension.find(".") == std::string::npos)
     new_extension.insert(0, ".");
 
   std::string old_extension = extension();
