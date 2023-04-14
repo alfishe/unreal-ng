@@ -260,17 +260,16 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
     if (message == nullptr || message->obj == nullptr)
         return;
 
-    qDebug() << "DebuggerWindow::handleEmulatorStateChanged()";
-
     SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
     EmulatorStateEnum emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
+
+    qDebug() << "DebuggerWindow::handleEmulatorStateChanged(" << getEmulatorStateName(emulatorState) << ")";
 
     dispatchToMainThread([this, emulatorState]()
     {
         switch (emulatorState)
         {
             case StateInitialized:
-            case StateStopped:
             default:
                 continueAction->setEnabled(false);
                 pauseAction->setEnabled(true);
@@ -278,6 +277,16 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(false);
+                break;
+            case StateStopped:
+                continueAction->setEnabled(false);
+                pauseAction->setEnabled(true);
+                cpuStepAction->setEnabled(false);
+                frameStepAction->setEnabled(false);
+                waitInterruptAction->setEnabled(false);
+                resetAction->setEnabled(false);
+
+                _emulator = nullptr;
                 break;
             case StateRun:
             case StateResumed:

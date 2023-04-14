@@ -43,7 +43,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Center device screen within content frame
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Connect button signal to appropriate slot
+    // Connect button release signal to appropriate event handling slot
     connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
 
     // Create bridge between GUI and emulator
@@ -344,12 +344,12 @@ void MainWindow::handleStartButton()
             ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
             messageCenter.AddObserver(NC_LOGGER_FRAME_REFRESH, observerInstance, callback);
 
-            // Start in async own thread
-            _emulator->StartAsync();
-
             // Notify debugger about new emulator instance
+            // Debugger will subscribe to required event messages from emulator core (like execution state changes)
             debuggerWindow->setEmulator(_emulator);
 
+            // Start in async own thread
+            _emulator->StartAsync();
 
             fflush(stdout);
             fflush(stderr);

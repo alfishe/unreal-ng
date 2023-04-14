@@ -436,12 +436,14 @@ void Emulator::Start()
 	//std::string snapshotPath = "/Volumes/SSDData/LocalGit/unreal/tests/loaders/sna/multifix.sna";
 	//LoadSnapshot(snapshotPath);
 
-	_mainloop->Run(_stopRequested);
-
-    // Broadcast notification - Emulator paused
+    // Broadcast notification - Emulator started
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
     messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+
+    // Pass execution to main loop
+    // It will return only after stop request
+	_mainloop->Run(_stopRequested);
 }
 
 void Emulator::StartAsync()

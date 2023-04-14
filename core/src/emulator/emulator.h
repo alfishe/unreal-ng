@@ -17,6 +17,7 @@
 class BreakpointManager;
 
 /// region <Types>
+
 enum EmulatorStateEnum : uint8_t
 {
     StateUnknown = 0,
@@ -25,6 +26,21 @@ enum EmulatorStateEnum : uint8_t
     StatePaused,
     StateResumed,
     StateStopped
+};
+
+inline const char* getEmulatorStateName(EmulatorStateEnum value)
+{
+    static const char* names[] =
+    {
+        "StateUnknown",
+        "StateInitialized",
+        "StateRun",
+        "StatePaused",
+        "StateResumed",
+        "StateStopped"
+    };
+
+    return names[value];
 };
 /// endregion </Types>
 
