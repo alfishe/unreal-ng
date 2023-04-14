@@ -64,6 +64,7 @@ public:
     template<typename T> static QHexDocument* fromFile(QString filename, QObject* parent = nullptr);
     template<typename T> static QHexDocument* fromMemory(char *data, int size, QObject* parent = nullptr);
     template<typename T> static QHexDocument* fromMemory(const QByteArray& ba, QObject* parent = nullptr);
+    template<typename T> static QHexDocument* emptyDocument(QObject* parent = nullptr);
     static QHexDocument* fromLargeFile(QString filename, QObject *parent = nullptr);
 
 signals:
@@ -130,6 +131,12 @@ template<typename T> QHexDocument* QHexDocument::fromMemory(const QByteArray& ba
 {
     QHexBuffer* hexbuffer = new T();
     hexbuffer->read(ba);
+    return new QHexDocument(hexbuffer, parent);
+}
+
+template<typename T> QHexDocument* QHexDocument::emptyDocument(QObject *parent)
+{
+    QHexBuffer* hexbuffer = new T();
     return new QHexDocument(hexbuffer, parent);
 }
 

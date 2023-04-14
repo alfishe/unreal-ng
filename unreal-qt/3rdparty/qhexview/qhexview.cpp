@@ -73,6 +73,11 @@ void QHexView::setReadOnly(bool b)
         m_document->cursor()->setInsertionMode(QHexCursor::OverwriteMode);
 }
 
+void QHexView::reset()
+{
+    setDocument(QHexDocument::emptyDocument<QMemoryBuffer>(this));
+}
+
 bool QHexView::event(QEvent *e)
 {
     if (m_document && m_renderer && (e->type() == QEvent::ToolTip))

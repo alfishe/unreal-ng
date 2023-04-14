@@ -107,7 +107,7 @@ Emulator* DebuggerWindow::getEmulator()
 void DebuggerWindow::reset()
 {
     ui->registersWidget->reset();
-    ui->hexView->
+    ui->hexView->reset();
 
     ui->memorypagesWidget->reset();
     ui->stackWidget->reset();
