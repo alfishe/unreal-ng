@@ -12,6 +12,8 @@ SoundManager::SoundManager(EmulatorContext *context)
     _logger = context->pModuleLogger;
 
     _beeper = new Beeper(1500000, AUDIO_SAMPLING_RATE);
+    _ay8910 = new SoundChip_AY8910();
+    _ym2149 = new SoundChip_YM2149();
 
     // Reserve buffer capacity for 1 second of stereo PCM samples at selected sampling rate
     constexpr int bufferSize = AUDIO_SAMPLING_RATE * AUDIO_BUFFER_DURATION_MILLISEC / 1000;
@@ -23,6 +25,21 @@ SoundManager::~SoundManager()
 {
     _outBufferLeft.clear();
     _outBufferRight.clear();
+
+    if (_ym2149)
+    {
+        delete _ym2149;
+    }
+
+    if (_ay8910)
+    {
+        delete _ay8910;
+    }
+
+    if (_beeper)
+    {
+        delete _beeper;
+    }
 }
 
 /// endregion </Constructors / Destructors>

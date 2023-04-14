@@ -17,6 +17,7 @@ public:
     QHexDocument* document();
     void setDocument(QHexDocument* document);
     void setReadOnly(bool b);
+    void reset();
 
 protected:
     virtual bool event(QEvent* e) override;

@@ -49,7 +49,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     // Subscribe to events leading to MemoryView changes
     connect(ui->registersWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
     connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewBank(uint8_t)), this, SLOT(changeMemoryViewBank(uint8_t)));
-    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t, uint16_t)));
+    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)));
     connect(ui->stackWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
 
     // Inject toolbar on top of other widget lines
@@ -107,6 +107,7 @@ Emulator* DebuggerWindow::getEmulator()
 void DebuggerWindow::reset()
 {
     ui->registersWidget->reset();
+    ui->hexView->reset();
 
     ui->memorypagesWidget->reset();
     ui->stackWidget->reset();
@@ -261,14 +262,28 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
         return;
 
     SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
-    EmulatorStateEnum emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
+    _emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
 
-    qDebug() << "DebuggerWindow::handleEmulatorStateChanged(" << getEmulatorStateName(emulatorState) << ")";
+    qDebug() << "DebuggerWindow::handleEmulatorStateChanged(" << getEmulatorStateName(_emulatorState) << ")";
 
-    dispatchToMainThread([this, emulatorState]()
+    dispatchToMainThread([this]()
     {
-        switch (emulatorState)
+        switch (_emulatorState)
         {
+            case StateUnknown:
+            case StateStopped:
+                continueAction->setEnabled(false);
+                pauseAction->setEnabled(false);
+                cpuStepAction->setEnabled(false);
+                frameStepAction->setEnabled(false);
+                waitInterruptAction->setEnabled(false);
+                resetAction->setEnabled(false);
+
+                // Emulator already stopped working.
+                // Time to disable all rendering activities and set controls to initial inactive state
+                _emulator = nullptr;
+                reset();
+                break;
             case StateInitialized:
             default:
                 continueAction->setEnabled(false);
@@ -277,16 +292,6 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(false);
-                break;
-            case StateStopped:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(true);
-                cpuStepAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(false);
-
-                _emulator = nullptr;
                 break;
             case StateRun:
             case StateResumed:
@@ -306,8 +311,6 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 resetAction->setEnabled(true);
                 break;
         }
-
-
 
         updateState();
     });
