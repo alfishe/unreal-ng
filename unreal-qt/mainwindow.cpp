@@ -40,9 +40,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     dp.setVerticalPolicy(QSizePolicy::Expanding);
     deviceScreen->setSizePolicy(dp);
 
-    // Center device screen within content frame
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
-
     // Connect button release signal to appropriate event handling slot
     connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
 
@@ -56,6 +53,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->reset();
     debuggerWindow->show();
+
+    // Bring application windows to foreground 
+    debuggerWindow->raise();
+    this->raise();
 
     // Enable Drag'n'Drop
     setAcceptDrops(true);
@@ -89,12 +90,17 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+/// region <Protected members>
+
+/// region <QWidget events override>
+
+/// QWidget event called after windows is shown
 void MainWindow::showEvent(QShowEvent *event)
 {
-    // Center device screen within content frame
-    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
-
     QWidget::showEvent(event);
+
+    // Center device screen within content frame
+    //updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -156,6 +162,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     QWidget::resizeEvent(event);
 }
 
+void MainWindow::moveEvent(QMoveEvent *event)
+{
+    QWidget::moveEvent(event);
+
+    arrangeWindows();
+}
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
 {
@@ -236,6 +248,8 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
     qDebug() << "MainWindow : mousePressEvent";
 }
 
+/// endregion </QWidget events override>
+
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     switch (event->type())
@@ -282,6 +296,33 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
     return QMainWindow::eventFilter(watched, event);
 }
+
+void MainWindow::arrangeWindows()
+{
+    QRect mainWindowRect = this->geometry();
+
+    if (this->debuggerWindow)
+    {
+        QRect debuggerWindowRect = this->debuggerWindow->rect();
+
+        debuggerWindowRect.moveLeft(mainWindowRect.left() - debuggerWindowRect.width());
+        debuggerWindowRect.moveTop(mainWindowRect.top());
+        debuggerWindow->setGeometry(debuggerWindowRect);
+    }
+
+    if (this->logWindow)
+    {
+        QRect logWindowRect = this->logWindow->rect();
+
+        logWindowRect.moveLeft(mainWindowRect.right());
+        logWindowRect.moveTop(mainWindowRect.top());
+        logWindow->setGeometry(logWindowRect);
+    }
+}
+
+/// endregion </Protected members>
+
+/// region <Slots>
 
 void MainWindow::handleStartButton()
 {
@@ -413,3 +454,5 @@ void MainWindow::resetEmulator()
         _emulator->Reset();
     }
 }
+
+/// endregion </Slots>
