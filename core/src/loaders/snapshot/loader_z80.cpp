@@ -364,9 +364,85 @@ bool LoaderZ80::loadZ80v3()
 {
     bool result = false;
 
-    if (_fileValidated && _snapshotVersion == Z80v3)
+    if (_fileValidated && _snapshotVersion == Z80v3 && _fileSize > 0)
     {
-        throw std::logic_error("Z80 v3 snapshots are not supported yet");
+        auto buffer = std::unique_ptr<uint8_t[]>(new uint8_t[_fileSize]);
+        uint8_t* pBuffer = buffer.get();
+
+        // Ensure we're reading from file start
+        rewind(_file);
+
+        // Read the whole file content to temporary buffer
+        FileHelper::ReadFileToBuffer(_file, pBuffer, _fileSize);
+
+        // Provide access to header structure
+        Z80Header_v1& headerV1 = *(Z80Header_v1*)pBuffer;
+        Z80Header_v3& headerV3 = *(Z80Header_v3*)pBuffer;
+
+
+        // Extract Z80 registers information
+        _z80Registers = getZ80Registers(headerV1, headerV3.newPC);
+
+        // Determine snapshot memory model based on model
+        _memoryMode = getMemoryMode(headerV3);
+
+        // Retrieve ports configuration
+        _port7FFD = headerV3.p7FFD;
+        _portFFFD = headerV3.pFFFD;
+
+        // Start memory blocks processing after all headers
+        uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV3.extendedHeaderLen + 2;
+        size_t processedBytes = memBlock - pBuffer;
+
+        while (memBlock)
+        {
+            MemoryBlockDescriptor* memoryBlockDescriptor = (MemoryBlockDescriptor*)memBlock;
+            uint8_t* pageBlock = memBlock + sizeof(MemoryBlockDescriptor);
+            size_t compressedBlockSize = memoryBlockDescriptor->compressedSize;
+            uint8_t targetPage = memoryBlockDescriptor->memoryPage;
+
+            // Determine emulator target page
+            MemoryPageDescriptor targetPageDescriptor = resolveSnapshotPage(targetPage, _memoryMode);
+
+            // Allocate memory page and register it in one of staging collections (ROM or RAM)
+            // De-allocation will be performed after staging changes applied to main emulator memory
+            // or in loader destructor
+            uint8_t* pageBuffer = new uint8_t[PAGE_SIZE];
+            switch (targetPageDescriptor.mode)
+            {
+                case BANK_ROM:
+                    _stagingROMPages[targetPageDescriptor.page] = pageBuffer;
+                    break;
+                case BANK_RAM:
+                    _stagingRAMPages[targetPageDescriptor.page] = pageBuffer;
+            }
+
+            // Unpack memory block to target staging page
+            if (compressedBlockSize == 0xFFFF)
+            {
+                // Block is not compressed and has fixed length 0x4000 (16384)
+                compressedBlockSize = PAGE_SIZE;
+                memcpy(pageBuffer, pageBlock, PAGE_SIZE);
+            }
+            else
+            {
+                // Block is compressed so we need to decompress it
+                decompressPage(pageBlock, compressedBlockSize, pageBuffer, PAGE_SIZE);
+            }
+
+            uint8_t* nextMemBlock = memBlock + compressedBlockSize + sizeof(MemoryBlockDescriptor);
+            processedBytes = nextMemBlock - pBuffer;
+            if (processedBytes >= _fileSize || nextMemBlock == memBlock)
+            {
+                memBlock = nullptr;
+            }
+            else
+            {
+                memBlock = nextMemBlock;
+            }
+        }
+
+        result = true;
     }
 
     return result;
