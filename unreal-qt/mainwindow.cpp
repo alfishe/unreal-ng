@@ -35,10 +35,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     QHBoxLayout* layout = new QHBoxLayout;
     layout->addWidget(deviceScreen, Qt::AlignHCenter);
     contentFrame->setLayout(layout);
+
+/*
     QSizePolicy dp;
     dp.setHorizontalPolicy(QSizePolicy::Expanding);
     dp.setVerticalPolicy(QSizePolicy::Expanding);
     deviceScreen->setSizePolicy(dp);
+*/
 
     // Connect button release signal to appropriate event handling slot
     connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
@@ -60,6 +63,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Enable Drag'n'Drop
     setAcceptDrops(true);
+
+    contentFrame->installEventFilter(this);
+    this->installEventFilter(this);
 }
 
 MainWindow::~MainWindow()
@@ -100,7 +106,7 @@ void MainWindow::showEvent(QShowEvent *event)
     QWidget::showEvent(event);
 
     // Center device screen within content frame
-    //updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
+    updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -276,6 +282,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                         }
                  }
                  */
+
+                 deviceScreen->handleExternalKeyPress(keyEvent);
             }
             break;
         case QEvent::KeyRelease:
@@ -286,6 +294,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                 QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
 
                 qDebug() << "MainWindow : eventFilter - keyRelease, scan: "<< hexScanCode << "virt: " << hexVirtualKey << " key: " << keyName << " " << keyEvent->text();
+
+                deviceScreen->handleExternalKeyRelease(keyEvent);
             }
             break;
         default:

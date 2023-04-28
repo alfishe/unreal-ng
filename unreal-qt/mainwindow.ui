@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>645</width>
-    <height>607</height>
+    <width>744</width>
+    <height>701</height>
    </rect>
   </property>
   <property name="focusPolicy">
@@ -20,6 +20,12 @@
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>
      <widget class="QFrame" name="contentFrame">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="minimumSize">
        <size>
         <width>352</width>
@@ -48,8 +54,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>645</width>
-     <height>22</height>
+     <width>744</width>
+     <height>24</height>
     </rect>
    </property>
   </widget>

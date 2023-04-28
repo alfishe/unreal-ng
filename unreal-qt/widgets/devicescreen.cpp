@@ -57,6 +57,16 @@ void DeviceScreen::refresh()
     update();
 }
 
+void DeviceScreen::handleExternalKeyPress(QKeyEvent *event)
+{
+    keyPressEvent(event);
+}
+
+void DeviceScreen::handleExternalKeyRelease(QKeyEvent *event)
+{
+    keyReleaseEvent(event);
+}
+
 void DeviceScreen::paintEvent(QPaintEvent *event)
 {
     QPainter painter = QPainter(this);
@@ -154,6 +164,8 @@ void DeviceScreen::resizeEvent(QResizeEvent *event)
     }
 
     resize(newWidth, newHeight);
+
+    QWidget::resizeEvent(event);
 }
 
 

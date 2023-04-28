@@ -21,8 +21,16 @@ public:
     void init(uint16_t width, uint16_t height, void* buffer);
     void detach();
 
+public:
+    QSize sizeHint() const override
+    {
+        return QSize(352, 288);
+    }
+
 public slots:
     void refresh();
+    void handleExternalKeyPress(QKeyEvent *event);
+    void handleExternalKeyRelease(QKeyEvent *event);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
