@@ -117,3 +117,27 @@ TEST_F(StringHelper_Test, FormatWithThousandsDelimiter)
         FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
     }
 }
+
+TEST_F(StringHelper_Test, StringToWideString)
+{
+    std::wstring reference = L"Test";
+
+    std::wstring result = StringHelper::StringToWideString("Test");
+
+    if (result != reference)
+    {
+        FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
+    }
+}
+
+TEST_F(StringHelper_Test, WideStringToString)
+{
+    std::string reference = "Test";
+
+    std:: string result = StringHelper::WideStringToString(L"Test");
+
+    if (result != reference)
+    {
+        FAIL() << "Expected result: '" << reference << "', found: '" << result << "'";
+    }
+}

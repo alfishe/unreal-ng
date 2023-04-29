@@ -106,19 +106,11 @@ int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, siz
 
 std::wstring StringHelper::StringToWideString(const std::string& str)
 {
-	size_t len = str.length() + 1;
+	size_t len = str.length();
     std::wstring result = std::wstring(len, 0);
 
-	#if defined _WIN32 && defined MSVC
-		// Optimized Windows API conversion
-		int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), NULL, 0);
-		result.resize(size_needed, 0);
-		MultiByteToWideChar(CP_UTF8, 0, str.c_str(), (int)str.size(), (LPWSTR)result.c_str(), size_needed);
-	#else
-		// Generic cross-platform conversion
-        std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-		result = converter.from_bytes(str);
-	#endif
+    // Generic cross-platform conversion
+    std::copy(str.begin(), str.end(), result.begin());
 
 	return result;
 }
@@ -127,16 +119,8 @@ std::string StringHelper::WideStringToString(const std::wstring& wstr)
 {
 	string result;
 
-#if defined _WIN32 && defined MSVC
-	// Optimized Windows API conversion
-	int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
-	result = string(size, 0);
-	WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, &wstr[0],(int) wstr.size(), (LPSTR)result.c_str(), size, NULL, NULL);
-#else
 	// Generic cross-platform conversion
-    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-	result = converter.to_bytes(wstr);
-#endif
+    std::copy(wstr.begin(), wstr.end(), std::back_inserter(result));
 
 	return result;
 }
