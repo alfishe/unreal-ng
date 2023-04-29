@@ -171,6 +171,7 @@ protected:
     Z80Registers _z80Registers = {};
     uint8_t _port7FFD = 0x00;
     uint8_t _portFFFD = 0x00;
+    uint8_t _borderColor = 0x00;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>

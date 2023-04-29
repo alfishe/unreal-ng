@@ -80,12 +80,13 @@ enum RenderTypeEnum : uint8_t
     RT_SCREEN           // Screen area
 };
 
-enum ColorEnum : uint8_t
+enum ZXColorEnum : uint8_t
 {
     COLOR_BLACK = 0,
     COLOR_BLUE,
     COLOR_RED,
     COLOR_MAGENTA,
+    COLOR_GREEN,
     COLOR_CYAN,
     COLOR_YELLOW,
     COLOR_WHITE,
@@ -93,6 +94,7 @@ enum ColorEnum : uint8_t
     COLOR_BRIGHT_BLUE,
     COLOR_BRIGHT_RED,
     COLOR_BRIGHT_MAGENTA,
+    COLOR_BRIGHT_GREEN,
     COLOR_BRIGHT_CYAN,
     COLOR_BRIGHT_YELLOW,
     COLOR_BRIGHT_WHITE,
@@ -492,6 +494,11 @@ public:
     static std::string GetVideoVideoModeName(VideoModeEnum mode);
     static std::string GetRenderTypeName(RenderTypeEnum type);
     /// endregion </Helper methods
+
+    /// region <Snapshot helpers>
+public:
+    virtual void FillBorderWithColor(uint8_t color) = 0;
+    /// endregion </Snapshot helpers>
 
     /// region <Debug methods>
 #ifdef _DEBUG

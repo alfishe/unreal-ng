@@ -63,6 +63,11 @@ public:
 
     void RenderOnlyMainScreen() override;
 
+    /// region <Snapshot helpers>
+public:
+    virtual void FillBorderWithColor(uint8_t color) override;
+    /// endregion </Snapshot helpers>
+
     /// region <Debug info>
 public:
     std::string DumpRenderForTState(uint32_t tstate);

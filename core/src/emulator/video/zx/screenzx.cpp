@@ -661,6 +661,69 @@ void ScreenZX::RenderOnlyMainScreen()
 
 /// endregion </Screen class methods override>
 
+/// region <Snapshot helpers>
+void ScreenZX::FillBorderWithColor(uint8_t color)
+{
+    // Get RGBA color from palette by index
+    const uint32_t borderColor = _rgbaColors[color];
+
+    uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
+    const size_t framebufferARGBSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
+
+    VideoModeEnum mode = GetVideoMode();
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
+    const uint16_t width = rasterDescriptor.fullFrameWidth;
+    const uint16_t height = rasterDescriptor.fullFrameHeight;
+    const uint16_t topBorderHeight = rasterDescriptor.screenOffsetTop;
+    const uint16_t leftBorderWidth = rasterDescriptor.screenOffsetLeft;
+    const uint16_t rightBorderOffset = rasterDescriptor.screenOffsetLeft + rasterDescriptor.screenWidth;
+    const uint16_t bottomBottomOffset = rasterDescriptor.screenOffsetTop + rasterDescriptor.screenHeight;
+
+    /// region <Top border>
+    for (uint16_t x = 0; x < width; x++)
+    {
+        for (uint16_t y = 0; y < topBorderHeight; y++)
+        {
+            *(framebufferARGB + x * width + y) = borderColor;
+        }
+    }
+    /// endregion </Top border>
+
+    /// region <Left border>
+    for (uint16_t x = 0; x < leftBorderWidth; x++)
+    {
+        for (uint16_t y = 0; y < height; y++)
+        {
+            *(framebufferARGB + x * width + y) = borderColor;
+        }
+    }
+    /// endregion </Left border>
+
+    /// region <Right border>
+    for (uint16_t x = rightBorderOffset; x < width; x++)
+    {
+        for (uint16_t y = 0; y < height; y++)
+        {
+            *(framebufferARGB + x * width + y) = borderColor;
+        }
+    }
+    /// endregion </Right border>
+
+    /// region <Bottom border>
+    for (uint16_t x = 0; x < width; x++)
+    {
+        for (uint16_t y = bottomBottomOffset; y < height; y++)
+        {
+            *(framebufferARGB + x * width + y) = borderColor;
+        }
+    }
+    /// endregion </Bottom border>
+
+    // Allow ULA to use the same color (if not re-defined by next OUT(#FE))
+    SetBorderColor(color);
+}
+/// endregion </Snapshot helpers>
+
 /// region <Debug Info>
 std::string ScreenZX::DumpRenderForTState(uint32_t tstate)
 {

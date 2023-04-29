@@ -125,17 +125,21 @@ void LoaderZ80::commitFromStage()
     if (_stagingLoaded)
     {
         Memory& memory = *_context->pMemory;
+        Screen& screen = *_context->pScreen;
         PortDecoder& ports = *_context->pPortDecoder;
 
         /// region <Apply port configuration>
         switch (_memoryMode)
         {
             case Z80_48K:
-            {
-                uint8_t port7FFD = PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
-                ports.PeripheralPortOut(0x7FFD, port7FFD);
-                ports.PeripheralPortOut(0xFFFD, _portFFFD);
-            }
+                {
+                    uint8_t port7FFD = PORT_7FFD_RAM_BANK_0 | PORT_7FFD_SCREEN_NORMAL | PORT_7FFD_ROM_BANK_1 | PORT_7FFD_LOCK;
+                    ports.PeripheralPortOut(0x7FFD, port7FFD);
+                    ports.PeripheralPortOut(0xFFFD, _portFFFD);
+
+                    // Set 48k ROM as active
+                    memory.SetROMPage(3);
+                }
                 break;
             case Z80_128K:
                 ports.PeripheralPortOut(0x7FFD, _port7FFD);
@@ -147,6 +151,10 @@ void LoaderZ80::commitFromStage()
                 throw std::logic_error("Not supported");
                 break;
         }
+
+        // Pre-fill whole border with color
+        screen.FillBorderWithColor(_borderColor);
+        ports.Port_FE_Out(0x00FE, _borderColor, _z80Registers.pc);
 
         /// endregion </Apply port configuration>
 
@@ -263,9 +271,11 @@ bool LoaderZ80::loadZ80v1()
         // Extract Z80 registers information
         _z80Registers = getZ80Registers(headerV1, headerV1.reg_PC);
 
+        // Remember border color
+        _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
+
         auto unpackedMemory = std::unique_ptr<uint8_t[]>(new uint8_t[3 * PAGE_SIZE]);
         size_t dataSize = _fileSize - sizeof(headerV1);
-
 
         throw std::logic_error("Not supported yet");
     }
@@ -301,6 +311,9 @@ bool LoaderZ80::loadZ80v2()
         // Retrieve ports configuration
         _port7FFD = headerV2.p7FFD;
         _portFFFD = headerV2.pFFFD;
+
+        // Remember border color
+        _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
 
         // Start memory blocks processing after all headers
         uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV2.extendedHeaderLen + 2;
@@ -389,6 +402,9 @@ bool LoaderZ80::loadZ80v3()
         // Retrieve ports configuration
         _port7FFD = headerV3.p7FFD;
         _portFFFD = headerV3.pFFFD;
+
+        // Remember border color
+        _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
 
         // Start memory blocks processing after all headers
         uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV3.extendedHeaderLen + 2;

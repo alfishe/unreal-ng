@@ -534,7 +534,7 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     CONFIG& config = _context->config;
     uint32_t maxFrameDuration = config.frame + MAX_FRAME_DURATION_TOLERANCE;
 
-    // Next frame started during current CPU command processing. Adjust toTstate
+    // Next frame started during current CPU command processing. Adjust to Tstate
     if (fromTstate > toTstate)
     {
         if (toTstate < MAX_FRAME_DURATION_TOLERANCE)
@@ -588,24 +588,24 @@ void Screen::DrawZX(uint32_t n)
 	static uint32_t palette[2][8] =
 	{
 		{ // Brightness OFF
-			0x00000000,		// Black
-			0x000022C7,		// Blue
-			0x00D62816,		// Red
-			0x00D433C7,		// Magenta
-			0x0000C525,		// Green,
-			0x0000C7C9,		// Cyan
-			0x00CCC82A,		// Yellow
-			0x00CACACA		// White
+			0x00000000,     // Black
+			0x000022C7,     // Blue
+			0x00D62816,     // Red
+			0x00D433C7,     // Magenta
+			0x0000C525,     // Green,
+			0x0000C7C9,     // Cyan
+			0x00CCC82A,     // Yellow
+			0x00CACACA      // White
 		},
 		{ // Brightness ON
-			0x00000000,		// Black
-			0x00002BFB,		// Blue
-			0x00FF331C,		// Red
-			0x00FF40FC,		// Magenta
-			0x0000F92F,		// Green
-			0x0000FBFE,		// Cyan
-			0x00FFFC36,		// Yellow
-			0x00FFFFFF		// White
+			0x00000000,     // Black
+			0x00002BFB,     // Blue
+			0x00FF331C,     // Red
+			0x00FF40FC,     // Magenta
+			0x0000F92F,     // Green
+			0x0000FBFE,     // Cyan
+			0x00FFFC36,     // Yellow
+			0x00FFFFFF      // White
 		}
 	};
 
@@ -819,7 +819,6 @@ std::string Screen::GetRenderTypeName(RenderTypeEnum type)
 }
 
 /// endregion </Helper methods
-
 
 /// region <Debug methods>
 
