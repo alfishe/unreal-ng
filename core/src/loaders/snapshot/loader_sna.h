@@ -120,6 +120,7 @@ protected:
     sna128Header _ext128Header;
     uint8_t _memoryPages[8][PAGE_SIZE];
     bool _memoryPagesUsed[8];
+    uint8_t _borderColor;
 
     /// endregion </Fields>
 

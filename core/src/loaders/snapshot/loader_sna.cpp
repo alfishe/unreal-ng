@@ -185,13 +185,13 @@ bool LoaderSNA::load48kToStaging()
 
     if (_snapshotMode == SNA_48 && _file != nullptr)
     {
-        snaHeader header;
-
         // Ensure we're reading from file start
         rewind(_file);
 
         // Read SNA common header
-        size_t headerRead = fread(&header, sizeof(header), 1, _file);
+        size_t headerRead = fread(&_header, sizeof(_header), 1, _file);
+
+        _borderColor = _header.border & 0b0000'0111;
     }
 
     return result;
@@ -258,6 +258,8 @@ bool LoaderSNA::load128kToStaging()
             }
         }
 
+        _borderColor = _header.border & 0b0000'0111;
+
         _stagingLoaded = true;
         result = true;
     }
@@ -270,6 +272,7 @@ bool LoaderSNA::applySnapshotFromStaging()
     bool result = false;
 
     Memory& memory = *_context->pMemory;
+    Screen& screen = *_context->pScreen;
     CPU& cpu = *_context->pCPU;
     Z80& z80 = *_context->pCPU->GetZ80();
     int ramPagesLoaded = 0;
@@ -354,6 +357,9 @@ bool LoaderSNA::applySnapshotFromStaging()
             // Switch to proper RAM/ROM pages configuration
             _context->pPortDecoder->DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc);
         }
+
+        // Pre-fill border with color
+        screen.FillBorderWithColor(_borderColor);
 
         result = true;
     }
