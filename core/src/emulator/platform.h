@@ -598,15 +598,12 @@ typedef struct tagRECT
 
 struct HOST
 {
+    char cpu_model[64];          // CPU model unique name
+
 	// Host CPU features
 	uint8_t mmx, sse, sse2;
 	uint64_t cpufq;		     // x86 t-states per second
 	unsigned ticks_frame;	 // x86 t-states in frame
-
-	// Video render / window parameters
-	unsigned gx, gy, gdx, gdy; // updating rectangle (used by GDI renderer)
-	//RECT client;               // updating rectangle (used by DD_blt renderer)
-	bool minimized;            // window is minimized
 };
 
 extern unsigned sb_start_frame;

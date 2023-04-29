@@ -343,13 +343,14 @@ void Emulator::GetSystemInfo()
 {
 	HOST& host = _context->host;
 
-	char cpuString[49];
+#if defined(__x86__) || defined(__x86_64__)
+    char cpuString[49];
 	cpuString[0] = '\0';
 
 	SystemHelper::GetCPUString(cpuString);
 	LOGINFO("CPU ID: %s", cpuString);
 
-	unsigned cpuver = SystemHelper::GetCPUID(1, 0);	// Read Highest Function Parameter and ManufacturerID
+	unsigned cpuver = SystemHelper::GetCPUID(1, 0);	    // Read Highest Function Parameter and ManufacturerID
 	unsigned features = SystemHelper::GetCPUID(1, 1);	// Read Processor Info and Feature Bits
 	host.mmx = (features >> 23) & 1;
 	host.sse = (features >> 25) & 1;
@@ -357,7 +358,16 @@ void Emulator::GetSystemInfo()
 	MLOGINFO("MMX:%s, SSE:%s, SSE2:%s", host.mmx ? "YES" : "NO", host.sse ? "YES" : "NO", host.sse2 ? "YES" : "NO");
 
 	host.cpufq = SystemHelper::GetCPUFrequency();
-	MLOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
+#elif defined(__arm__) || defined (__aarch64__)
+    #ifdef __APPLE__
+
+        size_t size = sizeof(host.cpu_model);
+        sysctlbyname("machdep.cpu.brand_string", &host.cpu_model, &size, NULL, 0);
+    #endif
+#endif
+
+    MLOGINFO("CPU model: %s", host.cpu_model);
+    MLOGINFO("CPU Frequency: %dMHz", (unsigned)(host.cpufq / 1000000));
 }
 
 // Performance management
