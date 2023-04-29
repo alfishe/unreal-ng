@@ -5,6 +5,7 @@
 
 #include <QLabel>
 #include <QWidget>
+#include <QPushButton>
 #include "logviewer/logviewer.h"
 #include "common/modulelogger.h"
 
@@ -16,20 +17,30 @@ class LogWindow : public QWidget, public ModuleLoggerObserver
 {
     Q_OBJECT
 
+    /// region <Constructors / destructors>
 public:
     LogWindow();
     virtual ~LogWindow();
+    /// endregion </Constructors / destructors>
 
+    /// region <Initialization>
+public:
     void init();
     void reset();
+    /// endregion </Initialization
 
 public slots:
     void Out(const char* line, size_t len);
     void Out(QString line);
 
+private slots:
+    void handleSaveButtonClick();
+    void handleClearButtonClick();
+
     // Fields
 protected:
     QThread* m_mainThread;
+    std::stringstream m_logStream;
     int m_logMessagesCount = 0;
     int m_logMessagesSize = 0;
 
@@ -41,6 +52,8 @@ private:
     QLabel* statusText;
     QLabel* statusCounter1;
     QLabel* statusCounter2;
+    QPushButton* clearButton;
+    QPushButton* saveButton;
 };
 
 #endif // LOGWINDOW_H

@@ -64,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Enable Drag'n'Drop
     setAcceptDrops(true);
 
+    // Enable event filter to passthrough keyboard events to DeviceScreen
     contentFrame->installEventFilter(this);
     this->installEventFilter(this);
 }
@@ -342,6 +343,9 @@ void MainWindow::handleStartButton()
     if (_emulator == nullptr)
     {
         startButton->setEnabled(false);
+
+        // Clear log
+        logWindow->reset();
 
         // Initialize emulator instance
         _emulator = new Emulator();

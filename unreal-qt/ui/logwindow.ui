@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>560</width>
-    <height>451</height>
+    <height>430</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -25,6 +25,24 @@
         <bool>true</bool>
        </property>
       </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout">
+       <item>
+        <widget class="QPushButton" name="clearButton">
+         <property name="text">
+          <string>Clear Log</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="saveButton">
+         <property name="text">
+          <string>Save To File</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </item>
      <item>
       <widget class="LogStatusBar" name="logStatusBar" native="true">
