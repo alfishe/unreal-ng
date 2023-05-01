@@ -9,12 +9,12 @@
 //  Non-prefixed opcodes
 // Important note: M1 cycle lasts 4 clocks. This is the bare minimum for any opcode. So only additional deltas added here with cputact(n) macro
 
-Z80OPCODE op_00(Z80 *cpu) { // nop
+Z80OPCODE op_00(Z80 *cpu) { // nop [4]
 	// No increment for CPU cycles counter (t) is required
-	// 4 cycles already wasted in m1_cycle();
+	// 4 cycles already spent in m1_cycle();
 }
 
-Z80OPCODE op_01(Z80 *cpu) { // ld bc,nnnn
+Z80OPCODE op_01(Z80 *cpu) { // ld bc,nnnn [10]
     uint16_t pc = cpu->pc;
 
     cpu->c = cpu->rd(pc++, true);
@@ -23,8 +23,7 @@ Z80OPCODE op_01(Z80 *cpu) { // ld bc,nnnn
     cpu->pc = pc;
 }
 
-Z80OPCODE op_02(Z80 *cpu) { // ld (bc),a
-//   wm(cpu->bc, cpu->a);
+Z80OPCODE op_02(Z80 *cpu) { // ld (bc),a [7]
    cpu->memh = cpu->a;
    cpu->wd(cpu->bc, cpu->a);
 }

@@ -21,6 +21,13 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 		throw("memory should not be null");
 	}
 
+    // Clear first few bytes in ROM area to have only related commands, not left from previous runs
+    for (size_t index = 0; index < 10; index++)
+    {
+        memory[index] = 0x00;
+    }
+
+
 	OpDescriptor* opTable = nullptr;
 
 	switch (prefix)
@@ -57,15 +64,10 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 		throw "Z80 instruction cannot be 0 bytes in length. Something wrong with test table(s)";
 	}
 
-	// No-prefix instructions started from instruction[1] so we need to offset
-	if (prefix == 0x00)
-	{
-		result++;
-	}
-
 	// Transfer instruction into memory
-	uint8_t idx = 0;
-	for (uint8_t i = 0; i < result; i++)
+	uint8_t memIndex = 0;
+    uint8_t opLength = prefix == 0x00 ? result + 1 : result; // No-prefix instructions require correction since instruction table always have first byte of prefix
+	for (uint8_t i = 0; i < opLength; i++)
 	{
 		// Skip prefix byte if not needed
 		if (prefix == 0x00 && i == 0)
@@ -79,11 +81,11 @@ uint8_t OpcodeTest::PrepareInstruction(uint8_t prefix, uint8_t opcode, uint8_t* 
 			break;
 		}
 
-		memory[idx] = operation.instruction[i];
-		idx++;
+		memory[memIndex] = operation.instruction[i];
+		memIndex++;
 	}
 
-	// Add HALT instruction right after requested
+	// Add HALT instruction right after the one requested
 	memory[result] = HALT;
 
 	return result;

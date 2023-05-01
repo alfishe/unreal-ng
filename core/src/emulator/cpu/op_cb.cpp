@@ -1274,8 +1274,8 @@ Z80OPCODE opl_FF(Z80 *cpu) { // set 7,a
    op_set(cpu->a, 7);
 }
 
-STEPFUNC const logic_opcode[0x100] = {
-
+STEPFUNC const logic_opcode[0x100] =
+{
    opl_00, opl_01, opl_02, opl_03, opl_04, opl_05, opl_06, opl_07,
    opl_08, opl_09, opl_0A, opl_0B, opl_0C, opl_0D, opl_0E, opl_0F,
    opl_10, opl_11, opl_12, opl_13, opl_14, opl_15, opl_16, opl_17,
@@ -1328,6 +1328,7 @@ Z80OPCODE op_CB(Z80 *cpu)
         cpu->prefix = 0xCB;
     }
 
+    // Execute CB-prefixed opcode
     (logic_opcode[opcode])(cpu);
 
     // Finalize opcode

@@ -366,7 +366,12 @@ uint8_t Z80::m1_cycle()
 		cycle_count += 8; // TODO: verify
 	}
 	else
-		IncrementCPUCyclesCounter(1);	// M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
+    {
+        // M1 cycle is always 4 CPU clocks (3 for memory read and 1 for decoding)
+        // +3 will be done in rd() (Memory read) method
+        // +1 will be done here
+        IncrementCPUCyclesCounter(1);
+    }
 
 	return opcode;
 }

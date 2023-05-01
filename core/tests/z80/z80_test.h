@@ -18,4 +18,6 @@ protected:
 protected:
 	void SetUp() override;
 	void TearDown() override;
+
+    void DumpFirst256ROMBytes();
 };

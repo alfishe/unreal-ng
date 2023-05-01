@@ -2,8 +2,9 @@
 
 #include "z80_test.h"
 
+#include "common/dumphelper.h"
 #include "common/modulelogger.h"
-#include <string>
+#include "common/stringhelper.h"
 
 /// region <SetUp / TearDown>
 
@@ -50,6 +51,17 @@ void Z80_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
+/// region <Helper methods>
+void Z80_Test::DumpFirst256ROMBytes()
+{
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+
+    std::cout << std::endl << "48k ROM [256 bytes]" << std::endl;
+    std::string dump = DumpHelper::HexDumpBuffer(memory, 256);
+    std::cout << dump << std::endl;
+}
+/// endregion </Helper methods>
+
 TEST_F(Z80_Test, Z80Reset)
 {
 	Z80* cpu = _cpu->GetZ80();
@@ -66,16 +78,16 @@ TEST_F(Z80_Test, Z80Reset)
 	EXPECT_EQ(cpu->last_branch, 0x0000);
 
 	// Reset procedure should take 3 clock cycles
+    EXPECT_EQ(cpu->t, 3);
 	EXPECT_EQ(cpu->cycle_count, 3);
 }
 
-TEST_F(Z80_Test, Z80OpcodeTimings_Noprefix)
+TEST_F(Z80_Test, Z80OpcodeTimings)
 {
 	Z80& z80 = *_cpu->GetZ80();
 	uint32_t start_cycles = 0;
 	uint32_t finish_cycles = 0;
 	uint32_t delta_cycles = 0;
-	static char message[256];
 
 	// Use 48k (SOS) ROM for testing purposes
 	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
@@ -87,8 +99,11 @@ TEST_F(Z80_Test, Z80OpcodeTimings_Noprefix)
 	// Test no-prefix opcode instructions
 	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t is used since MSVC and GCC compilers are going crazy for 1 byte type and type overflow condition wnen comparing with 0xFF after increment to 0x00 and loosing overflow flag
 	{
+        // Exclude prefixed command prefixes
 		if (i == 0xCB || i == 0xDD || i == 0xED || i == 0xFD)
 			continue;
+
+        const std::string message = StringHelper::Format("Opcode: 0x%02X", i);
 
 		// Perform reset to get clean results for each instruction
 		z80.Reset();
@@ -98,6 +113,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_Noprefix)
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0x00, (uint8_t)i, memory);
+            EXPECT_EQ(len, descriptor.bytes) << message << std::endl;;
         }
         catch (const char* err)
         {
@@ -114,11 +130,49 @@ TEST_F(Z80_Test, Z80OpcodeTimings_Noprefix)
 		finish_cycles = z80.cycle_count;
 		delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0x%02X", i);
 		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+        EXPECT_EQ(z80.t, z80.cycle_count);
 	}
 
 	// Test 0xCB prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t is used since MSVC and GCC compilers are going crazy for 1 byte type and type overflow condition wnen comparing with 0xFF after increment to 0x00 and loosing overflow flag
+    {
+        // Exclude prefixed command prefixes
+        if (i == 0xCB || i == 0xDD || i == 0xED || i == 0xFD)
+            continue;
+
+        const std::string message = StringHelper::Format("Opcode: 0xCB 0x%02X", i);
+
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
+
+        // Prepare instruction in ROM (0x0000 address)
+        OpDescriptor& descriptor = _opcode->_prefixCB[i];
+        try
+        {
+            uint8_t len = _opcode->PrepareInstruction(0xCB, (uint8_t)i, memory);
+            EXPECT_EQ(len, descriptor.bytes) << message << std::endl;;
+
+            //DumpFirst256ROMBytes();
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
+        }
+
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.cycle_count;
+
+        // Execute single instruction
+        z80.Z80Step();
+
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.cycle_count;
+        delta_cycles = finish_cycles - start_cycles;
+
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+        EXPECT_EQ(z80.t, z80.cycle_count);
+    }
 
 	// Test 0xDD prefixed opcodes
 
