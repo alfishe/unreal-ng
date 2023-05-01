@@ -88,20 +88,26 @@ target_link_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/cmake-build-debug/co
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
-
-
 # Copy default config file to binary folder after successful compilation
 SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
-message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
+message("Binary: ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}")
 add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E
-    copy ${CONFIG_FILE} "${CMAKE_BINARY_DIR}/unreal.ini"
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy ${CONFIG_FILE} "${CMAKE_CURRENT_BINARY_DIR}/unreal.ini"
 )
 
+# Copy all ROM files to /rom sub-folder
 add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E
-    copy_directory ${DATA_PATH}/rom ${CMAKE_BINARY_DIR}/rom
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/rom ${CMAKE_CURRENT_BINARY_DIR}/rom
+)
+
+# Copy all test ROM files to /rom sub-folder
+add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/testrom ${CMAKE_CURRENT_BINARY_DIR}/rom
 )
