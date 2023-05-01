@@ -58,7 +58,7 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 
     if (IsPort_FE(port))
     {
-        result = _keyboard->HandlePort(port);
+        result = _keyboard->HandlePortIn(port);
     }
 
     /// region <Debug logging>

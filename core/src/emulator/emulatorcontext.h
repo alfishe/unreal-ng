@@ -4,6 +4,7 @@
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
 #include "state.h"
+#include "emulator/io/tape/tape.h"
 
 class CPU;
 class Emulator;
@@ -50,6 +51,9 @@ public:
 
 	// Model-specific port decoder
 	PortDecoder* pPortDecoder;
+
+    // Tape input instance
+    Tape* pTape;
 
 	// Video controller parameters and logic
 	Screen* pScreen;

@@ -45,6 +45,7 @@ protected:
     PortDecoder* _portDecoder = nullptr;
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
+    Tape* _tape = nullptr;
     SoundManager* _sound = nullptr;
     HDD* _hdd = nullptr;
     VideoControl* _video = nullptr;

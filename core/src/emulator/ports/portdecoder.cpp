@@ -26,6 +26,7 @@ PortDecoder::PortDecoder(EmulatorContext* context)
     _keyboard = context->pKeyboard;
     _memory = context->pMemory;
     _screen = context->pScreen;
+    _tape = context->pTape;
     _soundManager = context->pSoundManager;
     _logger = context->pModuleLogger;
 }

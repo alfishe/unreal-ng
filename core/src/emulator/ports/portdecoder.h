@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include "emulator/io/tape/tape.h"
 #include <set>
 
 class ModuleLogger;
@@ -71,6 +72,7 @@ protected:
 
     EmulatorState* _state = nullptr;
     Keyboard* _keyboard = nullptr;
+    Tape* _tape = nullptr;
     Memory* _memory = nullptr;
     Screen* _screen = nullptr;
     SoundManager* _soundManager = nullptr;

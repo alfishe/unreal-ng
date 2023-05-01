@@ -46,13 +46,19 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 
     if (IsPort_FE(port))
     {
-        result = _keyboard->HandlePort(port);
+        result = _keyboard->HandlePortIn(port);
+
+        // Only bit 6 (EAR) of port #FE is affected by tape input signal
+        uint8_t inputEARSignal = _tape->handlePortIn() & 0b0100'0000;
+        result |= inputEARSignal;
     }
 
+#ifndef NDEBUG
     // Determine RAM/ROM page where code executed from
     std::string currentMemoryPage = GetPCAddressLocator(pc);
 
     MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
+#endif
 
     return result;
 }

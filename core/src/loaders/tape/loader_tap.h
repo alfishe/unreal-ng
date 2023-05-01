@@ -7,6 +7,8 @@
 /// region <TAP format>
 // @see TAP format: https://faqwiki.zxnet.co.uk/wiki/TAP_format
 // @see: https://k1.spdns.de/Develop/Projects/zasm/Info/tap.txt
+// @see: https://documentation.help/BASin/format_tape.html
+// @see: http://web.archive.org/web/20110711141601/http://www.zxmodules.de/fileformats/tapformat.html
 // @see TAP structures: https://formats.kaitai.io/zx_spectrum_tap/index.html
 
 //    The .TAP files contain blocks of tape-saved data.
@@ -70,10 +72,46 @@ enum TapeBlockTypeEnum : uint8_t
     TAP_BLOCK_CODE                  // Block contains code
 };
 
-enum TapeBlockFlagEnum : uint64_t
+inline const char* getTapeBlockTypeName(TapeBlockTypeEnum value)
+{
+    static const char* names[] =
+    {
+    "Program",
+    "Numeric array",
+    "Symbolic array",
+    "Code"
+    };
+
+    return names[value];
+};
+
+enum TapeBlockFlagEnum : uint8_t
 {
     TAP_BLOCK_FLAG_HEADER = 0x00,
     TAP_BLOCK_FLAG_DATA = 0xFF
+};
+
+inline const char* getTapeBlockFlagName(TapeBlockFlagEnum value)
+{
+    const char* header = "Header";
+    const char* data = "Data";
+    const char* unknown = "<Unknown value";
+
+    const char* result;
+    switch (value)
+    {
+        case 0x00:
+            result = header;
+            break;
+        case 0xFF:
+            result = data;
+            break;
+        default:
+            result = unknown;
+            break;
+    }
+
+    return result;
 };
 
 /// Tape information (header)
@@ -86,20 +124,20 @@ struct TapeInfo
 
 struct TapeProgramParams
 {
-    uint16_t autostart_line;
-    uint16_t len_program;
+    uint16_t autostartLine;
+    uint16_t programLength;
 };
 
 struct TapeArrayParams
 {
     uint8_t reserved;
-    uint8_t var_name;
+    uint8_t varName;
     uint16_t reserved1 = 0x8000;
 };
 
 struct TapeBytesParams
 {
-    uint16_t start_address;
+    uint16_t startAddress;
     uint16_t reserved;
 };
 
@@ -112,14 +150,14 @@ struct TapeHeader
     };
 
     char filename[10];
-    uint16_t len_data;
+    uint16_t dataLength;
     
     union
     {
         uint8_t bytes[4];
-        TapeProgramParams program_params;
-        TapeArrayParams array_params;
-        TapeBytesParams code_params;
+        TapeProgramParams programParams;
+        TapeArrayParams arrayParams;
+        TapeBytesParams codeParams;
     };
 
     uint8_t checksum;
@@ -214,9 +252,14 @@ protected:
     bool validateFile();
     bool parseTAP();
 
+    vector<uint8_t> readNextBlock(FILE* file);
+    bool isBlockValid(const vector<uint8_t>& blockData);
+    uint8_t getBlockChecksum(const vector<uint8_t>& blockData);
+
+
     std::string getBlockName(vector<uint8_t>& blockData);
     std::string getBlockDescription(vector<uint8_t>& blockData);
-    uint8_t getBlockChecksum(vector<uint8_t>& blockData);
+
 
     void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
               unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
@@ -228,7 +271,13 @@ protected:
 
     void parseHardware(uint8_t* data);
 
-    void allocTapeBuffer();
+    /// region <Debug methods>
+
+public:
+    std::string dumpBlocks(const std::vector<std::vector<uint8_t>>& dataBlocks);
+    std::string dumpBlock(const std::vector<uint8_t>& dataBlock);
+
+    /// endregion </Debug methods>
 };
 
 //
@@ -247,7 +296,14 @@ public:
     using LoaderTAP::_path;
     using LoaderTAP::_file;
 
+    using LoaderTAP::readNextBlock;
+    using LoaderTAP::isBlockValid;
+    using LoaderTAP::getBlockChecksum;
+
     using LoaderTAP::validateFile;
+    using LoaderTAP::parseTAP;
     using LoaderTAP::parseHardware;
+    using LoaderTAP::getBlockName;
+    using LoaderTAP::getBlockDescription;
 };
 #endif // _CODE_UNDER_TEST

@@ -307,7 +307,7 @@ bool Keyboard::anyKeyWithSimilarModifier(ZXKeysEnum key)
 /// Respond on port IN request from Z80
 /// \param port
 /// \return
-uint8_t Keyboard::HandlePort(uint16_t port)
+uint8_t Keyboard::HandlePortIn(uint16_t port)
 {
     uint8_t result = 0xFF;
 

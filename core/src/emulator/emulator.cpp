@@ -238,6 +238,12 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
+    if (!_context->pTape)
+    {
+        std::string error = "_context->pTape not available";
+        throw std::logic_error(error);
+    }
+
     if (!_context->pPortDecoder)
     {
         std::string error = "_context->pPortDecoder not available";

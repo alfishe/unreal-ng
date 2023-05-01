@@ -305,7 +305,7 @@ protected:
 
     /// region <Handle keyboard events>
 public:
-    uint8_t HandlePort(uint16_t port);                                                  // Respond on port IN request from Z80
+    uint8_t HandlePortIn(uint16_t port);                                                  // Respond on port IN request from Z80
     void OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool alt);        // Translate host keyboard event to ZX-Spectrum
     /// endregion </Handle keyboard events>
 

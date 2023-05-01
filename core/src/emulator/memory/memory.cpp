@@ -676,15 +676,20 @@ uint16_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
     /// endregion </Override submodule>
 
     uint16_t result = MEMORY_UNMAPPABLE;
+    uint8_t* romBase = ROMBase();
 
-    if (hostAddress >= ROMBase() && hostAddress < ROMBase() + MAX_ROM_PAGES * PAGE_SIZE)
+#ifndef NDEBUG
+    if (hostAddress >= romBase && hostAddress < romBase + MAX_ROM_PAGES * PAGE_SIZE)
     {
-        result = (hostAddress - ROMBase()) / PAGE_SIZE;
+        result = (hostAddress - romBase) / PAGE_SIZE;
     }
     else
     {
         MLOGWARNING("Memory::GetRAMPageFromAddress - unable to map 0x%08x to any RAM page:0x%08x-0x%08x", hostAddress, ROMBase(), ROMBase() + MAX_ROM_PAGES * PAGE_SIZE - 1);
     }
+#else
+    result = (hostAddress - romBase) / PAGE_SIZE;
+#endif
 
     return result;
 }

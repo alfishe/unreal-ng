@@ -118,6 +118,24 @@ bool CPU::Init()
 
     /// endregion </Keyboard>
 
+    /// region <Tape>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate Tape interface implementation
+        _tape = new Tape(_context);
+        if (_tape)
+        {
+            _context->pTape = _tape;
+
+            result = true;
+        }
+    }
+
+    /// endregion </Tape>
+
     /// region <Sound manager>
 
     if (result)
@@ -268,6 +286,13 @@ void CPU::Release()
     {
         delete _keyboard;
         _keyboard = nullptr;
+    }
+
+    _context->pTape = nullptr;
+    if (_tape != nullptr)
+    {
+        delete _tape;
+        _tape = nullptr;
     }
 
     if (_rom != nullptr)

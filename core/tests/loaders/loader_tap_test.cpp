@@ -53,3 +53,148 @@ TEST_F(LoaderTAP_Test, read)
     EXPECT_EQ(result, true);
 }
 
+TEST_F(LoaderTAP_Test, getBlockChecksum)
+{
+    LoaderTAPCUT loader(_context, "");
+
+    /// region <Positive cases>
+
+    // Valid TAP blocks
+    std::vector<std::vector<uint8_t>> testDataBlocks =
+    {
+        { 0x00, 0x03, 0x52, 0x4F, 0x4D, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80, 0xF1 },
+        { 0xFF, 0xF3, 0xAF, 0xA3 }
+    };
+
+    // Traverse across all test data blocks
+    size_t counter = 0;
+    std::for_each(testDataBlocks.begin(), testDataBlocks.end(), [&counter, &loader](std::vector<uint8_t>& dataBlock)
+    {
+        uint8_t reference = dataBlock.back();
+        uint8_t checksum = loader.getBlockChecksum(dataBlock);
+
+        if (checksum != reference)
+        {
+            FAIL() << "For the testDataBlocks[" << counter << "] expected checksum: " << reference << " but found: " << checksum;
+        }
+
+        counter++;
+    });
+
+    /// endregion </Positive cases>
+
+    /// region <Negative cases>
+
+    // Valid TAP blocks with incorrect checksums (last byte)
+    testDataBlocks =
+    {
+        { 0x00, 0x03, 0x52, 0x4F, 0x4D, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80, 0xB8 },
+        { 0xFF, 0xF3, 0xAF, 0xDE }
+    };
+
+    // Traverse across all test data blocks
+    counter = 0;
+    std::for_each(testDataBlocks.begin(), testDataBlocks.end(), [&counter, &loader](std::vector<uint8_t>& dataBlock)
+    {
+        uint8_t reference = dataBlock.back();
+        uint8_t checksum = loader.getBlockChecksum(dataBlock);
+
+        if (checksum == reference)
+        {
+            FAIL() << "For the testDataBlocks[" << counter << "] falsely positive result for checksum: " << reference << " It must not match";
+        }
+
+        counter++;
+    });
+
+    /// endregion </Negative cases>
+}
+
+TEST_F(LoaderTAP_Test, isBlockValid)
+{
+    LoaderTAPCUT loader(_context, "");
+
+    /// region <Positive cases>
+
+    // Valid TAP blocks
+    std::vector<std::vector<uint8_t>> testDataBlocks =
+    {
+        { 0x00, 0x03, 0x52, 0x4F, 0x4D, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80, 0xF1 },
+        { 0xFF, 0xF3, 0xAF, 0xA3 }
+    };
+
+    // Traverse across all test data blocks
+    size_t counter = 0;
+    std::for_each(testDataBlocks.begin(), testDataBlocks.end(), [&counter, &loader](std::vector<uint8_t>& dataBlock)
+    {
+        bool reference = true;
+        bool result = loader.isBlockValid(dataBlock);
+
+        if (result != reference)
+        {
+            FAIL() << "For the testDataBlocks[" << counter << "] expected checksum: " << reference << " but found: " << result;
+        }
+
+        counter++;
+    });
+
+    /// endregion </Positive cases>
+
+    /// region <Negative cases>
+
+    // Valid TAP blocks with incorrect checksums (last byte)
+    testDataBlocks =
+    {
+        { 0x00, 0x03, 0x52, 0x4F, 0x4D, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x02, 0x00, 0x00, 0x00, 0x00, 0x80, 0xB8 },
+        { 0xFF, 0xF3, 0xAF, 0xDE }
+    };
+
+    // Traverse across all test data blocks
+    counter = 0;
+    std::for_each(testDataBlocks.begin(), testDataBlocks.end(), [&counter, &loader](std::vector<uint8_t>& dataBlock)
+    {
+        bool reference = true;
+        bool result = loader.isBlockValid(dataBlock);
+
+        if (result == reference)
+        {
+            FAIL() << "For the testDataBlocks[" << counter << "] falsely positive result for block validity: " << reference << " It must not match";
+        }
+
+        counter++;
+    });
+
+    /// endregion </Negative cases>
+}
+
+TEST_F(LoaderTAP_Test, readNextBlock)
+{
+    static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
+    std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
+    const size_t referenceBlockCount = 6;
+
+    LoaderTAPCUT loader(_context, testTapePath);
+    std::vector<std::vector<uint8_t>> allBlocks;
+
+    FILE* file = FileHelper::OpenFile(testTapePath);
+    EXPECT_NE(file, nullptr);
+
+    size_t blockCount = 0;
+    while (true)
+    {
+        std::vector<uint8_t> block = loader.readNextBlock(file);
+
+        if (block.size() == 0)
+            break;
+
+        allBlocks.push_back(block);
+
+        blockCount++;
+    }
+
+    std::cout << loader.dumpBlocks(allBlocks);
+
+    EXPECT_EQ(blockCount, referenceBlockCount);
+
+    FileHelper::CloseFile(file);
+}
