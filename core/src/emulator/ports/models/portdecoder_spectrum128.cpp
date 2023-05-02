@@ -284,7 +284,7 @@ std::string PortDecoder_Spectrum128::Dump_7FFD_value(uint8_t value)
     uint8_t romPage = (value & 0b00010000) >> 4;
     bool isPagingDisabled = value & 0b00100000;
 
-    std::string result = StringHelper::Format("RAM bank3 page: %d; Screen: %d; ROM: %d; #7FFD lock: %d", bankRAM, screenNumber, romPage, isPagingDisabled);
+    std::string result = StringHelper::Format("RAM page 3 (C000-FFFF) bank: %d; Screen: %d; ROM: %d; #7FFD lock: %d", bankRAM, screenNumber, romPage, isPagingDisabled);
 
     return result;
 }

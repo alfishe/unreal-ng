@@ -136,9 +136,11 @@ public:
 
 /// endregion </Structs and Enums>
 
-/// See: http://www.breakintoprogram.co.uk/computers/zx-spectrum/keyboard
-/// See: https://www.salkin.co.uk/~wiki/index.php/Spectrum_Keyboard
-/// See: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
+/// Handles keyboard events (key press/release events) coming from host via MessageCenter
+/// and convert them to ZX-Spectrum key matrix polled by #xxFE ports
+/// @See: http://www.breakintoprogram.co.uk/computers/zx-spectrum/keyboard
+/// @See: https://www.salkin.co.uk/~wiki/index.php/Spectrum_Keyboard
+/// @See: http://slady.net/Sinclair-ZX-Spectrum-keyboard/
 class Keyboard : public Observer
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -149,6 +151,10 @@ public:
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Constants>
+
+    // [0:5] Lowest 5 bits are used for key half-rows polling
+    // [6]   Bit 6 - Audio in (EAR input)
+    // [7]   Bit 7 - not used
 
     //    Port	    Dec	    Bin	                    Address line	D0	        D1	        D2	D3	D4
     //    $FEFE	    65278	%1111 1110 1111 1110	A8	            Caps shift	Z	        X	C	V
@@ -305,7 +311,7 @@ protected:
 
     /// region <Handle keyboard events>
 public:
-    uint8_t HandlePortIn(uint16_t port);                                                  // Respond on port IN request from Z80
+    uint8_t HandlePortIn(uint16_t port);                                                // Respond on port IN request from Z80
     void OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool alt);        // Translate host keyboard event to ZX-Spectrum
     /// endregion </Handle keyboard events>
 
