@@ -9,6 +9,8 @@
 // @see: https://k1.spdns.de/Develop/Projects/zasm/Info/tap.txt
 // @see: https://documentation.help/BASin/format_tape.html
 // @see: http://web.archive.org/web/20110711141601/http://www.zxmodules.de/fileformats/tapformat.html
+// @see: https://shred.zone/cilla/page/440/r-tape-loading-error.html
+// @see: https://shred.zone/cilla/page/441/r-tape-loading-error-part-2.html
 // @see TAP structures: https://formats.kaitai.io/zx_spectrum_tap/index.html
 
 //    The .TAP files contain blocks of tape-saved data.
@@ -251,14 +253,13 @@ public:
 protected:
     bool validateFile();
     bool parseTAP();
+    std::string getBlockName(vector<uint8_t>& blockData);
+    std::string getBlockDescription(vector<uint8_t>& blockData);
 
     vector<uint8_t> readNextBlock(FILE* file);
     bool isBlockValid(const vector<uint8_t>& blockData);
     uint8_t getBlockChecksum(const vector<uint8_t>& blockData);
-
-
-    std::string getBlockName(vector<uint8_t>& blockData);
-    std::string getBlockDescription(vector<uint8_t>& blockData);
+    void convertPayloadDataToBitstream(const vector<uint8_t>& payloadData);
 
 
     void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
