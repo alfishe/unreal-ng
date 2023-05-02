@@ -89,8 +89,9 @@ enum PlatformIOSubmodulesEnum: uint16_t
     SUBMODULE_IO_IN             = 0x0002,
     SUBMODULE_IO_OUT            = 0x0004,
     SUBMODULE_IO_KEYBOARD       = 0x0008,
-    SUBMODULE_IO_KEMPSTON_JOY   = 0x0010,
-    SUBMODULE_IO_KEMPSTON_MOUSE = 0x0020,
+    SUBMODULE_IO_TAPE           = 0x0010,
+    SUBMODULE_IO_KEMPSTON_JOY   = 0x0020,
+    SUBMODULE_IO_KEMPSTON_MOUSE = 0x0040,
 
     SUBMODULE_IO_ALL            = 0xFFFF
 };
