@@ -22,18 +22,18 @@ const char* ModuleLogger::NONE = "<None>";
 
 const char* ModuleLogger::moduleNames[12] =
 {
-        "<Unknown>",
-        "Core",
-        "Z80",
-        "Memory",
-        "I/O",
-        "Disk",
-        "Video",
-        "Sound",
-        "DMA",
-        "Loader",
-        "Debugger",
-        "Disassembler"
+    "<Unknown>",
+    "Core",
+    "Z80",
+    "Memory",
+    "I/O",
+    "Disk",
+    "Video",
+    "Sound",
+    "DMA",
+    "Loader",
+    "Debugger",
+    "Disassembler"
 };
 
 /// endregion </Constants>
@@ -97,6 +97,32 @@ void ModuleLogger::Unmute()
     _mute = false;
 }
 
+/// Disable log outputs for all modules and theis submodules
+void ModuleLogger::TurnOffLoggingForAll()
+{
+    // Disable all modules
+    _settings.modules = 0x0000'0000;
+
+    size_t size = sizeof(_settings.submodules) / sizeof(_settings.submodules[0]);
+    for (size_t i = 0; i < size; i++)
+    {
+        _settings.submodules[i] = 0x0000; // Disable all submodule bits
+    }
+}
+
+/// Enable log outputs for all modules and theis submodules
+void ModuleLogger::TurnOnLoggingForAll()
+{
+    // Enable all modules
+    _settings.modules = 0xFFFF'FFFF;
+
+    size_t size = sizeof(_settings.submodules) / sizeof(_settings.submodules[0]);
+    for (size_t i = 0; i < size; i++)
+    {
+        _settings.submodules[i] = 0xFF; // Enable all submodule bits
+    }
+}
+
 void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule)
 {
     /// region <Sanity checks>
@@ -118,13 +144,13 @@ void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t s
         throw std::logic_error(message);
     }
 
-
     /// endregion </Sanity checks>
 
     if (submodule == 0xFF)
     {
         // Disable the whole module
         _settings.modules &= ~(1 << module);
+        _settings.submodules[module] = 0x00;
     }
     else
     {
@@ -155,14 +181,16 @@ void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t su
 
     /// endregion </Sanity checks>
 
+    // Enable the whole module
+    _settings.modules |= module;
+
     if (submodule == 0xFF)
     {
-        // Disable the whole module
-        _settings.modules |= module;
+        _settings.submodules[module] = 0xFF;
     }
     else
     {
-        _settings.submodules[module] |= (1 << submodule);
+        _settings.submodules[module] |= submodule;
     }
 }
 
@@ -221,6 +249,10 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
 {
     // Skip messages with level below allowed (message has more details than we want)
     if (level < _level)
+        return;
+
+    // Don't log message if we configured logger not to
+    if (!IsLoggingEnabled(module, submodule))
         return;
 
     /// region <Sanity checks>

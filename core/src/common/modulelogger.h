@@ -82,9 +82,9 @@ public:
     LoggerSettingsModulePayload(LoggerSettings& settings)
     {
         // Copy structure content
-        memcpy((void *)&settings, (const void *)&settings, sizeof(LoggerSettings));
+        memcpy((void *)&_settings, (const void *)&settings, sizeof(LoggerSettings));
     }
-    virtual ~LoggerSettingsModulePayload() {};
+    virtual ~LoggerSettingsModulePayload() = default;
 };
 
 // Base class for all observer listeners. Derived class can implement method with any name
@@ -142,12 +142,13 @@ class ModuleLogger : public Observer
         "RAM"
     };
 
-    const char* submoduleIONames[6] =
+    const char* submoduleIONames[7] =
     {
         "Generic",
         "In",
         "Out",
         "Keyboard",
+        "Tape",
         "Kempston joystick",
         "Kempston mouse"
     };
@@ -229,6 +230,8 @@ public:
 
     void Mute();
     void Unmute();
+    void TurnOffLoggingForAll();
+    void TurnOnLoggingForAll();
     void TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
     void TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
     void SetLoggingLevel(LoggerLevel level);
