@@ -16,4 +16,9 @@ public:
 	void Stop();
 
 	Emulator* GetEmulator();
+
+    /// region <Helper methods>
+protected:
+    void SetUpLogging();
+    /// endregion </Helper methods>
 };

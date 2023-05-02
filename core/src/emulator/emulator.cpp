@@ -16,15 +16,30 @@
 
 /// region <Constructors / Destructors>
 
-Emulator::Emulator()
+Emulator::Emulator() : Emulator(LoggerLevel::LogTrace)
 {
 }
 
-Emulator::Emulator(LoggerLevel level) : Emulator()
+Emulator::Emulator(LoggerLevel level)
 {
-    LOGDEBUG("Emulator::Emulator()");
+    LOGDEBUG("Emulator::Emulator(LoggerLevel level)");
 
     _loggerLevel = level;
+
+    // Create and initialize emulator context. ModuleLogger will be initialized as well.
+    _context = new EmulatorContext(_loggerLevel);
+    if (_context != nullptr)
+    {
+        _logger = _context->pModuleLogger;
+        _context->pEmulator = this;
+
+        MLOGDEBUG("Emulator::Init - context created");
+    }
+    else
+    {
+        LOGERROR("Emulator::Emulator() - context creation failed");
+        throw std::logic_error("Emulator::Emulator() - context creation failed");
+    }
 }
 
 Emulator::~Emulator()
@@ -54,49 +69,29 @@ bool Emulator::Init()
 	// Ensure that MessageCenter instance is up and running
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
 
-	// Create and initialize emulator context. ModuleLogger will be initialized as well.
-	_context = new EmulatorContext(_loggerLevel);
-	if (_context != nullptr)
-	{
-        _logger = _context->pModuleLogger;
-        _context->pEmulator = this;
-
-		MLOGDEBUG("Emulator::Init - context created");
-
-		result = true;
-	}
-	else
-	{
-		LOGERROR("Emulator::Init - context creation failed");
-		result = false;
-	}
-
 	// Get host system info
 	GetSystemInfo();
 
 	// Load configuration
-	if (result)
-	{
-		_config = new Config(_context);
-		if (_config != nullptr)
-		{
-			result = _config->LoadConfig();
+    _config = new Config(_context);
+    if (_config != nullptr)
+    {
+        result = _config->LoadConfig();
 
-			if (result)
-			{
-				MLOGDEBUG("Emulator::Init - Config file successfully loaded");
-			}
-			else
-			{
-				MLOGERROR("Emulator::Init - Config load failed");
-			}
-		}
-		else
-		{
-			MLOGERROR("Emulator::Init - config manager creation failed");
-			result = false;
-		}
-	}
+        if (result)
+        {
+            MLOGDEBUG("Emulator::Init - Config file successfully loaded");
+        }
+        else
+        {
+            MLOGERROR("Emulator::Init - Config load failed");
+        }
+    }
+    else
+    {
+        MLOGERROR("Emulator::Init - config manager creation failed");
+        result = false;
+    }
 
 	// Create and initialize CPU system instance (including most peripheral devices)
 	if (result)
@@ -379,12 +374,12 @@ void Emulator::GetSystemInfo()
 // Performance management
 BaseFrequency_t Emulator::GetSpeed()
 {
-    return (BaseFrequency_t)_context->state.baseFreqMultiplier;
+    return (BaseFrequency_t)_context->coreState.baseFreqMultiplier;
 }
 
 void Emulator::SetSpeed(BaseFrequency_t speed)
 {
-    _context->state.baseFreqMultiplier = speed;
+    _context->coreState.baseFreqMultiplier = speed;
 }
 
 ///region <Integration interfaces>

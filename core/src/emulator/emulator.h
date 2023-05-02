@@ -7,7 +7,7 @@
 #include "common/logger.h"
 
 #include "emulatorcontext.h"
-#include "state.h"
+#include "corestate.h"
 #include "emulator/config.h"
 #include "emulator/mainloop.h"
 #include "cpu/cpu.h"

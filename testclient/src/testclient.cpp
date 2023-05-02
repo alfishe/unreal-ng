@@ -1,5 +1,3 @@
-#include "stdafx.h"
-
 #include "testclient.h"
 
 #include "shell/shell.h"
@@ -21,6 +19,9 @@ TestClient::~TestClient()
 
 void TestClient::Start()
 {
+    // Set up logging for the session
+    SetUpLogging();
+
     if (!_emulator->Init())
     {
         LOGERROR("Unable to initialize emulator. Exiting...");
@@ -35,7 +36,7 @@ void TestClient::Start()
         if (message && message->obj)
         {
             SimpleTextPayload* payload = dynamic_cast<SimpleTextPayload*>(message->obj);
-            if (payload && payload->_payloadText.size() > 0)
+            if (payload && !payload->_payloadText.empty())
             {
                 LOGINFO("CPU was reset with message '%s'", payload->_payloadText.c_str());
             }
@@ -79,7 +80,6 @@ void TestClient::Start()
 
     //endregion Test
 
-
     _emulator->Start();
 }
 
@@ -107,6 +107,21 @@ Emulator* TestClient::GetEmulator()
 {
     return _emulator;
 }
+
+/// region <Helper methods>
+void TestClient::SetUpLogging()
+{
+    ModuleLogger& logger = *_emulator->GetContext()->pModuleLogger;
+
+    // Disable all messages by default
+    // FIXME: change logging according to your test needs
+    logger.TurnOffLoggingForAll();
+
+    // Set only required
+    logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_GENERIC);
+    logger.TurnOnLoggingForModule(MODULE_CORE, SUBMODULE_CORE_MAINLOOP);
+}
+/// endregion </Helper methods>
 
 /// endregion </TestClient class>
 
@@ -174,7 +189,7 @@ void registerSignalHandler()
     sigemptyset(&sigIntHandler.sa_mask);
     sigIntHandler.sa_flags = 0;
 
-    sigaction(SIGINT, &sigIntHandler, NULL);
+    sigaction(SIGINT, &sigIntHandler, nullptr);
 #endif
 }
 
@@ -182,7 +197,7 @@ void createNamedPipe()
 {
 #if __APPLE__
     const char* PIPE_NAME = "/tmp/unreal_pipe";
-    struct stat stat_path;
+    struct stat stat_path = {};
     stat(PIPE_NAME, &stat_path);
 
     if (!S_ISFIFO(stat_path.st_mode))
@@ -234,11 +249,11 @@ void runAsShell()
     g_emulator = client.GetEmulator();
 
     std::thread t([]()
-                  {
-                      cout << "Client thread started" << endl;
+    {
+      cout << "Client thread started" << endl;
 
-                      client.Start();
-                  });
+      client.Start();
+    });
 
     shell.Init();
     shell.Run();
