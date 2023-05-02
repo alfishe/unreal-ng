@@ -6,7 +6,7 @@
 #include "screen.h"
 
 #include "common/stringhelper.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 
 #include <cassert>
@@ -38,7 +38,7 @@ Screen::Screen(EmulatorContext* context)
 {
     _context = context;
     _state = &_context->emulatorState;
-	_system = _context->pCPU;
+	_system = _context->pCore;
 	_cpu = _system->GetZ80();
 	_memory = _context->pMemory;
 	_logger = _context->pModuleLogger;
@@ -323,7 +323,7 @@ uint8_t Screen::GetBorderColor()
 
 uint32_t Screen::GetCurrentTstate()
 {
-    uint32_t result = _context->pCPU->GetZ80()->t;
+    uint32_t result = _context->pCore->GetZ80()->t;
 
     return result;
 }

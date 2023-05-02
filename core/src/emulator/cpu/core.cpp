@@ -2,7 +2,7 @@
 
 #include "common/modulelogger.h"
 
-#include "cpu.h"
+#include "core.h"
 #include <algorithm>
 #include <cassert>
 #include "emulator/ports/portdecoder.h"
@@ -10,12 +10,12 @@
 #include "emulator/video/zx/screenzx.h"
 
 
-// Instantiate CPU tables as static (only one instance per process)
-CPUTables CPU::_cpuTables;
+// Instantiate Core tables as static (only one instance per process)
+CPUTables Core::_cpuTables;
 
 /// region <Constructors / Destructors>
 
-CPU::CPU(EmulatorContext* context)
+Core::Core(EmulatorContext* context)
 {
 	_context = context;
     _state = &_context->emulatorState;
@@ -23,7 +23,7 @@ CPU::CPU(EmulatorContext* context)
     _logger = _context->pModuleLogger;
 }
 
-CPU::~CPU()
+Core::~Core()
 {
     Release();
 
@@ -33,7 +33,7 @@ CPU::~CPU()
 /// endregion </Constructors / Destructors>
 
 /// region <Initialization>
-bool CPU::Init()
+bool Core::Init()
 {
     bool result = false;
 
@@ -44,7 +44,7 @@ bool CPU::Init()
     // Step N       - PortDecoder()
 
     // Register itself in context
-    _context->pCPU = this;
+    _context->pCore = this;
 
     /// region <Frequency>
 
@@ -194,7 +194,7 @@ bool CPU::Init()
     {
         result = false;
 
-        // Create main CPU core instance (Z80)
+        // Create main Core core instance (Z80)
         _z80 = new Z80(_context);
         if (_z80)
         {
@@ -227,7 +227,7 @@ bool CPU::Init()
             }
             else
             {
-                LOGERROR("CPU::CPU - Unable to create port decoder for model %d", model);
+                LOGERROR("Core::Core - Unable to create port decoder for model %d", model);
                 throw std::logic_error("No port decoder");
             }
         }
@@ -244,10 +244,10 @@ bool CPU::Init()
     return result;
 }
 
-void CPU::Release()
+void Core::Release()
 {
     // Unegister itself from context
-    _context->pCPU = nullptr;
+    _context->pCore = nullptr;
 
     _context->pPortDecoder = nullptr;
     if (_portDecoder != nullptr)
@@ -317,26 +317,26 @@ void CPU::Release()
 /// endregion </Initialization>
 
 // Configuration methods
-void CPU::UseFastMemoryInterface()
+void Core::UseFastMemoryInterface()
 {
     _z80->MemIf = _z80->FastMemIf;
 }
 
-void CPU::UseDebugMemoryInterface()
+void Core::UseDebugMemoryInterface()
 {
     _z80->MemIf = _z80->DbgMemIf;
 }
 
-void CPU::Reset()
+void Core::Reset()
 {
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 	int topicID = messageCenter.RegisterTopic("CPU_RESET");
-	messageCenter.Post(topicID, new SimpleTextPayload("CPU reset started"));
+	messageCenter.Post(topicID, new SimpleTextPayload("Core reset started"));
 
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
 	_mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
-	// Reset main Z80 CPU and all peripherals
+	// Reset main Z80 Core and all peripherals
 	_z80->Reset();					// Main Z80
 	_memory->Reset();               // Memory
 	_keyboard->Reset();             // Keyboard
@@ -352,19 +352,18 @@ void CPU::Reset()
 
 	// Reset counters
     _state->frame_counter = 0;
-	_state->t_states = 0;
 
-	messageCenter.Post(topicID, new SimpleTextPayload("CPU reset finished"));
+	messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
 
-void CPU::Pause()
+void Core::Pause()
 {
     _pauseRequested = true;
 
     _z80->Pause();
 }
 
-void CPU::Resume()
+void Core::Resume()
 {
     _pauseRequested = false;
 
@@ -372,36 +371,36 @@ void CPU::Resume()
 }
 
 //
-// Set main Z80 CPU clock speed
+// Set main Z80 Core clock speed
 // Multplier from 3.5MHz
 //
-void CPU::SetCPUClockSpeed(uint8_t multiplier)
+void Core::SetCPUClockSpeed(uint8_t multiplier)
 {
 	if (multiplier == 0)
 	{
-		LOGERROR("CPU::SetCPUClockSpeed - Z80 clock frequency multiplier cannot be 0");
+		LOGERROR("Core::SetCPUClockSpeed - Z80 clock frequency multiplier cannot be 0");
 		assert(false);
 	}
 
     _z80->rate = (256 / multiplier);
 }
 
-uint32_t CPU::GetBaseCPUFrequency()
+uint32_t Core::GetBaseCPUFrequency()
 {
     return _state->base_z80_frequency;
 }
 
-uint32_t CPU::GetCPUFrequency()
+uint32_t Core::GetCPUFrequency()
 {
     return _state->current_z80_frequency;
 }
 
-uint16_t CPU::GetCPUFrequencyMultiplier()
+uint16_t Core::GetCPUFrequencyMultiplier()
 {
     return _state->current_z80_frequency_multiplier;
 };
 
-void CPU::CPUFrameCycle()
+void Core::CPUFrameCycle()
 {
 	// Execute Z80 cycle
 	if (_z80->isDebugMode)
@@ -417,11 +416,14 @@ void CPU::CPUFrameCycle()
 		_z80->Z80FrameCycle();
 	}
 
+    uint32_t t = _context->pCore->GetZ80()->t;
+    MLOGINFO("tState counter after the frame: %d", t);
+
     AdjustFrameCounters();
 }
 
 /// Perform corrections after each frame rendered
-void CPU::AdjustFrameCounters()
+void Core::AdjustFrameCounters()
 {
     /// region <Input parameters validation>
     if (_z80->t < _config->frame)
@@ -431,24 +433,12 @@ void CPU::AdjustFrameCounters()
     // Update frame stats
     _state->frame_counter++;
 
-    // Update counter
-    _state->t_states += _config->frame;
-
-    // Re-adjust CPU frame t-state counter and interrupt position
+    // Re-adjust Core frame t-state counter and interrupt position
     _z80->t -= _config->frame;
     _z80->eipos -= _config->frame;
-
-    /// region <TSConf only>
-
-    if (_config->mem_model == MM_TSL)
-    {
-        _state->ts.intctrl.last_cput -= _config->frame;
-    }
-
-    /// endregion </TSConf only>
 }
 
-void CPU::UpdateScreen()
+void Core::UpdateScreen()
 {
 	GetZ80()->UpdateScreen();
 }

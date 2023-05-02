@@ -3,7 +3,7 @@
 
 #include "debuggerwindow.h"
 #include "common/stringhelper.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -142,7 +142,7 @@ void StackWidget::readStackIntoArray(uint16_t* outArray, uint16_t depth)
         return;
 
     Memory* memory = getMemory();
-    Z80State* z80 = getEmulatorContext()->pCPU->GetZ80();
+    Z80State* z80 = getEmulatorContext()->pCore->GetZ80();
     uint16_t sp = static_cast<uint16_t>(z80->Z80Registers::sp);
 
     for (unsigned long i = 0; i < depth; i++)

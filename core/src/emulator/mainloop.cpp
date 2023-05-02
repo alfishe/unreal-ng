@@ -12,7 +12,7 @@ MainLoop::MainLoop(EmulatorContext* context)
     _logger = context->pModuleLogger;
 
 	_state = &_context->emulatorState;
-	_cpu = _context->pCPU;
+	_cpu = _context->pCore;
     _screen = _context->pScreen;
 
     _isRunning = false;

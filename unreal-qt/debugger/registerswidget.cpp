@@ -35,7 +35,7 @@ RegistersWidget::~RegistersWidget()
 }
 
 ///
-/// \brief RegistersWidget::setZ80State set actual values for Z80 registers from CPU state
+/// \brief RegistersWidget::setZ80State set actual values for Z80 registers from Core state
 /// \param state
 ///
 void RegistersWidget::setZ80State(Z80State* state)
@@ -65,7 +65,7 @@ Memory* RegistersWidget::getMemory()
 
 Z80Registers* RegistersWidget::getRegisters()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pCPU->GetZ80();
+    return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
 }
 
 /// region <Event handlers / Slots>

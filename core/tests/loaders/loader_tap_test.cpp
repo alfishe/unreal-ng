@@ -13,7 +13,7 @@ void LoaderTAP_Test::SetUp()
     // Instantiate emulator with all peripherals, but no configuration loaded
     _context = new EmulatorContext(LoggerLevel::LogError);
 
-    _cpu = new CPU(_context);
+    _cpu = new Core(_context);
     if (_cpu->Init())
     {
 

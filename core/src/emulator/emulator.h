@@ -10,7 +10,7 @@
 #include "corestate.h"
 #include "emulator/config.h"
 #include "emulator/mainloop.h"
-#include "cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
 
@@ -64,7 +64,7 @@ protected:
 	EmulatorContext* _context = nullptr;
 
 	Config* _config = nullptr;
-	CPU* _cpu = nullptr;
+	Core* _core = nullptr;
 	Z80* _z80 = nullptr;
 	Memory* _memory = nullptr;
 	MainLoop* _mainloop = nullptr;

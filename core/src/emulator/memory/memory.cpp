@@ -158,7 +158,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
     /// region <Read breakpoint logic>
 
     Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCPU->GetZ80();
+    Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
     uint16_t breakpointID = brk.HandleMemoryRead(addr);
     if (breakpointID != BRK_INVALID)
@@ -252,7 +252,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     /// region <Write breakpoint logic>
 
     Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCPU->GetZ80();
+    Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
     uint16_t breakpointID = brk.HandleMemoryWrite(addr);
     if (breakpointID != BRK_INVALID)

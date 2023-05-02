@@ -164,7 +164,7 @@ void Z80::Z80Step(bool skipBreakpoints)
         if (breakpointID != BRK_INVALID)
         {
             // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Important note: Emulator.Pause() is needed, not Core.Pause() or Z80.Pause() for successful resume later
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered

@@ -18,7 +18,7 @@ class MessageCenter;
 class Z80;
 class PortDecoder;
 
-class CPU
+class Core
 {
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
@@ -57,9 +57,9 @@ protected:
 
     /// region <Constructors / Destructors>
 public:
-    CPU() = delete;			        // Disable default constructor. C++ 11 feature
-    CPU(EmulatorContext* context);  // Only constructor with context param is allowed
-    virtual ~CPU();
+    Core() = delete;			        // Disable default constructor. C++ 11 feature
+    Core(EmulatorContext* context);  // Only constructor with context param is allowed
+    virtual ~Core();
     /// endregion </Constructors / Destructors
 
     /// region <Initialization>
@@ -80,7 +80,7 @@ public:
     void UseFastMemoryInterface();
     void UseDebugMemoryInterface();
 
-    // Z80 CPU-related methods
+    // Z80 Core-related methods
 public:
     void Reset();
     void Pause();

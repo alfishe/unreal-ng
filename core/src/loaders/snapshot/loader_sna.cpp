@@ -7,7 +7,7 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
@@ -273,8 +273,8 @@ bool LoaderSNA::applySnapshotFromStaging()
 
     Memory& memory = *_context->pMemory;
     Screen& screen = *_context->pScreen;
-    CPU& cpu = *_context->pCPU;
-    Z80& z80 = *_context->pCPU->GetZ80();
+    Core& cpu = *_context->pCore;
+    Z80& z80 = *_context->pCore->GetZ80();
     int ramPagesLoaded = 0;
 
     if (_stagingLoaded)

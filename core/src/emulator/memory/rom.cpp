@@ -7,7 +7,7 @@
 #include "common/collectionhelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
 #include "3rdparty/digestpp/digestpp.hpp"
 
@@ -358,7 +358,7 @@ bool ROM::LoadROMSet()
 	bool result = false;
 
 	CONFIG& config = _context->config;
-	Memory& memory = *_context->pCPU->GetMemory();
+	Memory& memory = *_context->pCore->GetMemory();
 
 	// BASIC48 (SOS)
 	string rompath = config.sos_rom_path;

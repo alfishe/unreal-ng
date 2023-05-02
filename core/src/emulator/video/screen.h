@@ -367,7 +367,7 @@ public:
 protected:
 	EmulatorContext* _context = nullptr;
 	EmulatorState* _state = nullptr;
-	CPU* _system = nullptr;
+	Core* _system = nullptr;
 	Z80* _cpu = nullptr;
 	Memory* _memory = nullptr;
     ModuleLogger* _logger;

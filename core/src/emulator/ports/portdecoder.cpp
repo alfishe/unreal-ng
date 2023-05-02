@@ -8,7 +8,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/emulator.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
@@ -83,7 +83,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, uint16_t pc)
     /// region <Port In breakpoint logic>
 
     Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCPU->GetZ80();
+    Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
     uint16_t breakpointID = brk.HandlePortIn(addr);
     if (breakpointID != BRK_INVALID)
@@ -112,7 +112,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc)
     /// region <Port Out breakpoint logic>
 
     Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCPU->GetZ80();
+    Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
     uint16_t breakpointID = brk.HandlePortIn(addr);
@@ -274,7 +274,7 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         // No peripheral to handle this port IN available
 
         // Determine RAM/ROM page where code executed from
-        uint16_t pc = _context->pCPU->GetZ80()->m1_pc;  // Use IN command PC, not the next one (z80->pc)
+        uint16_t pc = _context->pCore->GetZ80()->m1_pc;  // Use IN command PC, not the next one (z80->pc)
         std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(), port);
     }
@@ -301,7 +301,7 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         // No peripheral to handle this port OUT available
 
         // Determine RAM/ROM page where code executed from
-        uint16_t pc = _context->pCPU->GetZ80()->m1_pc;  // Use OUT command PC, not the next one (z80->pc)
+        uint16_t pc = _context->pCore->GetZ80()->m1_pc;  // Use OUT command PC, not the next one (z80->pc)
         std::string currentMemoryPage = GetPCAddressLocator(pc);
         MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(), port, value);
     }

@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 
 class Z80;
 
@@ -46,44 +46,44 @@ extern uint8_t const (&rr0)[0x100];
 extern uint8_t const (&rr1)[0x100];
 extern uint8_t (&cpf8b)[0x10000];
 
-//auto& inc_f = CPU::_cpuTables.increment_flags;
-//auto& dec_f = CPU::_cpuTables.decrement_flags;
-//auto& adc_f = CPU::_cpuTables.add_flags;
-//auto& sbc_f = CPU::_cpuTables.sub_flags;
-//auto& cp_f = CPU::_cpuTables.cp_flags;
-//auto& rlc_f = CPU::_cpuTables.rlc_flags;
-//auto& rrc_f = CPU::_cpuTables.rrc_flags;
-//auto& rlca_f = CPU::_cpuTables.rlca_flags;
-//auto& rrca_f = CPU::_cpuTables.rrca_flags;
-//auto& sra_f = CPU::_cpuTables.sra_flags;
+//auto& inc_f = Core::_cpuTables.increment_flags;
+//auto& dec_f = Core::_cpuTables.decrement_flags;
+//auto& adc_f = Core::_cpuTables.add_flags;
+//auto& sbc_f = Core::_cpuTables.sub_flags;
+//auto& cp_f = Core::_cpuTables.cp_flags;
+//auto& rlc_f = Core::_cpuTables.rlc_flags;
+//auto& rrc_f = Core::_cpuTables.rrc_flags;
+//auto& rlca_f = Core::_cpuTables.rlca_flags;
+//auto& rrca_f = Core::_cpuTables.rrca_flags;
+//auto& sra_f = Core::_cpuTables.sra_flags;
 //
-//auto& rol = CPU::_cpuTables.rol_table;
-//auto& ror = CPU::_cpuTables.ror_table;
-//auto& rl0 = CPU::_cpuTables.rl0_table;
-//auto& rl1 = CPU::_cpuTables.rl1_table;
-//auto& rr0 = CPU::_cpuTables.rr0_table;
-//auto& rr1 = CPU::_cpuTables.rr1_table;
-//auto& cpf8b = CPU::_cpuTables.cpf8b;
+//auto& rol = Core::_cpuTables.rol_table;
+//auto& ror = Core::_cpuTables.ror_table;
+//auto& rl0 = Core::_cpuTables.rl0_table;
+//auto& rl1 = Core::_cpuTables.rl1_table;
+//auto& rr0 = Core::_cpuTables.rr0_table;
+//auto& rr1 = Core::_cpuTables.rr1_table;
+//auto& cpf8b = Core::_cpuTables.cpf8b;
 
-//#define log_f CPU::_cpuTables.logic_flags
-//#define inc_f CPU::_cpuTables.increment_flags
-//#define dec_f CPU::_cpuTables.decrement_flags
-//#define adc_f CPU::_cpuTables.add_flags
-//#define sbc_f CPU::_cpuTables.sub_flags
-//#define cp_f CPU::_cpuTables.cp_flags
-//#define rlc_f CPU::_cpuTables.rlc_flags
-//#define rrc_f CPU::_cpuTables.rrc_flags
-//#define rlca_f CPU::_cpuTables.rlca_flags
-//#define rrca_f CPU::_cpuTables.rrca_flags
+//#define log_f Core::_cpuTables.logic_flags
+//#define inc_f Core::_cpuTables.increment_flags
+//#define dec_f Core::_cpuTables.decrement_flags
+//#define adc_f Core::_cpuTables.add_flags
+//#define sbc_f Core::_cpuTables.sub_flags
+//#define cp_f Core::_cpuTables.cp_flags
+//#define rlc_f Core::_cpuTables.rlc_flags
+//#define rrc_f Core::_cpuTables.rrc_flags
+//#define rlca_f Core::_cpuTables.rlca_flags
+//#define rrca_f Core::_cpuTables.rrca_flags
 //
-//#define rol CPU::_cpuTables.rol_table
-//#define ror CPU::_cpuTables.ror_table
-//#define rl0 CPU::_cpuTables.rl0_table
-//#define rl1 CPU::_cpuTables.rl1_table
-//#define rr0 CPU::_cpuTables.rr0_table
-//#define rr1 CPU::_cpuTables.rr1_table
+//#define rol Core::_cpuTables.rol_table
+//#define ror Core::_cpuTables.ror_table
+//#define rl0 Core::_cpuTables.rl0_table
+//#define rl1 Core::_cpuTables.rl1_table
+//#define rr0 Core::_cpuTables.rr0_table
+//#define rr1 Core::_cpuTables.rr1_table
 
-// Z80 CPU flag register bits
+// Z80 Core flag register bits
 #define CF 0x01			// Bit 0 - Carry Flag
 #define NF 0x02			// Bit 1 - Add/Subtract
 #define PV 0x04			// Bit 2 - Parity/Overflow

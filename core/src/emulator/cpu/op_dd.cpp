@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/cpu/z80.h"
 #include "op_noprefix.h"

@@ -1,6 +1,6 @@
 #include "pch.h"
 
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 
@@ -12,7 +12,7 @@ class Z80_Logic_Jump_Test : public ::testing::Test
 {
 protected:
     EmulatorContext* _context = nullptr;
-    CPU* _cpu = nullptr;
+    Core* _cpu = nullptr;
     OpcodeTest* _opcode = nullptr;
 
 protected:

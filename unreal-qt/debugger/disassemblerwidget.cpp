@@ -8,7 +8,7 @@
 #include "common/stringhelper.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 
@@ -47,7 +47,7 @@ Memory* DisassemblerWidget::getMemory()
 
 Z80Registers* DisassemblerWidget::getZ80Registers()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pCPU->GetZ80();
+    return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
 }
 
 Z80Disassembler* DisassemblerWidget::getDisassembler()

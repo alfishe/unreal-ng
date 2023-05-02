@@ -3,7 +3,7 @@
 
 #include "common/logger.h"
 #include "common/image/gifanimationhelper.h"
-#include "cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 
 class MainLoop
@@ -19,7 +19,7 @@ protected:
     ModuleLogger* _logger;
 
     EmulatorState* _state = nullptr;
-    CPU* _cpu = nullptr;
+    Core* _cpu = nullptr;
     Screen* _screen = nullptr;
     SoundManager* _soundManager = nullptr;
 

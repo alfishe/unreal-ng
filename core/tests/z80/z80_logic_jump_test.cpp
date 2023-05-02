@@ -13,7 +13,7 @@ void Z80_Logic_Jump_Test::SetUp()
     // Instantiate emulator with all peripherals, but no configuration loaded
     _context = new EmulatorContext(LoggerLevel::LogError);
 
-    _cpu = new CPU(_context);
+    _cpu = new Core(_context);
     bool init = _cpu->Init();
 
     // Use Spectrum48K / Pentagon memory layout

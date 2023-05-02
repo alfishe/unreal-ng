@@ -3,7 +3,7 @@
 
 #include "screenzx_benchmark.h"
 
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/zx/screenzx.h"
 

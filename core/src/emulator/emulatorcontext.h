@@ -6,7 +6,7 @@
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
 
-class CPU;
+class Core;
 class Emulator;
 class Keyboard;
 class MainLoop;
@@ -41,7 +41,7 @@ public:
 	HOST host;
 
 	// Computer system instance
-	CPU* pCPU;
+	Core* pCore;
 
 	// Keyboard controller instance
 	Keyboard* pKeyboard;
@@ -68,7 +68,7 @@ public:
     /// region <Parent object references>
 public:
     Emulator* pEmulator;
-    /// endregion </Parent object refereces>
+    /// endregion </Parent object references>
 
     /// region <Constructors / destructors>
 public:

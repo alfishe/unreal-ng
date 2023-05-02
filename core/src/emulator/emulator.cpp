@@ -98,28 +98,28 @@ bool Emulator::Init()
 	{
 	    result = false;
 
-		_cpu = new CPU(_context);
-		if (_cpu && _cpu->Init())
+        _core = new Core(_context);
+		if (_core && _core->Init())
 		{
-			LOGDEBUG("Emulator::Init - CPU system created");
+			LOGDEBUG("Emulator::Init - CPU system core created");
 
-			_context->pCPU = _cpu;
+			_context->pCore = _core;
 
-			_z80 = _cpu->GetZ80();
-			_memory = _cpu->GetMemory();
+			_z80 = _core->GetZ80();
+			_memory = _core->GetMemory();
 
 			result = true;
 		}
 		else
 		{
-			MLOGERROR("Emulator::Init - CPU system (or main peripheral devices) creation failed");
+			MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed");
 		}
 	}
 
 	// Load ROMs
 	if (result)
 	{
-		ROM& rom = *_cpu->GetROM();
+		ROM& rom = *_core->GetROM();
 
 		//std::string rompath = rom.GetROMFilename();
 		result = rom.LoadROM();
@@ -203,15 +203,15 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
-	if (!_cpu)
+	if (!_core)
     {
 	    std::string error = "CPU was not created";
 	    throw std::logic_error(error);
     }
 
-    if (!_context->pCPU)
+    if (!_context->pCore)
     {
-        std::string error = "_context->pCPU not available";
+        std::string error = "_context->pCore not available";
         throw std::logic_error(error);
     }
 
@@ -256,7 +256,7 @@ bool Emulator::Init()
 	// Reset CPU and set-up all ports / ROM and RAM pages
 	if (result)
 	{
-		_cpu->Reset();
+		_core->Reset();
 
 		// Init default video render
 		_context->pScreen->InitFrame();
@@ -311,12 +311,12 @@ void Emulator::ReleaseNoGuard()
     // Tape
 
 
-    // Release CPU subsystem (it will release all main peripherals)
-    _context->pCPU = nullptr;
-    if (_cpu != nullptr)
+    // Release CPU subsystem core (it will release all main peripherals)
+    _context->pCore = nullptr;
+    if (_core != nullptr)
     {
-        delete _cpu;
-        _cpu = nullptr;
+        delete _core;
+        _core = nullptr;
     }
 
     // Release Config
@@ -428,12 +428,12 @@ void Emulator::Reset()
 	_isPaused = false;
 	_isRunning = false;
 
-	_cpu->Reset();
+	_core->Reset();
 }
 
 void Emulator::Start()
 {
-	_cpu->Reset();
+	_core->Reset();
 
 	_stopRequested = false;
 	_isPaused = false;
@@ -622,7 +622,7 @@ bool Emulator::LoadSnapshot(std::string &path)
 void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
     const CONFIG& config = _context->config;
-    Z80& z80 = *_cpu->GetZ80();
+    Z80& z80 = *_core->GetZ80();
     Memory& memory = *_context->pMemory;
 
 	// TODO: synchronize with all timings within frame and I/O
@@ -633,7 +633,7 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     // New frame to be started
     if (z80.t >= config.frame)
     {
-        _cpu->AdjustFrameCounters();
+        _core->AdjustFrameCounters();
     }
 
 #ifdef _DEBUG
@@ -679,7 +679,7 @@ bool Emulator::LoadROM(std::string path)
 {
     Pause();
 
-    ROM& rom = *_cpu->GetROM();
+    ROM& rom = *_core->GetROM();
 
     bool result = rom.LoadROM(path, _memory->ROMBase(), MAX_ROM_PAGES);
 
@@ -689,7 +689,7 @@ bool Emulator::LoadROM(std::string path)
 void Emulator::DebugOn()
 {
     // Switch to slow but instrumented memory interface
-    _cpu->UseDebugMemoryInterface();
+    _core->UseDebugMemoryInterface();
 
     _isDebug = true;
     _z80->isDebugMode = true;
@@ -698,7 +698,7 @@ void Emulator::DebugOn()
 void Emulator::DebugOff()
 {
     // Switch to fast memory interface
-    _cpu->UseFastMemoryInterface();
+    _core->UseFastMemoryInterface();
 
     _isDebug = false;
     _z80->isDebugMode = false;
@@ -732,7 +732,7 @@ std::string Emulator::GetStatistics()
 {
     EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
-    Z80& z80 = *_context->pCPU->GetZ80();
+    Z80& z80 = *_context->pCore->GetZ80();
 
     std::string dump = z80.DumpZ80State();
     std::string cpuState = string(StringHelper::Trim(dump));
