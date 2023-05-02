@@ -95,10 +95,8 @@ void Logger::OutEnriched(string fmt, va_list args)
 	gettimeofday(&tv, NULL);
 
 #if defined __GNUC__
-    time_t time;
-    tm_info = localtime(&time);
-#elif defined __APPLE__
-    tm_info = localtime(&tv);
+    time_t currentTime = time(nullptr);
+    tm_info = localtime(&currentTime);
 #endif
 
 	time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
