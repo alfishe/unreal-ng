@@ -10,7 +10,7 @@ enum BaseFrequency_t : uint8_t
     FREQ_56MHZ = 16
 };
 
-struct State
+struct CoreState
 {
     uint8_t baseFreqMultiplier = (uint8_t)FREQ_3_5MHZ;     // How fast is Z80 clocked comparing to standard 3.5MHz model
 };

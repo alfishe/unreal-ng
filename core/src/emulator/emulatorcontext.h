@@ -3,7 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
-#include "state.h"
+#include "corestate.h"
 #include "emulator/io/tape/tape.h"
 
 class CPU;
@@ -28,7 +28,7 @@ public:
 	CONFIG config;
 
     // Runtime state
-    State state;
+    CoreState coreState;
 
 	// Emulated system state (ports, flags including peripheral devices)
 	EmulatorState emulatorState;
