@@ -5,13 +5,13 @@
 #include "wd93.h"
 #include "wd93crc.h"
 #include "emulator/cpu/z80.h"
-#include "emulator/cpu/cpu.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 
 
 void WD1793::process()
 {
-	Z80& cpu = *_context->pCPU->GetZ80();
+	Z80& cpu = *_context->pCore->GetZ80();
 	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
@@ -507,7 +507,7 @@ void WD1793::process()
 
 void WD1793::find_marker()
 {
-	Z80& cpu = *_context->pCPU->GetZ80();
+	Z80& cpu = *_context->pCore->GetZ80();
 	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
@@ -631,7 +631,7 @@ uint8_t WD1793::in(uint8_t port)
 
 void WD1793::out(uint8_t port, uint8_t val)
 {
-	Z80& cpu = *_context->pCPU->GetZ80();
+	Z80& cpu = *_context->pCore->GetZ80();
 	EmulatorState& state = _context->emulatorState;
 	CONFIG& config = _context->config;
 
