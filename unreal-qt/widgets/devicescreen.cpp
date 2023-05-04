@@ -13,7 +13,7 @@ bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
     bool result = false;
 
-   if (fabs(x - y) < epsilon)
+   if (fabsf(x - y) < epsilon)
       result = true;
 
    return result;
