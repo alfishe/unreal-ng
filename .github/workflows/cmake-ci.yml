@@ -21,6 +21,18 @@ jobs:
       uses: actions/checkout@v3
       with:
         submodules: recursive
+    - name: Linux dependencies
+      run: |
+             sudo apt-get update
+             sudo apt remove -y libicu-dev
+             sudo apt-get install -o Acquire::Retries=3 -y --no-install-recommends --fix-missing build-essential cmake git
+             wget https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz
+             tar -xzvf icu4c-56_1-src.tgz
+             cd icu/source
+             ./configure --prefix=/usr/local
+             make
+             sudo make install
+             sudo ldconfig
       
     - name: Install Qt on Linux
       if: runner.os == 'Linux'
@@ -39,8 +51,6 @@ jobs:
         
     - name: Build and Test on Linux
       run: |
-              sudo apt-get update
-              sudo apt-get install -o Acquire::Retries=3 -y --no-install-recommends --fix-missing build-essential cmake git libicu-dev
               cd ${{ github.workspace }}/unreal-qt
               mkdir build
               cd build
