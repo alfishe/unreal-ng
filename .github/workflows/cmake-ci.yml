@@ -38,7 +38,7 @@ jobs:
     - name: Build and Test on Linux
       run: |
               sudo apt-get update
-              sudo apt-get install -o Acquire::Retries=3 -y --no-install-recommends --fix-missing build-essential cmake git
+              sudo apt-get install -o Acquire::Retries=3 -y --no-install-recommends --fix-missing build-essential cmake git libicu-dev
               cd ${{ github.workspace }}/unreal-qt
               mkdir build
               cd build
