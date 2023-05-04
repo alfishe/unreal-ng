@@ -17,7 +17,7 @@ struct Z80Registers
 {
 	union
 	{
-		unsigned tt;
+		uint32_t tt;
 		struct
 		{
 			unsigned t_l : 8;
@@ -28,7 +28,7 @@ struct Z80Registers
 	/*------------------------------*/
 	union
 	{
-		unsigned pc;
+        uint16_t pc;
 		struct
 		{
 			uint8_t pcl;
@@ -38,7 +38,7 @@ struct Z80Registers
 
 	union
 	{
-		unsigned sp;
+        uint16_t sp;
 		struct
 		{
 			uint8_t spl;
@@ -49,7 +49,7 @@ struct Z80Registers
 	// IR - Instruction register
 	union
 	{
-		unsigned ir_;
+        uint16_t ir_;
 		struct
 		{
 			uint8_t r_low;
@@ -57,14 +57,28 @@ struct Z80Registers
 		};
 	};
 
+    /// The purpose of IFF2 is to save the status of IFF1 when a nonmaskable interrupt occurs.
+    /// When a nonmaskable interrupt is accepted, IFF1 resets to prevent further interrupts until
+    /// reenabled by the programmer. Therefore, after a nonmaskable interrupt is accepted, maskable
+    /// interrupts are disabled but the previous state of IFF1 is saved so that the complete
+    /// state of the CPU just prior to the nonmaskable interrupt can be restored at any time. When
+    /// a Load Register A with Register I (LD A, I) instruction or a Load Register A with Register R
+    /// (LD A, R) instruction is executed, the state of IFF2 is copied to the parity flag, where it
+    /// can be tested or stored.
+    /// A second method of restoring the status of IFF1 is through the execution of a Return From
+    /// Nonmaskable Interrupt (RETN) instruction. This instruction indicates that the nonmaskable
+    /// interrupt service routine is complete and the contents of IFF2 are now copied back
+    /// into IFF1 so that the status of IFF1 just prior to the acceptance of the nonmaskable interrupt
+    /// is restored automatically.
+    /// @see https://www.zilog.com/docs/z80/um0080.pdf
 	union
 	{
-		unsigned int_flags;
+        uint16_t int_flags;
 		struct
 		{
 			uint8_t r_hi;
-			uint8_t iff1;	// Interrupt flip-flop 1
-			uint8_t iff2;	// Interrupt flip-flop 2
+			uint8_t iff1;	// Interrupt enable flip-flop 1. Disables interrupts from being accepted
+			uint8_t iff2;	// Interrupt enable flip-flop 2. Temporary storage location for IFF1
 			uint8_t halted;	// CPU halted
 		};
 	};
@@ -72,8 +86,7 @@ struct Z80Registers
 	/*------------------------------*/
 	union
 	{
-		unsigned bc;
-		uint16_t bc16;
+        uint16_t bc;
 		struct
 		{
 			uint8_t c;
@@ -83,7 +96,7 @@ struct Z80Registers
 
 	union
 	{
-		unsigned de;
+        uint16_t de;
 		struct
 		{
 			uint8_t e;
@@ -93,7 +106,7 @@ struct Z80Registers
 
 	union
 	{
-		unsigned hl;
+		uint16_t hl;
 		struct
 		{
 			uint8_t l;
@@ -103,7 +116,7 @@ struct Z80Registers
 
 	union
 	{
-		unsigned af;
+        uint16_t af;
 		struct
 		{
 			uint8_t f;
@@ -114,7 +127,7 @@ struct Z80Registers
 	/*------------------------------*/
 	union
 	{
-		unsigned ix;
+        uint16_t ix;
 		struct
 		{
 			uint8_t xl;
@@ -123,7 +136,7 @@ struct Z80Registers
 	};
 	union
 	{
-		unsigned iy;
+        uint16_t iy;
 		struct
 		{
 			uint8_t yl;
@@ -136,7 +149,7 @@ struct Z80Registers
 	{
 		union
 		{
-			unsigned bc;
+            uint16_t bc;
 			struct
 			{
 				uint8_t c;
@@ -146,7 +159,7 @@ struct Z80Registers
 
 		union
 		{
-			unsigned de;
+            uint16_t de;
 			struct
 			{
 				uint8_t e;
@@ -155,7 +168,7 @@ struct Z80Registers
 		};
 		union
 		{
-			unsigned hl;
+            uint16_t hl;
 			struct
 			{
 				uint8_t l;
@@ -164,7 +177,7 @@ struct Z80Registers
 		};
 		union
 		{
-			unsigned af;
+            uint16_t af;
 			struct
 			{
 				uint8_t f;
@@ -175,7 +188,7 @@ struct Z80Registers
 
 	union
 	{
-		unsigned memptr; // undocumented register
+        uint16_t memptr; // undocumented register
 		struct
 		{
 			uint8_t meml;
@@ -183,10 +196,11 @@ struct Z80Registers
 		};
 	};
 
-	uint32_t cycle_count;	// Counter to track cycle accuracy
+	uint32_t cycle_count;       // Counter to track cycle accuracy
+    uint32_t tStatesPerFrame;   // How many t-states already spent during current frame
 
-	unsigned eipos;
-	unsigned haltpos;
+    uint16_t eipos;
+    uint16_t haltpos;
 
 	/*------------------------------*/
 	uint8_t im;				// Interrupt mode [IM0|IM1|IM2]
@@ -223,6 +237,8 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
 	uint32_t z80_index; 							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
+    uint64_t clock_count;                           // Monotonically increasing clock edge counter. Doesn't depend on any rates recalculation
+
 	uint16_t prev_pc;                               // PC on previous cycle
 	uint16_t m1_pc;                                 // PC when M1 cycle started
 
@@ -250,7 +266,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
 	unsigned cbpn;
 	int64_t debug_last_t;							// Used to find time delta
 
-	int cycles_to_capture;                          // [NEW] Number of cycles to capture after trigger
+	int cycles_to_capture = 0;                      // [NEW] Number of cycles to capture after trigger
 
 
 	// Interrupts / HALT

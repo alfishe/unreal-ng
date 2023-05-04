@@ -98,22 +98,22 @@ Z80OPCODE ope_41(Z80 *cpu) { // out (c),b
 Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
     cpu->memptr = cpu->hl + 1;
 
-    int hl = cpu->hl & 0xFFFF;
-    int bc = cpu->bc & 0xFFFF;
+    int32_t hl = cpu->hl;
+    int32_t bc = cpu->bc;
 
-    int halfHL = hl & 0x0FFF;
-    int halfBC = bc & 0x0FFF;
+    int32_t halfHL = hl;
+    int32_t halfBC = bc;
 
     uint8_t flags = NF;
     flags |= ((halfHL - halfBC - (cpu->af & CF)) >> 8) & 0x10; // HF
 
-    unsigned result = hl - bc - (cpu->af & CF);
+    uint32_t result = hl - bc - (cpu->af & CF);
     if (result & 0x10000)
         flags |= CF;
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl - bc - (int)(cpu->af & CF);
+    int32_t ri = hl - bc - (int)(cpu->af & CF);
     if (ri < -0x8000 || ri >= 0x8000)
         flags |= PV;
 
@@ -190,15 +190,15 @@ Z80OPCODE ope_49(Z80 *cpu) { // out (c),c
 Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
     cpu->memptr = cpu->hl + 1;
 
-    int hl = cpu->hl & 0xFFFF;
-    int bc = cpu->bc & 0xFFFF;
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t bc = cpu->bc & 0xFFFF;
 
-    int halfHL = hl & 0x0FFF;
-    int halfBC = bc & 0x0FFF;
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfBC = bc & 0x0FFF;
 
     // Calculate half-carry flag (HF)
     uint8_t flags = ((halfHL + halfBC + (cpu->f & CF)) >> 8) & 0x10; // HF
-    unsigned result = hl + bc + (cpu->f & CF);
+    uint32_t result = hl + bc + (cpu->f & CF);
 
     if (result & 0x10000)
         flags |= CF;
@@ -277,17 +277,17 @@ Z80OPCODE ope_51(Z80 *cpu) { // out (c),d
 Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
     cpu->memptr = cpu->hl + 1;
 
-    int hl = cpu->hl & 0xFFFF;
-    int de = cpu->de & 0xFFFF;
-    int halfHL = hl & 0x0FFF;
-    int halfDE = de & 0x0FFF;
-    int carryAF = cpu->af & CF;
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t de = cpu->de & 0xFFFF;
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfDE = de & 0x0FFF;
+    int32_t carryAF = cpu->af & CF;
 
     // Calculate half-carry flag
     uint8_t flags = NF;
     flags |= ((halfHL - halfDE - carryAF) >> 8) & 0x10; // HF
 
-    unsigned result = hl - de - carryAF;
+    uint32_t result = hl - de - carryAF;
     if (result & 0x10000)
         flags |= CF;
 
@@ -355,31 +355,31 @@ Z80OPCODE ope_59(Z80 *cpu) { // out (c),e
 }
 
 Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
-   cpu->memptr = cpu->hl + 1;
+    cpu->memptr = cpu->hl + 1;
 
-   int hl = cpu->hl & 0xFFFF;
-   int de = cpu->de & 0xFFFF;
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t de = cpu->de & 0xFFFF;
 
-   int halfHL = hl & 0x0FFF;
-   int halfDE = de & 0x0FFF;
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfDE = de & 0x0FFF;
 
-   uint8_t flags = ((halfHL + halfDE + (cpu->af & CF)) >> 8) & 0x10; /* HF */
-   unsigned result = hl + de + (cpu->af & CF);
+    uint8_t flags = ((halfHL + halfDE + (cpu->af & CF)) >> 8) & 0x10; /* HF */
+    uint32_t result = hl + de + (cpu->af & CF);
 
-   if (result & 0x10000)
-	   flags |= CF;
-   if (!(result & 0xFFFF))
-	   flags |= ZF;
+    if (result & 0x10000)
+       flags |= CF;
+    if (!(result & 0xFFFF))
+       flags |= ZF;
 
-   int ri = (int)(short)cpu->hl + (int)(short)cpu->de + (int)(cpu->af & CF);
-   if (ri < -0x8000 || ri >= 0x8000)
+    int ri = (int)(short)cpu->hl + (int)(short)cpu->de + (int)(cpu->af & CF);
+    if (ri < -0x8000 || ri >= 0x8000)
        flags |= PV;
 
-   // Store result back to registers
-   cpu->hl = result & 0xFFFF;
-   cpu->f = flags | (cpu->h & (F3|F5|SF));
+    // Store result back to registers
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3|F5|SF));
 
-   cputact(7);
+    cputact(7);
 }
 
 Z80OPCODE ope_5B(Z80 *cpu) { // ld de,(nnnn)
@@ -436,7 +436,7 @@ Z80OPCODE ope_62(Z80 *cpu) { // sbc hl,hl
    uint8_t flags = NF;
     flags |= (cpu->f & CF) << 4; // HF - copy from CF
 
-   unsigned result = 0 - (cpu->af & CF);
+   uint32_t result = 0 - (cpu->af & CF);
    if (result & 0x10000)
        flags |= CF;
    if (!(result & 0xFFFF))
@@ -486,7 +486,7 @@ Z80OPCODE ope_69(Z80 *cpu) { // out (c),l
 Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    cpu->memptr = cpu->hl + 1;
 
-   int hl = cpu->hl & 0xFFFF;
+    int32_t hl = cpu->hl & 0xFFFF;
 
    uint8_t flags = ((cpu->h << 1) & 0x10); // HF
    unsigned result = hl + hl + (cpu->af & CF);
@@ -543,16 +543,16 @@ Z80OPCODE ope_71(Z80 *cpu) { // out (c),0 - Undocumented. Writes zero to the por
 Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
     cpu->memptr = cpu->hl + 1;
 
-    int hl = cpu->hl & 0xFFFF;
-    int sp = cpu->sp & 0xFFFF;
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t sp = cpu->sp & 0xFFFF;
 
-    int halfHL = hl & 0x0FFF;
-    int halfSP = sp & 0x0FFF;
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfSP = sp & 0x0FFF;
 
     uint8_t flags = NF;
     flags |= ((halfHL - halfSP - (cpu->af & CF)) >> 8) & 0x10; // HF
 
-    unsigned result = hl - sp - (cpu->af & CF);
+    uint32_t result = hl - sp - (cpu->af & CF);
 
     if (result & 0x10000)
         flags |= CF;
@@ -611,32 +611,32 @@ Z80OPCODE ope_79(Z80 *cpu) { // out (c),a
 }
 
 Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
-   cpu->memptr = cpu->hl + 1;
+    cpu->memptr = cpu->hl + 1;
 
-   int hl = cpu->hl & 0xFFFF;
-   int sp = cpu->sp & 0xFFFF;
+    int32_t hl = cpu->hl & 0xFFFF;
+    int32_t sp = cpu->sp & 0xFFFF;
 
-   int halfHL = hl & 0x0FFF;
-   int halfSP = sp & 0x0FFF;
+    int32_t halfHL = hl & 0x0FFF;
+    int32_t halfSP = sp & 0x0FFF;
 
-   uint8_t flags = ((halfHL + halfSP + (cpu->af & CF)) >> 8) & 0x10; // HF
+    uint8_t flags = ((halfHL + halfSP + (cpu->af & CF)) >> 8) & 0x10; // HF
 
-   unsigned result = hl + sp + (cpu->af & CF);
+    uint32_t result = hl + sp + (cpu->af & CF);
 
-   if (result & 0x10000)
+    if (result & 0x10000)
        flags |= CF;
-   if (!(uint16_t)result)
+    if (!(uint16_t)result)
        flags |= ZF;
 
-   int ri = (int)(short)cpu->hl + (int)(short)cpu->sp + (int)(cpu->af & CF);
-   if (ri < -0x8000 || ri >= 0x8000)
+    int ri = (int)(short)cpu->hl + (int)(short)cpu->sp + (int)(cpu->af & CF);
+    if (ri < -0x8000 || ri >= 0x8000)
        flags |= PV;
 
-   // Store result back to registers
-   cpu->hl = result & 0xFFFF;
-   cpu->f = flags | (cpu->h & (F3 | F5 | SF));
+    // Store result back to registers
+    cpu->hl = result & 0xFFFF;
+    cpu->f = flags | (cpu->h & (F3 | F5 | SF));
 
-   cputact(7);
+    cputact(7);
 }
 
 Z80OPCODE ope_7B(Z80 *cpu) { // ld sp,(nnnn)
@@ -668,7 +668,7 @@ Z80OPCODE ope_A0(Z80 *cpu) { // ldi
 
     cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
 
-    if (--cpu->bc16)
+    if (--cpu->bc)
         cpu->f |= PV;
 
     cputact(2);
@@ -681,7 +681,7 @@ Z80OPCODE ope_A1(Z80 *cpu) { // cpi
 
    cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
-   if (--cpu->bc16)
+   if (--cpu->bc)
 	   cpu->f |= PV;
 
    cpu->memptr++;
@@ -737,7 +737,7 @@ Z80OPCODE ope_A8(Z80 *cpu) { // ldd
 
     cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
 
-    if (--cpu->bc16)
+    if (--cpu->bc)
         cpu->f |= PV;
 
     cpu->hl = hl;
@@ -754,7 +754,7 @@ Z80OPCODE ope_A9(Z80 *cpu) { // cpd
 
     cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
-    if (--cpu->bc16)
+    if (--cpu->bc)
         cpu->f |= PV;
 
     cpu->hl = hl;
@@ -814,7 +814,7 @@ Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 
 	cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
 
-	if (--cpu->bc16)
+	if (--cpu->bc)
 	{
 		cpu->f |= PV;
 		cpu->pc = (cpu->pc - 2) & 0xFFFF;
@@ -844,7 +844,7 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 
    cputact(5);
 
-   if (--cpu->bc16)
+   if (--cpu->bc)
    {
       cpu->f |= PV;
 
@@ -923,28 +923,28 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
     uint16_t hl = cpu->hl;
     uint16_t de = cpu->de;
 
-   uint8_t value = cpu->rd(hl--);
+    uint8_t value = cpu->rd(hl--);
 
-   cpu->wd(de--, value);
+    cpu->wd(de--, value);
 
     value += cpu->a; value = (value & F3) + ((value << 4) & F5);
 
-   cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
+    cpu->f = (cpu->f & ~(NF|HF|PV|F3|F5)) + value;
 
-   if (--cpu->bc16)
-   {
-	   cpu->f |= PV;
-	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+    if (--cpu->bc)
+    {
+       cpu->f |= PV;
+       cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
-	   cputact(7);
-   }
-   else
-   {
-	   cputact(2);
-   }
+       cputact(7);
+    }
+    else
+    {
+       cputact(2);
+    }
 
-   cpu->hl = hl;
-   cpu->de = de;
+    cpu->hl = hl;
+    cpu->de = de;
 }
 
 Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
@@ -959,13 +959,13 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 
    cputact(5);
 
-   if (--cpu->bc16)
+   if (--cpu->bc)
    {
       cpu->f |= PV;
 
 	  if (!(cpu->f & ZF))
 	  {
-		  cpu->pc = (cpu->pc - 2) & 0xFFFF;
+		  cpu->pc = cpu->pc - 2;
 
 		  cputact(5);
 
@@ -989,7 +989,7 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
    if (cpu->b)
    {
 	   cpu->f |= PV;
-	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+	   cpu->pc = cpu->pc - 2;
 
 	   cputact(6);
    }
@@ -1018,7 +1018,7 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
    if (cpu->b)
    {
 	   cpu->f |= PV;
-       cpu->pc = (cpu->pc - 2) & 0xFFFF;
+       cpu->pc = cpu->pc - 2;
 
 	   cputact(5);
    }
@@ -1076,7 +1076,7 @@ STEPFUNC const ext_opcode[0x100] =
 };
 
 
-/// ED-prefix handler. Executes one more M1 CPU cycle to fetch extended opcode
+/// ED-prefix handler. Executes one more M1 Core cycle to fetch extended opcode
 /// \param cpu
 Z80OPCODE op_ED(Z80 *cpu)
 {

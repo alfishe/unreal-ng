@@ -352,8 +352,8 @@ uint8_t Z80::m1_cycle()
         m1_pc = cpu.pc;
 
 	// Z80 CPU M1 cycle logic
-	r_low++;
-	opcode = rd(cpu.pc, true);          // Keep opcode copy for trace / debug purposes
+    r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
+	opcode = rd(cpu.pc, true);      // Initiate memory read cycle and Keep opcode copy for trace / debug purposes
 
 	// Point PC to next byte
 	cpu.pc++;
@@ -659,12 +659,14 @@ void Z80::WaitUntilResumed()
 //
 // Increment CPU cycles counter by specified number of cycles.
 // Required to keep exact timings for Z80 commands
-// Note: same as '#define cputact(a)	cpu->tt += ((a) * cpu->rate); cpu->cycle_count += (a)' macro defined in cpulogic.h
+// Note: same as '#define cputact(a)	cpu->tt += ((a) * cpu->rate); cpu->cycle_count += (a); cpu->clock_count += (a)' macro defined in cpulogic.h
 //
 void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 {
 	tt += cycles * rate;
 	cycle_count += cycles;
+
+    clock_count += cycles;
 }
 
 /// region <TSConf specific>

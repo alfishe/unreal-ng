@@ -20,7 +20,7 @@ typedef void (Z80FAST * STEPFUNC)(Z80*);
 typedef uint8_t(Z80FAST * LOGICFUNC)(Z80*, uint8_t byte);
 
 // Operations decoder / micrologic helpers
-#define cputact(a)	cpu->tt += ((a) * cpu->rate); cpu->cycle_count += (a)
+#define cputact(a)	cpu->tt += ((a) * cpu->rate); cpu->cycle_count += (a); cpu->clock_count += (a);
 #define turbo(a)	cpu.rate = (256/(a))
 
 
