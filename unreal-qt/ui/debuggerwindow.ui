@@ -68,16 +68,6 @@
          </property>
         </spacer>
        </item>
-       <item>
-        <widget class="DisassemblerWidget" name="disassemblerWidget" native="true">
-         <property name="minimumSize">
-          <size>
-           <width>360</width>
-           <height>100</height>
-          </size>
-         </property>
-        </widget>
-       </item>
       </layout>
      </item>
      <item>
@@ -155,6 +145,16 @@
         </size>
        </property>
       </spacer>
+     </item>
+     <item>
+      <widget class="DisassemblerWidget" name="disassemblerWidget" native="true">
+       <property name="minimumSize">
+        <size>
+         <width>360</width>
+         <height>100</height>
+        </size>
+       </property>
+      </widget>
      </item>
     </layout>
    </item>

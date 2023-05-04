@@ -57,7 +57,6 @@ Z80Disassembler* DisassemblerWidget::getDisassembler()
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
-
     Memory& memory = *getMemory();
     Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
@@ -65,23 +64,33 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     uint8_t* pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(pc);
     uint8_t commandLen = 0;
     DecodedInstruction decoded;
+    std::stringstream ss;
 
-    std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
-    std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen, registers, &memory, &decoded);
-    std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
-    std::string runtime;
-
-    if (decoded.hasRuntime)
+    for (size_t i = 0; i < 4; i++)
     {
-        runtime = disassembler.getRuntimeHints(decoded);
-        if (runtime.size() > 0)
+        std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
+        std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
+                                                                               registers, &memory, &decoded);
+        std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
+        std::string runtime;
+
+        if (decoded.hasRuntime)
         {
-            runtime = " " + runtime;
+            runtime = disassembler.getRuntimeHints(decoded);
+            if (runtime.size() > 0)
+            {
+                runtime = " " + runtime;
+            }
         }
+
+        pcPhysicalAddress += decoded.fullCommandLen;
+        pc += decoded.fullCommandLen;
+
+        // Format value like: $15FB: CD 2C 16   call #162C
+        ss << StringHelper::Format("$%s: %-11s   %s%s", pcAddress.c_str(), hex.c_str(), command.c_str(), runtime.c_str()) << std::endl;
     }
 
-    // Format value like: $15FB: CD 2C 16   call #162C
-    std::string value = StringHelper::Format("$%s: %s   %s%s", pcAddress.c_str(), hex.c_str(), command.c_str(), runtime.c_str());
+    std::string value = ss.str();
     m_disassemblyTextEdit->setPlainText(value.c_str());
 
 
