@@ -1,0 +1,59 @@
+name: CMake CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+  
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        qt-version: [6.5.0]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    - name: Linux dependencies
+      run: |
+             sudo apt-get update
+             sudo apt remove -y libicu-dev
+             sudo apt-get install -o Acquire::Retries=3 -y --no-install-recommends --fix-missing build-essential cmake git
+             wget https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz
+             tar -xzvf icu4c-56_1-src.tgz
+             cd icu/source
+             ./configure --prefix=/usr/local
+             make
+             sudo make install
+             sudo ldconfig
+      
+    - name: Install Qt on Linux
+      if: runner.os == 'Linux'
+      uses: jurplel/install-qt-action@v3
+      with:
+        aqtversion: '==3.1.*'
+        py7zrversion: '>=0.20.2'
+        version: ${{ matrix.qt-version }}
+        host: 'linux'
+        target: 'desktop'
+        arch: gcc_64
+        install-deps: 'true'
+        tools-only: 'false'
+        modules: 'qtmultimedia qt5compat'
+        archives: 'qttools qtbase'
+        
+    - name: Build and Test on Linux
+      run: |
+              cd ${{ github.workspace }}/unreal-qt
+              mkdir build
+              cd build
+              cmake ..
+              make
+  
