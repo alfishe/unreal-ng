@@ -32,6 +32,8 @@ jobs:
         host: 'linux'
         target: 'desktop'
         arch: gcc_64
+        install-deps: 'true'
+        tools-only: 'false'
         modules: 'qtmultimedia qt5compat'
         archives: 'qttools qtbase'
         
