@@ -1,0 +1,48 @@
+name: CMake CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+  
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        qt-version: [6.5.0]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+       submodules: recursive
+      
+    - name: Install Qt on Linux
+      if: runner.os == 'Linux'
+      uses: jurplel/install-qt-action@v3
+      with:
+        aqtversion: '==3.1.*'
+        py7zrversion: '>=0.20.2'
+        version: ${{ matrix.qt-version }}
+        host: 'linux'
+        target: 'desktop'
+        arch: gcc_64
+        modules: 'qtmultimedia qt5compat'
+        archives: 'qttools qtbase'
+        
+    - name: Build and Test on Linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+              sudo apt-get update
+              sudo apt-get install -o Acquire::Retries=3 -y --no-install-recommends --fix-missing build-essential cmake git
+              cd ${{ github.workspace }}/unreal-qt
+              mkdir build
+              cd build
+              cmake ..
+              make
+  
