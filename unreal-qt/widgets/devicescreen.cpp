@@ -9,7 +9,7 @@
 #include "emulator/keyboardmanager.h"
 
 #include <cmath>
-bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
+static inline bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
     bool result = false;
 
