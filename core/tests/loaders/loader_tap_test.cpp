@@ -198,3 +198,61 @@ TEST_F(LoaderTAP_Test, readNextBlock)
 
     FileHelper::CloseFile(file);
 }
+
+TEST_F(LoaderTAP_Test, makeBlock)
+{
+    LoaderTAPCUT loader(_context, "");
+
+    uint8_t data[] = { 0x00, 0x01, 0x02, 0xFF };
+    std::vector<uint32_t> referenceResult =
+    {
+        // Pilot
+        2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168,
+
+        // Synchronization
+       667, 735,
+
+       // [0] - 0x00
+       855, 855, 855, 855, 855, 855, 855, 855,
+       855, 855, 855, 855, 855, 855, 855, 855,
+
+       // [1] - 0x01
+       855, 855, 855, 855, 855, 855, 855, 855,
+       855, 855, 855, 855, 855, 855, 1710, 1710,
+
+       // [2] - 0x02
+       855, 855, 855, 855, 855, 855, 855, 855,
+       855, 855, 855, 855, 1710, 1710, 855, 855,
+
+       // [3] - 0xFF
+       1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
+       1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
+
+       // Pause
+       3500000
+    };
+
+    std::vector<uint32_t> result = loader.makeStandardBlock(data, sizeof(data), 2168, 667, 735, 855, 1710, 10, 1000);
+
+    // Standard data block has long pilot (8064 or 3220 periods) but reference vector will be too long for that
+    //std::vector<uint32_t> result = loader.makeStandardBlock(data, sizeof(data), 2168, 667, 735, 855, 1710, true ? 8064 : 3220, 1000);
+
+    EXPECT_EQ(result, referenceResult);
+
+    // region <Debug print>
+
+    /*
+    std::stringstream ss;
+
+    ss << "Vector len: " << result.size() << std::endl;
+    std::for_each(result.begin(), result.end(), [&ss](uint32_t value)
+    {
+        ss << value << ", ";
+    });
+
+    ss << std::endl;
+    std::cout << ss.str();
+    */
+
+    // endregion </Debug print>
+}

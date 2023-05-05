@@ -1,3 +1,4 @@
+#include <debugger/assembler/z80asm.h>
 #include "stdafx.h"
 #include "loader_tap.h"
 
@@ -26,6 +27,11 @@ LoaderTAP::~LoaderTAP()
     if (_buffer)
     {
         free(_buffer);
+    }
+
+    if (_tape_image)
+    {
+        free(_tape_image);
     }
 }
 
@@ -273,42 +279,70 @@ bool LoaderTAP::isBlockValid(const vector<uint8_t>& blockData)
 
 
 
-void LoaderTAP::makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
-               unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
-               unsigned pilot_len, unsigned pause, uint8_t last)
+std::vector<uint32_t> LoaderTAP::makeStandardBlock(uint8_t* data, size_t len,
+                          uint16_t pilotHalfPeriod_tStates,
+                          uint16_t synchro1_tStates, uint16_t synchro2_tStates,
+                          uint16_t zeroEncodingHalfPeriod_tState, uint16_t oneEncodingHalfPeriod_tStates,
+                          size_t pilotLength_periods, size_t pause_ms)
 {
-    //reserve(size*16 + pilot_len + 3);
+    size_t resultSize = 0;
+    resultSize += (pilotLength_periods * 2);    // Each pilot signal period is encoded as 2 edges
+    resultSize += 2;                            // Two sync pulses at the end of pilot
+    resultSize += (len * 8 * 2);                // Each byte split to bits and each bit encoded as 2 edges
+    if (pause_ms > 0)
+        resultSize += 1;                        // Pause is just a marker so single edge is sufficient
 
-    if (pilot_len != -1)
+    std::vector<uint32_t> result;
+    result.reserve(resultSize);
+
+    /// region <Pilot tone + sync>
+
+    if (pilotLength_periods > 0)
     {
-        unsigned t = findPulse(pilot_t);
+        // Required number of pilot periods
+        // Calling code determines it based on block type: header or data
+        for (size_t i = 0; i < pilotLength_periods; i++)
+        {
+            result.push_back(pilotHalfPeriod_tStates);
+        }
 
-        for (unsigned i = 0; i < pilot_len; i++)
-            tape_image[tape_imagesize++] = t;
-
-        tape_image[tape_imagesize++] = findPulse(s1_t);
-        tape_image[tape_imagesize++] = findPulse(s2_t);
+        // Sync pulses at the end of pilot
+        result.push_back(synchro1_tStates);
+        result.push_back(synchro2_tStates);
     }
 
-    unsigned t0 = findPulse(zero_t), t1 = findPulse(one_t);
-    for (; size>1; size--, data++)
+    /// endregion </Pilot tone + sync>
+
+    /// region <Data bytes>
+
+    for (size_t i = 0; i < len; i++)
     {
-        for (unsigned char j = 0x80; j; j >>= 1)
-            tape_image[tape_imagesize++] = (*data & j) ? t1 : t0,
-                    tape_image[tape_imagesize++] = (*data & j) ? t1 : t0;
+        // Extract bits from input data byte and add correspondent bit encoding length to image array
+        for (uint8_t bitMask = 0x80; bitMask != 0; bitMask >>= 1)
+        {
+            bool bit = (data[i] & bitMask) != 0;
+            uint16_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
+
+            // Each bit is encoded by two edges
+            result.push_back(bitEncoded);
+            result.push_back(bitEncoded);
+        }
     }
 
-    // Process last byte for the block
-    for (unsigned char j = 0x80; j != (unsigned char)(0x80 >> last); j >>= 1)
+    /// endregion </Data bytes>
+
+
+    /// region <Pause>
+
+    if (pause_ms)
     {
-        tape_image[tape_imagesize++] = (*data & j) ? t1 : t0,
-        tape_image[tape_imagesize++] = (*data & j) ? t1 : t0;
+        // Pause doesn't require any encoding, just a time mark after the delay
+        result.push_back(pause_ms * 3500);
     }
 
-    if (pause)
-    {
-        tape_image[tape_imagesize++] = findPulse(pause * 3500);
-    }
+    /// endregion </Pause>
+
+    return result;
 }
 
 uint16_t LoaderTAP::findPulse(uint32_t t)
@@ -319,11 +353,11 @@ uint16_t LoaderTAP::findPulse(uint32_t t)
     {
         for (unsigned i = 0; i < max_pulses; i++)
         {
-            if (tape_pulse[i] == t)
+            if (_tape_pulse[i] == t)
                 return i;
         }
 
-        tape_pulse[max_pulses] = t;
+        _tape_pulse[max_pulses] = t;
         return max_pulses++;
     }
 
@@ -337,7 +371,7 @@ uint16_t LoaderTAP::findPulse(uint32_t t)
     int32_t delta = 0x7FFF'FFFF;
     for (unsigned i = 0; i < MAX_TAPE_PULSES; i++)
     {
-        int32_t value = abs((int)t - (int)tape_pulse[i]);
+        int32_t value = abs((int)t - (int)_tape_pulse[i]);
 
         if (delta > value)
         {

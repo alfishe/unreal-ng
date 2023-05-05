@@ -222,11 +222,11 @@ protected:
     // Parsed blocks-related fields
     std::list<TapeBlock> _tapeBlocks;
 
-    uint32_t tape_pulse[MAX_TAPE_PULSES];
+    uint32_t _tape_pulse[MAX_TAPE_PULSES];
     uint32_t max_pulses = 0;
     uint32_t tape_err = 0;
 
-    uint8_t* tape_image = 0;
+    uint8_t* _tape_image = 0;
     uint32_t tape_imagesize = 0;
 
     TapeInfo* tapeinfo;
@@ -262,13 +262,13 @@ protected:
     void convertPayloadDataToBitstream(const vector<uint8_t>& payloadData);
 
 
-    void makeBlock(unsigned char *data, unsigned size, unsigned pilot_t,
-              unsigned s1_t, unsigned s2_t, unsigned zero_t, unsigned one_t,
-              unsigned pilot_len, unsigned pause, uint8_t last = 8);
+    std::vector<uint32_t> makeStandardBlock(uint8_t* data, size_t len,
+                                           uint16_t pilotHalfPeriod_tStates,
+                                           uint16_t synchro1_tStates, uint16_t synchro2_tStates,
+                                           uint16_t zeroEncodingHalfPeriod_tState, uint16_t oneEncodingHalfPeriod_tStates,
+                                           size_t pilotLength_periods,
+                                           size_t pause_ms);
     uint16_t findPulse(uint32_t t);
-    void findTapeIndex();
-    void findTapeSizes();
-
 
     void parseHardware(uint8_t* data);
 
@@ -306,5 +306,8 @@ public:
     using LoaderTAP::parseHardware;
     using LoaderTAP::getBlockName;
     using LoaderTAP::getBlockDescription;
+
+    using LoaderTAP::makeStandardBlock;
+    using LoaderTAP::findPulse;
 };
 #endif // _CODE_UNDER_TEST
