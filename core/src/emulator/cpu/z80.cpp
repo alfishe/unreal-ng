@@ -300,6 +300,9 @@ void Z80::Z80FrameCycle()
     Z80& cpu = *this;
     EmulatorState& state = _context->emulatorState;
 
+    /// region <All peripheral pre-frame preparations>
+    _context->pTape->handleFrameStart();
+    /// endregion </All peripheral pre-frame preparations>
 
     // Video Interrupt position calculation
     bool int_occurred = false;
@@ -328,6 +331,10 @@ void Z80::Z80FrameCycle()
         // Update screen buffer (including border draw)
         UpdateScreen();
     }
+
+    /// region <All peripheral frame end activities>
+    _context->pTape->handleFrameEnd();
+    /// endregion </All peripheral rame end activities>
 }
 
 

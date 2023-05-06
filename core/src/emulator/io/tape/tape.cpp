@@ -3,6 +3,7 @@
 #include "tape.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
+#include "loaders/tape/loader_tap.h"
 
 /// region <Constructors / destructors>
 
@@ -35,6 +36,7 @@ void Tape::reset()
     _tapePosition = 0LL;
 
     // Tape input bitstream related
+    _tapeBlocks = std::vector<TapeBlock>();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
     _currentTapeBlockPulseCount = 0;
@@ -92,6 +94,9 @@ uint8_t Tape::handlePortIn()
         // And our PC is currently on $0564 RRA (which has opcode 0x1F)
         if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
         {
+            LoaderTAP loader(_context);
+            _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
+
             startTape();
         }
     }
@@ -129,10 +134,15 @@ void Tape::handleFrameStart()
             _currentTapeBlockPulseCount = 0;
             _currentPulseIdxInBlock = 0;
             _currentOffsetWithinPulse = 0;
-        }
 
+            // Generating bit-stream related data
+            generateBitstreamForStandardBlock(*_currentTapeBlock);
+
+            // Record current clock
+            _currentClockCount = clockCount;
+        }
         // Check if it's time to create bitstream data for the next block
-        if (_currentTapeBlockIndex < _tapeBlocks.size() - 1 &&
+        else if (_currentTapeBlockIndex < _tapeBlocks.size() - 1 &&
             _currentTapeBlockPulseCount == _tapeBlocks[_currentTapeBlockIndex].totalBitstreamLength
            )
         {
@@ -151,6 +161,11 @@ void Tape::handleFrameStart()
                 // Error. There must be no nullable blocks
                 throw std::logic_error("Tape::handleFrameStart() null TapeBlock found");
             }
+        }
+        else if (_currentTapeBlockIndex == UINT64_MAX)
+        {
+            // We've depleted all available blocks
+            stopTape();
         }
     }
 }

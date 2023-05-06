@@ -76,6 +76,8 @@ TapeBlock LoaderTAP::readNextBlock(FILE* file)
             {
                 result.data.resize(blockSize);
                 FileHelper::ReadFileToBuffer(file, result.data.data(), blockSize);
+
+                result.type = (TapeBlockFlagEnum)result.data[0];
             }
         }
     }
