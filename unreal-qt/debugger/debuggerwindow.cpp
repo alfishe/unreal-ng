@@ -128,7 +128,7 @@ void DebuggerWindow::reset()
         ui->registersWidget->refresh();
 
         // Update disassembler widget
-        ui->disassemblerWidget->setDisassemblerAddress(static_cast<uint16_t>(state->Z80Registers::pc));
+        ui->disassemblerWidget->setDisassemblerAddress(state->Z80Registers::pc);
 
         // Update memory banks widget
         ui->memorypagesWidget->refresh();
@@ -145,7 +145,7 @@ void DebuggerWindow::reset()
             uint8_t bank = memory->GetZ80BankFromAddress(pc);
             uint16_t addressInBank = pc & 0b0011'1111'1111'1111;
             size_t pageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
-            uint8_t* pagePhysicalAddress = memory->GetPhysicalAddressForZ80Bank(bank);
+            uint8_t* pagePhysicalAddress = memory->GetPhysicalAddressForZ80Page(bank);
 
             QHexDocument* document;
             if (pageOffset != _curPageOffset)
@@ -429,7 +429,7 @@ void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
     uint8_t bank = memory->GetZ80BankFromAddress(addr);
     _curPageOffset = memory->GetPhysicalOffsetForZ80Bank(bank);
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
-    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Bank(bank);
+    uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Page(bank);
     size_t size = 0x4000;
     uint16_t offset = bank * 0x4000;
 
