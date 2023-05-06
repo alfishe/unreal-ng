@@ -43,14 +43,14 @@ void LoaderTAP_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
-TEST_F(LoaderTAP_Test, read)
+TEST_F(LoaderTAP_Test, loadTAP)
 {
     static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
 
     LoaderTAPCUT loader(_context, testTapePath);
-    bool result = loader.read();
-    EXPECT_EQ(result, true);
+    vector<TapeBlock> result = loader.loadTAP();
+    EXPECT_EQ(result.size(), 6);
 }
 
 TEST_F(LoaderTAP_Test, getBlockChecksum)
@@ -174,7 +174,7 @@ TEST_F(LoaderTAP_Test, readNextBlock)
     const size_t referenceBlockCount = 6;
 
     LoaderTAPCUT loader(_context, testTapePath);
-    std::vector<std::vector<uint8_t>> allBlocks;
+    std::vector<TapeBlock> allBlocks;
 
     FILE* file = FileHelper::OpenFile(testTapePath);
     EXPECT_NE(file, nullptr);
@@ -182,9 +182,9 @@ TEST_F(LoaderTAP_Test, readNextBlock)
     size_t blockCount = 0;
     while (true)
     {
-        std::vector<uint8_t> block = loader.readNextBlock(file);
+        TapeBlock block = loader.readNextBlock(file);
 
-        if (block.size() == 0)
+        if (block.data.size() == 0)
             break;
 
         allBlocks.push_back(block);

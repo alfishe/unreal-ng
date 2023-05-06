@@ -28,11 +28,6 @@ LoaderTAP::~LoaderTAP()
     {
         free(_buffer);
     }
-
-    if (_tape_image)
-    {
-        free(_tape_image);
-    }
 }
 
 /// endregion </Constructors / destructors>
@@ -41,37 +36,37 @@ LoaderTAP::~LoaderTAP()
 
 void LoaderTAP::reset()
 {
-    _tapeState.play_pointer = nullptr;
-    _tapeState.edge_change = 0x7FFF'FFFF'FFFF'FFFFLL;
-    _tapeState.tape_bit = -1;
-    _tapeState.index = 0;
 }
 
-int LoaderTAP::read()
+std::vector<TapeBlock> LoaderTAP::loadTAP()
 {
-    int result = 0;
+    std::vector<TapeBlock> result;
 
-    if (validateFile())
+    _file = FileHelper::OpenFile(_path);
+    if (_file)
     {
-        _buffer = malloc(_fileSize);
+        size_t index = 0;
 
-        if (_buffer)
+        while (true)
         {
-            if (FileHelper::ReadFileToBuffer(_path, (uint8_t *)_buffer, _fileSize) == _fileSize)
+            TapeBlock block = readNextBlock(_file);
+            if (!block.data.empty())
             {
-                result = parseTAP();
+                result.push_back(block);
+            }
+            else
+            {
+                break;
             }
 
-            free(_buffer);
-            _buffer = nullptr;
+            index++;
         }
+
+        FileHelper::CloseFile(_file);
+        _file = nullptr;
     }
 
     return result;
-}
-
-void LoaderTAP::close()
-{
 }
 
 /// endregion </Methods>
@@ -99,112 +94,9 @@ bool LoaderTAP::validateFile()
     return result;
 }
 
-bool LoaderTAP::parseTAP()
+TapeBlock LoaderTAP::readNextBlock(FILE* file)
 {
-    bool result = false;
-
-    uint8_t* buffer = (uint8_t *)_buffer;
-    uint8_t* ptr = buffer;
-
-    // Read all blocks from TAP file
-    // Each block is represented by:
-    //   block length - 2 bytes
-    //   block body - <block length> bytes
-    while (ptr < buffer + _fileSize)
-    {
-        // Get block length
-        uint16_t blockSize = *(uint16_t*)ptr;
-        ptr += 2;
-
-        // Parse block
-        if (blockSize > 0)
-        {
-            TapeBlock block;
-            block.data_len = blockSize;
-            block.data.insert(block.data.end(), ptr, ptr + blockSize);
-            block.name = getBlockName(block.data);
-            block.description = getBlockDescription(block.data);
-            block.data_checksum = getBlockChecksum(block.data);
-
-            // Add block to block list
-            _tapeBlocks.push_back(block);
-
-            ptr += blockSize;
-        }
-    }
-
-    int blocks = _tapeBlocks.size();
-    int a = 2;
-
-    /*
-    unsigned char *ptr = snbuf;
-    close();
-
-    while (ptr < snbuf+snapsize)
-    {
-        unsigned size = *(unsigned short*)ptr; ptr += 2;
-        if (!size) break;
-        alloc_infocell();
-        desc(ptr, size, tapeinfo[tape_infosize].desc);
-        tape_infosize++;
-        makeblock(ptr, size, 2168, 667, 735, 855, 1710, (*ptr < 4) ? 8064 : 3220, 1000);
-        ptr += size;
-    }
-
-    find_tape_sizes();
-    result = (ptr == snbuf+snapsize);
-*/
-
-    return result;
-}
-
-
-std::string LoaderTAP::getBlockName(vector<uint8_t>& blockData)
-{
-    std::string result;
-
-    uint32_t size = blockData.size();
-    uint8_t flag = blockData[0];
-
-    if (flag == TAP_BLOCK_FLAG_HEADER && size == 19)
-    {
-        TapeHeader* header = (TapeHeader*)&blockData[1];
-        result = string(header->filename, 10);
-    }
-
-    return result;
-}
-
-std::string LoaderTAP::getBlockDescription(vector<uint8_t>& blockData)
-{
-    std::string result;
-
-    uint32_t size = blockData.size();
-    uint8_t flag = blockData[0];
-
-    if (flag == TAP_BLOCK_FLAG_HEADER)
-    {
-        TapeHeader* header = (TapeHeader*)&blockData[1];
-        std::string name = string(header->filename, 10);
-        TapeBlockTypeEnum type = header->headerType;
-
-        result = StringHelper::Format("Header");
-    }
-    else if (flag == TAP_BLOCK_FLAG_DATA)
-    {
-        result = StringHelper::Format("Data");
-    }
-    else
-    {
-        result = "<Invalid>";
-    }
-
-    return result;
-}
-
-vector<uint8_t> LoaderTAP::readNextBlock(FILE* file)
-{
-    vector<uint8_t> result;
+    TapeBlock result;
 
     if (file != nullptr)
     {
@@ -218,8 +110,8 @@ vector<uint8_t> LoaderTAP::readNextBlock(FILE* file)
 
             if (blockSize > 0)
             {
-                result.resize(blockSize);
-                FileHelper::ReadFileToBuffer(file, result.data(), blockSize);
+                result.data.resize(blockSize);
+                FileHelper::ReadFileToBuffer(file, result.data.data(), blockSize);
             }
         }
     }
@@ -228,7 +120,7 @@ vector<uint8_t> LoaderTAP::readNextBlock(FILE* file)
 }
 
 /// Calculate checksum for the tape block
-/// @note The checksum is the bitwise XOR of all bytes including the flag(aka block type) byte
+/// @note The checksum is the bitwise XOR of all paramBytes including the flag(aka block type) byte
 /// @see http://fizyka.umk.pl/~jacek/zx/faq/reference/formats.htm
 /// @param blockData
 /// @return
@@ -257,9 +149,9 @@ bool LoaderTAP::isBlockValid(const vector<uint8_t>& blockData)
 {
     bool result = false;
 
-    // Block cannot have length less than 3 bytes since it must contain
+    // Block cannot have length less than 3 paramBytes since it must contain
     // [0]        - Block type
-    // [1... N-1] - Block data bytes
+    // [1... N-1] - Block data paramBytes
     // [N]        - Checksum
     if (blockData.size() > 2)
     {
@@ -313,7 +205,7 @@ std::vector<uint32_t> LoaderTAP::makeStandardBlock(uint8_t* data, size_t len,
 
     /// endregion </Pilot tone + sync>
 
-    /// region <Data bytes>
+    /// region <Data paramBytes>
 
     for (size_t i = 0; i < len; i++)
     {
@@ -329,7 +221,7 @@ std::vector<uint32_t> LoaderTAP::makeStandardBlock(uint8_t* data, size_t len,
         }
     }
 
-    /// endregion </Data bytes>
+    /// endregion </Data paramBytes>
 
 
     /// region <Pause>
@@ -345,61 +237,24 @@ std::vector<uint32_t> LoaderTAP::makeStandardBlock(uint8_t* data, size_t len,
     return result;
 }
 
-uint16_t LoaderTAP::findPulse(uint32_t t)
-{
-    uint16_t result;
-
-    if (max_pulses < MAX_TAPE_PULSES)
-    {
-        for (unsigned i = 0; i < max_pulses; i++)
-        {
-            if (_tape_pulse[i] == t)
-                return i;
-        }
-
-        _tape_pulse[max_pulses] = t;
-        return max_pulses++;
-    }
-
-    if (!tape_err)
-    {
-        //errmsg("pulse table full");
-        tape_err = 1;
-    }
-
-    uint32_t nearest = 0;
-    int32_t delta = 0x7FFF'FFFF;
-    for (unsigned i = 0; i < MAX_TAPE_PULSES; i++)
-    {
-        int32_t value = abs((int)t - (int)_tape_pulse[i]);
-
-        if (delta > value)
-        {
-            nearest = i;
-            delta = value;
-        }
-    }
-
-    return result;
-}
 
 /// endregion </Helper methods>
 
 /// region <Debug methods>
 
-std::string LoaderTAP::dumpBlocks(const std::vector<std::vector<uint8_t>>& dataBlocks)
+std::string LoaderTAP::dumpBlocks(const std::vector<TapeBlock>& dataBlocks)
 {
     std::stringstream ss;
 
     ss << "Blocks total: " << dataBlocks.size() << std::endl;
 
     size_t index = 1;
-    std::for_each(dataBlocks.begin(), dataBlocks.end(), [this, &index, &ss](const std::vector<uint8_t>& dataBlock)
+    std::for_each(dataBlocks.begin(), dataBlocks.end(), [this, &index, &ss](const TapeBlock& dataBlock)
     {
         ss << "Block: " << index << std::endl;
-        ss << "  Size: " << dataBlock.size() << std::endl;
+        ss << "  Size: " << dataBlock.data.size() << std::endl;
 
-        ss << this->dumpBlock(dataBlock);
+        ss << this->dumpBlock(dataBlock.data);
 
         index++;
     });
@@ -421,7 +276,7 @@ std::string LoaderTAP::dumpBlock(const std::vector<uint8_t>& dataBlock)
     std::string flagName;
     if (flag == 0x00 || flag == 0xFF)
     {
-        flagName = getTapeBlockFlagName(flag);
+        flagName = getTapeBlockFlagEnumName(flag);
     }
     else
     {
@@ -436,7 +291,7 @@ std::string LoaderTAP::dumpBlock(const std::vector<uint8_t>& dataBlock)
 
     if (flag == TAP_BLOCK_FLAG_HEADER)
     {
-        TapeBlockTypeEnum type = (TapeBlockTypeEnum)dataBlock.front();
+        ZXTapeBlockTypeEnum type = (ZXTapeBlockTypeEnum)dataBlock.front();
         std::string typeName;
         if (type <= TAP_BLOCK_CODE)
         {
@@ -466,7 +321,7 @@ std::string LoaderTAP::dumpBlock(const std::vector<uint8_t>& dataBlock)
     if (flag == TAP_BLOCK_FLAG_DATA)
     {
         uint16_t dataSize = dataBlock.size() - 2;
-        ss << StringHelper::Format("    Data: 0x%04X (%d) bytes", dataSize, dataSize) << std::endl;
+        ss << StringHelper::Format("    Data: 0x%04X (%d) paramBytes", dataSize, dataSize) << std::endl;
     }
 
     ss << StringHelper::Format("  Checksum: 0x%02X (%d) - %s", checksum, checksum, checksumValidityString.c_str()) << std::endl;
