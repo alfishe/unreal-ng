@@ -35,11 +35,15 @@ void Tape::reset()
     _tapePosition = 0LL;
 
     // Tape input bitstream related
-    _currentTapeBlock = UINT64_MAX;
+    _currentTapeBlock = nullptr;
+    _currentTapeBlockIndex = UINT64_MAX;
+    _currentTapeBlockPulseCount = 0;
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
     _currentClockCount = 0;
 };
+
+/// region <Port events>
 
 uint8_t Tape::handlePortIn()
 {
@@ -50,8 +54,10 @@ uint8_t Tape::handlePortIn()
     if (_tapeStarted)
     {
         size_t clockCount = cpu.clock_count;
-        result = getPilotSample(clockCount) << 6;
-        return result;
+
+        result = getTapeStreamBit(clockCount) << 6;
+        //result = getPilotSample(clockCount) << 6;
+        //return result;
     }
     else
     {
@@ -84,8 +90,10 @@ uint8_t Tape::handlePortIn()
 
         // If we just executed instruction at $0562 IN A,($FE)
         // And our PC is currently on $0564 RRA (which has opcode 0x1F)
-        if ((cpu.pc & 0xFFFF) == 0x0564 && memory.GetPhysicalAddressForZ80Bank(0)[0x0564] == 0x1F)
+        if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
+        {
             startTape();
+        }
     }
 
     return result;
@@ -100,23 +108,108 @@ void Tape::handlePortOut(bool value)
     //MLOGINFO("[Out] [%09ld] Value: %d", clockCount, value);
 }
 
+/// endregion </Port events>
+
+/// region <Emulation events>
+
+/// Prepare for next video frame start
+/// If we have previous tape block played, then we can generate bitstream for the next block
+void Tape::handleFrameStart()
+{
+    // Fetch clock counter for precise timing
+    size_t clockCount = _context->pCore->GetZ80()->clock_count;
+
+    if (_tapeStarted && !_tapeBlocks.empty())
+    {
+        // Tape is just loaded, we need setup fields
+        if (_currentTapeBlock == nullptr || _currentTapeBlockIndex == UINT64_MAX)
+        {
+            _currentTapeBlock = &_tapeBlocks[0];
+            _currentTapeBlockIndex = 0;
+            _currentTapeBlockPulseCount = 0;
+            _currentPulseIdxInBlock = 0;
+            _currentOffsetWithinPulse = 0;
+        }
+
+        // Check if it's time to create bitstream data for the next block
+        if (_currentTapeBlockIndex < _tapeBlocks.size() - 1 &&
+            _currentTapeBlockPulseCount == _tapeBlocks[_currentTapeBlockIndex].totalBitstreamLength
+           )
+        {
+            _currentTapeBlockIndex++;
+
+            // Getting new TapeBlock
+            _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
+
+            if (_currentTapeBlock)
+            {
+                // Generating bit-stream related data
+                generateBitstreamForStandardBlock(*_currentTapeBlock);
+            }
+            else
+            {
+                // Error. There must be no nullable blocks
+                throw std::logic_error("Tape::handleFrameStart() null TapeBlock found");
+            }
+        }
+    }
+}
+
+void Tape::handleFrameEnd()
+{
+    // Fetch clock counter for precise timing
+    size_t clockCount = _context->pCore->GetZ80()->clock_count;
+}
+
+/// endregion </Emulation events>
+
 /// region <Helper methods>
+
 bool Tape::getTapeStreamBit(uint64_t clockCount)
 {
-    bool result = false;
+    static bool result = false;
 
     uint64_t deltaTime = clockCount - _currentClockCount;
 
     if (_tapeStarted)
     {
-        if (_currentTapeBlock != UINT64_MAX)
+        // Forward playback for the whole deltaTime period
+        for (int i = 0; i < deltaTime; i++)
         {
+            if (_currentTapeBlockIndex != UINT64_MAX && _currentTapeBlock)
+            {
+                // Determine position within bit stream
+                // Find correspondent pulse timings record and then count up to its value
+                TapeBlock &block = *_currentTapeBlock;
+                uint32_t currentPulseDuration = block.edgePulseTimings[_currentTapeBlockIndex];
 
-        }
-        else
-        {
-            // End of tape
-            // TODO: Rewind and stop
+                // Create signal edge by inverting tape bit
+                if (currentPulseDuration > 0 && _currentPulseIdxInBlock == 0)
+                {
+                    result = !result;
+                }
+
+                /// region <Perform repositioning for next bit in stream>
+                _currentPulseIdxInBlock++;
+                if (_currentPulseIdxInBlock >= currentPulseDuration)
+                {
+                    _currentTapeBlockIndex++;
+                    _currentPulseIdxInBlock = 0;
+
+                    if (_currentTapeBlockIndex >= block.edgePulseTimings.size())
+                    {
+                        // We're depleted the whole block
+                        _currentTapeBlockIndex = UINT64_MAX;
+                        break;
+                    }
+                }
+                /// endregion </Perform repositioning for next bit in stream>
+            }
+            else
+            {
+                // End of block, nothing to do
+                break;
+            }
         }
     }
 
@@ -125,6 +218,117 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
     return result;
 }
+
+/// Generate bitstream assistive data for the TapeBlock data
+/// @param tapeBlock Reference to single TapeBlock object
+/// @return Result whether generating process finished successfully or not
+bool Tape::generateBitstreamForStandardBlock(TapeBlock& tapeBlock)
+{
+    bool result = false;
+
+    bool isHeader = tapeBlock.type == TAP_BLOCK_FLAG_HEADER;
+
+    size_t totalBlockDuration = generateBitstream(tapeBlock,
+                                                  PILOT_TONE_HALF_PERIOD,
+                                                  PILOT_SYNCHRO_1,
+                                                  PILOT_SYNCHRO_1,
+                                                  ZERO_ENCODE_HALF_PERIOD,
+                                                  ONE_ENCODE_HALF_PERIOD,
+                                                  isHeader ? PILOT_DURATION_HEADER : PILOT_DURATION_DATA,
+                                                  1000);
+
+    if (totalBlockDuration > 0)
+    {
+        result = true;
+    }
+
+    return result;
+}
+
+size_t Tape::generateBitstream(TapeBlock& tapeBlock,
+                               uint16_t pilotHalfPeriod_tStates,
+                               uint16_t synchro1_tStates,
+                               uint16_t synchro2_tStates,
+                               uint16_t zeroEncodingHalfPeriod_tState,
+                               uint16_t oneEncodingHalfPeriod_tStates,
+                               size_t pilotLength_periods,
+                               size_t pause_ms)
+{
+    size_t result = 0;
+    size_t len = tapeBlock.data.size();
+
+    // Calculate collection size to fit all edge time intervals
+    size_t resultSize = 0;
+    resultSize += (pilotLength_periods * 2);    // Each pilot signal period is encoded as 2 edges
+    resultSize += 2;                            // Two sync pulses at the end of pilot
+    resultSize += (len * 8 * 2);                // Each byte split to bits and each bit encoded as 2 edges
+    if (pause_ms > 0)
+        resultSize += 1;                        // Pause is just a marker so single edge is sufficient
+
+    tapeBlock.edgePulseTimings.reserve(resultSize);
+
+    /// region <Pilot tone + sync>
+
+    if (pilotLength_periods > 0)
+    {
+        // Required number of pilot periods
+        // Calling code determines it based on block type: header or data
+        for (size_t i = 0; i < pilotLength_periods; i++)
+        {
+            tapeBlock.edgePulseTimings.push_back(pilotHalfPeriod_tStates);
+
+            result += pilotHalfPeriod_tStates;
+        }
+
+        // Sync pulses at the end of pilot
+        tapeBlock.edgePulseTimings.push_back(synchro1_tStates);
+        tapeBlock.edgePulseTimings.push_back(synchro2_tStates);
+
+        result += synchro1_tStates;
+        result += synchro2_tStates;
+    }
+
+    /// endregion </Pilot tone + sync>
+
+    /// region <Data paramBytes>
+
+    for (size_t i = 0; i < len; i++)
+    {
+        // Extract bits from input data byte and add correspondent bit encoding length to image array
+        for (uint8_t bitMask = 0x80; bitMask != 0; bitMask >>= 1)
+        {
+            bool bit = (tapeBlock.data[i] & bitMask) != 0;
+            uint16_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
+
+            // Each bit is encoded by two edges
+            tapeBlock.edgePulseTimings.push_back(bitEncoded);
+            tapeBlock.edgePulseTimings.push_back(bitEncoded);
+
+            result += bitEncoded;
+        }
+    }
+
+    /// endregion </Data paramBytes>
+
+
+    /// region <Pause>
+
+    if (pause_ms)
+    {
+        // Pause doesn't require any encoding, just a time mark after the delay
+        size_t pauseDuration = pause_ms * 3500;
+        tapeBlock.edgePulseTimings.push_back(pauseDuration);
+
+        result += pauseDuration;
+    }
+
+    /// endregion </Pause>
+
+    tapeBlock.totalBitstreamLength = result;
+
+    return result;
+}
+
 /// endregion </Helper methods>
 
 // TODO: just experimentation method

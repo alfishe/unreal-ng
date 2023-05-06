@@ -47,15 +47,27 @@ TEST_F(LoaderTAP_Test, loadTAP)
 {
     static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
+    constexpr size_t referenceBlockNumber = 6;
+    const std::vector<size_t> referenceBlockSizes = { 19, 167, 19, 4338, 19, 27082 };
 
-    LoaderTAPCUT loader(_context, testTapePath);
-    vector<TapeBlock> result = loader.loadTAP();
-    EXPECT_EQ(result.size(), 6);
+    LoaderTAPCUT loader(_context);
+    vector<TapeBlock> result = loader.loadTAP(testTapePath);
+
+    // Check block count
+    EXPECT_EQ(result.size(), referenceBlockNumber);
+
+    // Check all block data sizes
+    for (int i = 0; i < result.size(); i++)
+    {
+        size_t blockSize = result[i].data.size();
+        size_t referenceBlockSize = referenceBlockSizes[i];
+        EXPECT_EQ(blockSize, referenceBlockSize) << "Invalid data content length for block #: " << i;
+    }
 }
 
 TEST_F(LoaderTAP_Test, getBlockChecksum)
 {
-    LoaderTAPCUT loader(_context, "");
+    LoaderTAPCUT loader(_context);
 
     /// region <Positive cases>
 
@@ -112,7 +124,7 @@ TEST_F(LoaderTAP_Test, getBlockChecksum)
 
 TEST_F(LoaderTAP_Test, isBlockValid)
 {
-    LoaderTAPCUT loader(_context, "");
+    LoaderTAPCUT loader(_context);
 
     /// region <Positive cases>
 
@@ -173,7 +185,7 @@ TEST_F(LoaderTAP_Test, readNextBlock)
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
     const size_t referenceBlockCount = 6;
 
-    LoaderTAPCUT loader(_context, testTapePath);
+    LoaderTAPCUT loader(_context);
     std::vector<TapeBlock> allBlocks;
 
     FILE* file = FileHelper::OpenFile(testTapePath);
@@ -197,62 +209,4 @@ TEST_F(LoaderTAP_Test, readNextBlock)
     EXPECT_EQ(blockCount, referenceBlockCount);
 
     FileHelper::CloseFile(file);
-}
-
-TEST_F(LoaderTAP_Test, makeBlock)
-{
-    LoaderTAPCUT loader(_context, "");
-
-    uint8_t data[] = { 0x00, 0x01, 0x02, 0xFF };
-    std::vector<uint32_t> referenceResult =
-    {
-        // Pilot
-        2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168,
-
-        // Synchronization
-       667, 735,
-
-       // [0] - 0x00
-       855, 855, 855, 855, 855, 855, 855, 855,
-       855, 855, 855, 855, 855, 855, 855, 855,
-
-       // [1] - 0x01
-       855, 855, 855, 855, 855, 855, 855, 855,
-       855, 855, 855, 855, 855, 855, 1710, 1710,
-
-       // [2] - 0x02
-       855, 855, 855, 855, 855, 855, 855, 855,
-       855, 855, 855, 855, 1710, 1710, 855, 855,
-
-       // [3] - 0xFF
-       1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
-       1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
-
-       // Pause
-       3500000
-    };
-
-    std::vector<uint32_t> result = loader.makeStandardBlock(data, sizeof(data), 2168, 667, 735, 855, 1710, 10, 1000);
-
-    // Standard data block has long pilot (8064 or 3220 periods) but reference vector will be too long for that
-    //std::vector<uint32_t> result = loader.makeStandardBlock(data, sizeof(data), 2168, 667, 735, 855, 1710, true ? 8064 : 3220, 1000);
-
-    EXPECT_EQ(result, referenceResult);
-
-    // region <Debug print>
-
-    /*
-    std::stringstream ss;
-
-    ss << "Vector len: " << result.size() << std::endl;
-    std::for_each(result.begin(), result.end(), [&ss](uint32_t value)
-    {
-        ss << value << ", ";
-    });
-
-    ss << std::endl;
-    std::cout << ss.str();
-    */
-
-    // endregion </Debug print>
 }

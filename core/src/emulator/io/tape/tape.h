@@ -8,6 +8,19 @@
 class EmulatorContext;
 class ModuleLogger;
 
+/// region <Constants>
+
+constexpr uint16_t PILOT_TONE_HALF_PERIOD = 2168;       // Pilot tone has 2168 t-states half-period
+constexpr uint16_t PILOT_SYNCHRO_1 = 667;               // At the end of pilot two synchro pulses are generated. First with 667 t-states duration
+constexpr uint16_t PILOT_SYNCHRO_2 = 735;               //  second - with 735 t-states duration
+constexpr uint16_t PILOT_DURATION_HEADER = 8064;        // Pilot for header block lasts for 3220 full period cycles (8064 * 2168 * 2)
+constexpr uint16_t PILOT_DURATION_DATA = 3220;          // Pilot for data block lasts for 3220 full period cycles (3220 * 2168 * 2)
+constexpr uint16_t ZERO_ENCODE_HALF_PERIOD = 855;       // Zeroes encoded as two 855 t-states half-periods
+constexpr uint16_t ONE_ENCODE_HALF_PERIOD = 1710;       // One encoded as two 1710 t-states half-periods
+constexpr uint16_t TAPE_PAUSE_BETWEEN_BLOCKS = 1000;    // 1000ms
+
+/// endregion </Constants>
+
 /// region <Types>
 
 enum ZXTapeBlockTypeEnum : uint8_t
@@ -67,8 +80,9 @@ struct TapeBlock
 
     TapeBlockFlagEnum type;                 // Header or data block
 
-    std::vector<uint8_t> data;              // Raw data paramBytes
+    std::vector<uint8_t> data;              // Raw data
 
+    size_t totalBitstreamLength = 0;        // How long in t-states current block will be played
     std::vector<uint32_t> edgePulseTimings; // Block data encoded to pulse edge series
 };
 
@@ -112,10 +126,14 @@ protected:
     size_t _tapePosition;
 
     // Tape input bitstream related
-    size_t _currentTapeBlock;
-    size_t _currentPulseIdxInBlock;
-    size_t _currentOffsetWithinPulse;
-    size_t _currentClockCount;
+    std::vector<TapeBlock> _tapeBlocks; // Tape representation as parsed TapeBlock vector
+
+    TapeBlock* _currentTapeBlock;       // Shortcut to current block object
+    size_t _currentTapeBlockIndex;      // Index of current TapeBlock
+    size_t _currentTapeBlockPulseCount; // Pulse counter. To compare with TapeBlock::totalBitstreamLength
+    size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
+    size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
+    size_t _currentClockCount;          // Store clock count for next iteration
 
     /// endregion </Fields>
 
@@ -128,22 +146,42 @@ public:
 
     /// region <Tape control methods>
 public:
+    void reset();
     void startTape();
     void stopTape();
     /// endregion </Tape control methods>
 
+    /// region <Port events>
 public:
-    void reset();
     uint8_t handlePortIn();
     void handlePortOut(bool value);
+    /// endregion </Port events>
+
+    /// region <Emulation events>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Emulation events>
 
     /// region <Helper methods>
 protected:
     bool getTapeStreamBit(uint64_t clockCount);
-   /// endregion </Helper methods>
 
-    // TODO: just experimentation method
+    bool generateBitstreamForStandardBlock(TapeBlock& tapeBlock);
+
+    size_t generateBitstream(TapeBlock& tapeBlock,
+                             uint16_t pilotHalfPeriod_tStates,
+                             uint16_t synchro1_tStates,
+                             uint16_t synchro2_tStates,
+                             uint16_t zeroEncodingHalfPeriod_tState,
+                             uint16_t oneEncodingHalfPeriod_tStates,
+                             size_t pilotLength_periods,
+                             size_t pause_ms);
+
+    // FIXME: just experimentation method
     bool getPilotSample(size_t clockCount);
+
+    /// endregion </Helper methods>
 };
 
 //
@@ -157,6 +195,8 @@ public:
     TapeCUT(EmulatorContext* context) : Tape(context) {};
 
     using Tape::handlePortIn;
+    using Tape::generateBitstream;
+
     using Tape::getPilotSample;
 };
 

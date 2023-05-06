@@ -8,48 +8,34 @@
 
 /// region <Constructors / destructors>
 
-LoaderTAP::LoaderTAP(EmulatorContext* context, std::string path)
+LoaderTAP::LoaderTAP(EmulatorContext* context)
 {
     _context = context;
     _logger = context->pModuleLogger;
-
-    _path = path;
 }
 
 LoaderTAP::~LoaderTAP()
 {
-    if (_file)
-    {
-        FileHelper::CloseFile(_file);
-        _file = nullptr;
-    }
-
-    if (_buffer)
-    {
-        free(_buffer);
-    }
 }
 
 /// endregion </Constructors / destructors>
 
 /// region <Methods>
 
-void LoaderTAP::reset()
-{
-}
-
-std::vector<TapeBlock> LoaderTAP::loadTAP()
+std::vector<TapeBlock> LoaderTAP::loadTAP(std::string filePath)
 {
     std::vector<TapeBlock> result;
 
-    _file = FileHelper::OpenFile(_path);
-    if (_file)
+    FILE* file = FileHelper::OpenFile(filePath);
+    if (file)
     {
         size_t index = 0;
 
         while (true)
         {
-            TapeBlock block = readNextBlock(_file);
+            TapeBlock block = readNextBlock(file);
+            block.blockIndex = index;
+
             if (!block.data.empty())
             {
                 result.push_back(block);
@@ -62,8 +48,7 @@ std::vector<TapeBlock> LoaderTAP::loadTAP()
             index++;
         }
 
-        FileHelper::CloseFile(_file);
-        _file = nullptr;
+        FileHelper::CloseFile(file);
     }
 
     return result;
@@ -72,27 +57,6 @@ std::vector<TapeBlock> LoaderTAP::loadTAP()
 /// endregion </Methods>
 
 /// region <Helper methods>
-
-bool LoaderTAP::validateFile()
-{
-    bool result = false;
-
-    if (FileHelper::FileExists(_path))
-    {
-        _file = FileHelper::OpenFile(_path);
-        if (_file != nullptr)
-        {
-            _fileSize = FileHelper::GetFileSize(_file);
-
-            result = true;
-        }
-    }
-
-    // Persist validation state in the field
-    _fileValidated = result;
-
-    return result;
-}
 
 TapeBlock LoaderTAP::readNextBlock(FILE* file)
 {
@@ -166,77 +130,6 @@ bool LoaderTAP::isBlockValid(const vector<uint8_t>& blockData)
 
     return result;
 }
-
-
-
-
-
-std::vector<uint32_t> LoaderTAP::makeStandardBlock(uint8_t* data, size_t len,
-                          uint16_t pilotHalfPeriod_tStates,
-                          uint16_t synchro1_tStates, uint16_t synchro2_tStates,
-                          uint16_t zeroEncodingHalfPeriod_tState, uint16_t oneEncodingHalfPeriod_tStates,
-                          size_t pilotLength_periods, size_t pause_ms)
-{
-    size_t resultSize = 0;
-    resultSize += (pilotLength_periods * 2);    // Each pilot signal period is encoded as 2 edges
-    resultSize += 2;                            // Two sync pulses at the end of pilot
-    resultSize += (len * 8 * 2);                // Each byte split to bits and each bit encoded as 2 edges
-    if (pause_ms > 0)
-        resultSize += 1;                        // Pause is just a marker so single edge is sufficient
-
-    std::vector<uint32_t> result;
-    result.reserve(resultSize);
-
-    /// region <Pilot tone + sync>
-
-    if (pilotLength_periods > 0)
-    {
-        // Required number of pilot periods
-        // Calling code determines it based on block type: header or data
-        for (size_t i = 0; i < pilotLength_periods; i++)
-        {
-            result.push_back(pilotHalfPeriod_tStates);
-        }
-
-        // Sync pulses at the end of pilot
-        result.push_back(synchro1_tStates);
-        result.push_back(synchro2_tStates);
-    }
-
-    /// endregion </Pilot tone + sync>
-
-    /// region <Data paramBytes>
-
-    for (size_t i = 0; i < len; i++)
-    {
-        // Extract bits from input data byte and add correspondent bit encoding length to image array
-        for (uint8_t bitMask = 0x80; bitMask != 0; bitMask >>= 1)
-        {
-            bool bit = (data[i] & bitMask) != 0;
-            uint16_t bitEncoded = bit ? oneEncodingHalfPeriod_tStates : zeroEncodingHalfPeriod_tState;
-
-            // Each bit is encoded by two edges
-            result.push_back(bitEncoded);
-            result.push_back(bitEncoded);
-        }
-    }
-
-    /// endregion </Data paramBytes>
-
-
-    /// region <Pause>
-
-    if (pause_ms)
-    {
-        // Pause doesn't require any encoding, just a time mark after the delay
-        result.push_back(pause_ms * 3500);
-    }
-
-    /// endregion </Pause>
-
-    return result;
-}
-
 
 /// endregion </Helper methods>
 

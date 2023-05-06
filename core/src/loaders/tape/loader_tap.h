@@ -50,16 +50,6 @@
 
 /// endregion </Documentation
 
-/// region <Constants>
-
-constexpr uint16_t PILOT_TONE_HALF_PERIOD = 2168;
-constexpr uint16_t SYNCHO1 = 667;
-constexpr uint16_t SYNCHRO2 = 735;
-constexpr uint16_t ZERO_ENCODE_HALF_PERIOD = 855;
-constexpr uint16_t ONE_ENCODE_HALF_PERIOD = 1710;
-
-/// endregion </Constants>
-
 /// region <Types>
 
 /// region <TAP parsing structures>
@@ -118,46 +108,25 @@ class LoaderTAP
 protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
-
-    // File-related fields
-    std::string _path;
-    FILE* _file = nullptr;
-    bool _fileValidated = false;
-    size_t _fileSize = 0;
-    void* _buffer = nullptr;
-
-    // Parsed blocks-related fields
-    std::list<TapeBlock> _tapeBlocks;
-
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
 public:
-    LoaderTAP(EmulatorContext* context, std::string path);
+    LoaderTAP(EmulatorContext* context);
     virtual ~LoaderTAP();
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:
-    void reset();
+    std::vector<TapeBlock> loadTAP(std::string filePath);
     /// endregion </Methods>
 
 protected:
-    bool validateFile();
-    std::vector<TapeBlock> loadTAP();
-
     TapeBlock readNextBlock(FILE* file);
+
     bool isBlockValid(const vector<uint8_t>& blockData);
     uint8_t getBlockChecksum(const vector<uint8_t>& blockData);
     void convertPayloadDataToBitstream(const vector<uint8_t>& payloadData);
-
-
-    std::vector<uint32_t> makeStandardBlock(uint8_t* data, size_t len,
-                                           uint16_t pilotHalfPeriod_tStates,
-                                           uint16_t synchro1_tStates, uint16_t synchro2_tStates,
-                                           uint16_t zeroEncodingHalfPeriod_tState, uint16_t oneEncodingHalfPeriod_tStates,
-                                           size_t pilotLength_periods,
-                                           size_t pause_ms);
 
     /// region <Debug methods>
 
@@ -176,21 +145,14 @@ public:
 class LoaderTAPCUT : public LoaderTAP
 {
 public:
-    LoaderTAPCUT(EmulatorContext* context, std::string path) : LoaderTAP(context, path) {};
+    LoaderTAPCUT(EmulatorContext* context) : LoaderTAP(context) {};
 
 public:
     using LoaderTAP::_context;
     using LoaderTAP::_logger;
-    using LoaderTAP::_path;
-    using LoaderTAP::_file;
 
     using LoaderTAP::readNextBlock;
     using LoaderTAP::isBlockValid;
     using LoaderTAP::getBlockChecksum;
-
-    using LoaderTAP::validateFile;
-    using LoaderTAP::loadTAP;
-
-    using LoaderTAP::makeStandardBlock;
 };
 #endif // _CODE_UNDER_TEST
