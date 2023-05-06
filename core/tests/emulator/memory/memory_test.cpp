@@ -86,7 +86,7 @@ TEST_F(Memory_Test, ROMPageAddress)
     // Check for valid pages
     for (int i = 0; i < MAX_ROM_PAGES; i++)
     {
-        uint8_t* pageAddress = _memory->ROMPageAddress(i);
+        uint8_t* pageAddress = _memory->ROMPageHostAddress(i);
 
         EXPECT_EQ(pageAddress, romBase + PAGE_SIZE * i);
     }
@@ -94,7 +94,7 @@ TEST_F(Memory_Test, ROMPageAddress)
     // There shouldn't be any ROM pages with such index
     for (int i = MAX_ROM_PAGES; i < 0xFF; i++)
     {
-        uint8_t* pageAddress = _memory->ROMPageAddress(i);
+        uint8_t* pageAddress = _memory->ROMPageHostAddress(i);
 
         EXPECT_EQ(pageAddress, nullptr);
     }

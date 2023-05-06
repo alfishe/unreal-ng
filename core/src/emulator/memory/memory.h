@@ -127,6 +127,11 @@ protected:
     uint8_t _memPageWriteMarks[MAX_PAGES / 8];              // Per-page write access flags
     uint8_t _memPageExecuteMarks[MAX_PAGES / 8];            // Per-page execute access flags
 
+    bool _isPage0ROM48k;
+    bool _isPage0ROM128k;
+    bool _isPage0ROMDOS;
+    bool _isPge0ROMService;
+
 public:
     // Base addresses for memory classes
     inline uint8_t* RAMBase() { return _ramBase; };			// Get starting address for RAM
@@ -161,7 +166,6 @@ public:
     static MemoryInterface* GetFastMemoryInterface();
     static MemoryInterface* GetDebugMemoryInterface();
 
-public:
     uint8_t MemoryReadFast(uint16_t addr, bool isExecution);
     uint8_t MemoryReadDebug(uint16_t addr, bool isExecution);
     void MemoryWriteFast(uint16_t addr, uint8_t value);
@@ -195,14 +199,23 @@ public:
     /// region <Service methods>
     void LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z80address);
     void LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize);
+    void SetROMPageFlags();
     /// endregion </Service methods>
+
+    /// region <Bank / Page identification helpers>
+public:
+    bool IsCurrentROM48k() { return _isPage0ROM48k; };
+    bool isCurrentROM128k() { return _isPage0ROM128k; };
+    bool isCurrentROMDOS() { return _isPage0ROMDOS; };
+    bool isCurrentROMService() { return _isPge0ROMService; };
+    /// endregion <Bank / Page identification helpers>
 
     /// region  <Address helper methods>
 
     uint8_t GetZ80BankFromAddress(uint16_t address);
 
     uint8_t* RAMPageAddress(uint16_t page);
-    uint8_t* ROMPageAddress(uint8_t page);
+    uint8_t* ROMPageHostAddress(uint8_t page);
 
     uint16_t GetRAMPageFromAddress(uint8_t* hostAddress);
     uint16_t GetROMPageFromAddress(uint8_t* hostAddress);
@@ -210,7 +223,7 @@ public:
     size_t GetPhysicalOffsetForZ80Address(uint16_t address);
     size_t GetPhysicalOffsetForZ80Bank(uint8_t bank);
 
-    uint8_t* GetPhysicalAddressForZ80Bank(uint8_t bank);
+    uint8_t* GetPhysicalAddressForZ80Page(uint8_t bank);
 
     uint8_t* MapZ80AddressToPhysicalAddress(uint16_t address);			    // Remap address to the bank. Important! inline for this method for some reason leads to MSVC linker error (not found export function)
     MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address);     // Determines current bank for Z80 address specified

@@ -140,14 +140,14 @@ bool ROM::LoadROM()
 	switch (config.mem_model)
 	{
 		case MM_PENTAGON:
-			memory.base_sys_rom = memory.ROMPageAddress(0); // Empty or system ROM
-			memory.base_dos_rom = memory.ROMPageAddress(1); // TR-DOS 5.04T
-			memory.base_128_rom = memory.ROMPageAddress(2); // Basic 128K
-			memory.base_sos_rom = memory.ROMPageAddress(3); // 48K
+			memory.base_sys_rom = memory.ROMPageHostAddress(0); // Empty or system ROM
+			memory.base_dos_rom = memory.ROMPageHostAddress(1); // TR-DOS 5.04T
+			memory.base_128_rom = memory.ROMPageHostAddress(2); // Basic 128K
+			memory.base_sos_rom = memory.ROMPageHostAddress(3); // 48K
 			romname = config.pent_rom_path;
 			break;
 	    case MM_SPECTRUM48:
-	        memory.base_sos_rom = memory.ROMPageAddress(0);
+	        memory.base_sos_rom = memory.ROMPageHostAddress(0);
 	        romname = config.zx48_rom_path;
 
 	        memory.base_128_rom = nullptr;
@@ -155,95 +155,95 @@ bool ROM::LoadROM()
 	        memory.base_sys_rom = nullptr;
 	        break;
 	    case MM_SPECTRUM128:
-            memory.base_128_rom = memory.ROMPageAddress(0);
-            memory.base_sos_rom = memory.ROMPageAddress(1);
+            memory.base_128_rom = memory.ROMPageHostAddress(0);
+            memory.base_sos_rom = memory.ROMPageHostAddress(1);
             romname = config.zx128_rom_path;
 
             memory.base_dos_rom = nullptr;
             memory.base_sys_rom = nullptr;
             break;
         case MM_PLUS3:
-            memory.base_128_rom = memory.ROMPageAddress(0);
-            memory.base_sys_rom = memory.ROMPageAddress(1);
-            memory.base_dos_rom = memory.ROMPageAddress(2);
-            memory.base_sos_rom = memory.ROMPageAddress(3);
+            memory.base_128_rom = memory.ROMPageHostAddress(0);
+            memory.base_sys_rom = memory.ROMPageHostAddress(1);
+            memory.base_dos_rom = memory.ROMPageHostAddress(2);
+            memory.base_sos_rom = memory.ROMPageHostAddress(3);
             romname = config.plus3_rom_path;
             break;
 		case MM_PROFI:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.profi_rom_path;
 			break;
 		case MM_SCORP:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.scorp_rom_path;
 			break;
 		case MM_PROFSCORP:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.prof_rom_path;
 			break;
 		case MM_KAY:
-			memory.base_128_rom = memory.ROMPageAddress(0);
-			memory.base_sos_rom = memory.ROMPageAddress(1);
-			memory.base_dos_rom = memory.ROMPageAddress(2);
-			memory.base_sys_rom = memory.ROMPageAddress(3);
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(1);
+			memory.base_dos_rom = memory.ROMPageHostAddress(2);
+			memory.base_sys_rom = memory.ROMPageHostAddress(3);
 			romname = config.kay_rom_path;
 			break;
 		case MM_ATM3:
-			memory.base_sos_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sys_rom = memory.ROMPageAddress(3);
+			memory.base_sos_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sys_rom = memory.ROMPageHostAddress(3);
 			romname = config.atm3_rom_path;					// TODO: Correct?
 			break;
 		case MM_ATM450:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.atm1_rom_path;
 			break;
 		case MM_ATM710:
-			memory.base_sos_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sys_rom = memory.ROMPageAddress(3);
+			memory.base_sos_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sys_rom = memory.ROMPageHostAddress(3);
 			romname = config.atm2_rom_path;					// TODO: Correct?
 			break;
 		case MM_QUORUM:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.quorum_rom_path;
 			break;
 		case MM_TSL:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.tsl_rom_path;
 			break;
 		case MM_LSY256:
-			memory.base_128_rom = memory.ROMPageAddress(0);
-			memory.base_sos_rom = memory.ROMPageAddress(1);
-			memory.base_dos_rom = memory.ROMPageAddress(3);
-			memory.base_sys_rom = memory.ROMPageAddress(2);
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(1);
+			memory.base_dos_rom = memory.ROMPageHostAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(2);
 			romname = config.lsy_rom_path;
 			break;
 		case MM_PHOENIX:
-			memory.base_sys_rom = memory.ROMPageAddress(0);
-			memory.base_dos_rom = memory.ROMPageAddress(1);
-			memory.base_128_rom = memory.ROMPageAddress(2);
-			memory.base_sos_rom = memory.ROMPageAddress(3);
+			memory.base_sys_rom = memory.ROMPageHostAddress(0);
+			memory.base_dos_rom = memory.ROMPageHostAddress(1);
+			memory.base_128_rom = memory.ROMPageHostAddress(2);
+			memory.base_sos_rom = memory.ROMPageHostAddress(3);
 			romname = config.phoenix_rom_path;
 			break;
 	    case MM_GMX:
@@ -468,7 +468,7 @@ void ROM::CalculateSignatures()
 	MLOGINFO("ROM Banks info (as loaded):");
 	for (int i = 0; i < _ROMBanksLoaded; i++)
     {
-	    std::string signature = CalculateSignature(memory.ROMPageAddress(i), 0x4000);
+	    std::string signature = CalculateSignature(memory.ROMPageHostAddress(i), 0x4000);
         LOGINFO("  ROM page %d: %s", i, GetROMTitle(signature).c_str());
     }
 
