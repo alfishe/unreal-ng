@@ -27,10 +27,13 @@ void Tape::stopTape()
 {
     _tapeStarted = false;
 
+    // Reset all tape-related fields and free up blocks memory
+    _tapeBlocks = std::vector<TapeBlock>();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
+
     _currentClockCount = 0;
 }
 /// endregion </Tape control methods>
@@ -47,6 +50,7 @@ void Tape::reset()
     _currentTapeBlockIndex = UINT64_MAX;
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
+
     _currentClockCount = 0;
 };
 
@@ -153,6 +157,11 @@ void Tape::handleFrameStart()
             {
                 // Generating bit-stream related data
                 generateBitstreamForStandardBlock(*_currentTapeBlock);
+
+                // Clear bit-stream data from previous block
+                TapeBlock& previousBlock = _tapeBlocks[_currentTapeBlockIndex - 1];
+                previousBlock.totalBitstreamLength = 0;
+                previousBlock.edgePulseTimings = std::vector<uint32_t>();
             }
             else
             {
