@@ -118,12 +118,24 @@ void MainLoop::RunFrame()
     Screen& screen = *_context->pScreen;
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
-	// Prepare sound and video for next cycle
+    /// region <Frame start handlers>
+
 	InitSoundFrame();
 	InitVideoFrame();
+    InitTapeFrame();
+
+    /// endregion </Frame start handlers>
+
 
 	// Execute CPU cycles for single video frame
 	ExecuteCPUFrameCycle();
+
+    /// region <Frame end handlers>
+
+    _context->pTape->handleFrameEnd();
+
+    /// endregion </Frame end handlers
+
 
 	// Process external periphery devices
 
@@ -181,6 +193,14 @@ void MainLoop::InitSoundFrame()
 void MainLoop::InitVideoFrame()
 {
 	_screen->InitFrame();
+}
+
+//
+// Prepare tape emulation for rendering next frame
+//
+void MainLoop::InitTapeFrame()
+{
+    _context->pTape->handleFrameStart();
 }
 
 //

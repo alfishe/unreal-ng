@@ -47,6 +47,7 @@ protected:
 
 	void InitSoundFrame();
 	void InitVideoFrame();
+    void InitTapeFrame();
 
 	void ExecuteCPUFrameCycle();
 	void DoIdle();
