@@ -63,8 +63,6 @@ uint8_t Tape::handlePortIn()
         size_t clockCount = cpu.clock_count;
 
         result = getTapeStreamBit(clockCount) << 6;
-        //result = getPilotSample(clockCount) << 6;
-        //return result;
     }
     else
     {
@@ -146,7 +144,7 @@ void Tape::handleFrameStart()
             _currentClockCount = clockCount;
         }
         // Just switched to next block, need to generate bit stream for it
-        else if (_currentTapeBlockIndex < _tapeBlocks.size() - 1 && _currentTapeBlock == nullptr)
+        else if (_currentTapeBlockIndex < _tapeBlocks.size() && _currentTapeBlock == nullptr)
         {
             // Getting new TapeBlock
             _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
