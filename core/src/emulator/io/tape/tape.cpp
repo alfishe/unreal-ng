@@ -213,8 +213,8 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
                     // We're depleted all pulses within this block. Switching to next one
                     _currentTapeBlockIndex++;
                     _currentTapeBlock = nullptr;
-                    _currentOffsetWithinPulse = UINT64_MAX;
-                    _currentPulseIdxInBlock = UINT64_MAX;
+                    _currentOffsetWithinPulse = 0;
+                    _currentPulseIdxInBlock = 0;
                     break;
                 }
             }
