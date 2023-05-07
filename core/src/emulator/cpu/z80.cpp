@@ -117,6 +117,9 @@ bool Z80::IsPaused()
 /// Handle Z80 reset signal
 void Z80::Reset()
 {
+    // Global clock count
+    clock_count = 0;
+
     // Emulation state
     last_branch = 0x0000;	        // Address of last branch (in Z80 address space)
     int_pending = false;	        // No interrupts pending
