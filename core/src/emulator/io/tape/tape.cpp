@@ -186,45 +186,39 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
     uint64_t deltaTime = clockCount - _currentClockCount;
 
-    if (_tapeStarted)
+    if (_tapeStarted && _currentTapeBlock && _currentTapeBlockIndex != UINT64_MAX)
     {
         // Forward playback for the whole deltaTime period
         for (int i = 0; i < deltaTime; i++)
         {
-            if (_currentTapeBlockIndex != UINT64_MAX && _currentTapeBlock)
+            // Determine position within bit stream
+            // Find correspondent pulse timings record and then count up to its value
+            TapeBlock &block = *_currentTapeBlock;
+            uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
+
+            // Create signal edge by inverting tape bit
+            if (currentPulseDuration > 0 && _currentPulseIdxInBlock == 0)
             {
-                // Determine position within bit stream
-                // Find correspondent pulse timings record and then count up to its value
-                TapeBlock &block = *_currentTapeBlock;
-                uint32_t currentPulseDuration = block.edgePulseTimings[_currentTapeBlockIndex];
-
-                // Create signal edge by inverting tape bit
-                if (currentPulseDuration > 0 && _currentPulseIdxInBlock == 0)
-                {
-                    result = !result;
-                }
-
-                /// region <Perform repositioning for next bit in stream>
-                _currentPulseIdxInBlock++;
-                if (_currentPulseIdxInBlock >= currentPulseDuration)
-                {
-                    _currentTapeBlockIndex++;
-                    _currentPulseIdxInBlock = 0;
-
-                    if (_currentTapeBlockIndex >= block.edgePulseTimings.size())
-                    {
-                        // We're depleted the whole block
-                        _currentTapeBlockIndex = UINT64_MAX;
-                        break;
-                    }
-                }
-                /// endregion </Perform repositioning for next bit in stream>
+                result = !result;
             }
-            else
+
+            /// region <Perform repositioning for next bit in stream>
+            _currentPulseIdxInBlock++;
+            if (_currentPulseIdxInBlock >= currentPulseDuration)
             {
-                // End of block, nothing to do
-                break;
+                // Pulse duration finished, switch to next
+                _currentOffsetWithinPulse++;
+                _currentPulseIdxInBlock = 0;
+
+                if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
+                {
+                    // We're depleted all pulses within this block
+                    _currentOffsetWithinPulse = UINT64_MAX;
+                    _currentPulseIdxInBlock = UINT64_MAX;
+                    break;
+                }
             }
+            /// endregion </Perform repositioning for next bit in stream>
         }
     }
 
