@@ -130,7 +130,6 @@ protected:
 
     TapeBlock* _currentTapeBlock;       // Shortcut to current block object
     size_t _currentTapeBlockIndex;      // Index of current TapeBlock
-    size_t _currentTapeBlockPulseCount; // Pulse counter. To compare with TapeBlock::totalBitstreamLength
     size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
     size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
     size_t _currentClockCount;          // Store clock count for next iteration

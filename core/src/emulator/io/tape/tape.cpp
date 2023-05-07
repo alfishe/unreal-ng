@@ -26,6 +26,12 @@ void Tape::startTape()
 void Tape::stopTape()
 {
     _tapeStarted = false;
+
+    _currentTapeBlock = nullptr;
+    _currentTapeBlockIndex = UINT64_MAX;
+    _currentPulseIdxInBlock = 0;
+    _currentOffsetWithinPulse = 0;
+    _currentClockCount = 0;
 }
 /// endregion </Tape control methods>
 
@@ -39,7 +45,6 @@ void Tape::reset()
     _tapeBlocks = std::vector<TapeBlock>();
     _currentTapeBlock = nullptr;
     _currentTapeBlockIndex = UINT64_MAX;
-    _currentTapeBlockPulseCount = 0;
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
     _currentClockCount = 0;
@@ -127,11 +132,10 @@ void Tape::handleFrameStart()
     if (_tapeStarted && !_tapeBlocks.empty())
     {
         // Tape is just loaded, we need setup fields
-        if (_currentTapeBlock == nullptr || _currentTapeBlockIndex == UINT64_MAX)
+        if (_currentTapeBlock == nullptr && _currentTapeBlockIndex == UINT64_MAX)
         {
             _currentTapeBlock = &_tapeBlocks[0];
             _currentTapeBlockIndex = 0;
-            _currentTapeBlockPulseCount = 0;
             _currentPulseIdxInBlock = 0;
             _currentOffsetWithinPulse = 0;
 
@@ -141,13 +145,9 @@ void Tape::handleFrameStart()
             // Record current clock
             _currentClockCount = clockCount;
         }
-        // Check if it's time to create bitstream data for the next block
-        else if (_currentTapeBlockIndex < _tapeBlocks.size() - 1 &&
-            _currentTapeBlockPulseCount == _tapeBlocks[_currentTapeBlockIndex].totalBitstreamLength
-           )
+        // Just switched to next block, need to generate bit stream for it
+        else if (_currentTapeBlockIndex < _tapeBlocks.size() - 1 && _currentTapeBlock == nullptr)
         {
-            _currentTapeBlockIndex++;
-
             // Getting new TapeBlock
             _currentTapeBlock = &_tapeBlocks[_currentTapeBlockIndex];
 
@@ -212,7 +212,9 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
                 if (_currentOffsetWithinPulse >= block.edgePulseTimings.size())
                 {
-                    // We're depleted all pulses within this block
+                    // We're depleted all pulses within this block. Switching to next one
+                    _currentTapeBlockIndex++;
+                    _currentTapeBlock = nullptr;
                     _currentOffsetWithinPulse = UINT64_MAX;
                     _currentPulseIdxInBlock = UINT64_MAX;
                     break;
