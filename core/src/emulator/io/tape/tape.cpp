@@ -195,22 +195,33 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
 
     if (_tapeStarted && _currentTapeBlock && _currentTapeBlockIndex != UINT64_MAX)
     {
+        // Determine position within bit stream
+        // Find correspondent pulse timings record and then count up to its value
+        TapeBlock &block = *_currentTapeBlock;
+        uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
+
         // Forward playback for the whole deltaTime period
         for (int i = 0; i < deltaTime; i++)
         {
-            // Determine position within bit stream
-            // Find correspondent pulse timings record and then count up to its value
-            TapeBlock &block = *_currentTapeBlock;
-            uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
-
             // Create signal edge by inverting tape bit
             if (currentPulseDuration > 0 && _currentPulseIdxInBlock == 0)
             {
                 result = !result;
             }
 
+            if (_currentPulseIdxInBlock + deltaTime > currentPulseDuration)
+            {
+                size_t pulsesToSkip = currentPulseDuration - _currentPulseIdxInBlock;
+
+                _currentPulseIdxInBlock += pulsesToSkip;
+                i += pulsesToSkip;
+            }
+            else
+            {
+                _currentPulseIdxInBlock++;
+            }
+
             /// region <Perform repositioning for next bit in stream>
-            _currentPulseIdxInBlock++;
             if (_currentPulseIdxInBlock >= currentPulseDuration)
             {
                 // Pulse duration finished, switch to next
