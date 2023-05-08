@@ -58,7 +58,8 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 
     if (IsPort_FE(port))
     {
-        result = _keyboard->HandlePortIn(port);
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
     }
 
     /// region <Debug logging>
@@ -98,7 +99,7 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     }
     else if (IsPort_FE(port))
     {
-        Port_FE_Out(port, value, pc);
+        Default_Port_FE_Out(port, value, pc);
     }
     else
     {

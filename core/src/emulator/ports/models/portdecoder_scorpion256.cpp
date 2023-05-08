@@ -35,6 +35,12 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
 
+    if (IsPort_FE(port))
+    {
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
+    }
+
     /// region <Debug logging>
 
     // Check if port was not explicitly muted
@@ -96,6 +102,22 @@ void PortDecoder_Scorpion256::SetROMPage(uint8_t page)
 /// endregion </Interface methods>
 
 /// region <Helper methods>
+
+bool PortDecoder_Scorpion256::IsPort_FE(uint16_t port)
+{
+    //    Scorpion ZS256
+    //    Port: #FE
+    //    Match pattern: xxxxxxxx xx1xxx10
+    //    Full pattern:  xxxxxxxx 11111110
+    static const uint16_t port_FE_full      = 0b0000'0000'1111'1110;
+    static const uint16_t port_FE_mask      = 0b0000'0000'0010'0011;
+    static const uint16_t port_FE_match     = 0b0000'0000'0010'0010;
+
+    bool result = (port & port_FE_mask) == port_FE_match;
+
+    return result;
+}
+
 bool PortDecoder_Scorpion256::IsPort_7FFD(uint16_t port)
 {
     //    Scorpion ZS256

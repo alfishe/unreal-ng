@@ -35,6 +35,12 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
 
+    if (IsPort_FE(port))
+    {
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
+    }
+
     /// region <Debug logging>
 
     // Check if port was not explicitly muted
@@ -96,6 +102,22 @@ void PortDecoder_Spectrum3::SetROMPage(uint8_t page)
 /// endregion </Interface methods>
 
 /// region <Helper methods>
+
+bool PortDecoder_Spectrum3::IsPort_FE(uint16_t port)
+{
+    //    ZX Spectrum 128 / +2A
+    //    Port: #FE
+    //    Match pattern: xxxxxxxx xxxxxxx0
+    //    Full pattern:  xxxxxxxx 11111110
+    static const uint16_t port_FE_full      = 0b0000'0000'1111'1110;
+    static const uint16_t port_FE_mask      = 0b0000'0000'0000'0001;
+    static const uint16_t port_FE_match     = 0b0000'0000'0000'0000;
+
+    bool result = (port & port_FE_mask) == port_FE_match;
+
+    return result;
+}
+
 bool PortDecoder_Spectrum3::IsPort_7FFD(uint16_t port)
 {
     //    ZX Spectrum +2A / +3

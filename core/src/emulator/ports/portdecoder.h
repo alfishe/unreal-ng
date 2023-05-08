@@ -103,7 +103,8 @@ public:
     virtual void SetROMPage(uint8_t page) = 0;
 
     virtual bool IsFEPort(uint16_t port);
-    virtual void Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
+    uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
+    void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
 
 protected:
     virtual std::string GetPCAddressLocator(uint16_t pc);

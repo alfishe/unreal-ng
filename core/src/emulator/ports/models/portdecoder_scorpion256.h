@@ -36,6 +36,7 @@ public:
 
     /// region <Helper methods>
 public:
+    bool IsPort_FE(uint16_t port);
     bool IsPort_7FFD(uint16_t port);
     bool IsPort_1FFD(uint16_t port);
     /// endregion <Helper methods>

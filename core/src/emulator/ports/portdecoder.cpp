@@ -162,15 +162,38 @@ bool PortDecoder::IsFEPort(uint16_t port)
     return result;
 }
 
+/// Default implementation for 'in (#FE)'
+/// Bits [0:4] - Keyboard selected half-row buttons state
+/// Bit  [6]   - MIC In
+/// \param port
+/// \param pc
+/// \return
+uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, uint16_t pc)
+{
+    uint8_t result = 0xFF;
+
+    result = _keyboard->HandlePortIn(port);
+
+    // Only bit 6 (EAR) of port #FE is affected by tape input signal
+    static const uint8_t maskEAR = 0b0100'0000;
+    static const uint8_t invMaskEAR = 0b1011'1111;
+
+    result &= invMaskEAR;
+    uint8_t inputEARSignal = _tape->handlePortIn() & maskEAR;
+    result |= inputEARSignal;
+
+    return result;
+}
+
 /// Default implementation for 'out (#FE)'
 /// Bits [0:2]  - Border color
-/// Bit [4]     - Beeper output bit
+/// Bit  [4]    - Beeper output bit
 /// See: https://worldofspectrum.org/faq/reference/48kreference.htm
 /// \param port
 /// \param value
 /// \param pc
 /// \return
-void PortDecoder::Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
+void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 {
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;

@@ -46,11 +46,8 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 
     if (IsPort_FE(port))
     {
-        result = _keyboard->HandlePortIn(port);
-
-        // Only bit 6 (EAR) of port #FE is affected by tape input signal
-        uint8_t inputEARSignal = _tape->handlePortIn() & 0b0100'0000;
-        result |= inputEARSignal;
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
     }
 
 #ifndef NDEBUG

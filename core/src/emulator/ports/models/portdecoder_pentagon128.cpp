@@ -58,15 +58,8 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
 
     if (IsPort_FE(port))
     {
-        result = _keyboard->HandlePortIn(port);
-
-        // Only bit 6 (EAR) of port #FE is affected by tape input signal
-        static const uint8_t maskEAR = 0b0100'0000;
-        static const uint8_t invMaskEAR = 0b1011'1111;
-
-        result &= invMaskEAR;
-        uint8_t inputEARSignal = _tape->handlePortIn() & maskEAR;
-        result |= inputEARSignal;
+        // Call default implementation
+        result = Default_Port_FE_In(port, pc);
     }
 
     /// region <Debug logging>
@@ -106,7 +99,7 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     else if (IsPort_FE(port))
     {
         decodedPort = 0x00FE;
-        Port_FE_Out(port, value, pc);
+        Default_Port_FE_Out(port, value, pc);
     }
     else
     {
