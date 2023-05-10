@@ -13,12 +13,13 @@ constexpr char const* NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODUL
 constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
 
 
-constexpr char const* NC_LOGGER_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE"; // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
+constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE"; // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
 
 constexpr char const* NC_LOGGER_CPU_STEP = "LOGGER_CPU_STEP";                    // Event fired when one single CPU step performed. Active in debug mode only.
 constexpr char const* NC_LOGGER_BREAKPOINT = "LOGGER_BREAKPOINT";                // Breakpoint fired
 
-constexpr char const* NC_LOGGER_FRAME_REFRESH = "LOGGER_FRAME_REFRESH";
+constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";            // Audio data for the current frame is ready
+constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";            // Video data for the current frame is ready
 
 /// endregion </Notification center events>
 
@@ -108,14 +109,17 @@ enum PlatformDiskSubmodulesEnum : uint16_t
 
 enum PlatformSoundSubmodulesEnum : uint16_t
 {
-    SUBMODULE_SOUND_NONE        = 0x0000,
-    SUBMODULE_SOUND_GENERIC     = 0x0001,
-    SUBMODULE_SOUND_AY          = 0x0002,
-    SUBMODULE_SOUND_GS          = 0x0004,
-    SUBMODULE_SOUND_MOONSOUND   = 0x0008,
-    SUBMODULE_SOUND_SAA         = 0x0010,
+    SUBMODULE_SOUND_NONE            = 0x0000,
+    SUBMODULE_SOUND_GENERIC         = 0x0001,
+    SUBMODULE_SOUND_BEEPER          = 0x0002,
+    SUBMODULE_SOUND_AY              = 0x0004,
+    SUBMODULE_SOUND_TURBOSOUND      = 0x0008,
+    SUBMODULE_SOUND_TURBOSOUNDFM    = 0x0010,
+    SUBMODULE_SOUND_GS              = 0x0028,
+    SUBMODULE_SOUND_MOONSOUND       = 0x0040,
+    SUBMODULE_SOUND_SAA             = 0x0080,
 
-    SUBMODULE_SOUND_ALL         = 0xFFFF
+    SUBMODULE_SOUND_ALL             = 0xFFFF
 };
 
 enum PlatformVideoSubmodulesEnum : uint16_t

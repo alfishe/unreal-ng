@@ -172,10 +172,13 @@ class ModuleLogger : public Observer
         "TSConf"
     };
 
-    const char* submoduleSoundNames[5] =
+    const char* submoduleSoundNames[8] =
     {
         "Generic",
+        "Beeper",
         "AY",
+        "TurboSound",
+        "TurboSound FM",
         "General Sound",
         "MoonSound",
         "SAA1099"

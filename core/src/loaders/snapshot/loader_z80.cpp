@@ -154,7 +154,7 @@ void LoaderZ80::commitFromStage()
 
         // Pre-fill whole border with color
         screen.FillBorderWithColor(_borderColor);
-        ports.Port_FE_Out(0x00FE, _borderColor, _z80Registers.pc);
+        ports.Default_Port_FE_Out(0x00FE, _borderColor, _z80Registers.pc);
 
         /// endregion </Apply port configuration>
 
