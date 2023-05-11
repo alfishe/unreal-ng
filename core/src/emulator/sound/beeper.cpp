@@ -1,6 +1,6 @@
 #include "beeper.h"
 
-#include "emulatorcontext.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 
 /// region <Methods>
