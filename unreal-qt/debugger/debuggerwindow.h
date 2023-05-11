@@ -53,6 +53,7 @@ private slots:
     void frameStep();
     void waitInterrupt();
     void resetEmulator();
+    void showBreakpointManager();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -80,6 +81,7 @@ private:
     QAction* frameStepAction;
     QAction* waitInterruptAction;
     QAction* resetAction;
+    QAction* breakpointsAction;
 };
 
 #endif // DEBUGGERWINDOW_H

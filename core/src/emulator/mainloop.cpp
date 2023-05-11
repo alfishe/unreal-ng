@@ -74,13 +74,13 @@ void MainLoop::Run(volatile bool& stopRequested)
 		/// endregion </Handle Pause>
 
 		MLOGINFO("Frame recalculation time: %d us", duration1);
-		sleep_us(15000U - std::min(duration1, 15000U));
+		sleep_us(20000U - std::min(duration1, 20000U));
 	}
 
 	MLOGINFO("Stop requested, exiting main loop");
 
     // Stop animation recording and finalize the file
-    //gifAnimationHelper.StopAnimation();
+    gifAnimationHelper.StopAnimation();
 
     _isRunning = false;
 }

@@ -8,13 +8,44 @@
 #include <QAudioSink>
 #include <QAudioSource>
 
-class AppSoundManager : public QIODevice
+class WaveGenerator : public QIODevice
 {
+    Q_OBJECT
+
+private:
+public:
+    WaveGenerator()
+    {
+        QIODevice::open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+    }
+
+    qint64 readData(char *data, qint64 len)
+    {
+
+        return len;
+    }
+
+    qint64 writeData(const char *data, qint64 len)
+    {
+        Q_UNUSED(data);
+        Q_UNUSED(len);
+        return 0;
+    }
+};
+
+class AppSoundManager : public QObject
+{
+    Q_OBJECT
+
     /// region <Fields>
 protected:
-    QAudioFormat _audioFormat;
+
     QScopedPointer<QAudioSink> _audioOutput;
     QScopedPointer<QAudioSource> _audioInput;
+    QIODevice* _audioDevice;
+
+    uint8_t* _audioBuffer;
+    size_t _audioBufferLen;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -25,10 +56,15 @@ public:
 
     /// region <Methods>
 public:
-    bool init();
-    bool init(const QAudioDevice &deviceInfo);
+    bool init(uint8_t* buffer, size_t len);
+    bool init(const QAudioDevice &deviceInfo, uint8_t* buffer, size_t len);
+    void deinit();
+
     void start();
     void stop();
+
+    void pushAudio();
+
     /// endregion </Methods>
 
     /// region <Info methods>

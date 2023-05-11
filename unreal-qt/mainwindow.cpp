@@ -11,8 +11,10 @@
 
 #include "emulator/filemanager.h"
 #include "emulator/soundmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 
 #include "common/modulelogger.h"
+#include "emulator/sound/soundmanager.h"
 #include "emulator/ports/portdecoder.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
@@ -173,7 +175,8 @@ void MainWindow::moveEvent(QMoveEvent *event)
 {
     QWidget::moveEvent(event);
 
-    arrangeWindows();
+    //arrangeWindows();
+    adjust(nullptr);
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
@@ -299,6 +302,30 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                 deviceScreen->handleExternalKeyRelease(keyEvent);
             }
             break;
+        case QEvent::Move:
+            m_lastCursorPos = QCursor::pos();
+            break;
+        case QEvent::Resize:
+        case QEvent::Show:
+            adjust(event);
+            break;
+#ifdef Q_OS_OSX
+        case QEvent::NonClientAreaMouseButtonPress:
+            m_lastCursorPos = QCursor::pos();
+            break;
+        case QEvent::NonClientAreaMouseButtonRelease:
+            adjust(event);
+            break;
+        case QEvent::NonClientAreaMouseMove:
+            {
+                if (static_cast<QMouseEvent *>(event)->buttons() == Qt::LeftButton)
+                {
+                    QPoint delta = QCursor::pos() - m_lastCursorPos;
+                    adjust(event, delta);
+                }
+            }
+            break;
+#endif
         default:
             break;
     }
@@ -331,6 +358,20 @@ void MainWindow::arrangeWindows()
     }
 }
 
+void MainWindow::adjust(QEvent* event, const QPoint& delta)
+{
+    const QPoint offsetDebugger(-debuggerWindow->geometry().width(), 0);
+    if (debuggerWindow)
+    {
+        debuggerWindow->move(this->geometry().topLeft() + offsetDebugger + delta);
+    }
+
+    if (logWindow)
+    {
+        logWindow->move(this->geometry().topRight() + delta);
+    }
+}
+
 /// endregion </Protected members>
 
 /// region <Slots>
@@ -347,23 +388,32 @@ void MainWindow::handleStartButton()
         // Clear log
         logWindow->reset();
 
+        _emulator = _emulatorManager->createEmulatorInstance();
+
         // Initialize emulator instance
-        _emulator = new Emulator();
         if (_emulator->Init())
         {
             _emulator->DebugOff();
 
+            /// region <Setup logging>
             // Redirect all module logger output to LogWindow
             if (true)
             {
                 ModuleLogger& logger = *_emulator->GetLogger();
+                logger.SetLoggingLevel(LoggerLevel::LogInfo);
 
                 // Mute frequently firing events
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80, PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_GENERIC);
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT);
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_MEMORY, PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM);
                 logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
+
+                logger.TurnOffLoggingForAll();
+                //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
+                //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
+                //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
 
                 std::string dumpSettings = logger.DumpSettings();
                 qDebug("%s", dumpSettings.c_str());
@@ -371,6 +421,9 @@ void MainWindow::handleStartButton()
                 // Mute I/O outs to frequently used ports
                 PortDecoder& portDecoder = *_emulator->GetContext()->pPortDecoder;
                 portDecoder.MuteLoggingForPort(0x00FE);
+                portDecoder.MuteLoggingForPort(0x7FFD);
+                portDecoder.MuteLoggingForPort(0xFFFD);
+                portDecoder.MuteLoggingForPort(0xBFFD);
 
 
                 ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
@@ -379,6 +432,20 @@ void MainWindow::handleStartButton()
                 logWindow->reset();
                 logWindow->show();
             }
+
+            /// endregion </Setup logging>
+
+            /// region <Setup breakpoints>
+            BreakpointManager& breakpointManager = *_emulator->GetBreakpointManager();
+            //breakpointManager.AddExecutionBreakpoint(0x05ED);   // LD_SAMPLE in SOS48
+            //breakpointManager.AddExecutionBreakpoint(0x05FA);   // LD_SAMPLE - pilot edge detected
+            //breakpointManager.AddExecutionBreakpoint(0x0562);   // LD_BYTES - first IN A,($FE)
+            /// endregion </Setup breakpoints>
+
+            // Attach emulator audio buffer
+            const AudioFrameDescriptor& audioframeDesc = _emulator->GetAudioBuffer();
+            uint8_t* buffer = (uint8_t *)audioframeDesc.memoryBuffer;
+            _emulatorManager->getSoundManager().init(buffer, audioframeDesc.memoryBufferSize);
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
@@ -393,15 +460,23 @@ void MainWindow::handleStartButton()
             this->adjustSize();
              */
 
-            // Subscribe to frame refresh events
+            // Subscribe to video frame refresh events
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             Observer* observerInstance = static_cast<Observer*>(this);
-            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+
+            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageAudioRefresh);
+            messageCenter.AddObserver(NC_AUDIO_FRAME_REFRESH, observerInstance, callback);
+
+            // Subscribe to video frame refresh events
+            callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
             messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)
             debuggerWindow->setEmulator(_emulator);
+
+            // Enable audio output
+            _emulatorManager->getSoundManager().start();
 
             // Start in async own thread
             _emulator->StartAsync();
@@ -426,22 +501,27 @@ void MainWindow::handleStartButton()
     {
         startButton->setEnabled(false);
 
+        // Disable audio output
+        _emulatorManager->getSoundManager().stop();
+
         // Stop emulator instance
         _emulator->Stop();
 
         // Unsubscribe from message bus events
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        std::string topic = "FRAME_REFRESH";
         Observer* observerInstance = static_cast<Observer*>(this);
+
         ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-        messageCenter.RemoveObserver(topic, observerInstance, callback);
+        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+
+        callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageAudioRefresh);
+        messageCenter.RemoveObserver(NC_AUDIO_FRAME_REFRESH, observerInstance, callback);
 
         // Detach framebuffer
         deviceScreen->detach();
 
         // Destroy emulator
-        _emulator->Release();
-        delete _emulator;
+        _emulatorManager->destroyEmulatorInstance(_emulator);
         _emulator = nullptr;
 
 
@@ -450,6 +530,12 @@ void MainWindow::handleStartButton()
         startButton->setText("Start");
         startButton->setEnabled(true);
     }
+}
+
+void MainWindow::handleMessageAudioRefresh(int id, Message* message)
+{
+    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
+    soundManager.pushAudio();
 }
 
 void MainWindow::handleMessageScreenRefresh(int id, Message* message)

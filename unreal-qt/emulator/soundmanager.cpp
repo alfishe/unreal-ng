@@ -6,49 +6,95 @@
 #include <QMediaDevices>
 
 #include <emulator/sound/soundmanager.h>
+#include <QFile>
+#include <QBuffer>
 
 /// region <Constructors / destructors>
 AppSoundManager::~AppSoundManager()
 {
-    stop();
+    this->stop();
 }
 /// endregion </Constructors / destructors>
 
 /// region <Methods>
 
-bool AppSoundManager::init()
+bool AppSoundManager::init(uint8_t* buffer, size_t len)
 {
     const QAudioDevice &deviceInfo = QMediaDevices::defaultAudioOutput();
-    bool result = init(deviceInfo);
+    bool result = init(deviceInfo, buffer, len);
 
     return result;
 }
 
-bool AppSoundManager::init(const QAudioDevice &deviceInfo)
+bool AppSoundManager::init(const QAudioDevice &deviceInfo, uint8_t* buffer, size_t len)
 {
     bool result = false;
 
-    // Set up audio format: stereo PCM. float samples, 48000 Hz sampling rate
-    _audioFormat.setChannelCount(2);
-    _audioFormat.setSampleRate(AUDIO_SAMPLING_RATE);
-    _audioFormat.setSampleFormat(QAudioFormat::Float);
+    _audioBuffer = buffer;
+    _audioBufferLen = len;
 
-    _audioOutput.reset(new QAudioSink(deviceInfo, _audioFormat, this));
+    // Set up audio format: stereo PCM. float samples, 48000 Hz sampling rate
+    QAudioFormat audioFormat;
+    audioFormat.setChannelCount(2);
+    audioFormat.setSampleRate(AUDIO_SAMPLING_RATE);
+    audioFormat.setSampleFormat(QAudioFormat::Int16);
+    audioFormat.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+
+    _audioOutput.reset(new QAudioSink(deviceInfo, audioFormat));
+    _audioOutput->setBufferSize(65536);
 
     return result;
+}
+
+void AppSoundManager::deinit()
+{
+    this->stop();
 }
 
 void AppSoundManager::start()
 {
-    _audioOutput->start();
+    if (!_audioDevice)
+    {
+        _audioDevice = _audioOutput->start();
+    }
 }
 
 void AppSoundManager::stop()
 {
-    _audioOutput->stop();
+    if (_audioOutput)
+    {
+        QAudio::State state = _audioOutput->state();
 
-    _audioOutput->disconnect();
+        switch (state)
+        {
+            case QAudio::ActiveState:
+            case QAudio::IdleState:
+                _audioOutput->stop();
+                break;
+            default:
+                break;
+        }
+
+        _audioOutput->disconnect();
+
+        _audioDevice = nullptr;
+    }
 }
+
+void AppSoundManager::pushAudio()
+{
+    if (!_audioDevice || !_audioBuffer || _audioBufferLen == 0)
+        return;
+
+    if (_audioDevice && _audioDevice->isOpen() && _audioOutput->state() != QAudio::StoppedState)
+    {
+        int len = _audioOutput->bytesFree();
+        qint64 bytesWritten = _audioDevice->write(reinterpret_cast<const char *>(&_audioBuffer), _audioBufferLen);
+
+        qDebug() << QString::asprintf("Bytes written: %lld Free: %d", bytesWritten, len);
+    }
+}
+
 /// endregion </Methods>
 
 /// region <Info methods>
@@ -79,6 +125,7 @@ void AppSoundManager::getAudioDevicesInfo()
 void AppSoundManager::onAudioDeviceChanged(const QAudioDevice &deviceInfo)
 {
     stop();
-    init(deviceInfo);
+
+    init(deviceInfo, _audioBuffer, _audioBufferLen);
 }
 /// endregion </Event handlers>

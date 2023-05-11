@@ -29,6 +29,7 @@ public:
 
 private slots:
     void handleStartButton();
+    void handleMessageAudioRefresh(int id, Message* message);
     void handleMessageScreenRefresh(int id, Message* message);
     void resetEmulator();
 
@@ -57,6 +58,7 @@ protected:
     }
 
     void arrangeWindows();
+    void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
     Ui::MainWindow* ui;
@@ -70,6 +72,6 @@ private:
     GUIEmulatorContext* _guiContext = nullptr;
     Emulator* _emulator = nullptr;
 
-    QPoint m_lastMousePos;
+    QPoint m_lastCursorPos;
 };
 #endif // MAINWINDOW_H

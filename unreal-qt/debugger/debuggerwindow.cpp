@@ -5,6 +5,9 @@
 #include <Qt>
 #include <QBoxLayout>
 #include <QColor>
+#include <QDialog>
+#include <QTableWidget>
+#include <QHeaderView>
 
 #include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -31,6 +34,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     QSize toolbarSize = QSize(360, 32);
     toolBar->resize(toolbarSize);
 
+    QWidget* spacer = new QWidget();
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+
     // Populate actions
     continueAction = toolBar->addAction("Continue");
     pauseAction = toolBar->addAction("Pause");
@@ -38,6 +44,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     frameStepAction = toolBar->addAction("Frame step");
     waitInterruptAction = toolBar->addAction("Wait INT");
     resetAction = toolBar->addAction("Reset");
+    toolBar->addWidget(spacer);
+    breakpointsAction = toolBar->addAction("Breakpoints");
 
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
@@ -45,6 +53,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
+    connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
 
     // Subscribe to events leading to MemoryView changes
     connect(ui->registersWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
@@ -419,6 +428,48 @@ void DebuggerWindow::resetEmulator()
     {
         _emulator->Reset();
     }
+}
+
+void DebuggerWindow::showBreakpointManager()
+{
+    qDebug() << "DebuggerWindow::showBreakpointManager()";
+
+    QDialog dialog;
+    dialog.setWindowTitle("Table Dialog");
+    dialog.resize(400, 500);
+
+
+    // Create the table widget
+    QTableWidget tableWidget(3, 2, &dialog);  // 3 rows, 2 columns
+    QHeaderView* header = tableWidget.horizontalHeader();
+    header->setSectionResizeMode(0, QHeaderView::Stretch);
+    header->setSectionResizeMode(1, QHeaderView::Stretch);
+
+    // Set the headers for the columns
+    QStringList headers;
+    headers << "Column 1" << "Column 2";
+    tableWidget.setHorizontalHeaderLabels(headers);
+
+    // Set the data for each cell
+    QTableWidgetItem *item;
+    item = new QTableWidgetItem("Row 1, Column 1");
+    tableWidget.setItem(0, 0, item);
+    item = new QTableWidgetItem("Row 1, Column 2");
+    tableWidget.setItem(0, 1, item);
+    item = new QTableWidgetItem("Row 2, Column 1");
+    tableWidget.setItem(1, 0, item);
+    item = new QTableWidgetItem("Row 2, Column 2");
+    tableWidget.setItem(1, 1, item);
+    item = new QTableWidgetItem("Row 3, Column 1");
+    tableWidget.setItem(2, 0, item);
+    item = new QTableWidgetItem("Row 3, Column 2");
+    tableWidget.setItem(2, 1, item);
+
+    QHBoxLayout *layout = new QHBoxLayout(&dialog);
+    layout->addWidget(&tableWidget);
+    dialog.setLayout(layout);
+
+    dialog.exec();
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)

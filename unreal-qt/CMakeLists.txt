@@ -104,7 +104,7 @@ if (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++ pthread)
 endif (UNIX AND NOT APPLE)
 
-# Link with Qt5, emulator core and C++ common libraries
+# Link with Qt, emulator core and C++ common libraries
 target_link_libraries(
     ${PROJECT_NAME} PRIVATE
 

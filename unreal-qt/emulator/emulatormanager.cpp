@@ -24,14 +24,19 @@ EmulatorManager* EmulatorManager::defaultInstance()
 
 Emulator* EmulatorManager::createEmulatorInstance()
 {
-    Emulator* result = nullptr;
+    Emulator* result = new Emulator();
+
 
     return result;
 }
 
 void EmulatorManager::destroyEmulatorInstance(Emulator* emulator)
 {
-
+    if (emulator)
+    {
+        emulator->Release();
+        delete emulator;
+    }
 }
 
 void EmulatorManager::sendKeyEvent(uint8_t key, KeyEventEnum type)
