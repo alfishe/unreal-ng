@@ -30,7 +30,7 @@ bool AppSoundManager::init(const QAudioDevice &deviceInfo)
 
     // Set up audio format: stereo PCM. float samples, 48000 Hz sampling rate
     _audioFormat.setChannelCount(2);
-    _audioFormat.setSampleRate(SoundManager::AUDIO_SAMPLING_RATE);
+    _audioFormat.setSampleRate(AUDIO_SAMPLING_RATE);
     _audioFormat.setSampleFormat(QAudioFormat::Float);
 
     _audioOutput.reset(new QAudioSink(deviceInfo, _audioFormat, this));
