@@ -9,6 +9,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/cpu/core.h"
+#include "emulator/sound/beeper.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
@@ -187,7 +188,8 @@ uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, uint16_t pc)
 
 /// Default implementation for 'out (#FE)'
 /// Bits [0:2]  - Border color
-/// Bit  [4]    - Beeper output bit
+/// Bit  [3]    - MIC output bit
+/// Bit  [4]    - EAR output bit
 /// See: https://worldofspectrum.org/faq/reference/48kreference.htm
 /// \param port
 /// \param value
@@ -200,11 +202,17 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     /// endregion </Override submodule>
 
     bool result = false;
+    uint32_t tState = _context->pCore->GetZ80()->t;
+
 
     uint8_t borderColor = value & 0b000'00111;
     bool micBit = (value & 0b0000'1000) > 0;
     bool beeperBit = (value & 0b0001'0000) > 0;
 
+    // Pass value to beeper sound generator
+    _soundManager->getBeeper().handlePortOut(value, tState);
+
+    // Set border color
     _screen->SetBorderColor(borderColor);
 
     /// region <Debug logging>

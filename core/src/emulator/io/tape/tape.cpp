@@ -3,6 +3,7 @@
 #include "tape.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
+#include "emulator/sound/soundmanager.h"
 #include "loaders/tape/loader_tap.h"
 
 /// region <Constructors / destructors>
@@ -66,7 +67,13 @@ uint8_t Tape::handlePortIn()
     {
         size_t clockCount = cpu.clock_count;
 
-        result = getTapeStreamBit(clockCount) << 6;
+        bool tapeBit = getTapeStreamBit(clockCount);
+        result = (uint8_t)tapeBit << 6;
+
+        // Mirror tape bit to beeper audio channel
+        uint32_t tState = _context->pCore->GetZ80()->t;
+        int16_t value = tapeBit ? INT16_MAX : INT16_MIN;
+        _context->pSoundManager->updateDAC(tState, value, value);
     }
     else
     {

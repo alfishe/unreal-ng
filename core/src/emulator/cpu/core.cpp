@@ -147,6 +147,8 @@ bool Core::Init()
 
         if (_sound)
         {
+            _context->pSoundManager = _sound;
+
             result = true;
         }
     }
@@ -260,6 +262,13 @@ void Core::Release()
     {
         delete _ports;
         _ports = nullptr;
+    }
+
+    _context->pSoundManager = nullptr;
+    if (_sound != nullptr)
+    {
+        delete _sound;
+        _sound = nullptr;
     }
 
     _context->pScreen = nullptr;

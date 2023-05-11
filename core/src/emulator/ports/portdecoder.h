@@ -9,6 +9,7 @@ class ModuleLogger;
 class EmulatorContext;
 class Memory;
 class Screen;
+class Beeper;
 class SoundManager;
 class Keyboard;
 

@@ -109,6 +109,7 @@ public:
     Memory* GetMemory();
     DebugManager* GetDebugManager();
     BreakpointManager* GetBreakpointManager();
+    const AudioFrameDescriptor& GetAudioBuffer();
     FramebufferDescriptor GetFramebuffer();
 
 	// Emulator control cycle

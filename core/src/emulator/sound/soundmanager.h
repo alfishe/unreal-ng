@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "common/sound/audiofilehelper.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_ym2149.h"
 #include "beeper.h"
@@ -9,17 +10,27 @@
 
 class EmulatorContext;
 
+static const int AUDIO_CHANNELS = 2;
+static const int AUDIO_SAMPLING_RATE = 44100;
+static const int FRAMES_PER_SECOND = 50;
+static constexpr int AUDIO_BUFFER_DURATION_MILLISEC = 1000 / FRAMES_PER_SECOND;
+static constexpr int SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / FRAMES_PER_SECOND;   // 882 audio samples per frame @44100
 
+struct AudioFrameDescriptor
+{
+    static constexpr uint32_t samplingRate = AUDIO_SAMPLING_RATE;
+    static constexpr uint8_t channels = AUDIO_CHANNELS;
+    static constexpr size_t durationInMs = AUDIO_BUFFER_DURATION_MILLISEC;
+    static constexpr size_t durationInSamples = SAMPLES_PER_FRAME;
+    static constexpr size_t memoryBufferSize = SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(uint16_t);
+
+    uint8_t memoryBuffer[memoryBufferSize] = {};
+};
 
 class SoundManager
 {
     /// region <Constants>
 public:
-    static const int OUTPUT_CHANNELS = 2;
-    static const int AUDIO_SAMPLING_RATE = 48000;
-    static const int AUDIO_BUFFER_DURATION_MILLISEC = 1000;
-    static constexpr double SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / 50.0;   // 882 audio samples per frame @44100
-
     static const size_t AUDIO_BUFFERS = 3;
 
     /// endregion </Constants>
@@ -27,12 +38,24 @@ public:
     /// region <Types>
 public:
     typedef std::vector<std::vector<float>> AudioBuffer_t;
+
     /// endregion </Types>
 
     /// region <Fields>
 protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
+
+    AudioFrameDescriptor _audioFrameDescriptor;         // Frame that exposed outside
+    AudioFrameDescriptor _renderAudioFrameDescriptor;   // Second frame for internal rendering
+
+    uint16_t* const _audioBuffer = (uint16_t*)_audioFrameDescriptor.memoryBuffer;
+    uint16_t* const _renderAudioBuffer = (uint16_t*)_renderAudioFrameDescriptor.memoryBuffer;
+    uint32_t _prevFrameTState = 0;
+    int16_t _prevLeftValue;
+    int16_t _prevRightValue;
+
+    uint32_t _audioBufferWrites = 0;
 
     AudioBuffer_t _outBeeper;
     AudioBuffer_t _outBufferLeft;           // Final rendered PCM samples, left channel, @ selected sampling rate
@@ -50,6 +73,9 @@ protected:
     // SoundChip_MoonSound;
     // SoundChip_SAA1099;
     // SoundChip_GeneralSound;
+
+    // Save to Wave file
+    TinyWav _tinyWav;
 
     /// endregion </Fields>
 
@@ -69,14 +95,24 @@ public:
     void mute();
     void unmute();
 
-    void initFrame();
+    const AudioFrameDescriptor& getAudioBufferDescriptor();
+    Beeper& getBeeper();
 
+    void updateDAC(uint32_t frameTState, int16_t left, int16_t right);
     /// endregion </Methods>
+
+    /// region <Emulation events>
+public:
+    void handleFrameStart();
+    void handleFrameEnd();
+    /// endregion </Emulation events>
 
     /// region <Wave file export>
 public:
     bool openWaveFile(std::string& path);
     void closeWaveFile();
+
+    void writeToWaveFile(uint8_t* buffer, size_t len);
 
     /// endregion </Wave file export>
 

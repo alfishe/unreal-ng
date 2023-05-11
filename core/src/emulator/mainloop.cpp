@@ -14,6 +14,7 @@ MainLoop::MainLoop(EmulatorContext* context)
 	_state = &_context->emulatorState;
 	_cpu = _context->pCore;
     _screen = _context->pScreen;
+    _soundManager = _context->pSoundManager;
 
     _isRunning = false;
 }
@@ -133,6 +134,7 @@ void MainLoop::RunFrame()
     /// region <Frame end handlers>
 
     _context->pTape->handleFrameEnd();
+    _context->pSoundManager->handleFrameEnd();
 
     /// endregion </Frame end handlers
 
@@ -175,8 +177,11 @@ void MainLoop::RunFrame()
 
 	// DEBUG: save frame to disk as image
 
-	// Notify that frame is composed and ready for rendering
-    messageCenter.Post(NC_LOGGER_FRAME_REFRESH);
+    // Notify that audio frame is composed and ready for output
+    messageCenter.Post(NC_AUDIO_FRAME_REFRESH);
+
+	// Notify that video frame is composed and ready for rendering
+    messageCenter.Post(NC_VIDEO_FRAME_REFRESH);
 }
 
 //
@@ -184,7 +189,7 @@ void MainLoop::RunFrame()
 //
 void MainLoop::InitSoundFrame()
 {
-    _soundManager->initFrame();
+    _soundManager->handleFrameStart();
 }
 
 //

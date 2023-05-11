@@ -132,7 +132,7 @@ protected:
     size_t _currentTapeBlockIndex;      // Index of current TapeBlock
     size_t _currentPulseIdxInBlock;     // Index in TapeBlock::edgePulseTimings vector
     size_t _currentOffsetWithinPulse;   // How many pulses already processed within single TapeBlock::edgePulseTimings vector element
-    size_t _currentClockCount;          // Store clock count for next iteration
+    uint64_t _currentClockCount;        // Store clock count for next iteration
 
     /// endregion </Fields>
 

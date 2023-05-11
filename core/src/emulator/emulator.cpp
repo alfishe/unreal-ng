@@ -245,6 +245,12 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
+    if (!_context->pSoundManager)
+    {
+        std::string error = "_context->pSoundManager not available";
+        throw std::logic_error(error);
+    }
+
     if (_isDebug && !_context->pDebugManager)
     {
         std::string error = "_context->pDebugManager not available";
@@ -414,6 +420,11 @@ BreakpointManager* Emulator::GetBreakpointManager()
     return _breakpointManager;
 }
 
+const AudioFrameDescriptor& Emulator::GetAudioBuffer()
+{
+    return _context->pSoundManager->getAudioBufferDescriptor();
+}
+
 FramebufferDescriptor Emulator::GetFramebuffer()
 {
     return _context->pScreen->GetFramebufferDescriptor();
@@ -450,7 +461,7 @@ void Emulator::Start()
     // Broadcast notification - Emulator started
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 
     // Pass execution to main loop
     // It will return only after stop request
@@ -485,7 +496,7 @@ void Emulator::Pause()
     // Broadcast notification - Emulator paused
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Resume()
@@ -503,7 +514,7 @@ void Emulator::Resume()
     // Broadcast notification - Emulator execution resumed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Stop()
@@ -543,7 +554,7 @@ void Emulator::Stop()
     // Broadcast notification - Emulator execution resumed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 //endregion
