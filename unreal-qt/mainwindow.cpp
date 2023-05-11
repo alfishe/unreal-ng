@@ -397,7 +397,7 @@ void MainWindow::handleStartButton()
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             Observer* observerInstance = static_cast<Observer*>(this);
             ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-            messageCenter.AddObserver(NC_LOGGER_FRAME_REFRESH, observerInstance, callback);
+            messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)

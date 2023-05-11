@@ -65,7 +65,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     // Subscribe to emulator state changes
     ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
-    messageCenter.AddObserver(NC_LOGGER_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+    messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
 
     // Subscribe to breakpoint trigger messages
     ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
