@@ -1,14 +1,16 @@
 #include "audiohelper.h"
 
 
-
+/// Detect base frequency using 65536 points FFT
+/// @param samples Mono audio samples in IEEE Float32 format
+/// @param sampleRate Sampling rate in Hz
+/// @return Determined base frequency (in Hz)
 uint32_t AudioHelper::detectBaseFrequencyFFT(AudioSamplesArray samples, uint32_t sampleRate)
 {
     uint32_t result = std::numeric_limits<uint32_t>().max();
 
     // Sampling rate and number of samples
     const double samplingRate = 48000;
-    const double frequency = 4230;
     const int N = 65536;
 
     /// region <Sanity checks>
@@ -40,20 +42,21 @@ uint32_t AudioHelper::detectBaseFrequencyFFT(AudioSamplesArray samples, uint32_t
 
     /// endregion </Perform the FFT>
 
-    int max_bin = 0;
-    double max_magnitude = -std::numeric_limits<double>::infinity();;
+    // Determine frequency band / bin for base frequency found
+    int maxBin = 0;
+    double maxMagnitude = -std::numeric_limits<double>::infinity();;
     for (int k = 0; k < N / 2; k++)
     {
         double magnitude = std::abs(fftOutput[k]);
-        if (magnitude > max_magnitude)
+        if (magnitude > maxMagnitude)
         {
-            max_magnitude = magnitude;
-            max_bin = k;
+            maxMagnitude = magnitude;
+            maxBin = k;
         }
     }
 
     // Convert the frequency bin to frequency
-    double detectedFrequency = max_bin * (samplingRate / (double)N);
+    double detectedFrequency = maxBin * (samplingRate / (double)N);
 
     // Output the frequency
     result = round(detectedFrequency);
@@ -61,6 +64,10 @@ uint32_t AudioHelper::detectBaseFrequencyFFT(AudioSamplesArray samples, uint32_t
     return result;
 }
 
+/// Detect base frequency using zero cross algorithm
+/// @param samples Mono audio samples in IEEE Float32 format
+/// @param sampleRate Sampling rate in Hz
+/// @return Determined base frequency (in Hz)
 uint32_t AudioHelper::detectBaseFrequencyZeroCross(AudioSamplesArray samples, uint32_t sampleRate)
 {
     uint32_t result = std::numeric_limits<uint32_t>().max();
@@ -69,8 +76,10 @@ uint32_t AudioHelper::detectBaseFrequencyZeroCross(AudioSamplesArray samples, ui
 
     // Count rising edges only
     int risingEdges = 0;
-    for (int i = 0; i < N - 1; i++) {
-        if (samples[i] < 0 && samples[i + 1] > 0) {
+    for (int i = 0; i < N - 1; i++)
+    {
+        if (samples[i] < 0 && samples[i + 1] > 0)
+        {
             risingEdges++;
         }
     }
