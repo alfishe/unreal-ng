@@ -176,7 +176,7 @@ void MainLoop::RunFrame()
 	// DEBUG: save frame to disk as image
 
 	// Notify that frame is composed and ready for rendering
-    messageCenter.Post(NC_LOGGER_FRAME_REFRESH);
+    messageCenter.Post(NC_VIDEO_FRAME_REFRESH);
 }
 
 //

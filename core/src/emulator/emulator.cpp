@@ -450,7 +450,7 @@ void Emulator::Start()
     // Broadcast notification - Emulator started
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 
     // Pass execution to main loop
     // It will return only after stop request
@@ -483,9 +483,9 @@ void Emulator::Pause()
     _mainloop->Pause();
 
     // Broadcast notification - Emulator paused
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload *payload = new SimpleNumberPayload(StatePaused);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Resume()
@@ -503,7 +503,7 @@ void Emulator::Resume()
     // Broadcast notification - Emulator execution resumed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Stop()
@@ -543,7 +543,7 @@ void Emulator::Stop()
     // Broadcast notification - Emulator execution resumed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
-    messageCenter.Post(NC_LOGGER_EMULATOR_STATE_CHANGE, payload);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 //endregion
