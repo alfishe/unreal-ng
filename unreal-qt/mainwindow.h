@@ -71,6 +71,7 @@ private:
     EmulatorManager* _emulatorManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
     Emulator* _emulator = nullptr;
+    uint32_t _lastFrameCount = 0;
 
     QPoint m_lastCursorPos;
 };

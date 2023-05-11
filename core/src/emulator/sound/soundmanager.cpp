@@ -146,18 +146,30 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 void SoundManager::handleFrameStart()
 {
     _audioBufferWrites = 0;
-    memset(_renderAudioBuffer, 0x00, _renderAudioFrameDescriptor.memoryBufferSize);
+
+    // Initialize render buffer with values corresponding to 0-bits from #FE (i.e. INT16_MIN)
+    if (true)
+    {
+        for (size_t i = 0; i < _renderAudioFrameDescriptor.durationInSamples * AUDIO_CHANNELS; i++)
+        {
+            _renderAudioBuffer[i] = INT16_MIN;
+        }
+    }
+    else
+    {
+        memset(_renderAudioBuffer, 0x00, _renderAudioFrameDescriptor.memoryBufferSize);
+    }
 }
 
 void SoundManager::handleFrameEnd()
 {
-    if (_audioBufferWrites > 0)
-    {
-        std::string dump = DumpHelper::HexDumpBuffer(_renderAudioFrameDescriptor.memoryBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
-    }
-
     if (false)
     {
+        if (_audioBufferWrites > 0)
+        {
+            std::string dump = DumpHelper::HexDumpBuffer(_renderAudioFrameDescriptor.memoryBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
+        }
+
         const int sampleCount = _renderAudioFrameDescriptor.durationInSamples;
         static int16_t position = -32767;
 
@@ -184,6 +196,11 @@ void SoundManager::handleFrameEnd()
     // Copy render buffer to external one
     memcpy(_audioBuffer, _renderAudioBuffer, _audioFrameDescriptor.memoryBufferSize);
     writeToWaveFile((uint8_t*)_audioBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    uint8_t* bufferToCopy = (uint8_t*)_renderAudioBuffer;
+    std::vector<uint8_t> payload(bufferToCopy, bufferToCopy + _renderAudioFrameDescriptor.memoryBufferSize);
+    messageCenter.Post(NC_AUDIO_FRAME_REFRESH, new SimpleByteDataPayload(std::move(payload)));
 }
 /// endregion </Emulation events>
 
@@ -192,13 +209,18 @@ bool SoundManager::openWaveFile(std::string& path)
 {
     bool result = false;
 
-    tinywav_open_write(
-        &_tinyWav,
-        AUDIO_CHANNELS,
-        AUDIO_SAMPLING_RATE,
-        TW_INT16,
-        TW_INTERLEAVED,
-        path.c_str());
+    int res = tinywav_open_write(
+                &_tinyWav,
+                AUDIO_CHANNELS,
+                AUDIO_SAMPLING_RATE,
+                TW_INT16,
+                TW_INTERLEAVED,
+                path.c_str());
+
+    if (res == 0 && _tinyWav.file)
+    {
+        result = true;
+    }
 
     return result;
 }

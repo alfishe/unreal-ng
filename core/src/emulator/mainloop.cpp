@@ -4,6 +4,7 @@
 
 #include "mainloop.h"
 #include "common/timehelper.h"
+#include "3rdparty/message-center/eventqueue.h"
 #include <algorithm>
 
 MainLoop::MainLoop(EmulatorContext* context)
@@ -73,8 +74,8 @@ void MainLoop::Run(volatile bool& stopRequested)
         }
 		/// endregion </Handle Pause>
 
-		MLOGINFO("Frame recalculation time: %d us", duration1);
 		sleep_us(20000U - std::min(duration1, 20000U));
+        MLOGINFO("Frame recalculation time: %d us", duration1);
 	}
 
 	MLOGINFO("Stop requested, exiting main loop");
@@ -116,25 +117,20 @@ void MainLoop::RunFrame()
 #endif
     /// endregion <Sanity checks>
 
-    Screen& screen = *_context->pScreen;
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-
     /// region <Frame start handlers>
 
-	InitSoundFrame();
-	InitVideoFrame();
-    InitTapeFrame();
+	OnFrameStart();
 
     /// endregion </Frame start handlers>
 
 
 	// Execute CPU cycles for single video frame
+
 	ExecuteCPUFrameCycle();
 
     /// region <Frame end handlers>
 
-    _context->pTape->handleFrameEnd();
-    _context->pSoundManager->handleFrameEnd();
+    OnFrameEnd();
 
     /// endregion </Frame end handlers
 
@@ -161,6 +157,7 @@ void MainLoop::RunFrame()
         //    screen.SaveZXSpectrumNativeScreen();
 
         // Save frame to GIF animation
+        Screen& screen = *_context->pScreen;
         uint32_t* buffer;
         size_t size;
         screen.GetFramebufferData(&buffer, &size);
@@ -177,36 +174,27 @@ void MainLoop::RunFrame()
 
 	// DEBUG: save frame to disk as image
 
-    // Notify that audio frame is composed and ready for output
-    messageCenter.Post(NC_AUDIO_FRAME_REFRESH);
 
-	// Notify that video frame is composed and ready for rendering
-    messageCenter.Post(NC_VIDEO_FRAME_REFRESH);
 }
 
-//
-// Init all sound devices before rendering next frame
-//
-void MainLoop::InitSoundFrame()
-{
-    _soundManager->handleFrameStart();
-}
-
-//
-// Init platform specific video capabilities before rendering next frame
-//
-void MainLoop::InitVideoFrame()
-{
-	_screen->InitFrame();
-}
-
-//
-// Prepare tape emulation for rendering next frame
-//
-void MainLoop::InitTapeFrame()
+void MainLoop::OnFrameStart()
 {
     _context->pTape->handleFrameStart();
+    _soundManager->handleFrameStart();
+    _screen->InitFrame();
 }
+
+void MainLoop::OnFrameEnd()
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+
+    _context->pTape->handleFrameEnd();
+    _context->pSoundManager->handleFrameEnd();  // Sound manager will send NC_AUDIO_FRAME_REFRESH notification by itself
+
+    // Notify that video frame is composed and ready for rendering
+    messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
+}
+
 
 //
 // Proceed with single frame CPU operations

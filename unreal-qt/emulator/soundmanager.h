@@ -7,6 +7,7 @@
 #include <QAudioFormat>
 #include <QAudioSink>
 #include <QAudioSource>
+#include <3rdparty/tinywav/tinywav.h>
 
 class WaveGenerator : public QIODevice
 {
@@ -46,6 +47,10 @@ protected:
 
     uint8_t* _audioBuffer;
     size_t _audioBufferLen;
+
+    // Save to Wave file
+    TinyWav _tinyWav;
+
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -63,7 +68,7 @@ public:
     void start();
     void stop();
 
-    void pushAudio();
+    void pushAudio(const std::vector<uint8_t>& payload);
 
     /// endregion </Methods>
 

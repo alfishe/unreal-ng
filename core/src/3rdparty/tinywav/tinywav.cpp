@@ -291,97 +291,100 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
 
 int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
 {
-  switch (tw->sampleFmt)
-  {
-    case TW_INT16:
-    {
-      int16_t *z = (int16_t *) alloca(tw->numChannels * lenSamples * sizeof(int16_t));
-      switch (tw->chanFmt)
-      {
-        case TW_INTERLEAVED:
-        {
-          const float *const x = (const float *const) f;
-          for (int i = 0; i < tw->numChannels * lenSamples; ++i)
-          {
-            z[i] = (int16_t) (x[i] * (float) INT16_MAX);
-          }
-          break;
-        }
-        case TW_INLINE:
-        {
-          const float *const x = (const float *const) f;
-          for (int i = 0, k = 0; i < lenSamples; ++i)
-          {
-            for (int j = 0; j < tw->numChannels; ++j)
-            {
-              z[k++] = (int16_t) (x[j * lenSamples + i] * (float) INT16_MAX);
-            }
-          }
-          break;
-        }
-        case TW_SPLIT:
-        {
-          const float **const x = (const float **const) f;
-          for (int i = 0, k = 0; i < lenSamples; ++i)
-          {
-            for (int j = 0; j < tw->numChannels; ++j)
-            {
-              z[k++] = (int16_t) (x[j][i] * (float) INT16_MAX);
-            }
-          }
-          break;
-        }
-        default: return 0;
-      }
+    if (!tw->file)
+        return -1;
 
-      tw->totalFramesReadWritten += lenSamples;
-      size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
-      return (int) samples_written / tw->numChannels;
-    }
-    case TW_FLOAT32:
+    switch (tw->sampleFmt)
     {
-      float *z = (float *)alloca(tw->numChannels * lenSamples * sizeof(float));
-      switch (tw->chanFmt)
-      {
-        case TW_INTERLEAVED:
+        case TW_INT16:
         {
-          tw->totalFramesReadWritten += lenSamples;
-          return (int) fwrite(f, sizeof(float), tw->numChannels * lenSamples, tw->file);
-        }
-        case TW_INLINE:
-        {
-          const float *const x = (const float *const) f;
-          for (int i = 0, k = 0; i < lenSamples; ++i)
-          {
-            for (int j = 0; j < tw->numChannels; ++j)
+            int16_t *z = (int16_t *) alloca(tw->numChannels * lenSamples * sizeof(int16_t));
+            switch (tw->chanFmt)
             {
-              z[k++] = x[j * lenSamples + i];
+                case TW_INTERLEAVED:
+                {
+                    const float *const x = (const float *const) f;
+                    for (int i = 0; i < tw->numChannels * lenSamples; ++i)
+                    {
+                        z[i] = (int16_t) (x[i] * (float) INT16_MAX);
+                    }
+                    break;
+                }
+                case TW_INLINE:
+                {
+                    const float *const x = (const float *const) f;
+                    for (int i = 0, k = 0; i < lenSamples; ++i)
+                    {
+                        for (int j = 0; j < tw->numChannels; ++j)
+                        {
+                            z[k++] = (int16_t) (x[j * lenSamples + i] * (float) INT16_MAX);
+                        }
+                    }
+                    break;
+                }
+                case TW_SPLIT:
+                {
+                    const float **const x = (const float **const) f;
+                    for (int i = 0, k = 0; i < lenSamples; ++i)
+                    {
+                        for (int j = 0; j < tw->numChannels; ++j)
+                        {
+                            z[k++] = (int16_t) (x[j][i] * (float) INT16_MAX);
+                        }
+                    }
+                    break;
+                }
+                default: return 0;
             }
-          }
-          break;
-        }
-        case TW_SPLIT:
-        {
-          const float **const x = (const float **const) f;
-          for (int i = 0, k = 0; i < lenSamples; ++i)
-          {
-            for (int j = 0; j < tw->numChannels; ++j)
-            {
-              z[k++] = x[j][i];
-            }
-          }
-          break;
-        }
-        default: return 0;
-      }
 
-      tw->totalFramesReadWritten += lenSamples;
-      size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
-      return (int) samples_written / tw->numChannels;
+            tw->totalFramesReadWritten += lenSamples;
+            size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
+            return (int) samples_written / tw->numChannels;
+        }
+        case TW_FLOAT32:
+        {
+            float *z = (float *)alloca(tw->numChannels * lenSamples * sizeof(float));
+            switch (tw->chanFmt)
+            {
+                case TW_INTERLEAVED:
+                {
+                    tw->totalFramesReadWritten += lenSamples;
+                    return (int) fwrite(f, sizeof(float), tw->numChannels * lenSamples, tw->file);
+                }
+                case TW_INLINE:
+                {
+                    const float *const x = (const float *const) f;
+                    for (int i = 0, k = 0; i < lenSamples; ++i)
+                    {
+                        for (int j = 0; j < tw->numChannels; ++j)
+                        {
+                            z[k++] = x[j * lenSamples + i];
+                        }
+                    }
+                    break;
+                }
+                case TW_SPLIT:
+                {
+                    const float **const x = (const float **const) f;
+                    for (int i = 0, k = 0; i < lenSamples; ++i)
+                    {
+                        for (int j = 0; j < tw->numChannels; ++j)
+                        {
+                            z[k++] = x[j][i];
+                        }
+                    }
+                    break;
+                }
+                default: return 0;
+            }
+
+            tw->totalFramesReadWritten += lenSamples;
+            size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
+            return (int) samples_written / tw->numChannels;
+        }
+        default:
+            return 0;
     }
-    default:
-        return 0;
-  }
 }
 
 void tinywav_close_write(TinyWav *tw)

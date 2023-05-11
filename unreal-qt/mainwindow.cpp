@@ -524,6 +524,7 @@ void MainWindow::handleStartButton()
         _emulatorManager->destroyEmulatorInstance(_emulator);
         _emulator = nullptr;
 
+        _lastFrameCount = 0;
 
         fflush(stdout);
         fflush(stderr);
@@ -534,8 +535,15 @@ void MainWindow::handleStartButton()
 
 void MainWindow::handleMessageAudioRefresh(int id, Message* message)
 {
-    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-    soundManager.pushAudio();
+    if (message && message->obj)
+    {
+        SimpleByteDataPayload* payload = (SimpleByteDataPayload*)message->obj;
+        if (!payload->_payloadByteVector.empty())
+        {
+            AppSoundManager& soundManager = _emulatorManager->getSoundManager();
+            soundManager.pushAudio(payload->_payloadByteVector);
+        }
+    }
 }
 
 void MainWindow::handleMessageScreenRefresh(int id, Message* message)
@@ -544,6 +552,21 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     {
         // Invoke deviceScreen->refresh() in main thread
         QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
+
+        if (message && message->obj)
+        {
+            SimpleNumberPayload* payload = (SimpleNumberPayload*)message->obj;
+            uint32_t frameCount = payload->_payloadNumber;
+
+#ifdef _DEBUG
+            if (frameCount - _lastFrameCount > 1)
+            {
+                qDebug() << QString::asprintf("Frame(s) skipped from:%d till: %d", _lastFrameCount, frameCount);
+            }
+#endif
+
+            _lastFrameCount = frameCount;
+        }
     }
 }
 

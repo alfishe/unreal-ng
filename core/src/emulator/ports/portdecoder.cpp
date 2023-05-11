@@ -209,8 +209,9 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     bool micBit = (value & 0b0000'1000) > 0;
     bool beeperBit = (value & 0b0001'0000) > 0;
 
-    // Pass value to beeper sound generator
-    _soundManager->getBeeper().handlePortOut(value, tState);
+    // Pass value to the tape and beeper sound generator
+    _tape->handlePortOut(value);
+    //_soundManager->getBeeper().handlePortOut(value, tState);
 
     // Set border color
     _screen->SetBorderColor(borderColor);

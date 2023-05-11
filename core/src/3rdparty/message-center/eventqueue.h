@@ -96,7 +96,7 @@ public:
 public:
     SimpleTextPayload(std::string& text) : MessagePayload() { _payloadText = std::string(text); };
     SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
-    virtual ~SimpleTextPayload() {};
+    virtual ~SimpleTextPayload() = default;
 };
 
 /// Allows to pass 32 bit numbers in MessageCenter message
@@ -108,7 +108,23 @@ public:
 
 public:
     SimpleNumberPayload(uint32_t value) : MessagePayload() { _payloadNumber = value; };
-    virtual ~SimpleNumberPayload() {};
+    virtual ~SimpleNumberPayload() = default;
+};
+
+/// Allows to transfer uint8_t data blocks (as std::vector<uint8_t> in MessageCenter message
+/// std::move for parameter is mandatory since we don't want double copy for all content
+/// Warning: payloads longer than 10k are not recommended. Copy constructors to transfer large data blocks will be slow.
+/// Example:
+///   std::vector<uint8_t> payload = { 0x00, 0x01, 0x02, 0x03 };
+///   messageCenter.Post(topic, new SimpleByteDataPayload(std::move(payload)));
+class SimpleByteDataPayload : public MessagePayload
+{
+public:
+    std::vector<uint8_t> _payloadByteVector;
+
+public:
+    SimpleByteDataPayload(const std::vector<uint8_t>&& payload) : MessagePayload() { _payloadByteVector = payload; };
+    virtual ~SimpleByteDataPayload()  = default;
 };
 
 

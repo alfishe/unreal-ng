@@ -153,7 +153,7 @@ public:
     /// region <Port events>
 public:
     uint8_t handlePortIn();
-    void handlePortOut(bool value);
+    void handlePortOut(uint8_t value);
     /// endregion </Port events>
 
     /// region <Emulation events>

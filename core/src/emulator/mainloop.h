@@ -45,9 +45,8 @@ public:
 protected:
 	void RunFrame();
 
-	void InitSoundFrame();
-	void InitVideoFrame();
-    void InitTapeFrame();
+	void OnFrameStart();
+    void OnFrameEnd();
 
 	void ExecuteCPUFrameCycle();
 	void DoIdle();

@@ -72,8 +72,8 @@ uint8_t Tape::handlePortIn()
 
         // Mirror tape bit to beeper audio channel
         uint32_t tState = _context->pCore->GetZ80()->t;
-        int16_t value = tapeBit ? INT16_MAX : INT16_MIN;
-        _context->pSoundManager->updateDAC(tState, value, value);
+        int16_t sample = tapeBit ? INT16_MAX : INT16_MIN;
+        _context->pSoundManager->updateDAC(tState, sample, sample);
     }
     else
     {
@@ -118,11 +118,15 @@ uint8_t Tape::handlePortIn()
     return result;
 }
 
-void Tape::handlePortOut(bool value)
+void Tape::handlePortOut(uint8_t value)
 {
     // Fetch clock counter for precise timing
     size_t clockCount = _context->pCore->GetZ80()->clock_count;
+    uint32_t tState = _context->pCore->GetZ80()->t;
 
+    bool outBit = value & 0b0001'0000;
+    int16_t sample = outBit ? INT16_MAX : INT16_MIN;
+    _context->pSoundManager->updateDAC(tState, sample, sample);
     //MLOGINFO("%09ld, %d", clockCount, value);
     //MLOGINFO("[Out] [%09ld] Value: %d", clockCount, value);
 }
