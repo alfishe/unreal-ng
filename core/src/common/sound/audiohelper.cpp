@@ -91,3 +91,26 @@ uint32_t AudioHelper::detectBaseFrequencyZeroCross(AudioSamplesArray samples, ui
 
     return result;
 }
+
+/// Converts all requested samples from Int16 format to IEEE Float32
+/// @param source Source samples in Int16 format
+/// @param destination Destination samples in IEEE Float32 format
+/// @param sampleLen Length of both sample frames
+/// @return Result if conversion was successful
+bool AudioHelper::convertInt16ToFloat(const int16_t* source, float* destination, size_t sampleLen)
+{
+    bool result = false;
+    constexpr static float MAX_INT16_VALUE = INT16_MAX;
+
+    if (source == nullptr || destination == nullptr || sampleLen == 0)
+        return result;
+
+    // Signed Int16 -> IEEE Float32 for each sample
+    for (size_t i = 0; i < sampleLen; i++)
+    {
+        destination[i] = (float)source[i] / MAX_INT16_VALUE;
+    }
+    result = true;
+
+    return result;
+}

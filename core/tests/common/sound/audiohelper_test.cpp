@@ -74,3 +74,33 @@ TEST_F(AudioHelper_Test, DetectBaseFrequencyZeroCrossTest)
     uint32_t detectedFrequency = AudioHelper::detectBaseFrequencyZeroCross(pcmInput, samplingRate);
     std::cout << "Frequency: " << detectedFrequency << " Hz" << std::endl;
 }
+
+TEST_F(AudioHelper_Test, convertInt16ToFloat)
+{
+    const int16_t int16Samples[] =
+    {
+        INT16_MIN,      INT16_MIN,
+        INT16_MAX,      INT16_MAX,
+        INT16_MIN,      INT16_MAX,
+        INT16_MIN / 2,  INT16_MAX / 2
+    };
+    const float referenceFloatSamples[] =
+    {
+        -1.0f, -1.0f,
+         1.0f,  1.0f,
+        -1.0f,  1.0f,
+        -0.5f,  0.5f
+    };
+    const size_t samplesLen = sizeof(int16Samples) / sizeof(int16Samples[0]);
+
+    float floatSamples[samplesLen] = {};
+    AudioHelper::convertInt16ToFloat((const int16_t*)&int16Samples, (float*)&floatSamples, samplesLen);
+
+    std::cout << "Source Int16 samples:" << std::endl;
+    std::cout << AudioHelper::dumpInterleavedSamples(int16Samples, samplesLen);
+    std::cout << std::endl;
+    std::cout << "Target IEEE Float32 samples:" << std::endl;
+    std::cout << AudioHelper::dumpInterleavedSamples(floatSamples, samplesLen);
+
+    ASSERT_FLOAT_ARRAY_NEAR(referenceFloatSamples, floatSamples, samplesLen, 0.01);
+}
