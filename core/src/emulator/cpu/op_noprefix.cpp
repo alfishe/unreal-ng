@@ -1624,6 +1624,9 @@ Z80OPCODE op_FA(Z80 *cpu) { // jp m,nnnn
 Z80OPCODE op_FB(Z80 *cpu) { // ei
     cpu->iff1 = 1;
     cpu->iff2 = 1;
+
+    // Remember EI command timing mark since in fact interrupts are enabled only
+    // after the CPU command after EI
     cpu->eipos = cpu->t;
 }
 

@@ -322,7 +322,7 @@ void Z80::Z80FrameCycle()
     while (cpu.t < config.frame)
     {
         // Handle interrupts if arrived
-        ProcessInterrupts(int_occurred, int_start, int_end);
+        ProcessInterrupts(int_occurred, int_start, config.intlen);
 
         // Perform single Z80 command cycle
         Z80Step();
@@ -546,7 +546,12 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 	/// region <INT (Non-masked interrupt)>
 
 	// If INT signal raised and IFF1 flag is set allowing interrupts handling (set by EI command)
-	if (cpu.int_pending && cpu.iff1)
+    // Important! Interrupts are in fact enabled only after command executed after EI (delay to 1 command)
+    // See: https://floooh.github.io/2021/12/06/z80-instruction-timing.html
+    // See: https://www.msx.org/forum/development/msx-development/question-about-z80r800-irqs-and-eidi-behaviour
+	if (cpu.int_pending && cpu.iff1 &&
+        cpu.t != cpu.eipos  // Make delay until command after EI executed
+        )
     {
         HandleINT();
     }
@@ -625,6 +630,8 @@ void Z80::HandleINT(uint8_t vector)
 	cpu.pc = interruptHandlerAddress;
 	cpu.memptr = interruptHandlerAddress;
 	cpu.halted = 0;
+
+    // Block potential interrupt double handling
 	cpu.iff1 = 0;
 	cpu.iff2 = 0;
 	cpu.int_pending = false;
