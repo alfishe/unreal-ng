@@ -119,8 +119,46 @@ bool AudioHelper::convertInt16ToFloat(const int16_t* source, float* destination,
 /// Filter applied independently for both left and right stereo channels
 /// @see https://www.dsprelated.com/freebooks/filters/DC_Blocker.html
 /// @see https://www.degruyter.com/document/doi/10.1515/freq-2020-0177/html?lang=en
-/// @param buffer
-/// @param samplesLen
+/// @param buffer Samples buffer (Int16 sample format)
+/// @param samplesLen Length in samples (length L + length R)
+void AudioHelper::filterDCRejectionMono(int16_t* const buffer, size_t samplesLen)
+{
+    // This filter uses a simple first-order IIR filter to remove the DC component from an input signal.
+    // The difference equation for the DC blocker can be written as follows:
+    //    y = x - xm1 + 0.995 * ym1;
+    //    xm1 = x;
+    //    ym1 = y;
+    // Where:
+    // x - input sample
+    // y - output sample
+
+    int16_t x;   // Input sample
+    float y;     // Output sample
+
+    int16_t xm1 = 0;
+    float ym1 = 0.0;
+
+    for (size_t k = 0; k < samplesLen; k++)
+    {
+        // Read input sample
+        x = buffer[k];
+
+        y = 0.995f * (x - xm1) + 0.99f * ym1;
+
+        xm1 = x;
+        ym1 = y;
+
+        // Store output sample
+        buffer[k] = y;
+    }
+}
+
+/// First-order IIR filter to remove the DC component from an input signal
+/// Filter applied independently for both left and right stereo channels
+/// @see https://www.dsprelated.com/freebooks/filters/DC_Blocker.html
+/// @see https://www.degruyter.com/document/doi/10.1515/freq-2020-0177/html?lang=en
+/// @param buffer Samples buffer (Int16 sample format)
+/// @param samplesLen Length in samples (length L + length R)
 void AudioHelper::filterDCRejectionStereoInterleaved(int16_t* const buffer, size_t samplesLen)
 {
     // This filter uses a simple first-order IIR filter to remove the DC component from an input signal.

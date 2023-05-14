@@ -23,6 +23,7 @@ public:
 
     /// region <Digital filters>
 public:
+    static void filterDCRejectionMono(int16_t* const buffer, size_t samplesLen);
     static void filterDCRejectionStereoInterleaved(int16_t* const buffer, size_t samplesLen);
     /// endregion </Digital filters>
 
