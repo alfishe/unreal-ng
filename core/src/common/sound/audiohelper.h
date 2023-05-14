@@ -21,6 +21,11 @@ public:
 
     static bool convertInt16ToFloat(const int16_t* source, float* destination, size_t sampleLen);
 
+    /// region <Digital filters>
+public:
+    static void filterDCRejectionStereoInterleaved(int16_t* const buffer, size_t samplesLen);
+    /// endregion </Digital filters>
+
     /// region <Debug methods>
 public:
     template <typename T>

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <common/dumphelper.h>
 #include <common/sound/audiohelper.h>
 
 /// region <SetUp / TearDown>
@@ -103,4 +104,55 @@ TEST_F(AudioHelper_Test, convertInt16ToFloat)
     std::cout << AudioHelper::dumpInterleavedSamples(floatSamples, samplesLen);
 
     ASSERT_FLOAT_ARRAY_NEAR(referenceFloatSamples, floatSamples, samplesLen, 0.01);
+}
+
+TEST_F(AudioHelper_Test, filterDCRejectionStereoInterleaved)
+{
+    // Input data samples in stereo interleaved format (L + R)
+    const int16_t inputSamples[] =
+    {
+          0,     0,
+        1000, 1000,
+          0,     0,
+          0,     0,
+          0,     0,
+          0,     0,
+          0,     0,
+          0,     0,
+          0,     0
+    };
+
+    const int16_t referenceOutput[] =
+    {
+          0,   0,
+        995, 995,
+         -9,  -9,
+         -9,  -9,
+         -9,  -9,
+         -9,  -9,
+         -9,  -9,
+         -9,  -9,
+         -9,  -9
+    };
+
+    constexpr size_t inputArraySizeInBytes = sizeof(inputSamples);
+    constexpr size_t inputArrayLength = sizeof(inputSamples) / sizeof(inputSamples[0]);
+    constexpr size_t inputArrayLengthInSamples = inputArrayLength / 2;  // Since we store interleaved stereo
+
+    std::cout << "Input:" << std::endl;
+    std::cout << DumpHelper::HexDumpBuffer(inputSamples, inputArrayLength, 2);
+
+    // Apply DC filter
+    AudioHelper::filterDCRejectionStereoInterleaved((int16_t*)inputSamples, inputArrayLengthInSamples);
+
+    std::cout << std::endl;
+    std::cout << "Output:" << std::endl;
+    std::cout << DumpHelper::HexDumpBuffer(inputSamples, inputArrayLength, 2);
+
+    ASSERT_EQ(sizeof(inputSamples), sizeof(referenceOutput)) << "Array sizes must be equal for input/output and reference vectors";
+
+    // Compare filter output and reference vector
+    bool resultsAreEqual = std::equal(std::begin(referenceOutput), std::end(referenceOutput), std::begin(inputSamples), std::end(inputSamples));
+
+    ASSERT_EQ(resultsAreEqual, true);
 }
