@@ -271,7 +271,7 @@ bool Tape::generateBitstreamForStandardBlock(TapeBlock& tapeBlock)
     size_t totalBlockDuration = generateBitstream(tapeBlock,
                                                   PILOT_TONE_HALF_PERIOD,
                                                   PILOT_SYNCHRO_1,
-                                                  PILOT_SYNCHRO_1,
+                                                  PILOT_SYNCHRO_2,
                                                   ZERO_ENCODE_HALF_PERIOD,
                                                   ONE_ENCODE_HALF_PERIOD,
                                                   isHeader ? PILOT_DURATION_HEADER : PILOT_DURATION_DATA,
