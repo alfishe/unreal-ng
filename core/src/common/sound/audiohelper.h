@@ -10,8 +10,11 @@
 #include <3rdparty/simple-fft/include/simple_fft/fft.h>
 #include "common/stringhelper.h"
 
+/// region <Types>
 typedef std::vector<float> AudioSamplesArray;
 typedef std::vector<complex_type> ComplexArray1D;
+
+/// endregion </Types>
 
 class AudioHelper
 {
