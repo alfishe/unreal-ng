@@ -2,7 +2,6 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
-#include "emulator/io/tape/tape.h"
 #include <set>
 
 class ModuleLogger;
@@ -10,6 +9,7 @@ class EmulatorContext;
 class Memory;
 class Screen;
 class Beeper;
+class Tape;
 class SoundManager;
 class Keyboard;
 

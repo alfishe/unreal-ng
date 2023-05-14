@@ -202,8 +202,10 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     /// endregion </Override submodule>
 
     bool result = false;
-    uint32_t tState = _context->pCore->GetZ80()->t;
+    const uint32_t tState = _context->pCore->GetZ80()->t;
 
+    // Persist output value
+    _context->emulatorState.pFE = value;
 
     uint8_t borderColor = value & 0b000'00111;
     bool micBit = (value & 0b0000'1000) > 0;
