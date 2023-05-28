@@ -183,27 +183,26 @@ void tinywav_close_read(TinyWav *tw) {
 
 int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
 {
+    int result = 0;
+    bool saveFile = true;
+    void* buffer = nullptr;
+
     switch (tw->sampleFmt)
     {
         case TW_INT16:
         {
-            int16_t *z = (int16_t *)alloca(tw->numChannels * lenSamples * sizeof(int16_t));    // Allocates memory on stack. No need to free
+            buffer = malloc(tw->numChannels * lenSamples * sizeof(int16_t));    // Allocates memory. Will be freed at the end of function execution
+            int16_t *z = (int16_t *)buffer;
+
             switch (tw->chanFmt)
             {
                 case TW_INTERLEAVED:
                 {
-                    /*
-                    const int16_t *const x = (const int16_t *const)in;
-                    for (int i = 0; i < tw->numChannels * len; ++i)
-                    {
-                        z[i] = x[i];
-                    }
-                    break;
-                    */
-
                     // No need to copy data since already in place
                     tw->totalFramesReadWritten += lenSamples;
-                    return (int) fwrite(in, sizeof(uint16_t), tw->numChannels * lenSamples, tw->file);
+                    result = (int)fwrite(in, sizeof(uint16_t), tw->numChannels * lenSamples, tw->file);
+                    saveFile = false;
+                    break;
                 }
                 case TW_INLINE:
                 {
@@ -233,14 +232,19 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
                     return 0;
             }
 
-            tw->totalFramesReadWritten += lenSamples;
-            size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
-
-            return (int)samples_written / tw->numChannels;
+            if (saveFile)
+            {
+                tw->totalFramesReadWritten += lenSamples;
+                size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
+                result = (int)samples_written / tw->numChannels;
+            }
+            break;
         }
         case TW_FLOAT32:
         {
-            float *z = (float *)alloca(tw->numChannels * lenSamples * sizeof(float));  // Allocates memory on stack. No need to free
+            buffer = alloca(tw->numChannels * lenSamples * sizeof(float));
+            float *z = (float *)buffer;
+
             switch (tw->chanFmt)
             {
                 case TW_INTERLEAVED:
@@ -277,16 +281,29 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
                     break;
                 }
                 default:
-                    return 0;
+                    result = 0;
+                    break;
             }
 
-            tw->totalFramesReadWritten += lenSamples;
-            size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
-            return (int) samples_written / tw->numChannels;
+            if (saveFile)
+            {
+                tw->totalFramesReadWritten += lenSamples;
+                size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
+                result = (int) samples_written / tw->numChannels;
+            }
+            break;
         }
         default:
-            return 0;
+            result = 0;
+            break;
     }
+
+    if (buffer)
+    {
+        free(buffer);
+    }
+
+    return result;
 }
 
 int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
@@ -294,11 +311,17 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
     if (!tw->file)
         return -1;
 
+    int result = 0;
+    bool saveFile = true;
+    void* buffer = nullptr;
+
     switch (tw->sampleFmt)
     {
         case TW_INT16:
         {
-            int16_t *z = (int16_t *) alloca(tw->numChannels * lenSamples * sizeof(int16_t));
+            buffer = malloc(tw->numChannels * lenSamples * sizeof(int16_t));
+            int16_t *z = (int16_t *)buffer;
+
             switch (tw->chanFmt)
             {
                 case TW_INTERLEAVED:
@@ -334,22 +357,32 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                     }
                     break;
                 }
-                default: return 0;
+                default:
+                    result = -1;
+                    saveFile = false;
+                    break;
             }
 
-            tw->totalFramesReadWritten += lenSamples;
-            size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
-            return (int) samples_written / tw->numChannels;
+            if (saveFile)
+            {
+                tw->totalFramesReadWritten += lenSamples;
+                size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
+                result = (int)samples_written / tw->numChannels;
+            }
         }
         case TW_FLOAT32:
         {
-            float *z = (float *)alloca(tw->numChannels * lenSamples * sizeof(float));
+            buffer = malloc(tw->numChannels * lenSamples * sizeof(float));
+            float *z = (float *)buffer;
+
             switch (tw->chanFmt)
             {
                 case TW_INTERLEAVED:
                 {
                     tw->totalFramesReadWritten += lenSamples;
-                    return (int) fwrite(f, sizeof(float), tw->numChannels * lenSamples, tw->file);
+                    result = (int)fwrite(f, sizeof(float), tw->numChannels * lenSamples, tw->file);
+                    saveFile = false;
+                    break;
                 }
                 case TW_INLINE:
                 {
@@ -375,16 +408,30 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                     }
                     break;
                 }
-                default: return 0;
+                default:
+                    result = 0;
+                    saveFile = false;
+                    break;
             }
 
-            tw->totalFramesReadWritten += lenSamples;
-            size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
-            return (int) samples_written / tw->numChannels;
+            if (saveFile)
+            {
+                tw->totalFramesReadWritten += lenSamples;
+                size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
+                result = (int)samples_written / tw->numChannels;
+            }
         }
         default:
-            return 0;
+            result = 0;
+            break;
     }
+
+    if (buffer)
+    {
+        free(buffer);
+    }
+
+    return result;
 }
 
 void tinywav_close_write(TinyWav *tw)
