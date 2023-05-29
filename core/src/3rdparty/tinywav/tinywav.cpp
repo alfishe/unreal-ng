@@ -183,6 +183,9 @@ void tinywav_close_read(TinyWav *tw) {
 
 int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
 {
+    if (!tw->file)
+        return -1;
+
     int result = 0;
     bool saveFile = true;
     void* buffer = nullptr;
