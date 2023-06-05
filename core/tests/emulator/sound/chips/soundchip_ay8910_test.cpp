@@ -24,6 +24,19 @@ void SoundChip_AY8910_Test::TearDown()
 
 /// endregion </Setup / TearDown>
 
+
+TEST_F(SoundChip_AY8910_Test, writeRegister)
+{
+    SoundChip_AY8910& soundChip = *_soundChip;
+
+    std::vector<std::tuple<uint16_t, uint8_t>> inputData =
+    {
+
+    };
+
+    //_soundChip->writeRegister();
+}
+
 TEST_F(SoundChip_AY8910_Test, ToneGenerator)
 {
     ToneGeneratorCUT toneGenerator;
@@ -175,6 +188,12 @@ TEST_F(SoundChip_AY8910_Test, GetNoiseGeneratorFrequency)
         ASSERT_NEAR(minFrequency, 27.067, 0.01);
         ASSERT_NEAR(maxFrequency, 110837.5, 0.01);
     }
+}
+
+TEST_F(SoundChip_AY8910_Test, printToneDivisorsFromFrequency)
+{
+    std::string message = _soundChip->printToneDivisorsFromFrequency(440.0, 1750000);
+    std::cout << message;
 }
 
 /// endregion </Generators period/frequency tests>
