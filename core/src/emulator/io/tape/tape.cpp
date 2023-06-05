@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "tape.h"
+#include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
 #include "emulator/sound/soundmanager.h"
@@ -8,12 +9,23 @@
 
 /// region <Constructors / destructors>
 
-Tape::Tape(EmulatorContext *context)
+Tape::Tape(EmulatorContext *context) : _lpFilter(16000.0f, (float)AUDIO_SAMPLING_RATE)
 {
     _context = context;
     _logger = _context->pModuleLogger;
 
     reset();
+
+    /// region <Debug functionality>
+    _logFile = fopen("unreal-tape-load-log.txt", "w"); // open the file in write mode
+    /// endregion </Debug functionality>
+}
+
+Tape::~Tape()
+{
+    /// region <Debug functionality>
+    fclose(_logFile);
+    /// endregion </Debug functionality>
 }
 
 /// endregion </Constructors / destructors>
@@ -22,11 +34,13 @@ Tape::Tape(EmulatorContext *context)
 void Tape::startTape()
 {
     _tapeStarted = true;
+    _muteEAR = true;
 }
 
 void Tape::stopTape()
 {
     _tapeStarted = false;
+    _muteEAR = false;
 
     // Reset all tape-related fields and free up blocks memory
     _tapeBlocks = std::vector<TapeBlock>();
@@ -60,8 +74,13 @@ void Tape::reset()
 uint8_t Tape::handlePortIn()
 {
     uint8_t result = 0;
+
+    CONFIG& config = _context->config;
     Z80& cpu = *_context->pCore->GetZ80();
     Memory& memory = *_context->pMemory;
+
+    const uint32_t tState = _context->pCore->GetZ80()->t;
+    uint8_t prevPortValue = _context->emulatorState.pFE;
 
     if (_tapeStarted)
     {
@@ -70,9 +89,14 @@ uint8_t Tape::handlePortIn()
         bool tapeBit = getTapeStreamBit(clockCount);
         result = (uint8_t)tapeBit << 6;
 
-        // Mirror tape bit to beeper audio channel
-        uint32_t tState = _context->pCore->GetZ80()->t;
-        int16_t sample = tapeBit ? INT16_MAX : INT16_MIN;
+        /// region <Debug functionality
+        std::string logLine = StringHelper::Format("[%0d] Bit: %1d\n", clockCount, tapeBit);
+        fwrite(logLine.c_str(), 1, logLine.size(), _logFile);
+        /// endregion </Debug functionality
+
+        // Only mic sound is heard to prevent clicks from keyboard polling out (#FE)
+        int16_t micSample = tapeBit ? 1000 : -1000;
+        int16_t sample = _lpFilter.filter(micSample);   // Apply LPF filtering to remove high-frequency noise
         _context->pSoundManager->updateDAC(tState, sample, sample);
     }
     else
@@ -109,7 +133,13 @@ uint8_t Tape::handlePortIn()
         if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
         {
             LoaderTAP loader(_context);
-            _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_ATOSSOFT.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_NICOLAS_RODIONOV.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/traffic_lights.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
+            _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/earshaver.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/lphp.tap");
 
             startTape();
         }
@@ -125,8 +155,24 @@ void Tape::handlePortOut(uint8_t value)
     uint32_t tState = _context->pCore->GetZ80()->t;
 
     bool outBit = value & 0b0001'0000;
-    int16_t sample = outBit ? INT16_MAX : INT16_MIN;
-    _context->pSoundManager->updateDAC(tState, sample, sample);
+    bool micBit = value & 0b0000'1000;
+
+    int16_t sample;
+    if (!_muteEAR)
+    {
+        // Use only EAR output sound
+        int16_t earSample = outBit ? 3000 : -3000;
+        sample = _lpFilter.filter(earSample);   // Apply LPF filtering to remove high-frequency noise;
+
+        _context->pSoundManager->updateDAC(tState, sample, sample);
+    }
+    else // Ignore outputs while tape is playing
+    {
+        // Use only tape sound
+        //int16_t micSample = micBit ? 1000: -1000;
+        //sample = micSample;
+    }
+
     //MLOGINFO("%09ld, %d", clockCount, value);
     //MLOGINFO("[Out] [%09ld] Value: %d", clockCount, value);
 }

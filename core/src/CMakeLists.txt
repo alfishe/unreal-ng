@@ -23,9 +23,9 @@ include(${ROOT_DIR}/cmake/func.cmake)
 
 # Set include paths for compiler
 include_directories(
-        ${SOURCE_DIR}/
-        ${SOURCE_DIR}/common
-        ${SOURCE_DIR}/emulator
+    ${SOURCE_DIR}/
+    ${SOURCE_DIR}/common
+    ${SOURCE_DIR}/emulator
 )
 
 

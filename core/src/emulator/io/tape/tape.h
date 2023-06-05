@@ -3,6 +3,8 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
+#include "emulator/sound/soundmanager.h"
+#include "common/sound/filters/filter_lpf.h"
 
 
 class EmulatorContext;
@@ -35,10 +37,10 @@ inline const char* getTapeBlockTypeName(ZXTapeBlockTypeEnum value)
 {
     static const char* names[] =
     {
-    "Program",
-    "Numeric array",
-    "Symbolic array",
-    "Code"
+        "Program",
+        "Numeric array",
+        "Symbolic array",
+        "Code"
     };
 
     return names[value];
@@ -125,6 +127,9 @@ protected:
     bool _tapeStarted;
     size_t _tapePosition;
 
+    bool _muteEAR = false;              // Mute EAR output when active tape loading is done (prevent noise clicks)
+    LowPassFilter _lpFilter;
+
     // Tape input bitstream related
     std::vector<TapeBlock> _tapeBlocks; // Tape representation as parsed TapeBlock vector
 
@@ -136,11 +141,16 @@ protected:
 
     /// endregion </Fields>
 
+    /// region <Debug functionality>
+public:
+    FILE* _logFile;
+    /// endregion </Debug functionality>
+
     /// region <Constructors / Destructors>
 public:
     Tape() = delete;    // Disable default constructor. C++ 11 feature
     Tape(EmulatorContext* context);
-    virtual ~Tape() = default;
+    virtual ~Tape();
     /// endregion </Constructors / Destructors>
 
     /// region <Tape control methods>
