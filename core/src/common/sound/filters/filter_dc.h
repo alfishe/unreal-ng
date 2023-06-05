@@ -6,12 +6,12 @@ template<typename T>
 class FilterDC
 {
 public:
-    static constexpr size_t DC_FILTER_SIZE = 1024;
+    static constexpr size_t DC_FILTER_BUFFER_SIZE = 1024;
 
 protected:
     double _sum;
     size_t _index;
-    double _delayBuffer[DC_FILTER_SIZE] = { 0.0 };
+    double _delayBuffer[DC_FILTER_BUFFER_SIZE] = {0.0 };
 
 public:
     FilterDC() : _sum(0), _index(0) {};
@@ -25,9 +25,9 @@ public:
         _delayBuffer[_index] = sample;
 
         // Same as _index = (_index + 1) % DC_FILTER_SIZE, but faster
-        _index = (_index + 1) & (DC_FILTER_SIZE - 1);
+        _index = (_index + 1) & (DC_FILTER_BUFFER_SIZE - 1);
 
-        T result = (T)(sample - (_sum / DC_FILTER_SIZE));
+        T result = (T)(sample - (_sum / DC_FILTER_BUFFER_SIZE));
 
         return result;
     }
