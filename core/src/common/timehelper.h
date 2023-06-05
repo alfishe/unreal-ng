@@ -17,6 +17,12 @@ public:
 	static unsigned GetTimeIntervalNs(chrono_time_t t1, chrono_time_t t2);
 	static unsigned GetTimeIntervalUs(chrono_time_t t1, chrono_time_t t2);
 	static unsigned GetTimeIntervalMs(chrono_time_t t1, chrono_time_t t2);
+
+    /// region <Low-level timestamps>
+    inline static uint64_t GetTimestampNs();
+    inline static uint64_t GetTimestampUs();
+    inline static uint64_t GetTimestampMs();
+    /// endregion </Low-level timestamps>
 };
 
 //
