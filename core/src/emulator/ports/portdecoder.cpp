@@ -300,7 +300,7 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         PortDevice* device = _portDevices.at(port);
         if (device)
         {
-            result = device->PortDeviceInMethod(port);
+            result = device->portDeviceInMethod(port);
         }
     }
     else
@@ -327,7 +327,7 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         PortDevice* device = _portDevices.at(port);
         if (device)
         {
-            device->PortDeviceOutMethod(port, value);
+            device->portDeviceOutMethod(port, value);
         }
     }
     else
