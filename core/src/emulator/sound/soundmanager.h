@@ -15,6 +15,7 @@ static const int AUDIO_SAMPLING_RATE = 44100;
 static const int FRAMES_PER_SECOND = 50;
 static constexpr int AUDIO_BUFFER_DURATION_MILLISEC = 1000 / FRAMES_PER_SECOND;
 static constexpr int SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / FRAMES_PER_SECOND;   // 882 audio samples per frame @44100
+static constexpr int AUDIO_BUFFER_SAMPLES_PER_FRAME = SAMPLES_PER_FRAME * AUDIO_CHANNELS;
 static constexpr int AUDIO_BUFFER_SIZE_PER_FRAME = SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(uint16_t);
 
 struct AudioFrameDescriptor
@@ -52,6 +53,7 @@ protected:
 
     int16_t* const _audioBuffer = (int16_t*)_audioFrameDescriptor.memoryBuffer;
     int16_t* const _renderAudioBuffer = (int16_t*)_renderAudioFrameDescriptor.memoryBuffer;
+    size_t  _prevFrane = 0;
     uint32_t _prevFrameTState = 0;
     int16_t _prevLeftValue;
     int16_t _prevRightValue;

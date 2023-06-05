@@ -420,14 +420,15 @@ BreakpointManager* Emulator::GetBreakpointManager()
     return _breakpointManager;
 }
 
-const AudioFrameDescriptor& Emulator::GetAudioBuffer()
-{
-    return _context->pSoundManager->getAudioBufferDescriptor();
-}
-
 FramebufferDescriptor Emulator::GetFramebuffer()
 {
     return _context->pScreen->GetFramebufferDescriptor();
+}
+
+void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
+{
+    _context->pAudioManagerObj = obj;
+    _context->pAudioCallback = callback;
 }
 
 ///endregion </Integration interfaces>
@@ -648,18 +649,22 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     }
 
 #ifdef _DEBUG
-	// Use static buffer to save on strings reallocation. CPU cycle is most frequently called functionality.
-	static char buffer[1024];
-	z80.DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-	MLOGINFO(buffer);
+    if (false)
+    {
+        // Use static buffer to save on strings reallocation. CPU cycle is most frequently called functionality.
+        static char buffer[1024];
+        z80.DumpZ80State(buffer, sizeof(buffer) / sizeof(buffer[0]));
+        MLOGINFO(buffer);
 
-	uint8_t* pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(z80.m1_pc);
-	uint8_t commandLen = 0;
-	std:: string pc = StringHelper::ToHexWithPrefix(z80.m1_pc, "");
-    std::string command = _context->pDebugManager->GetDisassembler()->disassembleSingleCommand(pcPhysicalAddress, 6, &commandLen);
-    std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
+        uint8_t *pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(z80.m1_pc);
+        uint8_t commandLen = 0;
+        std::string pc = StringHelper::ToHexWithPrefix(z80.m1_pc, "");
+        std::string command = _context->pDebugManager->GetDisassembler()->disassembleSingleCommand(pcPhysicalAddress, 6,
+                                                                                                   &commandLen);
+        std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
 
-    MLOGINFO("$%s: %s   %s", pc.c_str(), hex.c_str(), command.c_str());
+        MLOGINFO("$%s: %s   %s", pc.c_str(), hex.c_str(), command.c_str());
+    }
 #endif
 }
 

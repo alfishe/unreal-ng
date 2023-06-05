@@ -480,13 +480,23 @@ void SoundChip_AY8910::detachFromPorts()
 
 /// region <PortDevice interface methods>
 
-uint8_t SoundChip_AY8910::PortDeviceInMethod(uint16_t port)
+uint8_t SoundChip_AY8910::portDeviceInMethod(uint16_t port)
 {
     uint8_t result = 0xFF;
 
     return result;
 }
-void SoundChip_AY8910::PortDeviceOutMethod(uint16_t port, uint8_t value)
+void SoundChip_AY8910::portDeviceOutMethod(uint16_t port, uint8_t value)
+{
+
+}
+
+void SoundChip_AY8910::handleFrameStart()
+{
+
+}
+
+void SoundChip_AY8910::handleFrameEnd()
 {
 
 }
@@ -556,6 +566,114 @@ std::string SoundChip_AY8910::printFrequency(double frequency)
     }
 
     return result;
+}
+
+///
+/// @see https://f.rdw.se/AY-3-8910-datasheet.pdf Page 17
+/// @param targetFrequency
+/// @param audioChipClockRate
+/// @return
+std::string SoundChip_AY8910::printToneDivisorsFromFrequency(double targetFrequency, double audioChipClockRate)
+{
+    std::string result;
+
+    if (targetFrequency > 20'000 || audioChipClockRate > 2'000'000)
+    {
+        result = "Invalid parameter. targetFrequency must be >20kHz and audioChipClockRate <= 2MHz";
+
+        return result;
+    }
+
+    uint16_t tonePeriod = (uint16_t)(audioChipClockRate / (16.0 * targetFrequency));
+    uint8_t coarseTuneValue = tonePeriod / 256;
+    uint8_t fineTuneValue = tonePeriod % 256;
+
+    result = StringHelper::Format("For the required: %d Hz frequency\n  Coarse: %s\n  Fine:   %s\n",
+                                  (uint32_t)targetFrequency,
+                                  StringHelper::FormatBinary(coarseTuneValue).c_str(),
+                                  StringHelper::FormatBinary(fineTuneValue).c_str());
+
+    return result;
+}
+
+std::string SoundChip_AY8910::dumpAY8910State()
+{
+    std::stringstream ss;
+
+    ss << std::endl;
+    ss << "AY8910 state:" << std::endl;
+    ss << dumpAY8910MixerState();
+
+
+    return ss.str();
+}
+
+std::string SoundChip_AY8910::dumpAY8910MixerState()
+{
+    std::stringstream ss;
+
+    ss << "Mixer:" << std::endl;
+    ss << "  Channel A tone : " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'0001) ? "On" : "Off") << std::endl;
+    ss << "  Channel B tone : " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'0010) ? "On" : "Off") << std::endl;
+    ss << "  Channel C tone : " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'0100) ? "On" : "Off") << std::endl;
+    ss << "  Channel A noise: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'1000) ? "On" : "Off") << std::endl;
+    ss << "  Channel B noise: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0001'0000) ? "On" : "Off") << std::endl;
+    ss << "  Channel C noise: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0010'0000) ? "On" : "Off") << std::endl;
+    ss << "  Port A I/O ctrl: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0100'0000) ? "On" : "Off") << std::endl;
+
+    return ss.str();
+}
+
+std::string SoundChip_AY8910::dumpAY8910ToneGeneratorState(uint8_t channel)
+{
+    const char* channelNames[] =
+    {
+        "Channel A",
+        "Channel B",
+        "Channel C"
+    };
+
+    std::stringstream ss;
+
+    size_t fineIndex = AY_A_FINE + (2 * channel);
+    size_t coarseIndex = AY_A_COARSE + (2 * channel);
+    uint8_t fineValue = _registers.reg[fineIndex];
+    uint8_t coarseValue = _registers.reg[coarseIndex] & 0x0000'FFFF;
+
+    ss << "Tone " << channelNames[channel] << ":" << std::endl;
+    ss << StringHelper::Format("  Coarse: %s (0x%02X, %d)", StringHelper::FormatBinary(coarseValue).c_str(), coarseValue, coarseValue) << std::endl;
+    ss << StringHelper::Format("  Fine  : %s (0x%02X, %d)", StringHelper::FormatBinary(fineValue).c_str(), fineValue, fineValue) << std::endl;
+
+    return ss.str();
+}
+
+std::string SoundChip_AY8910::dumpAY8910NoiseGeneratorState()
+{
+    std::stringstream ss;
+
+    uint8_t noiseLevel = _registers.reg[AY_NOISE_PERIOD];
+
+    return ss.str();
+}
+
+std::string SoundChip_AY8910::dumpAY8910VolumeState(uint8_t channel)
+{
+    const char* channelNames[] =
+    {
+        "Channel A",
+        "Channel B",
+        "Channel C"
+    };
+
+    std::stringstream ss;
+    size_t registerIndex = AY_A_VOLUME + channel;
+    uint8_t registerValue = _registers.reg[registerIndex];
+
+    ss << "Volume " << channelNames[channel] << ":" << std::endl;
+    ss << StringHelper::Format("  Amplitude  : 0x%04X", registerValue & 0x000'1111) << std::endl;
+    ss << StringHelper::Format("  HW envelope: %s", registerValue & 0x001'0000 ? "on" : "off") << std::endl;
+
+    return ss.str();
 }
 
 /// endregion <Debug methods>

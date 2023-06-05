@@ -12,6 +12,19 @@ protected:
     static constexpr size_t FILTER_ARRAY_SIZE = OVERSAMPLING_FACTOR * 2;
     static constexpr size_t OVERSAMPLING_FACTOR_BITMASK = OVERSAMPLING_FACTOR - 1;
 
+
+    // bw = 1*(10^-2)*pi rad/smp (-3dB)
+    // bw = 2*(10^-2)*pi rad/smp (-10dB)
+    // bw = 20 kHz (fs=44100 * 64 = 2822400)
+    // matlab: fvtool(filter_coeff)
+
+    // MATLAB DSP toolbox synthesis parameters:
+    // MATLAB: (fdatool/filterDesigner)
+    // FIR: Window (Hamming)
+    // order: 127
+    // fs: 2822400 - Sampling rate (44100 x 64)
+    // fc: 11025   - Filter cut-off frequency
+
     static constexpr double _oversamplingFIRCoefficients[FILTER_ARRAY_SIZE] =
     {
         // FIR filter designed with Matlab's DSP toolbox
@@ -50,7 +63,7 @@ protected:
     };
 
     // Helper array with cumulative coefficients sum
-    size_t _oversamplingFIRSums[FILTER_ARRAY_SIZE];
+    size_t _stepResponseCoefficients[FILTER_ARRAY_SIZE];
 
     static constexpr double _filterSumFull = 1.0;
     static constexpr double _filterSumHalf = 0.5;
@@ -86,5 +99,7 @@ public:
     void setTimings(size_t systemClockRate, size_t audioChipClockRate, size_t outputSampleRate);
 
     void interpolate(uint32_t startTick, uint32_t endTick, uint32_t left, uint32_t right);
+
+    void applyFilter(uint16_t* input, uint16_t* output, size_t samplesLen);
     /// region </Methods>
 } UnrealDSPFilter;

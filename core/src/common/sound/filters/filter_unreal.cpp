@@ -7,9 +7,13 @@ UnrealFilter::UnrealFilter()
 {
     double sum = 0.0;
 
+    // Calculate discrete time step response.
+    // Step response is obtained by summing the impulse response values.
+    // See: https://en.wikipedia.org/wiki/Step_response
+    // See: https://lpsa.swarthmore.edu/Transient/TransInputs/TransStep.html
     for (size_t i = 0; i < FILTER_ARRAY_SIZE; i++)
     {
-        _oversamplingFIRSums[i] = (size_t)(sum * 0x10000);
+        _stepResponseCoefficients[i] = (size_t)(sum * 0x10000);
         sum += _oversamplingFIRCoefficients[i];
     }
 }
@@ -60,19 +64,27 @@ void UnrealFilter::interpolate(uint32_t startTick, uint32_t endTick, uint32_t le
 
     // Same as: !((startTick ^ endTick) % OVERSAMPLING_FACTOR)
     // Same as: (startTick % OVERSAMPLING_FACTOR) != (endTick % OVERSAMPLING_FACTOR)
-    if (!((tick ^ endTick) & ~OVERSAMPLING_FACTOR_BITMASK))  // If ticks are syn-phased within oversampling window
+    if (!((tick ^ endTick) & ~OVERSAMPLING_FACTOR_BITMASK))  // Input signal changed faster than single sample of output audio signal
     {
+        // s1 - output signal sample at left decimation node
+        // s2 - output signal sample at right decimation node
+        // left/right - input signal sample within [startTick.. endTick]
+
         // Apply coefficients from the second FIR sum table half
         size_t startIndex = (tick & OVERSAMPLING_FACTOR_BITMASK) + OVERSAMPLING_FACTOR;
         size_t endIndex = (endTick & OVERSAMPLING_FACTOR_BITMASK) + OVERSAMPLING_FACTOR;
-        scale = _oversamplingFIRSums[endIndex] - _oversamplingFIRSums[startIndex];
+
+        // Right decimation node calculated from FIR transfer characteristic
+        scale = _stepResponseCoefficients[endIndex] - _stepResponseCoefficients[startIndex];
         s2_l = left * scale;
         s2_r = right * scale;
 
         // Apply coefficients from the first FIR sum table half
         startIndex = tick & OVERSAMPLING_FACTOR_BITMASK;
         endIndex = endTick & OVERSAMPLING_FACTOR_BITMASK;
-        scale = _oversamplingFIRSums[endIndex] - _oversamplingFIRSums[startIndex];
+
+        // Left decimation point calculated from FIR transfer characteristic
+        scale = _stepResponseCoefficients[endIndex] - _stepResponseCoefficients[startIndex];
         s1_l = left * scale;
         s1_r = right * scale;
     }
@@ -81,14 +93,14 @@ void UnrealFilter::interpolate(uint32_t startTick, uint32_t endTick, uint32_t le
         // If startTick and endTick differs within oversampling window
         // We need to interpolate between samples
         size_t index = (tick & OVERSAMPLING_FACTOR_BITMASK) + OVERSAMPLING_FACTOR;
-        scale = _filterSumFullUnsigned - _oversamplingFIRSums[index];
+        scale = _filterSumFullUnsigned - _stepResponseCoefficients[index];
 
         uint16_t outputLeft = left * scale + s2_l;
         uint16_t outputRight = right * scale + s2_r;
         // TODO: write to output buffer
 
         index = tick & OVERSAMPLING_FACTOR_BITMASK;
-        scale = _filterSumHalfUnsigned - _oversamplingFIRSums[index];
+        scale = _filterSumHalfUnsigned - _stepResponseCoefficients[index];
         s2_l = s1_l + left * scale;
         s2_r = s1_r + right * scale;
 
@@ -118,14 +130,25 @@ void UnrealFilter::interpolate(uint32_t startTick, uint32_t endTick, uint32_t le
         tick = endTick;
 
         index = (endTick & OVERSAMPLING_FACTOR_BITMASK) + OVERSAMPLING_FACTOR;
-        scale = _oversamplingFIRSums[index] - _filterSumHalfUnsigned;
+        scale = _stepResponseCoefficients[index] - _filterSumHalfUnsigned;
         s2_l += left * scale;
         s2_r += right * scale;
 
         index = endTick & OVERSAMPLING_FACTOR_BITMASK;
-        scale = _oversamplingFIRSums[index];
+        scale = _stepResponseCoefficients[index];
         s1_l = left * scale;
         s1_r = right * scale;
+    }
+}
+
+void UnrealFilter::applyFilter(uint16_t* input, uint16_t* output, size_t samplesLen)
+{
+    static double state[FILTER_ARRAY_SIZE] = { 0 };
+
+    for (size_t i = 0; i < samplesLen; i++)
+    {
+        double sampleResult = 0.0;
+
     }
 }
 

@@ -2,6 +2,9 @@
 #include "soundmanager.h"
 
 #include "common/dumphelper.h"
+#include "common/stringhelper.h"
+#include "common/sound/audiohelper.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 
 /// region <Constructors / Destructors>
@@ -54,6 +57,14 @@ void SoundManager::reset()
     _ay8910->reset();
 
     // Reset sound rendering state
+    _prevFrane = 0;
+    _prevFrameTState = 0;
+    _prevLeftValue = 0;
+    _prevRightValue = 0;
+
+    /// region <Debug functionality
+    _continuousAudioBuffer = {};
+    /// endregion /Debug functionality>
 
     // New wave file
     closeWaveFile();
@@ -138,6 +149,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     _prevLeftValue = left;
     _prevRightValue = right;
     _prevFrameTState = frameTState;
+    _prevFrane = _context->emulatorState.frame_counter;
 }
 
 /// endregion </Methods>
@@ -148,7 +160,7 @@ void SoundManager::handleFrameStart()
     _audioBufferWrites = 0;
 
     // Initialize render buffer with values corresponding to 0-bits from #FE (i.e. INT16_MIN)
-    if (true)
+    if (false)
     {
         for (size_t i = 0; i < _renderAudioFrameDescriptor.durationInSamples * AUDIO_CHANNELS; i++)
         {
@@ -195,12 +207,21 @@ void SoundManager::handleFrameEnd()
 
     // Copy render buffer to external one
     memcpy(_audioBuffer, _renderAudioBuffer, _audioFrameDescriptor.memoryBufferSize);
-    writeToWaveFile((uint8_t*)_audioBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
+    AudioHelper::filterDCRejectionStereoInterleaved(_audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
 
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    uint8_t* bufferToCopy = (uint8_t*)_renderAudioBuffer;
-    std::vector<uint8_t> payload(bufferToCopy, bufferToCopy + _renderAudioFrameDescriptor.memoryBufferSize);
-    messageCenter.Post(NC_AUDIO_FRAME_REFRESH, new SimpleByteDataPayload(std::move(payload)));
+    /// region <Debug functionality>
+
+    // Replace generated audio stream with pcm file
+    if (true)
+    {
+        int read = fread(_audioBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
+        read = read;
+    }
+
+    writeToWaveFile((uint8_t*)_audioBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
+    /// endregion </Debug functionality>
+
+    _context->pAudioCallback(_context->pAudioManagerObj, _audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
 }
 /// endregion </Emulation events>
 

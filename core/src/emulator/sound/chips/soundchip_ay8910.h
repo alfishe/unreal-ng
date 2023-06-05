@@ -325,7 +325,7 @@ public:
 public:
     void reset();
 
-    // Emulate physical interface with ports #BFFD, #FFFD)
+    // Emulate physical interface with ports #BFFD, #FFFD
     void setRegister(uint8_t regAddr);
     uint8_t readCurrentRegister();
     void writeCurrentRegister(uint8_t value, size_t time);
@@ -347,8 +347,11 @@ public:
     /// endregion </Ports interaction>
 
     /// region <PortDevice interface methods>
-    uint8_t PortDeviceInMethod(uint16_t port) override;
-    void PortDeviceOutMethod(uint16_t port, uint8_t value) override;
+    uint8_t portDeviceInMethod(uint16_t port) override;
+    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
+
+    void handleFrameStart() override;
+    void handleFrameEnd() override;
     /// endregion </PortDevice interface methods>
 
     /// region <Debug methods>
@@ -358,6 +361,13 @@ public:
     double getNoiseGeneratorFrequency(uint8_t divisor);
 
     std::string printFrequency(double frequency);
+    std::string printToneDivisorsFromFrequency(double targetFrequency, double audioChipClockRate);
+
+    std::string dumpAY8910State();
+    std::string dumpAY8910MixerState();
+    std::string dumpAY8910ToneGeneratorState(uint8_t channel);
+    std::string dumpAY8910NoiseGeneratorState();
+    std::string dumpAY8910VolumeState(uint8_t channel);
     /// endregion <Debug methods>
 };
 
