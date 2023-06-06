@@ -39,6 +39,8 @@ protected:
     AudioFrameDescriptor _audioFrameDescriptor;                                 // Frame that exposed outside
     int16_t* const _audioBuffer = (int16_t*)_audioFrameDescriptor.memoryBuffer; // Shortcut to it's sample buffer
 
+    volatile bool _mute;
+
     size_t  _prevFrane = 0;
     uint32_t _prevFrameTState = 0;
     int16_t _prevLeftValue;

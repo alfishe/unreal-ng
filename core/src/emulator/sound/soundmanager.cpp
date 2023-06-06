@@ -70,12 +70,12 @@ void SoundManager::reset()
 
 void SoundManager::mute()
 {
-
+    _mute = true;
 }
 
 void SoundManager::unmute()
 {
-
+    _mute = false;
 }
 
 const AudioFrameDescriptor& SoundManager::getAudioBufferDescriptor()
