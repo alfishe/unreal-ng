@@ -82,11 +82,6 @@ uint8_t Tape::handlePortIn()
         bool tapeBit = getTapeStreamBit(clockCount);
         result = (uint8_t)tapeBit << 6;
 
-        /// region <Debug functionality
-        std::string logLine = StringHelper::Format("[%0d] Bit: %1d\n", clockCount, tapeBit);
-        fwrite(logLine.c_str(), 1, logLine.size(), _logFile);
-        /// endregion </Debug functionality
-
         // Only mic sound is heard to prevent clicks from keyboard polling out (#FE)
         int16_t micSample = tapeBit ? 1000 : -1000;
         int16_t sample = _lpfFilter.filter(sample);// Apply LPF filtering to remove high-frequency noise

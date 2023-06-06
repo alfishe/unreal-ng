@@ -143,11 +143,6 @@ protected:
 
     /// endregion </Fields>
 
-    /// region <Debug functionality>
-public:
-    FILE* _logFile;
-    /// endregion </Debug functionality>
-
     /// region <Constructors / Destructors>
 public:
     Tape() = delete;    // Disable default constructor. C++ 11 feature
