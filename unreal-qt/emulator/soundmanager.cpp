@@ -7,6 +7,7 @@
 #include <QDebug>
 
 #include <emulator/sound/soundmanager.h>
+#include <common/timehelper.h>
 
 void logCallback(void* pUserData, ma_uint32 level, const char* pMessage)
 {
@@ -18,6 +19,7 @@ void logCallback(void* pUserData, ma_uint32 level, const char* pMessage)
 AppSoundManager::~AppSoundManager()
 {
     this->stop();
+    this->deinit();
 }
 /// endregion </Constructors / destructors>
 
@@ -74,6 +76,9 @@ void AppSoundManager::start()
 void AppSoundManager::stop()
 {
     ma_device_stop(&_audioDevice);
+
+    // Wipe ring buffer to prevent crackles during next emulation session
+    _ringBuffer.clear();
 }
 
 /// Audio playback callback

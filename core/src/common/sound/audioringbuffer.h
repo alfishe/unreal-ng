@@ -22,6 +22,11 @@ public:
     AudioRingBuffer() : _readPtr{0}, _writePtr{0}
     {
         // Clear buffer to eliminate noise on audio playback start
+        clear();
+    }
+
+    void clear()
+    {
         memset(_buffer, 0x00, sizeof(_buffer));
     }
 
