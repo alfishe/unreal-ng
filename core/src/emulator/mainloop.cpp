@@ -73,6 +73,7 @@ void MainLoop::Run(volatile bool& stopRequested)
 
 	/// endregion </Debug>
 
+    static std::chrono::milliseconds timeout(20); // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     uint64_t betweenIterations = 0;
 
@@ -105,7 +106,7 @@ void MainLoop::Run(volatile bool& stopRequested)
         // That means we're in sync between audio and video frames
         std::unique_lock<std::mutex> lock(_audioBufferMutex);
         auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-        _cv.wait(lock, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
+        _cv.wait_for(lock, timeout, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
         _moreAudioDataRequested.store(false);
         lock.unlock();
 
