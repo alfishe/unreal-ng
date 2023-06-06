@@ -9,11 +9,6 @@
 #include <emulator/sound/soundmanager.h>
 #include <common/timehelper.h>
 
-void logCallback(void* pUserData, ma_uint32 level, const char* pMessage)
-{
-    // Custom logging implementation
-    qDebug() << "[Miniaudio Log]: " << pMessage;
-}
 
 /// region <Constructors / destructors>
 AppSoundManager::~AppSoundManager()
@@ -28,9 +23,6 @@ AppSoundManager::~AppSoundManager()
 bool AppSoundManager::init()
 {
     bool result = true;
-
-    // Set the log callback
-    ma_log_callback_init(&logCallback, nullptr);
 
     // Set audio output parameters
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
