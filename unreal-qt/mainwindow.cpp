@@ -19,10 +19,6 @@
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
-    /// region <Debug>
-    AppSoundManager::getDefaultAudioDeviceInfo();
-    /// endregion </Debug>
-
     // Intercept all keyboard and mouse events
     //qApp->installEventFilter(this);
 
@@ -511,9 +507,6 @@ void MainWindow::handleStartButton()
         ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
         messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
-        callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageAudioRefresh);
-        messageCenter.RemoveObserver(NC_AUDIO_FRAME_REFRESH, observerInstance, callback);
-
         // Detach framebuffer
         deviceScreen->detach();
 
@@ -527,19 +520,6 @@ void MainWindow::handleStartButton()
         fflush(stderr);
         startButton->setText("Start");
         startButton->setEnabled(true);
-    }
-}
-
-void MainWindow::handleMessageAudioRefresh(int id, Message* message)
-{
-    if (message && message->obj)
-    {
-        SimpleByteDataPayload* payload = (SimpleByteDataPayload*)message->obj;
-        if (!payload->_payloadByteVector.empty())
-        {
-            AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-            soundManager.pushAudio(payload->_payloadByteVector);
-        }
     }
 }
 

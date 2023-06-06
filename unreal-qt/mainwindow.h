@@ -29,7 +29,6 @@ public:
 
 private slots:
     void handleStartButton();
-    void handleMessageAudioRefresh(int id, Message* message);
     void handleMessageScreenRefresh(int id, Message* message);
     void resetEmulator();
 
