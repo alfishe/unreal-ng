@@ -209,7 +209,10 @@ void SoundManager::handleFrameEnd()
     /// endregion </Debug functionality>
 
     // Enqueue generated sound data via previously registered application callback
-    _context->pAudioCallback(_context->pAudioManagerObj, _audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    if (_context->pAudioCallback)
+    {
+        _context->pAudioCallback(_context->pAudioManagerObj, _audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    }
 }
 
 /// endregion </Emulation events>
