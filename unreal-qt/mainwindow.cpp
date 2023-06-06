@@ -125,10 +125,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
      // Unsubscribe from message bus events
      MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-     std::string topic = "FRAME_REFRESH";
      Observer* observerInstance = static_cast<Observer*>(this);
      ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-     messageCenter.RemoveObserver(topic, observerInstance, callback);
+     messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
      // Close debugger
      if (debuggerWindow)
