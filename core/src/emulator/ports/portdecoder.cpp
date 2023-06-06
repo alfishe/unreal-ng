@@ -96,7 +96,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, uint16_t pc)
         // Broadcast notification - breakpoint triggered
         MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_LOGGER_BREAKPOINT, payload);
+        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
         // Wait until emulator resumed externally (by debugger or scripting engine)
         // Pause emulation until upper-level controller (emulator / scripting) resumes execution
@@ -126,7 +126,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc)
         // Broadcast notification - breakpoint triggered
         MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_LOGGER_BREAKPOINT, payload);
+        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
         // Wait until emulator resumed externally (by debugger or scripting engine)
         // Pause emulation until upper-level controller (emulator / scripting) resumes execution

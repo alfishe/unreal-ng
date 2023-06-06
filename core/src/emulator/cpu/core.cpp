@@ -339,7 +339,7 @@ void Core::UseDebugMemoryInterface()
 void Core::Reset()
 {
 	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-	int topicID = messageCenter.RegisterTopic("CPU_RESET");
+	int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
 	messageCenter.Post(topicID, new SimpleTextPayload("Core reset started"));
 
 	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
@@ -351,7 +351,7 @@ void Core::Reset()
 	_keyboard->Reset();             // Keyboard
 	_sound->reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
 	_screen->Reset();               // Reset all video subsystem
-	//reset_tape();					// Reset tape loader state
+    _tape->reset();                 // Reset tape loader state
 	_hdd->Reset();					// Reset IDE controller
     _portDecoder->Reset();          // Reset peripheral port decoder
 

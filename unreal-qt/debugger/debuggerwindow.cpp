@@ -78,7 +78,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     // Subscribe to breakpoint trigger messages
     ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, observerInstance, breakpointCallback);
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
 
     /// endregion </Subscribe to events>
 }
@@ -91,7 +91,7 @@ DebuggerWindow::~DebuggerWindow()
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.RemoveObserver(NC_LOGGER_BREAKPOINT, observerInstance, callback);
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, callback);
 }
 
 /// endregion </Constructor / destructors>

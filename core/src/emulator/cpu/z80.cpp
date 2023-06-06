@@ -173,7 +173,7 @@ void Z80::Z80Step(bool skipBreakpoints)
             // Broadcast notification - breakpoint triggered
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
-            messageCenter.Post(NC_LOGGER_BREAKPOINT, payload);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
             // Wait until emulator resumed externally (by debugger or scripting engine)
             WaitUntilResumed();

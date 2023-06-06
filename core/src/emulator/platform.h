@@ -13,13 +13,16 @@ constexpr char const* NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODUL
 constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
 
 
-constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE"; // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
+constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
 
-constexpr char const* NC_LOGGER_CPU_STEP = "LOGGER_CPU_STEP";                    // Event fired when one single CPU step performed. Active in debug mode only.
-constexpr char const* NC_LOGGER_BREAKPOINT = "LOGGER_BREAKPOINT";                // Breakpoint fired
+constexpr char const* NC_SYSTEM_RESET = "RESET";                                // Event fired when system was reset
+constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Event fired when one single CPU step performed. Active in debug mode only.
+constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint fired
 
-constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";            // Audio data for the current frame is ready
-constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";            // Video data for the current frame is ready
+constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio data for the current frame is ready
+constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video data for the current frame is ready
+
+constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio player callback notifies that buffer has less than half of its content
 
 /// endregion </Notification center events>
 
@@ -778,8 +781,6 @@ struct EmulatorState
 		//      SNDRENDER sound; //Alone Coder
 	} tape;
 	
-	//SNDRENDER tape_sound; //Alone Coder
-
 	uint8_t comp_pal[0x10];
 	uint8_t ulaplus_cram[64];
 	uint8_t ulaplus_mode;

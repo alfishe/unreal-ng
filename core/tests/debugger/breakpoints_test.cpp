@@ -83,7 +83,7 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
         {
             breakpointTriggered = true;
 
@@ -143,7 +143,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
           {
               breakpointTriggered = true;
 
@@ -205,7 +205,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_LOGGER_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
           {
               breakpointTriggered = true;
 
