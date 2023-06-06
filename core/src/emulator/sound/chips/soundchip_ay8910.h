@@ -1,13 +1,9 @@
 #pragma once
-#include "stdafx.h"
 
-#include "common/modulelogger.h"
-
-#include "emulator/ports/portdecoder.h"
+#include <cstdint>
+#include <string>
 #include <cmath>
-
-
-class PortDecoder;
+#include "common/sound/filters/filter_dc.h"
 
 /// Information:
 /// See:
@@ -20,6 +16,7 @@ class PortDecoder;
 ///     https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
 ///     http://spatula-city.org/~im14u2c/intv/jzintv-1.0-beta3/src/ay8910/ay8910.c
 ///     https://www.julien-nevo.com/arkostracker/index.php/ay-overview/
+///     https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
 
 /// Base clock frequency is: 1.75MHz for Pentagon, 1.7734MHz for genuine ZX-Spectrum models
 ///
@@ -30,22 +27,24 @@ class PortDecoder;
 /// AY command registers enumeration
 enum AYRegisterEnum : uint8_t
 {
-    AY_A_FINE = 0,
-    AY_A_COARSE = 1,
-    AY_B_FINE = 2,
-    AY_B_COARSE = 3,
-    AY_C_FINE = 4,
-    AY_C_COARSE = 5,
-    AY_NOISE_PERIOD = 6,
-    AY_MIXER_CONTROL = 7,
-    AY_A_VOLUME = 8,
-    AY_B_VOLUME = 9,
-    AY_C_VOLUME = 10,
-    AY_ENVELOPE_PERIOD_FINE = 11,
-    AY_ENVELOPE_PERIOD_COARSE = 12,
-    AY_ENVELOPE_SHAPE = 13,
-    AY_PORTA = 14,
-    AY_PORTB = 15
+    AY_A_FINE = 0,              // R0
+    AY_A_COARSE,                // R1
+    AY_B_FINE,                  // R2
+    AY_B_COARSE,                // R3
+    AY_C_FINE,                  // R4
+    AY_C_COARSE,                // R5
+    AY_NOISE_PERIOD,            // R6
+    AY_MIXER_CONTROL,           // R7
+    AY_RESERVED_8,              // R8
+    AY_RESERVED_9,              // R9
+    AY_A_VOLUME,                // R10
+    AY_B_VOLUME,                // R11
+    AY_C_VOLUME,                // R12
+    AY_ENVELOPE_PERIOD_FINE,    // R13
+    AY_ENVELOPE_PERIOD_COARSE,  // R14
+    AY_ENVELOPE_SHAPE,          // R15
+    AY_PORTA,                   // R16
+    AY_PORTB                    // R17
 };
 
 /// AY tone generators enumeration
@@ -58,7 +57,7 @@ enum AYChannelsEnum : uint8_t
 
 /// endregion </Types>
 
-class SoundChip_AY8910 : public PortDevice
+class SoundChip_AY8910
 {
     /// region <Constants>
 protected:
@@ -80,7 +79,53 @@ protected:
     // How many AY cycles in each audio sample (at selected sampling rate / frequency)
     static constexpr double CYCLES_PER_SAMPLE = AY_BASE_FREQUENCY / AY_SAMPLING_RATE;
 
+    // Number of tone generators in AY8910
+    static constexpr size_t TONE_CHANNELS = 3;
+
     // Chip-specific output amplitude (volume) logarithmic conversion table
+    static constexpr double AY_DAC_TABLE[] =
+    {
+        0.0,              0.0,
+        0.00999465934234, 0.00999465934234,
+        0.01445029373620, 0.01445029373620,
+        0.02105745021740, 0.02105745021740,
+        0.03070115205620, 0.03070115205620,
+        0.04554818036160, 0.04554818036160,
+        0.06449988555730, 0.06449988555730,
+        0.10736247806500, 0.10736247806500,
+        0.12658884565500, 0.12658884565500,
+        0.20498970016000, 0.20498970016000,
+        0.29221026932200, 0.29221026932200,
+        0.37283894102400, 0.37283894102400,
+        0.49253070878200, 0.49253070878200,
+        0.63532463569100, 0.63532463569100,
+        0.80558480201400, 0.80558480201400,
+        1.0, 1.0
+    };
+
+    static constexpr double YM_DAC_TABLE[] =
+    {
+        0.0, 0.0,
+        0.00465400167849, 0.00772106507973,
+        0.01095597772180, 0.01396200503550,
+        0.01699855039290, 0.02001983672850,
+        0.02436865796900, 0.02969405661100,
+        0.03506523231860, 0.04039063096060,
+        0.04853894865340, 0.05833524071110,
+        0.06805523765930, 0.07777523460750,
+        0.09251544975970, 0.11108567940800,
+        0.12974746318800, 0.14848554207700,
+        0.17666895552000, 0.21155107957600,
+        0.24638742656600, 0.28110170138100,
+        0.33373006790300, 0.40042725261300,
+        0.46738384069600, 0.53443198291000,
+        0.63517204547200, 0.75800717174000,
+        0.87992675669500, 1.0
+    };
+
+    const double* _volumeDACTablePtr = (double*)&AY_DAC_TABLE;
+
+    // 16-bit volume table for AY-8910
     static const uint16_t _volumeTable[32];
     /// endregion </Constants>
 
@@ -90,7 +135,7 @@ protected:
     {
         /// region <Constants>
     public:
-        static const char* AYRegisterNames[16];
+        static const char* AYRegisterNames[18];
         /// endregion </Constants>
 
         uint8_t ChannelA_Fine;          // R0
@@ -101,41 +146,22 @@ protected:
         uint8_t ChannelC_Coarse;        // R5
         uint8_t Noise_Period;           // R6
         uint8_t Mixer_Control;          // R7
-        uint8_t ChannelA_Amplitude;     // R8
-        uint8_t ChannelB_Amplitude;     // R9
-        uint8_t ChannelC_Amplitude;     // R10
-        uint8_t EnvelopePeriod_Fine;    // R11
-        uint8_t EnvelopePeriod_Coarse;  // R12
-        uint8_t Envelope_Shape;         // R13
-        uint8_t IOPortA_Datastore;      // R14
-        uint8_t IOPortB_Datastore;      // R15
+        uint8_t Reserved_8;             // R8
+        uint8_t Reserved_9;             // R9
+        uint8_t ChannelA_Amplitude;     // R10
+        uint8_t ChannelB_Amplitude;     // R11
+        uint8_t ChannelC_Amplitude;     // R12
+        uint8_t EnvelopePeriod_Fine;    // R13
+        uint8_t EnvelopePeriod_Coarse;  // R14
+        uint8_t Envelope_Shape;         // R15
+        uint8_t IOPortA_Datastore;      // R16
+        uint8_t IOPortB_Datastore;      // R17
     };
 
     union AYRegisters
     {
-        uint8_t reg[16];
+        uint8_t reg[18];
         Registers named;
-    };
-
-    class RegisterAddressDecoder
-    {
-        /// region <Fields>
-    protected:
-        AYRegisters& _registers;
-        /// endregion </Fields>
-
-        /// region <Constructors / Destructors>
-    public:
-        RegisterAddressDecoder() = delete;
-        RegisterAddressDecoder(const RegisterAddressDecoder&) = delete;
-        RegisterAddressDecoder(AYRegisters& registers);
-        virtual ~RegisterAddressDecoder();
-        /// endregion </Constructors / Destructors>
-
-        /// region <Methods>
-    public:
-        void reset();
-        /// endregion </Methods>
     };
 
     /// <b>Information:</b>
@@ -156,12 +182,17 @@ protected:
     {
         /// region <Fields>
     protected:
-        uint16_t _period;   // Tone Generator channel period (in AY clock cycles)
-        uint8_t _amplitude; // Tone Generator channel amplitude / volume
+        uint16_t _period;       // Tone Generator channel period (in AY clock cycles)
+        uint16_t _counter;      // Current position in the period
+        uint8_t _volume;        // Volume amplitude set via registers R10, R11, R12
+        bool _envelopeEnabled;  // Is volume driven by envelope? (bit [5] of R10, R11 and R12)
+        bool _toneEnabled;      // Is tone enabled? (bits 0, 1, 2 of R7)
+        bool _noiseEnabled;     // Is noise enabled? (bits 3, 4, 5 of R7)
 
-        uint32_t _counter;
-        bool _outPulse;
-        uint16_t _out;
+        double _panLeft;        // Panning coefficient for left channel (contribution to mixed stereo sample)
+        double _panRight;       // Panning coefficient for right channel (contribution to mixed stereo sample)
+
+        bool _out;          // Output bit
         /// endregion </Fields>
 
         /// region <Constructors / Destructors>
@@ -173,8 +204,25 @@ protected:
     public:
         void reset();
         void setPeriod(uint8_t fine, uint8_t coarse);
-        void setVolume(uint8_t amplitude);
-        uint16_t render(size_t cpu_clock_time);
+        void setVolume(uint8_t volume);
+        void setEnvelopeEnabled(bool value);
+        void setToneEnabled(bool value);
+        void setNoiseEnabled(bool value);
+        void setPanLeft(double value);
+        void setPanRight(double value);
+
+        uint8_t volume() { return _volume; };
+        bool envelopeEnabled() { return _envelopeEnabled; }
+        bool toneEnabled() { return _toneEnabled; }
+        bool noiseEnabled() { return _noiseEnabled; };
+
+        double panLeft() { return _panLeft; }
+        double panRight() { return _panRight; }
+
+        bool out() { return _out; };
+
+
+        bool updateState();
         /// endregion </Methods>
     };
 
@@ -193,19 +241,27 @@ protected:
         /// region <Fields>
     protected:
         uint8_t _period;
-        uint32_t _randomSeed;
+        uint16_t _counter;  // Current position in the period
+        bool _out;          // Output bit
+
+        uint32_t _registerLSFR;
         /// endregion </Fields>
 
         /// region <Constructors / Destructors>
-        public:
-            NoiseGenerator();
+    public:
+        NoiseGenerator();
+        virtual ~NoiseGenerator() = default;
         /// endregion </Constructors / Destructors>
 
         /// region <Methods>
     public:
         void reset();
         void setPeriod(uint8_t period);
-        uint32_t getNextRandom();
+        bool updateState();
+        bool out() { return _out; };
+
+    protected:
+        inline bool shiftLSFR();
         /// endregion </Methods>
     };
 
@@ -225,38 +281,48 @@ protected:
     class EnvelopeGenerator
     {
         /// region <Types>
-        enum EnvelopeBlockTypeEnum : uint8_t
+        enum EnvelopeSegmentTypeEnum : uint8_t
         {
             Envelope_Decay = 0,     // Volume goes down
             Envelope_Attack = 1,    // Volume goes up
             Envelope_StayLow = 2,   // Volume stays low
             Envelope_StayHigh = 3   // Volume stays high
         };
+
+        using EnvelopeHandler = void (*)(EnvelopeGenerator*);  // Define a type alias for the member function pointer type
+
         /// endregion </Types>
 
         /// region <Constants>
     protected:
         static const uint8_t ENVELOPE_SHAPE_COUNT = 16;
-        static const uint8_t ENVELOPE_SHAPE_BLOCKS = 3;
+        static const uint8_t ENVELOPE_SEGMENTS = 2;
         static const uint8_t ENVELOPE_COUNTER_BITS = 5;
         static const uint8_t ENVELOPE_COUNTER_MAX = 1 << ENVELOPE_COUNTER_BITS;
 
-        static const uint8_t _envelopeShapes[ENVELOPE_SHAPE_COUNT][ENVELOPE_SHAPE_BLOCKS];
-        static int16_t _envelopeWaves[ENVELOPE_COUNTER_MAX][ENVELOPE_SHAPE_BLOCKS];
-
-        static bool _initialized;
+        static EnvelopeHandler _handlers[ENVELOPE_SHAPE_COUNT][ENVELOPE_SEGMENTS];
         /// endregion </Constants>
 
         /// region <Fields>
     protected:
-        uint16_t _period;
-        uint8_t _shape;
-        /// endregion </Fields
+        uint8_t _shape;     // Selected envelope shape
+        uint32_t _period;   // Envelope period - 16 bit value. 32 bit variable used to handle overflows
+        uint32_t _counter;  // Current position in the period
+        uint8_t  _segment;  // Envelope segment
+        int8_t _out;        // Envelope generator output (5 bits amplitude value) (Note: it must be signed type to survive decrease below zero)
+        /// endregion </Fields>
+
+        /// region <Properties>
+    public:
+        int16_t period() { return (uint16_t)_period; }
+        int8_t shape() { return _shape; }
+        int8_t out() { return _out; };
+        /// endregion </Properties>
 
         /// region <Constructors / Destructors>
     public:
         EnvelopeGenerator();
-        virtual ~EnvelopeGenerator();
+        virtual ~EnvelopeGenerator() = default;
         /// endregion </Constructors / Destructors>
 
         /// region <Methods>
@@ -264,20 +330,22 @@ protected:
         void reset();
         void setPeriod(uint8_t fine, uint8_t coarse);
         void setShape(uint8_t shape);
+        uint8_t updateState();
         /// endregion </Methods>
 
         /// region <Helper methods>
     protected:
+        void resetSegment();
         void generateEnvelopeShapes();
         /// endregion </Helper methods>
-    };
 
-    class AmplificationControl
-    {
-        /// region <Methods>
-    public:
-        void reset();
-        /// endregion </Methods>
+        /// region <Envelope handlers>
+    protected:
+        static void slideUp(EnvelopeGenerator* obj);
+        static void slideDown(EnvelopeGenerator* obj);
+        static void holdTop(EnvelopeGenerator* obj);
+        static void holdBottom(EnvelopeGenerator* obj);
+        /// endregion </Envelope handlers>
     };
 
     /// endregion </Nested classes>
@@ -287,43 +355,57 @@ protected:
     // AY8910 registers
     AYRegisters _registers;
 
-    // Register address decoder (handle bus interactions)
-    RegisterAddressDecoder _decoder;
-
     // 3x Tone generators (A,B,C) + 1x Noise Generator + 1x Envelope Generator
     ToneGenerator _toneGenerators[3];
     NoiseGenerator _noiseGenerator;
     EnvelopeGenerator _envelopeGenerator;
 
-    // Currently selected register (#BFFD)
+    // Currently selected register (value of #BFFD)
     uint8_t _currentRegister;
 
-    // Indicator - chip attached to system port decoder
-    bool _chipAttachedToPortDecoder = false;
+    // Current AY tick
+    size_t _tick;
 
-    // Port decoder chip attached to - instance reference
-    PortDecoder* _portDecoder = nullptr;
+    // Raw 3-channel samples
+    double _left[3];
+    double _right[3];
 
-    // Internal AY timings
-    uint8_t _ayClockDivisor;        // 2 for Z80 @ 3.5Mhz, 4 for @7.0MHz, 8 for @14MHz, 16 for @28MHz, 32 for @56MHz
-    size_t _ayClockCounter;         // CPU clock / ayClockDivider
+    // Mixed stereo samples
+    double _mixedLeft;
+    double _mixedRight;
 
-    // Z80 timings
-    size_t _startFrameCPUCounter;
-    size_t _prevCallCPUCounter;     // t-state counter captured on previous render call
-    size_t _endFrameCPUCounter;
+    // Remove DC offset (work as analog capacitors per channel)
+    FilterDC<double> _filterDCLeft;
+    FilterDC<double> _filterDCRight;
 
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
 public:
     SoundChip_AY8910();
-    virtual ~SoundChip_AY8910();
+    virtual ~SoundChip_AY8910() = default;
     /// endregion </Constructors / Destructors>
+
+    /// region <Properties>
+public:
+    double mixedLeft() { return _mixedLeft; }
+    double mixedRight() { return _mixedRight; }
+    int16_t outLeft() { return (int16_t)(_mixedLeft * (double)INT16_MAX); };
+    int16_t outRight() { return (int16_t)(_mixedRight * (double)INT16_MAX); };
+
+    double* left() { return _left; }
+    double* right() { return _right; }
+
+    /// endregion </Properties>
 
     /// region <Methods>
 public:
     void reset();
+    void updateState(bool bypassPrescaler = false);
+    void updateMixer();
+
+    void setMixer(uint8_t mixerValue);
+    void setVolume(uint8_t volume, uint8_t channel);
 
     // Emulate physical interface with ports #BFFD, #FFFD
     void setRegister(uint8_t regAddr);
@@ -334,24 +416,14 @@ public:
     uint8_t readRegister(uint8_t regAddr);
     void writeRegister(uint8_t regAddr, uint8_t value, size_t time);
 
-    void startFrame(size_t tstateCounter);
-    void endFrame(size_t tstateCounter);
-    void render(size_t tstateCounter);
-
     /// endregion </Methods>
 
-    /// region <Ports interaction>
-public:
-    bool attachToPorts(PortDecoder* decoder);
-    void detachFromPorts();
-    /// endregion </Ports interaction>
-
     /// region <PortDevice interface methods>
-    uint8_t portDeviceInMethod(uint16_t port) override;
-    void portDeviceOutMethod(uint16_t port, uint8_t value) override;
+    uint8_t portDeviceInMethod(uint16_t port);
+    void portDeviceOutMethod(uint16_t port, uint8_t value);
 
-    void handleFrameStart() override;
-    void handleFrameEnd() override;
+    void handleFrameStart();
+    void handleFrameEnd();
     /// endregion </PortDevice interface methods>
 
     /// region <Debug methods>
@@ -367,6 +439,7 @@ public:
     std::string dumpAY8910MixerState();
     std::string dumpAY8910ToneGeneratorState(uint8_t channel);
     std::string dumpAY8910NoiseGeneratorState();
+    std::string dumpAY8910EnvelopeGeneratorState();
     std::string dumpAY8910VolumeState(uint8_t channel);
     /// endregion <Debug methods>
 };
@@ -380,6 +453,8 @@ public:
 class SoundChip_AY8910CUT : public SoundChip_AY8910
 {
 public:
+    SoundChip_AY8910CUT() : SoundChip_AY8910() {};
+
     using SoundChip_AY8910::AY_BASE_FREQUENCY;
     using SoundChip_AY8910::CPU_BASE_FREQUENCY;
 
@@ -405,9 +480,7 @@ class NoiseGeneratorCUT: public SoundChip_AY8910CUT::NoiseGenerator
 class EnvelopeGeneratorCUT : public SoundChip_AY8910CUT::EnvelopeGenerator
 {
 public:
-    using SoundChip_AY8910CUT::EnvelopeGenerator::_initialized;
-    using SoundChip_AY8910CUT::EnvelopeGenerator::_envelopeShapes;
-    using SoundChip_AY8910CUT::EnvelopeGenerator::_envelopeWaves;
+
 };
 
 #endif // _CODE_UNDER_TEST

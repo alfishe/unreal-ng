@@ -353,7 +353,7 @@ bool SoundManager::attachAY8910ToPorts()
 {
     bool result = false;
 
-    _ay8910->attachToPorts(_context->pPortDecoder);
+    //_ay8910->attachToPorts(_context->pPortDecoder);
 
     return result;
 }
@@ -362,7 +362,7 @@ bool SoundManager::detachAY8910FromPorts()
 {
     bool result = false;
 
-    _ay8910->detachFromPorts();
+    //_ay8910->detachFromPorts();
 
     return result;
 }

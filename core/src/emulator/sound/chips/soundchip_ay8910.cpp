@@ -37,56 +37,29 @@ const uint16_t SoundChip_AY8910::_volumeTable[32] =
 
 /// region <Registers>
 
-const char* SoundChip_AY8910::Registers::AYRegisterNames[16]
+const char* SoundChip_AY8910::Registers::AYRegisterNames[18]
 {
-    "[Reg]  R0 - Channel A - fine tune",        // R0
-    "[Reg]  R1 - Channel A - coarse tune",      // R1
-    "[Reg]  R2 - Channel B - fine tune",        // R2
-    "[Reg]  R3 - Channel B - coarse tune",      // R3
-    "[Reg]  R4 - Channel C - fine tune",        // R4
-    "[Reg]  R5 - Channel C - coarse tune",      // R5
-    "[Reg]  R6 - Noise period",                 // R6
-    "[Reg]  R7 - Mixer Control Enable",         // R7
-    "[Reg]  R8 - Channel A - Amplitude",        // R8
-    "[Reg]  R9 - Channel B - Amplitude",        // R9
-    "[Reg]  R10 - Channel C - Amplitude",       // R10
-    "[Reg]  R11 - Envelope period - fine",      // R11
-    "[Reg]  R12 - Envelope period - coarse",    // R12
-    "[Reg]  R13 - Envelope shape",              // R13
-    "[Reg]  R14 - I/O Port A data store",       // R14
-    "[Reg]  R15 - I/O Port B data store"        // R15
+    " R0 - Channel A - fine tune",      // R0
+    " R1 - Channel A - coarse tune",    // R1
+    " R2 - Channel B - fine tune",      // R2
+    " R3 - Channel B - coarse tune",    // R3
+    " R4 - Channel C - fine tune",      // R4
+    " R5 - Channel C - coarse tune",    // R5
+    " R6 - Noise period",               // R6
+    " R7 - Mixer Control Enable",       // R7
+    " R8 - <Reserved>",                 // R8
+    " R9 - <Reserved",                  // R9
+    "R10 - Channel A - Amplitude",      // R10
+    "R11 - Channel B - Amplitude",      // R11
+    "R12 - Channel C - Amplitude",      // R12
+    "R13 - Envelope period - fine",     // R13
+    "R14 - Envelope period - coarse",   // R14
+    "R15 - Envelope shape",             // R15
+    "R16 - I/O Port A data store",      // R16
+    "R17 - I/O Port B data store"       // R17
 };
 
 /// endregion </Registers>
-
-/// region <RegisterAddressDecoder>
-
-/// region <Constructors / Destructors>
-
-SoundChip_AY8910::RegisterAddressDecoder::RegisterAddressDecoder(AYRegisters& registers) : _registers(registers)
-{
-}
-
-SoundChip_AY8910::RegisterAddressDecoder::~RegisterAddressDecoder()
-{
-}
-
-/// endregion </Constructors / Destructors>
-
-/// region <Methods>
-
-void SoundChip_AY8910::RegisterAddressDecoder::reset()
-{
-    // Reset contents for all registers
-    memset(&_registers, 0, sizeof(AYRegisters));
-
-    // Mute all channels. R7 - Mixer Control register has active low (0) signals
-    _registers.reg[AY_MIXER_CONTROL] = 0xFF;
-}
-
-/// endregion </Methods>
-
-/// endregion </RegisterAddressDecoder>
 
 /// region <ToneGenerator>
 
@@ -97,9 +70,7 @@ SoundChip_AY8910::ToneGenerator::ToneGenerator()
 
 void SoundChip_AY8910::ToneGenerator::reset()
 {
-    _period = 0x0000;
-    _amplitude = 0x00;
-
+    _period = 0x0001;
     _counter = 0x0000'0000;
 }
 
@@ -113,33 +84,58 @@ void SoundChip_AY8910::ToneGenerator::reset()
 void SoundChip_AY8910::ToneGenerator::setPeriod(uint8_t fine, uint8_t coarse)
 {
     // 4 lowest bits from coarse + 8 bits from fine forms 12-bit Tone Period of Tone Generator
-    _period = (coarse & 0b0000'1111) << 8 | fine;
+    uint16_t value = (coarse & 0b0000'1111) << 8 | fine;
+
+    // Period cannot be zero, so set it to 1 if detected
+    _period = (value == 0) | value;
 }
 
-void SoundChip_AY8910::ToneGenerator::setVolume(uint8_t amplitude)
+void SoundChip_AY8910::ToneGenerator::setVolume(uint8_t volume)
 {
-    // Lower 5 bits of registers (R10 - Channel A, R11 - Channel B, R12 - Channel C)
-    // define tone generator amplitude (volume)
-    _amplitude = amplitude & 0b0001'1111;
+    // Only 4 bits used
+    _volume = volume & 0b0000'1111;
 }
 
-uint16_t SoundChip_AY8910::ToneGenerator::render(size_t tstateCounter)
+void SoundChip_AY8910::ToneGenerator::setEnvelopeEnabled(bool value)
 {
-    uint16_t result= 0x0000;
+    _envelopeEnabled = value;
+}
 
+void SoundChip_AY8910::ToneGenerator::setToneEnabled(bool value)
+{
+    _toneEnabled = value;
+}
+
+void SoundChip_AY8910::ToneGenerator::setNoiseEnabled(bool value)
+{
+    _noiseEnabled = value;
+}
+
+void SoundChip_AY8910::ToneGenerator::setPanLeft(double value)
+{
+    _panLeft = value;
+}
+
+void SoundChip_AY8910::ToneGenerator::setPanRight(double value)
+{
+    _panRight = value;
+}
+
+bool SoundChip_AY8910::ToneGenerator::updateState()
+{
     // 0 period is not played
-    if (_period < 1)
-        return result;
-
-    _counter++;
-
-    if (_counter >= _period)
+    if (_period > 0)
     {
-        _counter = 0;
-        _outPulse = !_outPulse;
+        _counter++;
+
+        if (_counter >= _period)
+        {
+            _counter = 0;
+            _out = !_out;
+        }
     }
 
-    return result;
+    return _out;
 }
 
 /// endregion </ToneGenerator>
@@ -153,17 +149,36 @@ SoundChip_AY8910::NoiseGenerator::NoiseGenerator()
 
 void SoundChip_AY8910::NoiseGenerator::reset()
 {
-    _period = 0;
-    _randomSeed = 1;
+    _period = 0x01;
+    //_registerLSFR = 0xFFFF'FFFF;
+    _registerLSFR = 1;
 }
 
 void SoundChip_AY8910::NoiseGenerator::setPeriod(uint8_t period)
 {
-    _period = period;
+    // Only 5 bits used
+    period &= 0b0001'1111;
+
+    // Period cannot be zero, so set it to 1 if detected
+    _period = (period == 0) | period;
+}
+
+bool SoundChip_AY8910::NoiseGenerator::updateState()
+{
+    _counter++;
+
+    if (_counter >= (_period << 1))
+    {
+        _counter = 0;
+
+        _out = shiftLSFR();
+    }
+
+    return _out;
 }
 
 /// Returns LSFR-generated random numbers for noise generator
-/// \return Next random number from LSFR
+/// @return Output from LSFR bit 0
 ///
 /// <b>Information:</b>
 /// The Random Number Generator of the 8910 is a 17-bit shift register.
@@ -172,13 +187,15 @@ void SoundChip_AY8910::NoiseGenerator::setPeriod(uint8_t period)
 /// 17 stage LSFR with 1 tap (3)
 ///
 /// See: https://en.wikipedia.org/wiki/Linear-feedback_shift_register
+/// See: https://github.com/floooh/chips/blob/master/chips/ay38910.h
 /// See: https://github.com/mamedev/mame/blob/master/src/devices/sound/ay8910.cpp
-uint32_t SoundChip_AY8910::NoiseGenerator::getNextRandom()
+bool SoundChip_AY8910::NoiseGenerator::shiftLSFR()
 {
-    _randomSeed ^= (((_randomSeed & 1) ^ ((_randomSeed >> 3) & 1)) << 17);
-    _randomSeed >>= 1;
+    uint32_t tapBit = (_registerLSFR & 1) ^ ((_registerLSFR >> 3) & 1); // Calculate tap (XOR of bits 0 and 3)
+    _registerLSFR = (_registerLSFR >> 1) | (tapBit << 16); // Right-shift the LFSR and insert tap value at the most significant bit
 
-    return _randomSeed;
+    // Return output bit [0]
+    return _registerLSFR & 1;
 }
 /// endregion </NoiseGenerator>
 
@@ -187,118 +204,124 @@ uint32_t SoundChip_AY8910::NoiseGenerator::getNextRandom()
 /// 4 lowest bits of R13 (Envelope shape) register determine envelope shape
 /// at the Envelope Generator Output
 /// See more in AY-8910 datasheet (page 5-22): http://map.grauw.nl/resources/sound/generalinstrument_ay-3-8910.pdf
-const uint8_t SoundChip_AY8910::EnvelopeGenerator::_envelopeShapes[ENVELOPE_SHAPE_COUNT][3] =
+SoundChip_AY8910::EnvelopeGenerator::EnvelopeHandler SoundChip_AY8910::EnvelopeGenerator::_handlers[ENVELOPE_SHAPE_COUNT][ENVELOPE_SEGMENTS] =
 {
-    { Envelope_Decay,  Envelope_StayLow,  Envelope_StayLow },       // 00 - 0b0000 - \___
-    { Envelope_Decay,  Envelope_StayLow,  Envelope_StayLow },       // 01 - 0b0001 - \___
-    { Envelope_Decay,  Envelope_StayLow,  Envelope_StayLow },       // 02 - 0b0010 - \___
-    { Envelope_Decay,  Envelope_StayLow,  Envelope_StayLow },       // 03 - 0b0011 - \___
-    { Envelope_Attack, Envelope_StayLow,  Envelope_StayLow },       // 04 - 0b0100 - /___
-    { Envelope_Attack, Envelope_StayLow,  Envelope_StayLow },       // 05 - 0b0101 - /___
-    { Envelope_Attack, Envelope_StayLow,  Envelope_StayLow },       // 06 - 0b0110 - /___
-    { Envelope_Attack, Envelope_StayLow,  Envelope_StayLow },       // 07 - 0b0111 - /___
-    { Envelope_Decay,  Envelope_Decay,    Envelope_Decay },         // 08 - 0b1000 - \\\\
-    { Envelope_Fade,   Envelope_StayLow,  Envelope_StayLow },       // 09 - 0b1001 - \___
-    { Envelope_Decay,  Envelope_Attack,   Envelope_Decay },         // 0A - 0b1010 - \/\/
-    { Envelope_Decay,  Envelope_StayHigh, Envelope_StayHigh },      // 0B - 0b1011 - \---
-    { Envelope_Attack, Envelope_Attack,   Envelope_Attack },        // 0C - 0b1100 - ////
-    { Envelope_Attack, Envelope_StayHigh, Envelope_StayHigh },      // 0D - 0b1101 - /---
-    { Envelope_Attack, Envelope_Decay,    Envelope_Attack },        // 0E - 0b1110 - /\/\
-    { Envelope_Attack,Envelope_StayLow,   Envelope_StayLow }        // 0F - 0b1111 - /___
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 00 - 0b0000 - \___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 01 - 0b0001 - \___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 02 - 0b0010 - \___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 03 - 0b0011 - \___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 04 - 0b0100 - /___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 05 - 0b0101 - /___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 06 - 0b0110 - /___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 07 - 0b0111 - /___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::slideDown  },       // 08 - 0b1000 - \\\\ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::holdBottom },       // 09 - 0b1001 - \___ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::slideUp    },       // 0A - 0b1010 - \/\/ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideDown, &SoundChip_AY8910::EnvelopeGenerator::holdTop    },       // 0B - 0b1011 - \--- ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::slideUp    },       // 0C - 0b1100 - //// ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::holdTop    },       // 0D - 0b1101 - /--- ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::slideDown  },       // 0E - 0b1110 - /\/\ ;
+    { &SoundChip_AY8910::EnvelopeGenerator::slideUp,   &SoundChip_AY8910::EnvelopeGenerator::holdBottom }        // 0F - 0b1111 - /___ ;
 };
-
-int16_t SoundChip_AY8910::EnvelopeGenerator::_envelopeWaves[ENVELOPE_COUNTER_MAX][ENVELOPE_SHAPE_BLOCKS];
-bool SoundChip_AY8910::EnvelopeGenerator::_initialized = false;
 
 SoundChip_AY8910::EnvelopeGenerator::EnvelopeGenerator()
 {
-    // Initialize shape waveform table if not done yet (static single-time)
-    if (!_initialized)
-    {
-        generateEnvelopeShapes();
-
-        _initialized = true;
-    }
-
     reset();
-}
-
-SoundChip_AY8910::EnvelopeGenerator::~EnvelopeGenerator()
-{
-
 }
 
 void SoundChip_AY8910::EnvelopeGenerator::reset()
 {
-    _period = 0;
+    _period = 0x0000'0001;
     _shape = 0;
+
+    _counter = 0;
+    _segment = 0;
 }
 
+/// Set envelope generator period (Registers R13 - fine and R14 - coarse bits)
+/// @param fine 8 lowest bits
+/// @param coarse 8 highest bits
 void SoundChip_AY8910::EnvelopeGenerator::setPeriod(uint8_t fine, uint8_t coarse)
 {
-    _period = (coarse << 8) | fine;
+    uint32_t value = (coarse << 8) | fine;
+
+    // Period cannot be zero, so set it to 1 if detected
+    _period = (value == 0) | value;
 }
 
 /// Sets current envelope shape [0:15] from register R15
-/// \param shape 4 lowest bits determine envelope shape
+/// @param shape 4 lowest bits define envelope shape
 void SoundChip_AY8910::EnvelopeGenerator::setShape(uint8_t shape)
 {
-    _shape = shape & 0x0000'1111;
+    _shape = shape & 0b0000'1111;
+    _counter = 0;
+    _segment = 0;
+
+    resetSegment();
 }
 
-/// Pre-create envelope shaped waveform samples
-/// 16 shapes
-/// 32 samples (5-bit counter) x 3 phase blocks
-void SoundChip_AY8910::EnvelopeGenerator::generateEnvelopeShapes()
+uint8_t SoundChip_AY8910::EnvelopeGenerator::updateState()
 {
-    uint8_t volume = 0;
-    int8_t delta = 0;
-
-    // Generate 16 envelope shapes
-    for (int envelope = 0; envelope < ENVELOPE_SHAPE_COUNT; envelope++)
+    if (_counter >= _period)
     {
-        // Each shape is constructed from 3 blocks:
-        // 1. Intro - played only once
-        // 2-3 - repeated sequence
-        for (int block = 0; block < ENVELOPE_SHAPE_BLOCKS; block++)
-        {
-            // Fetch envelope form from shapes dictionary
-            EnvelopeBlockTypeEnum blockType = static_cast<EnvelopeBlockTypeEnum>(_envelopeShapes[envelope][block]);
+        _counter = 0;
 
-            // Set initial volume and it's change rule
-            // Min volume = 0; Max volume = 31
-            // +1 - volume increases, 0 - volume remains the same, -1 - volume decreases
-            switch (blockType)
-            {
-                case Envelope_Decay:
-                    volume = ENVELOPE_COUNTER_MAX - 1;
-                    delta = -1;
-                    break;
-                case Envelope_Attack:
-                    volume = 0;
-                    delta = 1;
-                    break;
-                case Envelope_StayLow:
-                    volume = 0;
-                    delta = 0;
-                    break;
-                case Envelope_StayHigh:
-                    volume = ENVELOPE_COUNTER_MAX - 1;
-                    delta = 0;
-                    break;
-            }
+        // Call envelope handler according handler matrix
+        _handlers[_shape][_segment](this);
+    }
 
-            // Generate 5-bits volume envelope for each block type
-            for (int i = 0; i < ENVELOPE_COUNTER_MAX; i++)
-            {
-                // Join 3 channel volumes, 5-bit each (for Channels A, B, C) into single 16-bit sample
-                _envelopeWaves[envelope][block * ENVELOPE_COUNTER_MAX + i] = (volume << (ENVELOPE_COUNTER_BITS * 2)) | (volume << ENVELOPE_COUNTER_BITS) | volume;
+    _counter++;
 
-                volume += delta;
-            }
-        }
+    return _out;
+}
+
+void SoundChip_AY8910::EnvelopeGenerator::resetSegment()
+{
+    EnvelopeHandler handler = _handlers[_shape][_segment];
+    if (handler == &slideDown || handler == &holdTop)
+    {
+        _out = 0x1F;    // Set max value
+    }
+    else
+    {
+        _out = 0x00;
     }
 }
+
+/// region <Envelope handlers>
+void SoundChip_AY8910::EnvelopeGenerator::slideUp(EnvelopeGenerator* obj)
+{
+    obj->_out += 1;
+
+    if (obj->_out > 31)
+    {
+        obj->_segment ^= 1;
+        obj->resetSegment();
+    }
+}
+
+void SoundChip_AY8910::EnvelopeGenerator::slideDown(EnvelopeGenerator* obj)
+{
+    obj->_out -= 1;
+
+    if (obj->_out < 0)
+    {
+        obj->_segment ^= 1;
+        obj->resetSegment();
+    }
+}
+
+void SoundChip_AY8910::EnvelopeGenerator::holdTop(EnvelopeGenerator* obj)
+{
+    // Do nothing
+}
+
+void SoundChip_AY8910::EnvelopeGenerator::holdBottom(EnvelopeGenerator* obj)
+{
+    // Do nothing
+}
+
+/// endregion </Envelope handlers>
 
 /// endregion </EnvelopeGenerator>
 
@@ -306,27 +329,20 @@ void SoundChip_AY8910::EnvelopeGenerator::generateEnvelopeShapes()
 
 /// region <Constructors / Destructors>
 
-SoundChip_AY8910::SoundChip_AY8910() : _decoder(_registers)
+SoundChip_AY8910::SoundChip_AY8910()
 {
-    _chipAttachedToPortDecoder = false;
-    _portDecoder = nullptr;
+    reset();
 }
 
-SoundChip_AY8910::~SoundChip_AY8910()
-{
-    if (_chipAttachedToPortDecoder)
-    {
-        detachFromPorts();
-    }
-}
 /// endregion </Constructors / Destructors>
 
 /// region <Methods>
 
 void SoundChip_AY8910::reset()
 {
-    // Reset decoder and the whole registers array
-    _decoder.reset();
+    // Reset whole registers array
+    memset(&_registers, 0x00, sizeof(AYRegisters));
+    _registers.named.Mixer_Control = 0xFF;  // Mute all generator outputs
 
     // Reset generators
     _toneGenerators[AY_CHANNEL_A].reset();
@@ -334,6 +350,139 @@ void SoundChip_AY8910::reset()
     _toneGenerators[AY_CHANNEL_C].reset();
     _noiseGenerator.reset();
     _envelopeGenerator.reset();
+
+    // Reset panning coefficients
+    /// region <ABC>
+    if (true)
+    {
+        _toneGenerators[AY_CHANNEL_A].setPanLeft(0.9);
+        _toneGenerators[AY_CHANNEL_A].setPanRight(0.1);
+        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.5);
+        _toneGenerators[AY_CHANNEL_B].setPanRight(0.5);
+        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.1);
+        _toneGenerators[AY_CHANNEL_C].setPanRight(0.9);
+    }
+    else
+    {
+        _toneGenerators[AY_CHANNEL_A].setPanLeft(0.65);
+        _toneGenerators[AY_CHANNEL_A].setPanRight(0.35);
+        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.5);
+        _toneGenerators[AY_CHANNEL_B].setPanRight(0.5);
+        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.35);
+        _toneGenerators[AY_CHANNEL_C].setPanRight(0.65);
+    }
+    /// endregion </ABC>
+    /// region <ACB>
+    if (false)
+    {
+        _toneGenerators[AY_CHANNEL_A].setPanLeft(0.9);
+        _toneGenerators[AY_CHANNEL_A].setPanRight(0.1);
+        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.1);
+        _toneGenerators[AY_CHANNEL_B].setPanRight(0.9);
+        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.5);
+        _toneGenerators[AY_CHANNEL_C].setPanRight(0.5);
+    }
+    /// endregion </ACB>
+    /// region <Debug A-left>
+    if (false)
+    {
+        _toneGenerators[AY_CHANNEL_A].setPanLeft(1.0);
+        _toneGenerators[AY_CHANNEL_A].setPanRight(0.0);
+        _toneGenerators[AY_CHANNEL_B].setPanLeft(0.0);
+        _toneGenerators[AY_CHANNEL_B].setPanRight(1.0);
+        _toneGenerators[AY_CHANNEL_C].setPanLeft(0.0);
+        _toneGenerators[AY_CHANNEL_C].setPanRight(1.0);
+    }
+    /// endregion </Debug A-left>
+
+    // Reset internal tick counter
+    _tick = 0;
+}
+
+/// Emulate single AY chip clock cycle
+/// All generator counters updated, output mixer value
+void SoundChip_AY8910::updateState(bool bypassPrescaler)
+{
+    _tick++;
+
+    // Update state for all generators
+    if (bypassPrescaler || _tick % 8 == 0)    // Turn on 16 pre-scaler for all generators
+    {
+        _noiseGenerator.updateState();
+        _envelopeGenerator.updateState();
+
+        _toneGenerators[AY_CHANNEL_A].updateState();
+        _toneGenerators[AY_CHANNEL_B].updateState();
+        _toneGenerators[AY_CHANNEL_C].updateState();
+
+        // Mix outputs into samples
+        updateMixer();
+    }
+}
+
+void SoundChip_AY8910::updateMixer()
+{
+    // Zero-down all output samples
+    _mixedLeft = 0.0;
+    _mixedRight = 0.0;
+
+    uint8_t channelOut;
+
+    for (size_t i = 0; i < TONE_CHANNELS; i++)
+    {
+        ToneGenerator& toneGenerator = _toneGenerators[i];
+
+        // Apply mixer flags and mix tone and noise accordingly
+        // Formula: (ToneOn | ToneDisable) & (NoiseOn | NoiseDisable)
+        // Note: disabling both noise and tone does not turn off a channel.
+        // Turning a channel off can only be accomplished by writing all zeroes
+        // Into corresponding bits of R10, R11 and R12 for corresponding channel
+        channelOut = (toneGenerator.out() | !toneGenerator.toneEnabled()) & (_noiseGenerator.out() | !toneGenerator.noiseEnabled());
+
+        // Apply volume (set via register or controlled by envelope generator)
+        channelOut *= toneGenerator.envelopeEnabled() ? _envelopeGenerator.out() : toneGenerator.volume() * 2 + 1;
+        channelOut &= 0x1F; // Ensure that amplitude not exceed 5 bit value
+
+        _left[i] = _volumeDACTablePtr[channelOut];
+        _right[i] = _volumeDACTablePtr[channelOut];
+
+        _mixedLeft += _left[i] * toneGenerator.panLeft();
+        _mixedRight += _right[i] * toneGenerator.panRight();
+    }
+
+    _mixedRight /= 3.0;
+    _mixedLeft /= 3.0;
+
+    // Filter out DC offset
+    if (true)
+    {
+        _mixedLeft = _filterDCLeft.filter(_mixedLeft);
+        _mixedRight = _filterDCRight.filter(_mixedRight);
+    }
+}
+
+void SoundChip_AY8910::setMixer(uint8_t mixerValue)
+{
+    bool isChannelAToneEnabled = (mixerValue & 0b0000'0001) == 0;
+    bool isChannelBToneEnabled = (mixerValue & 0b0000'0010) == 0;
+    bool isChannelCToneEnabled = (mixerValue & 0b0000'0100) == 0;
+
+    bool isChannelANoiseEnabled = (mixerValue & 0b0000'1000) == 0;
+    bool isChannelBNoiseEnabled = (mixerValue & 0b0001'0000) == 0;
+    bool isChannelCNoiseEnabled = (mixerValue & 0b0010'0000) == 0;
+
+    _toneGenerators[AY_CHANNEL_A].setToneEnabled(isChannelAToneEnabled);
+    _toneGenerators[AY_CHANNEL_B].setToneEnabled(isChannelBToneEnabled);
+    _toneGenerators[AY_CHANNEL_C].setToneEnabled(isChannelCToneEnabled);
+
+    _toneGenerators[AY_CHANNEL_A].setNoiseEnabled(isChannelANoiseEnabled);
+    _toneGenerators[AY_CHANNEL_B].setNoiseEnabled(isChannelBNoiseEnabled);
+    _toneGenerators[AY_CHANNEL_C].setNoiseEnabled(isChannelCNoiseEnabled);
+}
+
+void SoundChip_AY8910::setVolume(uint8_t volume, uint8_t channel)
+{
+    _toneGenerators[channel].setVolume(volume);
 }
 
 void SoundChip_AY8910::setRegister(uint8_t regAddr)
@@ -372,7 +521,7 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
 void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, size_t time)
 {
     // Invalid register address provided - ignore it
-    if (regAddr > 0x0F)
+    if (regAddr > 0x11)
         return;
 
     // XOR value with previous state => all non-zeroed bits indicate the change
@@ -403,20 +552,41 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, size_t time
             _noiseGenerator.setPeriod(_registers.reg[AY_NOISE_PERIOD]);
             break;
         case AY_MIXER_CONTROL:
-            throw std::logic_error("AY_MIXER_CONTROL register not implemented yet");
+            setMixer(_registers.reg[AY_MIXER_CONTROL]);
             break;
         // Change volume for Channel A
         case AY_A_VOLUME:
-            _toneGenerators[AY_CHANNEL_A].setVolume(_registers.reg[AY_A_VOLUME]);
+        {
+            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_A];
+            uint8_t volume = _registers.reg[AY_A_VOLUME];
+            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
+
+            generator.setVolume(volume);
+            generator.setEnvelopeEnabled(isEnvelopeEnabled);
             break;
+        }
         // Change volume for Channel B
         case AY_B_VOLUME:
-            _toneGenerators[AY_CHANNEL_B].setVolume(_registers.reg[AY_B_VOLUME]);
+        {
+            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_B];
+            uint8_t volume = _registers.reg[AY_B_VOLUME];
+            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
+
+            generator.setVolume(volume);
+            generator.setEnvelopeEnabled(isEnvelopeEnabled);
             break;
+        }
         // Change volume for Channel C
         case AY_C_VOLUME:
-            _toneGenerators[AY_CHANNEL_C].setVolume(_registers.reg[AY_C_VOLUME]);
+        {
+            ToneGenerator& generator = _toneGenerators[AY_CHANNEL_C];
+            uint8_t volume = _registers.reg[AY_C_VOLUME];
+            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
+
+            generator.setVolume(volume);
+            generator.setEnvelopeEnabled(isEnvelopeEnabled);
             break;
+        }
         // Change period (frequency) for Envelope Generator
         case AY_ENVELOPE_PERIOD_FINE:
         case AY_ENVELOPE_PERIOD_COARSE:
@@ -426,57 +596,24 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, size_t time
         case AY_ENVELOPE_SHAPE:
             _envelopeGenerator.setShape(_registers.reg[AY_ENVELOPE_SHAPE]);
             break;
+        default:
+            // Do nothing
+            break;
     }
 
     // TODO: Here we can log all register writes to get YM/MYM files
-}
-
-/// Generate PSG output as PCM data into the buffer
-void SoundChip_AY8910::render(size_t tstateCounter)
-{
-
+    if (false)
+    {
+        const char* registerName = SoundChip_AY8910::Registers::AYRegisterNames[regAddr];
+        std::cout << StringHelper::Format("Register: %-30s Value: 0x%02X", registerName, value) << std::endl;
+        if (regAddr == 0x07)
+        {
+            std::cout << dumpAY8910MixerState() << std::endl;
+        }
+    }
 }
 
 /// endregion </Methods>
-
-/// region <Ports interaction>
-
-bool SoundChip_AY8910::attachToPorts(PortDecoder* decoder)
-{
-    bool result = false;
-
-    if (decoder)
-    {
-        _portDecoder = decoder;
-
-        result = decoder->RegisterPortHandler(0xBFFD, this);
-        result &= decoder->RegisterPortHandler(0xFFFD, this);
-
-        if (result)
-        {
-            _chipAttachedToPortDecoder = true;
-        }
-        else
-        {
-            // TODO: Log error
-        }
-    }
-
-    return result;
-}
-
-void SoundChip_AY8910::detachFromPorts()
-{
-    if (_portDecoder && _chipAttachedToPortDecoder)
-    {
-        _portDecoder->UnregisterPortHandler(0xBFFD);
-        _portDecoder->UnregisterPortHandler(0xFFFD);
-
-        _chipAttachedToPortDecoder = false;
-    }
-}
-
-/// endregion </Ports interaction>
 
 /// region <PortDevice interface methods>
 
@@ -602,7 +739,28 @@ std::string SoundChip_AY8910::dumpAY8910State()
 
     ss << std::endl;
     ss << "AY8910 state:" << std::endl;
+    ss << StringHelper::Format("  tick: %d", _tick) << std::endl;
+    ss << StringHelper::Format("                Left: %lf", _mixedLeft);
+    ss << StringHelper::Format("      Right: %lf", _mixedRight) << std::endl;
+    ss << StringHelper::Format("  A sample: %.8lf", _left[AY_CHANNEL_A]);
+    ss << StringHelper::Format("  B sample: %.8lf", _left[AY_CHANNEL_B]);
+    ss << StringHelper::Format("  C sample: %.8lf", _left[AY_CHANNEL_C]) << std::endl;
+    ss << StringHelper::Format("  A sample:     0x%04X", (int16_t)(_left[AY_CHANNEL_A] * INT16_MAX));
+    ss << StringHelper::Format("  B sample:     0x%04X", (int16_t)(_left[AY_CHANNEL_B] * INT16_MAX));
+    ss << StringHelper::Format("  C sample:     0x%04X", (int16_t)(_left[AY_CHANNEL_C] * INT16_MAX)) << std::endl;
+
+    ss << StringHelper::Format("  A volume:       0x%02X", _toneGenerators[AY_CHANNEL_A].volume());
+    ss << StringHelper::Format("  B volume:       0x%02X", _toneGenerators[AY_CHANNEL_B].volume());
+    ss << StringHelper::Format("  C volume:       0x%02X", _toneGenerators[AY_CHANNEL_C].volume()) << std::endl;
+
     ss << dumpAY8910MixerState();
+
+    ss << dumpAY8910ToneGeneratorState(AY_CHANNEL_A) << std::endl;
+    ss << dumpAY8910ToneGeneratorState(AY_CHANNEL_B) << std::endl;
+    ss << dumpAY8910ToneGeneratorState(AY_CHANNEL_C) << std::endl;
+
+    ss << dumpAY8910NoiseGeneratorState() << std::endl;
+    ss << dumpAY8910EnvelopeGeneratorState() << std::endl;
 
 
     return ss.str();
@@ -611,15 +769,17 @@ std::string SoundChip_AY8910::dumpAY8910State()
 std::string SoundChip_AY8910::dumpAY8910MixerState()
 {
     std::stringstream ss;
+    uint8_t regValue = _registers.reg[AY_MIXER_CONTROL];
 
-    ss << "Mixer:" << std::endl;
-    ss << "  Channel A tone : " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'0001) ? "On" : "Off") << std::endl;
-    ss << "  Channel B tone : " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'0010) ? "On" : "Off") << std::endl;
-    ss << "  Channel C tone : " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'0100) ? "On" : "Off") << std::endl;
-    ss << "  Channel A noise: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0000'1000) ? "On" : "Off") << std::endl;
-    ss << "  Channel B noise: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0001'0000) ? "On" : "Off") << std::endl;
-    ss << "  Channel C noise: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0010'0000) ? "On" : "Off") << std::endl;
-    ss << "  Port A I/O ctrl: " << ((_registers.reg[AY_MIXER_CONTROL] & 0b0100'0000) ? "On" : "Off") << std::endl;
+    ss << StringHelper::Format("Mixer value: 0x%02X (%d) %s", regValue, regValue, StringHelper::FormatBinary(regValue).c_str()) << std::endl;
+    ss << "  Channel A tone : " << (!(regValue & 0b0000'0001) ? "On " : "Off");
+    ss << "  Channel B tone : " << (!(regValue & 0b0000'0010) ? "On " : "Off");
+    ss << "  Channel C tone : " << (!(regValue & 0b0000'0100) ? "On " : "Off") << std::endl;
+    ss << "  Channel A noise: " << (!(regValue & 0b0000'1000) ? "On " : "Off");
+    ss << "  Channel B noise: " << (!(regValue & 0b0001'0000) ? "On " : "Off");
+    ss << "  Channel C noise: " << (!(regValue & 0b0010'0000) ? "On " : "Off") << std::endl;
+    ss << "  Port A I/O ctrl: " << (!(regValue & 0b0100'0000) ? "IN " : "OUT");
+    ss << "  Port B I/O ctrl: " << (!(regValue & 0b0100'0000) ? "IN " : "OUT") << std::endl;
 
     return ss.str();
 }
@@ -651,7 +811,24 @@ std::string SoundChip_AY8910::dumpAY8910NoiseGeneratorState()
 {
     std::stringstream ss;
 
-    uint8_t noiseLevel = _registers.reg[AY_NOISE_PERIOD];
+    uint8_t period = _registers.reg[AY_NOISE_PERIOD];
+
+    ss << "Noise Generator: " << std::endl;
+    ss << StringHelper::Format("  Period: %d (0x%04X)", period, period) << std::endl;
+
+    return ss.str();
+}
+
+std::string SoundChip_AY8910::dumpAY8910EnvelopeGeneratorState()
+{
+    std::stringstream ss;
+
+    uint16_t period = _envelopeGenerator.period();
+    uint8_t shape = _envelopeGenerator.shape();
+
+    ss << "Envelope Generator: " << std::endl;
+    ss << StringHelper::Format("  Period: %d (0x%04X)", period, period) << std::endl;
+    ss << StringHelper::Format("  Shape : %d (0x02X)", shape, shape);
 
     return ss.str();
 }
@@ -670,8 +847,8 @@ std::string SoundChip_AY8910::dumpAY8910VolumeState(uint8_t channel)
     uint8_t registerValue = _registers.reg[registerIndex];
 
     ss << "Volume " << channelNames[channel] << ":" << std::endl;
-    ss << StringHelper::Format("  Amplitude  : 0x%04X", registerValue & 0x000'1111) << std::endl;
-    ss << StringHelper::Format("  HW envelope: %s", registerValue & 0x001'0000 ? "on" : "off") << std::endl;
+    ss << StringHelper::Format("  Amplitude  : 0x%04X", registerValue & 0b000'1111) << std::endl;
+    ss << StringHelper::Format("  HW envelope: %s", registerValue & 0b001'0000 ? "on" : "off");
 
     return ss.str();
 }
