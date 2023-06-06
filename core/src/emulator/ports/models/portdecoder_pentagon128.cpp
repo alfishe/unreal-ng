@@ -25,7 +25,7 @@ PortDecoder_Pentagon128::~PortDecoder_Pentagon128()
 /// region <Interface methods>
 
 // See: https://zx-pk.ru/archive/index.php/t-11295.html - Pentagon 128K ROM pages
-void PortDecoder_Pentagon128::Reset()
+void PortDecoder_Pentagon128::reset()
 {
     // Pentagon ROM pages
     // 0 - Service <-- Set after reset

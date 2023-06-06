@@ -353,7 +353,7 @@ void Core::Reset()
 	_screen->Reset();               // Reset all video subsystem
     _tape->reset();                 // Reset tape loader state
 	_hdd->Reset();					// Reset IDE controller
-    _portDecoder->Reset();          // Reset peripheral port decoder
+    _portDecoder->reset();          // Reset peripheral port decoder
 
 	// Input controllers reset
 	//input.atm51.reset();

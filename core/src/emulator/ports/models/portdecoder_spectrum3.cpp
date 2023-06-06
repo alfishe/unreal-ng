@@ -21,7 +21,7 @@ PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
 
 /// region <Interface methods>
 
-void PortDecoder_Spectrum3::Reset()
+void PortDecoder_Spectrum3::reset()
 {
     // Reset memory paging lock latch
     _7FFD_Locked = false;

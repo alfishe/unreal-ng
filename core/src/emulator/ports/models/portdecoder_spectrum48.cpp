@@ -23,7 +23,7 @@ PortDecoder_Spectrum48::~PortDecoder_Spectrum48()
 
 /// region <Interface methods>
 
-void PortDecoder_Spectrum48::Reset()
+void PortDecoder_Spectrum48::reset()
 {
     // Set default 48K memory pages
     Memory& memory = *_context->pMemory;

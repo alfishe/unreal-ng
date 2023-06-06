@@ -100,12 +100,12 @@ public:
 
     /// region <Interface methods>
 public:
-    virtual void Reset() = 0;
+    virtual void reset() = 0;
     virtual uint8_t DecodePortIn(uint16_t addr, uint16_t pc);
     virtual void DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc);
 
-    virtual void SetRAMPage(uint8_t oage) = 0;
-    virtual void SetROMPage(uint8_t page) = 0;
+    virtual void SetRAMPage(uint8_t oage) {};
+    virtual void SetROMPage(uint8_t page) {};
 
     virtual bool IsFEPort(uint16_t port);
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);

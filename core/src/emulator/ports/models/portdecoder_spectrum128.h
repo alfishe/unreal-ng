@@ -34,7 +34,7 @@ public:
 
     /// region <Interface methods>
 public:
-    void Reset() override;
+    void reset() override;
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
 

@@ -19,7 +19,7 @@ PortDecoder_Profi::~PortDecoder_Profi()
 
 /// region <Interface methods>
 
-void PortDecoder_Profi::Reset()
+void PortDecoder_Profi::reset()
 {
     // Reset memory paging lock latch
     _7FFD_Locked = false;

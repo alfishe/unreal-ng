@@ -25,7 +25,7 @@ PortDecoder_Spectrum128::~PortDecoder_Spectrum128()
 
 /// region <Interface methods>
 
-void PortDecoder_Spectrum128::Reset()
+void PortDecoder_Spectrum128::reset()
 {
     // ZX-Spectrum 128K ROM pages
     // 0 - SOS128 <-- Set after reset

@@ -21,7 +21,7 @@ PortDecoder_Scorpion256::~PortDecoder_Scorpion256()
 
 /// region <Interface methods>
 
-void PortDecoder_Scorpion256::Reset()
+void PortDecoder_Scorpion256::reset()
 {
     // Reset memory paging lock latch
     _7FFD_Locked = false;
