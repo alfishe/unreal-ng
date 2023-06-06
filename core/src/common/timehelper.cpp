@@ -1,7 +1,10 @@
-#include <mach/clock_types.h>
 #include "stdafx.h"
 
 #include "timehelper.h"
+
+#ifdef __APPLE__
+#include <mach/clock_types.h>
+#endif
 
 chrono_time_t TimeHelper::GetPrecisionTime()
 {
