@@ -24,48 +24,27 @@ struct AudioFrameDescriptor
     static constexpr uint8_t channels = AUDIO_CHANNELS;
     static constexpr size_t durationInMs = AUDIO_BUFFER_DURATION_MILLISEC;
     static constexpr size_t durationInSamples = SAMPLES_PER_FRAME;
-    static constexpr size_t memoryBufferSize = AUDIO_BUFFER_SIZE_PER_FRAME;
+    static constexpr size_t memoryBufferSizeInBytes = AUDIO_BUFFER_SIZE_PER_FRAME;
 
-    uint8_t memoryBuffer[memoryBufferSize] = {};
+    uint8_t memoryBuffer[memoryBufferSizeInBytes] = {};
 };
 
 class SoundManager
 {
-    /// region <Constants>
-public:
-    static const size_t AUDIO_BUFFERS = 3;
-
-    /// endregion </Constants>
-
-    /// region <Types>
-public:
-    typedef std::vector<std::vector<float>> AudioBuffer_t;
-
-    /// endregion </Types>
-
     /// region <Fields>
 protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
 
-    AudioFrameDescriptor _audioFrameDescriptor;         // Frame that exposed outside
-    AudioFrameDescriptor _renderAudioFrameDescriptor;   // Second frame for internal rendering
+    AudioFrameDescriptor _audioFrameDescriptor;                                 // Frame that exposed outside
+    int16_t* const _audioBuffer = (int16_t*)_audioFrameDescriptor.memoryBuffer; // Shortcut to it's sample buffer
 
-    int16_t* const _audioBuffer = (int16_t*)_audioFrameDescriptor.memoryBuffer;
-    int16_t* const _renderAudioBuffer = (int16_t*)_renderAudioFrameDescriptor.memoryBuffer;
     size_t  _prevFrane = 0;
     uint32_t _prevFrameTState = 0;
     int16_t _prevLeftValue;
     int16_t _prevRightValue;
 
     uint32_t _audioBufferWrites = 0;
-
-    AudioBuffer_t _outBeeper;
-    AudioBuffer_t _outBufferLeft;           // Final rendered PCM samples, left channel, @ selected sampling rate
-    AudioBuffer_t _outBufferRight;          // Final rendered PCM samples, right channel, @ selected sampling rate
-
-    size_t _outBufferReadOffset;
-    size_t _outBufferWriteOffset;
 
     // Supported sound chips
     Beeper*           _beeper;

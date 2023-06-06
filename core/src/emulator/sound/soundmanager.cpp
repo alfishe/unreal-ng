@@ -18,13 +18,7 @@ SoundManager::SoundManager(EmulatorContext *context)
     _ay8910 = new SoundChip_AY8910();
     _ym2149 = new SoundChip_YM2149();
 
-    // Reserve buffer capacity for 1 second of stereo PCM samples at selected sampling rate
-    constexpr int bufferSize = AUDIO_SAMPLING_RATE * AUDIO_BUFFER_DURATION_MILLISEC / 1000;
-    _outBufferLeft.resize(bufferSize);
-    _outBufferRight.resize(bufferSize);
-
     /// region <Debug functionality>
-    _logFile = fopen("unreal-tape-log.txt", "w"); // open the file in write mode
     _pcmFile = fopen("/Users/dev/Downloads/int16.pcm", "rb");
     /// endregion </Debug functionality>
 }
@@ -33,14 +27,9 @@ SoundManager::~SoundManager()
 {
     /// region <Debug functionality
     fclose(_pcmFile);
-    fclose(_logFile);
-    saveContinuousWaveFile(_continuousAudioBuffer);
     /// endregion /Debug functionality>
 
     closeWaveFile();
-
-    _outBufferLeft.clear();
-    _outBufferRight.clear();
 
     if (_ym2149)
     {
@@ -73,10 +62,6 @@ void SoundManager::reset()
     _prevLeftValue = 0;
     _prevRightValue = 0;
 
-    /// region <Debug functionality
-    _continuousAudioBuffer = {};
-    /// endregion /Debug functionality>
-
     // New wave file
     closeWaveFile();
     std::string filePath = "unreal.wav";
@@ -107,51 +92,6 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 {
     CONFIG& config = _context->config;
 
-    /// region <Debug functionality
-    {
-        Z80& cpu = *_context->pCore->GetZ80();
-        size_t clockCount = cpu.clock_count;
-
-        static constexpr double TSTATES_TO_AUDIO_INDEX = 44100.0 / 3'500'000.0;
-
-        size_t curTime = (config.frame * _context->emulatorState.frame_counter) + frameTState;
-        size_t prevTime = (config.frame * _prevFrane) + _prevFrameTState;
-        size_t deltaTime = curTime - prevTime;
-
-        size_t curIndex = curTime * TSTATES_TO_AUDIO_INDEX;
-        size_t prevIndex = prevTime * TSTATES_TO_AUDIO_INDEX;
-        size_t samplesToFill = curIndex - prevIndex;
-
-
-        std::string logLine = StringHelper::Format("[%d] [%0d] L: %04X R: %04X\n", clockCount, curIndex, (uint16_t)left, (uint16_t)right);
-        fwrite(logLine.c_str(), 1, logLine.size(), _logFile);
-
-        /*
-        // Resize audio buffer if needed
-        if (_continuousAudioBuffer.size() <= curIndex * 2)
-        {
-            _continuousAudioBuffer.resize(curIndex * 4);
-        }
-
-        // Detect rising edge
-        if (left > _prevLeftValue)
-        {
-            curIndex = curIndex;
-        }
-
-        // Fill all samples between updateDAC calls
-        for (size_t i = prevIndex; i < curIndex; i++)
-        {
-            _continuousAudioBuffer[(i << 1)] = _prevLeftValue;
-            _continuousAudioBuffer[(i << 1) + 1] = _prevRightValue;
-        }
-
-        _continuousAudioBuffer[curIndex << 1] = left;
-        _continuousAudioBuffer[(curIndex << 1) + 1] = right;
-         */
-    }
-    /// endregion /Debug functionality>
-
     // We're transitioned to new frame
     if (_prevFrameTState > frameTState && _prevFrameTState >= config.frame)
     {
@@ -181,23 +121,6 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     if (sampleIndex >= 882)
         sampleIndex = 881;
     /// endregion <If we're over frame duration>
-
-    // Fill the gap between previous call and current
-    if (sampleIndex > prevIndex)
-    {
-        for (size_t i = prevIndex; i < sampleIndex && i < _renderAudioFrameDescriptor.memoryBufferSize / 2; i++)
-        {
-            _renderAudioBuffer[i * 2] = _prevLeftValue;
-            _renderAudioBuffer[i * 2 + 1] = _prevRightValue;
-         }
-    }
-
-    // Render current samples
-    if (sampleIndex != prevIndex)
-    {
-        _renderAudioBuffer[sampleIndex * 2] = left;
-        _renderAudioBuffer[sampleIndex * 2 + 1] = right;
-    }
 
     _audioBufferWrites++;
 
@@ -242,53 +165,19 @@ void SoundManager::handleFrameStart()
     // Initialize render buffer with values corresponding to 0-bits from #FE (i.e. INT16_MIN)
     if (false)
     {
-        for (size_t i = 0; i < _renderAudioFrameDescriptor.durationInSamples * AUDIO_CHANNELS; i++)
+        for (size_t i = 0; i < _audioFrameDescriptor.durationInSamples * AUDIO_CHANNELS; i++)
         {
-            _renderAudioBuffer[i] = INT16_MIN;
+            _audioBuffer[i] = INT16_MIN;
         }
     }
     else
     {
-        memset(_renderAudioBuffer, 0x00, _renderAudioFrameDescriptor.memoryBufferSize);
+        memset(_audioBuffer, 0x00, _audioFrameDescriptor.memoryBufferSizeInBytes);
     }
 }
 
 void SoundManager::handleFrameEnd()
 {
-    if (false)
-    {
-        if (_audioBufferWrites > 0)
-        {
-            std::string dump = DumpHelper::HexDumpBuffer(_renderAudioFrameDescriptor.memoryBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
-        }
-
-        const int sampleCount = _renderAudioFrameDescriptor.durationInSamples;
-        static int16_t position = -32767;
-
-        for (int i = 0; i < sampleCount; i++)
-        {
-            _renderAudioBuffer[i * 2] = 0xAAAA;
-            _renderAudioBuffer[i * 2 + 1] = 0xBBBB;
-        }
-    }
-
-    /*
-    const int sampleCount = _audioFrameDescriptor.durationInSamples;
-    static int16_t position = -32767;
-
-    for (int i = 0; i < sampleCount; i++)
-    {
-        int16_t value = position;
-        _renderAudioBuffer[i * 2] = value;
-        _renderAudioBuffer[i * 2 + 1] = value;
-
-        position += 65535 / 100;
-    }*/
-
-    // Copy render buffer to external one
-    memcpy(_audioBuffer, _renderAudioBuffer, _audioFrameDescriptor.memoryBufferSize);
-    AudioHelper::filterDCRejectionStereoInterleaved(_audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
-
     /// region <Debug functionality>
 
     // Replace generated audio stream with pcm file
@@ -298,7 +187,7 @@ void SoundManager::handleFrameEnd()
         read = read;
     }
 
-    writeToWaveFile((uint8_t*)_audioBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
+    writeToWaveFile((uint8_t*)_audioBuffer, _audioFrameDescriptor.memoryBufferSizeInBytes);
     /// endregion </Debug functionality>
 
     // Enqueue generated sound data via previously registered application callback
