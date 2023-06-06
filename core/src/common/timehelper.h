@@ -19,9 +19,53 @@ public:
 	static unsigned GetTimeIntervalMs(chrono_time_t t1, chrono_time_t t2);
 
     /// region <Low-level timestamps>
-    inline static uint64_t GetTimestampNs();
-    inline static uint64_t GetTimestampUs();
-    inline static uint64_t GetTimestampMs();
+    inline static uint64_t GetTimestampNs()
+    {
+        struct timespec ts;
+        uint64_t result = 0;
+
+        if (timespec_get(&ts, TIME_UTC))
+        {
+            result = (uint64_t)ts.tv_sec * 1'000'000'000 + (uint64_t)ts.tv_nsec;
+        }
+
+        return result;
+    }
+
+    inline static uint64_t GetTimestampUs()
+    {
+        struct timeval tv;
+        uint64_t result;
+
+        gettimeofday(&tv, NULL);
+        result = (uint64_t)tv.tv_sec * 1'000'000 + (uint64_t)tv.tv_usec;
+
+        return result;
+    }
+
+    inline static uint64_t GetTimestampMs()
+    {
+        struct timespec ts;
+        uint64_t result = 0;
+
+#if defined(WIN32)
+        LARGE_INTEGER frequency;
+        LARGE_INTEGER ticks;
+        QueryPerformanceFrequency(&frequency);
+        QueryPerformanceCounter(&ticks);
+
+        uint64_t divider = frequency.QuadPart / 1'000'000;   // Convert from milliseconds to nanoseconds
+
+        result = ticks.QuadPart / divider;
+#else
+        if (timespec_get(&ts, TIME_UTC))
+        {
+            result = (uint64_t)ts.tv_sec * 1'000'000'000 + (uint64_t)ts.tv_nsec;
+        }
+#endif
+
+        return result;
+    }
     /// endregion </Low-level timestamps>
 };
 
