@@ -47,6 +47,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Create bridge between GUI and emulator
     _emulatorManager = EmulatorManager::defaultInstance();
 
+    // Init audio subsystem
+    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
+    soundManager.init();
+
     // Instantiate Logger window
     logWindow = new LogWindow();
 
@@ -70,6 +74,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
+
+    // Init audio subsystem
+    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
+    soundManager.stop();
+    soundManager.deinit();
 
     if (debuggerWindow != nullptr)
     {
@@ -440,7 +449,6 @@ void MainWindow::handleStartButton()
 
             // Attach emulator audio buffer
             AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-            soundManager.init();
             _emulator->SetAudioCallback(&soundManager, &AppSoundManager::audioCallback);
 
             // Attach emulator framebuffer to GUI
