@@ -75,9 +75,8 @@ MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
 
-    // Init audio subsystem
+    // Deinit audio subsystem
     AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-    soundManager.stop();
     soundManager.deinit();
 
     if (debuggerWindow != nullptr)

@@ -4,7 +4,7 @@
 
 #include "emulator/platform.h"
 #include "emulator/sound/soundmanager.h"
-#include "common/sound/filters/filter_lpf.h"
+#include "common/sound/filters/filter_dc.h"
 
 
 class EmulatorContext;
@@ -128,7 +128,7 @@ protected:
     size_t _tapePosition;
 
     bool _muteEAR = false;              // Mute EAR output when active tape loading is done (prevent noise clicks)
-    LowPassFilter _lpFilter;
+    FilterDC<int16_t> _dcFilter;
 
     // Tape input bitstream related
     std::vector<TapeBlock> _tapeBlocks; // Tape representation as parsed TapeBlock vector
