@@ -58,7 +58,7 @@ enum AYChannelsEnum : uint8_t
 
 /// endregion </Types>
 
-class SoundChip_AY8910 : public PortDecoder
+class SoundChip_AY8910 : public PortDecoder, public PortDevice
 {
     /// region <Constants>
 protected:
@@ -417,11 +417,11 @@ public:
     // Emulate physical interface with ports #BFFD, #FFFD
     void setRegister(uint8_t regAddr);
     uint8_t readCurrentRegister();
-    void writeCurrentRegister(uint8_t value, size_t time);
+    void writeCurrentRegister(uint8_t value);
 
     // Logic-level interface
     uint8_t readRegister(uint8_t regAddr);
-    void writeRegister(uint8_t regAddr, uint8_t value, size_t time);
+    void writeRegister(uint8_t regAddr, uint8_t value);
 
     /// endregion </Methods>
 

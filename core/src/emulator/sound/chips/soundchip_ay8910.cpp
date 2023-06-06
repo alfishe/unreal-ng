@@ -499,9 +499,9 @@ uint8_t SoundChip_AY8910::readCurrentRegister()
     return result;
 }
 
-void SoundChip_AY8910::writeCurrentRegister(uint8_t value, size_t time)
+void SoundChip_AY8910::writeCurrentRegister(uint8_t value)
 {
-    writeRegister(_currentRegister, value, time);
+    writeRegister(_currentRegister, value);
 }
 
 uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
@@ -518,7 +518,7 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
 }
 
 
-void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value, size_t time)
+void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
 {
     // Invalid register address provided - ignore it
     if (regAddr > 0x11)
@@ -621,11 +621,34 @@ uint8_t SoundChip_AY8910::portDeviceInMethod(uint16_t port)
 {
     uint8_t result = 0xFF;
 
+    switch (port)
+    {
+        case PORT_FFFD:
+            result = _currentRegister;
+            break;
+        case PORT_BFFD:
+            result = readCurrentRegister();
+            break;
+        default:
+            break;
+    }
+
     return result;
 }
+
 void SoundChip_AY8910::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-
+    switch (port)
+    {
+        case PORT_FFFD:
+            setRegister(value);
+            break;
+        case PORT_BFFD:
+            writeCurrentRegister(value);
+            break;
+        default:
+            break;
+    }
 }
 
 /// endregion </PortDevice interface methods>
@@ -640,8 +663,9 @@ bool SoundChip_AY8910::attachToPorts(PortDecoder* decoder)
     {
         _portDecoder = decoder;
 
-        result = decoder->RegisterPortHandler(0xBFFD, (PortDevice *)this);
-        result &= decoder->RegisterPortHandler(0xFFFD, (PortDevice *)this);
+        PortDevice* device = this;
+        result = decoder->RegisterPortHandler(0xBFFD, this);
+        result &= decoder->RegisterPortHandler(0xFFFD, this);
 
         if (result)
         {

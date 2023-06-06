@@ -334,7 +334,7 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
                 ayChip->portDeviceOutMethod(port, value);
             }
             else
-            */
+             */
             device->portDeviceOutMethod(port, value);
         }
     }

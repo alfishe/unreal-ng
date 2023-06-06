@@ -16,6 +16,9 @@ class Keyboard;
 
 /// region <Constants>
 
+constexpr uint16_t PORT_FFFD = 0xFFFD;
+constexpr uint16_t PORT_BFFD = 0xBFFD;
+
 // Port 0x7FFD bits
 constexpr uint8_t PORT_7FFD_RAM_BANK_BITMASK    = 0b0000'0111;
 constexpr uint8_t PORT_7FFD_SCREEN              = (1u << 3);
@@ -47,9 +50,6 @@ class PortDevice
 public:
     virtual uint8_t portDeviceInMethod(uint16_t port) = 0;
     virtual void portDeviceOutMethod(uint16_t port, uint8_t) = 0;
-
-    virtual void handleFrameStart() {};
-    virtual void handleFrameEnd() {};
 };
 
 typedef uint8_t (PortDevice::* PortDeviceInMethod)(uint16_t port);              // Class method callback
