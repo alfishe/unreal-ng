@@ -122,6 +122,24 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
         sampleIndex = 881;
     /// endregion <If we're over frame duration>
 
+    // Fill the gap between previous call and current
+    if (sampleIndex > prevIndex)
+    {
+        for (size_t i = prevIndex; i < sampleIndex && i < _audioFrameDescriptor.memoryBufferSizeInBytes / 2; i++)
+        {
+            _audioBuffer[i * 2] = _prevLeftValue;
+            _audioBuffer[i * 2 + 1] = _prevRightValue;
+        }
+    }
+
+    // Render current samples
+    if (sampleIndex != prevIndex)
+    {
+        _audioBuffer[sampleIndex * 2] = left;
+        _audioBuffer[sampleIndex * 2 + 1] = right;
+    }
+
+
     _audioBufferWrites++;
 
     // Remember timestamp and channel values
