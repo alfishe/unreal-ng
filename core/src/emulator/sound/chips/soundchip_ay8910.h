@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include "common/sound/filters/filter_dc.h"
+#include "emulator/ports/portdecoder.h"
 
 /// Information:
 /// See:
@@ -57,7 +58,7 @@ enum AYChannelsEnum : uint8_t
 
 /// endregion </Types>
 
-class SoundChip_AY8910
+class SoundChip_AY8910 : public PortDecoder
 {
     /// region <Constants>
 protected:
@@ -380,9 +381,15 @@ protected:
 
     /// endregion </Fields>
 
+    /// region <Interfacing fields>
+protected:
+    bool _chipAttachedToPortDecoder = false;
+    PortDecoder* _portDecoder = nullptr;
+    /// endregion </Interfacing fields>
+
     /// region <Constructors / Destructors>
 public:
-    SoundChip_AY8910();
+    SoundChip_AY8910(EmulatorContext* context);
     virtual ~SoundChip_AY8910() = default;
     /// endregion </Constructors / Destructors>
 
@@ -421,10 +428,13 @@ public:
     /// region <PortDevice interface methods>
     uint8_t portDeviceInMethod(uint16_t port);
     void portDeviceOutMethod(uint16_t port, uint8_t value);
-
-    void handleFrameStart();
-    void handleFrameEnd();
     /// endregion </PortDevice interface methods>
+
+    /// region <Ports interaction>
+public:
+    bool attachToPorts(PortDecoder* decoder);
+    void detachFromPorts();
+    /// endregion </Ports interaction>
 
     /// region <Debug methods>
 public:

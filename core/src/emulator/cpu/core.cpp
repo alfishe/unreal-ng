@@ -237,6 +237,13 @@ bool Core::Init()
 
     // endregion </Ports decoder>
 
+    /// region <Activate IO devices>
+    if (_sound)
+    {
+        _sound->attachAY8910ToPorts();
+    }
+    /// endregion </Activate IO devices>
+
     // Release all allocated object in case of at least single failure
     if (!result)
     {
@@ -267,6 +274,9 @@ void Core::Release()
     _context->pSoundManager = nullptr;
     if (_sound != nullptr)
     {
+        // Detach sound chips from the PortDecoder
+        _sound->detachAY8910FromPorts();
+
         delete _sound;
         _sound = nullptr;
     }

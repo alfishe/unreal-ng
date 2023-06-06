@@ -329,7 +329,7 @@ void SoundChip_AY8910::EnvelopeGenerator::holdBottom(EnvelopeGenerator* obj)
 
 /// region <Constructors / Destructors>
 
-SoundChip_AY8910::SoundChip_AY8910()
+SoundChip_AY8910::SoundChip_AY8910(EmulatorContext* context) : PortDecoder(context)
 {
     reset();
 }
@@ -628,17 +628,42 @@ void SoundChip_AY8910::portDeviceOutMethod(uint16_t port, uint8_t value)
 
 }
 
-void SoundChip_AY8910::handleFrameStart()
-{
-
-}
-
-void SoundChip_AY8910::handleFrameEnd()
-{
-
-}
-
 /// endregion </PortDevice interface methods>
+
+/// region <Ports interaction>
+
+bool SoundChip_AY8910::attachToPorts(PortDecoder* decoder)
+{
+    bool result = false;
+
+    if (decoder)
+    {
+        _portDecoder = decoder;
+
+        result = decoder->RegisterPortHandler(0xBFFD, (PortDevice *)this);
+        result &= decoder->RegisterPortHandler(0xFFFD, (PortDevice *)this);
+
+        if (result)
+        {
+            _chipAttachedToPortDecoder = true;
+        }
+    }
+
+    return result;
+}
+
+void SoundChip_AY8910::detachFromPorts()
+{
+    if (_portDecoder && _chipAttachedToPortDecoder)
+    {
+        _portDecoder->UnregisterPortHandler(0xBFFD);
+        _portDecoder->UnregisterPortHandler(0xFFFD);
+
+        _chipAttachedToPortDecoder = false;
+    }
+}
+
+/// endregion </Ports interaction>
 
 /// region <Debug methods>
 

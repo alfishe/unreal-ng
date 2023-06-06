@@ -111,7 +111,7 @@ public:
 
     /// region <Port interconnection>
 
-protected:
+public:
     bool attachAY8910ToPorts();
     bool detachAY8910FromPorts();
 

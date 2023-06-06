@@ -14,8 +14,8 @@ SoundManager::SoundManager(EmulatorContext *context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    _beeper = new Beeper(_context, 1500000, AUDIO_SAMPLING_RATE);
-    _ay8910 = new SoundChip_AY8910();
+    _beeper = new Beeper(_context, 3.5 * 1'000'000, AUDIO_SAMPLING_RATE);
+    _ay8910 = new SoundChip_AY8910(_context);
     _ym2149 = new SoundChip_YM2149();
 
     /// region <Debug functionality>
@@ -199,7 +199,7 @@ void SoundManager::handleFrameEnd()
     /// region <Debug functionality>
 
     // Replace generated audio stream with pcm file
-    if (true)
+    if (false)
     {
         int read = fread(_audioBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
         read = read;
@@ -263,14 +263,14 @@ bool SoundManager::attachAY8910ToPorts()
 {
     bool result = false;
 
-    //_ay8910->attachToPorts(_context->pPortDecoder);
+    //result = _ay8910->attachToPorts(_context->pPortDecoder);
 
     return result;
 }
 
 bool SoundManager::detachAY8910FromPorts()
 {
-    bool result = false;
+    bool result = true;
 
     //_ay8910->detachFromPorts();
 
