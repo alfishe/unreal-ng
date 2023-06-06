@@ -9,7 +9,7 @@
 
 /// region <Constructors / destructors>
 
-Tape::Tape(EmulatorContext *context)
+Tape::Tape(EmulatorContext *context) : _lpfFilter(6000, AUDIO_SAMPLING_RATE)
 {
     _context = context;
     _logger = _context->pModuleLogger;
@@ -96,7 +96,9 @@ uint8_t Tape::handlePortIn()
 
         // Only mic sound is heard to prevent clicks from keyboard polling out (#FE)
         int16_t micSample = tapeBit ? 1000 : -1000;
-        int16_t sample = _dcFilter.filter(micSample);   // Apply LPF filtering to remove high-frequency noise
+        int16_t sample = _lpfFilter.filter(sample);// Apply LPF filtering to remove high-frequency noise
+        sample = _dcFilter.filter(micSample);
+
         _context->pSoundManager->updateDAC(tState, sample, sample);
     }
     else

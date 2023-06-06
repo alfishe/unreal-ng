@@ -126,6 +126,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
         std::string logLine = StringHelper::Format("[%d] [%0d] L: %04X R: %04X\n", clockCount, curIndex, (uint16_t)left, (uint16_t)right);
         fwrite(logLine.c_str(), 1, logLine.size(), _logFile);
 
+        /*
         // Resize audio buffer if needed
         if (_continuousAudioBuffer.size() <= curIndex * 2)
         {
@@ -147,6 +148,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 
         _continuousAudioBuffer[curIndex << 1] = left;
         _continuousAudioBuffer[(curIndex << 1) + 1] = right;
+         */
     }
     /// endregion /Debug functionality>
 
