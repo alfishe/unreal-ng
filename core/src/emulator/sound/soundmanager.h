@@ -82,6 +82,15 @@ protected:
 
     /// endregion </Fields>
 
+    /// region <Debug functionality>
+public:
+    std::vector<int16_t> _continuousAudioBuffer;
+    void saveContinuousWaveFile(const std::vector<int16_t>& audioBuffer);
+
+    FILE* _logFile;
+    FILE* _pcmFile;
+    /// endregion </Debug functionality>
+
     /// region <Constructors / Destructors>
 public:
     SoundManager() = delete;                    // Disable default constructor

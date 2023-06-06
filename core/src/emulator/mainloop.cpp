@@ -6,6 +6,7 @@
 #include "common/timehelper.h"
 #include "3rdparty/message-center/eventqueue.h"
 #include <algorithm>
+#include <stringhelper.h>
 
 MainLoop::MainLoop(EmulatorContext* context)
 {
@@ -17,6 +18,8 @@ MainLoop::MainLoop(EmulatorContext* context)
     _screen = _context->pScreen;
     _soundManager = _context->pSoundManager;
 
+    _moreAudioDataRequested.store(false, std::memory_order_release);
+
     _isRunning = false;
 }
 
@@ -24,6 +27,12 @@ MainLoop::~MainLoop()
 {
     if (_isRunning)
         Stop();
+
+    // Unsubscribe from audio buffer state event(s)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
+    messageCenter.RemoveObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
     _screen = nullptr;
 	_cpu = nullptr;
@@ -48,6 +57,14 @@ void MainLoop::Run(volatile bool& stopRequested)
 	_pauseRequested = false;
 	_isRunning = true;
 
+    // Subscribe to audio buffer state event(s)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
+
+    // Subscribe to video frame refresh events
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
+    messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
+
 	/// region <Debug>
 
 	// Initialize animation
@@ -56,8 +73,14 @@ void MainLoop::Run(volatile bool& stopRequested)
 
 	/// endregion </Debug>
 
+    uint64_t lastRun = 0;
+    uint64_t betweenIterations = 0;
+
 	while (!stopRequested && !_stopRequested)
 	{
+        uint64_t startTime = TimeHelper::GetTimestampUs();
+        betweenIterations = startTime - lastRun;
+
 		unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
 
 		/// region <Handle Pause>
@@ -74,8 +97,19 @@ void MainLoop::Run(volatile bool& stopRequested)
         }
 		/// endregion </Handle Pause>
 
-		sleep_us(20000U - std::min(duration1, 20000U));
-        MLOGINFO("Frame recalculation time: %d us", duration1);
+        //MLOGINFO("Frame recalculation time: %d us", duration1);
+        std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
+        std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
+
+        // Wait until audio callback requests more data and buffer is about half-full
+        // That means we're in sync between audio and video frames
+        std::unique_lock<std::mutex> lock(_audioBufferMutex);
+        auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
+        _cv.wait(lock, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
+        _moreAudioDataRequested.store(false);
+        lock.unlock();
+
+        lastRun = startTime;
 	}
 
 	MLOGINFO("Stop requested, exiting main loop");
@@ -145,7 +179,7 @@ void MainLoop::RunFrame()
 
 	// Queue new frame data to Video/Audio encoding
 
-	// DEBUG: save frame to disk as image (only each 100th)
+	/// region <DEBUG: save frame to disk as image>
 
     static int i = 0;
 	//if (i % 100 == 0)
@@ -172,9 +206,7 @@ void MainLoop::RunFrame()
         //exit(1);
     }
 
-	// DEBUG: save frame to disk as image
-
-
+    /// endregion <DEBUG: save frame to disk as image>
 }
 
 void MainLoop::OnFrameStart()
@@ -189,12 +221,21 @@ void MainLoop::OnFrameEnd()
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 
     _context->pTape->handleFrameEnd();
-    _context->pSoundManager->handleFrameEnd();  // Sound manager will send NC_AUDIO_FRAME_REFRESH notification by itself
+    _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
 
     // Notify that video frame is composed and ready for rendering
     messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
 }
 
+void MainLoop::handleAudioBufferHalfFull(int id, Message* message)
+{
+    std::unique_lock<std::mutex> lock(_audioBufferMutex);
+
+    // Set the atomic variable to indicate frame sync
+    _moreAudioDataRequested.store(true, std::memory_order_release);
+    // Notify the main loop
+    _cv.notify_one();
+}
 
 //
 // Proceed with single frame CPU operations
@@ -202,39 +243,4 @@ void MainLoop::OnFrameEnd()
 void MainLoop::ExecuteCPUFrameCycle()
 {
 	_cpu->CPUFrameCycle();
-}
-
-
-/// Holds execution of current thread until next frame
-/// Note: uses SSE2 pause CPU instruction (_mm_pause instrinc) to achieve ultimate time resolution at the cost of CPU core utilization (although with low power consumption)
-void MainLoop::DoIdle()
-{
-	const CONFIG& config = _context->config;
-	const HOST& host = _context->host;
-
-	static volatile uint64_t prev_time = 0;
-
-	prev_time = rdtsc();
-
-	for (;;)
-	{
-		_mm_pause();
-
-		volatile uint64_t cur_time = rdtsc();
-		if ((cur_time - prev_time) >= host.ticks_frame)
-			break;
-
-		if (config.sleepidle)
-		{
-			uint32_t delay = uint32_t(((host.ticks_frame - (cur_time - prev_time)) * 1000ULL) / host.cpufq);
-
-			if (delay > 0)
-			{
-				sleep_ms(delay);
-				break;
-			}
-		}
-	}
-
-	prev_time = rdtsc();
 }

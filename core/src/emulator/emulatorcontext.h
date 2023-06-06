@@ -17,6 +17,10 @@ class SoundManager;
 class DebugManager;
 class Z80Disassembler;
 
+// Create callback type for audio
+// void audioCallback(int16_t* samples, size_t numSamples);
+typedef void (*AudioCallback)(void* obj, int16_t*, size_t);
+
 class EmulatorContext
 {
     /// region <Child object references>
@@ -57,6 +61,10 @@ public:
 
 	// Video controller parameters and logic
 	Screen* pScreen;
+
+    // Audio callback (will be triggered after each video frame render and provide audio samples for host system)
+    void * pAudioManagerObj;
+    AudioCallback pAudioCallback;
 
     // Sound manager
     SoundManager* pSoundManager;

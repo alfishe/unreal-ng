@@ -439,12 +439,13 @@ void MainWindow::handleStartButton()
             //breakpointManager.AddExecutionBreakpoint(0x05ED);   // LD_SAMPLE in SOS48
             //breakpointManager.AddExecutionBreakpoint(0x05FA);   // LD_SAMPLE - pilot edge detected
             //breakpointManager.AddExecutionBreakpoint(0x0562);   // LD_BYTES - first IN A,($FE)
+            //breakpointManager.AddExecutionBreakpoint(0x04D8);   // SA_LEADER - 5 seconds of pilot during SAVE
             /// endregion </Setup breakpoints>
 
             // Attach emulator audio buffer
-            const AudioFrameDescriptor& audioframeDesc = _emulator->GetAudioBuffer();
-            uint8_t* buffer = (uint8_t *)audioframeDesc.memoryBuffer;
-            _emulatorManager->getSoundManager().init(buffer, audioframeDesc.memoryBufferSize);
+            AppSoundManager& soundManager = _emulatorManager->getSoundManager();
+            soundManager.init();
+            _emulator->SetAudioCallback(&soundManager, &AppSoundManager::audioCallback);
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
@@ -463,11 +464,8 @@ void MainWindow::handleStartButton()
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             Observer* observerInstance = static_cast<Observer*>(this);
 
-            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageAudioRefresh);
-            messageCenter.AddObserver(NC_AUDIO_FRAME_REFRESH, observerInstance, callback);
-
             // Subscribe to video frame refresh events
-            callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
             messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
             // Notify debugger about new emulator instance

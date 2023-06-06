@@ -22,10 +22,21 @@ SoundManager::SoundManager(EmulatorContext *context)
     constexpr int bufferSize = AUDIO_SAMPLING_RATE * AUDIO_BUFFER_DURATION_MILLISEC / 1000;
     _outBufferLeft.resize(bufferSize);
     _outBufferRight.resize(bufferSize);
+
+    /// region <Debug functionality>
+    _logFile = fopen("unreal-tape-log.txt", "w"); // open the file in write mode
+    _pcmFile = fopen("/Users/dev/Downloads/int16.pcm", "rb");
+    /// endregion </Debug functionality>
 }
 
 SoundManager::~SoundManager()
 {
+    /// region <Debug functionality
+    fclose(_pcmFile);
+    fclose(_logFile);
+    saveContinuousWaveFile(_continuousAudioBuffer);
+    /// endregion /Debug functionality>
+
     closeWaveFile();
 
     _outBufferLeft.clear();
@@ -96,6 +107,49 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 {
     CONFIG& config = _context->config;
 
+    /// region <Debug functionality
+    {
+        Z80& cpu = *_context->pCore->GetZ80();
+        size_t clockCount = cpu.clock_count;
+
+        static constexpr double TSTATES_TO_AUDIO_INDEX = 44100.0 / 3'500'000.0;
+
+        size_t curTime = (config.frame * _context->emulatorState.frame_counter) + frameTState;
+        size_t prevTime = (config.frame * _prevFrane) + _prevFrameTState;
+        size_t deltaTime = curTime - prevTime;
+
+        size_t curIndex = curTime * TSTATES_TO_AUDIO_INDEX;
+        size_t prevIndex = prevTime * TSTATES_TO_AUDIO_INDEX;
+        size_t samplesToFill = curIndex - prevIndex;
+
+
+        std::string logLine = StringHelper::Format("[%d] [%0d] L: %04X R: %04X\n", clockCount, curIndex, (uint16_t)left, (uint16_t)right);
+        fwrite(logLine.c_str(), 1, logLine.size(), _logFile);
+
+        // Resize audio buffer if needed
+        if (_continuousAudioBuffer.size() <= curIndex * 2)
+        {
+            _continuousAudioBuffer.resize(curIndex * 4);
+        }
+
+        // Detect rising edge
+        if (left > _prevLeftValue)
+        {
+            curIndex = curIndex;
+        }
+
+        // Fill all samples between updateDAC calls
+        for (size_t i = prevIndex; i < curIndex; i++)
+        {
+            _continuousAudioBuffer[(i << 1)] = _prevLeftValue;
+            _continuousAudioBuffer[(i << 1) + 1] = _prevRightValue;
+        }
+
+        _continuousAudioBuffer[curIndex << 1] = left;
+        _continuousAudioBuffer[(curIndex << 1) + 1] = right;
+    }
+    /// endregion /Debug functionality>
+
     // We're transitioned to new frame
     if (_prevFrameTState > frameTState && _prevFrameTState >= config.frame)
     {
@@ -153,6 +207,30 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 }
 
 /// endregion </Methods>
+
+/// region <Debug functionality>
+void SoundManager::saveContinuousWaveFile(const std::vector<int16_t>& audioBuffer)
+{
+    const std::string filePath = "unreal-continuous.wav";
+    TinyWav tw;
+
+    //AudioHelper::filterDCRejectionStereoInterleaved((int16_t*)audioBuffer.data(), audioBuffer.size());
+
+    tinywav_open_write(
+            &tw,
+            AUDIO_CHANNELS,
+            AUDIO_SAMPLING_RATE,
+            TW_INT16,
+            TW_INTERLEAVED,
+            filePath.c_str());
+
+    // Save using method with Int16 samples input
+    size_t lengthInSamples = audioBuffer.size() / 2;
+    tinywav_write_i(&tw, (void*)audioBuffer.data(), lengthInSamples);
+
+    tinywav_close_write(&tw);
+}
+/// endregion </Debug functionality>
 
 /// region <Emulation events>
 void SoundManager::handleFrameStart()
@@ -221,8 +299,10 @@ void SoundManager::handleFrameEnd()
     writeToWaveFile((uint8_t*)_audioBuffer, _renderAudioFrameDescriptor.memoryBufferSize);
     /// endregion </Debug functionality>
 
+    // Enqueue generated sound data via previously registered application callback
     _context->pAudioCallback(_context->pAudioManagerObj, _audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
 }
+
 /// endregion </Emulation events>
 
 /// region <Wave file export>

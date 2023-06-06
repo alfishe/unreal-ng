@@ -42,6 +42,7 @@ inline const char* getEmulatorStateName(EmulatorStateEnum value)
 
     return names[value];
 };
+
 /// endregion </Types>
 
 class Emulator
@@ -109,8 +110,8 @@ public:
     Memory* GetMemory();
     DebugManager* GetDebugManager();
     BreakpointManager* GetBreakpointManager();
-    const AudioFrameDescriptor& GetAudioBuffer();
     FramebufferDescriptor GetFramebuffer();
+    void SetAudioCallback(void* obj, AudioCallback callback);
 
 	// Emulator control cycle
 	void Reset();

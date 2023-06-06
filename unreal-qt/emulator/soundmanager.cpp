@@ -4,10 +4,11 @@
 #include <QAudioOutput>
 #include <QDebug>
 #include <QMediaDevices>
-
-#include <emulator/sound/soundmanager.h>
-#include <QFile>
 #include <QBuffer>
+
+#include <common/sound/audiohelper.h>
+#include <emulator/sound/soundmanager.h>
+
 
 /// region <Constructors / destructors>
 AppSoundManager::~AppSoundManager()
@@ -18,30 +19,34 @@ AppSoundManager::~AppSoundManager()
 
 /// region <Methods>
 
-bool AppSoundManager::init(uint8_t* buffer, size_t len)
+bool AppSoundManager::init()
 {
     const QAudioDevice &deviceInfo = QMediaDevices::defaultAudioOutput();
-    bool result = init(deviceInfo, buffer, len);
-
-    return result;
+    return init(deviceInfo);
 }
 
-bool AppSoundManager::init(const QAudioDevice &deviceInfo, uint8_t* buffer, size_t len)
+bool AppSoundManager::init(const QAudioDevice &deviceInfo)
 {
     bool result = false;
 
-    _audioBuffer = buffer;
-    _audioBufferLen = len;
-
     // Set up audio format: stereo PCM. float samples, 44100 Hz sampling rate
     QAudioFormat audioFormat;
-    audioFormat.setChannelCount(2);
-    audioFormat.setSampleRate(AUDIO_SAMPLING_RATE);
-    audioFormat.setSampleFormat(QAudioFormat::Float);
-    audioFormat.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+
+    if (true)
+    {
+        audioFormat = deviceInfo.preferredFormat();
+    }
+    else
+    {
+        audioFormat.setChannelCount(AUDIO_CHANNELS);
+        audioFormat.setSampleRate(AUDIO_SAMPLING_RATE);
+        audioFormat.setSampleFormat(QAudioFormat::Float);
+        audioFormat.setChannelConfig(QAudioFormat::ChannelConfigStereo);
+    }
 
     _audioOutput.reset(new QAudioSink(deviceInfo, audioFormat));
-    _audioOutput->setBufferSize(16384);
+    _audioOutput->setBufferSize(4096);
+    _audioDevice.reset(new EmuAudioDevice());
 
     return result;
 }
@@ -53,9 +58,11 @@ void AppSoundManager::deinit()
 
 void AppSoundManager::start()
 {
-    if (!_audioDevice)
+    // Start playback in pull mode (Audio subsystem will call device's read method when data required)
+    if (_audioDevice)
     {
-        _audioDevice = _audioOutput->start();
+        _audioDevice->start();
+        _audioOutput->start(_audioDevice.data());
     }
 
     // New wave file
@@ -66,7 +73,7 @@ void AppSoundManager::start()
             &_tinyWav,
             AUDIO_CHANNELS,
             AUDIO_SAMPLING_RATE,
-            TW_FLOAT32,
+            TW_INT16,
             TW_INTERLEAVED,
             filePath.c_str());
 }
@@ -90,8 +97,6 @@ void AppSoundManager::stop()
         }
 
         _audioOutput->disconnect();
-
-        _audioDevice = nullptr;
     }
 }
 
@@ -99,7 +104,7 @@ void AppSoundManager::pushAudio(const std::vector<uint8_t>& payload)
 {
     static float audioBuffer[AUDIO_CHANNELS * SAMPLES_PER_FRAME];
 
-    if (!_audioDevice || !_audioBuffer || _audioBufferLen == 0 || payload.empty())
+    if (!_audioDevice || payload.empty())
         return;
 
     if (_audioDevice && _audioDevice->isOpen() && _audioOutput->state() != QAudio::StoppedState)
@@ -109,13 +114,9 @@ void AppSoundManager::pushAudio(const std::vector<uint8_t>& payload)
             /// region <Convert audio frame from interleaved Int16 to interleaved Float format>
             if (true)
             {
-                // Signed Int16 -> IEEE FLoat32 for each sample
-                int16_t *inputBuffer = (int16_t *)payload.data();
-
-                for (size_t i = 0; i < AUDIO_CHANNELS * SAMPLES_PER_FRAME; i++)
-                {
-                    audioBuffer[i] = ((float)inputBuffer[i]) / 32767.0f;
-                }
+                // Signed Int16 -> IEEE FLoat32 for all samples
+                const int16_t *inputBuffer = (int16_t *)payload.data();
+                AudioHelper::convertInt16ToFloat(inputBuffer, (float*)&audioBuffer, AUDIO_CHANNELS * SAMPLES_PER_FRAME);
             }
             else
             {
@@ -124,43 +125,6 @@ void AppSoundManager::pushAudio(const std::vector<uint8_t>& payload)
                 memcpy(audioBuffer, payload.data(), AUDIO_BUFFER_SIZE_PER_FRAME);
             }
             /// endregion </Convert audio frame from interleaved Int16 to interleaved Float format>
-
-            /// region <DC removal filter>
-            if (false)
-            {
-                double leftMeanValue = 0.0f;
-                double rightMeanValue = 0.0f;
-
-                // Left channel
-                for (int i = 0; i < SAMPLES_PER_FRAME; i += 2)
-                {
-                    leftMeanValue += audioBuffer[i];
-                }
-
-                leftMeanValue /= SAMPLES_PER_FRAME;
-
-                for (int i = 0; i < SAMPLES_PER_FRAME; i += 2)
-                {
-                    audioBuffer[i] -= leftMeanValue;
-                }
-
-
-                // Right channel
-                for (int i = 1; i < SAMPLES_PER_FRAME; i += 2)
-                {
-                    rightMeanValue += audioBuffer[i];
-                }
-
-                rightMeanValue /= SAMPLES_PER_FRAME;
-
-                for (int i = 1; i < SAMPLES_PER_FRAME; i += 2)
-                {
-                    audioBuffer[i] -= rightMeanValue;
-                }
-
-                qDebug() << QString::asprintf("DC offsets - left:%f, right:%f", leftMeanValue, rightMeanValue);
-            }
-            /// endregion </DC removal filter>
 
             /// region <Write to wave file>
 
@@ -181,7 +145,57 @@ void AppSoundManager::pushAudio(const std::vector<uint8_t>& payload)
     }
 }
 
+void AppSoundManager::writeData(int16_t* samples, size_t numSamples)
+{
+    static float audioBuffer[AUDIO_CHANNELS * SAMPLES_PER_FRAME];
+
+    if (_audioDevice && numSamples <= AUDIO_CHANNELS * SAMPLES_PER_FRAME)
+    {
+        if (false)
+        {
+            // Signed Int16 -> IEEE Float32 for all samples
+            const int16_t *inputBuffer = samples;
+            AudioHelper::convertInt16ToFloat(inputBuffer, (float *) &audioBuffer, numSamples);
+
+            //applyDCFilters(audioBuffer, numSamples);
+            _audioDevice->writeData((const char *) audioBuffer, numSamples * sizeof(float));
+
+            /// region <Write to wave file>
+
+            // Convert length from bytes to samples (stereo sample still counts as single)
+            // Save using method with Int16 samples input
+            tinywav_write_f(&_tinyWav, (void *)audioBuffer, numSamples);
+
+            /// endregion </Write to wave file>
+        }
+        else
+        {
+            // Write samples to ring buffer (will be played back by request from host audio system)
+            _audioDevice->writeData((const char *)samples, numSamples * sizeof(int16_t));
+
+            /// region <Write to wave file>
+
+            // Save using method with Int16 samples input
+            size_t samplesCount = numSamples / AUDIO_CHANNELS;  // tinywav_write_i requires only sample numbers (per channel)
+            tinywav_write_i(&_tinyWav, (void *)samples, samplesCount);
+
+            /// endregion </Write to wave file>
+        }
+    }
+}
+
+void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSamples)
+{
+    if (obj)
+    {
+        AppSoundManager* appSoundManager = static_cast<AppSoundManager *>(obj);
+
+        appSoundManager->writeData(samples, numSamples);
+    }
+}
+
 /// endregion </Methods>
+
 
 /// region <Info methods>
 
@@ -212,6 +226,6 @@ void AppSoundManager::onAudioDeviceChanged(const QAudioDevice &deviceInfo)
 {
     stop();
 
-    init(deviceInfo, _audioBuffer, _audioBufferLen);
+    init(deviceInfo);
 }
 /// endregion </Event handlers>

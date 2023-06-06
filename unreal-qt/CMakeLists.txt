@@ -23,9 +23,8 @@ add_subdirectory("${ROOT_DIR}/core/tests" tests)
 
 
 # Hint to CMake where to find Qt
-#set(CMAKE_PREFIX_PATH /Users/dev/Qt/5.15.2/clang_64)
-set(CMAKE_PREFIX_PATH /Users/dev/Qt/6.2.1/macos)
-set(CMAKE_MODULE_PATH /Users/dev/Qt/6.2.1/macos)
+#set(CMAKE_PREFIX_PATH /Users/dev/Qt/6.5.0/macos)
+#set(CMAKE_MODULE_PATH /Users/dev/Qt/6.5.0/macos)
 
 # Qt specific settings
 find_package(Qt6 REQUIRED)
