@@ -15,17 +15,10 @@ Tape::Tape(EmulatorContext *context) : _lpfFilter(6000, AUDIO_SAMPLING_RATE)
     _logger = _context->pModuleLogger;
 
     reset();
-
-    /// region <Debug functionality>
-    _logFile = fopen("unreal-tape-load-log.txt", "w"); // open the file in write mode
-    /// endregion </Debug functionality>
 }
 
 Tape::~Tape()
 {
-    /// region <Debug functionality>
-    fclose(_logFile);
-    /// endregion </Debug functionality>
 }
 
 /// endregion </Constructors / destructors>
