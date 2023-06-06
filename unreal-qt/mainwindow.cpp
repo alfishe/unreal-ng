@@ -227,15 +227,15 @@ void MainWindow::dropEvent(QDropEvent* event)
 
         switch (category)
         {
-            case ROM:
+            case FileROM:
                 break;
-            case Snapshot:
+            case FileSnapshot:
                 _emulator->LoadSnapshot(file);
                 break;
-            case Tape:
+            case FileTape:
                 //_emulator->LoadTape(file);
                 break;
-            case Disk:
+            case FileDisk:
                 //_emulator->LoadDisk(file);
                 break;
             default:

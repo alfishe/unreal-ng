@@ -1,8 +1,9 @@
 #pragma once
 #include "stdafx.h"
 
-#include "emulator/platform.h"
 #include <set>
+#include "emulator/platform.h"
+
 
 class ModuleLogger;
 class EmulatorContext;

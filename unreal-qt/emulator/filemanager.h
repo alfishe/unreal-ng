@@ -9,12 +9,12 @@
 
 enum SupportedFileCategoriesEnum
 {
-    Unknown = 0,
-    ROM,
-    Snapshot,
-    Tape,
-    Disk,
-    Archive
+    FileUnknown = 0,
+    FileROM,
+    FileSnapshot,
+    FileTape,
+    FileDisk,
+    FileArchive
 };
 
 enum SupportedPlatformEnum

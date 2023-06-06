@@ -4,29 +4,29 @@
 
 PatternCategoryMap FileManager::_extensions =
 {
-    { "rom", SupportedFileCategoriesEnum::ROM },
-    { "bin", SupportedFileCategoriesEnum::ROM },
-    { "bin", SupportedFileCategoriesEnum::ROM },
+    { "rom", SupportedFileCategoriesEnum::FileROM },
+    { "bin", SupportedFileCategoriesEnum::FileROM },
+    { "bin", SupportedFileCategoriesEnum::FileROM },
 
-    { "sna", SupportedFileCategoriesEnum::Snapshot },
-    { "z80", SupportedFileCategoriesEnum::Snapshot },
+    { "sna", SupportedFileCategoriesEnum::FileSnapshot },
+    { "z80", SupportedFileCategoriesEnum::FileSnapshot },
 
-    { "tap", SupportedFileCategoriesEnum::Tape },
-    { "tzx", SupportedFileCategoriesEnum::Tape },
+    { "tap", SupportedFileCategoriesEnum::FileTape },
+    { "tzx", SupportedFileCategoriesEnum::FileTape },
 
-    { "trd", SupportedFileCategoriesEnum::Disk },
-    { "scl", SupportedFileCategoriesEnum::Disk },
+    { "trd", SupportedFileCategoriesEnum::FileDisk },
+    { "scl", SupportedFileCategoriesEnum::FileDisk },
 
-    { "gz", SupportedFileCategoriesEnum::Archive },
-    { "tar", SupportedFileCategoriesEnum::Archive },
-    { "zip", SupportedFileCategoriesEnum::Archive },
-    { "rar", SupportedFileCategoriesEnum::Archive },
-    { "7z", SupportedFileCategoriesEnum::Archive },
+    { "gz", SupportedFileCategoriesEnum::FileArchive },
+    { "tar", SupportedFileCategoriesEnum::FileArchive },
+    { "zip", SupportedFileCategoriesEnum::FileArchive },
+    { "rar", SupportedFileCategoriesEnum::FileArchive },
+    { "7z", SupportedFileCategoriesEnum::FileArchive },
 };
 
 SupportedFileCategoriesEnum FileManager::determineFileCategoryByExtension(QString filepath)
 {
-    SupportedFileCategoriesEnum result = SupportedFileCategoriesEnum::Unknown;
+    SupportedFileCategoriesEnum result = SupportedFileCategoriesEnum::FileUnknown;
 
     QFileInfo fileInfo(filepath);
     if (!fileInfo.suffix().isEmpty())
