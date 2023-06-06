@@ -27,7 +27,7 @@ public:
 
     void clear()
     {
-        memset(_buffer, 0x00, sizeof(_buffer));
+        std::fill(_buffer, _buffer + Size, 0);
     }
 
     inline bool isEmpty() const
