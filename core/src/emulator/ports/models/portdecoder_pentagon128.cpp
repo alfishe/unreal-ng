@@ -55,11 +55,22 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
+    uint16_t decodedPort = port;
 
     if (IsPort_FE(port))
     {
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
+    }
+    else if (IsPort_BFFD(port))
+    {
+        decodedPort = 0xBFFD;
+        result = PeripheralPortIn(decodedPort);
+    }
+    else if (IsPort_FFFD(port))
+    {
+        decodedPort = 0xFFFD;
+        result = PeripheralPortIn(decodedPort);
     }
     else
     {
@@ -105,6 +116,16 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         decodedPort = 0x00FE;
         Default_Port_FE_Out(port, value, pc);
+    }
+    else if (IsPort_BFFD(port))
+    {
+        decodedPort = 0xBFFD;
+        PeripheralPortOut(decodedPort, value);
+    }
+    else if (IsPort_FFFD(port))
+    {
+        decodedPort = 0xFFFD;
+        PeripheralPortOut(decodedPort, value);
     }
     else
     {

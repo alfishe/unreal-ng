@@ -619,16 +619,9 @@ uint8_t SoundChip_AY8910::portDeviceInMethod(uint16_t port)
 {
     uint8_t result = 0xFF;
 
-    switch (port)
+    if (_currentRegister < 0x10)
     {
-        case PORT_FFFD:
-            result = _currentRegister;
-            break;
-        case PORT_BFFD:
-            result = readCurrentRegister();
-            break;
-        default:
-            break;
+        result = _registers.reg[_currentRegister];
     }
 
     return result;
