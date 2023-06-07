@@ -60,8 +60,14 @@ void SoundManager::reset()
     _ay8910->reset();
 
     _x = 0.0;
+    double oversample_stream_rate = AUDIO_SAMPLING_RATE * 8 * FilterInterpolate::DECIMATE_FACTOR; // 2822400 bits per second for 44100Hz sample rate
+    _clockStep = PSG_CLOCK_RATE / oversample_stream_rate;
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_ayBuffer, _ayBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
+
+    // Set FIR parameters
+    _leftFIR.setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
+    _rightFIR.setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
 
     // Reset sound rendering state
     _prevFrane = 0;
