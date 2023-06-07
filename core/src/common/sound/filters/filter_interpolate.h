@@ -106,6 +106,10 @@ public:
     {
         // Set default values;
         setRates(1'750'000, 44100);
+
+        _x = 0.0;
+        _firIndex = 0;
+        _firBlockPos = _firBuffer;
     }
 
     virtual ~FilterInterpolate() = default;

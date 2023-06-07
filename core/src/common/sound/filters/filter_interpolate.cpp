@@ -6,7 +6,9 @@ void FilterInterpolate::startOversamplingBlock()
 {
     static constexpr size_t MAX_FIR_BLOCK_INDEX = FIR_ORDER / DECIMATE_FACTOR - 1;
 
-    _firBlockPos = &_firBuffer[FIR_ORDER - _firIndex * DECIMATE_FACTOR];
+    size_t firBufferPos = FIR_ORDER - _firIndex * DECIMATE_FACTOR;
+    _firBlockPos = &_firBuffer[firBufferPos];
+
     _firIndex = (_firIndex + 1) % MAX_FIR_BLOCK_INDEX;
 }
 
