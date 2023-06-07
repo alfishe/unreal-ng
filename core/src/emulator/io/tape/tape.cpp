@@ -127,9 +127,10 @@ uint8_t Tape::handlePortIn()
             //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_NICOLAS_RODIONOV.tap");
             //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/traffic_lights.tap");
             //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
-            _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
+            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
             //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/earshaver.tap");
             //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/lphp.tap");
+            _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/AYtest_v0.2.tap");
 
             startTape();
         }
