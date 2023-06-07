@@ -182,6 +182,25 @@ void MainWindow::moveEvent(QMoveEvent *event)
     adjust(nullptr);
 }
 
+void MainWindow::changeEvent(QEvent* event)
+{
+    // Make app fullscreen and removes window header on window maximize
+    // Restores back on size restore
+    if (event->type() == QEvent::WindowStateChange)
+    {
+        if (windowState() == Qt::WindowMaximized)
+        {
+            setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+            showFullScreen();
+        }
+        else
+        {
+            setWindowFlags(Qt::Window);
+            showNormal();
+        }
+    }
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
 {
     // Highlight drop area when mouse enters the window
