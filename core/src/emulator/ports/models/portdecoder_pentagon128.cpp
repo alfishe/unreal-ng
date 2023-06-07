@@ -61,6 +61,11 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
         // Call default implementation
         result = Default_Port_FE_In(port, pc);
     }
+    else
+    {
+        // Allow registered peripheral device to handle port IN
+        result = PeripheralPortIn(port);
+    }
 
     /// region <Debug logging>
 

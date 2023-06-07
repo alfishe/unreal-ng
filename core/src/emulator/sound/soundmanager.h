@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "common/sound/audiofilehelper.h"
+#include "common/sound/filters/filter_interpolate.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/soundchip_ym2149.h"
 #include "beeper.h"
@@ -10,14 +11,21 @@
 
 class EmulatorContext;
 
-static const int AUDIO_CHANNELS = 2;
-static const int AUDIO_SAMPLING_RATE = 44100;
-static const int FRAMES_PER_SECOND = 50;
+static constexpr int FRAMES_PER_SECOND = 50;
+static constexpr size_t AUDIO_SAMPLING_RATE = 48000;
+static constexpr size_t AUDIO_CHANNELS = 2;
+static constexpr size_t CPU_CLOCK_RATE = 3.5 * 1'000'000;
+static constexpr size_t PSG_CLOCK_RATE = CPU_CLOCK_RATE / 2;
+static constexpr size_t PSG_CLOCKS_PER_AUDIO_SAMPLE = PSG_CLOCK_RATE / AUDIO_SAMPLING_RATE;
+static constexpr size_t AUDIO_SAMPLES_PER_VIDEO_FRAME = AUDIO_SAMPLING_RATE / FRAMES_PER_SECOND;
+
 static constexpr int AUDIO_BUFFER_DURATION_MILLISEC = 1000 / FRAMES_PER_SECOND;
 static constexpr int SAMPLES_PER_FRAME = AUDIO_SAMPLING_RATE / FRAMES_PER_SECOND;   // 882 audio samples per frame @44100
 static constexpr int AUDIO_BUFFER_SAMPLES_PER_FRAME = SAMPLES_PER_FRAME * AUDIO_CHANNELS;
 static constexpr int AUDIO_BUFFER_SIZE_PER_FRAME = SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(uint16_t);
 
+/// Holds memory buffer capable to store 20ms of stereo PCM samples at selected sampling rate
+/// The rest is just meta-information about that buffer
 struct AudioFrameDescriptor
 {
     static constexpr uint32_t samplingRate = AUDIO_SAMPLING_RATE;
@@ -36,10 +44,20 @@ protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
 
-    AudioFrameDescriptor _audioFrameDescriptor;                                 // Frame that exposed outside
-    int16_t* const _audioBuffer = (int16_t*)_audioFrameDescriptor.memoryBuffer; // Shortcut to it's sample buffer
-
     volatile bool _mute;
+
+    AudioFrameDescriptor _beeperAudioDescriptor;                                  // Audio descriptor for the beeper
+    int16_t* const _beeperBuffer = (int16_t*)_beeperAudioDescriptor.memoryBuffer; // Shortcut to it's sample buffer
+
+    /// region <AY emulation>
+    AudioFrameDescriptor _ayAudioDescriptor;                                      // Audio descriptor for AY
+    int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;         // Shortcut to it's sample buffer
+
+    double _clockStep;
+    double _x;
+    FilterInterpolate _leftFIR;
+    FilterInterpolate _rightFIR;
+    /// endregion </AY emulation>
 
     size_t  _prevFrane = 0;
     uint32_t _prevFrameTState = 0;
@@ -65,10 +83,6 @@ protected:
 
     /// region <Debug functionality>
 public:
-    std::vector<int16_t> _continuousAudioBuffer;
-    void saveContinuousWaveFile(const std::vector<int16_t>& audioBuffer);
-
-    FILE* _logFile;
     FILE* _pcmFile;
     /// endregion </Debug functionality>
 

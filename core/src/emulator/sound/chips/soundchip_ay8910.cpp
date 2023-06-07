@@ -37,7 +37,7 @@ const uint16_t SoundChip_AY8910::_volumeTable[32] =
 
 /// region <Registers>
 
-const char* SoundChip_AY8910::Registers::AYRegisterNames[18]
+const char* SoundChip_AY8910::Registers::AYRegisterNames[16]
 {
     " R0 - Channel A - fine tune",      // R0
     " R1 - Channel A - coarse tune",    // R1
@@ -47,16 +47,14 @@ const char* SoundChip_AY8910::Registers::AYRegisterNames[18]
     " R5 - Channel C - coarse tune",    // R5
     " R6 - Noise period",               // R6
     " R7 - Mixer Control Enable",       // R7
-    " R8 - <Reserved>",                 // R8
-    " R9 - <Reserved",                  // R9
-    "R10 - Channel A - Amplitude",      // R10
-    "R11 - Channel B - Amplitude",      // R11
-    "R12 - Channel C - Amplitude",      // R12
-    "R13 - Envelope period - fine",     // R13
-    "R14 - Envelope period - coarse",   // R14
-    "R15 - Envelope shape",             // R15
-    "R16 - I/O Port A data store",      // R16
-    "R17 - I/O Port B data store"       // R17
+    "R10 - Channel A - Amplitude",      // R8
+    "R11 - Channel B - Amplitude",      // R9
+    "R12 - Channel C - Amplitude",      // R10
+    "R13 - Envelope period - fine",     // R11
+    "R14 - Envelope period - coarse",   // R12
+    "R15 - Envelope shape",             // R13
+    "R16 - I/O Port A data store",      // R14
+    "R17 - I/O Port B data store"       // R15
 };
 
 /// endregion </Registers>
@@ -521,7 +519,7 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
 void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
 {
     // Invalid register address provided - ignore it
-    if (regAddr > 0x11)
+    if (regAddr > 0x0F)
         return;
 
     // XOR value with previous state => all non-zeroed bits indicate the change
@@ -570,8 +568,8 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
         {
             ToneGenerator& generator = _toneGenerators[AY_CHANNEL_B];
             uint8_t volume = _registers.reg[AY_B_VOLUME];
-            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
 
+            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
             generator.setVolume(volume);
             generator.setEnvelopeEnabled(isEnvelopeEnabled);
             break;
@@ -581,8 +579,8 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
         {
             ToneGenerator& generator = _toneGenerators[AY_CHANNEL_C];
             uint8_t volume = _registers.reg[AY_C_VOLUME];
-            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
 
+            bool isEnvelopeEnabled = (volume & 0b0001'0000) >> 4;
             generator.setVolume(volume);
             generator.setEnvelopeEnabled(isEnvelopeEnabled);
             break;

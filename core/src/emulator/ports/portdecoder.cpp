@@ -327,14 +327,6 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         PortDevice* device = _portDevices.at(port);
         if (device)
         {
-            /*
-            SoundChip_AY8910* ayChip = dynamic_cast<SoundChip_AY8910*>(device);
-            if (ayChip)
-            {
-                ayChip->portDeviceOutMethod(port, value);
-            }
-            else
-             */
             device->portDeviceOutMethod(port, value);
         }
     }

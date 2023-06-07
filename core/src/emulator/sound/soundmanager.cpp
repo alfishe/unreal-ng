@@ -56,6 +56,10 @@ void SoundManager::reset()
     // Reset all chips state
     _ay8910->reset();
 
+    _x = 0.0;
+    std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
+    std::fill(_ayBuffer, _ayBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
+
     // Reset sound rendering state
     _prevFrane = 0;
     _prevFrameTState = 0;
@@ -80,7 +84,7 @@ void SoundManager::unmute()
 
 const AudioFrameDescriptor& SoundManager::getAudioBufferDescriptor()
 {
-    return _audioFrameDescriptor;
+    return _beeperAudioDescriptor;
 }
 
 Beeper& SoundManager::getBeeper()
@@ -125,20 +129,19 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     // Fill the gap between previous call and current
     if (sampleIndex > prevIndex)
     {
-        for (size_t i = prevIndex; i < sampleIndex && i < _audioFrameDescriptor.memoryBufferSizeInBytes / 2; i++)
+        for (size_t i = prevIndex; i < sampleIndex && i < _beeperAudioDescriptor.memoryBufferSizeInBytes / 2; i++)
         {
-            _audioBuffer[i * 2] = _prevLeftValue;
-            _audioBuffer[i * 2 + 1] = _prevRightValue;
+            _beeperBuffer[i * 2] = _prevLeftValue;
+            _beeperBuffer[i * 2 + 1] = _prevRightValue;
         }
     }
 
     // Render current samples
     if (sampleIndex != prevIndex)
     {
-        _audioBuffer[sampleIndex * 2] = left;
-        _audioBuffer[sampleIndex * 2 + 1] = right;
+        _beeperBuffer[sampleIndex * 2] = left;
+        _beeperBuffer[sampleIndex * 2 + 1] = right;
     }
-
 
     _audioBufferWrites++;
 
@@ -151,30 +154,6 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 
 /// endregion </Methods>
 
-/// region <Debug functionality>
-void SoundManager::saveContinuousWaveFile(const std::vector<int16_t>& audioBuffer)
-{
-    const std::string filePath = "unreal-continuous.wav";
-    TinyWav tw;
-
-    //AudioHelper::filterDCRejectionStereoInterleaved((int16_t*)audioBuffer.data(), audioBuffer.size());
-
-    tinywav_open_write(
-            &tw,
-            AUDIO_CHANNELS,
-            AUDIO_SAMPLING_RATE,
-            TW_INT16,
-            TW_INTERLEAVED,
-            filePath.c_str());
-
-    // Save using method with Int16 samples input
-    size_t lengthInSamples = audioBuffer.size() / 2;
-    tinywav_write_i(&tw, (void*)audioBuffer.data(), lengthInSamples);
-
-    tinywav_close_write(&tw);
-}
-/// endregion </Debug functionality>
-
 /// region <Emulation events>
 void SoundManager::handleFrameStart()
 {
@@ -183,35 +162,87 @@ void SoundManager::handleFrameStart()
     // Initialize render buffer with values corresponding to 0-bits from #FE (i.e. INT16_MIN)
     if (false)
     {
-        for (size_t i = 0; i < _audioFrameDescriptor.durationInSamples * AUDIO_CHANNELS; i++)
+        for (size_t i = 0; i < _beeperAudioDescriptor.durationInSamples * AUDIO_CHANNELS; i++)
         {
-            _audioBuffer[i] = INT16_MIN;
+            _beeperBuffer[i] = INT16_MIN;
         }
     }
     else
     {
-        memset(_audioBuffer, 0x00, _audioFrameDescriptor.memoryBufferSizeInBytes);
+        memset(_beeperBuffer, 0x00, _beeperAudioDescriptor.memoryBufferSizeInBytes);
     }
 }
 
 void SoundManager::handleFrameEnd()
 {
+    size_t bufferIndex = 0;
+
+    for (size_t i = 0; i <  AUDIO_SAMPLES_PER_VIDEO_FRAME; i++)
+    {
+        int16_t leftSample;
+        int16_t rightSample;
+
+        if (true)
+        {
+            // Keep AY running on it's clock
+            for (int j = 0; j < PSG_CLOCKS_PER_AUDIO_SAMPLE; j++)
+            {
+                _ay8910->updateState();
+            }
+
+            // Add rendered audio samples
+            leftSample = _ay8910->outLeft();
+            rightSample = _ay8910->outRight();
+        }
+        else
+        {
+            _leftFIR.startOversamplingBlock();
+            _rightFIR.startOversamplingBlock();
+
+            // Oversample and apply LPF FIR
+            for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+            {
+                _x += _clockStep;
+
+                if (_x >= 1.0)
+                {
+                    _x -= 1.0;
+                    _ay8910->updateState(true);
+                }
+
+                _leftFIR.recalculateInterpolationCoefficients(j, _ay8910->mixedLeft());
+                _rightFIR.recalculateInterpolationCoefficients(j, _ay8910->mixedRight());
+            }
+
+            leftSample = _leftFIR.endOversamplingBlock() * INT16_MAX;
+            rightSample = _rightFIR.endOversamplingBlock() * INT16_MAX;
+
+            //leftSample = _ay8910->outLeft();
+            //rightSample = _ay8910->outRight();
+        }
+
+        // Store samples in output buffer
+        _ayBuffer[bufferIndex++] = leftSample;
+        _ayBuffer[bufferIndex++] = rightSample;
+    }
+
     /// region <Debug functionality>
 
     // Replace generated audio stream with pcm file
     if (false)
     {
-        int read = fread(_audioBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
+        int read = fread(_beeperBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
         read = read;
     }
 
-    writeToWaveFile((uint8_t*)_audioBuffer, _audioFrameDescriptor.memoryBufferSizeInBytes);
+    writeToWaveFile((uint8_t*)_beeperBuffer, _beeperAudioDescriptor.memoryBufferSizeInBytes);
     /// endregion </Debug functionality>
 
     // Enqueue generated sound data via previously registered application callback
     if (_context->pAudioCallback)
     {
-        _context->pAudioCallback(_context->pAudioManagerObj, _audioBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        //_context->pAudioCallback(_context->pAudioManagerObj, _beeperBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        _context->pAudioCallback(_context->pAudioManagerObj, _ayBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
     }
 }
 
