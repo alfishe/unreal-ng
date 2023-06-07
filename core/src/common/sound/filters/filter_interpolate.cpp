@@ -14,13 +14,6 @@ void FilterInterpolate::startOversamplingBlock()
 
 void FilterInterpolate::recalculateInterpolationCoefficients(size_t index, double sample)
 {
-#ifndef NDEBUG
-    if (index > DECIMATE_FACTOR - 1)
-    {
-        throw std::logic_error("Index must be less than DECIMATE_FACTOR - 1");
-    }
-#endif
-
     double y1;
     double* c = _c;
     double* y = _y;
