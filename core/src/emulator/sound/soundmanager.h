@@ -59,6 +59,9 @@ protected:
     FilterInterpolate _rightFIR;
     /// endregion </AY emulation>
 
+    AudioFrameDescriptor _outAudioDescriptor;                                      // Audio descriptor for mixer output
+    int16_t* const _outBuffer = (int16_t*)_outAudioDescriptor.memoryBuffer;        // Shortcut to it's sample buffer
+
     size_t  _prevFrane = 0;
     uint32_t _prevFrameTState = 0;
     int16_t _prevLeftValue;

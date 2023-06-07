@@ -64,6 +64,7 @@ void SoundManager::reset()
     _clockStep = PSG_CLOCK_RATE / oversample_stream_rate;
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_ayBuffer, _ayBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
+    std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
 
     // Set FIR parameters
     _leftFIR.setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
@@ -191,7 +192,7 @@ void SoundManager::handleFrameEnd()
         int16_t leftSample;
         int16_t rightSample;
 
-        if (true)
+        if (false)
         {
             // Keep AY running on it's clock
             for (int j = 0; j < PSG_CLOCKS_PER_AUDIO_SAMPLE; j++)
@@ -237,24 +238,32 @@ void SoundManager::handleFrameEnd()
 
     /// region <Debug functionality>
 
+    /// region <Mix all channels to output buffer>
+    for (size_t i = 0; i < AUDIO_BUFFER_SAMPLES_PER_FRAME; i++)
+    {
+        _outBuffer[i] = _ayBuffer[i] + _beeperBuffer[i];
+    }
+    /// endregion </Mix all channels to output buffer>
+
+
     // Replace generated audio stream with pcm file
     if (false)
     {
         if (_pcmFile)
         {
-            int read = fread(_ayBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
+            int read = fread(_outBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
             read = read;
         }
     }
 
-    writeToWaveFile((uint8_t*)_beeperBuffer, _beeperAudioDescriptor.memoryBufferSizeInBytes);
+    writeToWaveFile((uint8_t*)_outBuffer, _outAudioDescriptor.memoryBufferSizeInBytes);
     /// endregion </Debug functionality>
 
     // Enqueue generated sound data via previously registered application callback
     if (_context->pAudioCallback)
     {
         //_context->pAudioCallback(_context->pAudioManagerObj, _beeperBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
-        _context->pAudioCallback(_context->pAudioManagerObj, _ayBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        _context->pAudioCallback(_context->pAudioManagerObj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
     }
 }
 

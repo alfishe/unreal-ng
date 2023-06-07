@@ -20,7 +20,7 @@ protected:
     FilterDC<int16_t> _filterDCRight;
 
     ma_device _audioDevice;
-    AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 2> _ringBuffer;
+    AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
 
     // Save to Wave file
