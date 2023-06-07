@@ -36,16 +36,14 @@ enum AYRegisterEnum : uint8_t
     AY_C_COARSE,                // R5
     AY_NOISE_PERIOD,            // R6
     AY_MIXER_CONTROL,           // R7
-    AY_RESERVED_8,              // R8
-    AY_RESERVED_9,              // R9
-    AY_A_VOLUME,                // R10
-    AY_B_VOLUME,                // R11
-    AY_C_VOLUME,                // R12
-    AY_ENVELOPE_PERIOD_FINE,    // R13
-    AY_ENVELOPE_PERIOD_COARSE,  // R14
-    AY_ENVELOPE_SHAPE,          // R15
-    AY_PORTA,                   // R16
-    AY_PORTB                    // R17
+    AY_A_VOLUME,                // R8
+    AY_B_VOLUME,                // R9
+    AY_C_VOLUME,                // R10
+    AY_ENVELOPE_PERIOD_FINE,    // R11
+    AY_ENVELOPE_PERIOD_COARSE,  // R12
+    AY_ENVELOPE_SHAPE,          // R13
+    AY_PORTA,                   // R14
+    AY_PORTB                    // R15
 };
 
 /// AY tone generators enumeration
@@ -136,7 +134,7 @@ protected:
     {
         /// region <Constants>
     public:
-        static const char* AYRegisterNames[18];
+        static const char* AYRegisterNames[16];
         /// endregion </Constants>
 
         uint8_t ChannelA_Fine;          // R0
@@ -147,21 +145,19 @@ protected:
         uint8_t ChannelC_Coarse;        // R5
         uint8_t Noise_Period;           // R6
         uint8_t Mixer_Control;          // R7
-        uint8_t Reserved_8;             // R8
-        uint8_t Reserved_9;             // R9
-        uint8_t ChannelA_Amplitude;     // R10
-        uint8_t ChannelB_Amplitude;     // R11
-        uint8_t ChannelC_Amplitude;     // R12
-        uint8_t EnvelopePeriod_Fine;    // R13
-        uint8_t EnvelopePeriod_Coarse;  // R14
-        uint8_t Envelope_Shape;         // R15
-        uint8_t IOPortA_Datastore;      // R16
-        uint8_t IOPortB_Datastore;      // R17
+        uint8_t ChannelA_Amplitude;     // R8
+        uint8_t ChannelB_Amplitude;     // R9
+        uint8_t ChannelC_Amplitude;     // R10
+        uint8_t EnvelopePeriod_Fine;    // R11
+        uint8_t EnvelopePeriod_Coarse;  // R12
+        uint8_t Envelope_Shape;         // R13
+        uint8_t IOPortA_Datastore;      // R14
+        uint8_t IOPortB_Datastore;      // R15
     };
 
     union AYRegisters
     {
-        uint8_t reg[18];
+        uint8_t reg[16];
         Registers named;
     };
 

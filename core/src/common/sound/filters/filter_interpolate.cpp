@@ -19,14 +19,6 @@ void FilterInterpolate::recalculateInterpolationCoefficients(size_t index, doubl
     }
 #endif
 
-/// region <Debug>
-    if (sample > 0.0)
-    {
-        (void)sample;
-    }
-/// endregion </Debug>
-
-
     double y1;
     double* c = _c;
     double* y = _y;
