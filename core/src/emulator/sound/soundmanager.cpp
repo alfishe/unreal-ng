@@ -26,10 +26,13 @@ SoundManager::SoundManager(EmulatorContext *context)
 SoundManager::~SoundManager()
 {
     /// region <Debug functionality
-    fclose(_pcmFile);
-    /// endregion /Debug functionality>
+    if (_pcmFile)
+    {
+        fclose(_pcmFile);
+    }
 
     closeWaveFile();
+    /// endregion /Debug functionality>
 
     if (_ym2149)
     {
@@ -231,8 +234,11 @@ void SoundManager::handleFrameEnd()
     // Replace generated audio stream with pcm file
     if (false)
     {
-        int read = fread(_beeperBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
-        read = read;
+        if (_pcmFile)
+        {
+            int read = fread(_ayBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
+            read = read;
+        }
     }
 
     writeToWaveFile((uint8_t*)_beeperBuffer, _beeperAudioDescriptor.memoryBufferSizeInBytes);
