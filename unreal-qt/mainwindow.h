@@ -59,6 +59,8 @@ protected:
 
     void arrangeWindows();
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
+    void showFullscreen();
+    void showNormal();
 
 private:
     Ui::MainWindow* ui = nullptr;
@@ -73,6 +75,7 @@ private:
     Emulator* _emulator = nullptr;
     uint32_t _lastFrameCount = 0;
 
-    QPoint m_lastCursorPos;
+    QPoint _lastCursorPos;
+    QPalette _originalPalette;
 };
 #endif // MAINWINDOW_H

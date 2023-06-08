@@ -26,6 +26,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     ui->setupUi(this);
     startButton = ui->startEmulator;
 
+    // Store original palette
+    _originalPalette = palette();
+
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
@@ -69,6 +72,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Enable event filter to passthrough keyboard events to DeviceScreen
     contentFrame->installEventFilter(this);
     this->installEventFilter(this);
+
+
+    /// region <Debug>
+
+    /// endregion </Debug>
 }
 
 MainWindow::~MainWindow()
@@ -184,19 +192,53 @@ void MainWindow::moveEvent(QMoveEvent *event)
 
 void MainWindow::changeEvent(QEvent* event)
 {
+    QWidget::changeEvent(event);
+
     // Make app fullscreen and removes window header on window maximize
     // Restores back on size restore
     if (event->type() == QEvent::WindowStateChange)
     {
-        if (windowState() == Qt::WindowMaximized)
+        QWindowStateChangeEvent *stateEvent = (QWindowStateChangeEvent *)event;
+
+        Qt::WindowStates state = windowState();
+        switch (state)
         {
-            setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
-            showFullScreen();
-        }
-        else
-        {
-            setWindowFlags(Qt::Window);
-            showNormal();
+            case Qt::WindowMaximized:
+            case Qt::WindowFullScreen:
+            {
+                qDebug() << "Maximized";
+
+                // Apply black background
+                QPalette palette;
+                palette.setColor(QPalette::Window, Qt::black);
+                setPalette(palette);
+
+                statusBar()->hide();
+                startButton->hide();
+
+                setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+                showFullScreen();
+                update();   // Redraw screen
+                break;
+            }
+            case Qt::WindowMinimized:
+                qDebug() << "Minimized";
+                break;
+            case Qt::WindowNoState:
+                qDebug() << "Restored";
+
+                // Restore background color
+                setPalette(_originalPalette);
+
+                statusBar()->show();
+                startButton->show();
+
+                setWindowFlags(Qt::Window);
+                showNormal();
+                update();   // Redraw screen
+                break;
+            default:
+                break;
         }
     }
 }
@@ -325,7 +367,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             }
             break;
         case QEvent::Move:
-            m_lastCursorPos = QCursor::pos();
+            _lastCursorPos = QCursor::pos();
             break;
         case QEvent::Resize:
         case QEvent::Show:
@@ -333,7 +375,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             break;
 #ifdef Q_OS_OSX
         case QEvent::NonClientAreaMouseButtonPress:
-            m_lastCursorPos = QCursor::pos();
+            _lastCursorPos = QCursor::pos();
             break;
         case QEvent::NonClientAreaMouseButtonRelease:
             adjust(event);
@@ -342,7 +384,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             {
                 if (static_cast<QMouseEvent *>(event)->buttons() == Qt::LeftButton)
                 {
-                    QPoint delta = QCursor::pos() - m_lastCursorPos;
+                    QPoint delta = QCursor::pos() - _lastCursorPos;
                     adjust(event, delta);
                 }
             }
@@ -393,6 +435,17 @@ void MainWindow::adjust(QEvent* event, const QPoint& delta)
         QPoint targetPoint = this->geometry().topRight() + delta;
         logWindow->move(targetPoint);
     }
+}
+
+void MainWindow::showFullscreen()
+{
+    QWidget::showFullScreen();
+
+}
+
+void MainWindow::showNormal()
+{
+    QWidget::showNormal();
 }
 
 /// endregion </Protected members>
