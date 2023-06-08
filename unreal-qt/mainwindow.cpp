@@ -382,15 +382,16 @@ void MainWindow::arrangeWindows()
 
 void MainWindow::adjust(QEvent* event, const QPoint& delta)
 {
-    const QPoint offsetDebugger(-debuggerWindow->geometry().width(), 0);
     if (debuggerWindow)
     {
+        const QPoint offsetDebugger(-debuggerWindow->geometry().width(), 0);
         debuggerWindow->move(this->geometry().topLeft() + offsetDebugger + delta);
     }
 
     if (logWindow)
     {
-        logWindow->move(this->geometry().topRight() + delta);
+        QPoint targetPoint = this->geometry().topRight() + delta;
+        logWindow->move(targetPoint);
     }
 }
 

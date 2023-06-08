@@ -61,11 +61,11 @@ protected:
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
-    Ui::MainWindow* ui;
-    DebuggerWindow* debuggerWindow;
-    LogWindow* logWindow;
-    DeviceScreen* deviceScreen;
-    QPushButton* startButton;
+    Ui::MainWindow* ui = nullptr;
+    DebuggerWindow* debuggerWindow = nullptr;
+    LogWindow* logWindow = nullptr;
+    DeviceScreen* deviceScreen = nullptr;
+    QPushButton* startButton = nullptr;
     QMutex lockMutex;
 
     EmulatorManager* _emulatorManager = nullptr;
