@@ -77,7 +77,10 @@ protected:
 
     // How many AY cycles in each audio sample (at selected sampling rate / frequency)
     static constexpr double CYCLES_PER_SAMPLE = AY_BASE_FREQUENCY / AY_SAMPLING_RATE;
+public:
+    static const char* AYRegisterNames[16];
 
+protected:
     // Number of tone generators in AY8910
     static constexpr size_t TONE_CHANNELS = 3;
 
@@ -124,42 +127,9 @@ protected:
 
     const double* _volumeDACTablePtr = (double*)&AY_DAC_TABLE;
 
-    // 16-bit volume table for AY-8910
-    static const uint16_t _volumeTable[32];
     /// endregion </Constants>
 
     /// region <Nested classes>
-
-    struct Registers
-    {
-        /// region <Constants>
-    public:
-        static const char* AYRegisterNames[16];
-        /// endregion </Constants>
-
-        uint8_t ChannelA_Fine;          // R0
-        uint8_t ChannelA_Coarse;        // R1
-        uint8_t ChannelB_Fine;          // R2
-        uint8_t ChannelB_Coarse;        // R3
-        uint8_t ChannelC_Fine;          // R4
-        uint8_t ChannelC_Coarse;        // R5
-        uint8_t Noise_Period;           // R6
-        uint8_t Mixer_Control;          // R7
-        uint8_t ChannelA_Amplitude;     // R8
-        uint8_t ChannelB_Amplitude;     // R9
-        uint8_t ChannelC_Amplitude;     // R10
-        uint8_t EnvelopePeriod_Fine;    // R11
-        uint8_t EnvelopePeriod_Coarse;  // R12
-        uint8_t Envelope_Shape;         // R13
-        uint8_t IOPortA_Datastore;      // R14
-        uint8_t IOPortB_Datastore;      // R15
-    };
-
-    union AYRegisters
-    {
-        uint8_t reg[16];
-        Registers named;
-    };
 
     /// <b>Information:</b>
     /// Produce the basic square wave tone frequencies for each channel (A, B, C)
@@ -333,7 +303,6 @@ protected:
         /// region <Helper methods>
     protected:
         void resetSegment();
-        void generateEnvelopeShapes();
         /// endregion </Helper methods>
 
         /// region <Envelope handlers>
@@ -350,7 +319,7 @@ protected:
     /// region <Fields>
 protected:
     // AY8910 registers
-    AYRegisters _registers;
+    uint8_t _registers[16] = { 0 };
 
     // 3x Tone generators (A,B,C) + 1x Noise Generator + 1x Envelope Generator
     ToneGenerator _toneGenerators[3];
@@ -435,8 +404,8 @@ public:
     /// region <Debug methods>
 public:
     uint32_t getToneGeneratorDivisor(uint8_t fine, uint8_t coarse);
-    double getToneGeneratorFrequency(uint8_t fine, uint8_t coarse);
-    double getNoiseGeneratorFrequency(uint8_t divisor);
+    double getToneGeneratorFrequency(size_t baseFrequency, uint8_t fine, uint8_t coarse);
+    double getNoiseGeneratorFrequency(size_t baseFrequency, uint8_t divisor);
 
     std::string printFrequency(double frequency);
     std::string printToneDivisorsFromFrequency(double targetFrequency, double audioChipClockRate);
