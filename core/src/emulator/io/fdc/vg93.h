@@ -111,6 +111,7 @@ public:
     }
     static void crc32(int &crc, uint8_t *buf, unsigned len);
 };
+
 /// endregion </Types>
 
 /// region <Constants>
@@ -122,6 +123,7 @@ static constexpr size_t MAX_PHYSICAL_CYLINDER = 86;     // FDC won't perform see
 static constexpr size_t MAX_SECTOR = 256;               // Max sectors per track
 /// endregion </Constants>
 
+/// @see https://www.retrotechnology.com/herbs_stuff/WD179X.PDF
 /// @see https://zxpress.ru/book_articles.php?id=1356
 /// Track 0 is the most outer track of the floppy disk
 class VG93 : public PortDecoder, public PortDevice
@@ -186,24 +188,53 @@ public:
         WDS_NOTRDY    = 0x80
     };
 
-    // WD93 / VG93 commands
+    /// WD93 / VG93 commands
     enum WD_COMMANDS : uint8_t
     {
-        WD_CMD_RESTORE,
-        WD_CMD_SEEK,
-        WD_CMD_STEP,
-        WD_CMD_STEP_FWD,
-        WD_CMD_STEP_RWD,
+        WD_CMD_RESTORE = 0,     // Restore         - Move the read/write head to the outermost track (track 0)
+        WD_CMD_SEEK,            // Seek            - Move the read/write head to a specified track on the floppy disk
+        WD_CMD_STEP,            // Step            - Moves the read/write head in the direction previously specified (inwards or outwards) by the "step in" or "step out" command.
+        WD_CMD_STEP_IN,         // Step In         - Moves the read/write head one track towards the center of the disk (increase track number)
+        WD_CMD_STEP_OUT,        // Step Out        - Moves the read/write head one track away from the center of the disk (decrease track number)
 
-        WD_CMD_READ_SECTOR,
-        WD_CMD_WRITE_SECTOR,
+        WD_CMD_READ_SECTOR,     // Read Sector     - Read a single sector from the current track
+        WD_CMD_WRITE_SECTOR,    // Write Sector    - Write data to a specified sector on the current track
 
-        WD_CMD_READ_ADDRESS,
-        WD_CMD_READ_TRACK,
-        WD_CMD_WRITE_TRACK,
+        WD_CMD_READ_ADDRESS,    // Read Address    - Reads the address field (track number, side number, sector number) of the current sector
+        WD_CMD_READ_TRACK,      // Read Track      - Read the entire contents of a track into the FDC's internal buffer
+        WD_CMD_WRITE_TRACK,     // Write Track     - Write an entire track worth of data from the FDC's internal buffer to the floppy disk
 
-        WD_CMD_INTERRUPT
+        WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
+
+    // Force Interrupt command parameter bits
+    enum WD_FORCE_INTERRUPT_BITS : uint8_t
+    {
+        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
+        WD_FORCE_INTERRUPT_READY                = 0x02,
+        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
+        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
+    };
+
+    inline static const char* const getWD_COMMANDName(WD_COMMANDS command)
+    {
+        static const char* const names[] =
+        {
+            "Restore",          // [ 0] Restore
+            "Seek",             // [ 1] Seek
+            "Step",             // [ 2] Step
+            "Step In",          // [ 3] Step In
+            "Step Out",         // [ 4] Step Out
+            "Read Sector",      // [ 5] Read Sector
+            "Write Sector",     // [ 6] Write Sector
+            "Read Address",     // [ 7] Read Address
+            "Read Track",       // [ 8] Read Track
+            "Write Track",      // [ 9] Write Track
+            "Force Interrupt"   // [10] Force Interrupt
+        };
+
+       return names[command];
+    }
 
     enum WD93_CMD_BITS : uint8_t
     {
@@ -236,10 +267,16 @@ public:
     {
         SIG_HLD = 0x01
     };
+
+    using CommandHandler = void (VG93::*)(uint8_t);
+
     /// endregion </Types>
 
     /// region <Constants>
 protected:
+    static constexpr size_t WD93_COMMAND_COUNT = 11;
+    static constexpr size_t WD_UNUSED_COMMANDS = 1;
+
     // Decoded port addresses (physical address line matching done in platform port decoder)
     static constexpr uint16_t PORT_1F = 0x001F;     // Write - command register; Read - state
     static constexpr uint16_t PORT_3F = 0x003F;     // Track register
@@ -273,10 +310,13 @@ public:
     uint8_t _status;
     uint8_t _extStatus;                         // External status. Only HLD is supported
 
-    int16_t _stepDirection;
-    uint8_t _beta128;                           // BETA128 system register
+    int16_t _stepDirection = 1;                 // Head movement direction
+    uint8_t _beta128 = 0x00;                    // BETA128 system register
 
-    uint16_t _indexCounter;
+    size_t _indexCounter = 0;                   // Index pulses counter
+    size_t _rotationCounter = 0;                  // Tracks disk rotation
+
+    uint16_t _trackCRC = 0x0000;                // Track CRC (used during formatting)
 
     /// endregion </Fields>
 
@@ -288,10 +328,31 @@ public:
 
     /// region <Methods>
 public:
+    void eject(uint8_t drive);
+
+protected:
     void process();
     void processBeta128(uint8_t value);
     uint8_t readStatus();
-    void eject(uint8_t drive);
+
+    static WD_COMMANDS decodeWD93Command(uint8_t value);
+    static uint8_t getWD93CommandValue(VG93::WD_COMMANDS command, uint8_t value);
+    void processWD93Command(uint8_t value);
+    void updateStatusesForReadWrite();
+    void updateStatusesForSeek(uint8_t maskedValue);
+
+    void cmdRestore(uint8_t value);
+    void cmdSeek(uint8_t value);
+    void cmdStep(uint8_t value);
+    void cmdStepIn(uint8_t value);
+    void cmdStepOut(uint8_t value);
+    void cmdReadSector(uint8_t value);
+    void cmdWriteSector(uint8_t value);
+    void cmdReadAddress(uint8_t value);
+    void cmdReadTrack(uint8_t value);
+    void cmdWriteTrack(uint8_t value);
+    void cmdForceInterrupt(uint8_t value);
+
 
     /// endregion </Methods>
 
@@ -307,3 +368,32 @@ public:
     void detachFromPorts();
     /// endregion </Ports interaction>
 };
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class VG93CUT : public VG93
+{
+public:
+    VG93CUT(EmulatorContext* context) : VG93(context) {};
+
+    using VG93::decodeWD93Command;
+    using VG93::getWD93CommandValue;
+    using VG93::processWD93Command;
+
+    using VG93::cmdRestore;
+    using VG93::cmdSeek;
+    using VG93::cmdStep;
+    using VG93::cmdStepIn;
+    using VG93::cmdStepOut;
+    using VG93::cmdReadSector;
+    using VG93::cmdWriteSector;
+    using VG93::cmdReadAddress;
+    using VG93::cmdReadTrack;
+    using VG93::cmdWriteTrack;
+    using VG93::cmdForceInterrupt;
+};
+
+#endif // _CODE_UNDER_TEST
