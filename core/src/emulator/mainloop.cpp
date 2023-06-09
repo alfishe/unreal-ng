@@ -3,10 +3,11 @@
 #include "common/modulelogger.h"
 
 #include "mainloop.h"
+#include <common/stringhelper.h>
 #include "common/timehelper.h"
 #include "3rdparty/message-center/eventqueue.h"
 #include <algorithm>
-#include <stringhelper.h>
+
 
 MainLoop::MainLoop(EmulatorContext* context)
 {

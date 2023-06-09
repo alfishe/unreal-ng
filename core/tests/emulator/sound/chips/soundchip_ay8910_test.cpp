@@ -10,7 +10,7 @@ void SoundChip_AY8910_Test::SetUp()
 {
     // Instantiate emulator with all peripherals, but no configuration loaded
     _context = new EmulatorContext(LoggerLevel::LogError);
-    _soundChip = new SoundChip_AY8910CUT();
+    _soundChip = new SoundChip_AY8910CUT(_context);
 }
 
 void SoundChip_AY8910_Test::TearDown()
@@ -40,39 +40,6 @@ TEST_F(SoundChip_AY8910_Test, writeRegister)
 TEST_F(SoundChip_AY8910_Test, ToneGenerator)
 {
     ToneGeneratorCUT toneGenerator;
-}
-
-TEST_F(SoundChip_AY8910_Test, NoiseGenerator)
-{
-    NoiseGeneratorCUT noiseGenerator;
-
-    uint16_t sample;
-    for (int i = 0; i < 1000; i++)
-    {
-        sample = noiseGenerator.getNextRandom();
-
-        std::string message = StringHelper::Format("[%d] %04X", i, sample);
-        std::cout << message << std::endl;
-    }
-
-}
-
-TEST_F(SoundChip_AY8910_Test, EnvelopeGenerator)
-{
-    EnvelopeGeneratorCUT envelopeGenerator;
-
-    // Check if instance initialized successfully
-    EXPECT_EQ(envelopeGenerator._initialized, true);
-
-    std::stringstream ss;
-    for (int i = 0; i < 32; i++)
-    {
-        std::string header = StringHelper::Format("");
-        for (int j = 0; j < 3; j++)
-        {
-            std::cout << envelopeGenerator._envelopeWaves[i][j] << std::endl;
-        }
-    }
 }
 
 /// region <Generators period/frequency tests>
@@ -127,7 +94,7 @@ TEST_F(SoundChip_AY8910_Test, GetToneGeneratorFrequency)
         uint8_t coarse = i >> 8;        // Sending all 8 bits instead of 4 and expect that method under test will mask correctly
         uint8_t fine = i & 0b1111'1111;
 
-        double frequency = _soundChip->getToneGeneratorFrequency(fine, coarse);
+        double frequency = _soundChip->getToneGeneratorFrequency(1.75 * 1'000'000, fine, coarse);
 
         EXPECT_EQ(frequency, refFrequency);
 
@@ -166,7 +133,7 @@ TEST_F(SoundChip_AY8910_Test, GetNoiseGeneratorFrequency)
             refDivisor = 1;
         double refFrequency = baseFrequency / (16 * refDivisor);
 
-        double frequency = _soundChip->getNoiseGeneratorFrequency(i);
+        double frequency = _soundChip->getNoiseGeneratorFrequency(1.75 * 1'000'000, i);
 
         ASSERT_NEAR(frequency, refFrequency, 0.01);
 

@@ -47,21 +47,3 @@ public:
         return result;
     }
 };
-
-//
-// Code Under Test (CUT) wrappers to allow access protected and private properties and methods for unit testing / benchmark purposes
-//
-#ifdef _CODE_UNDER_TEST
-
-// Expose all internal classes to public
-class FilterDCCUT : public FilterDC
-{
-public:
-    FilterDCCUT() : FilterDC() {};
-
-    using FilterDC::_sum;
-    using FilterDC::_delayBuffer;
-};
-
-
-#endif // _CODE_UNDER_TEST

@@ -428,12 +428,11 @@ public:
 class SoundChip_AY8910CUT : public SoundChip_AY8910
 {
 public:
-    SoundChip_AY8910CUT() : SoundChip_AY8910() {};
+    SoundChip_AY8910CUT(EmulatorContext* context) : SoundChip_AY8910(context) {};
 
     using SoundChip_AY8910::AY_BASE_FREQUENCY;
     using SoundChip_AY8910::CPU_BASE_FREQUENCY;
 
-    using SoundChip_AY8910::AYRegisters;
     using SoundChip_AY8910::ToneGenerator;
     using SoundChip_AY8910::NoiseGenerator;
     using SoundChip_AY8910::EnvelopeGenerator;
