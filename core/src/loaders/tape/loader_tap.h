@@ -93,7 +93,7 @@ struct ZXTapeHeader
     };
 
     uint8_t checksum;
-} __attribute__((packed));
+};
 
 /// endregion </TAP parsing structures>
 
