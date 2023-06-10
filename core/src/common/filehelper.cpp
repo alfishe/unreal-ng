@@ -82,6 +82,12 @@ std::string FileHelper::AbsolutePath(const std::string& path)
     std::string result;
 
 #if defined _WIN32
+    char buffer[MAX_PATH];
+    DWORD length = GetFullPathNameA(path.c_str(), MAX_PATH, buffer, nullptr);
+    if (length != 0)
+    {
+        result = std::string(buffer, length);
+    }
 #endif
 
 #ifdef __linux__
