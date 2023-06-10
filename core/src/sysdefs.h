@@ -167,9 +167,11 @@
 // Cross-platform GCC-related (both x86 and ARM)
 #if defined __GNUC__
     #define ATTR_ALIGN(x) __attribute__((aligned(x)))
-    #define _countof(x) (sizeof(x)/sizeof((x)[0]))
-
     #define __assume(x)
 #endif // __GNUC__
+
+#if !defined _countof
+    #define _countof(x) (sizeof(x)/sizeof((x)[0]))
+#endif // _countof
 
 #endif // _INCLUDE_SYSDEFS_H_

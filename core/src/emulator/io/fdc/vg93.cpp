@@ -107,7 +107,7 @@ void VG93::processWD93Command(uint8_t value)
             _status |= WDS_BUSY;
             _rqs = 0;
             _indexCounter = 0;
-            _rotationCounter = SIZE_T_MAX;
+            _rotationCounter = SIZE_MAX;
 
             // Call the corresponding command method
             (this->*handler)(commandValue);
@@ -282,7 +282,7 @@ void VG93::cmdForceInterrupt(uint8_t value)
     std::cout << "Command Force Interrupt: " << value << std::endl;
 
     _indexCounter = 0;
-    _rotationCounter = SIZE_T_MAX;
+    _rotationCounter = SIZE_MAX;
 
     if (value != 0)
     {

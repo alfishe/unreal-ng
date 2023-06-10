@@ -6,6 +6,7 @@
 #include <functional>
 #include <thread>
 #include <tuple>
+#include <time.h>
 
 typedef std::chrono::high_resolution_clock::time_point chrono_time_t;
 typedef std::chrono::high_resolution_clock hiresclock;
@@ -21,13 +22,16 @@ public:
     /// region <Low-level timestamps>
     inline static uint64_t GetTimestampNs()
     {
-        struct timespec ts;
         uint64_t result = 0;
+
+#if not defined _WIN32
+        struct timespec ts;
 
         if (timespec_get(&ts, TIME_UTC))
         {
             result = (uint64_t)ts.tv_sec * 1'000'000'000 + (uint64_t)ts.tv_nsec;
         }
+#endif
 
         return result;
     }

@@ -34,7 +34,7 @@ int tinywav_open_write(TinyWav *tw,
                        const char *path)
 {
 #if _WIN32
-    errno_t err = fopen_s(&tw->f, path, "w");
+    errno_t err = fopen_s(&tw->file, path, "w");
   assert(err == 0);
 #else
     tw->file = fopen(path, "w");

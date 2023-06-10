@@ -61,6 +61,10 @@ if (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++ pthread)
 endif (UNIX AND NOT APPLE)
 
+if (WIN32)
+    set(common_libraries -static-libstdc++ Shlwapi)
+endif()
+
 # Link all components into target binary
 target_link_libraries(
     ${PROJECT_NAME} PRIVATE

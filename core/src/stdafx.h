@@ -127,7 +127,8 @@ using std::atomic;
     #include <sys/time.h>       // gettimeofday()
 
     #define CACHE_LINE 64
-    #define CACHE_ALIGNED __attribute__ ((aligned (CACHE_LINE)))
+    #define CACHE_ALIGNED __attribute__((aligned(CACHE_LINE)))
+
 
 #endif // _WIN32 && defined __GNUC__
 
