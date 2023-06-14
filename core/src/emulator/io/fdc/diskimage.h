@@ -3,97 +3,12 @@
 #include "stdafx.h"
 
 #include <algorithm>
-#include "vg93.h"
+#include "emulator/io/fdc/fdc.h"
 
 class DiskImage
 {
 /// region <Types>
 public:
-    enum WD93_REGISTERS : uint8_t
-    {
-        CMD = 0,    // COMMAND/STATUS register (port #1F)
-        TRK,        // TRACK register (port #3F)
-        SEC,        // SECTOR register (port #5F)
-        DAT,        // DATA register (port #7F)
-        SYS         // BETA128 register (port #FF)
-    };
-
-    /// WD92 / VG93 state machine states
-    enum WDSTATE : uint8_t
-    {
-        S_IDLE = 0,
-        S_WAIT,
-
-        S_DELAY_BEFORE_CMD,
-        S_CMD_RW,
-        S_FOUND_NEXT_ID,
-        S_RDSEC,
-        S_READ,
-        S_WRSEC,
-        S_WRITE,
-        S_WRTRACK,
-        S_WR_TRACK_DATA,
-
-        S_TYPE1_CMD,
-        S_STEP,
-        S_SEEKSTART,
-        S_RESTORE,
-        S_SEEK,
-        S_VERIFY,
-        S_VERIFY2,
-
-        S_WAIT_HLT,
-        S_WAIT_HLT_RW,
-
-        S_EJECT1,
-        S_EJECT2
-    };
-
-    /// FDC status (output signals)
-    enum WD_STATUS : uint8_t
-    {
-        WDS_BUSY      = 0x01,
-        WDS_INDEX     = 0x02,
-        WDS_DRQ       = 0x02,
-        WDS_TRK00     = 0x04,
-        WDS_LOST      = 0x04,
-        WDS_CRCERR    = 0x08,
-        WDS_NOTFOUND  = 0x10,
-        WDS_SEEKERR   = 0x10,
-        WDS_RECORDT   = 0x20,
-        WDS_HEADL     = 0x20,
-        WDS_WRFAULT   = 0x20,
-        WDS_WRITEP    = 0x40,   // Disk is write protected
-        WDS_NOTRDY    = 0x80
-    };
-
-    enum WD93_CMD_BITS : uint8_t
-    {
-        CMD_SEEK_RATE     = 0x03,
-        CMD_SEEK_VERIFY   = 0x04,
-        CMD_SEEK_HEADLOAD = 0x08,
-        CMD_SEEK_TRKUPD   = 0x10,
-        CMD_SEEK_DIR      = 0x20,
-
-        CMD_WRITE_DEL     = 0x01,
-        CMD_SIDE_CMP_FLAG = 0x02,
-        CMD_DELAY         = 0x04,
-        CMD_SIDE          = 0x08,
-        CMD_SIDE_SHIFT    = 3,
-        CMD_MULTIPLE      = 0x10
-    };
-
-    enum BETA_STATUS : uint8_t
-    {
-        DRQ   = 0x40,
-        INTRQ = 0x80
-    };
-
-    enum WD_SYS : uint8_t
-    {
-        SYS_HLT       = 0x08
-    };
-
     enum SEEK_MODE : uint8_t
     {
         JUST_SEEK = 0,
@@ -532,15 +447,6 @@ public:
     /// region <Fields>
 protected:
     Disk* loadedDisk = nullptr;
-    WDSTATE state;
-
-    uint8_t cmd;
-    uint8_t data;
-    uint8_t track;
-    uint8_t sector;
-    uint8_t status;
-
-    int8_t _stepDirection = 1;      // Positive values: from edge to center. Negative - from center to edge
     /// endregion </Fields>
 
     /// region <Methods>

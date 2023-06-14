@@ -15,7 +15,10 @@ VG93::VG93(EmulatorContext* context) : PortDecoder(context)
 /// Update FDC internal state
 void VG93::process()
 {
+    if (_extStatus & SIG_OUT_HLD)
+    {
 
+    }
 }
 
 /// Handle Beta128 interface system controller commands
@@ -54,7 +57,7 @@ uint8_t VG93::readStatus()
     if (!(_cmd & 0x80))
     {
         // hld & hlt
-        result = _status | (((_extStatus & SIG_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADL : 0);
+        result = _status | (((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0);
     }
     return result;
 }
@@ -62,7 +65,7 @@ uint8_t VG93::readStatus()
 /// Initiate disk ejection sequence
 void VG93::eject(uint8_t drive)
 {
-    _status |= WDS_WRITEP;
+    _status |= WDS_WRITEPROTECTED;  // Write protection sensor is covered when disk is partially inserted / ejected
     _state = S_EJECT1;
     _ejectPending = true;
 
@@ -123,8 +126,8 @@ void VG93::processWD93Command(uint8_t value)
 /// - Write Track
 void VG93::updateStatusesForReadWrite()
 {
-    _status |= _status | WDS_BUSY;                                              // Set BUSY status
-    _status &= ~(WDS_DRQ | WDS_LOST | WDS_NOTFOUND | WDS_RECORDT | WDS_WRITEP); // Reset other status
+    _status |= _status | WDS_BUSY;                                                         // Set BUSY status
+    _status &= ~(WDS_DRQ | WDS_LOST | WDS_NOTFOUND | WDS_RECORDTYPE | WDS_WRITEPROTECTED); // Reset other status
 
     // Continue disk spinning
     //seldrive->motor = next + 2*Z80FQ;
@@ -139,7 +142,7 @@ void VG93::updateStatusesForReadWrite()
     }
     else
     {
-        _extStatus |= SIG_HLD;
+        _extStatus |= SIG_OUT_HLD;
         _state = S_DELAY_BEFORE_CMD;
     }
 }
@@ -171,11 +174,11 @@ void VG93::updateStatusesForSeek(uint8_t maskedValue)
 {
     if (maskedValue & CMD_SEEK_HEADLOAD)    // h = 1 (Bit3), Head will be loaded until unload command or for 15 disk revolutions until timeout
     {
-        _extStatus |= SIG_HLD;
+        _extStatus |= SIG_OUT_HLD;
     }
     else                                    // Head will be unloaded
     {
-        _extStatus ^= ~SIG_HLD;
+        _extStatus ^= ~SIG_OUT_HLD;
     }
 
     // FIXME: Seek operations should not be instantaneous. There should be a realistic delay
@@ -518,8 +521,11 @@ bool VG93::attachToPorts(PortDecoder* decoder)
         _portDecoder = decoder;
 
         PortDevice* device = this;
-        result = decoder->RegisterPortHandler(0xBFFD, this);
-        result &= decoder->RegisterPortHandler(0xFFFD, this);
+        result = decoder->RegisterPortHandler(0x001F, this);
+        result &= decoder->RegisterPortHandler(0x003F, this);
+        result &= decoder->RegisterPortHandler(0x005F, this);
+        result &= decoder->RegisterPortHandler(0x007F, this);
+        result &= decoder->RegisterPortHandler(0x00FF, this);
 
         if (result)
         {
@@ -534,8 +540,12 @@ void VG93::detachFromPorts()
 {
     if (_portDecoder && _chipAttachedToPortDecoder)
     {
-        _portDecoder->UnregisterPortHandler(0xBFFD);
-        _portDecoder->UnregisterPortHandler(0xFFFD);
+        _portDecoder->UnregisterPortHandler(0x001F);
+        _portDecoder->UnregisterPortHandler(0x003F);
+        _portDecoder->UnregisterPortHandler(0x005F);
+        _portDecoder->UnregisterPortHandler(0x007F);
+        _portDecoder->UnregisterPortHandler(0x00FF);
+
 
         _chipAttachedToPortDecoder = false;
     }
