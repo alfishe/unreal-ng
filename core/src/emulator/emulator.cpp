@@ -562,7 +562,7 @@ void Emulator::Stop()
 
 /// region <File operations>
 
-bool Emulator::LoadSnapshot(std::string &path)
+bool Emulator::LoadSnapshot(const std::string &path)
 {
     bool result = false;
 
@@ -620,8 +620,21 @@ bool Emulator::LoadSnapshot(std::string &path)
     // Resume execution
     if (wasRunning)
     {
+        // TODO: uncomment for the release
         //Resume();
     }
+
+    return result;
+}
+
+bool Emulator::LoadTape(const std::string &path)
+{
+    bool result = false;
+
+    MLOGEMPTY();
+    MLOGINFO("Inserting tape from file: '%s'", path.c_str());
+
+    _context->coreState.tapeFilePath = path;
 
     return result;
 }

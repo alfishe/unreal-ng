@@ -122,7 +122,8 @@ public:
 	void Stop();
 
 	// File format operations
-	bool LoadSnapshot(std::string& path);
+	bool LoadSnapshot(const std::string& path);
+    bool LoadTape(const std::string& path);
 
 	// Controlled emulator behavior
 	void RunSingleCPUCycle(bool skipBreakpoints = true);

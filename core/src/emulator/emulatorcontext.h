@@ -18,6 +18,7 @@ class DebugManager;
 class Z80Disassembler;
 
 // Create callback type for audio
+// User in emulator/sound/soundmanager and client/GUI
 // void audioCallback(int16_t* samples, size_t numSamples);
 typedef void (*AudioCallback)(void* obj, int16_t*, size_t);
 

@@ -13,4 +13,7 @@ enum BaseFrequency_t : uint8_t
 struct CoreState
 {
     uint8_t baseFreqMultiplier = (uint8_t)FREQ_3_5MHZ;     // How fast is Z80 clocked comparing to standard 3.5MHz model
+
+    // Tape file selected
+    std::string tapeFilePath;
 };

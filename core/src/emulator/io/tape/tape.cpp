@@ -123,14 +123,22 @@ uint8_t Tape::handlePortIn()
         if (cpu.pc == 0x0564 && memory.IsCurrentROM48k() && memory.GetPhysicalAddressForZ80Page(0)[0x0564] == 0x1F)
         {
             LoaderTAP loader(_context);
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_ATOSSOFT.tap");
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_NICOLAS_RODIONOV.tap");
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/traffic_lights.tap");
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/earshaver.tap");
-            //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/lphp.tap");
-            _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/AYtest_v0.2.tap");
+
+            if (_context->coreState.tapeFilePath.empty())
+            {
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_ATOSSOFT.tap");
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/ELITE_NICOLAS_RODIONOV.tap");
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/traffic_lights.tap");
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/action.tap");
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/IntTest+.tap");
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/earshaver.tap");
+                //_tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/lphp.tap");
+                _tapeBlocks = loader.loadTAP("../../../tests/loaders/tap/AYtest_v0.2.tap");
+            }
+            else
+            {
+                _tapeBlocks = loader.loadTAP(_context->coreState.tapeFilePath);
+            }
 
             startTape();
         }
