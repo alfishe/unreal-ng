@@ -364,7 +364,7 @@ struct CONFIG
 	uint8_t ch_size;
 	uint8_t EFF7_mask;
 	uint8_t reset_rom;
-	uint8_t use_romset;
+	uint8_t use_romset = false;
 	uint8_t spg_mem_init;
 
 	uint8_t updateb, bordersize;
@@ -476,6 +476,12 @@ struct CONFIG
 		uint8_t mix_frames;
 		uint8_t mode; // RSM_MODE
 	} rsm;
+
+    std::string romSetName;
+    std::string romSet128Path;
+    std::string romSetSOSPath;
+    std::string romSetDOSPath;
+    std::string romSetSYSPath;
 
 	char sos_rom_path[FILENAME_MAX];
 	char dos_rom_path[FILENAME_MAX];

@@ -16,4 +16,7 @@ struct CoreState
 
     // Tape file selected
     std::string tapeFilePath;
+
+    // Disk image files mounted
+    std::string diskFilePaths[4];
 };

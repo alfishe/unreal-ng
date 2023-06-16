@@ -294,10 +294,10 @@ void MainWindow::dropEvent(QDropEvent* event)
                 _emulator->LoadSnapshot(file);
                 break;
             case FileTape:
-                //_emulator->LoadTape(file);
+                _emulator->LoadTape(file);
                 break;
             case FileDisk:
-                //_emulator->LoadDisk(file);
+                _emulator->LoadDisk(file);
                 break;
             default:
                 break;

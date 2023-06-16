@@ -14,23 +14,6 @@
 	#define SI_CONVERT_ICU
 #endif
 
-// Ini file section names
-const char* Config::misc = "MISC";
-const char* Config::video = "VIDEO";
-const char* Config::ula = "ULA";
-const char* Config::beta128 = "Beta128";
-const char* Config::leds = "LEDS";
-const char* Config::sound = "SOUND";
-const char* Config::input = "INPUT";
-const char* Config::colors = "COLORS";
-const char* Config::ay = "AY";
-const char* Config::saa1099 = "SAA1099";
-const char* Config::atm = "ATM";
-const char* Config::hdd = "HDD";
-const char* Config::rom = "ROM";
-const char* Config::ngs = "NGS";
-const char* Config::zc = "ZC";
-
 Config::Config(EmulatorContext* context)
 {
 	_context = context;
@@ -163,23 +146,36 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 
 	// MISC::TSConf sub-section
 
-	// ROM section
-	CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr, nullptr), config.pent_rom_path, sizeof config.pent_rom_path);
+    // ROM set
+    config.romSetName = inimanager.GetValue(rom, "ROMSET");
+
+    if (!config.romSetName.empty())
+    {
+        config.use_romset = true;
+
+        config.romSet128Path = inimanager.GetValue(config.romSetName.c_str(), romset_128);
+        config.romSetSOSPath = inimanager.GetValue(config.romSetName.c_str(), romset_sos);
+        config.romSetDOSPath = inimanager.GetValue(config.romSetName.c_str(), romset_dos);
+        config.romSetSYSPath = inimanager.GetValue(config.romSetName.c_str(), romset_sys);
+    }
+
+    // Populate rom files for each platform
+    CopyStringValue(inimanager.GetValue(rom, "PENTAGON", nullptr, nullptr), config.pent_rom_path, sizeof config.pent_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "48k", nullptr, nullptr), config.zx48_rom_path, sizeof config.zx48_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "128k", nullptr, nullptr), config.zx128_rom_path, sizeof config.zx128_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PLUS3", nullptr, nullptr), config.plus3_rom_path, sizeof config.plus3_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "ATM1", nullptr, nullptr), config.atm1_rom_path, sizeof config.atm1_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr, nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr, nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr, nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr, nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr, nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr, nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr, nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr, nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr, nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr, nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
-	CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr, nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "ATM2", nullptr, nullptr), config.atm2_rom_path, sizeof config.atm2_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "ATM3", nullptr, nullptr), config.atm3_rom_path, sizeof config.atm3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "SCORP", nullptr, nullptr), config.scorp_rom_path, sizeof config.scorp_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PROFROM", nullptr, nullptr), config.prof_rom_path, sizeof config.prof_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr, nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr, nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr, nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "QUORUM", nullptr, nullptr), config.quorum_rom_path, sizeof config.quorum_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "TSL", nullptr, nullptr), config.tsl_rom_path, sizeof config.tsl_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "LSY", nullptr, nullptr), config.lsy_rom_path, sizeof config.lsy_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "PHOENIX", nullptr, nullptr), config.phoenix_rom_path, sizeof config.phoenix_rom_path);
 
 	// ULA section (video signal timings)
 	config.intfq = (uint8_t)inimanager.GetLongValue(ula, "int", 50);

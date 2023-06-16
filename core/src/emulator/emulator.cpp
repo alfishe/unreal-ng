@@ -639,6 +639,18 @@ bool Emulator::LoadTape(const std::string &path)
     return result;
 }
 
+bool Emulator::LoadDisk(const std::string &path)
+{
+    bool result = false;
+
+    MLOGEMPTY();
+    MLOGINFO("Inserting drive A: disk image from file: '%s'", path.c_str());
+
+    _context->coreState.diskFilePaths[0] = path;
+
+    return result;
+}
+
 /// endregion </File operations>
 
 

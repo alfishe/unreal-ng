@@ -19,21 +19,27 @@ protected:
 
 	// Ini file section names
 private:
-	static const char* misc;
-	static const char* video;
-	static const char* ula;
-	static const char* beta128;
-	static const char* leds;
-	static const char* sound;
-	static const char* input;
-	static const char* colors;
-	static const char* ay;
-	static const char* saa1099;
-	static const char* atm;
-	static const char* hdd;
-	static const char* rom;
-	static const char* ngs;
-	static const char* zc;
+    static constexpr const char* misc = "MISC";
+    static constexpr const char* video = "VIDEO";
+    static constexpr const char* ula = "ULA";
+    static constexpr const char* beta128 = "Beta128";
+    static constexpr const char* leds = "LEDS";
+    static constexpr const char* sound = "SOUND";
+    static constexpr const char* input = "INPUT";
+    static constexpr const char* colors = "COLORS";
+    static constexpr const char* ay = "AY";
+    static constexpr const char* saa1099 = "SAA1099";
+    static constexpr const char* atm = "ATM";
+    static constexpr const char* hdd = "HDD";
+    static constexpr const char* rom = "ROM";
+    static constexpr const char* ngs = "NGS";
+    static constexpr const char* zc = "ZC";
+
+    // Separate ROM file variables within ROMSET profile
+    static constexpr const char* romset_128 = "128";
+    static constexpr const char* romset_sos = "sos";
+    static constexpr const char* romset_dos = "dos";
+    static constexpr const char* romset_sys = "sys";
 
 
 	const struct TMemModel mem_model[N_MM_MODELS] =

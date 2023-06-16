@@ -361,7 +361,7 @@ bool ROM::LoadROMSet()
 	Memory& memory = *_context->pCore->GetMemory();
 
 	// BASIC48 (SOS)
-	string rompath = config.sos_rom_path;
+	string romPath = config.romSetSOSPath;
 	bool result1 = LoadROM(rompath, memory.base_sos_rom);
 	if (!result1)
 	{
@@ -369,24 +369,24 @@ bool ROM::LoadROMSet()
 	}
 
 	// BASIC128
-	rompath = config.zx128_rom_path;
-	bool result2 = LoadROM(rompath, memory.base_128_rom);
+    romPath = config.romSet128Path;
+	bool result2 = LoadROM(romPath, memory.base_128_rom);
 	if (!result2)
 	{
 		MLOGERROR("Unable to load BASIC128 ROM from file: '%s'", config.zx128_rom_path);
 	}
 
 	// DOS (TR-DOS)
-	rompath = config.dos_rom_path;
-	bool result3 = LoadROM(rompath, memory.base_dos_rom);
+    romPath = config.romSetDOSPath;
+	bool result3 = LoadROM(romPath, memory.base_dos_rom);
 	if (!result3)
 	{
 		MLOGERROR("Unable to load DOS (TR-DOS) ROM from file: '%s'", config.dos_rom_path);
 	}
 
 	// Shadow (SYS)
-    rompath = config.sys_rom_path;
-	bool result4 = LoadROM(rompath, memory.base_sys_rom);
+    romPath = config.romSetSYSPath;
+	bool result4 = LoadROM(romPath, memory.base_sys_rom);
 	if (!result4)
 	{
 		MLOGERROR("Unable to load Shadow (SYS) ROM from file: '%s'", config.sys_rom_path);
