@@ -469,6 +469,8 @@ void MainWindow::handleStartButton()
         // Initialize emulator instance
         if (_emulator->Init())
         {
+            _lastFrameCount = 0;
+
             _emulator->DebugOff();
 
             /// region <Setup logging>
@@ -632,6 +634,8 @@ void MainWindow::resetEmulator()
     if (_emulator)
     {
         _emulator->Reset();
+
+        _lastFrameCount = 0;
     }
 }
 
