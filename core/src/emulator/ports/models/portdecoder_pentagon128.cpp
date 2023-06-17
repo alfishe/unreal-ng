@@ -241,6 +241,28 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
     return result;
 }
 
+uint16_t PortDecoder_Pentagon128::matchPort(uint16_t port)
+{
+    uint16_t result = 0x0000;
+
+    static constexpr PortMatch const portMasksMatches[] =
+    {
+        // ------- Mask ------ , ------- Match ------ . - Port -
+        { 0b1100'0000'0000'0010, 0b1100'0000'0000'0000, 0xFFFD },   // AY #FFFD         Match value: (0xF000)
+        { 0b1100'0000'0000'0010, 0b1000'0000'0000'0000, 0xBFFD },   // AY #BFFD         Match value: (0x8000)
+        { 0b1000'0000'0000'0010, 0b0000'0000'0000'0000, 0x7FFD },   // Mem #7FFD        Match value: (0x0000)
+        { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
+
+        { 0b0000'0000'1111'1111, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
+        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
+        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
+        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
+        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x007F },   // Beta128 #007F    Match value: (131, 0x0083)
+    };
+
+    return result;
+}
+
 /// endregion <Helper methods>
 
 /// Port #7FFD (Memory) handler

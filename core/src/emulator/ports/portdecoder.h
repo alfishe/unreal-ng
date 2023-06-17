@@ -44,6 +44,13 @@ constexpr uint8_t PORT_7FFD_RAM_BANK_7          = 0b0000'0111;
 
 /// region <Types>
 
+struct PortMatch
+{
+    uint16_t mask;
+    uint16_t match;
+    uint16_t resolvedPort;
+};
+
 /// Base class to mark all devices connected to port decoder
 class PortDevice
 {
