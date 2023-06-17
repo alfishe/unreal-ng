@@ -259,6 +259,10 @@ bool ROM::LoadROM()
 	{
 		// Use separate files for each ROM bank
 		result = LoadROMSet();
+        if (result)
+        {
+            _ROMBanksLoaded = 4;
+        }
 	}
 	else
 	{
@@ -363,7 +367,7 @@ bool ROM::LoadROMSet()
 
 	// BASIC48 (SOS)
 	string romPath = config.romSetSOSPath;
-	bool result1 = LoadROM(rompath, memory.base_sos_rom);
+	bool result1 = LoadROM(romPath, memory.base_sos_rom);
 	if (!result1)
 	{
 		MLOGERROR("Unable to load BASIC48 (SOS) ROM from file: '%s'", config.sos_rom_path);
@@ -470,32 +474,32 @@ void ROM::CalculateSignatures()
 	for (int i = 0; i < _ROMBanksLoaded; i++)
     {
 	    std::string signature = CalculateSignature(memory.ROMPageHostAddress(i), 0x4000);
-        LOGINFO("  ROM page %d: %s", i, GetROMTitle(signature).c_str());
+        MLOGINFO("  ROM page %d: %s", i, GetROMTitle(signature).c_str());
     }
 
-    LOGINFO("ROM Banks info (as mapped):");
+    MLOGINFO("ROM Banks info (as mapped):");
 	if (memory.base_sos_rom)
     {
         std::string signature = CalculateSignature(memory.base_sos_rom, 0x4000);
-        LOGINFO("  base_sos_rom: %s", GetROMTitle(signature).c_str());
+        MLOGINFO("  base_sos_rom: %s", GetROMTitle(signature).c_str());
     }
 
     if (memory.base_128_rom)
     {
         std::string signature = CalculateSignature(memory.base_128_rom, 0x4000);
-        LOGINFO("  base_128_rom: %s", GetROMTitle(signature).c_str());
+        MLOGINFO("  base_128_rom: %s", GetROMTitle(signature).c_str());
     }
 
     if (memory.base_dos_rom)
     {
         std::string signature = CalculateSignature(memory.base_dos_rom, 0x4000);
-        LOGINFO("  base_dos_rom: %s", GetROMTitle(signature).c_str());
+        MLOGINFO("  base_dos_rom: %s", GetROMTitle(signature).c_str());
     }
 
     if (memory.base_sys_rom)
     {
         std::string signature = CalculateSignature(memory.base_sys_rom, 0x4000);
-        LOGINFO("  base_sys_rom: %s", GetROMTitle(signature).c_str());
+        MLOGINFO("  base_sys_rom: %s", GetROMTitle(signature).c_str());
     }
 }
 

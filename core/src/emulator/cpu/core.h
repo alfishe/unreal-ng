@@ -17,6 +17,7 @@ class ModuleLogger;
 class MessageCenter;
 class Z80;
 class PortDecoder;
+class VG93;
 
 class Core
 {
@@ -46,6 +47,7 @@ protected:
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
     Tape* _tape = nullptr;
+    VG93* _betaDisk = nullptr;
     SoundManager* _sound = nullptr;
     HDD* _hdd = nullptr;
     VideoControl* _video = nullptr;

@@ -147,7 +147,7 @@ class Keyboard : public Observer
 public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_IO;
     const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_KEYBOARD;
-    ModuleLogger* _logger;
+    ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Constants>

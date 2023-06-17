@@ -1,10 +1,12 @@
 #pragma once
+
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
+#include <emulator/io/fdc/vg93.h>
 
 class Core;
 class Emulator;
@@ -59,6 +61,9 @@ public:
 
     // Tape input instance
     Tape* pTape;
+
+    // BDI - Beta Disk Interfae
+    VG93* pBetaDisk;
 
 	// Video controller parameters and logic
 	Screen* pScreen;

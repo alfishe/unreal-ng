@@ -311,16 +311,14 @@ void SoundManager::SoundManager::writeToWaveFile(uint8_t* buffer, size_t len)
 
 /// region <Port interconnection>
 
-bool SoundManager::attachAY8910ToPorts()
+bool SoundManager::attachToPorts()
 {
-    bool result = false;
-
-    result = _ay8910->attachToPorts(_context->pPortDecoder);
+    bool result = _ay8910->attachToPorts(_context->pPortDecoder);
 
     return result;
 }
 
-bool SoundManager::detachAY8910FromPorts()
+bool SoundManager::detachFromPorts()
 {
     bool result = true;
 

@@ -383,6 +383,37 @@ void Memory::SetROMMode(ROMModeEnum mode)
 	//SetBanks();
 }
 
+/// input: ports 7FFD,1FFD,DFFD,FFF7,FF77,EFF7, flags CF_TRDOS,CF_CACHEON
+void Memory::UpdateZ80Banks()
+{
+    EmulatorState& state = _context->emulatorState;
+
+    if (state.flags & CF_TRDOS)
+    {
+        if (state.p7FFD & 0x10)
+        {
+            SetROMDOS();
+        }
+        else
+        {
+            SetROMSystem();
+        }
+    }
+    else
+    {
+        if (state.p7FFD & 0x10)
+        {
+            SetROM48k();
+        }
+        else
+        {
+            SetROM128k();
+        }
+    }
+
+    // TODO: implement support for extended ports and cache
+}
+
 /// Set ROM page
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page ROM page number
@@ -1119,9 +1150,6 @@ size_t Memory::GetZ80BankExecuteAccessCountExclScreen(uint8_t bank)
 
 void Memory::SetROM48k(bool updatePorts)
 {
-    // Set all port values accordingly
-    SetROMMode(RM_SOS);
-
     // Switch to 48k ROM page
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1129,9 +1157,6 @@ void Memory::SetROM48k(bool updatePorts)
 
 void Memory::SetROM128k(bool updatePorts)
 {
-    // Set all port values accordingly
-    SetROMMode(RM_128);
-
     // Switch to 128k ROM page
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1139,9 +1164,6 @@ void Memory::SetROM128k(bool updatePorts)
 
 void Memory::SetROMDOS(bool updatePorts)
 {
-    // Set all port values accordingly
-    SetROMMode(RM_DOS);
-
     // Switch to DOS ROM page
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1149,9 +1171,6 @@ void Memory::SetROMDOS(bool updatePorts)
 
 void Memory::SetROMSystem(bool updatePorts)
 {
-    // Set all port values accordingly
-    SetROMMode(RM_SYS);
-
     // Switch to DOS ROM page
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;

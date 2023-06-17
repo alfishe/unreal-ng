@@ -129,8 +129,8 @@ public:
     /// region <Port interconnection>
 
 public:
-    bool attachAY8910ToPorts();
-    bool detachAY8910FromPorts();
+    bool attachToPorts();
+    bool detachFromPorts();
 
     /// endregion </Port interconnection>
 };

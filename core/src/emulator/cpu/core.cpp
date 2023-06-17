@@ -6,8 +6,9 @@
 #include <algorithm>
 #include <cassert>
 #include "emulator/ports/portdecoder.h"
-#include <emulator/video/videocontroller.h>
+#include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
+#include "emulator/io/fdc/vg93.h"
 
 
 // Instantiate Core tables as static (only one instance per process)
@@ -240,8 +241,15 @@ bool Core::Init()
     /// region <Activate IO devices>
     if (_sound)
     {
-        _sound->attachAY8910ToPorts();
+        _sound->attachToPorts();
     }
+
+    _betaDisk = new VG93(_context);
+    if (_betaDisk)
+    {
+        _betaDisk->attachToPorts();
+    }
+
     /// endregion </Activate IO devices>
 
     // Release all allocated object in case of at least single failure
@@ -275,7 +283,7 @@ void Core::Release()
     if (_sound != nullptr)
     {
         // Detach sound chips from the PortDecoder
-        _sound->detachAY8910FromPorts();
+        _sound->detachFromPorts();
 
         delete _sound;
         _sound = nullptr;
@@ -294,17 +302,13 @@ void Core::Release()
         _hdd = nullptr;
     }
 
-    if (_sound != nullptr)
+    _context->pBetaDisk = nullptr;
+    if (_betaDisk != nullptr)
     {
-        delete _sound;
-        _sound = nullptr;
-    }
+        _betaDisk->detachFromPorts();
 
-    _context->pKeyboard = nullptr;
-    if (_keyboard != nullptr)
-    {
-        delete _keyboard;
-        _keyboard = nullptr;
+        delete _betaDisk;
+        _betaDisk = nullptr;
     }
 
     _context->pTape = nullptr;
@@ -312,6 +316,13 @@ void Core::Release()
     {
         delete _tape;
         _tape = nullptr;
+    }
+
+    _context->pKeyboard = nullptr;
+    if (_keyboard != nullptr)
+    {
+        delete _keyboard;
+        _keyboard = nullptr;
     }
 
     if (_rom != nullptr)

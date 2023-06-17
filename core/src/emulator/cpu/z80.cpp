@@ -181,6 +181,30 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
 
     /// region  <Ports logic>
+
+    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
+    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
+    {
+        state.flags |= CF_TRDOS;
+
+        // Apply ROM page changes
+        memory.UpdateZ80Banks();
+
+        // TODO: remove Debug
+        /// region <Debug>
+        //emulator.Pause();
+        // Wait until emulator resumed externally (by debugger or scripting engine)
+        //WaitUntilResumed();
+        /// endregion </Debug
+    }
+    else if ((state.flags & CF_TRDOS) && (cpu.pch >= 0x40)) // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
+    {
+        state.flags &= ~CF_TRDOS;
+
+        // Apply ROM page changes
+        memory.UpdateZ80Banks();
+    }
+
     /* TODO: move to Ports class
     if (state.flags & CF_SETDOSROM)
     {
@@ -217,19 +241,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
      */
     /// endregion  </Ports logic>
-
-    /// region <Tape related>
-    // Tape related IO
-    // TODO: Move to io/tape
-    /*
-    if (state.tape.play_pointer && config.tape_traps && (cpu.pc & 0xFFFF) == 0x056B)
-        tape_traps();
-
-    if (state.tape.play_pointer && !config.sound.enabled)
-        fast_tape();
-    */
-
-    /// endregion </Tape related>
 
     if (cpu.vm1 && cpu.halted)
     {

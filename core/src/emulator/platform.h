@@ -760,7 +760,7 @@ struct EmulatorState
 	};
 	uint8_t pBE, pBF;
 
-	uint8_t flags;
+	uint8_t flags = 0x00; // Stores execution flags
 	uint8_t border_attr;
 	uint8_t cmos_addr;
 	uint8_t pVD;

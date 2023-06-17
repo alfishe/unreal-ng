@@ -177,6 +177,7 @@ public:
 public:
     void SetROMMode(ROMModeEnum mode);
 
+    void UpdateZ80Banks();
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank0(uint16_t page, bool updatePorts = false);
     void SetRAMPageToBank1(uint16_t page);

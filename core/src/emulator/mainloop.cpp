@@ -100,8 +100,8 @@ void MainLoop::Run(volatile bool& stopRequested)
 		/// endregion </Handle Pause>
 
         //MLOGINFO("Frame recalculation time: %d us", duration1);
-        std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
-        std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
+        //std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
+        //std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
 
         // Wait until audio callback requests more data and buffer is about half-full
         // That means we're in sync between audio and video frames

@@ -11,11 +11,20 @@
 /// Track 0 is the most outer track of the floppy disk
 class VG93 : public PortDecoder, public PortDevice
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISK;
+    const uint16_t _SUBMODULE = PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC;
+    ModuleLogger* _logger = nullptr;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
     /// region <Constants>
 protected:
     // Typical head engage time is 30...100ms depending on the drive
     static constexpr const uint8_t HEAD_LOAD_TIME_MS = 50;
     /// endregion </Constants>
+
+
 
     /// region <Types>
 public:
@@ -242,6 +251,7 @@ public:
 
     /// region <Methods>
 public:
+    void reset();
     void eject(uint8_t drive);
 
 protected:
@@ -278,7 +288,7 @@ public:
 
     /// region <Ports interaction>
 public:
-    bool attachToPorts(PortDecoder* decoder);
+    bool attachToPorts();
     void detachFromPorts();
     /// endregion </Ports interaction>
 };

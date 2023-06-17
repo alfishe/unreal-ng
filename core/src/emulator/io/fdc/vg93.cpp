@@ -1,9 +1,14 @@
 #include "vg93.h"
 
+#include "emulator/emulatorcontext.h"
+
 /// region <Constructors / destructors>
 
 VG93::VG93(EmulatorContext* context) : PortDecoder(context)
 {
+    _context = context;
+    _logger = context->pModuleLogger;
+
     _chipAttachedToPortDecoder = false;
     _ejectPending = false;
 }
@@ -60,6 +65,11 @@ uint8_t VG93::readStatus()
         result = _status | (((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0);
     }
     return result;
+}
+
+void VG93::reset()
+{
+
 }
 
 /// Initiate disk ejection sequence
@@ -474,6 +484,8 @@ uint8_t VG93::portDeviceInMethod(uint16_t port)
 
 void VG93::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
+    MLOGINFO("Out port:0x04X, value: 0x%02X", port, value);
+
     // Update FDC internal states
     process();
 
@@ -512,10 +524,11 @@ void VG93::portDeviceOutMethod(uint16_t port, uint8_t value)
 
 /// region <Ports interaction>
 
-bool VG93::attachToPorts(PortDecoder* decoder)
+bool VG93::attachToPorts()
 {
     bool result = false;
 
+    PortDecoder* decoder = _context->pPortDecoder;
     if (decoder)
     {
         _portDecoder = decoder;
