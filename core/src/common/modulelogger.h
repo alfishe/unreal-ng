@@ -235,8 +235,8 @@ public:
     void Unmute();
     void TurnOffLoggingForAll();
     void TurnOnLoggingForAll();
-    void TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
-    void TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t submodule);
+    void TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t submodule);
+    void TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t submodule);
     void SetLoggingLevel(LoggerLevel level);
 
     void SetLoggerOut(ModuleLoggerOutCallback callback);

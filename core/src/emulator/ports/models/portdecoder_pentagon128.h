@@ -52,7 +52,7 @@ public:
     bool IsPort_BFFD(uint16_t port);
     bool IsPort_FFFD(uint16_t port);
 
-    uint16_t matchPort(uint16_t port);
+    uint16_t decodePort(uint16_t port);
 
     /// endregion <Helper methods>
 

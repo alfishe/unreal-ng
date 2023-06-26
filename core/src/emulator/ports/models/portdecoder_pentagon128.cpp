@@ -55,32 +55,29 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     /// endregion </Override submodule>
 
     uint8_t result = 0xFF;
-    uint16_t decodedPort = port;
+    uint16_t decodedPort = decodePort(port);
 
-    if (IsPort_FE(port))
+    if (decodedPort != 0x0000)
     {
-        // Call default implementation
-        result = Default_Port_FE_In(port, pc);
-    }
-    else if (IsPort_BFFD(port))
-    {
-        decodedPort = 0xBFFD;
-        result = PeripheralPortIn(decodedPort);
-    }
-    else if (IsPort_FFFD(port))
-    {
-        decodedPort = 0xFFFD;
-        result = PeripheralPortIn(decodedPort);
-    }
-    else
-    {
-        // Allow registered peripheral device to handle port IN
-        result = PeripheralPortIn(port);
+        switch (decodedPort)
+        {
+            case 0x00FE:
+                // FE port must be passed as non-decoded since keyboard handler uses it
+                result = Default_Port_FE_In(port, pc);
+                break;
+            case 0x7FFD:
+                result = _context->emulatorState.p7FFD;
+                break;
+            default:
+                // All ports registered with PortDecoder will be handled
+                PeripheralPortIn(decodedPort);
+                break;
+        }
     }
 
     /// region <Debug logging>
 
-    // Treat all FE ports as one
+    // Treat all FE ports as one for logging purposes
     if ((port & 0x00FE) == 0x00FE)
         port = 0x00FE;
 
@@ -102,35 +99,22 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    uint16_t decodedPort = port;
-
-    //    Pentagon 128K
-    //    port: #7FFD
-    bool isPort_7FFD = IsPort_7FFD(port);
-    if (isPort_7FFD)
+    uint16_t decodedPort = decodePort(port);
+    if (decodedPort != 0x0000)
     {
-        decodedPort = 0x7FFD;
-        Port_7FFD_Out(port, value, pc);
-    }
-    else if (IsPort_FE(port))
-    {
-        decodedPort = 0x00FE;
-        Default_Port_FE_Out(port, value, pc);
-    }
-    else if (IsPort_BFFD(port))
-    {
-        decodedPort = 0xBFFD;
-        PeripheralPortOut(decodedPort, value);
-    }
-    else if (IsPort_FFFD(port))
-    {
-        decodedPort = 0xFFFD;
-        PeripheralPortOut(decodedPort, value);
-    }
-    else
-    {
-        // Allow registered peripheral device to handle port OUT
-        PeripheralPortOut(port, value);
+        switch (decodedPort)
+        {
+            case 0x00FE:
+                Default_Port_FE_Out(decodedPort, value, pc);
+                break;
+            case 0x7FFD:
+                Port_7FFD_Out(decodedPort, value, pc);
+                break;
+            default:
+                // All ports registered with PortDecoder will be handled
+                PeripheralPortOut(decodedPort, value);
+                break;
+        }
     }
 
     /// region <Debug logging>
@@ -140,7 +124,7 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     {
         // Determine RAM/ROM page where code executed from
         std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Decoded port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
+        MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
     }
     /// endregion </Debug logging>
 }
@@ -241,7 +225,7 @@ bool PortDecoder_Pentagon128::IsPort_FFFD(uint16_t port)
     return result;
 }
 
-uint16_t PortDecoder_Pentagon128::matchPort(uint16_t port)
+uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
 {
     uint16_t result = 0x0000;
 
@@ -254,11 +238,38 @@ uint16_t PortDecoder_Pentagon128::matchPort(uint16_t port)
         { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
 
         { 0b0000'0000'1111'1111, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
-        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
-        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
-        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
-        { 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x007F },   // Beta128 #007F    Match value: (131, 0x0083)
+        //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
+        //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
+        //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
+        //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x007F },   // Beta128 #007F    Match value: (131, 0x0083)
     };
+    static constexpr size_t const elements = sizeof(portMasksMatches) / sizeof(PortMatch);
+
+    /// region <Full resolving>
+    bool matchResult;
+    for (size_t i = 0; i < elements; i++)
+    {
+        const PortMatch& item = portMasksMatches[i];
+        matchResult = (port & item.mask) == item.match;
+        if (matchResult)
+        {
+            result = item.resolvedPort;
+            break;
+        }
+    }
+    /// endregion </Full resolving>
+
+    if (result == 0x0000)
+    {
+        // Simplified resolving for BDI ports 1F, 3F, 5F, 7F
+        static constexpr const uint8_t portsMask = 0b1000'0011;     // 0x83 (131)
+        static constexpr const uint8_t portsMatch = 0b0000'0011;    // 0x03 (3)
+        if ((port & portsMask) == portsMatch)
+        {
+            // result = (port & 0x60) | 0x1F;
+            result = (port & 0b0110'0000) | 0b0001'1111;
+        }
+    }
 
     return result;
 }

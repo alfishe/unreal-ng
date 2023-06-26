@@ -123,7 +123,7 @@ void ModuleLogger::TurnOnLoggingForAll()
     }
 }
 
-void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t submodule)
+void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t submodule)
 {
     /// region <Sanity checks>
     if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
@@ -158,7 +158,7 @@ void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint8_t s
     }
 }
 
-void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t submodule)
+void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t submodule)
 {
     /// region <Sanity checks>
     if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
@@ -167,13 +167,13 @@ void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint8_t su
         throw std::logic_error(message);
     }
 
-    if (submodule == 0x00)
+    if (submodule == 0x0000)
     {
         std::string message = StringHelper::Format("No sense to pass NONE module");
         throw std::logic_error(message);
     }
 
-    if (submodule != 0xFF && BitHelper::CountSetBits(submodule) > 1)
+    if (submodule != 0xFFFF && BitHelper::CountSetBits(submodule) > 1)
     {
         std::string message = StringHelper::Format("Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
         throw std::logic_error(message);

@@ -11,6 +11,16 @@ VG93::VG93(EmulatorContext* context) : PortDecoder(context)
 
     _chipAttachedToPortDecoder = false;
     _ejectPending = false;
+
+    _selectedDrive = new FDD();
+}
+
+VG93::~VG93()
+{
+    if (_selectedDrive)
+    {
+        delete _selectedDrive;
+    }
 }
 
 /// endregion </Constructors / destructors>
@@ -20,10 +30,273 @@ VG93::VG93(EmulatorContext* context) : PortDecoder(context)
 /// Update FDC internal state
 void VG93::process()
 {
-    if (_extStatus & SIG_OUT_HLD)
-    {
+    return;
 
+    _time = _context->emulatorState.t_states;
+
+    // Stop motor if HLD signal is inactive
+    if (!(_extStatus & SIG_OUT_HLD))
+    {
+        _selectedDrive->setMotor(false);
     }
+
+    // If no data available from disk image - not ready flag must be set
+    if (_selectedDrive->getRawData())
+    {
+        _status &= ~WDS_NOTRDY;     // Data available => clear NOT READY
+    }
+    else
+    {
+        _status |= WDS_NOTRDY;      // No data => NOT READY
+    }
+
+    // Set status flags for all Type 1 and 4 commands
+    if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK || _lastDecodedCmd == WD_CMD_STEP ||
+        _lastDecodedCmd == WD_CMD_STEP_IN || _lastDecodedCmd == WD_CMD_STEP_OUT || _lastDecodedCmd == WD_CMD_FORCE_INTERRUPT)
+    {
+        _status &= ~WDS_INDEX;
+
+        if (_state != S_IDLE)
+        {
+            _status &= ~(WDS_TRK00 | WDS_INDEX);
+
+            uint8_t track = _selectedDrive->getTrack();
+            if (track == 0)
+            {
+                _status |= WDS_TRK00;
+            }
+        }
+    }
+
+    /// region <Main state machine
+
+    //while (true)
+    {
+        if (!_selectedDrive->getMotor())
+        {
+            _status |= WDS_NOTRDY;  // Motor is not started yet
+        }
+        else
+        {
+            _status &= ~WDS_NOTRDY; // Motor already started
+        }
+
+        switch (_state)
+        {
+            case S_IDLE:
+                _status ^= ~WDS_BUSY;   // Remove busy flag
+
+                // Stop motor after 3 seconds (3 * 5 revolutions per second) being idle
+                if (_indexPulseCounter >= 15 || _time > _rotationCounter)
+                {
+                    _indexPulseCounter = 15;
+                    _status = 0x00;                     // Clear status
+                    _status |= WDS_NOTRDY;              // Set NOT READY status bit
+                    _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
+
+                    _selectedDrive->setMotor(false);    // Stop motor
+                }
+                _rqs = INTRQ;
+                break;
+            case S_WAIT:
+                if (_time < _next)  // Delay is still active
+                {
+                    return;
+                }
+                _state = _state2;
+                break;
+            case S_DELAY_BEFORE_CMD: // Type 2 or 3 command issues (read/write sector or track)
+                if (_lastCmd & CMD_DELAY) // Check for Bit2: E=1 command parameter
+                {
+                    _next = Z80_CLK_CYCLES_PER_MS * 15; // Make 15ms delay as requested
+                }
+                _state2 = S_WAIT_HLT_RW;
+                _state = S_WAIT;
+                break;
+            case S_WAIT_HLT_RW:     // Wait for the read-write head to be engaged
+                if (!(_beta128 & BETA_COMMAND_BITS::BETA_CMD_BLOCK_HLT)) // If BETA_CMD_BLOCK_HLT is active low - infinite wait
+                {
+                    return;
+                }
+                _state = S_CMD_RW;  // Transition to read/write operation after the delay
+                break;
+            case S_CMD_RW:
+                // TODO: transfer code
+                break;
+            case S_FOUND_NEXT_ID:
+                // TODO: transfer code
+                break;
+            case S_RDSEC:
+                // TODO: transfer code
+                break;
+            case S_READ:
+                // TODO: transfer code
+                break;
+            case S_WRSEC:
+                // TODO: transfer code
+                break;
+            case S_WRITE:
+                // TODO: transfer code
+                break;
+            case S_WRTRACK:
+                // TODO: transfer code
+                break;
+            case S_WR_TRACK_DATA:
+                // TODO: transfer code
+                break;
+            case S_TYPE1_CMD:           // Type 1 (RESTORE / SEEK / STEP) command issued
+                {
+                    _status &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_WRITEPROTECTED);    // Reset error flags
+
+                    _rqs = 0;
+
+                    bool motorFlag = (_lastCmd & CMD_SEEK_HEADLOAD) || (_beta128 & BETA_COMMAND_BITS::BETA_CMD_DRIVE_MASK) ? _next + 2 * Z80_FREQUENCY : 0;
+                    _selectedDrive->setMotor(motorFlag);
+
+                    _state2 = S_SEEKSTART;  // Start with restore/seek by default
+
+                    constexpr uint8_t const stepCommandMask = 0b1110'0000;
+                    if (_lastCmd & stepCommandMask)
+                    {
+                        _state2 = S_STEP;
+
+                        // Set step direction for STEP IN and STEP OUT commands (STEP command will use previous direction)
+                        if (_lastDecodedCmd == WD_CMD_STEP_IN || _lastDecodedCmd == WD_CMD_STEP_OUT)
+                        {
+                            _stepDirection = (_lastCmd & CMD_SEEK_DIR) ? -1 : 1;
+                        }
+                    }
+                }
+                break;
+            case S_STEP:
+                {
+                    _status |= WDS_BUSY;
+
+                    uint8_t track = _selectedDrive->getTrack();
+                    if (track == 0 &&
+                        _stepDirection < 0) // If we already at TRK00 and step out command issued - this is the limit
+                    {
+                        _track = 0;
+                        _state = S_VERIFY;  // Next step will be - processing V bit (Verify) for the command if set
+                    }
+                    else
+                    {
+                        // Update Track register (RESTORE command - always, STEP IN / STEP OUT - only if bit4 (u flag) was set
+                        if (_lastDecodedCmd == WD_CMD_RESTORE || _lastCmd & CMD_SEEK_TRKUPD)
+                        {
+                            _track += _stepDirection;
+                        }
+
+                        // Apply step changes to the drive state
+                        if (_selectedDrive->getMotor())
+                        {
+                            int8_t track = _selectedDrive->getTrack();
+                            track += _stepDirection;
+
+                            if (track < 0)
+                            {
+                                track = 0;
+                            } else if (track >= MAX_PHYSICAL_CYLINDER)
+                            {
+                                track = MAX_PHYSICAL_CYLINDER;
+                            }
+
+                            _selectedDrive->setTrack(track);
+                        }
+
+                        // Set step timings / delays
+                        uint8_t rateIndex = _lastCmdValue & CMD_SEEK_RATE;
+                        uint8_t rate = STEP_TIMINGS_1MHZ[rateIndex];
+                        _next += rate * Z80_CLK_CYCLES_PER_MS;
+
+                        // Next step will be:
+                        // - S_VERIFY for STEP / STEP IN / STEP OUT commands
+                        // - S_SEEK for SEEK and RESTORE commands
+                        constexpr uint8_t const stepCommandMask = 0b1110'0000;
+                        _state2 = (_lastCmd & stepCommandMask) ? S_VERIFY : S_SEEK;
+                        _state = S_WAIT;
+                    }
+                }
+                break;
+            case S_SEEKSTART:
+                _status |= WDS_BUSY;
+
+                if (_lastDecodedCmd == WD_CMD_RESTORE)
+                {
+                    _state2 = S_RESTORE;
+                    _next += (Z80_CLK_CYCLES_PER_MS * 21) / 1000;   // 21us delay before Register Register load
+                    _state = S_WAIT;
+                }
+                else
+                {
+                    _state = S_SEEK;
+                }
+                break;
+            case S_RESTORE:
+                _track = 0xFF;
+                _data = 0;
+                _state = S_SEEK;
+                break;
+            case S_SEEK:
+                if (_data == _track) // If we already reached requested track - next step will be to handle verify flags (Bit2)
+                {
+                    _state = S_VERIFY;
+                }
+                else                // Otherwise - continue stepping in required direction
+                {
+                    _stepDirection = (_data < _track) ? -1 : 1;
+                    _state = S_STEP;
+                }
+                break;
+            case S_VERIFY:
+                if (_lastCmd & CMD_SEEK_VERIFY)  // Verification is required (Bit2 in command set)
+                {
+                    _extStatus |= SIG_OUT_HLD;
+
+                    // Wait for 15ms
+                    //       |
+                    //       v
+                    // Wait for HLT == 1
+                    //       |
+                    //       v
+                    // S_VERIFY2
+                    _next += 15 * Z80_CLK_CYCLES_PER_MS;    // 15ms delay
+                    _state2 = S_WAIT_HLT;
+                }
+                else                            // Verification is not required (Bit2 in command not set)
+                {
+                    _status |= WDS_BUSY;
+                    _state2 = S_IDLE;
+                    _state = S_WAIT;
+                    _rotationCounter = _next + 15 * Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;   // Disk will be spinning at least for additional 15 whole turns
+                    _next += (105 * Z80_CLK_CYCLES_PER_MS) / 1000;  // Set 105 us delay
+                }
+                break;
+            case S_WAIT_HLT:
+                if (_beta128 & BETA_CMD_RESET)  // Reset is NOT active (active low)
+                {
+                    _state = S_VERIFY2;
+                }
+                break;
+            case S_VERIFY2:
+                // TODO: transfer code
+                seekInDiskImage();  // Position within disk image
+                findMarker();       // Find sector marker
+                break;
+            case S_EJECT1:  // Initiate eject
+                _next = _time + 10 * Z80_CLK_CYCLES_PER_MS; // 10ms delay
+                _state2 = S_EJECT2;
+                _state = S_WAIT;
+                break;
+            case S_EJECT2:  // Continue the ejection after the delay
+                _status &= ~WDS_WRITEPROTECTED;
+                _ejectPending = false;
+                _state = S_IDLE;
+                break;
+        }
+    }
+
+    /// endregion </<Main state machine>
 }
 
 /// Handle Beta128 interface system controller commands
@@ -45,26 +318,56 @@ void VG93::processBeta128(uint8_t value)
     {
         _status &= ~WDS_NOTRDY;
         _rqs = INTRQ;
-        //_seldrive->motor = 0;
-        _indexCounter = 0;
+        _selectedDrive->setMotor(false);
+        _indexPulseCounter = 0;
 
         // Set initial state after reset
         _state = S_TYPE1_CMD;
-        _cmd =
-        _decodedCmd = WD_CMD_RESTORE;
+        _lastCmd =
+        _lastDecodedCmd = WD_CMD_RESTORE;
+    }
+    else
+    {
+        uint8_t beta128ChangedBits = _beta128 ^ value;
+        if (beta128ChangedBits & SYS_HLT) // When HLT signal positive edge (from 0 to 1) detected
+        {
+            // FIXME: index strobes should be set by disk rotation timings, not by HLT / BUSY edges
+            if (!(_status & WDS_BUSY))
+            {
+                _indexPulseCounter++;
+            }
+        }
+
+        _beta128 = value;
     }
 }
 
-uint8_t VG93::readStatus()
+void VG93::findMarker()
 {
-    uint8_t result = _status;
+    seekInDiskImage();
 
-    if (!(_cmd & 0x80))
+    int headerIndex = -1;
+    if (_selectedDrive->getMotor() && _selectedDrive->getRawData())
     {
-        // hld & hlt
-        result = _status | (((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0);
+
     }
-    return result;
+    else
+    {
+        // next = comp.t_states + cpu.t + 1;
+    }
+
+    _state = S_WAIT;
+    _state2 = S_FOUND_NEXT_ID;
+}
+
+void VG93::getIndex()
+{
+
+}
+
+void VG93::seekInDiskImage()
+{
+    // seldrive->t.seek(seldrive, seldrive->track, side, LOAD_SECTORS);
 }
 
 void VG93::reset()
@@ -101,8 +404,14 @@ void VG93::processWD93Command(uint8_t value)
         &VG93::cmdForceInterrupt
     };
 
+    // Decode command
     VG93::WD_COMMANDS command = decodeWD93Command(value);
     uint8_t commandValue = getWD93CommandValue(command, value);
+
+    // Persist information about command
+    _lastCmd = value;
+    _lastDecodedCmd = command;
+    _lastCmdValue = commandValue;
 
     if (command < sizeof(commandTable) / sizeof(commandTable[0]))
     {
@@ -116,10 +425,10 @@ void VG93::processWD93Command(uint8_t value)
         }
         else if (!isBusy)                               // All other commands are ignored if controller is busy
         {
-            _cmd = value;
+            _lastCmd = value;
             _status |= WDS_BUSY;
             _rqs = 0;
-            _indexCounter = 0;
+            _indexPulseCounter = 0;
             _rotationCounter = SIZE_MAX;
 
             // Call the corresponding command method
@@ -294,7 +603,7 @@ void VG93::cmdForceInterrupt(uint8_t value)
 {
     std::cout << "Command Force Interrupt: " << value << std::endl;
 
-    _indexCounter = 0;
+    _indexPulseCounter = 0;
     _rotationCounter = SIZE_MAX;
 
     if (value != 0)
@@ -437,7 +746,7 @@ uint8_t VG93::getWD93CommandValue(VG93::WD_COMMANDS command, uint8_t value)
 
     if (command < sizeof(commandMaskValues) / sizeof(commandMaskValues[0]))
     {
-        result = result & commandMaskValues[command];
+        result = value & commandMaskValues[command];
     }
 
     return result;
@@ -459,7 +768,16 @@ uint8_t VG93::portDeviceInMethod(uint16_t port)
     {
         case PORT_1F:   // Return state
             _rqs &= ~INTRQ;
-            result = readStatus();
+            if (!(_lastCmd & 0x80))
+            {
+                // Set head load state based on HLD and HLT signals
+                uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0;
+                result = _status | headStatus;
+            }
+            else
+            {
+                result = _status;
+            }
             break;
         case PORT_3F:   // Return current track number
             result = _track;

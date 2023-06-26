@@ -90,7 +90,7 @@ protected:
     SoundManager* _soundManager = nullptr;
     ModuleLogger* _logger = nullptr;
 
-    // Registered port handlers from peripheral devices
+    // Registered port handlers from external peripheral devices
     std::map<uint16_t, PortDevice*> _portDevices;
 
     // Set of ports to mute logging to

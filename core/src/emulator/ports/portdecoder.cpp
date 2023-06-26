@@ -201,7 +201,6 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    bool result = false;
     const uint32_t tState = _context->pCore->GetZ80()->t;
 
     // Persist output value
@@ -220,7 +219,7 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
 
     /// region <Debug logging>
 
-    // Treat all FE ports as one
+    // Treat all FE ports as one for logging purposes
     if ((port & 0x00FE) == 0x00FE)
         port = 0x00FE;
 

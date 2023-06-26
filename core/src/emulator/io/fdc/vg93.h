@@ -3,8 +3,10 @@
 #include "stdafx.h"
 
 #include <algorithm>
+#include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/fdc/fdc.h"
+#include "emulator/io/fdc/fdd.h"
 
 /// @see https://www.retrotechnology.com/herbs_stuff/WD179X.PDF
 /// @see https://zxpress.ru/book_articles.php?id=1356
@@ -17,14 +19,6 @@ public:
     const uint16_t _SUBMODULE = PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC;
     ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
-
-    /// region <Constants>
-protected:
-    // Typical head engage time is 30...100ms depending on the drive
-    static constexpr const uint8_t HEAD_LOAD_TIME_MS = 50;
-    /// endregion </Constants>
-
-
 
     /// region <Types>
 public:
@@ -127,15 +121,6 @@ public:
         WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
 
-    // Force Interrupt command parameter bits
-    enum WD_FORCE_INTERRUPT_BITS : uint8_t
-    {
-        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
-        WD_FORCE_INTERRUPT_READY                = 0x02,
-        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
-        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
-    };
-
     inline static const char* const getWD_COMMANDName(WD_COMMANDS command)
     {
         static const char* const names[] =
@@ -172,10 +157,36 @@ public:
         CMD_MULTIPLE      = 0x10
     };
 
-    enum BETA_STATUS : uint8_t
+    // Force Interrupt command parameter bits
+    enum WD_FORCE_INTERRUPT_BITS : uint8_t
     {
-        DRQ   = 0x40,   // Indicates that Data Register(DR) contains assembled data in Read operations or empty in Write operations
-        INTRQ = 0x80    // Set at the completion of any command and is reset when the STATUS register is read or the command register os written to
+        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
+        WD_FORCE_INTERRUPT_READY                = 0x02,
+        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
+        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
+    };
+
+    enum BETA_COMMAND_BITS : uint8_t
+    {
+        BETA_CMD_DRIVE_MASK = 0b0000'0011,  // Bits[0,1] define drive selection. 00 - A, 01 - B, 10 - C, 11 - D
+
+        BETA_CMD_RESET      = 0b0000'0100,  // Bit2 (active low) allows to reset BDI and WD73 controller. Similar to RESTORE command execution for the application
+        // HLT - Head Load Timing is an input signal used to determine head engagement time.
+        // When HLT = 1, FDC assumes that head is completely engaged. Usually it takes 30-100ms for FDD to react on HLD signal from FDC and engage the head
+        BETA_CMD_BLOCK_HLT  = 0b0000'1000,  // Bit3 (active low) blocks HLT signal. Normally it should be inactive (high).
+        BETA_CMD_HEAD       = 0b0001'0000,  // Bit4 - select head / side. 0 - lower side head. 1 - upper side head
+        BETA_CMD_RESERVED5  = 0b0010'0000,  // Bit5 - Unused
+        BETA_CMD_DENSITY    = 0b0100'0000,  // Bit6 - 0 - Double density / MFM, 1 - Single density / FM
+        BETA_CMD_RESERVED7  = 0b1000'0000,  // Bit7 - Unused
+    };
+
+    enum BETA_STATUS_BITS : uint8_t
+    {
+        DRQ   = 0x40,   // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
+
+        /// INTRQ = 0 - Command complete
+        /// INTRQ = 1 - Command in progress
+        INTRQ = 0x80    // Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
     };
 
     enum WD_SYS : uint8_t
@@ -187,7 +198,6 @@ public:
     enum WD_SIG : uint8_t
     {
         /// Head LoaD (HLD) output controls the loading of the Read-Write head against the media
-
         SIG_OUT_HLD = 0x01
     };
 
@@ -197,16 +207,26 @@ public:
 
     /// region <Constants>
 protected:
-    static constexpr size_t WD93_COMMAND_COUNT = 11;
-    static constexpr size_t WD_UNUSED_COMMANDS = 1;
+    static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
+    static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
+    static constexpr const size_t WD93_FREQUENCY = 1'000'000;
+    static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
+
+    static constexpr const size_t WD93_COMMAND_COUNT = 11;
 
     // Decoded port addresses (physical address line matching done in platform port decoder)
-    static constexpr uint16_t PORT_1F = 0x001F;     // Write - command register; Read - state
-    static constexpr uint16_t PORT_3F = 0x003F;     // Track register
-    static constexpr uint16_t PORT_5F = 0x005F;     // Sector register
-    static constexpr uint16_t PORT_7F = 0x007F;     // Data register
-    static constexpr uint16_t PORT_FF = 0x00FF;     // Write - BETA128 system controller; Read - FDC readiness (Bit6 - DRQ, bit7 - INTRQ)
-    static constexpr uint16_t PORT_7FFD = 0x7FFD;   // DOS lock mode. Bit4 = 0 - block; Bit4 = 1 - allow
+    static constexpr const uint16_t PORT_1F = 0x001F;     // Write - command register; Read - state
+    static constexpr const uint16_t PORT_3F = 0x003F;     // Track register
+    static constexpr const uint16_t PORT_5F = 0x005F;     // Sector register
+    static constexpr const uint16_t PORT_7F = 0x007F;     // Data register
+    static constexpr const uint16_t PORT_FF = 0x00FF;     // Write - BETA128 system controller; Read - FDC readiness (Bit6 - DRQ, bit7 - INTRQ)
+    static constexpr const uint16_t PORT_7FFD = 0x7FFD;   // DOS lock mode. Bit4 = 0 - block; Bit4 = 1 - allow
+
+    // Stepping rates from WD93 datasheet
+    static constexpr uint8_t const STEP_TIMINGS_1MHZ[] = { 6, 12, 20, 30 };
+    static constexpr uint8_t const STEP_TIMINGS_2MHZ[] = { 3, 6, 10, 15 };
+
+
     /// endregion </Constants>
 
     /// region <Fields>
@@ -214,18 +234,26 @@ public:
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
 
+    FDD* _selectedDrive = nullptr;
+
     bool _ejectPending = false;                 // Disk is ejecting. FDC is already locked
 
+    // WD93 internal state machine
     WDSTATE _state;
     WDSTATE _state2;
+
+    // Counters to measure time intervals
+    size_t _next;
+    size_t _time;
 
     // Notify host system
     uint8_t _drive;
     uint8_t _side;
 
     // Controller state
-    uint8_t _cmd;
-    WD_COMMANDS _decodedCmd;
+    uint8_t _lastCmd;                               // Last command executed (full data byte)
+    WD_COMMANDS _lastDecodedCmd;                    // Last command executed (decoded)
+    uint8_t _lastCmdValue;                          // Last command parameters (already masked)
     uint8_t _data;
     uint8_t _track;
     uint8_t _sector;
@@ -236,7 +264,7 @@ public:
     int16_t _stepDirection = 1;                 // Head movement direction
     uint8_t _beta128 = 0x00;                    // BETA128 system register
 
-    size_t _indexCounter = 0;                   // Index pulses counter
+    size_t _indexPulseCounter = 0;                   // Index pulses counter
     size_t _rotationCounter = 0;                  // Tracks disk rotation
 
     uint16_t _trackCRC = 0x0000;                // Track CRC (used during formatting)
@@ -246,7 +274,7 @@ public:
     /// region <Constructors / destructors>
 public:
     VG93(EmulatorContext* context);
-    virtual ~VG93() = default;
+    virtual ~VG93();
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
@@ -257,7 +285,9 @@ public:
 protected:
     void process();
     void processBeta128(uint8_t value);
-    uint8_t readStatus();
+    void findMarker();
+    void getIndex();
+    void seekInDiskImage();
 
     static WD_COMMANDS decodeWD93Command(uint8_t value);
     static uint8_t getWD93CommandValue(VG93::WD_COMMANDS command, uint8_t value);
@@ -265,6 +295,7 @@ protected:
     void updateStatusesForReadWrite();
     void updateStatusesForSeek(uint8_t maskedValue);
 
+    // WD93 Command handlers
     void cmdRestore(uint8_t value);
     void cmdSeek(uint8_t value);
     void cmdStep(uint8_t value);
@@ -276,7 +307,6 @@ protected:
     void cmdReadTrack(uint8_t value);
     void cmdWriteTrack(uint8_t value);
     void cmdForceInterrupt(uint8_t value);
-
 
     /// endregion </Methods>
 
