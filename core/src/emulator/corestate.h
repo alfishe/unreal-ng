@@ -1,5 +1,8 @@
 #pragma once
+
 #include "stdafx.h"
+
+#include <emulator/io/fdc/diskimage.h>
 
 enum BaseFrequency_t : uint8_t
 {
@@ -18,5 +21,8 @@ struct CoreState
     std::string tapeFilePath;
 
     // Disk image files mounted
-    std::string diskFilePaths[4];
+    std::string diskFilePaths[4] = {};
+
+    // Disk images loaded
+    DiskImage* diskImages[4] = {};
 };

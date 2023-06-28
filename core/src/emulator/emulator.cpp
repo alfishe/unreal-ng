@@ -1,4 +1,5 @@
 #include <loaders/snapshot/loader_z80.h>
+#include <loaders/disc/loader_trd.h>
 #include "stdafx.h"
 
 #include "emulator.h"
@@ -310,11 +311,23 @@ void Emulator::ReleaseNoGuard()
         _mainloop = nullptr;
     }
 
-    // Release additional peripheral devices
+    /// region <Release additional peripheral devices>
     // GS / NGS
     // ZiFi
     // HDD/CD
     // Tape
+    // Floppy
+    for (size_t i = 0; i < 4; i++)
+    {
+        DiskImage* diskImage = _context->coreState.diskImages[i];
+
+        if (diskImage)
+        {
+            delete diskImage;
+        }
+    }
+
+    /// endregion </Release additional peripheral devices>
 
 
     // Release CPU subsystem core (it will release all main peripherals)
@@ -647,6 +660,14 @@ bool Emulator::LoadDisk(const std::string &path)
     MLOGINFO("Inserting drive A: disk image from file: '%s'", path.c_str());
 
     _context->coreState.diskFilePaths[0] = path;
+
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
+    if (ext == "trd")
+    {
+        LoaderTRD loaderTrd(_context, path);
+        DiskImage* diskImage = loaderTrd.load();
+        _context->coreState.diskImages[0] = diskImage;
+    }
 
     return result;
 }

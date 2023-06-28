@@ -263,7 +263,7 @@ bool Core::Init()
 
 void Core::Release()
 {
-    // Unegister itself from context
+    // Unregister itself from context
     _context->pCore = nullptr;
 
     _context->pPortDecoder = nullptr;

@@ -2,6 +2,10 @@
 
 #include "stdafx.h"
 
+#include <string>
+#include <emulator/emulatorcontext.h>
+#include "emulator/io/fdc/diskimage.h"
+
 /// TR-DOS uses 256 Bytes per sector (BPS) and 16 Sectors per track (SPT) for disks
 // 40 track 1 sided image length => 163840 bytes (1×40×16×256)
 // 40 track 2 sided image length => 327680 bytes
@@ -63,9 +67,21 @@ struct TRDFile
 
 class LoaderTRD
 {
+    /// region <Fields>
+protected:
+    EmulatorContext* _context = nullptr;
+    std::string _filepath;
+    /// endregion </Fields>
+
+    /// region <Constructors / destructors>
+public:
+    LoaderTRD(EmulatorContext* context, const std::string& filepath) : _context(context), _filepath(filepath) {};
+    virtual ~LoaderTRD() = default;
+    /// endregion </Constructors / destructors>
+
     /// region <Basic methods>
 public:
-    bool readImage();
+    DiskImage* load();
     bool writeImage();
     bool createNewImage();
     bool format();

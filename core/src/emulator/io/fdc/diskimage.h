@@ -439,18 +439,35 @@ public:
         uint8_t* trackBads[MAX_CYLINDERS][2];       // Shortcuts to each track bad byte info
 
         Track _track;                               // Buffer current track for fast sector access
-
-
     };
     /// endregion </Types>
 
     /// region <Fields>
 protected:
-    Disk* loadedDisk = nullptr;
+    bool _loaded = false;
+    Disk* _loadedDisk = nullptr;
     /// endregion </Fields>
+
+    /// region <Constructors / destructors>
+public:
+    DiskImage() = default;
+    virtual ~DiskImage()
+    {
+        if (_loadedDisk)
+        {
+            if (_loadedDisk->rawData)
+            {
+                delete _loadedDisk->rawData;
+            }
+
+            delete _loadedDisk;
+        }
+    }
+    /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:
+    bool setRawDiskImageData(uint8_t* buffer, size_t size);
 
     /// endregion </Methods>
 };
