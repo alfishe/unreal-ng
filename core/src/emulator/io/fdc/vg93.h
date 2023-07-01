@@ -95,7 +95,12 @@ public:
         WDS_CRCERR         = 0x08,   // For Type 1 (Restore & Seek) commands + READ ADDRESS + READ SECTOR + WRITE SECTOR
         WDS_NOTFOUND       = 0x10,   // RNF (Record Not Found) - For READ ADDRESS + READ SECTOR + WRITE SECTOR
         WDS_SEEKERR        = 0x10,   // For Type 1 (Restore & Seek) commands only
-        WDS_RECORDTYPE     = 0x20,   // For READ SECTOR command only
+
+        // The data mark code is a byte value that is read from the disk and helps identify the sector's characteristics.
+        // Data mark code for the READ_SECTOR operation is typically:
+        // - 0xFB (binary 11111011) or
+        // - 0xF8 (binary 11111000)
+        WDS_RECORDTYPE     = 0x20,   // For READ SECTOR command only. Indicates record type code from data field address mark. 1 - Deleted Data Mark; 0 - Data Mark
         WDS_HEADLOADED     = 0x20,
         WDS_WRITEFAULT     = 0x20,
         WDS_WRITEPROTECTED = 0x40,   // Disk is write-protected
@@ -211,6 +216,7 @@ protected:
     static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
+    static constexpr const size_t T_STATES_PER_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);    // We must read the whole track during single disk spin (200ms)
 
     static constexpr const size_t WD93_COMMAND_COUNT = 11;
 

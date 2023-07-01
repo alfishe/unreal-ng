@@ -24,6 +24,9 @@ constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           
 
 constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio player callback notifies that buffer has less than half of its content
 
+constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";
+constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";
+
 /// endregion </Notification center events>
 
 /// region <Logging / Tracing data>
@@ -702,8 +705,8 @@ struct EmulatorState
 {
     /// region <Counters>
 
-    uint64_t t_states;      // inc with conf.frame by each frame
-    unsigned frame_counter; // Counting each video frame displayed
+    uint64_t t_states;      // T-State counter within frame
+    uint64_t frame_counter; // Counting each video frame displayed
 
     /// endregion </Counters>
 

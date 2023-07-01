@@ -12,7 +12,7 @@ VG93::VG93(EmulatorContext* context) : PortDecoder(context)
     _chipAttachedToPortDecoder = false;
     _ejectPending = false;
 
-    _selectedDrive = new FDD();
+    _selectedDrive = new FDD(context);
 }
 
 VG93::~VG93()
@@ -30,7 +30,7 @@ VG93::~VG93()
 /// Update FDC internal state
 void VG93::process()
 {
-    return;
+    //return;
 
     _time = _context->emulatorState.t_states;
 
@@ -131,6 +131,18 @@ void VG93::process()
                 break;
             case S_READ:
                 // TODO: transfer code
+
+                // Set READ_SECTOR specific data mark status
+                // seldrive->t.hdr[foundid].data[-1] == 0xF8
+                if (false)
+                    _status |= WDS_RECORDTYPE;
+                else
+                    _status &= ~WDS_RECORDTYPE;
+
+                _next += T_STATES_PER_BYTE;
+
+                _state = S_WAIT;
+                _state2 = S_READ;
                 break;
             case S_WRSEC:
                 // TODO: transfer code
@@ -389,7 +401,7 @@ void VG93::eject(uint8_t drive)
 /// @param value Command written
 void VG93::processWD93Command(uint8_t value)
 {
-    static constexpr CommandHandler commandTable[] =
+    static constexpr CommandHandler const commandTable[] =
     {
         &VG93::cmdRestore,
         &VG93::cmdSeek,
@@ -701,8 +713,6 @@ VG93::WD_COMMANDS VG93::decodeWD93Command(uint8_t value)
         { 0b1111'0000, 0b1101'0000 }    // [10] Force Interrupt. Match value: (208, 0xD0)
     };
 
-    constexpr uint8_t val = 0b1100'1000;
-
     VG93::WD_COMMANDS result = WD_CMD_RESTORE;
 
     int index = -1;
@@ -851,8 +861,7 @@ bool VG93::attachToPorts()
     {
         _portDecoder = decoder;
 
-        PortDevice* device = this;
-        result = decoder->RegisterPortHandler(0x001F, this);
+        result  = decoder->RegisterPortHandler(0x001F, this);
         result &= decoder->RegisterPortHandler(0x003F, this);
         result &= decoder->RegisterPortHandler(0x005F, this);
         result &= decoder->RegisterPortHandler(0x007F, this);
@@ -876,7 +885,6 @@ void VG93::detachFromPorts()
         _portDecoder->UnregisterPortHandler(0x005F);
         _portDecoder->UnregisterPortHandler(0x007F);
         _portDecoder->UnregisterPortHandler(0x00FF);
-
 
         _chipAttachedToPortDecoder = false;
     }
