@@ -220,12 +220,15 @@ void MainLoop::OnFrameStart()
 
 void MainLoop::OnFrameEnd()
 {
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    // Update counters
+    _context->emulatorState.t_states += _context->config.frame;
 
+    // Trigger events for peripherals
     _context->pTape->handleFrameEnd();
     _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
 
     // Notify that video frame is composed and ready for rendering
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
 }
 
