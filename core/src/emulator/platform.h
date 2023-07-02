@@ -705,7 +705,7 @@ struct EmulatorState
 {
     /// region <Counters>
 
-    uint64_t t_states;      // T-State counter within frame
+    uint64_t t_states;      // Cumulative T-State counter. Updated after each frame!!! Used for peripheral synchronization
     uint64_t frame_counter; // Counting each video frame displayed
 
     /// endregion </Counters>

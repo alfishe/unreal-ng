@@ -33,10 +33,29 @@ protected:
     EmulatorContext* _context = nullptr;
 
     uint8_t _driveID = 0;               // Drive number. 0..3
-    bool _motorOn = false;
 
+    // Read / write circuit signals
     bool _sideTop = false;
+    bool _readDataBit = false;
+    bool _writeDataBit = false;
+
+    // Input signals
+    bool _motorOn = false;
+    bool _direction = true;             // True - from outside to inner tracks. false - from inner to outside
+    bool _step = false;                 // Step strobe. Active high
+    bool _headLoad = false;             // Activate head load solenoid
+
+    // Output signals
+    bool _track00 = false;
+    bool _index = false;
+    bool _ready = false;
+    bool _writeProtect = true;
+
+    bool _diskInserted = false;
     uint8_t _track = 0;
+    uint8_t _readDataByte = 0;
+    uint8_t _writeDataByte = 0;
+
     uint8_t* _rawData = nullptr;
 
 
@@ -50,6 +69,12 @@ protected:
 
     /// region <Properties>
 public:
+    bool getSide() { return _sideTop; };
+    void setSide(bool sideTop) { _sideTop = sideTop; };
+
+    bool readDataBit() { return _readDataBit; }
+    void writeDataBit(bool value) { _writeDataBit = value; }
+
     bool getMotor() { return _motorOn; };
     void setMotor(bool motorOn)
     {
@@ -73,13 +98,15 @@ public:
         }
     };
 
-    bool getSide() { return _sideTop; };
-    void setSide(bool sideTop) { _sideTop = sideTop; };
-
     int8_t getTrack() { return _track; };
     void setTrack(int8_t track) { _track = track; };
 
-    bool isTrack00() { return _track == 0; }
+    bool isTrack00() { return _track00; }
+    bool isIndex() { return _index; }
+    bool isWriteProtect() { return _writeProtect; }
+    bool isReady() { return _ready; }
+
+    bool isDiskInserted() { return _diskInserted; }
 
     uint8_t* getRawData() { return _rawData; };
     void setRawData(uint8_t* rawData) { _rawData = rawData; };
@@ -87,13 +114,16 @@ public:
 
     /// region <Constructors / destructors>
 public:
-    FDD(EmulatorContext* context) : _context(context) {};
+    FDD(EmulatorContext* context);
     virtual ~FDD() = default;
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:
     void process();
+
+    void insertDisk(uint8_t* rawData);
+    void ejectDisk();
     /// endregion </Methods>
 
     /// region <Helper methods>

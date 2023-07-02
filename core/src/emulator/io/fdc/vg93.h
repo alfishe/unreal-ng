@@ -214,6 +214,7 @@ public:
 protected:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
+    static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
     static constexpr const size_t T_STATES_PER_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);    // We must read the whole track during single disk spin (200ms)
@@ -265,15 +266,20 @@ public:
     uint8_t _sector;
     uint8_t _rqs;
     uint8_t _status;
-    uint8_t _extStatus;                         // External status. Only HLD is supported
+    uint8_t _extStatus;                             // External status. Only HLD is supported
 
-    int16_t _stepDirection = 1;                 // Head movement direction
-    uint8_t _beta128 = 0x00;                    // BETA128 system register
+    int16_t _stepDirection = 1;                     // Head movement direction
+    uint8_t _beta128 = 0x00;                        // BETA128 system register
 
-    size_t _indexPulseCounter = 0;                   // Index pulses counter
-    size_t _rotationCounter = 0;                  // Tracks disk rotation
 
-    uint16_t _trackCRC = 0x0000;                // Track CRC (used during formatting)
+    uint8_t _type1CmdStatus = 0;
+    uint8_t _type2CmdStatus = 0;
+    uint8_t _type3CmdStatus = 0;
+    bool _index = false;                            // Current state of index strobe
+    size_t _indexPulseCounter = 0;                  // Index pulses counter
+    size_t _rotationCounter = 0;                    // Tracks disk rotation
+
+    uint16_t _trackCRC = 0x0000;                    // Track CRC (used during formatting)
 
     /// endregion </Fields>
 
@@ -292,7 +298,7 @@ protected:
     void process();
     void processBeta128(uint8_t value);
     void findMarker();
-    void getIndex();
+    void processIndexStrobe();
     void seekInDiskImage();
 
     static WD_COMMANDS decodeWD93Command(uint8_t value);
@@ -316,6 +322,12 @@ protected:
 
     /// endregion </Methods>
 
+    /// region <Helper methods>
+protected:
+    uint8_t getStatusRegister();
+    bool isReady();
+    /// endregion </Helper methods>
+
     /// region <PortDevice interface methods>
 public:
     uint8_t portDeviceInMethod(uint16_t port);
@@ -327,6 +339,11 @@ public:
     bool attachToPorts();
     void detachFromPorts();
     /// endregion </Ports interaction>
+
+    /// region <Debug methods>
+public:
+    std::string dumpStatusRegister(WD_COMMANDS command);
+    /// endregion </Debug methods>
 };
 
 //

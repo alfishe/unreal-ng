@@ -1,6 +1,8 @@
 #include "vg93.h"
 
+#include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/core.h"
 
 /// region <Constructors / destructors>
 
@@ -32,7 +34,13 @@ void VG93::process()
 {
     //return;
 
-    _time = _context->emulatorState.t_states;
+    // Get current Z80 clock state for timings synchronization
+    uint64_t totalTime = _context->emulatorState.t_states;
+    uint64_t frameTime = _context->pCore->GetZ80()->t;
+    _time = totalTime + frameTime;
+
+    // Emulate disk rotation and index strobe changes
+    processIndexStrobe();
 
     // Stop motor if HLD signal is inactive
     if (!(_extStatus & SIG_OUT_HLD))
@@ -50,27 +58,9 @@ void VG93::process()
         _status |= WDS_NOTRDY;      // No data => NOT READY
     }
 
-    // Set status flags for all Type 1 and 4 commands
-    if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK || _lastDecodedCmd == WD_CMD_STEP ||
-        _lastDecodedCmd == WD_CMD_STEP_IN || _lastDecodedCmd == WD_CMD_STEP_OUT || _lastDecodedCmd == WD_CMD_FORCE_INTERRUPT)
-    {
-        _status &= ~WDS_INDEX;
-
-        if (_state != S_IDLE)
-        {
-            _status &= ~(WDS_TRK00 | WDS_INDEX);
-
-            uint8_t track = _selectedDrive->getTrack();
-            if (track == 0)
-            {
-                _status |= WDS_TRK00;
-            }
-        }
-    }
-
     /// region <Main state machine
 
-    //while (true)
+    while (true)
     {
         if (!_selectedDrive->getMotor())
         {
@@ -84,10 +74,10 @@ void VG93::process()
         switch (_state)
         {
             case S_IDLE:
-                _status ^= ~WDS_BUSY;   // Remove busy flag
+                _status &= ~WDS_BUSY;   // Remove busy flag
 
                 // Stop motor after 3 seconds (3 * 5 revolutions per second) being idle
-                if (_indexPulseCounter >= 15 || _time > _rotationCounter)
+                if (_indexPulseCounter > 15 || _time > _rotationCounter)
                 {
                     _indexPulseCounter = 15;
                     _status = 0x00;                     // Clear status
@@ -97,18 +87,25 @@ void VG93::process()
                     _selectedDrive->setMotor(false);    // Stop motor
                 }
                 _rqs = INTRQ;
+                return;
+
                 break;
             case S_WAIT:
-                if (_time < _next)  // Delay is still active
+                if (_time >= _next)
                 {
+                    // Delay already passed, set next status (queued in _state2)
+                    _state = _state2;
+                }
+                else
+                {
+                    // Delay is still active. Do not change current status
                     return;
                 }
-                _state = _state2;
                 break;
             case S_DELAY_BEFORE_CMD: // Type 2 or 3 command issues (read/write sector or track)
                 if (_lastCmd & CMD_DELAY) // Check for Bit2: E=1 command parameter
                 {
-                    _next = Z80_CLK_CYCLES_PER_MS * 15; // Make 15ms delay as requested
+                    _next = _time + Z80_CLK_CYCLES_PER_MS * 15; // Make 15ms delay as requested
                 }
                 _state2 = S_WAIT_HLT_RW;
                 _state = S_WAIT;
@@ -122,16 +119,19 @@ void VG93::process()
                 break;
             case S_CMD_RW:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_FOUND_NEXT_ID:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_RDSEC:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_READ:
                 // TODO: transfer code
-
+                throw std::logic_error("Not implemented yet");
                 // Set READ_SECTOR specific data mark status
                 // seldrive->t.hdr[foundid].data[-1] == 0xF8
                 if (false)
@@ -146,15 +146,19 @@ void VG93::process()
                 break;
             case S_WRSEC:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_WRITE:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_WRTRACK:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_WR_TRACK_DATA:
                 // TODO: transfer code
+                throw std::logic_error("Not implemented yet");
                 break;
             case S_TYPE1_CMD:           // Type 1 (RESTORE / SEEK / STEP) command issued
                 {
@@ -162,11 +166,16 @@ void VG93::process()
 
                     _rqs = 0;
 
+                    // Start motor for the selected disk drive
                     bool motorFlag = (_lastCmd & CMD_SEEK_HEADLOAD) || (_beta128 & BETA_COMMAND_BITS::BETA_CMD_DRIVE_MASK) ? _next + 2 * Z80_FREQUENCY : 0;
                     _selectedDrive->setMotor(motorFlag);
 
                     _state2 = S_SEEKSTART;  // Start with restore/seek by default
 
+                    /// STEP has - 0b001x'xxxx code
+                    /// STEP IN  - 0b010x'xxxx
+                    /// STEP OUT - 0b011x'xxxx
+                    /// So only those three type 1 commands will match. RESTORE and SEEK - won't
                     constexpr uint8_t const stepCommandMask = 0b1110'0000;
                     if (_lastCmd & stepCommandMask)
                     {
@@ -178,6 +187,11 @@ void VG93::process()
                             _stepDirection = (_lastCmd & CMD_SEEK_DIR) ? -1 : 1;
                         }
                     }
+
+                    // Make 14us delay before FDC will report BUSY status
+                    size_t delay = (14 * Z80_CLK_CYCLES_PER_MS) / 1000;
+                    _next = _time + delay;
+                    _state = S_WAIT;
                 }
                 break;
             case S_STEP:
@@ -185,8 +199,7 @@ void VG93::process()
                     _status |= WDS_BUSY;
 
                     uint8_t track = _selectedDrive->getTrack();
-                    if (track == 0 &&
-                        _stepDirection < 0) // If we already at TRK00 and step out command issued - this is the limit
+                    if (track == 0 && _stepDirection < 0) // If we already at TRK00 and step out command issued - this is the limit
                     {
                         _track = 0;
                         _state = S_VERIFY;  // Next step will be - processing V bit (Verify) for the command if set
@@ -236,7 +249,7 @@ void VG93::process()
                 if (_lastDecodedCmd == WD_CMD_RESTORE)
                 {
                     _state2 = S_RESTORE;
-                    _next += (Z80_CLK_CYCLES_PER_MS * 21) / 1000;   // 21us delay before Register Register load
+                    _next = _time + (Z80_CLK_CYCLES_PER_MS * 21) / 1000;   // 21us delay before Register Register load
                     _state = S_WAIT;
                 }
                 else
@@ -372,9 +385,35 @@ void VG93::findMarker()
     _state2 = S_FOUND_NEXT_ID;
 }
 
-void VG93::getIndex()
+/// Emulate disk rotation and index strobe changes
+void VG93::processIndexStrobe()
 {
+    // Based on:
+    // - 300 revolutions per minute => 5 revolutions per second => 200ms or 1/5 second for single revolution
+    // - base Z80 frequency 3.5MHz
+    // We're getting 700'000 Z80 clock cycles period for each disk revolution / rotation
+    static constexpr const size_t DISK_ROTATION_PERIOD_IN_Z80_CLOCK_CYCLES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
 
+    // For 4ms index strobe and base Z80 frequency 3.5Mhz we're getting 14'000 Z80 clock cycles for 4ms index strobe duration
+    static constexpr const size_t INDEX_STROBE_DURATION_IN_Z80_CLOCK_CYCLES = Z80_CLK_CYCLES_PER_MS * FDD::DISK_INDEX_STROBE_DURATION_MS;
+
+    bool diskInserted = _selectedDrive->isDiskInserted();
+    bool motorOn = _selectedDrive->getMotor();
+
+    if (diskInserted && motorOn)
+    {
+        // Set new state for the INDEX flag based on rotating disk position
+        // Note: it is assumed that each disk revolution started with index strobe
+        size_t diskRotationPhaseCounter = (_time % DISK_ROTATION_PERIOD_IN_Z80_CLOCK_CYCLES);
+        if (diskRotationPhaseCounter < INDEX_STROBE_DURATION_IN_Z80_CLOCK_CYCLES)
+        {
+            _index = true;
+        }
+        else
+        {
+            _index = false;
+        }
+    }
 }
 
 void VG93::seekInDiskImage()
@@ -384,7 +423,18 @@ void VG93::seekInDiskImage()
 
 void VG93::reset()
 {
+    _state = S_IDLE;
+    _status = 0;
+    _track = 0;
+    _sector = 0;
+    _data = 0;
 
+    // Execute RESTORE command
+    uint8_t restoreValue = 0b0000'1111;
+    _lastDecodedCmd = WD_CMD_RESTORE;
+    _lastCmd = restoreValue;
+    _lastCmdValue = restoreValue;
+    cmdRestore(restoreValue);
 }
 
 /// Initiate disk ejection sequence
@@ -764,6 +814,64 @@ uint8_t VG93::getWD93CommandValue(VG93::WD_COMMANDS command, uint8_t value)
 
 /// endregion </Methods>
 
+/// region <Helper methods>
+uint8_t VG93::getStatusRegister()
+{
+    bool isType1Command = (_lastCmd & 0x80) == 0;
+
+    if (isType1Command || _lastDecodedCmd == WD_CMD_FORCE_INTERRUPT)
+    {
+        // Type I or type IV command
+
+        // Clear all bits that will be recalculated
+        _status &= ~(WDS_INDEX | WDS_TRK00 | WDS_HEADLOADED | WDS_WRITEPROTECTED);
+
+        // Update index strobe state according rotation timing
+        processIndexStrobe();
+        if (_index)
+        {
+            _status |= WDS_INDEX;
+        }
+
+        if (_selectedDrive->isTrack00())
+        {
+            _status |= WDS_TRK00;
+        }
+
+        if (_selectedDrive->isWriteProtect())
+        {
+            _status |= WDS_WRITEPROTECTED;
+        }
+
+        // Set head load state based on HLD and HLT signals
+        uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0;
+        _status |= headStatus;
+    }
+    else
+    {
+        // Type II or III command so bit 1 should be DRQ
+    }
+
+    if (isReady())
+    {
+        _status &= ~WDS_NOTRDY;
+    }
+    else
+    {
+        _status |= WDS_NOTRDY;
+    }
+
+    return _status;
+}
+
+bool VG93::isReady()
+{
+    bool result = _selectedDrive->isDiskInserted();
+
+    return result;
+}
+/// endregion </Helper methods>
+
 /// region <PortDevice interface methods>
 
 uint8_t VG93::portDeviceInMethod(uint16_t port)
@@ -776,18 +884,13 @@ uint8_t VG93::portDeviceInMethod(uint16_t port)
     // Handle FDC ports
     switch (port)
     {
-        case PORT_1F:   // Return state
-            _rqs &= ~INTRQ;
-            if (!(_lastCmd & 0x80))
-            {
-                // Set head load state based on HLD and HLT signals
-                uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0;
-                result = _status | headStatus;
-            }
-            else
-            {
-                result = _status;
-            }
+        case PORT_1F:   // Return status register value
+            _rqs &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag
+
+            result = getStatusRegister();
+
+            // TODO: remove debug
+            std::cout << dumpStatusRegister(_lastDecodedCmd);
             break;
         case PORT_3F:   // Return current track number
             result = _track;
@@ -796,7 +899,6 @@ uint8_t VG93::portDeviceInMethod(uint16_t port)
             result = _sector;
             break;
         case PORT_7F:   // Return data byte and update internal state
-            _status &= ~WDS_DRQ;
             _rqs &= ~DRQ;
             result = _data;
             break;
@@ -891,3 +993,57 @@ void VG93::detachFromPorts()
 }
 
 /// endregion </Ports interaction>
+
+
+/// region <Debug methods>
+std::string VG93::dumpStatusRegister(WD_COMMANDS command)
+{
+    static constexpr const char *STATUS_REGISTER_FLAGS[][8] =
+            {
+                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // RESTORE
+                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // SEEK
+                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
+                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
+                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
+                    {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "ZERO5",       "ZERO6",         "NOT READY"},  // READ ADDRESS
+                    {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "RECORD TYPE", "ZERO6",         "NOT READY"},  // READ SECTOR
+                    {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
+                    {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
+                    {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE TRACK
+                    // FORCE INTERRUPT doesn't have its own status bits. Bits from previous / ongoing command to be shown instead
+            };
+
+    std::stringstream ss;
+    uint8_t status = _status;
+
+    ss << StringHelper::Format("Command: %s. Status: 0x%02X", getWD_COMMANDName(command), status) << std::endl;
+    switch (command)
+    {
+        case WD_CMD_FORCE_INTERRUPT:
+            ss << "Force interrupt" << std::endl;
+            break;
+        default:
+        {
+            for (uint8_t i = 0; i < 8; i++)
+            {
+                if (status & 0x01)
+                {
+                    ss << StringHelper::Format("<%s> ", STATUS_REGISTER_FLAGS[command][i]);
+                }
+                else
+                {
+                    ss << "<0> ";
+                }
+
+                status >>= 1;
+            }
+        }
+        break;
+    }
+    ss << std::endl;
+
+    std::string result = ss.str();
+
+    return result;
+}
+/// endregion </Debug methods>
