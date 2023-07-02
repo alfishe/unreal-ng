@@ -49,15 +49,14 @@ enum BreakpointAddressMatchEnum : uint8_t
 ///
 struct BreakpointDescriptor
 {
-    uint16_t breakpointID = BRK_INVALID;      // Unique breakpoint ID (sequence is shared across all memory and IO breakpoints)
-    uint32_t keyAddress = 0xFFFF'FFFF;        // Composite bank + address key for fast lookup
+    uint16_t breakpointID = BRK_INVALID;        // Unique breakpoint ID (sequence is shared across all memory and IO breakpoints)
+    uint32_t keyAddress = 0xFFFF'FFFF;          // Composite bank + address key for fast lookup
 
     BreakpointTypeEnum type = BRK_MEMORY;
     BreakpointAddressMatchEnum matchType = BRK_MATCH_ADDR;
 
     uint8_t memoryType = BRK_MEM_READ | BRK_MEM_WRITE | BRK_MEM_EXECUTE;
     uint8_t ioType = BRK_IO_IN | BRK_IO_OUT;
-
     uint8_t keyType = BRK_KEY_PRESS | BRK_KEY_RELEASE;
 
     uint16_t z80address = 0xFFFF;
@@ -65,6 +64,8 @@ struct BreakpointDescriptor
     uint16_t bankAddress = 0xFFFF;
 
     bool active = true;
+
+    std::string note;                           // Annotation for the breakpoint
 };
 
 ///
@@ -89,6 +90,8 @@ struct BreakpointRangeDescription
     uint16_t bankAddressTo = 0xFFFF;
 
     bool active;
+
+    std::string note;                           // Annotation for the breakpoint
 };
 
 typedef std::map<uint32_t, BreakpointDescriptor*> BreakpointMapByAddress;
