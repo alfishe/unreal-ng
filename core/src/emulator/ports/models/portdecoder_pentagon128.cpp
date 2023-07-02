@@ -70,7 +70,7 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
                 break;
             default:
                 // All ports registered with PortDecoder will be handled
-                PeripheralPortIn(decodedPort);
+                result = PeripheralPortIn(decodedPort);
                 break;
         }
     }
