@@ -1,5 +1,6 @@
 #include "vg93.h"
 
+#include "common/dumphelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
@@ -294,7 +295,7 @@ void VG93::process()
                     _state2 = S_IDLE;
                     _state = S_WAIT;
                     _rotationCounter = _next + 15 * Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;   // Disk will be spinning at least for additional 15 whole turns
-                    _next += (105 * Z80_CLK_CYCLES_PER_MS) / 1000;  // Set 105 us delay
+                    _next = _time + (105 * Z80_CLK_CYCLES_PER_MS) / 1000;  // Set 105 us delay to keep BUSY. After that switch to idle and disable BUSY
                 }
                 break;
             case S_WAIT_HLT:
@@ -626,6 +627,14 @@ void VG93::cmdWriteSector(uint8_t value)
     updateStatusesForReadWrite();
 }
 
+/// Upon receipt of the Read Address command, the head is loaded and the Busy Status bit is set.
+/// The next encountered ID field is then read in from the disk, and the six data bytes of the
+/// ID field are assembled and transferred to the DR, and a DRQ is generated for each byte.
+/// The six bytes of the ID field are : Track address, Side number, Sector address, Sector Length, CRC1, CRC2.
+/// Although the CRC bytes are transferred to the computer, the FD179X checks for validity and the CRC error
+/// status bit is set if there is a CRC error. The track address of the ID field is written into the sector
+/// register so that a comparison can be made by the user. At the end of the operation, an interrupt is generated
+/// and the Busy status bit is reset.
 void VG93::cmdReadAddress(uint8_t value)
 {
     std::cout << "Command Read Address: " << static_cast<int>(value) << std::endl;
@@ -890,7 +899,7 @@ uint8_t VG93::portDeviceInMethod(uint16_t port)
             result = getStatusRegister();
 
             // TODO: remove debug
-            std::cout << dumpStatusRegister(_lastDecodedCmd);
+            //std::cout << dumpStatusRegister(_lastDecodedCmd);
             break;
         case PORT_3F:   // Return current track number
             result = _track;
@@ -928,21 +937,33 @@ void VG93::portDeviceOutMethod(uint16_t port, uint8_t value)
     // Handle FDC ports
     switch (port)
     {
-        case PORT_1F:
+        case PORT_1F:   // Write to Command Register
             processWD93Command(value);
+
+            //TODO: remove debug
+            std::cout << dumpCommand(value);
             break;
-        case PORT_3F:
+        case PORT_3F:   // Write to Track Register
             _track = value;
+
+            //TODO: remove debug
+            std::cout << StringHelper::Format("#3F - Set track: 0x%02X", _track) << std::endl;
             break;
-        case PORT_5F:
+        case PORT_5F:   // Write to Sector Register
             _sector = value;
+
+            //TODO: remove debug
+            std::cout << StringHelper::Format("#5F - Set sector: 0x%02X", _sector) << std::endl;
             break;
-        case PORT_7F:
+        case PORT_7F:   // Write to Data Register
             _data = value;
             _rqs &= ~DRQ;
             _status &= ~WDS_DRQ;
+
+            //TODO: remove debug
+            std::cout << StringHelper::Format("#7F - Set data: 0x%02X", _data) << std::endl;
             break;
-        case PORT_FF:
+        case PORT_FF:   // Write to Beta128 system register
             processBeta128(value);
             break;
         default:
@@ -999,19 +1020,19 @@ void VG93::detachFromPorts()
 std::string VG93::dumpStatusRegister(WD_COMMANDS command)
 {
     static constexpr const char *STATUS_REGISTER_FLAGS[][8] =
-            {
-                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // RESTORE
-                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // SEEK
-                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
-                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
-                    {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
-                    {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "ZERO5",       "ZERO6",         "NOT READY"},  // READ ADDRESS
-                    {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "RECORD TYPE", "ZERO6",         "NOT READY"},  // READ SECTOR
-                    {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
-                    {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
-                    {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE TRACK
-                    // FORCE INTERRUPT doesn't have its own status bits. Bits from previous / ongoing command to be shown instead
-            };
+    {
+        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // RESTORE
+        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // SEEK
+        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
+        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
+        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
+        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "ZERO5",       "ZERO6",         "NOT READY"},  // READ ADDRESS
+        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "RECORD TYPE", "ZERO6",         "NOT READY"},  // READ SECTOR
+        {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
+        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
+        {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE TRACK
+        // FORCE INTERRUPT doesn't have its own status bits. Bits from previous / ongoing command to be shown instead
+    };
 
     std::stringstream ss;
     uint8_t status = _status;
@@ -1041,6 +1062,22 @@ std::string VG93::dumpStatusRegister(WD_COMMANDS command)
         break;
     }
     ss << std::endl;
+
+    std::string result = ss.str();
+
+    return result;
+}
+
+std::string VG93::dumpCommand(uint8_t value)
+{
+    std::stringstream ss;
+
+    VG93::WD_COMMANDS command = decodeWD93Command(value);
+    uint8_t commandValue = getWD93CommandValue(command, value);
+    std::string commandName = getWD_COMMANDName(command);
+    std::string commandBits = StringHelper::FormatBinary<uint8_t>(commandValue);
+
+    ss << StringHelper::Format("0x%02X: %s. Bits: %s", value, commandName.c_str(), commandBits.c_str()) << std::endl;
 
     std::string result = ss.str();
 

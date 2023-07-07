@@ -67,10 +67,21 @@ struct TRDFile
 
 class LoaderTRD
 {
+    /// region <Constants>
+public:
+    static constexpr const size_t TRD_SECTOR_SIZE = 256;        // Sector data size (without service fields) in bytes
+    static constexpr const size_t TRD_SECTORS_PER_TRACK = 16;   // Sectors per track
+    static constexpr const size_t TRD_SIDES = 2;                // Sides on disk
+    static constexpr const size_t TRD_TRACK_SIZE = TRD_SECTOR_SIZE * TRD_SECTORS_PER_TRACK * TRD_SIDES;   // Full track size (both sides) in bytes
+
+    /// endregion </Constants>
+
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
     std::string _filepath;
+
+    DiskImage* _diskImage = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -81,10 +92,17 @@ public:
 
     /// region <Basic methods>
 public:
-    DiskImage* load();
+    bool loadImage();
     bool writeImage();
+    DiskImage* getImage();
+
     bool createNewImage();
-    bool format();
+    bool format(DiskImage* image);
+
     /// endregion </Basic methods>
 
+    /// region <Helper methods>
+protected:
+    uint8_t getCylindersFromImageSize(size_t filesize);
+    /// endregion </Helper methods>
 };

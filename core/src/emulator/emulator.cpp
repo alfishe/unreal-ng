@@ -665,8 +665,12 @@ bool Emulator::LoadDisk(const std::string &path)
     if (ext == "trd")
     {
         LoaderTRD loaderTrd(_context, path);
-        DiskImage* diskImage = loaderTrd.load();
-        _context->coreState.diskImages[0] = diskImage;
+        if (loaderTrd.loadImage())
+        {
+            // FIXME: use active drive, not fixed A:
+            DiskImage* diskImage = loaderTrd.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+        }
     }
 
     return result;

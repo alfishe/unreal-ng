@@ -7,7 +7,7 @@
 
 class DiskImage
 {
-/// region <Types>
+    /// region <Types>
 public:
     enum SEEK_MODE : uint8_t
     {
@@ -41,6 +41,7 @@ public:
     class Disk;  // Forward declaration
     struct Track
     {
+        /// region <Fields>
         Disk* _disk = nullptr;
 
         uint8_t _cylinder = 0;
@@ -55,24 +56,9 @@ public:
 
         SectorHeader _headers[MAX_SECTOR] = { 0 };  // Sectors on track
         size_t _sectorNum = 0;                      // Number of sectors on this track
+        /// endregion </Fields>
 
-        /// region <Helper methods>
-        static inline bool test_bit(const uint8_t *data, uint8_t bit)
-        {
-            return (data[bit >> 3] & (1U << (bit & 7))) != 0;
-        }
-
-        static inline void set_bit(uint8_t *data, unsigned bit)
-        {
-            data[bit >> 3] |= (1U << (bit & 7));
-        }
-
-        static inline void clr_bit(uint8_t *data, unsigned bit)
-        {
-            data[bit >> 3] &= ~(1U << (bit & 7));
-        }
-        /// endregion </Helper methods>
-
+        /// region <Methods>
         void seek(Disk* disk, uint8_t side, uint8_t cylinder, SEEK_MODE seekMode)
         {
             // We already positioned to this sector properly
@@ -203,11 +189,11 @@ public:
             _trackData[pos] = byte;
             if (index)
             {
-                set_bit(_trackSynchro, pos);
+                setBit(_trackSynchro, pos);
             }
             else
             {
-                clr_bit(_trackSynchro, pos);
+                clearBit(_trackSynchro, pos);
             }
         }
 
@@ -333,9 +319,9 @@ public:
 
                             for (size_t b = 0; b < len; b++)
                             {
-                                if (test_bit(header->damagedSectorMap, b))
+                                if (testBit(header->damagedSectorMap, b))
                                 {
-                                    set_bit(_trackBad, damageBitIndex + b);
+                                    setBit(_trackBad, damageBitIndex + b);
                                 }
                             }
                         }
@@ -417,14 +403,30 @@ public:
 
             return result;
         }
+        /// endregion </Methods>
+
+        /// region <Helper methods>
+        static inline bool testBit(const uint8_t *data, uint8_t bit)
+        {
+            bool result = (data[bit >> 3] & (1U << (bit & 7))) != 0;
+
+            return result;
+        }
+
+        static inline void setBit(uint8_t *data, unsigned bit)
+        {
+            data[bit >> 3] |= (1U << (bit & 7));
+        }
+
+        static inline void clearBit(uint8_t *data, unsigned bit)
+        {
+            data[bit >> 3] &= ~(1U << (bit & 7));
+        }
+        /// endregion </Helper methods>
     };
 
     struct Disk
     {
-        uint8_t id = 0;                             // Unique drive identifier
-        size_t motorSpinCounter = 0;                // 0 - not spinning; >0 - time when it'll stop
-        uint8_t currentTrack = 0;                   // Head position
-
         // Disk data
         uint8_t* rawData = nullptr;                 // Raw disk data (already unpacked by disk image loader)
         size_t rawDataSize = 0;                     // Size of raw data
@@ -446,30 +448,51 @@ public:
 protected:
     bool _loaded = false;
     Disk* _loadedDisk = nullptr;
+
+    uint8_t _cylinders;
+    uint8_t _sides;
+    const size_t _trackSizeInBytes = MAX_TRACK_LEN;
+    const size_t _surfaceBitmapLen = (_trackSizeInBytes + 7) >> 3;
+    const size_t _fullTrackSizeInBytes = _trackSizeInBytes + 2 * _surfaceBitmapLen; // Each track contain data + bitmap of bads + bitmap of synchro's
+    size_t _fullRawImageSize = 0;
     /// endregion </Fields>
+
+    /// region <Properties>
+public:
+    uint8_t getCylinders() { return _cylinders; }
+    uint8_t getSides() { return _sides; }
+    /// endregion </Properties>
 
     /// region <Constructors / destructors>
 public:
-    DiskImage() = default;
+    DiskImage(uint8_t cylinders, uint8_t sides)
+    {
+        _cylinders = cylinders > MAX_CYLINDERS ? MAX_CYLINDERS : cylinders;
+        _sides = sides > 2 ? 2 : sides;
+
+        // Allocate memory for disk image with selected characteristics
+        createNewDisk(_cylinders, _sides);
+    }
+
     virtual ~DiskImage()
     {
-        if (_loadedDisk)
-        {
-            if (_loadedDisk->rawData)
-            {
-                delete _loadedDisk->rawData;
-            }
-
-            delete _loadedDisk;
-        }
+        releaseMemory();
     }
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:
+    bool createNewDisk(uint8_t cylinders, uint8_t sides);
+    bool format();
+
     bool setRawDiskImageData(uint8_t* buffer, size_t size);
 
     /// endregion </Methods>
+
+    /// region <Helper methods>
+protected:
+    void releaseMemory();
+    /// endregion </Helper methods>
 };
 
 

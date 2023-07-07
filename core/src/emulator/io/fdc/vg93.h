@@ -343,6 +343,7 @@ public:
     /// region <Debug methods>
 public:
     std::string dumpStatusRegister(WD_COMMANDS command);
+    std::string dumpCommand(uint8_t value);
     /// endregion </Debug methods>
 };
 
