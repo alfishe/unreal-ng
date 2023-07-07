@@ -103,9 +103,10 @@ public:
     /// Format any integer number to bit quads
     /// int8  => b'0110'1111
     /// int16 => b'0110'1111'0000'1111
-    /// \tparam T
-    /// \param n
-    /// \return
+    /// @tparam T
+    /// @param n
+    /// @return
+    /// @example std::string value = StringHelper::FormatBinary<uint8_t>(0xFF);
     template <typename T>
     static std::string FormatBinary(T n)
     {
