@@ -133,7 +133,7 @@ void MessageCenter::ThreadWorker()
 #if defined _WIN32 && defined MSVC
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
         GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription == nullptr)
+    if (setThreadDescription != nullptr)
     {
 	    wchar_t wname[24];
 	    size_t retval;
@@ -145,7 +145,7 @@ void MessageCenter::ThreadWorker()
 #if defined _WIN32 && defined __GNUC__
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
             GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription == nullptr)
+    if (setThreadDescription != nullptr)
     {
         wchar_t wname[24];
         size_t retval;
