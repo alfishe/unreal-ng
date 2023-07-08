@@ -16,7 +16,7 @@
 
 /// region <Constructors / Destructors>
 
-Z80::Z80(EmulatorContext* context)
+Z80::Z80(EmulatorContext* context) : Z80State {}
 {
 	_context = context;
     _logger = context->pModuleLogger;
@@ -28,6 +28,7 @@ Z80::Z80(EmulatorContext* context)
 	MemIf = FastMemIf;	// Use fast memory access interface by default
 
 	// Ensure register memory and unions do not contain garbage
+	Z80State::
 	tt = 0;
 	pc = 0;
 	sp = 0;

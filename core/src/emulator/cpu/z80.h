@@ -73,7 +73,7 @@ struct Z80Registers
     /// @see https://www.zilog.com/docs/z80/um0080.pdf
 	union
 	{
-        uint16_t int_flags;
+        uint32_t int_flags;
 		struct
 		{
 			uint8_t r_hi;
