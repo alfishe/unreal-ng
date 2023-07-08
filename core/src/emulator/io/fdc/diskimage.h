@@ -15,6 +15,64 @@ public:
         LOAD_SECTORS = 1
     };
 
+#pragma pack(push, 1)
+    /// This record is used by WD1793 to verify head positioning
+    /// Used by READ_ADDRESS and READ_TRACK commands
+    struct AddressMarkRecord
+    {
+        uint8_t id_address_mark = 0xFE;
+        uint8_t track = 0x00;
+        uint8_t head = 0x00;
+        uint8_t sector = 0x00;
+        uint8_t sector_len = 0x01;  // 0x01 - sector size 256 bytes. The only option for TR-DOS
+        uint16_t id_crc = 0xFFFF;
+
+        /// region <Methods>
+    public:
+        void recalculateCRC()
+        {
+            uint16_t crc = CRCHelper::crcWD93(&id_address_mark, 5);
+            id_crc = crc;
+        }
+        /// endregion </Methods>
+    };
+
+    /// Each sector on disk represented by this structure.
+    /// It represents modified IBM System 34 format layout from WD1793 datasheet
+    struct RawSectorBytes
+    {
+        // Sector start gap
+        uint8_t gap0[10] = { 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E };
+        uint8_t sync0[12] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // Must be exactly 12 bytes of zeroes
+
+        // Index block
+        uint8_t f5_token0[3] = { 0xA1, 0xA1, 0xA1 }; // Clock transitions between bits 4 and 5 missing (Written by putting 0xF5 into Data Register during WRITE TRACK command by WD1793)
+        AddressMarkRecord address_record;
+
+        // Gap between blocks
+        uint8_t gap1[22] = { 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E };
+        uint8_t sync1[12] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // Must be exactly 12 bytes of zeroes
+
+        // Data block
+        uint8_t f5_token1[3] = { 0xA1, 0xA1, 0xA1 }; // Clock transitions between bits 4 and 5 missing (Written by putting 0xF5 into Data Register during WRITE TRACK command by WD1793)
+        uint8_t data_address_mark = 0xFB;
+        uint8_t data[256] = {};
+        uint16_t data_crc = 0xFFFF;
+
+        // Sector end gap
+        uint8_t gap2[60] =
+        {
+            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
+            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
+            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
+            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
+            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
+            0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E
+        };
+    };
+#pragma pack(pop)
+
+
     struct SectorHeader
     {
         uint8_t sector = 0;
@@ -217,17 +275,25 @@ public:
 
             uint8_t* dst = _trackData;
 
+
+            // Typical track size: 6250 bytes
+            // 6208 = 16 x 388 - sector raw data
+            //          2048 = 16 x 256 bytes of sector data
+            // 42 bytes end of track gap
+
+
+
             // 6250 - 6144 = 106
-            // gap4a(80) + sync0(12) + iam(3) + 1 + s*(gap1(50) + sync1(12) + idam(3) + 1 + 4 + 2 + gap2(22) + sync2(12) + data_am(3) + 1 + 2)
+            // gap4a(80) + sync0(12) + iam(3) + 1 + s*(gap1(40) + sync1(12) + idam(3) + 1 + 4 + 2 + gap2(22) + sync2(12) + data_am(3) + 1 + 2)
             uint8_t gap4a = 80;
             uint8_t sync0 = 12;
-            uint8_t i_am = 3;
-            uint8_t gap1 = 40;
-            uint8_t sync1 = 12;
-            uint8_t id_am = 3;
+            uint8_t i_am = 3;       // Address Mark
+            uint8_t gap1 = 40;      // Filled with 0x4E
+            uint8_t sync1 = 12;     // Filled with 0x00
+            uint8_t id_am = 3;      // ID Address Mark
             uint8_t gap2 = 22;
             uint8_t sync2 = 12;
-            uint8_t data_am = 3;
+            uint8_t data_am = 3;    // Data Address Mark
             size_t synchroDataLen = gap4a + sync0 + i_am + 1 + _sectorNum * (gap1 + sync1 + id_am + 1 + 4 + 2 + gap2 + sync2 + data_am + 1 + 2);
 
             size_t dataSize = 0;

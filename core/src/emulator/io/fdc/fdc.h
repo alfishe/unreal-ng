@@ -67,21 +67,27 @@ public:
         return (i >> 8) | (i << 8);
     }
 
-    // Used in WD1793 emulation for sector CRC
+    /// Used in WD1793 emulation for sector CRC
+    /// @param ptr Pointer to byte buffer
+    /// @param size Buffer size
+    /// @return crc16-CCITT calculated value
+    /// @details It's crc16-CCITT. Polynomial is: x^12 + x^5 + 1. CRC init value: 0xCDB4
     static uint16_t crcWD93(uint8_t *ptr, uint16_t size)
     {
-        uint16_t crc = 0xCDB4;
+        uint32_t crc = 0xCDB4;
         while (size--)
         {
             crc ^= (*ptr++) << 8;
             for (int j = 8; j; j--)
             {
-                if ((crc *= 2) & 0x10000)
-                    crc ^= 0x1021; // bit representation of x^12 + x^5 + 1
+                if ((crc *= 2) & 0x10000) // Overflow bit is used to determine if XOR with polynomial is required
+                {
+                    crc ^= 0x1021; // Bit-encoded representation of polynomial taps: x^12 + x^5 + 1
+                }
             }
         }
 
-        uint16_t result = _byteswap_ushort(crc);
+        uint16_t result = _byteswap_ushort(crc);    // Return only 16 bits of CRC value
 
         return result;
     }
