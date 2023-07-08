@@ -27,7 +27,7 @@ void ThreadHelper::setThreadName(const char* name)
 #if defined _WIN32 && defined __GNUC__
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
             GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription == nullptr)
+    if (setThreadDescription != nullptr)
     {
         wchar_t wname[128];
         size_t retval;
