@@ -29,6 +29,7 @@ public:
 
         /// region <Methods>
     public:
+        /// CRC is calculated for all AddressMarkRecord fields starting from id_address_mark byte
         void recalculateCRC()
         {
             uint16_t crc = CRCHelper::crcWD93(&id_address_mark, 5);
@@ -69,6 +70,16 @@ public:
             0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E,
             0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E, 0x4E
         };
+
+        /// region <Methods>
+    public:
+        /// CRC is calculated for all sector data AND data_address_mark
+        void recalculateDataCRC()
+        {
+            uint16_t crc = CRCHelper::crcWD93(&data_address_mark, sizeof(data) + sizeof(data_address_mark));
+            data_crc = crc;
+        }
+        /// endregion </Methods>
     };
 #pragma pack(pop)
 

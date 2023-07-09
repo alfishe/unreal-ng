@@ -79,3 +79,29 @@ TEST_F(DiskImage_Test, RawSectorBytesConsistency)
         EXPECT_EQ(filledCorrectly, true) << StringHelper::Format("Field '%s' with len=%d expected to be filled with 0x%02X.\nActual: %s", fieldName.c_str(), size, fillValue, dump.c_str());
     }
 }
+
+/// Test RawSectorBytes data CRC recalculation via CRCHelper
+TEST_F(DiskImage_Test, RawSectorBytesDataCRC)
+{
+    // Verification vector in format: <fillByte>, <dataCRC>
+    std::vector<std::pair<uint8_t, uint16_t>> referenceData =
+    {
+        { 0x00, 0x22E1 },  // All sector data filled with 0x00
+        { 0xAA, 0x58F2 },  // All sector data filled with 0xAA
+        { 0xFF, 0xE5FB },  // All sector data filled with 0xFF
+    };
+
+    for (size_t i = 0; i < referenceData.size(); i++)
+    {
+        auto item = referenceData[i];
+        uint8_t fillByte = item.first;
+        uint16_t referenceCRC = item.second;
+
+        DiskImage::RawSectorBytes sectorBytes;
+        std::fill(sectorBytes.data, sectorBytes.data + sizeof(sectorBytes.data), fillByte);
+        sectorBytes.recalculateDataCRC();
+        uint16_t crc = sectorBytes.data_crc;
+
+        EXPECT_EQ(crc, referenceCRC) << StringHelper::Format("Test vector[%d]. Expected 0x%04X, found 0x%04X", i, referenceCRC, crc);
+    }
+}
