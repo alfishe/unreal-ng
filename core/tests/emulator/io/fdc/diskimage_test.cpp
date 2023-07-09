@@ -15,12 +15,14 @@ protected:
     //void TearDown() override;
 };
 
-TEST_F(DiskImage_Test, AddressMarkRecord)
+/// Test AddressMarkRecord CRC recalculation via CRCHelper
+TEST_F(DiskImage_Test, AddressMarkRecordCRC)
 {
     std::vector<std::pair<std::vector<uint8_t>, uint16_t>> referenceData =
     {
         { {0x00, 0x00, 0x01, 0x01 }, 0x0CFA },  // Track #0, Sector #1
-        { {0x00, 0x00, 0x09, 0x01 }, 0xA573 }   // Track #0, Sector #9
+        { {0x00, 0x00, 0x09, 0x01 }, 0xA573 },  // Track #0, Sector #9
+        { {0x50, 0x00, 0x0F, 0x01 }, 0x38AC },  // Track #80, Sector #15
     };
 
     for (size_t i = 0; i < referenceData.size(); i++)
