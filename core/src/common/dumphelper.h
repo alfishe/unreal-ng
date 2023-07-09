@@ -1,6 +1,7 @@
 #pragma once
-#include "stdafx.h"
 
+#include <cstdint>
+#include <string>
 #include "common/stringhelper.h"
 
 class DumpHelper
@@ -57,5 +58,17 @@ public:
         }
 
         return ss.str();
+    }
+
+    /// Check if byte buffer filled with desired value
+    /// @param buffer Byte buffer
+    /// @param size Buffer size
+    /// @param value Value to check against
+    /// @return Whether buffer is filled with the value or not
+    static bool IsFilledWith(const uint8_t* buffer, size_t size, uint8_t value)
+    {
+        bool result = std::all_of(buffer, buffer + size, [value](uint8_t val) { return val == value; });
+
+        return result;
     }
 };
