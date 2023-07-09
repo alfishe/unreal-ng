@@ -72,7 +72,8 @@ public:
     static constexpr const size_t TRD_SECTOR_SIZE = 256;        // Sector data size (without service fields) in bytes
     static constexpr const size_t TRD_SECTORS_PER_TRACK = 16;   // Sectors per track
     static constexpr const size_t TRD_SIDES = 2;                // Sides on disk
-    static constexpr const size_t TRD_TRACK_SIZE = TRD_SECTOR_SIZE * TRD_SECTORS_PER_TRACK * TRD_SIDES;   // Full track size (both sides) in bytes
+    static constexpr const size_t TRD_TRACK_SIZE = TRD_SECTOR_SIZE * TRD_SECTORS_PER_TRACK;                     // Single side track size
+    static constexpr const size_t TRD_FULL_TRACK_SIZE = TRD_SECTOR_SIZE * TRD_SECTORS_PER_TRACK * TRD_SIDES;    // Full track size (both sides) in bytes
 
     /// endregion </Constants>
 
@@ -96,13 +97,13 @@ public:
     bool writeImage();
     DiskImage* getImage();
 
-    bool createNewImage();
-    bool format(DiskImage* image);
+    bool format(DiskImage* diskImage);
 
     /// endregion </Basic methods>
 
     /// region <Helper methods>
 protected:
-    uint8_t getCylindersFromImageSize(size_t filesize);
+    uint8_t getTrackNoFromImageSize(size_t filesize);
+    bool transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize);
     /// endregion </Helper methods>
 };

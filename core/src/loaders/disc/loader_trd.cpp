@@ -15,14 +15,17 @@ bool LoaderTRD::loadImage()
             uint8_t* buffer = new uint8_t[fileSize];
             if (FileHelper::ReadFileToBuffer(_filepath, buffer, fileSize))
             {
-                size_t cylinders = getCylindersFromImageSize(fileSize);
+                size_t cylinders = getTrackNoFromImageSize(fileSize);
                 if (cylinders < MAX_CYLINDERS)
                 {
+                    // Allocate disk image with required characteristics
                     _diskImage = new DiskImage(cylinders, TRD_SIDES);
 
+                    // Perform low level format since .TRD files do not store any low-level information (gaps, clock sync marks ets)
+                    format(_diskImage);
 
-
-                    _diskImage->setRawDiskImageData(buffer, fileSize);
+                    // Transfer sector data from .TRD to prepared disk image
+                    transferSectorData(_diskImage, buffer, fileSize);
 
                     result = true;
                 }
@@ -45,7 +48,7 @@ DiskImage* LoaderTRD::getImage()
     return _diskImage;
 }
 
- bool LoaderTRD::format(DiskImage* image)
+ bool LoaderTRD::format(DiskImage* diskImage)
  {
      static constexpr uint8_t const INTERLEAVE_PATTERNS[3][16] =
      {
@@ -57,7 +60,7 @@ DiskImage* LoaderTRD::getImage()
      bool result = false;
 
      /// region <Sanity checks>
-     if (image == nullptr)
+     if (diskImage == nullptr)
      {
          return result;
      }
@@ -71,28 +74,38 @@ DiskImage* LoaderTRD::getImage()
      }
      /// endregion </Get preferred interleave pattern from config>
 
-     uint8_t cylinders = image->getCylinders();
-     uint8_t sides = image->getSides();
+     uint8_t cylinders = diskImage->getCylinders();
+     uint8_t sides = diskImage->getSides();
      for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
      {
          for (uint8_t side = 0; side < sides; side++)
          {
-             // Step 1: position to the track (cylinder+side) within disk image data
-             //DiskImage::Track track = DiskImage::Track::seek();
+             /// region <Step 1: position to the track (cylinder+side) within disk image data>
+             DiskImage::Track& track = *diskImage->getTrackForCylinderAndSide(cylinder, side);
+             /// endregion </Step 1: position to the track (cylinder+side) within disk image data>
 
-             // Step 2: format the track
+             /// region <Step 2: Fully re-initialize low-level formatting by applying default object state>
+             track = DiskImage::Track();
+
+             // Apply interleave sector pattern used during formatting and re-index sector information
+             track.applyInterleaveTable(INTERLEAVE_PATTERNS[interleavePatternIndex]);
+
+             /// endregion </Step 2: Fully re-initialize low-level formatting by applying default object state>
+
+             /// region <Step 3: format the track on logical level (put valid ID records to each sector)>
              for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; sector++)
              {
                  uint8_t sectorNumber = INTERLEAVE_PATTERNS[interleavePatternIndex][sector];
 
-                 // Populate sector ID information
-                 // Byte[0] - cylinder
-                 // Byte[1] - side
-                 // Byte[2] - sector
-                 // Byte[3] - sector size
-                 // Byte[4] - crc1
-                 // Byte[5] - crc2
+                 // Populate sector ID information and recalculate ID CRC
+                 DiskImage::AddressMarkRecord& markRecord = *track.getIDForSector(sector);
+                 markRecord.cylinder = cylinder;
+                 markRecord.head = 0;
+                 markRecord.sector = sectorNumber;
+                 markRecord.sector_len = 0x01;  // Default TR-DOS 1 - 256 bytes sector
+                 markRecord.recalculateCRC();
              }
+             /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>
          }
      }
 
@@ -101,11 +114,54 @@ DiskImage* LoaderTRD::getImage()
  /// endregion </Methods>
 
 /// region <Helper methods>
-uint8_t LoaderTRD::getCylindersFromImageSize(size_t filesize)
+uint8_t LoaderTRD::getTrackNoFromImageSize(size_t filesize)
 {
-    uint8_t result = filesize / TRD_TRACK_SIZE;     // Full cylinders
-    result += filesize % (TRD_TRACK_SIZE) ? 1 : 0;  // Partially filled cylinders
+    uint8_t result = filesize / TRD_FULL_TRACK_SIZE;     // Full cylinders (both sides)
+    result += filesize % (TRD_FULL_TRACK_SIZE) ? 1 : 0;  // Partially filled cylinders
 
     return result;
 }
+
+bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize)
+{
+    bool result = false;
+    uint8_t cylinders = getTrackNoFromImageSize(fileSize);
+    uint8_t tracks = cylinders * 2;
+
+    /// region <Sanity checks>
+    if (diskImage == nullptr || buffer == nullptr || fileSize == 0)
+    {
+        return result;
+    }
+
+    if (cylinders == 0 || cylinders > MAX_CYLINDERS)
+    {
+        return result;
+    }
+
+    /// endregion </Sanity checks>
+
+    for (uint8_t trackNo = 0; trackNo < tracks; trackNo++)
+    {
+        DiskImage::Track& track = *_diskImage->getTrack(trackNo);
+
+        for (uint8_t sectorNo = 0; sectorNo < TRD_SECTORS_PER_TRACK; sectorNo++)
+        {
+            size_t offset = trackNo * TRD_TRACK_SIZE + sectorNo * TRD_SECTOR_SIZE;
+            uint8_t* srcSector = buffer + offset;
+
+            DiskImage::RawSectorBytes* dstSectorObj = track.getRawSectorBytes(sectorNo);
+            uint8_t* dstSector = dstSectorObj->data;
+
+            // Transfer sector data
+            std::copy(srcSector, srcSector + TRD_SECTOR_SIZE, dstSector);
+
+            // Recalculate CRC for sector data block
+            dstSectorObj->recalculateDataCRC();
+        }
+    }
+
+    return result;
+}
+
 /// endregion </Helper methods>

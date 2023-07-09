@@ -108,7 +108,7 @@ public:
     /// @param size Buffer size
     /// @return crc16-CCITT calculated value
     /// @details It's crc16-CCITT. Polynomial is: x^12 + x^5 + 1. CRC init value: 0xCDB4
-    static uint16_t crcWD93(uint8_t *ptr, uint16_t size)
+    static uint16_t crcWD1793(uint8_t *ptr, uint16_t size)
     {
         uint16_t crc = 0xCDB4;
 

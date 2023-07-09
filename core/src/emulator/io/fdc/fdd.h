@@ -5,6 +5,7 @@
 #include "emulator/platform.h"
 
 class EmulatorContext;
+class DiskImage;
 
 class FDD
 {
@@ -51,13 +52,11 @@ protected:
     bool _ready = false;
     bool _writeProtect = true;
 
+    DiskImage* _diskImage = nullptr;    // Pointer to a disk image inserted to this drive
     bool _diskInserted = false;
     uint8_t _track = 0;
     uint8_t _readDataByte = 0;
     uint8_t _writeDataByte = 0;
-
-    uint8_t* _rawData = nullptr;
-
 
     size_t _motorStopTimeoutMs = 0;     // 0 - stopped, >0 - timeout when motor will be stopped
     size_t _motorRotationCounter = 0;   //
@@ -107,9 +106,7 @@ public:
     bool isReady() { return _ready; }
 
     bool isDiskInserted() { return _diskInserted; }
-
-    uint8_t* getRawData() { return _rawData; };
-    void setRawData(uint8_t* rawData) { _rawData = rawData; };
+    DiskImage* getDiskImage() { return _diskImage; }
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
@@ -122,7 +119,7 @@ public:
 public:
     void process();
 
-    void insertDisk(uint8_t* rawData);
+    void insertDisk(DiskImage* diskImage);
     void ejectDisk();
     /// endregion </Methods>
 

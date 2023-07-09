@@ -26,18 +26,18 @@ void FDD::process()
     _lastTime = time;
 }
 
-void FDD::insertDisk(uint8_t* rawData)
+void FDD::insertDisk(DiskImage* diskImage)
 {
-    if (rawData)
+    if (_diskImage)
     {
-        _rawData = rawData;
+        _diskImage = diskImage;
         _diskInserted = true;
     }
 }
 
 void FDD::ejectDisk()
 {
-    _rawData = nullptr;
+    _diskImage = nullptr;
     _diskInserted = false;
 }
 
