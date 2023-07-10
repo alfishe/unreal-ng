@@ -50,7 +50,7 @@ void VG93::process()
     }
 
     // If no data available from disk image - not ready flag must be set
-    if (_selectedDrive->getRawData())
+    if (_selectedDrive->isDiskInserted())
     {
         _status &= ~WDS_NOTRDY;     // Data available => clear NOT READY
     }
@@ -78,9 +78,9 @@ void VG93::process()
                 _status &= ~WDS_BUSY;   // Remove busy flag
 
                 // Stop motor after 3 seconds (3 * 5 revolutions per second) being idle
-                if (_indexPulseCounter > 15 || _time > _rotationCounter)
+                if (_indexPulseCounter > 3 * FDD_RPS || _time > _rotationCounter)
                 {
-                    _indexPulseCounter = 15;
+                    _indexPulseCounter = 3 * FDD_RPS;
                     _status = 0x00;                     // Clear status
                     _status |= WDS_NOTRDY;              // Set NOT READY status bit
                     _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
@@ -124,7 +124,40 @@ void VG93::process()
                 break;
             case S_FOUND_NEXT_ID:
                 // TODO: transfer code
-                throw std::logic_error("Not implemented yet");
+                // If no disk inserted - restart the whole ID AM detection process
+                if (!_selectedDrive->isDiskInserted())
+                {
+                    _endWaiting = _next + 5 * Z80_FREQUENCY / FDD_RPS;
+                    findIDAddressMark();
+                }
+                else    // Disk in place
+                {
+                    if (_next > _endWaiting)                // Search ID AM operation timeout occurred
+                    {
+                        _status |= WDS_NOTFOUND;
+                        _state = S_IDLE;
+                    }
+                    else if (_indexAddressMarkIndex == -1)  // ID AM cannot be found
+                    {
+                        _status |= WDS_NOTFOUND;
+                        _state = S_IDLE;
+                    }
+                    else
+                    {
+                        _status &= ~WDS_CRCERR; // Reset CRC error flag before CRC checks
+                        positionToTrackForDiskImage();
+
+                        // Type 1 commands - verify after positioning
+                        if (_lastCmd == WD_CMD_RESTORE || _lastCmd == WD_CMD_SEEK || _lastCmd == WD_CMD_STEP || _lastCmd == WD_CMD_STEP_IN || _lastCmd == WD_CMD_STEP_OUT)
+                        {
+                            _state = S_IDLE;
+                        }
+                        else
+                        {
+
+                        }
+                    }
+                }
                 break;
             case S_RDSEC:
                 // TODO: transfer code
@@ -305,9 +338,14 @@ void VG93::process()
                 }
                 break;
             case S_VERIFY2:
-                // TODO: transfer code
-                seekInDiskImage();  // Position within disk image
-                findMarker();       // Find sector marker
+                // We can wait for successful ID address mark read no more than 6 disk revolutions (~1.2 secs)
+                _endWaiting = _next + 6 * Z80_FREQUENCY / FDD_RPS;
+
+                positionToTrackForDiskImage();  // Position within disk image
+                findIDAddressMark();            // Find very next ID address mark
+
+                _state = S_WAIT;
+                _state2 = S_FOUND_NEXT_ID;
                 break;
             case S_EJECT1:  // Initiate eject
                 _next = _time + 10 * Z80_CLK_CYCLES_PER_MS; // 10ms delay
@@ -324,6 +362,59 @@ void VG93::process()
 
     /// endregion </<Main state machine>
 }
+
+/// region <New state machine>
+
+void VG93::process2()
+{
+    /// region <Get current Z80 clock state for timings synchronization>
+    uint64_t totalTime = _context->emulatorState.t_states;
+    uint64_t frameTime = _context->pCore->GetZ80()->t;
+    _time = totalTime + frameTime;
+    /// endregion <Get current Z80 clock state for timings synchronization>
+
+    /// region <Replacement for lengthy switch()>
+
+    // Get the handler for State1
+    FSMHandler handler = _stateHandlerMap[_state];
+
+    if (handler)    // Handler found
+    {
+        // Call correspondent handler through the pointer or reference
+        (this->*handler)();
+    }
+    else            // Handler is not available
+    {
+
+    }
+
+    /// endregion </Replacement for lengthy switch()>
+}
+
+void VG93::processIdle()
+{
+    _status &= ~WDS_BUSY;   // Remove busy flag
+
+    // Stop motor after 3 seconds (3 * 5 revolutions per second) being idle
+    if (_indexPulseCounter > 3 * FDD_RPS || _time > _rotationCounter)
+    {
+        _indexPulseCounter = 3 * FDD_RPS;
+        _status = 0x00;                     // Clear status
+        _status |= WDS_NOTRDY;              // Set NOT READY status bit
+        _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
+
+        _selectedDrive->setMotor(false);    // Stop motor
+    }
+
+    _rqs = INTRQ;
+}
+
+void VG93::processWait()
+{
+
+}
+
+/// endregion </New state machine>
 
 /// Handle Beta128 interface system controller commands
 /// @param value
@@ -368,18 +459,40 @@ void VG93::processBeta128(uint8_t value)
     }
 }
 
-void VG93::findMarker()
+void VG93::findIDAddressMark()
 {
-    seekInDiskImage();
+    // Get current Z80 clock state for timings synchronization
+    uint64_t totalTime = _context->emulatorState.t_states;
+    uint64_t frameTime = _context->pCore->GetZ80()->t;
 
-    int headerIndex = -1;
-    if (_selectedDrive->getMotor() && _selectedDrive->getRawData())
+    // Prepare for information read from current track
+    positionToTrackForDiskImage();
+
+    _indexAddressMarkIndex = -1;
+    _indexAddressMarkFound = nullptr;
+    if (_selectedDrive->getMotor() && _selectedDrive->isDiskInserted())
     {
+        /// region <Calculate delay in t-states till first ID AM byte>
+        if (_indexAddressMarkIndex != -1)
+        {
 
+        }
+        else
+        {
+
+        }
+        /// endregion </Calculate delay in t-states till first ID AM byte>
     }
     else
     {
-        // next = comp.t_states + cpu.t + 1;
+        // Floppy drive is not active - we can just wait
+        _next = totalTime + frameTime + 1;
+    }
+
+    // Check for ID address mark search operation timeout
+    if (_selectedDrive->isDiskInserted() && _next > _endWaiting)
+    {
+        _next = _endWaiting;
     }
 
     _state = S_WAIT;
@@ -417,9 +530,10 @@ void VG93::processIndexStrobe()
     }
 }
 
-void VG93::seekInDiskImage()
+void VG93::positionToTrackForDiskImage()
 {
-    // seldrive->t.seek(seldrive, seldrive->track, side, LOAD_SECTORS);
+    DiskImage* diskImage = _selectedDrive->getDiskImage();
+    _currentTrack = diskImage->getTrackForCylinderAndSide(_track, _side);
 }
 
 void VG93::reset()
@@ -511,15 +625,19 @@ void VG93::updateStatusesForReadWrite()
     _status |= _status | WDS_BUSY;                                                         // Set BUSY status
     _status &= ~(WDS_DRQ | WDS_LOST | WDS_NOTFOUND | WDS_RECORDTYPE | WDS_WRITEPROTECTED); // Reset other status
 
-    // Continue disk spinning
-    //seldrive->motor = next + 2*Z80FQ;
+    uint64_t totalTime = _context->emulatorState.t_states;
+    uint64_t frameTime = _context->pCore->GetZ80()->t;
+
+    // Continue disk spinning for at least 2 more seconds
+    //seldrive->motor = next + 2 * Z80FQ;
 
     // Abort command if no disk detected
+    // Transition to S_IDLE after
     if (_status & WDS_NOTRDY)
     {
         _state2 = S_IDLE;
         _state = S_WAIT;
-        //next = comp.t_states + cpu.t + Z80FQ/FDD_RPS;
+        _next = totalTime + frameTime + Z80_FREQUENCY / FDD_RPS;
         _rqs = INTRQ;
     }
     else

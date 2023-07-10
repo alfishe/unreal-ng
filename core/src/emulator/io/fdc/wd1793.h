@@ -2,35 +2,53 @@
 
 #include "stdafx.h"
 
-#include <algorithm>
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/fdc/fdd.h"
-#include "emulator/io/fdc/diskimage.h"
 
-/// @see https://www.retrotechnology.com/herbs_stuff/WD179X.PDF
-/// @see https://zxpress.ru/book_articles.php?id=1356
-/// Track 0 is the most outer track of the floppy disk
-class VG93 : public PortDecoder, public PortDevice
+class WD1793 : public PortDecoder, public PortDevice
 {
-    /// region <ModuleLogger definitions for Module/Submodule>
-public:
-    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISK;
-    const uint16_t _SUBMODULE = PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC;
-    ModuleLogger* _logger = nullptr;
-    /// endregion </ModuleLogger definitions for Module/Submodule>
-
     /// region <Types>
 public:
-    enum WD93_REGISTERS : uint8_t
+    /// WD1793 / VG93 commands
+    enum WD_COMMANDS : uint8_t
     {
-        REG_COMMAND = 0,    // COMMAND/STATUS register (port #1F)
-        REG_TRACK,          // TRACK register (port #3F)
-        REG_SECTOR,         // SECTOR register (port #5F)
-        REG_DATA,           // DATA register (port #7F)
-        REG_SYSTEM          // BETA128/System register (port #FF)
+        WD_CMD_RESTORE = 0,     // Restore         - Move the read/write head to the outermost track (track 0)
+        WD_CMD_SEEK,            // Seek            - Move the read/write head to a specified track on the floppy disk
+        WD_CMD_STEP,            // Step            - Moves the read/write head in the direction previously specified (inwards or outwards) by the "step in" or "step out" command.
+        WD_CMD_STEP_IN,         // Step In         - Moves the read/write head one track towards the center of the disk (increase track number)
+        WD_CMD_STEP_OUT,        // Step Out        - Moves the read/write head one track away from the center of the disk (decrease track number)
+
+        WD_CMD_READ_SECTOR,     // Read Sector     - Read a single sector from the current track
+        WD_CMD_WRITE_SECTOR,    // Write Sector    - Write data to a specified sector on the current track
+
+        WD_CMD_READ_ADDRESS,    // Read Address    - Reads the address field (track number, side number, sector number) of the current sector
+        WD_CMD_READ_TRACK,      // Read Track      - Read the entire contents of a track into the FDC's internal buffer
+        WD_CMD_WRITE_TRACK,     // Write Track     - Write an entire track worth of data from the FDC's internal buffer to the floppy disk
+
+        WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
+
+    inline static const char* const getWD_COMMANDName(WD_COMMANDS command)
+    {
+        static const char* const names[] =
+        {
+            "Restore",          // [ 0] Restore
+            "Seek",             // [ 1] Seek
+            "Step",             // [ 2] Step
+            "Step In",          // [ 3] Step In
+            "Step Out",         // [ 4] Step Out
+            "Read Sector",      // [ 5] Read Sector
+            "Write Sector",     // [ 6] Write Sector
+            "Read Address",     // [ 7] Read Address
+            "Read Track",       // [ 8] Read Track
+            "Write Track",      // [ 9] Write Track
+            "Force Interrupt"   // [10] Force Interrupt
+        };
+
+        return names[command];
+    }
 
     /// WD1793 / VG93 state machine states
     enum WDSTATE : uint8_t
@@ -61,6 +79,45 @@ public:
 
         S_EJECT1,
         S_EJECT2
+    };
+
+    enum WD93_CMD_BITS : uint8_t
+    {
+        CMD_SEEK_RATE     = 0x03,
+        CMD_SEEK_VERIFY   = 0x04,
+        CMD_SEEK_HEADLOAD = 0x08,
+        CMD_SEEK_TRKUPD   = 0x10,
+        CMD_SEEK_DIR      = 0x20,
+
+        CMD_WRITE_DEL     = 0x01,
+        CMD_SIDE_CMP_FLAG = 0x02,
+        CMD_DELAY         = 0x04,
+        CMD_SIDE          = 0x08,
+        CMD_SIDE_SHIFT    = 3,
+        CMD_MULTIPLE      = 0x10
+    };
+
+    // Force Interrupt command parameter bits
+    enum WD_FORCE_INTERRUPT_BITS : uint8_t
+    {
+        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
+        WD_FORCE_INTERRUPT_READY                = 0x02,
+        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
+        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
+    };
+
+    enum BETA_COMMAND_BITS : uint8_t
+    {
+        BETA_CMD_DRIVE_MASK = 0b0000'0011,  // Bits[0,1] define drive selection. 00 - A, 01 - B, 10 - C, 11 - D
+
+        BETA_CMD_RESET      = 0b0000'0100,  // Bit2 (active low) allows to reset BDI and WD73 controller. Similar to RESTORE command execution for the application
+        // HLT - Head Load Timing is an input signal used to determine head engagement time.
+        // When HLT = 1, FDC assumes that head is completely engaged. Usually it takes 30-100ms for FDD to react on HLD signal from FDC and engage the head
+        BETA_CMD_BLOCK_HLT  = 0b0000'1000,  // Bit3 (active low) blocks HLT signal. Normally it should be inactive (high).
+        BETA_CMD_HEAD       = 0b0001'0000,  // Bit4 - select head / side. 0 - lower side head. 1 - upper side head
+        BETA_CMD_RESERVED5  = 0b0010'0000,  // Bit5 - Unused
+        BETA_CMD_DENSITY    = 0b0100'0000,  // Bit6 - 0 - Double density / MFM, 1 - Single density / FM
+        BETA_CMD_RESERVED7  = 0b1000'0000,  // Bit7 - Unused
     };
 
     /// FDC status (corresponds to port #1F read)
@@ -108,84 +165,6 @@ public:
         WDS_NOTRDY         = 0x80    // Drive is not ready
     };
 
-    /// WD1793 / VG93 commands
-    enum WD_COMMANDS : uint8_t
-    {
-        WD_CMD_RESTORE = 0,     // Restore         - Move the read/write head to the outermost track (track 0)
-        WD_CMD_SEEK,            // Seek            - Move the read/write head to a specified track on the floppy disk
-        WD_CMD_STEP,            // Step            - Moves the read/write head in the direction previously specified (inwards or outwards) by the "step in" or "step out" command.
-        WD_CMD_STEP_IN,         // Step In         - Moves the read/write head one track towards the center of the disk (increase track number)
-        WD_CMD_STEP_OUT,        // Step Out        - Moves the read/write head one track away from the center of the disk (decrease track number)
-
-        WD_CMD_READ_SECTOR,     // Read Sector     - Read a single sector from the current track
-        WD_CMD_WRITE_SECTOR,    // Write Sector    - Write data to a specified sector on the current track
-
-        WD_CMD_READ_ADDRESS,    // Read Address    - Reads the address field (track number, side number, sector number) of the current sector
-        WD_CMD_READ_TRACK,      // Read Track      - Read the entire contents of a track into the FDC's internal buffer
-        WD_CMD_WRITE_TRACK,     // Write Track     - Write an entire track worth of data from the FDC's internal buffer to the floppy disk
-
-        WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
-    };
-
-    inline static const char* const getWD_COMMANDName(WD_COMMANDS command)
-    {
-        static const char* const names[] =
-        {
-            "Restore",          // [ 0] Restore
-            "Seek",             // [ 1] Seek
-            "Step",             // [ 2] Step
-            "Step In",          // [ 3] Step In
-            "Step Out",         // [ 4] Step Out
-            "Read Sector",      // [ 5] Read Sector
-            "Write Sector",     // [ 6] Write Sector
-            "Read Address",     // [ 7] Read Address
-            "Read Track",       // [ 8] Read Track
-            "Write Track",      // [ 9] Write Track
-            "Force Interrupt"   // [10] Force Interrupt
-        };
-
-       return names[command];
-    }
-
-    enum WD93_CMD_BITS : uint8_t
-    {
-        CMD_SEEK_RATE     = 0x03,
-        CMD_SEEK_VERIFY   = 0x04,
-        CMD_SEEK_HEADLOAD = 0x08,
-        CMD_SEEK_TRKUPD   = 0x10,
-        CMD_SEEK_DIR      = 0x20,
-
-        CMD_WRITE_DEL     = 0x01,
-        CMD_SIDE_CMP_FLAG = 0x02,
-        CMD_DELAY         = 0x04,
-        CMD_SIDE          = 0x08,
-        CMD_SIDE_SHIFT    = 3,
-        CMD_MULTIPLE      = 0x10
-    };
-
-    // Force Interrupt command parameter bits
-    enum WD_FORCE_INTERRUPT_BITS : uint8_t
-    {
-        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
-        WD_FORCE_INTERRUPT_READY                = 0x02,
-        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
-        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
-    };
-
-    enum BETA_COMMAND_BITS : uint8_t
-    {
-        BETA_CMD_DRIVE_MASK = 0b0000'0011,  // Bits[0,1] define drive selection. 00 - A, 01 - B, 10 - C, 11 - D
-
-        BETA_CMD_RESET      = 0b0000'0100,  // Bit2 (active low) allows to reset BDI and WD73 controller. Similar to RESTORE command execution for the application
-        // HLT - Head Load Timing is an input signal used to determine head engagement time.
-        // When HLT = 1, FDC assumes that head is completely engaged. Usually it takes 30-100ms for FDD to react on HLD signal from FDC and engage the head
-        BETA_CMD_BLOCK_HLT  = 0b0000'1000,  // Bit3 (active low) blocks HLT signal. Normally it should be inactive (high).
-        BETA_CMD_HEAD       = 0b0001'0000,  // Bit4 - select head / side. 0 - lower side head. 1 - upper side head
-        BETA_CMD_RESERVED5  = 0b0010'0000,  // Bit5 - Unused
-        BETA_CMD_DENSITY    = 0b0100'0000,  // Bit6 - 0 - Double density / MFM, 1 - Single density / FM
-        BETA_CMD_RESERVED7  = 0b1000'0000,  // Bit7 - Unused
-    };
-
     enum BETA_STATUS_BITS : uint8_t
     {
         DRQ   = 0x40,   // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
@@ -207,8 +186,8 @@ public:
         SIG_OUT_HLD = 0x01
     };
 
-    using CommandHandler = void (VG93::*)(uint8_t);
-    using FSMHandler = void (VG93::*)();
+    using CommandHandler = void (WD1793::*)(uint8_t);
+    using FSMHandler = void (WD1793::*)();
 
     /// endregion </Types>
 
@@ -238,85 +217,70 @@ protected:
     /// endregion </Constants>
 
     /// region <Fields>
-public:
+protected:
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
 
     FDD* _selectedDrive = nullptr;
 
-    bool _ejectPending = false;                 // Disk is ejecting. FDC is already locked
-
-    // WD93 internal state machine
-    WDSTATE _state;
-    WDSTATE _state2;
-
     // Counters to measure time intervals
-    size_t _next;   // Next state machine transition will be performed on this time mark (in Z80 t-states)
-    size_t _time;   // Current time mark (in Z80 t-states)
+    size_t _next;                       // Next state machine transition will be performed on this time mark (in Z80 t-states)
+    size_t _time;                       // Current time mark (in Z80 t-states)
 
-    // Notify host system
-    uint8_t _drive;
-    uint8_t _side;
+    // WD93 internal state
+    uint8_t _commandRegister = 0x00;    // Last command executed (full data byte)
+    uint8_t _trackRegister = 0;
+    uint8_t _sectorRegister = 0;
+    uint8_t _dataRegister = 0x00;       // WD1793 Data Register
+    uint8_t _status = 0x00;             // WD1793 Status Register
 
-    // Controller state
-    uint8_t _lastCmd;                               // Last command executed (full data byte)
-    WD_COMMANDS _lastDecodedCmd;                    // Last command executed (decoded)
-    uint8_t _lastCmdValue;                          // Last command parameters (already masked)
-    uint8_t _data;
-    uint8_t _track;
-    uint8_t _sector;
-    uint8_t _rqs;
-    uint8_t _status;
-    uint8_t _extStatus;                             // External status. Only HLD is supported
+    uint8_t _beta128 = 0x00;            // BETA128 system register
+    uint8_t _extStatus = 0x00;          // External status. Only HLD flag is supported
 
-    int16_t _stepDirection = 1;                     // Head movement direction
-    uint8_t _beta128 = 0x00;                        // BETA128 system register
+    WD_COMMANDS _lastDecodedCmd;        // Last command executed (decoded)
+    uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
+    uint8_t _rqs = 0x00;                // Data request (DRQ) and interrupt request (INTRQ) flags
+    WDSTATE _state = S_IDLE;
+    WDSTATE _state2 = S_IDLE;
+    bool _dataRegisterWritten = false;  // Type2 commands have timeout for data availability in Data Register
 
 
-    uint8_t _type1CmdStatus = 0;
-    uint8_t _type2CmdStatus = 0;
-    uint8_t _type3CmdStatus = 0;
-    bool _index = false;                            // Current state of index strobe
-    size_t _indexPulseCounter = 0;                  // Index pulses counter
-    size_t _rotationCounter = 0;                    // Tracks disk rotation
+    // FDD state
+    bool _index = false;                // Current state of index strobe
+    size_t _indexPulseCounter = 0;      // Index pulses counter
+    size_t _rotationCounter = 0;        // Tracks disk rotation
 
-    uint16_t _trackCRC = 0x0000;                    // Track CRC (used during formatting)
-
-    // Internal state for Type2/Type3 commands
-    size_t _endWaiting = 0;
-    int8_t _indexAddressMarkIndex = -1;
-    DiskImage::AddressMarkRecord* _indexAddressMarkFound  = nullptr;
-    size_t _rwLength = 0;   // _bytesToProcessOnDisk - how many bytes to process on disk during next read/write operation (including READ ADDRESS and positioning verification)
-
-    // Shortcuts to disk image fields
-    DiskImage::Track* _currentTrack = nullptr;
 
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
 public:
-    VG93(EmulatorContext* context);
-    virtual ~VG93();
+    WD1793(EmulatorContext* context);
+    virtual ~WD1793();
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:
     void reset();
-    void eject(uint8_t drive);
-
-protected:
     void process();
-    void process2();
-    void processBeta128(uint8_t value);
-    void findIDAddressMark();
     void processIndexStrobe();
-    void positionToTrackForDiskImage();
+    /// endregion </Methods>
 
+    /// region <Helper methods>
+protected:
+    uint8_t getStatusRegister();
+    bool isReady();
+    /// endregion </Helper methods>
+
+    /// region <Command handling
+protected:
+    static bool isType1Command(uint8_t command);
+    static bool isType2Command(uint8_t command);
+    static bool isType3Command(uint8_t command);
+    static bool isType4Command(uint8_t command);
     static WD_COMMANDS decodeWD93Command(uint8_t value);
-    static uint8_t getWD93CommandValue(VG93::WD_COMMANDS command, uint8_t value);
+    static uint8_t getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value);
     void processWD93Command(uint8_t value);
-    void updateStatusesForReadWrite();
-    void updateStatusesForSeek(uint8_t maskedValue);
 
     // WD93 Command handlers
     void cmdRestore(uint8_t value);
@@ -331,38 +295,26 @@ protected:
     void cmdWriteTrack(uint8_t value);
     void cmdForceInterrupt(uint8_t value);
 
+    // Command group related
+    void startType1Command();
+    void startType2Command();
+    void startType3Command();
+    void endCommand();
+
+
+    /// endregion </Command handling>
+
     /// region <State machine handlers>
+protected:
     std::map<WDSTATE, FSMHandler> _stateHandlerMap =
     {
-        { S_IDLE, &VG93::processIdle },
-        { S_WAIT, &VG93::processWait }
+        { S_IDLE, &WD1793::processIdle },
+        { S_WAIT, &WD1793::processWait }
     };
 
     void processIdle();
     void processWait();
     /// endregion </State machine handlers>
-
-    /// endregion </Methods>
-
-    /// region <Helper methods>
-protected:
-    void scheduleState(WDSTATE nextState, size_t delay)
-    {
-        _next = _time + delay;
-        _state2 = nextState;
-
-        _state = S_WAIT;
-    }
-
-    void switchStateTo(WDSTATE nextState)
-    {
-        _state = _state2;
-        _state2 = S_IDLE;
-    }
-
-    uint8_t getStatusRegister();
-    bool isReady();
-    /// endregion </Helper methods>
 
     /// region <PortDevice interface methods>
 public:
@@ -388,26 +340,34 @@ public:
 //
 #ifdef _CODE_UNDER_TEST
 
-class VG93CUT : public VG93
+class WD1793CUT : public WD1793
 {
 public:
-    VG93CUT(EmulatorContext* context) : VG93(context) {};
+    WD1793CUT(EmulatorContext* context) : WD1793(context) {};
 
-    using VG93::decodeWD93Command;
-    using VG93::getWD93CommandValue;
-    using VG93::processWD93Command;
+    using WD1793::_commandRegister;
+    using WD1793::_lastDecodedCmd;
+    using WD1793::_lastCmdValue;
 
-    using VG93::cmdRestore;
-    using VG93::cmdSeek;
-    using VG93::cmdStep;
-    using VG93::cmdStepIn;
-    using VG93::cmdStepOut;
-    using VG93::cmdReadSector;
-    using VG93::cmdWriteSector;
-    using VG93::cmdReadAddress;
-    using VG93::cmdReadTrack;
-    using VG93::cmdWriteTrack;
-    using VG93::cmdForceInterrupt;
+    using WD1793::isType1Command;
+    using WD1793::isType2Command;
+    using WD1793::isType3Command;
+    using WD1793::isType4Command;
+    using WD1793::decodeWD93Command;
+    using WD1793::getWD93CommandValue;
+    using WD1793::processWD93Command;
+
+    using WD1793::cmdRestore;
+    using WD1793::cmdSeek;
+    using WD1793::cmdStep;
+    using WD1793::cmdStepIn;
+    using WD1793::cmdStepOut;
+    using WD1793::cmdReadSector;
+    using WD1793::cmdWriteSector;
+    using WD1793::cmdReadAddress;
+    using WD1793::cmdReadTrack;
+    using WD1793::cmdWriteTrack;
+    using WD1793::cmdForceInterrupt;
 };
 
 #endif // _CODE_UNDER_TEST
