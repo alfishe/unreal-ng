@@ -100,3 +100,17 @@ public:
 public:
     void UpdateScreen();
 };
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class CoreCUT : public Core
+{
+public:
+    CoreCUT(EmulatorContext *context) : Core(context) {};
+
+    using Core::_z80;
+};
+#endif // _CODE_UNDER_TEST
