@@ -2,7 +2,9 @@
 
 #include "stdafx.h"
 
+#include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
+#include "emulator/cpu/core.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/fdc/fdd.h"
@@ -54,7 +56,7 @@ public:
     enum WDSTATE : uint8_t
     {
         S_IDLE = 0,
-        S_WAIT,
+        S_WAIT,         // Dedicated state to handle timing delays
 
         S_DELAY_BEFORE_CMD,
         S_CMD_RW,
@@ -78,8 +80,54 @@ public:
         S_WAIT_HLT_RW,
 
         S_EJECT1,
-        S_EJECT2
+        S_EJECT2,
+
+        WDSTATE_MAX
     };
+    static std::string WDSTATEToString(WDSTATE state)
+    {
+        std::string result;
+
+        static constexpr const char* const names[] =
+        {
+            "S_IDLE",
+            "S_WAIT",
+            "S_DELAY_BEFORE_CMD",
+            "S_CMD_RW",
+            "S_FOUND_NEXT_ID",
+            "S_RDSEC",
+            "S_READ",
+            "S_WRSEC",
+            "S_WRITE",
+            "S_WRTRACK",
+            "S_WR_TRACK_DATA",
+
+            "S_TYPE1_CMD",
+            "S_STEP",
+            "S_SEEKSTART",
+            "S_RESTORE",
+            "S_SEEK",
+            "S_VERIFY",
+            "S_VERIFY2",
+
+            "S_WAIT_HLT",
+            "S_WAIT_HLT_RW",
+
+            "S_EJECT1",
+            "S_EJECT2"
+        };
+
+        if (state <= sizeof(names)/sizeof(names[0]))
+        {
+            result = names[state];
+        }
+        else
+        {
+            result = "<Unknown state>";
+        }
+
+        return result;
+    }
 
     enum WD93_CMD_BITS : uint8_t
     {
@@ -198,7 +246,13 @@ protected:
     static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
-    static constexpr const size_t T_STATES_PER_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);    // We must read the whole track during single disk spin (200ms)
+    /// Time limit to retrieve single byte from WD1793
+    /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
+    static constexpr const size_t T_STATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
+    static constexpr const size_t WD93_REVOLUTIONS_TILL_MOTOR_STOP = 15;
+    static constexpr const size_t WD93_TSTATES_TILL_MOTOR_STOP = Z80_FREQUENCY * WD93_REVOLUTIONS_TILL_MOTOR_STOP / FDD_RPS;
+    static constexpr const size_t WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH = 5;
+    static constexpr const size_t WD93_TSTATES_LIMIT_FOR_INDEX_MARK_SEARCH = Z80_FREQUENCY * WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH /  FDD_RPS;
 
     static constexpr const size_t WD93_COMMAND_COUNT = 11;
 
@@ -224,8 +278,10 @@ protected:
     FDD* _selectedDrive = nullptr;
 
     // Counters to measure time intervals
-    size_t _next;                       // Next state machine transition will be performed on this time mark (in Z80 t-states)
-    size_t _time;                       // Current time mark (in Z80 t-states)
+    size_t _time = 0;                   // Current time mark (in Z80 t-states)
+    size_t _lastTime = 0;               // Time mark when process() was called last time
+    int64_t _diffTime = 0;              // Difference between _time and _lastTime (_time - _lastTime)
+    int64_t _delayTStates = 0;          // Delay between switching to next state
 
     // WD93 internal state
     uint8_t _commandRegister = 0x00;    // Last command executed (full data byte)
@@ -314,6 +370,42 @@ protected:
 
     void processIdle();
     void processWait();
+
+    void delayFSMTransition(WDSTATE nextState, size_t delayTStates)
+    {
+        std::cout << "  " << WDSTATEToString(_state) << " -> " << WDSTATEToString(nextState) << " delay(" << delayTStates << ")" << std::endl;
+
+        _state2 = nextState;
+        _delayTStates = delayTStates - 1;
+        _state = WDSTATE::S_WAIT;  // Keep FSM in wait state until delay time elapsed
+    }
+
+    void processClockTimings()
+    {
+        // Decouple time sync with emulator state. Unit tests override updateTimeFromEmulatorState(); as dummy stub
+        updateTimeFromEmulatorState();
+
+        _diffTime = std::abs((int64_t)(_time - _lastTime));
+
+        // If we're waiting more than 15 disk revolutions - something goes wrong on Z80 side,
+        // and we need to recover into
+        if (_diffTime > Z80_FREQUENCY * 15 / FDD_RPS)
+        {
+            throw std::logic_error("Not implemented yet");
+        }
+
+        // Update last call time
+        _lastTime = _time;
+    }
+
+    /// Get current time mark from emulator state
+    virtual void updateTimeFromEmulatorState()
+    {
+        uint64_t totalTime = _context->emulatorState.t_states;
+        uint64_t frameTime = _context->pCore->GetZ80()->t;
+        _time = totalTime + frameTime;
+    }
+
     /// endregion </State machine handlers>
 
     /// region <PortDevice interface methods>
@@ -349,6 +441,14 @@ public:
     using WD1793::_lastDecodedCmd;
     using WD1793::_lastCmdValue;
 
+    using WD1793::_state;
+    using WD1793::_state2;
+    using WD1793::_delayTStates;
+
+    using WD1793::_time;
+    using WD1793::_lastTime;
+    using WD1793::_diffTime;
+
     using WD1793::isType1Command;
     using WD1793::isType2Command;
     using WD1793::isType3Command;
@@ -368,6 +468,13 @@ public:
     using WD1793::cmdReadTrack;
     using WD1793::cmdWriteTrack;
     using WD1793::cmdForceInterrupt;
+
+    using WD1793::processIdle;
+    using WD1793::processWait;
+
+    using WD1793::delayFSMTransition;
+    using WD1793::processClockTimings;
+    virtual void updateTimeFromEmulatorState() override {}; // Make it dummy stub and skip reading T-State counters from the emulator
 };
 
 #endif // _CODE_UNDER_TEST

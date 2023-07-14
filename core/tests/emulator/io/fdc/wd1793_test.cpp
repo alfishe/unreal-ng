@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #include "pch.h"
 
+#include <random>
 #include "_helpers/testtiminghelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
@@ -161,6 +162,94 @@ TEST_F(WD1793_Test, isTypeNCommand)
 /// endregion </WD1793 commands>
 
 /// region <FSM>
+
+TEST_F(WD1793_Test, FSM_Delays)
+{
+    WD1793CUT fdc(_context);
+
+    /// region <Set up random numbers generator>
+    std::random_device rd;
+    std::mt19937 generator(rd());
+
+    // Define random numbers range
+    std::uniform_int_distribution<size_t> delayDistribution(1, 10'000'000);
+    std::uniform_int_distribution<uint8_t> stateDistribution(WD1793::S_IDLE, WD1793::WDSTATE_MAX - 1);
+
+    /// endregion </Set up random numbers generator>
+
+    /// region <Check delay request was registered correctly>
+
+    for (size_t i = 0; i < 20; i++)
+    {
+        int64_t randomDelay = delayDistribution(generator);
+        WD1793::WDSTATE fromState = WD1793::S_IDLE;
+        WD1793::WDSTATE toState = (WD1793::WDSTATE)stateDistribution(generator);
+
+        fdc._state = fromState;
+        fdc.delayFSMTransition(toState, randomDelay);
+
+        EXPECT_EQ(fdc._delayTStates, randomDelay - 1);
+        EXPECT_EQ(fdc._state, WD1793::S_WAIT);
+        EXPECT_EQ(fdc._state2, toState);
+    }
+
+    /// endregion </Check delay request was registered correctly>
+
+    /// region <Check delay counter operates correctly>
+    delayDistribution = std::uniform_int_distribution<size_t>(1, 10'000);
+    stateDistribution = std::uniform_int_distribution<uint8_t>(WD1793::S_WAIT + 1, WD1793::WDSTATE_MAX - 1);
+
+    for (size_t i = 0; i < 10; i++)
+    {
+        // Generate random delays that are multiplier of 100
+        static const size_t ITERATION_STEP = 100;
+        int64_t randomDelay = delayDistribution(generator) * ITERATION_STEP;
+        WD1793::WDSTATE fromState = (WD1793::WDSTATE)stateDistribution(generator);
+        WD1793::WDSTATE toState = (WD1793::WDSTATE)stateDistribution(generator);
+        std::string srcState = WD1793::WDSTATEToString(fromState);
+        std::string dstState = WD1793::WDSTATEToString(toState);
+
+        fdc._state = fromState;
+        fdc.delayFSMTransition(toState, randomDelay);
+
+        // Consistency checks
+        EXPECT_EQ(fdc._delayTStates, randomDelay - 1);
+        EXPECT_EQ(fdc._state, WD1793::S_WAIT);
+        EXPECT_EQ(fdc._state2, toState);
+
+        size_t iterations = randomDelay / ITERATION_STEP;
+
+        int64_t expectedDelay = randomDelay - 1 - ITERATION_STEP;
+        fdc._time = 0;
+        fdc._lastTime = 0;
+        fdc._diffTime = 0;
+        for (int64_t it = randomDelay; it > 0; it -= ITERATION_STEP)
+        {
+            // Check if delay has already been finished prematurely
+            if ((fdc._state == WD1793::S_WAIT && fdc._delayTStates <= 0) || fdc._state != WD1793::S_WAIT)
+            {
+                FAIL() << StringHelper::Format("i: %d; it: %d; %s -> %s; expectedDelay: %d, delayTStates: %d", i, it, srcState.c_str(), dstState.c_str(), expectedDelay, fdc._delayTStates) << std::endl;
+            }
+
+            /// region <Main loop>
+            fdc._time += ITERATION_STEP;
+            fdc.process();
+
+            EXPECT_EQ(expectedDelay, fdc._delayTStates) << StringHelper::Format("i: %d; it: %d; %s -> %s; expectedDelay: %d, delayTStates: %d", i, it, srcState.c_str(), dstState.c_str(), expectedDelay, fdc._delayTStates) << std::endl;
+            /// endregion </Main loop>
+
+            // Adjust expected delay
+            expectedDelay -= ITERATION_STEP;
+            if (expectedDelay < 0)
+            {
+                expectedDelay = 0;
+            }
+        }
+    }
+
+    /// endregion </Check delay counter operates correctly>
+}
+
 
 TEST_F(WD1793_Test, FSM_Restore)
 {

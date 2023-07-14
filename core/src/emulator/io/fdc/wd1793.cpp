@@ -40,9 +40,10 @@ void WD1793::reset()
 void WD1793::process()
 {
     /// region <Get current Z80 clock state for timings synchronization>
-    uint64_t totalTime = _context->emulatorState.t_states;
-    uint64_t frameTime = _context->pCore->GetZ80()->t;
-    _time = totalTime + frameTime;
+
+    // Timings synchronization
+    processClockTimings();
+
     /// endregion <Get current Z80 clock state for timings synchronization>
 
     /// region <Replacement for lengthy switch()>
@@ -310,20 +311,20 @@ WD1793::WD_COMMANDS WD1793::decodeWD93Command(uint8_t value)
 uint8_t WD1793::getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value)
 {
     static constexpr uint8_t commandMaskValues[WD93_COMMAND_COUNT] =
-            {
-                    //    Mask
-                    0b0000'1111,   // [ 0] Restore          Match value: (  0, 0x00)
-                    0b0000'1111,   // [ 1] Seek             Match value: ( 16, 0x10)
-                    0b0001'1111,   // [ 2] Step             Match value: ( 32, 0x20)
-                    0b0001'1111,   // [ 3] Step In          Match value: ( 64, 0x40)
-                    0b0001'1111,   // [ 4] Step Out         Match value: ( 96, 0x60)
-                    0b0001'1110,   // [ 5] Read Sector      Match value: (128, 0x80)
-                    0b0001'1111,   // [ 6] Write Sector     Match value: (160, 0xA0)
-                    0b0000'0100,   // [ 7] Read Address     Match value: (192, 0xC0)
-                    0b0000'0100,   // [ 8] Read Track       Match value: (224, 0xE0)
-                    0b0000'0100,   // [ 9] Write Track      Match value: (240, 0xF0)
-                    0b0000'1111,   // [10] Force Interrupt. Match value: (208, 0xD0)
-            };
+    {
+        //    Mask
+        0b0000'1111,   // [ 0] Restore          Match value: (  0, 0x00)
+        0b0000'1111,   // [ 1] Seek             Match value: ( 16, 0x10)
+        0b0001'1111,   // [ 2] Step             Match value: ( 32, 0x20)
+        0b0001'1111,   // [ 3] Step In          Match value: ( 64, 0x40)
+        0b0001'1111,   // [ 4] Step Out         Match value: ( 96, 0x60)
+        0b0001'1110,   // [ 5] Read Sector      Match value: (128, 0x80)
+        0b0001'1111,   // [ 6] Write Sector     Match value: (160, 0xA0)
+        0b0000'0100,   // [ 7] Read Address     Match value: (192, 0xC0)
+        0b0000'0100,   // [ 8] Read Track       Match value: (224, 0xE0)
+        0b0000'0100,   // [ 9] Write Track      Match value: (240, 0xF0)
+        0b0000'1111,   // [10] Force Interrupt. Match value: (208, 0xD0)
+    };
 
     uint8_t result = 0x00;
 
@@ -426,7 +427,6 @@ void WD1793::cmdStepIn(uint8_t value)
     std::cout << "Command Step In: " << static_cast<int>(value) << std::endl;
 
     startType1Command();
-    //updateStatusesForSeek(value);
 }
 
 void WD1793::cmdStepOut(uint8_t value)
@@ -434,7 +434,6 @@ void WD1793::cmdStepOut(uint8_t value)
     std::cout << "Command Step Out: " << static_cast<int>(value) << std::endl;
 
     startType1Command();
-    //updateStatusesForSeek(value);
 }
 
 void WD1793::cmdReadSector(uint8_t value)
@@ -442,7 +441,6 @@ void WD1793::cmdReadSector(uint8_t value)
     std::cout << "Command Read Sector: " << static_cast<int>(value) << std::endl;
 
     startType2Command();
-    //updateStatusesForReadWrite();
 }
 
 void WD1793::cmdWriteSector(uint8_t value)
@@ -450,7 +448,6 @@ void WD1793::cmdWriteSector(uint8_t value)
     std::cout << "Command Write Sector: " << static_cast<int>(value) << std::endl;
 
     startType2Command();
-    //updateStatusesForReadWrite();
 }
 
 /// Upon receipt of the Read Address command, the head is loaded and the Busy Status bit is set.
@@ -466,7 +463,6 @@ void WD1793::cmdReadAddress(uint8_t value)
     std::cout << "Command Read Address: " << static_cast<int>(value) << std::endl;
 
     startType3Command();
-    //updateStatusesForReadWrite();
 }
 
 void WD1793::cmdReadTrack(uint8_t value)
@@ -474,7 +470,6 @@ void WD1793::cmdReadTrack(uint8_t value)
     std::cout << "Command Read Track: " << static_cast<int>(value) << std::endl;
 
     startType3Command();
-    //updateStatusesForReadWrite();
 }
 
 void WD1793::cmdWriteTrack(uint8_t value)
@@ -482,7 +477,6 @@ void WD1793::cmdWriteTrack(uint8_t value)
     std::cout << "Command Write Track: " << static_cast<int>(value) << std::endl;
 
     startType3Command();
-    //updateStatusesForReadWrite();
 }
 
 /// Execute Force Interrupt command
@@ -645,7 +639,20 @@ void WD1793::processIdle()
 
 void WD1793::processWait()
 {
+    // Attempt time correction before checks
+    if (_delayTStates > 0)
+    {
+        _delayTStates -= _diffTime;
+    }
 
+    // Transition to the next state when delay elapsed
+    if (_delayTStates <= 0)
+    {
+        _delayTStates = 0;
+
+        _state = _state2;
+        _state2 = WDSTATE::S_IDLE;
+    }
 }
 
 /// endregion </State machine handlers>
