@@ -7,7 +7,8 @@
 #include "emulator/platform.h"
 #include <cstring>
 
-#if !defined(_CODE_UNDER_TEST)
+// _ALWAYS_USE_LOGGING always override the behavior
+#if !defined(_CODE_UNDER_TEST) || defined(_ALWAYS_USE_LOGGING)
 
 // Write all Debug / Info logs if not under unit testing / benchmarking
 #define MLOGDEBUG(format, ...) _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
