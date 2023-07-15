@@ -450,9 +450,6 @@ void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
 
 void Emulator::Reset()
 {
-	_isPaused = false;
-	_isRunning = false;
-
 	_core->Reset();
 }
 

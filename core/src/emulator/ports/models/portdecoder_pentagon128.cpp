@@ -153,7 +153,7 @@ void PortDecoder_Pentagon128::SetROMPage(uint8_t page)
         assert("Invalid ROM page");
     }
 
-
+    _memory->SetROMPage(page, false);
 }
 
 /// endregion </Interface methods>

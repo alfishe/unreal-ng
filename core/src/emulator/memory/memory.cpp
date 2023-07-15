@@ -285,7 +285,7 @@ void Memory::Reset()
     // Bank 1 [4000:7FFF] - RAM
     // Bank 2 [8000:BFFF] - RAM
     // Bank 3 [C000:FFFF] - RAM
-    DefaultBanksFor48k();
+    //DefaultBanksFor48k();
 
     // Reset counters
     ResetCounters();

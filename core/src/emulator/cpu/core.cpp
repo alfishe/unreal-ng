@@ -373,6 +373,7 @@ void Core::Reset()
 	_sound->reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
 	_screen->Reset();               // Reset all video subsystem
     _tape->reset();                 // Reset tape loader state
+    _betaDisk->reset();             // BetaDisk floppy controller
 	_hdd->Reset();					// Reset IDE controller
     _portDecoder->reset();          // Reset peripheral port decoder
 

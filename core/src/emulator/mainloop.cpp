@@ -78,7 +78,7 @@ void MainLoop::Run(volatile bool& stopRequested)
     uint64_t lastRun = 0;
     uint64_t betweenIterations = 0;
 
-	while (!stopRequested && !_stopRequested)
+	while (!stopRequested)
 	{
         uint64_t startTime = TimeHelper::GetTimestampUs();
         betweenIterations = startTime - lastRun;
