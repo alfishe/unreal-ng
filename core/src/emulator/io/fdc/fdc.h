@@ -58,7 +58,7 @@ protected:
         0x6E17, 0x7E36, 0x4E55, 0x5E74, 0x2E93, 0x3EB2, 0x0ED1, 0x1EF0
     };
 
-    static constexpr uint16_t crcTable[256] =
+    static constexpr const uint16_t crcTable[256] =
     {
         0x0000, 0x97A0, 0xB9E1, 0x2E41, 0xE563, 0x72C3, 0x5C82, 0xCB22,
         0xCAC7, 0x5D67, 0x7326, 0xE486, 0x2FA4, 0xB804, 0x9645, 0x01E5,
@@ -107,7 +107,7 @@ public:
     /// @param ptr Pointer to byte buffer
     /// @param size Buffer size
     /// @return crc16-CCITT calculated value
-    /// @details It's crc16-CCITT. Polynomial is: x^12 + x^5 + 1. CRC init value: 0xCDB4
+    /// @details It's crc16-CCITT. Polynomial is: x^16 + x^12 + x^5 + 1. CRC init value: 0xCDB4
     static uint16_t crcWD1793(uint8_t *ptr, uint16_t size)
     {
         uint16_t crc = 0xCDB4;
@@ -145,7 +145,9 @@ public:
         return result;
     }
 
-    // Used for UDI disk format
+    /// Used for UDI disk format
+    /// @details In fact it is CRC-32 algorithm with one mistake introduced:
+    ///
     int crcUDI(int &crc, unsigned char *buf, unsigned len)
     {
         while (len--)

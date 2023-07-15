@@ -1,11 +1,25 @@
 #include "fdd.h"
 
+#include <random>
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
 
 /// region <Constructors / destructors>
 FDD::FDD(EmulatorContext* context) : _context(context)
 {
+    /// region <Random track number on init>
+    // Initialize random numbers generator
+    std::random_device rd;
+    std::mt19937 generator(rd());
+
+    // Set distribution range within valid track number [0:85]
+    std::uniform_int_distribution<size_t> trackValueDistribution(0, MAX_CYLINDERS - 1);
+
+    // setTrack will set flags as well
+    setTrack(trackValueDistribution(generator));
+
+    /// endregion </Random track number on init>
+
     // TODO: remove debug
     _diskInserted = true;
 }
