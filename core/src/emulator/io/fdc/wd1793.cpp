@@ -313,17 +313,17 @@ uint8_t WD1793::getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value)
     static constexpr uint8_t commandMaskValues[WD93_COMMAND_COUNT] =
     {
         //    Mask
-        0b0000'1111,   // [ 0] Restore          Match value: (  0, 0x00)
-        0b0000'1111,   // [ 1] Seek             Match value: ( 16, 0x10)
-        0b0001'1111,   // [ 2] Step             Match value: ( 32, 0x20)
-        0b0001'1111,   // [ 3] Step In          Match value: ( 64, 0x40)
-        0b0001'1111,   // [ 4] Step Out         Match value: ( 96, 0x60)
-        0b0001'1110,   // [ 5] Read Sector      Match value: (128, 0x80)
-        0b0001'1111,   // [ 6] Write Sector     Match value: (160, 0xA0)
-        0b0000'0100,   // [ 7] Read Address     Match value: (192, 0xC0)
-        0b0000'0100,   // [ 8] Read Track       Match value: (224, 0xE0)
-        0b0000'0100,   // [ 9] Write Track      Match value: (240, 0xF0)
-        0b0000'1111,   // [10] Force Interrupt. Match value: (208, 0xD0)
+        0b0000'1111,   // [ 0] Restore
+        0b0000'1111,   // [ 1] Seek
+        0b0001'1111,   // [ 2] Step
+        0b0001'1111,   // [ 3] Step In
+        0b0001'1111,   // [ 4] Step Out
+        0b0001'1110,   // [ 5] Read Sector
+        0b0001'1111,   // [ 6] Write Sector
+        0b0000'0100,   // [ 7] Read Address
+        0b0000'0100,   // [ 8] Read Track
+        0b0000'0100,   // [ 9] Write Track
+        0b0000'1111,   // [10] Force Interrupt
     };
 
     uint8_t result = 0x00;
@@ -342,17 +342,17 @@ void WD1793::processWD93Command(uint8_t value)
 {
     static constexpr CommandHandler const commandTable[] =
     {
-            &WD1793::cmdRestore,
-            &WD1793::cmdSeek,
-            &WD1793::cmdStep,
-            &WD1793::cmdStepIn,
-            &WD1793::cmdStepOut,
-            &WD1793::cmdReadSector,
-            &WD1793::cmdWriteSector,
-            &WD1793::cmdReadAddress,
-            &WD1793::cmdReadTrack,
-            &WD1793::cmdWriteTrack,
-            &WD1793::cmdForceInterrupt
+        &WD1793::cmdRestore,
+        &WD1793::cmdSeek,
+        &WD1793::cmdStep,
+        &WD1793::cmdStepIn,
+        &WD1793::cmdStepOut,
+        &WD1793::cmdReadSector,
+        &WD1793::cmdWriteSector,
+        &WD1793::cmdReadAddress,
+        &WD1793::cmdReadTrack,
+        &WD1793::cmdWriteTrack,
+        &WD1793::cmdForceInterrupt
     };
 
     // Decode command
@@ -378,7 +378,7 @@ void WD1793::processWD93Command(uint8_t value)
         {
             _commandRegister = value;
             _status |= WDS_BUSY;
-            _rqs = 0;
+            _beta128status = 0;
             _indexPulseCounter = 0;
             _rotationCounter = SIZE_MAX;
 
@@ -388,15 +388,33 @@ void WD1793::processWD93Command(uint8_t value)
     }
 }
 
+/// Resolves Type1 Command r0r1 bits into stepping rate in ms
+/// @param command Type1 command
+/// @return Resolved stepping speed rate in milliseconds
+uint8_t WD1793::getPositioningRateForType1CommandMs(uint8_t command)
+{
+    uint8_t rateIndex = command & 0b0000'0011;
+    uint8_t result = STEP_TIMINGS_MS_1MHZ[rateIndex];
+
+    return result;
+}
+
 
 /// Restore (Seek track 0)
 /// @param value
 void WD1793::cmdRestore(uint8_t value)
 {
-    std::cout << "Command Restore: " << static_cast<int>(value) << std::endl;
+    std::string message = StringHelper::Format("Command Restore: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
     startType1Command();
-    //updateStatusesForSeek(value);
+
+    // We're not sure about current head position at this moment. Will be determined during step positioning
+    _trackRegister = 0xFF;
+
+    // FSM will transition across steps (making required wait cycles as needed):
+    // S_STEP -> S_VERIFY -> S_IDLE
+    transitionFSM(WDSTATE::S_STEP);
 }
 
 /// This command assumes that Track Register contains the track number of the current position
@@ -411,7 +429,7 @@ void WD1793::cmdSeek(uint8_t value)
 {
     std::cout << "Command Seek: " << static_cast<int>(value) << std::endl;
 
-    //updateStatusesForSeek(value);
+    startType1Command();
 }
 
 void WD1793::cmdStep(uint8_t value)
@@ -419,21 +437,36 @@ void WD1793::cmdStep(uint8_t value)
     std::cout << "Command Step: " << static_cast<int>(value) << std::endl;
 
     startType1Command();
-    //updateStatusesForSeek(value);
 }
 
 void WD1793::cmdStepIn(uint8_t value)
 {
-    std::cout << "Command Step In: " << static_cast<int>(value) << std::endl;
+    std::string message = StringHelper::Format("Command Step In: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
     startType1Command();
+
+    // Yes, we move the head towards central ring (increasing track number)
+    _stepDirectionIn = true;
+
+    // FSM will transition across steps (making required wait cycles as needed):
+    // S_STEP -> S_VERIFY -> S_IDLE
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
 }
 
 void WD1793::cmdStepOut(uint8_t value)
 {
-    std::cout << "Command Step Out: " << static_cast<int>(value) << std::endl;
+    std::string message = StringHelper::Format("Command Step Out: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
     startType1Command();
+
+    // We move the head outwards, to track 0 (decreasing track number)
+    _stepDirectionIn = false;
+
+    // FSM will transition across steps (making required wait cycles as needed):
+    // S_STEP -> S_VERIFY -> S_IDLE
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
 }
 
 void WD1793::cmdReadSector(uint8_t value)
@@ -508,7 +541,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         {
             // Not fully implemented
             _state = S_IDLE;
-            _rqs = INTRQ;
+            _beta128status |= INTRQ;
+            _beta128status &= ~DRQ;
             _status &= ~WDS_BUSY;
         }
 
@@ -516,7 +550,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         {
             // Not fully implemented
             _state = S_IDLE;
-            _rqs = INTRQ;
+            _beta128status |= INTRQ;
+            _beta128status &= ~DRQ;
             _status &= ~WDS_BUSY;
         }
 
@@ -524,14 +559,16 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         {
             // Not fully implemented
             _state = S_IDLE;
-            _rqs = INTRQ;
+            _beta128status |= INTRQ;
+            _beta128status &= ~DRQ;
             _status &= ~WDS_BUSY;
         }
 
         if (value & WD_FORCE_INTERRUPT_NOT_READY)           // Bit0 (J0) - Not-Ready to Ready transition
         {
             _state = S_IDLE;
-            _rqs = INTRQ;
+            _beta128status |= INTRQ;
+            _beta128status &= ~DRQ;
             _status &= ~WDS_BUSY;
         }
     }
@@ -540,28 +577,35 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         // Terminate with no interrupt
         _state = S_IDLE;
         _status &= ~WDS_BUSY;
-        _rqs = 0;
+        _beta128status &= ~(DRQ | INTRQ);
     }
 }
 
 void WD1793::startType1Command()
 {
+    MLOGINFO("==>> Start Type 1 command");
+
     _status |= WDS_BUSY;                        // Set BUSY flag
     _status &= ~(WDS_SEEKERR | WDS_CRCERR);     // Clear positioning and CRC errors
+    _beta128status &= ~(DRQ | INTRQ);           // Clear Data Request and Interrupt request bits
 
-    // Handle HEAD LOAD flag
-    if (_commandRegister & CMD_SEEK_HEADLOAD)
-    {
-        // Activate HLD
-    }
-    else
-    {
-        // Deactivate HLD
-    }
+    // Decode stepping motor rate from bits [0..1] (r0r1)
+    _steppingMotorRate = getPositioningRateForType1CommandMs(_commandRegister);
+
+    // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
+    _verifySeek = _commandRegister & 0b0000'0100;
+
+    // Determines if load should be loaded or unloaded during Type1 command
+    _loadHead = _commandRegister & 0b0000'1000;
+
+    // Reset head step counter
+    _stepCounter = 0;
 }
 
 void WD1793::startType2Command()
 {
+    MLOGINFO("==>> Start Type 2 command");
+
     _status |= WDS_BUSY;                                // Set BUSY flag
     _status &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type2 error flags
                 WDS_RECORDTYPE | WDS_WRITEPROTECTED);
@@ -588,6 +632,8 @@ void WD1793::startType2Command()
 
 void WD1793::startType3Command()
 {
+    MLOGINFO("==>> Start Type 3 command");
+
     _status |= WDS_BUSY;                                // Set BUSY flag
     _status &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type3 error flags
                  WDS_RECORDTYPE);
@@ -611,9 +657,16 @@ void WD1793::startType3Command()
     }
 }
 
+/// Each WD1793 command finishes with resetting BUSY flag
 void WD1793::endCommand()
 {
-    _status &= ~WDS_BUSY;                        // Reset BUSY flag
+    _status &= ~WDS_BUSY;                    // Reset BUSY flag
+
+    // Transition to IDLE state
+    transitionFSM(S_IDLE);
+
+    // Debug logging
+    MLOGINFO("<<== End command");
 }
 
 /// endregion </Command handling>
@@ -634,7 +687,7 @@ void WD1793::processIdle()
         _selectedDrive->setMotor(false);    // Stop motor
     }
 
-    _rqs = INTRQ;
+    _beta128status = INTRQ;
 }
 
 void WD1793::processWait()
@@ -649,10 +702,91 @@ void WD1793::processWait()
     if (_delayTStates <= 0)
     {
         _delayTStates = 0;
-
-        _state = _state2;
-        _state2 = WDSTATE::S_IDLE;
+        transitionFSM(_state2);
     }
+}
+
+void WD1793::processStep()
+{
+    /// region <Check for step limits>
+    if (_stepCounter >= WD93_STEPS_MAX)
+    {
+        // We've reached limit - seek error
+        _status |= WDS_SEEKERR;
+        _beta128status |= INTRQ;
+
+        endCommand();
+    }
+    else
+    {
+        _stepCounter++;
+    }
+    /// endregion </Check for step limits>
+
+    /// region <Make head step>
+    int8_t stepCorrection = _stepDirectionIn ? 1 : -1;
+
+    // Apply changes to the WD1793 Track Register
+    _trackRegister += stepCorrection;
+    /// endregion </Make head step>
+
+    // Check for track 0
+    if (!_stepDirectionIn && _selectedDrive->isTrack00())
+    {
+        // We've reach Track 0. No further movements
+        _trackRegister = 0;
+
+        // Check if position verification was requested
+        if (_verifySeek)
+        {
+            // Yes, verification is required
+            transitionFSMWithDelay(WDSTATE::S_VERIFY, _steppingMotorRate * T_STATES_PER_MS);
+        }
+        else
+        {
+            // No, verification is not required, command execution finished
+            endCommand();
+        }
+    }
+    else
+    {
+        // Apply track change to selected FDD
+        uint8_t driveTrack = _selectedDrive->getTrack();
+        driveTrack += stepCorrection;
+        _selectedDrive->setTrack(driveTrack);
+
+        if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK)
+        {
+            // Schedule next step according currently selected stepping motor rate
+            transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
+        }
+        else if (_lastDecodedCmd == WD_CMD_STEP || _lastDecodedCmd == WD_CMD_STEP_IN || _lastDecodedCmd == WD_CMD_STEP_OUT)
+        {
+            // Check if position verification was requested
+            if (_verifySeek)
+            {
+                // Yes, verification is required
+                transitionFSMWithDelay(WDSTATE::S_VERIFY, _steppingMotorRate * T_STATES_PER_MS);
+            }
+            else
+            {
+                // No, verification is not required, command execution finished
+                endCommand();
+            }
+        }
+        else
+        {
+            throw std::logic_error("Only Type 1 commands can have S_STEP state");
+        }
+    }
+
+    // Debug print
+    MLOGINFO(dumpStep().c_str());
+}
+
+void WD1793::processVerify()
+{
+
 }
 
 /// endregion </State machine handlers>
@@ -670,7 +804,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     switch (port)
     {
         case PORT_1F:   // Return status register value
-            _rqs &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag
+            _beta128status &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag
 
             result = getStatusRegister();
 
@@ -684,11 +818,11 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = _sectorRegister;
             break;
         case PORT_7F:   // Return data byte and update internal state
-            _rqs &= ~DRQ;
+            _beta128status &= ~DRQ;
             result = _dataRegister;
             break;
         case PORT_FF:   // Handle BETA128 system port (#FF)
-            result = _rqs | (_beta128 & 0x3F);
+            result = _beta128status | (_beta128 & 0x3F);
             break;
         default:
             break;
@@ -847,6 +981,22 @@ std::string WD1793::dumpCommand(uint8_t value)
     std::string commandBits = StringHelper::FormatBinary<uint8_t>(commandValue);
 
     ss << StringHelper::Format("0x%02X: %s. Bits: %s", value, commandName.c_str(), commandBits.c_str()) << std::endl;
+
+    std::string result = ss.str();
+
+    return result;
+}
+
+std::string WD1793::dumpStep()
+{
+    std::stringstream ss;
+
+    std::string direction = _stepDirectionIn ? "In" : "Out";
+
+    ss << "Step" << std::endl;
+    ss << StringHelper::Format("WD1793 track: %d", _trackRegister) << std::endl;
+    ss << StringHelper::Format("   FDD track: %d", _selectedDrive->getTrack()) << std::endl;
+    ss << StringHelper::Format("   Direction: %s", direction.c_str()) << std::endl;
 
     std::string result = ss.str();
 

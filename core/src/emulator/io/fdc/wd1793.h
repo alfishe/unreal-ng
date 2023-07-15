@@ -1,7 +1,9 @@
 #pragma once
 
 #include "stdafx.h"
+#include "_helpers/testtiminghelper.h"
 
+#include <common/stringhelper.h>
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include "emulator/cpu/core.h"
@@ -58,6 +60,9 @@ public:
         S_IDLE = 0,
         S_WAIT,         // Dedicated state to handle timing delays
 
+        S_STEP,
+        S_VERIFY,
+
         S_DELAY_BEFORE_CMD,
         S_CMD_RW,
         S_FOUND_NEXT_ID,
@@ -69,11 +74,10 @@ public:
         S_WR_TRACK_DATA,
 
         S_TYPE1_CMD,
-        S_STEP,
+
         S_SEEKSTART,
         S_RESTORE,
         S_SEEK,
-        S_VERIFY,
         S_VERIFY2,
 
         S_WAIT_HLT,
@@ -92,6 +96,10 @@ public:
         {
             "S_IDLE",
             "S_WAIT",
+
+            "S_STEP",
+            "S_VERIFY",
+
             "S_DELAY_BEFORE_CMD",
             "S_CMD_RW",
             "S_FOUND_NEXT_ID",
@@ -103,11 +111,11 @@ public:
             "S_WR_TRACK_DATA",
 
             "S_TYPE1_CMD",
-            "S_STEP",
+
             "S_SEEKSTART",
             "S_RESTORE",
             "S_SEEK",
-            "S_VERIFY",
+
             "S_VERIFY2",
 
             "S_WAIT_HLT",
@@ -244,6 +252,8 @@ protected:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
     static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
+    static constexpr const size_t T_STATES_PER_MS = Z80_FREQUENCY / 1000;
+
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
     /// Time limit to retrieve single byte from WD1793
@@ -253,6 +263,8 @@ protected:
     static constexpr const size_t WD93_TSTATES_TILL_MOTOR_STOP = Z80_FREQUENCY * WD93_REVOLUTIONS_TILL_MOTOR_STOP / FDD_RPS;
     static constexpr const size_t WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH = 5;
     static constexpr const size_t WD93_TSTATES_LIMIT_FOR_INDEX_MARK_SEARCH = Z80_FREQUENCY * WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH /  FDD_RPS;
+    /// We can do no more than 255 head steps. Normally it cannot be more than 80-83 track positioning steps. If we reached 255 limit - FDD is broken
+    static constexpr const size_t WD93_STEPS_MAX = 255;
 
     static constexpr const size_t WD93_COMMAND_COUNT = 11;
 
@@ -265,10 +277,16 @@ protected:
     static constexpr const uint16_t PORT_7FFD = 0x7FFD;   // DOS lock mode. Bit4 = 0 - block; Bit4 = 1 - allow
 
     // Stepping rates from WD93 datasheet
-    static constexpr uint8_t const STEP_TIMINGS_1MHZ[] = { 6, 12, 20, 30 };
-    static constexpr uint8_t const STEP_TIMINGS_2MHZ[] = { 3, 6, 10, 15 };
+    static constexpr const uint8_t  STEP_TIMINGS_MS_1MHZ[] = { 6, 12, 20, 30 };
+    static constexpr const uint8_t STEP_TIMINGS_MS_2MHZ[] = { 3, 6, 10, 15 };
 
     /// endregion </Constants>
+
+    /// region <ModuleLogger definitions for Module/Submodule>
+public:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISK;
+    const uint16_t _SUBMODULE = PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Fields>
 protected:
@@ -291,15 +309,26 @@ protected:
     uint8_t _status = 0x00;             // WD1793 Status Register
 
     uint8_t _beta128 = 0x00;            // BETA128 system register
+    uint8_t _beta128status = 0x00;                // BETA128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
     uint8_t _extStatus = 0x00;          // External status. Only HLD flag is supported
 
     WD_COMMANDS _lastDecodedCmd;        // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
-    uint8_t _rqs = 0x00;                // Data request (DRQ) and interrupt request (INTRQ) flags
     WDSTATE _state = S_IDLE;
     WDSTATE _state2 = S_IDLE;
+
+    // Type 1 command params
+    bool _loadHead = false;             // Determines if load should be loaded or unloaded during Type1 command
+    bool _verifySeek = false;           // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
+    uint8_t _steppingMotorRate = 6;     // Positioning speed rate. Value is resolved from Type1 command via STEP_TIMINGS_MS_1MHZ and STEP_TIMINGS_MS_2MHZ arrays depending on WD1793 clock speed
+
+    // Type 2 command params
     bool _dataRegisterWritten = false;  // Type2 commands have timeout for data availability in Data Register
 
+
+    // Internal state
+    int8_t _stepDirectionIn = false;    // Head step direction. True - move head towards center cut (Step In). False - move outwards to Track 0 (Step Out)
+    size_t _stepCounter = 0;            // Count each head positioning step
 
     // FDD state
     bool _index = false;                // Current state of index strobe
@@ -317,7 +346,7 @@ public:
 
     /// region <Methods>
 public:
-    void reset();
+    virtual void reset();
     void process();
     void processIndexStrobe();
     /// endregion </Methods>
@@ -337,6 +366,8 @@ protected:
     static WD_COMMANDS decodeWD93Command(uint8_t value);
     static uint8_t getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value);
     void processWD93Command(uint8_t value);
+
+    uint8_t getPositioningRateForType1CommandMs(uint8_t command);
 
     // WD93 Command handlers
     void cmdRestore(uint8_t value);
@@ -364,16 +395,34 @@ protected:
 protected:
     std::map<WDSTATE, FSMHandler> _stateHandlerMap =
     {
-        { S_IDLE, &WD1793::processIdle },
-        { S_WAIT, &WD1793::processWait }
+        { S_IDLE,   &WD1793::processIdle },
+        { S_WAIT,   &WD1793::processWait },
+        { S_STEP,   &WD1793::processStep },
+        { S_VERIFY, &WD1793::processVerify },
     };
 
     void processIdle();
     void processWait();
+    void processStep();
+    void processVerify();
 
-    void delayFSMTransition(WDSTATE nextState, size_t delayTStates)
+    void transitionFSM(WDSTATE nextState)
     {
-        std::cout << "  " << WDSTATEToString(_state) << " -> " << WDSTATEToString(nextState) << " delay(" << delayTStates << ")" << std::endl;
+        /// region <Debug logging>
+        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, TestTimingHelper::convertTStatesToMs(_time));
+        std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
+        MLOGINFO(message.c_str());
+        /// endregion </Debug logging>
+
+        _state = nextState;
+        _state2 = WDSTATE::S_IDLE;
+    }
+
+    void transitionFSMWithDelay(WDSTATE nextState, size_t delayTStates)
+    {
+        std::string delayNote = StringHelper::Format(" delay(%d | %d ms)", delayTStates, TestTimingHelper::convertTStatesToMs(delayTStates));
+        std::string message = StringHelper::Format("%s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
+        MLOGINFO(message.c_str());
 
         _state2 = nextState;
         _delayTStates = delayTStates - 1;
@@ -406,6 +455,14 @@ protected:
         _time = totalTime + frameTime;
     }
 
+    /// Reset internal time marks
+    void resetTime()
+    {
+        _time = 0;
+        _lastTime = 0;
+        _diffTime = 0;
+    };
+
     /// endregion </State machine handlers>
 
     /// region <PortDevice interface methods>
@@ -424,6 +481,7 @@ public:
 public:
     std::string dumpStatusRegister(WD_COMMANDS command);
     std::string dumpCommand(uint8_t value);
+    std::string dumpStep();
     /// endregion </Debug methods>
 };
 
@@ -437,9 +495,16 @@ class WD1793CUT : public WD1793
 public:
     WD1793CUT(EmulatorContext* context) : WD1793(context) {};
 
+    using WD1793::_selectedDrive;
+
     using WD1793::_commandRegister;
     using WD1793::_lastDecodedCmd;
     using WD1793::_lastCmdValue;
+
+    using WD1793::_trackRegister;
+    using WD1793::_sectorRegister;
+    using WD1793::_dataRegister;
+    using WD1793::_status;
 
     using WD1793::_state;
     using WD1793::_state2;
@@ -448,6 +513,15 @@ public:
     using WD1793::_time;
     using WD1793::_lastTime;
     using WD1793::_diffTime;
+
+    virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
+    {
+        _state = S_IDLE;
+        _status = 0;
+        _trackRegister = 0;
+        _sectorRegister = 0;
+        _dataRegister = 0;
+    }
 
     using WD1793::isType1Command;
     using WD1793::isType2Command;
@@ -471,10 +545,13 @@ public:
 
     using WD1793::processIdle;
     using WD1793::processWait;
+    using WD1793::processStep;
+    using WD1793::processVerify;
 
-    using WD1793::delayFSMTransition;
+    using WD1793::transitionFSMWithDelay;
     using WD1793::processClockTimings;
     virtual void updateTimeFromEmulatorState() override {}; // Make it dummy stub and skip reading T-State counters from the emulator
+    using WD1793::resetTime;
 };
 
 #endif // _CODE_UNDER_TEST
