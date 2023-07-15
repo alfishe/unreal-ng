@@ -98,7 +98,7 @@ public:
     };
 
     int8_t getTrack() { return _track; };
-    void setTrack(int8_t track) { _track = track; };
+    void setTrack(int8_t track) { _track = track; _track00 = _track == 0; };
 
     bool isTrack00() { return _track00; }
     bool isIndex() { return _index; }
