@@ -428,6 +428,9 @@ void DebuggerWindow::resetEmulator()
     {
         _emulator->Reset();
     }
+
+    // Update debugger state after the reset
+    updateState();
 }
 
 void DebuggerWindow::showBreakpointManager()
