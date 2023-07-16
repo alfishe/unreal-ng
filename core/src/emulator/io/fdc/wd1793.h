@@ -313,8 +313,12 @@ protected:
     uint8_t _status = 0x00;             // WD1793 Status Register
 
     uint8_t _beta128 = 0x00;            // BETA128 system register
-    uint8_t _beta128status = 0x00;                // BETA128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
+    uint8_t _beta128status = 0x00;      // BETA128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
     uint8_t _extStatus = 0x00;          // External status. Only HLD flag is supported
+
+    // Beta128 state
+    uint8_t _drive = 0;                 // Currently selected drive index [0..3]
+    bool _sideUp = false;               // False - bottom side. True - top side
 
     WD_COMMANDS _lastDecodedCmd;        // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
@@ -332,15 +336,21 @@ protected:
 
     // Internal state
     int8_t _stepDirectionIn = false;    // Head step direction. True - move head towards center cut (Step In). False - move outwards to Track 0 (Step Out)
-    size_t _stepCounter = 0;            // Count each head positioning step
+    size_t _stepCounter = 0;            // Count each head positioning step during current Type 1 command
 
     // FDD state
     bool _index = false;                // Current state of index strobe
     size_t _indexPulseCounter = 0;      // Index pulses counter
     size_t _rotationCounter = 0;        // Tracks disk rotation
-
+    int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
 
     /// endregion </Fields>
+
+    /// region <Properties>
+public:
+    FDD* getDrive() { return _selectedDrive; }
+    void setDrive(FDD* drive) { _selectedDrive = drive; }
+    /// endregion </Properties>
 
     /// region <Constructors / destructors>
 public:
@@ -352,11 +362,14 @@ public:
 public:
     virtual void reset();
     void process();
-    void processIndexStrobe();
     /// endregion </Methods>
 
     /// region <Helper methods>
 protected:
+    void processBeta128(uint8_t value);
+    void processFDDMotorState();
+    void processFDDIndexStrobe();
+    void prolongFDDMotorRotation();
     uint8_t getStatusRegister();
     bool isReady();
     /// endregion </Helper methods>
@@ -448,7 +461,8 @@ protected:
         // and we need to recover into
         if (_diffTime > Z80_FREQUENCY * 15 / FDD_RPS)
         {
-            throw std::logic_error("Not implemented yet");
+            // TODO: handle the case
+            //throw std::logic_error("Not implemented yet");
         }
 
         // Update last call time

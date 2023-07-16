@@ -39,12 +39,14 @@ void WD1793::reset()
 
 void WD1793::process()
 {
-    /// region <Get current Z80 clock state for timings synchronization>
-
     // Timings synchronization
     processClockTimings();
 
-    /// endregion <Get current Z80 clock state for timings synchronization>
+    // Maintain FDD motor state
+    processFDDMotorState();
+
+    // Emulate disk rotation and index strobe changes
+    processFDDIndexStrobe();
 
     /// region <Replacement for lengthy switch()>
 
@@ -64,8 +66,89 @@ void WD1793::process()
     /// endregion </Replacement for lengthy switch()>
 }
 
+/// endregion </Methods>
+
+/// region <Helper methods>
+
+/// Handle Beta128 interface system controller commands
+/// @param value
+void WD1793::processBeta128(uint8_t value)
+{
+    // Set active drive, Bits[0,1] (0..3)
+    _drive = value & 0b0000'0011;
+
+    // Set side Bit[4] (0..1)
+    _sideUp = ~(value >> 4) & 0b0000'0001;
+
+    // TODO: Select different drive if requested
+
+    // Reset Bit[3] (active low)
+    bool reset = !(value & 0b0000'0100);
+
+    if (reset)
+    {
+        _status &= ~WDS_NOTRDY;
+        _beta128status = INTRQ;
+
+        // Stop FDD motor, reset all related counters
+        _selectedDrive->setMotor(false);
+        _motorTimeoutTStates = 0;
+        _indexPulseCounter = 0;
+
+        // Set initial state after reset
+        _lastCmdValue = 0x00;
+        _lastDecodedCmd = WD_CMD_RESTORE;
+        _lastCmdValue = 0x00;
+        cmdRestore(_lastCmdValue);
+    }
+    else
+    {
+        uint8_t beta128ChangedBits = _beta128 ^ value;
+        if (beta128ChangedBits & SYS_HLT) // When HLT signal positive edge (from 0 to 1) detected
+        {
+            // FIXME: index strobes should be set by disk rotation timings, not by HLT / BUSY edges
+            if (!(_status & WDS_BUSY))
+            {
+                _indexPulseCounter++;
+            }
+        }
+
+        _beta128 = value;
+    }
+}
+
+/// Handle motor start/stop events as well as timeouts
+void WD1793::processFDDMotorState()
+{
+    // Apply time difference from the previous call
+    _motorTimeoutTStates -= _diffTime;
+
+    if (_motorTimeoutTStates <= 0)
+    {
+        // Motor timeout passed. Prepare to stop
+        _motorTimeoutTStates = 0;
+
+        _status |= WDS_NOTRDY;              // Set NOT READY status bit
+        _loadHead = false;
+        _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
+
+        if (isType1Command(_commandRegister))
+        {
+            _status &= ~WDS_HEADLOADED;
+        }
+
+        // Send stop motor command to FDD
+        if (_selectedDrive->getMotor())
+        {
+            _selectedDrive->setMotor(false);
+
+            MLOGINFO("FDD motor stopped");
+        }
+    }
+}
+
 /// Emulate disk rotation and index strobe changes
-void WD1793::processIndexStrobe()
+void WD1793::processFDDIndexStrobe()
 {
     // Based on:
     // - 300 revolutions per minute => 5 revolutions per second => 200ms or 1/5 second for single revolution
@@ -93,11 +176,36 @@ void WD1793::processIndexStrobe()
             _index = false;
         }
     }
+
+    // Update status register for Type 1 commands
+    if (isType1Command(_lastCmdValue))
+    {
+        if (_index)
+        {
+            _status |= WDS_INDEX;
+        }
+        else
+        {
+            _status &= ~WDS_INDEX;
+        }
+    }
 }
 
-/// endregion </Methods>
+/// Ensure FDD motor is spinning and set default stop timeout
+void WD1793::prolongFDDMotorRotation()
+{
+    static constexpr const size_t MOTOR_STOP_TIMEOUT_TSTATES = 15 * Z80_FREQUENCY / FDD_RPS;
 
-/// region <Helper methods>
+    // Set motor timeout to 15 disk revolutions (3 seconds)
+    _motorTimeoutTStates = MOTOR_STOP_TIMEOUT_TSTATES;
+
+    // Start motor if not spinning yet
+    if (!_selectedDrive->getMotor())
+    {
+        MLOGINFO("FDD motor started");
+        _selectedDrive->setMotor(true);
+    }
+}
 
 uint8_t WD1793::getStatusRegister()
 {
@@ -111,7 +219,7 @@ uint8_t WD1793::getStatusRegister()
         _status &= ~(WDS_INDEX | WDS_TRK00 | WDS_HEADLOADED | WDS_WRITEPROTECTED);
 
         // Update index strobe state according rotation timing
-        processIndexStrobe();
+        processFDDIndexStrobe();
         if (_index)
         {
             _status |= WDS_INDEX;
@@ -602,6 +710,9 @@ void WD1793::startType1Command()
     _status &= ~(WDS_SEEKERR | WDS_CRCERR);     // Clear positioning and CRC errors
     _beta128status &= ~(DRQ | INTRQ);           // Clear Data Request and Interrupt request bits
 
+    // Ensure motor is spinning
+    prolongFDDMotorRotation();
+
     // Decode stepping motor rate from bits [0..1] (r0r1)
     _steppingMotorRate = getPositioningRateForType1CommandMs(_commandRegister);
 
@@ -610,6 +721,14 @@ void WD1793::startType1Command()
 
     // Determines if load should be loaded or unloaded during Type1 command
     _loadHead = _commandRegister & 0b0000'1000;
+    if (_loadHead)
+    {
+        _status |= WDS_HEADLOADED;
+    }
+    else
+    {
+        _status &= ~WDS_HEADLOADED;
+    }
 
     // Reset head step counter
     _stepCounter = 0;
@@ -631,6 +750,9 @@ void WD1793::startType2Command()
     }
     else
     {
+        // Ensure motor is spinning
+        prolongFDDMotorRotation();
+
         if (_commandRegister & CMD_DELAY)
         {
             // 30ms @ 1MHz or 15ms @ 2MHz delay requested
@@ -658,6 +780,9 @@ void WD1793::startType3Command()
     }
     else
     {
+        // Ensure motor is spinning
+        prolongFDDMotorRotation();
+
         if (_commandRegister & CMD_DELAY)
         {
             // 30ms @ 1MHz or 15ms @ 2MHz delay requested
@@ -679,7 +804,7 @@ void WD1793::endCommand()
     transitionFSM(S_IDLE);
 
     // Debug logging
-    MLOGINFO("<<== End command");
+    MLOGINFO("<<== End command. status %s", StringHelper::FormatBinary(_status).c_str());
 }
 
 /// Helper for Type1 command states to execute VERIFY using unified approach
@@ -688,6 +813,12 @@ void  WD1793::type1CommandVerify()
     if (_verifySeek)
     {
         // Yes, verification is required
+
+        // Activate head load
+        _loadHead = true;
+        _status |= WDS_HEADLOADED;
+
+        // Transition to FSM S_VERIFY state after the delay
         transitionFSMWithDelay(WDSTATE::S_VERIFY, WD93_VERIFY_DELAY_MS * TSTATES_PER_MS);
     }
     else
@@ -796,7 +927,8 @@ void WD1793::processStep()
         }
         else
         {
-            throw std::logic_error("Only Type 1 commands can have S_STEP state");
+            int a = a;
+            //throw std::logic_error("Only Type 1 commands can have S_STEP state");
         }
     }
 
@@ -882,7 +1014,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
 
 void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-    MLOGINFO("Out port:0x04X, value: 0x%02X", port, value);
+    MLOGINFO("Out port:0x%04X, value: 0x%02X", port, value);
 
     // Update FDC internal states
     process();
@@ -891,33 +1023,40 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     switch (port)
     {
         case PORT_1F:   // Write to Command Register
-            //processWD93Command(value);
+            processWD93Command(value);
 
             //TODO: remove debug
-            std::cout << dumpCommand(value);
+            MLOGINFO(dumpCommand(value).c_str());
             break;
         case PORT_3F:   // Write to Track Register
-            //_track = value;
+            _trackRegister = value;
 
             //TODO: remove debug
-            //std::cout << StringHelper::Format("#3F - Set track: 0x%02X", _track) << std::endl;
+            MLOGINFO(StringHelper::Format("#3F - Set track: 0x%02X", _trackRegister).c_str());
             break;
         case PORT_5F:   // Write to Sector Register
-            //_sector = value;
+            _sectorRegister = value;
 
             //TODO: remove debug
-            //std::cout << StringHelper::Format("#5F - Set sector: 0x%02X", _sector) << std::endl;
+            MLOGINFO(StringHelper::Format("#5F - Set sector: 0x%02X", _sectorRegister).c_str());
             break;
         case PORT_7F:   // Write to Data Register
-            //_data = value;
-            //_rqs &= ~DRQ;
-            //_status &= ~WDS_DRQ;
+            _dataRegister = value;
+
+            // Reset Data Request bit (DRQ) in Beta128 register
+            _beta128status &= ~DRQ;
+
+            // Reset Data Request bit in status register (only if Type 2 or Type 3 command was executed)
+            if (isType2Command(_lastCmdValue) || isType3Command(_lastCmdValue))
+            {
+                _status &= ~WDS_DRQ;
+            }
 
             //TODO: remove debug
-            //std::cout << StringHelper::Format("#7F - Set data: 0x%02X", _data) << std::endl;
+            MLOGINFO(StringHelper::Format("#7F - Set data: 0x%02X", _dataRegister).c_str());
             break;
         case PORT_FF:   // Write to Beta128 system register
-            //processBeta128(value);
+            processBeta128(value);
             break;
         default:
             break;
@@ -1027,7 +1166,7 @@ std::string WD1793::dumpCommand(uint8_t value)
     WD1793::WD_COMMANDS command = decodeWD93Command(value);
     uint8_t commandValue = getWD93CommandValue(command, value);
     std::string commandName = getWD_COMMANDName(command);
-    std::string commandBits = StringHelper::FormatBinary<uint8_t>(commandValue);
+    std::string commandBits = StringHelper::FormatBinary<uint8_t>(value);
 
     ss << StringHelper::Format("0x%02X: %s. Bits: %s", value, commandName.c_str(), commandBits.c_str()) << std::endl;
 
@@ -1046,6 +1185,7 @@ std::string WD1793::dumpStep()
     ss << StringHelper::Format("WD1793 track: %d", _trackRegister) << std::endl;
     ss << StringHelper::Format("   FDD track: %d", _selectedDrive->getTrack()) << std::endl;
     ss << StringHelper::Format("   Direction: %s", direction.c_str()) << std::endl;
+    ss << StringHelper::Format("      Status: %s", StringHelper::FormatBinary(_status).c_str());
 
     std::string result = ss.str();
 
