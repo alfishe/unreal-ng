@@ -1041,7 +1041,7 @@ uint8_t VG93::portDeviceInMethod(uint16_t port)
 
 void VG93::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-    MLOGINFO("Out port:0x04X, value: 0x%02X", port, value);
+    MLOGINFO("Out port:0x%04X, value: 0x%02X", port, value);
 
     // Update FDC internal states
     process();

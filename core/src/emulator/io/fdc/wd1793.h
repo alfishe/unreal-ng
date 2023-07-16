@@ -312,6 +312,15 @@ protected:
     uint8_t _dataRegister = 0x00;       // WD1793 Data Register
     uint8_t _status = 0x00;             // WD1793 Status Register
 
+    // Per-command statuses
+    uint8_t _statusType1 = 0x00;
+    uint8_t _statusReadAddress = 0x00;
+    uint8_t _statusReadSector = 0x00;
+    uint8_t _statusWriteSector = 0x00;
+    uint8_t _statusReadTrack = 0x00;
+    uint8_t _statusWriteTrack = 0x00;
+
+
     uint8_t _beta128 = 0x00;            // BETA128 system register
     uint8_t _beta128status = 0x00;      // BETA128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
     uint8_t _extStatus = 0x00;          // External status. Only HLD flag is supported

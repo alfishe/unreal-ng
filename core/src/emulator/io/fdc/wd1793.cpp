@@ -11,10 +11,17 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 {
     _context = context;
     _logger = context->pModuleLogger;
+
+    // Attach single drive by default
+    _selectedDrive = new FDD(_context);
 }
 
 WD1793::~WD1793()
 {
+    if (_selectedDrive)
+    {
+        delete _selectedDrive;
+    }
 }
 
 /// endregion </Constructors / destructors>

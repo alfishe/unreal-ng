@@ -5,11 +5,12 @@
 #include "core.h"
 #include <algorithm>
 #include <cassert>
-#include <io/fdc/wd1793.h>
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/fdc/vg93.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
-#include "emulator/io/fdc/vg93.h"
+
 
 
 // Instantiate Core tables as static (only one instance per process)
@@ -250,10 +251,6 @@ bool Core::Init()
     if (_betaDisk)
     {
         _betaDisk->attachToPorts();
-
-        // Attach single drive by default
-        FDD* fdd = new FDD(_context);
-        _betaDisk->setDrive(fdd);
     }
 
     /// endregion </Activate IO devices>
@@ -312,11 +309,6 @@ void Core::Release()
     if (_betaDisk != nullptr)
     {
         _betaDisk->detachFromPorts();
-
-        if (_betaDisk->getDrive())
-        {
-            delete _betaDisk->getDrive();
-        }
 
         delete _betaDisk;
         _betaDisk = nullptr;

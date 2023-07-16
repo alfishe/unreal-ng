@@ -18,7 +18,6 @@ protected:
     EmulatorContext* _context = nullptr;
     CoreCUT* _core = nullptr;
     Z80* _z80 = nullptr;
-    FDD* _fdd = nullptr;
 
     TestTimingHelper* _timingHelper = nullptr;
 
@@ -37,9 +36,6 @@ protected:
         _core->_z80 = _z80;
         _context->pCore = _core;
 
-        // FDD instance
-        _fdd = new FDD(_context);
-
         // Timing helper
         _timingHelper = new TestTimingHelper(_context);
         _timingHelper->resetClock();    // Reset all t-state counters within system (Z80, emulator state)
@@ -50,11 +46,6 @@ protected:
         if (_timingHelper)
         {
             delete _timingHelper;
-        }
-
-        if (_fdd)
-        {
-            delete _fdd;
         }
 
         if (_context)
@@ -184,7 +175,6 @@ TEST_F(WD1793_Test, FSM_DelayRegister)
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Set up random numbers generator>
     std::random_device rd;
@@ -299,7 +289,6 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
     _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
 
@@ -307,7 +296,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
 
     for (size_t i = 0; i < MAX_CYLINDERS; i++)
     {
-       _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
 
         // Mock parameters
         const uint8_t restoreCommand = 0b0000'0000; // RESTORE on reset is done with all bits zeroed: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
@@ -340,7 +329,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
 
             if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                 fdc._trackRegister == 0 &&              // FDC track set to 0
-                _fdd->isTrack00() &&                    // FDD has the same track 0
+                fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                 fdc._state == WD1793::S_IDLE)           // FSM is in idle state
             {
                 // RESTORE operation finished
@@ -355,7 +344,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
 
         bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                        fdc._trackRegister == 0 &&              // FDC track set to 0
-                                       _fdd->isTrack00() &&                    // FDD has the same track 0
+                                       fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                                        fdc._state == WD1793::S_IDLE;           // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly";
@@ -368,7 +357,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
         std::stringstream ss;
         ss << "RESTORE test stats:" << std::endl;
         ss << StringHelper::Format("TStates: %d, time: %d ms", elapsedTimeTStates, elapsedTimeMs) << std::endl;
-        ss << StringHelper::Format("From track: %d to track %d", i, _fdd->getTrack()) << std::endl;
+        ss << StringHelper::Format("From track: %d to track %d", i, fdc._selectedDrive->getTrack()) << std::endl;
         ss << "------------------------------" << std::endl;
 
         std::cout << ss.str();
@@ -385,10 +374,9 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     // Remember initial FDD state
-    uint8_t initialFDDTrack = _fdd->getTrack();
+    uint8_t initialFDDTrack = fdc._selectedDrive->getTrack();
 
     // Mock parameters
     const uint8_t restoreCommand = 0b0000'1000; // RESTORE with load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
@@ -421,7 +409,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
 
         if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
             fdc._trackRegister == 0 &&              // FDC track set to 0
-            _fdd->isTrack00() &&                    // FDD has the same track 0
+            fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
             fdc._state == WD1793::S_IDLE)           // FSM is in idle state
         {
             // RESTORE operation finished
@@ -433,7 +421,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     /// region <Check results>
     bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                    fdc._trackRegister == 0 &&              // FDC track set to 0
-                                   _fdd->isTrack00() &&                    // FDD has the same track 0
+                                   fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                                    fdc._state == WD1793::S_IDLE;           // FSM is in idle state
 
     EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly";
@@ -446,7 +434,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     std::stringstream ss;
     ss << "RESTORE test stats:" << std::endl;
     ss << StringHelper::Format("TStates: %d, time: %d ms", elapsedTimeTStates, elapsedTimeMs) << std::endl;
-    ss << StringHelper::Format("From track: %d to track %d", initialFDDTrack, _fdd->getTrack()) << std::endl;
+    ss << StringHelper::Format("From track: %d to track %d", initialFDDTrack, fdc._selectedDrive->getTrack()) << std::endl;
 
     std::cout << ss.str();
     /// endregion </Get simulation stats>
@@ -462,7 +450,6 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
     //_context->pModuleLogger->SetLoggingLevel(LogError);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
 
@@ -470,7 +457,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 
     for (size_t i = 0; i < MAX_CYLINDERS; i++)
     {
-        _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
 
         // Mock parameters
         const uint8_t restoreCommand = 0b0000'1100; // RESTORE on reset is done with all bits zeroed: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
@@ -503,7 +490,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 
             if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                 fdc._trackRegister == 0 &&              // FDC track set to 0
-                _fdd->isTrack00() &&                    // FDD has the same track 0
+                fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                 fdc._state == WD1793::S_IDLE)           // FSM is in idle state
             {
                 // RESTORE operation finished
@@ -518,7 +505,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 
         bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                        fdc._trackRegister == 0 &&              // FDC track set to 0
-                                       _fdd->isTrack00() &&                    // FDD has the same track 0
+                                       fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                                        fdc._state == WD1793::S_IDLE;           // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly";
@@ -531,7 +518,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
         std::stringstream ss;
         ss << "RESTORE test stats:" << std::endl;
         ss << StringHelper::Format("TStates: %d, time: %d ms", elapsedTimeTStates, elapsedTimeMs) << std::endl;
-        ss << StringHelper::Format("From track: %d to track %d", i, _fdd->getTrack()) << std::endl;
+        ss << StringHelper::Format("From track: %d to track %d", i, fdc._selectedDrive->getTrack()) << std::endl;
         ss << "------------------------------" << std::endl;
 
         std::cout << ss.str();
@@ -555,7 +542,6 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
     for (int i = 0; i < MAX_CYLINDERS - 1; i++)
@@ -564,7 +550,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         //int targetTrack = 3;
 
         // Set initial conditions
-        _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
         fdc._trackRegister = i;
         fdc._dataRegister = targetTrack;
 
@@ -597,10 +583,10 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
+                fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
+                fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
             {
                 // STEP_IN command finished
                 break;
@@ -612,10 +598,10 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                       fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                                       _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+                                       fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
+                                       fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
+                                       fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK didn't end up correctly";
 
@@ -638,7 +624,6 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
     for (uint8_t stepRate = 0; stepRate < 4; stepRate++)
@@ -649,7 +634,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
             int targetTrack = MAX_CYLINDERS - 1 - i;
 
             // Set initial conditions
-            _fdd->setTrack(i);
+            fdc._selectedDrive->setTrack(i);
             fdc._trackRegister = i;
             fdc._dataRegister = targetTrack;
 
@@ -683,10 +668,10 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
                 // Process FSM state updates
                 fdc.process();
 
-                if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                    fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                    _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                    fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+                if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                    fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
+                    fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
+                    fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
                 {
                     // STEP_IN command finished
                     break;
@@ -698,10 +683,10 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
             size_t elapsedTimeTStates = clk;
             size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-            bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                           fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                                           _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                                           fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+            bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+                                           fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
+                                           fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
+                                           fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
 
             EXPECT_EQ(isAccomplishedCorrectly, true)
                     << "SEEK didn't end up correctly"
@@ -734,7 +719,6 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
     //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
     for (size_t i = 0; i < MAX_CYLINDERS - 1; i++)
@@ -742,7 +726,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
         uint8_t targetTrack = i + 1;
 
         // Set initial conditions
-        _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
         fdc._trackRegister = i;
         fdc._stepDirectionIn = true;
 
@@ -776,10 +760,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
+                fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
+                fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
             {
                 // STEP_IN command finished
                 break;
@@ -791,10 +775,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                       fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                                       _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+                                       fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
+                                       fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
+                                       fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK increasing direction didn't end up correctly";
 
@@ -816,7 +800,6 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
     _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
     for (size_t i = MAX_CYLINDERS - 1; i > 0; i--)
@@ -824,7 +807,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
         uint8_t targetTrack = i - 1;
 
         // Set initial conditions
-        _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
         fdc._trackRegister = i;
         fdc._stepDirectionIn = false;
 
@@ -858,10 +841,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
+                fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
+                fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
             {
                 // STEP_IN command finished
                 break;
@@ -873,10 +856,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                       fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                                       _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+                                       fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
+                                       fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
+                                       fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK decreasing direction didn't end up correctly";
 
@@ -902,7 +885,6 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
     _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     /// region <Main test loop>
     for (size_t i = 0; i < MAX_CYLINDERS - 1; i++)
@@ -910,7 +892,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
         uint8_t targetTrack = i + 1;
 
         // Set initial conditions
-        _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
         fdc._trackRegister = i;
 
         // Mock parameters
@@ -942,10 +924,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
+                fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
+                fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
             {
                 // STEP_IN command finished
                 break;
@@ -957,10 +939,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                       fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                                       _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+                                       fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
+                                       fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
+                                       fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK_IN didn't end up correctly";
 
@@ -986,14 +968,13 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
     _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
-    fdc._selectedDrive = _fdd;
 
     for (int i = MAX_CYLINDERS - 1; i >= 1; i--)
     {
         uint8_t targetTrack = i - 1;
 
         // Set initial conditions
-        _fdd->setTrack(i);
+        fdc._selectedDrive->setTrack(i);
         fdc._trackRegister = i;
 
         // Mock parameters
@@ -1025,10 +1006,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
+                fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
+                fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
             {
                 // STEP_IN command finished
                 break;
@@ -1040,10 +1021,10 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                       fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
-                                       _fdd->getTrack() == targetTrack &&      // FDD has the same track
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+                                       fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
+                                       fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
+                                       fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK_OUT didn't end up correctly";
 

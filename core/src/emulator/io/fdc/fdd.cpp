@@ -12,8 +12,8 @@ FDD::FDD(EmulatorContext* context) : _context(context)
     std::random_device rd;
     std::mt19937 generator(rd());
 
-    // Set distribution range within valid track number [0:85]
-    std::uniform_int_distribution<size_t> trackValueDistribution(0, MAX_CYLINDERS - 1);
+    // Set distribution range within standard valid track number [0:80]
+    std::uniform_int_distribution<size_t> trackValueDistribution(0, 80);
 
     // setTrack will set flags as well
     setTrack(trackValueDistribution(generator));
