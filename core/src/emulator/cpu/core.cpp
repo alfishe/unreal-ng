@@ -5,6 +5,7 @@
 #include "core.h"
 #include <algorithm>
 #include <cassert>
+#include <io/fdc/wd1793.h>
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
@@ -244,10 +245,15 @@ bool Core::Init()
         _sound->attachToPorts();
     }
 
-    _betaDisk = new VG93(_context);
+    //_betaDisk = new VG93(_context);
+    _betaDisk = new WD1793(_context);
     if (_betaDisk)
     {
         _betaDisk->attachToPorts();
+
+        // Attach single drive by default
+        FDD* fdd = new FDD(_context);
+        _betaDisk->setDrive(fdd);
     }
 
     /// endregion </Activate IO devices>
@@ -306,6 +312,11 @@ void Core::Release()
     if (_betaDisk != nullptr)
     {
         _betaDisk->detachFromPorts();
+
+        if (_betaDisk->getDrive())
+        {
+            delete _betaDisk->getDrive();
+        }
 
         delete _betaDisk;
         _betaDisk = nullptr;
