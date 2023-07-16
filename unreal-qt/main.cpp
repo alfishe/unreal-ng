@@ -9,6 +9,7 @@ int fontID = -1;
 
 void registerFonts(QApplication& app)
 {
+    return;
     /// region <Load monospace font>
     // Note: All fonts and resources used on windows must be loaded before window object(s) instantiated
 

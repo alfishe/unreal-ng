@@ -1,5 +1,5 @@
 #include <loaders/snapshot/loader_z80.h>
-#include <loaders/disc/loader_trd.h>
+#include <loaders/disk/loader_trd.h>
 #include "stdafx.h"
 
 #include "emulator.h"
