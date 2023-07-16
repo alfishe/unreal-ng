@@ -514,6 +514,9 @@ public:
     using WD1793::_lastTime;
     using WD1793::_diffTime;
 
+    using WD1793::_stepDirectionIn;
+    using WD1793::_stepCounter;
+
     virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
     {
         _state = S_IDLE;

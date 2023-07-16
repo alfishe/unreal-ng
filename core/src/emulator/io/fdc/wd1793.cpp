@@ -432,11 +432,18 @@ void WD1793::cmdSeek(uint8_t value)
     startType1Command();
 }
 
+/// Performs single head step movement remaining previously set direction
+/// @param value STEP command parameter bits
 void WD1793::cmdStep(uint8_t value)
 {
-    std::cout << "Command Step: " << static_cast<int>(value) << std::endl;
+    std::string message = StringHelper::Format("Command Step: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
     startType1Command();
+
+    // FSM will transition across steps (making required wait cycles as needed):
+    // S_STEP -> S_VERIFY -> S_IDLE
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
 }
 
 void WD1793::cmdStepIn(uint8_t value)
