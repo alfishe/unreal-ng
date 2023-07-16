@@ -427,9 +427,14 @@ void WD1793::cmdRestore(uint8_t value)
 /// @param value
 void WD1793::cmdSeek(uint8_t value)
 {
-    std::cout << "Command Seek: " << static_cast<int>(value) << std::endl;
+    std::string message = StringHelper::Format("Command Seek: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
     startType1Command();
+
+    // FSM will transition across steps (making required wait cycles as needed):
+    // S_SEEK -> S_STEP -> S_SEEK -> ..... -> S_VERIFY -> S_IDLE
+    transitionFSMWithDelay(WDSTATE::S_SEEK, _steppingMotorRate * TSTATES_PER_MS);
 }
 
 /// Performs single head step movement remaining previously set direction
@@ -443,7 +448,7 @@ void WD1793::cmdStep(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
 }
 
 void WD1793::cmdStepIn(uint8_t value)
@@ -458,7 +463,7 @@ void WD1793::cmdStepIn(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
 }
 
 void WD1793::cmdStepOut(uint8_t value)
@@ -473,7 +478,7 @@ void WD1793::cmdStepOut(uint8_t value)
 
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
 }
 
 void WD1793::cmdReadSector(uint8_t value)
@@ -676,6 +681,21 @@ void WD1793::endCommand()
     MLOGINFO("<<== End command");
 }
 
+/// Helper for Type1 command states to execute VERIFY using unified approach
+void  WD1793::type1CommandVerify()
+{
+    if (_verifySeek)
+    {
+        // Yes, verification is required
+        transitionFSMWithDelay(WDSTATE::S_VERIFY, WD93_VERIFY_DELAY_MS * TSTATES_PER_MS);
+    }
+    else
+    {
+        // No, verification is not required, command execution finished
+        endCommand();
+    }
+}
+
 /// endregion </Command handling>
 
 /// region <State machine handlers>
@@ -738,22 +758,23 @@ void WD1793::processStep()
     /// endregion </Make head step>
 
     // Check for track 0
-    if (!_stepDirectionIn && _selectedDrive->isTrack00())
+    if (!_stepDirectionIn && _selectedDrive->isTrack00())                       // RESTORE command finished
     {
         // We've reach Track 0. No further movements
         _trackRegister = 0;
 
         // Check if position verification was requested
-        if (_verifySeek)
-        {
-            // Yes, verification is required
-            transitionFSMWithDelay(WDSTATE::S_VERIFY, _steppingMotorRate * T_STATES_PER_MS);
-        }
-        else
-        {
-            // No, verification is not required, command execution finished
-            endCommand();
-        }
+        type1CommandVerify();
+    }
+    else if (_lastDecodedCmd == WD_CMD_SEEK && _dataRegister == _trackRegister)   // SEEK command finished
+    {
+        // Apply track change to selected FDD
+        uint8_t driveTrack = _selectedDrive->getTrack();
+        driveTrack += stepCorrection;
+        _selectedDrive->setTrack(driveTrack);
+
+        // Check if position verification was requested
+        type1CommandVerify();
     }
     else
     {
@@ -765,21 +786,12 @@ void WD1793::processStep()
         if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK)
         {
             // Schedule next step according currently selected stepping motor rate
-            transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * T_STATES_PER_MS);
+            transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
         }
         else if (_lastDecodedCmd == WD_CMD_STEP || _lastDecodedCmd == WD_CMD_STEP_IN || _lastDecodedCmd == WD_CMD_STEP_OUT)
         {
             // Check if position verification was requested
-            if (_verifySeek)
-            {
-                // Yes, verification is required
-                transitionFSMWithDelay(WDSTATE::S_VERIFY, _steppingMotorRate * T_STATES_PER_MS);
-            }
-            else
-            {
-                // No, verification is not required, command execution finished
-                endCommand();
-            }
+            type1CommandVerify();
         }
         else
         {
@@ -794,6 +806,35 @@ void WD1793::processStep()
 void WD1793::processVerify()
 {
 
+}
+
+/// Process SEEK flow (attempting to reach track in Data Register)
+void WD1793::processSeek()
+{
+    if (_dataRegister == _trackRegister)
+    {
+        // We've reached requested track
+
+        // Check if position verification was requested
+        if (_verifySeek)
+        {
+            // Yes, verification is required
+            transitionFSMWithDelay(WDSTATE::S_VERIFY, WD93_VERIFY_DELAY_MS * TSTATES_PER_MS);
+        }
+        else
+        {
+            // No, verification is not required, command execution finished
+            endCommand();
+        }
+    }
+    else
+    {
+        // Not on request track. Re-positioning required
+        _stepDirectionIn = _dataRegister > _trackRegister;
+
+        // Start re-positioning without additional delays
+        transitionFSM(WDSTATE::S_STEP);
+    }
 }
 
 /// endregion </State machine handlers>

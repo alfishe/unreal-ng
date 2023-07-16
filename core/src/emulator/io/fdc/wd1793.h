@@ -1,7 +1,6 @@
 #pragma once
 
 #include "stdafx.h"
-#include "_helpers/testtiminghelper.h"
 
 #include <common/stringhelper.h>
 #include "emulator/emulatorcontext.h"
@@ -62,6 +61,7 @@ public:
 
         S_STEP,
         S_VERIFY,
+        S_SEEK,
 
         S_DELAY_BEFORE_CMD,
         S_CMD_RW,
@@ -77,7 +77,6 @@ public:
 
         S_SEEKSTART,
         S_RESTORE,
-        S_SEEK,
         S_VERIFY2,
 
         S_WAIT_HLT,
@@ -99,6 +98,7 @@ public:
 
             "S_STEP",
             "S_VERIFY",
+            "S_SEEK",
 
             "S_DELAY_BEFORE_CMD",
             "S_CMD_RW",
@@ -114,8 +114,6 @@ public:
 
             "S_SEEKSTART",
             "S_RESTORE",
-            "S_SEEK",
-
             "S_VERIFY2",
 
             "S_WAIT_HLT",
@@ -252,19 +250,25 @@ protected:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
     static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
-    static constexpr const size_t T_STATES_PER_MS = Z80_FREQUENCY / 1000;
+    static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000;
 
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
+
     /// Time limit to retrieve single byte from WD1793
     /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
     static constexpr const size_t T_STATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
+
     static constexpr const size_t WD93_REVOLUTIONS_TILL_MOTOR_STOP = 15;
     static constexpr const size_t WD93_TSTATES_TILL_MOTOR_STOP = Z80_FREQUENCY * WD93_REVOLUTIONS_TILL_MOTOR_STOP / FDD_RPS;
     static constexpr const size_t WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH = 5;
     static constexpr const size_t WD93_TSTATES_LIMIT_FOR_INDEX_MARK_SEARCH = Z80_FREQUENCY * WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH /  FDD_RPS;
+
     /// We can do no more than 255 head steps. Normally it cannot be more than 80-83 track positioning steps. If we reached 255 limit - FDD is broken
     static constexpr const size_t WD93_STEPS_MAX = 255;
+
+    /// After the last directional step an additional 15 milliseconds of head settling time takes place if the Verify flag is set in Type I commands
+    static constexpr const size_t WD93_VERIFY_DELAY_MS = 15;
 
     static constexpr const size_t WD93_COMMAND_COUNT = 11;
 
@@ -388,6 +392,8 @@ protected:
     void startType3Command();
     void endCommand();
 
+    void type1CommandVerify();
+
 
     /// endregion </Command handling>
 
@@ -399,17 +405,19 @@ protected:
         { S_WAIT,   &WD1793::processWait },
         { S_STEP,   &WD1793::processStep },
         { S_VERIFY, &WD1793::processVerify },
+        { S_SEEK,   &WD1793::processSeek },
     };
 
     void processIdle();
     void processWait();
     void processStep();
     void processVerify();
+    void processSeek();
 
     void transitionFSM(WDSTATE nextState)
     {
         /// region <Debug logging>
-        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, TestTimingHelper::convertTStatesToMs(_time));
+        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, convertTStatesToMs(_time));
         std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
         MLOGINFO(message.c_str());
         /// endregion </Debug logging>
@@ -420,7 +428,7 @@ protected:
 
     void transitionFSMWithDelay(WDSTATE nextState, size_t delayTStates)
     {
-        std::string delayNote = StringHelper::Format(" delay(%d | %d ms)", delayTStates, TestTimingHelper::convertTStatesToMs(delayTStates));
+        std::string delayNote = StringHelper::Format(" delay(%d | %d ms)", delayTStates, convertTStatesToMs(delayTStates));
         std::string message = StringHelper::Format("%s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
         MLOGINFO(message.c_str());
 
@@ -482,6 +490,13 @@ public:
     std::string dumpStatusRegister(WD_COMMANDS command);
     std::string dumpCommand(uint8_t value);
     std::string dumpStep();
+
+    static inline size_t convertTStatesToMs(size_t tStates)
+    {
+        size_t result = tStates / TSTATES_PER_MS;
+
+        return result;
+    }
     /// endregion </Debug methods>
 };
 
@@ -516,6 +531,7 @@ public:
 
     using WD1793::_stepDirectionIn;
     using WD1793::_stepCounter;
+    using WD1793::_steppingMotorRate;
 
     virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
     {

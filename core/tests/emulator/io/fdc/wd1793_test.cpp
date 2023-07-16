@@ -296,7 +296,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+    _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
     fdc._selectedDrive = _fdd;
@@ -339,9 +339,9 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
             fdc.process();
 
             if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-            fdc._trackRegister == 0 &&              // FDC track set to 0
-            _fdd->isTrack00() &&                    // FDD has the same track 0
-            fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+                fdc._trackRegister == 0 &&              // FDC track set to 0
+                _fdd->isTrack00() &&                    // FDD has the same track 0
+                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
             {
                 // RESTORE operation finished
                 break;
@@ -544,6 +544,89 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 /// endregion </RESTORE>
 
 /// region <SEEK>
+
+TEST_F(WD1793_Test, FSM_CMD_Seek)
+{
+    static constexpr double const TEST_DURATION_SEC = 1.0;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive = _fdd;
+
+    /// region <Main test loop>
+    for (int i = 0; i < MAX_CYLINDERS - 1; i++)
+    {
+        int targetTrack = MAX_CYLINDERS - 1 - i;
+        //int targetTrack = 3;
+
+        // Set initial conditions
+        _fdd->setTrack(i);
+        fdc._trackRegister = i;
+        fdc._dataRegister = targetTrack;
+
+        // Mock parameters
+        const uint8_t stepCommand = 0b0001'0000; // SEEK: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepCommand);
+        fdc._commandRegister = stepCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+
+        // Reset WDC internal time marks
+        fdc.resetTime();
+
+        /// region <Pre-checks>
+        EXPECT_EQ(decodedCommand, WD1793::WD_CMD_SEEK);
+        EXPECT_EQ(fdc._time, 0);
+        EXPECT_EQ(fdc._lastTime, 0);
+        EXPECT_EQ(fdc._diffTime, 0);
+        /// endregion </Pre-checks>
+
+        // Trigger SEEK command
+        fdc.cmdSeek(stepCommand);
+
+        /// region <Perform simulation loop>
+        size_t clk;
+        for (clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+        {
+            // Update time for FDC
+            fdc._time = clk;
+
+            // Process FSM state updates
+            fdc.process();
+
+            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+                fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
+                _fdd->getTrack() == targetTrack &&      // FDD has the same track
+                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+            {
+                // STEP_IN command finished
+                break;
+            }
+        }
+        /// endregion </Perform simulation loop>
+
+        /// region <Check results>
+        size_t elapsedTimeTStates = clk;
+        size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
+
+        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+                                       fdc._trackRegister == targetTrack &&    // FDC track set to <next track>
+                                       _fdd->getTrack() == targetTrack &&      // FDD has the same track
+                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+
+        EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK increasing direction didn't end up correctly";
+
+        size_t estimatedExecutionTime = std::abs(targetTrack - i) * fdc._steppingMotorRate; // We're performing single positioning step 6ms long
+        size_t estimationError = std::abs(targetTrack - i) * 0.5; // No more than 0.5ms estimation error per step
+        EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + estimationError) << "Abnormal execution time" << StringHelper::Format(" from trk: %d to trk: %d", i, targetTrack);
+        /// endregion </Check results>
+    }
+
+    /// endregion </Main test loop>
+}
 /// region <SEEK>
 
 /// region <STEP>
