@@ -428,6 +428,7 @@ void WD1793::cmdRestore(uint8_t value)
 void WD1793::cmdSeek(uint8_t value)
 {
     std::string message = StringHelper::Format("Command Seek: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    message += StringHelper::Format(" From trk: %d, to trk: %d", _trackRegister, _dataRegister);
     MLOGINFO(message.c_str());
 
     startType1Command();
