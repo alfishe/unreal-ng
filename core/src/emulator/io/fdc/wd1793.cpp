@@ -31,7 +31,7 @@ WD1793::~WD1793()
 void WD1793::reset()
 {
     _state = S_IDLE;
-    _status = 0;
+    _statusRegister = 0;
     _trackRegister = 0;
     _sectorRegister = 0;
     _dataRegister = 0;
@@ -94,7 +94,7 @@ void WD1793::processBeta128(uint8_t value)
 
     if (reset)
     {
-        _status &= ~WDS_NOTRDY;
+        _statusRegister &= ~WDS_NOTRDY;
         _beta128status = INTRQ;
 
         // Stop FDD motor, reset all related counters
@@ -114,7 +114,7 @@ void WD1793::processBeta128(uint8_t value)
         if (beta128ChangedBits & SYS_HLT) // When HLT signal positive edge (from 0 to 1) detected
         {
             // FIXME: index strobes should be set by disk rotation timings, not by HLT / BUSY edges
-            if (!(_status & WDS_BUSY))
+            if (!(_statusRegister & WDS_BUSY))
             {
                 _indexPulseCounter++;
             }
@@ -135,13 +135,13 @@ void WD1793::processFDDMotorState()
         // Motor timeout passed. Prepare to stop
         _motorTimeoutTStates = 0;
 
-        _status |= WDS_NOTRDY;              // Set NOT READY status bit
+        _statusRegister |= WDS_NOTRDY;              // Set NOT READY status bit
         _loadHead = false;
         _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
 
         if (isType1Command(_commandRegister))
         {
-            _status &= ~WDS_HEADLOADED;
+            _statusRegister &= ~WDS_HEADLOADED;
         }
 
         // Send stop motor command to FDD
@@ -189,11 +189,11 @@ void WD1793::processFDDIndexStrobe()
     {
         if (_index)
         {
-            _status |= WDS_INDEX;
+            _statusRegister |= WDS_INDEX;
         }
         else
         {
-            _status &= ~WDS_INDEX;
+            _statusRegister &= ~WDS_INDEX;
         }
     }
 }
@@ -223,28 +223,28 @@ uint8_t WD1793::getStatusRegister()
         // Type I or type IV command
 
         // Clear all bits that will be recalculated
-        _status &= ~(WDS_INDEX | WDS_TRK00 | WDS_HEADLOADED | WDS_WRITEPROTECTED);
+        _statusRegister &= ~(WDS_INDEX | WDS_TRK00 | WDS_HEADLOADED | WDS_WRITEPROTECTED);
 
         // Update index strobe state according rotation timing
         processFDDIndexStrobe();
         if (_index)
         {
-            _status |= WDS_INDEX;
+            _statusRegister |= WDS_INDEX;
         }
 
         if (_selectedDrive->isTrack00())
         {
-            _status |= WDS_TRK00;
+            _statusRegister |= WDS_TRK00;
         }
 
         if (_selectedDrive->isWriteProtect())
         {
-            _status |= WDS_WRITEPROTECTED;
+            _statusRegister |= WDS_WRITEPROTECTED;
         }
 
         // Set head load state based on HLD and HLT signals
         uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0;
-        _status |= headStatus;
+        _statusRegister |= headStatus;
     }
     else
     {
@@ -253,14 +253,14 @@ uint8_t WD1793::getStatusRegister()
 
     if (isReady())
     {
-        _status &= ~WDS_NOTRDY;
+        _statusRegister &= ~WDS_NOTRDY;
     }
     else
     {
-        _status |= WDS_NOTRDY;
+        _statusRegister |= WDS_NOTRDY;
     }
 
-    return _status;
+    return _statusRegister;
 }
 
 bool WD1793::isReady()
@@ -482,7 +482,7 @@ void WD1793::processWD93Command(uint8_t value)
     if (command < sizeof(commandTable) / sizeof(commandTable[0]))
     {
         const CommandHandler& handler = commandTable[command];
-        bool isBusy = _status & WDS_BUSY;
+        bool isBusy = _statusRegister & WDS_BUSY;
 
         if (command == WD_CMD_FORCE_INTERRUPT)          // Force interrupt command executes in any state
         {
@@ -492,7 +492,7 @@ void WD1793::processWD93Command(uint8_t value)
         else if (!isBusy)                               // All other commands are ignored if controller is busy
         {
             _commandRegister = value;
-            _status |= WDS_BUSY;
+            _statusRegister |= WDS_BUSY;
             _beta128status = 0;
             _indexPulseCounter = 0;
             _rotationCounter = SIZE_MAX;
@@ -671,7 +671,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _state = S_IDLE;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _status &= ~WDS_BUSY;
+            _statusRegister &= ~WDS_BUSY;
         }
 
         if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)         // Bit2 (J2) - Index pulse
@@ -680,7 +680,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _state = S_IDLE;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _status &= ~WDS_BUSY;
+            _statusRegister &= ~WDS_BUSY;
         }
 
         if (value & WD_FORCE_INTERRUPT_READY)               // Bit1 (J1) - Ready to Not-Ready transition
@@ -689,7 +689,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _state = S_IDLE;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _status &= ~WDS_BUSY;
+            _statusRegister &= ~WDS_BUSY;
         }
 
         if (value & WD_FORCE_INTERRUPT_NOT_READY)           // Bit0 (J0) - Not-Ready to Ready transition
@@ -697,14 +697,14 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _state = S_IDLE;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _status &= ~WDS_BUSY;
+            _statusRegister &= ~WDS_BUSY;
         }
     }
     else
     {
         // Terminate with no interrupt
         _state = S_IDLE;
-        _status &= ~WDS_BUSY;
+        _statusRegister &= ~WDS_BUSY;
         _beta128status &= ~(DRQ | INTRQ);
     }
 }
@@ -713,9 +713,10 @@ void WD1793::startType1Command()
 {
     MLOGINFO("==>> Start Type 1 command");
 
-    _status |= WDS_BUSY;                        // Set BUSY flag
-    _status &= ~(WDS_SEEKERR | WDS_CRCERR);     // Clear positioning and CRC errors
-    _beta128status &= ~(DRQ | INTRQ);           // Clear Data Request and Interrupt request bits
+    _statusRegister |= WDS_BUSY;                            // Set BUSY flag
+    _statusRegister &= ~(WDS_SEEKERR | WDS_CRCERR);         // Clear positioning and CRC errors
+
+    _beta128status &= ~(DRQ | INTRQ);               // Clear Data Request and Interrupt request bits
 
     // Ensure motor is spinning
     prolongFDDMotorRotation();
@@ -730,11 +731,11 @@ void WD1793::startType1Command()
     _loadHead = _commandRegister & 0b0000'1000;
     if (_loadHead)
     {
-        _status |= WDS_HEADLOADED;
+        _statusRegister |= WDS_HEADLOADED;
     }
     else
     {
-        _status &= ~WDS_HEADLOADED;
+        _statusRegister &= ~WDS_HEADLOADED;
     }
 
     // Reset head step counter
@@ -745,10 +746,10 @@ void WD1793::startType2Command()
 {
     MLOGINFO("==>> Start Type 2 command");
 
-    _status |= WDS_BUSY;                                // Set BUSY flag
-    _status &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type2 error flags
+    _statusRegister |= WDS_BUSY;                                // Set BUSY flag
+    _statusRegister &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type2 error flags
                 WDS_RECORDTYPE | WDS_WRITEPROTECTED);
-    _dataRegisterWritten = false;                       // Type2 commands have timeout for data availability in Data Register
+    _dataRegisterWritten = false;                               // Type2 commands have timeout for data availability in Data Register
 
     if (!isReady())
     {
@@ -776,8 +777,8 @@ void WD1793::startType3Command()
 {
     MLOGINFO("==>> Start Type 3 command");
 
-    _status |= WDS_BUSY;                                // Set BUSY flag
-    _status &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type3 error flags
+    _statusRegister |= WDS_BUSY;                                // Set BUSY flag
+    _statusRegister &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type3 error flags
                  WDS_RECORDTYPE);
 
     if (!isReady())
@@ -805,13 +806,13 @@ void WD1793::startType3Command()
 /// Each WD1793 command finishes with resetting BUSY flag
 void WD1793::endCommand()
 {
-    _status &= ~WDS_BUSY;                    // Reset BUSY flag
+    _statusRegister &= ~WDS_BUSY;                    // Reset BUSY flag
 
     // Transition to IDLE state
     transitionFSM(S_IDLE);
 
     // Debug logging
-    MLOGINFO("<<== End command. status %s", StringHelper::FormatBinary(_status).c_str());
+    MLOGINFO("<<== End command. status %s", StringHelper::FormatBinary(_statusRegister).c_str());
 }
 
 /// Helper for Type1 command states to execute VERIFY using unified approach
@@ -823,7 +824,7 @@ void  WD1793::type1CommandVerify()
 
         // Activate head load
         _loadHead = true;
-        _status |= WDS_HEADLOADED;
+        _statusRegister |= WDS_HEADLOADED;
 
         // Transition to FSM S_VERIFY state after the delay
         transitionFSMWithDelay(WDSTATE::S_VERIFY, WD93_VERIFY_DELAY_MS * TSTATES_PER_MS);
@@ -840,14 +841,14 @@ void  WD1793::type1CommandVerify()
 /// region <State machine handlers>
 void WD1793::processIdle()
 {
-    _status &= ~WDS_BUSY;   // Remove busy flag
+    _statusRegister &= ~WDS_BUSY;   // Remove busy flag
 
     // Stop motor after 3 seconds (3 * 5 revolutions per second) being idle
     if (_indexPulseCounter > 3 * FDD_RPS || _time > _rotationCounter)
     {
         _indexPulseCounter = 3 * FDD_RPS;
-        _status = 0x00;                     // Clear status
-        _status |= WDS_NOTRDY;              // Set NOT READY status bit
+        _statusRegister = 0x00;                     // Clear status
+        _statusRegister |= WDS_NOTRDY;              // Set NOT READY status bit
         _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
 
         _selectedDrive->setMotor(false);    // Stop motor
@@ -878,7 +879,7 @@ void WD1793::processStep()
     if (_stepCounter >= WD93_STEPS_MAX)
     {
         // We've reached limit - seek error
-        _status |= WDS_SEEKERR;
+        _statusRegister |= WDS_SEEKERR;
         _beta128status |= INTRQ;
 
         endCommand();
@@ -1056,7 +1057,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             // Reset Data Request bit in status register (only if Type 2 or Type 3 command was executed)
             if (isType2Command(_lastCmdValue) || isType3Command(_lastCmdValue))
             {
-                _status &= ~WDS_DRQ;
+                _statusRegister &= ~WDS_DRQ;
             }
 
             //TODO: remove debug
@@ -1133,7 +1134,7 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
     };
 
     std::stringstream ss;
-    uint8_t status = _status;
+    uint8_t status = _statusRegister;
 
     ss << StringHelper::Format("Command: %s. Status: 0x%02X", getWD_COMMANDName(command), status) << std::endl;
     switch (command)
@@ -1192,7 +1193,7 @@ std::string WD1793::dumpStep()
     ss << StringHelper::Format("WD1793 track: %d", _trackRegister) << std::endl;
     ss << StringHelper::Format("   FDD track: %d", _selectedDrive->getTrack()) << std::endl;
     ss << StringHelper::Format("   Direction: %s", direction.c_str()) << std::endl;
-    ss << StringHelper::Format("      Status: %s", StringHelper::FormatBinary(_status).c_str());
+    ss << StringHelper::Format("      Status: %s", StringHelper::FormatBinary(_statusRegister).c_str());
 
     std::string result = ss.str();
 

@@ -310,16 +310,7 @@ protected:
     uint8_t _trackRegister = 0;
     uint8_t _sectorRegister = 0;
     uint8_t _dataRegister = 0x00;       // WD1793 Data Register
-    uint8_t _status = 0x00;             // WD1793 Status Register
-
-    // Per-command statuses
-    uint8_t _statusType1 = 0x00;
-    uint8_t _statusReadAddress = 0x00;
-    uint8_t _statusReadSector = 0x00;
-    uint8_t _statusWriteSector = 0x00;
-    uint8_t _statusReadTrack = 0x00;
-    uint8_t _statusWriteTrack = 0x00;
-
+    uint8_t _statusRegister = 0x00;     // WD1793 Status Register
 
     uint8_t _beta128 = 0x00;            // BETA128 system register
     uint8_t _beta128status = 0x00;      // BETA128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
@@ -542,7 +533,7 @@ public:
     using WD1793::_trackRegister;
     using WD1793::_sectorRegister;
     using WD1793::_dataRegister;
-    using WD1793::_status;
+    using WD1793::_statusRegister;
 
     using WD1793::_state;
     using WD1793::_state2;
@@ -559,7 +550,7 @@ public:
     virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
     {
         _state = S_IDLE;
-        _status = 0;
+        _statusRegister = 0;
         _trackRegister = 0;
         _sectorRegister = 0;
         _dataRegister = 0;

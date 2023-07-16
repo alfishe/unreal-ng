@@ -286,7 +286,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
 
@@ -327,7 +327,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                 fdc._trackRegister == 0 &&              // FDC track set to 0
                 fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                 fdc._state == WD1793::S_IDLE)           // FSM is in idle state
@@ -342,7 +342,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                        fdc._trackRegister == 0 &&              // FDC track set to 0
                                        fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                                        fdc._state == WD1793::S_IDLE;           // FSM is in idle state
@@ -372,6 +372,9 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     static constexpr size_t const RESTORE_TEST_DURATION_SEC = 3;
     static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
 
@@ -407,7 +410,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
         // Process FSM state updates
         fdc.process();
 
-        if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+        if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
             fdc._trackRegister == 0 &&              // FDC track set to 0
             fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
             fdc._state == WD1793::S_IDLE)           // FSM is in idle state
@@ -419,7 +422,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     /// endregion </Perform simulation loop>
 
     /// region <Check results>
-    bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+    bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                    fdc._trackRegister == 0 &&              // FDC track set to 0
                                    fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                                    fdc._state == WD1793::S_IDLE;           // FSM is in idle state
@@ -488,7 +491,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                 fdc._trackRegister == 0 &&              // FDC track set to 0
                 fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                 fdc._state == WD1793::S_IDLE)           // FSM is in idle state
@@ -503,7 +506,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                        fdc._trackRegister == 0 &&              // FDC track set to 0
                                        fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
                                        fdc._state == WD1793::S_IDLE;           // FSM is in idle state
@@ -583,7 +586,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -598,7 +601,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -668,7 +671,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
                 // Process FSM state updates
                 fdc.process();
 
-                if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
                     fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                     fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                     fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -683,7 +686,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
             size_t elapsedTimeTStates = clk;
             size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-            bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+            bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
                                            fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                            fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                            fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -760,7 +763,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -775,7 +778,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -797,7 +800,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
 
@@ -841,7 +844,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -856,7 +859,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -882,7 +885,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
 
@@ -924,7 +927,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -939,7 +942,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -965,7 +968,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
 
@@ -1006,7 +1009,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._status & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -1021,7 +1024,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._status & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
