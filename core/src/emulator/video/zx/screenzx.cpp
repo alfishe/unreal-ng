@@ -668,7 +668,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     const uint32_t borderColor = _rgbaColors[color];
 
     uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
-    const size_t framebufferARGBSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
+    const size_t framebufferARGBSizePixels = _framebuffer.memoryBufferSize / sizeof (uint32_t);
 
     VideoModeEnum mode = GetVideoMode();
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
@@ -684,7 +684,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     {
         for (uint16_t y = 0; y < topBorderHeight; y++)
         {
-            *(framebufferARGB + x * width + y) = borderColor;
+            *(framebufferARGB + y * width + x) = borderColor;
         }
     }
     /// endregion </Top border>
@@ -694,7 +694,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     {
         for (uint16_t y = 0; y < height; y++)
         {
-            *(framebufferARGB + x * width + y) = borderColor;
+            *(framebufferARGB + y * width + x) = borderColor;
         }
     }
     /// endregion </Left border>
@@ -704,7 +704,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     {
         for (uint16_t y = 0; y < height; y++)
         {
-            *(framebufferARGB + x * width + y) = borderColor;
+            *(framebufferARGB + y * width + x) = borderColor;
         }
     }
     /// endregion </Right border>
@@ -714,7 +714,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     {
         for (uint16_t y = bottomBottomOffset; y < height; y++)
         {
-            *(framebufferARGB + x * width + y) = borderColor;
+            *(framebufferARGB + y * width + x) = borderColor;
         }
     }
     /// endregion </Bottom border>
