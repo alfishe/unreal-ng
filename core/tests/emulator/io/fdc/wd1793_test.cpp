@@ -615,6 +615,13 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
             // Process FSM state updates
             fdc.process();
 
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
+
             if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                 fdc._trackRegister == 0 &&              // FDC track set to 0
                 fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
@@ -698,6 +705,13 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
         // Process FSM state updates
         fdc.process();
 
+        // Check that BUSY flag is set for the whole duration of head positioning
+        if (fdc._state != WD1793::S_IDLE)
+        {
+            bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+            EXPECT_EQ(busyFlag, true);
+        }
+
         if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
             fdc._trackRegister == 0 &&              // FDC track set to 0
             fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
@@ -778,6 +792,13 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 
             // Process FSM state updates
             fdc.process();
+
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
 
             if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                 fdc._trackRegister == 0 &&              // FDC track set to 0
@@ -874,7 +895,14 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
+
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&        // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -889,7 +917,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&      // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -959,7 +987,14 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
                 // Process FSM state updates
                 fdc.process();
 
-                if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+                // Check that BUSY flag is set for the whole duration of head positioning
+                if (fdc._state != WD1793::S_IDLE)
+                {
+                    bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                    EXPECT_EQ(busyFlag, true);
+                }
+
+                if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&        // Controller is not BUSY anymore
                     fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                     fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                     fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -974,7 +1009,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
             size_t elapsedTimeTStates = clk;
             size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-            bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+            bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&      // Controller is not BUSY anymore
                                            fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                            fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                            fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -1051,7 +1086,14 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
+
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&        // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -1066,7 +1108,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&     // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -1132,7 +1174,14 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
+
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&        // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -1147,7 +1196,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&     // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -1215,7 +1264,14 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
+
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&        // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -1230,7 +1286,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&     // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
@@ -1297,7 +1353,14 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
             // Process FSM state updates
             fdc.process();
 
-            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&                // Controller is not BUSY anymore
+            // Check that BUSY flag is set for the whole duration of head positioning
+            if (fdc._state != WD1793::S_IDLE)
+            {
+                bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                EXPECT_EQ(busyFlag, true);
+            }
+
+            if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&        // Controller is not BUSY anymore
                 fdc._trackRegister == targetTrack &&                // FDC track set to <next track>
                 fdc._selectedDrive->getTrack() == targetTrack &&    // FDD has the same track
                 fdc._state == WD1793::S_IDLE)                       // FSM is in idle state
@@ -1312,7 +1375,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&             // Controller is not BUSY anymore
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&     // Controller is not BUSY anymore
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
