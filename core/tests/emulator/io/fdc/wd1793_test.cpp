@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
-#include <random>
 #include "_helpers/testtiminghelper.h"
+
+#include <cmath>
+#include <random>
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
 #include <emulator/io/fdc/wd1793.h>
@@ -165,6 +167,292 @@ TEST_F(WD1793_Test, isTypeNCommand)
 }
 
 /// endregion </WD1793 commands>
+
+/// region <FDD related>
+
+/// Test motor starts and auto-stops after 3 seconds
+TEST_F(WD1793_Test, FDD_Motor_StartStop)
+{
+    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 4;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+
+    WD1793CUT fdc(_context);
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+
+    // Trigger motor start
+    fdc.prolongFDDMotorRotation();
+
+    /// region <Perform simulation loop>
+
+    bool motorStarted = false;
+    int64_t motorStartTStates = 0;
+    int64_t motorStopTStates = 0;
+
+    size_t clk;
+    for (clk = 10; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        // Update time for FDC
+        fdc._time = clk;
+
+        // Process FSM state updates
+        fdc.process();
+
+        if (!motorStarted && fdc._selectedDrive->getMotor())
+        {
+            motorStartTStates = clk;
+
+            motorStarted = true;
+        }
+
+        if (motorStarted && !fdc._selectedDrive->getMotor())
+        {
+            motorStopTStates = clk;
+
+            motorStarted = false;
+        }
+    }
+    /// endregion </Perform simulation loop>
+
+    /// region <Check results>
+    EXPECT_NE(motorStartTStates, 0);
+    EXPECT_NE(motorStopTStates, 0);
+
+    size_t estimatedMotorOnTStates = 3 * Z80_FREQUENCY;
+    size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
+    EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
+    /// endregion </Check results>
+}
+
+/// Test if any new operation prolongs timeout
+TEST_F(WD1793_Test, FDD_Motor_Prolong)
+{
+    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 10;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+
+    WD1793CUT fdc(_context);
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+
+    // Trigger motor start
+    fdc.prolongFDDMotorRotation();
+
+    /// region <Perform simulation loop>
+
+    bool motorStarted = false;
+    bool prolongActivated = false;
+    int64_t motorStartTStates = 0;
+    int64_t motorStopTStates = 0;
+
+    size_t clk;
+    for (clk = 10; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        // Prolong for another 3 seconds. So total time should be about 5 seconds
+        if (!prolongActivated &&clk >= 2 * Z80_FREQUENCY)
+        {
+            fdc.prolongFDDMotorRotation();
+
+            prolongActivated = true;
+        }
+
+        // Update time for FDC
+        fdc._time = clk;
+
+        // Process FSM state updates
+        fdc.process();
+
+        if (!motorStarted && fdc._selectedDrive->getMotor())
+        {
+            motorStartTStates = clk;
+
+            motorStarted = true;
+        }
+
+        if (motorStarted && !fdc._selectedDrive->getMotor())
+        {
+            motorStopTStates = clk;
+
+            motorStarted = false;
+        }
+    }
+    /// endregion </Perform simulation loop>
+
+    /// region <Check results>
+    EXPECT_NE(motorStartTStates, 0);
+    EXPECT_NE(motorStopTStates, 0);
+
+    size_t estimatedMotorOnTStates = 5 * Z80_FREQUENCY;
+    size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
+    EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
+    /// endregion </Check results>
+}
+
+/// Test if index pulses are available during disk rotation
+TEST_F(WD1793_Test, FDD_Rotation_Index)
+{
+    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 4;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+
+    WD1793CUT fdc(_context);
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+
+    /// region <Perform simulation loop>
+    bool motorStarted = false;
+    int64_t motorStartTStates = 0;
+    int64_t motorStopTStates = 0;
+
+    /// region <Pre-checks>
+    EXPECT_EQ(fdc._indexPulseCounter, 0);
+    /// endregion </Pre-checks>
+
+    size_t clk;
+    for (clk = 10; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        if (clk < Z80_FREQUENCY)
+        {
+            EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter shouldn't increment when FDD motor is stopped";
+        }
+
+        // Start motor after 1 second delay
+        if (clk > Z80_FREQUENCY && !motorStarted)
+        {
+            // Trigger motor start
+            fdc.prolongFDDMotorRotation();
+
+            motorStartTStates = clk;
+            motorStarted = true;
+        }
+
+        // Update time for FDC
+        fdc._time = clk;
+
+        // Process FSM state updates
+        fdc.process();
+
+        // Record motor stop time
+        if (motorStarted && !fdc._selectedDrive->getMotor())
+        {
+            motorStopTStates = clk;
+
+            motorStarted = false;
+        }
+    }
+    /// endregion </Perform simulation loop>
+
+    /// region <Check results>
+    EXPECT_NE(motorStartTStates, 0);
+    EXPECT_NE(motorStopTStates, 0);
+
+    // Check motor still switched off within specs
+    size_t estimatedMotorOnTStates = 3 * Z80_FREQUENCY;
+    size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
+    EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
+
+    size_t estimatedIndexPulses = std::ceil((double)motorWasOnForTSTates * FDD_RPS / (double)Z80_FREQUENCY);
+    size_t indexPulses = fdc._indexPulseCounter;
+    EXPECT_IN_RANGE(indexPulses, estimatedIndexPulses - 1, estimatedIndexPulses + 1);
+    /// endregion </Check results>
+}
+
+/// Test if index pulses stop if FDD motor is not rotating
+TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
+{
+    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 4;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+
+    WD1793CUT fdc(_context);
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+
+    /// region <Perform simulation loop>
+    bool motorStarted = false;
+    bool motorStopped = false;
+    int64_t motorStartTStates = 0;
+    int64_t motorStopTStates = 0;
+
+    /// region <Pre-checks>
+    EXPECT_EQ(fdc._indexPulseCounter, 0);
+    /// endregion </Pre-checks>
+
+    size_t clk;
+    for (clk = 10; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        if (clk < Z80_FREQUENCY)
+        {
+            EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter shouldn't increment when FDD motor is stopped";
+        }
+
+        // Start motor after 1 second delay
+        if (clk > Z80_FREQUENCY && !motorStarted && !motorStopped)  // Block motor re-start by checking motorStopped flag meaning it was done intentionally
+        {
+            // Trigger motor start
+            fdc.prolongFDDMotorRotation();
+
+            motorStartTStates = clk;
+            motorStarted = true;
+        }
+
+        // Stop motor after 0.5 second after start
+        if (!motorStopped && clk >= 1.5 * Z80_FREQUENCY)
+        {
+            fdc.stopFDDMotor();
+
+            motorStopped = true;
+        }
+
+        // Update time for FDC
+        fdc._time = clk;
+
+        // Process FSM state updates
+        fdc.process();
+
+        // Record motor stop time
+        if (motorStarted && !fdc._selectedDrive->getMotor())
+        {
+            motorStopTStates = clk;
+
+            motorStarted = false;
+        }
+    }
+    /// endregion </Perform simulation loop>
+
+    /// region <Check results>
+    EXPECT_NE(motorStartTStates, 0);
+    EXPECT_NE(motorStopTStates, 0);
+
+    // Check motor still switched off within specs
+    size_t estimatedMotorOnTStates = 0.5 * Z80_FREQUENCY;
+    size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
+    EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
+
+    size_t estimatedIndexPulses = std::ceil((double)motorWasOnForTSTates * FDD_RPS / (double)Z80_FREQUENCY);
+    size_t indexPulses = fdc._indexPulseCounter;
+    EXPECT_IN_RANGE(indexPulses, estimatedIndexPulses - 1, estimatedIndexPulses + 1);
+    /// endregion </Check results>
+}
+
+/// endregion <FDD related>
 
 /// region <FSM>
 
@@ -708,7 +996,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
     /// endregion </Main test loop>
 }
 
-/// region <SEEK>
+/// endregion <SEEK>
 
 /// region <STEP>
 

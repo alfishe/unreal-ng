@@ -36,12 +36,14 @@ void WD1793::reset()
     _sectorRegister = 0;
     _dataRegister = 0;
 
+    _indexPulseCounter = 0;
+
     // Execute RESTORE command
     uint8_t restoreValue = 0b0000'1111;
     _lastDecodedCmd = WD_CMD_RESTORE;
     _commandRegister = restoreValue;
     _lastCmdValue = restoreValue;
-    //cmdRestore(restoreValue);
+    cmdRestore(restoreValue);
 }
 
 void WD1793::process()
@@ -147,10 +149,11 @@ void WD1793::processFDDMotorState()
         // Send stop motor command to FDD
         if (_selectedDrive->getMotor())
         {
-            _selectedDrive->setMotor(false);
-
-            MLOGINFO("FDD motor stopped");
+            stopFDDMotor();
         }
+
+        // Notify via Beta128 status INTRQ bit about changes
+        _beta128status = INTRQ;
     }
 }
 
@@ -171,6 +174,8 @@ void WD1793::processFDDIndexStrobe()
 
     if (diskInserted && motorOn)
     {
+        bool lastIndex = _index;
+
         // Set new state for the INDEX flag based on rotating disk position
         // Note: it is assumed that each disk revolution started with index strobe
         size_t diskRotationPhaseCounter = (_time % DISK_ROTATION_PERIOD_IN_Z80_CLOCK_CYCLES);
@@ -181,6 +186,12 @@ void WD1793::processFDDIndexStrobe()
         else
         {
             _index = false;
+        }
+
+        // Trigger on index pulse rising edge
+        if (!lastIndex && _index)
+        {
+            _indexPulseCounter++;
         }
     }
 
@@ -209,9 +220,24 @@ void WD1793::prolongFDDMotorRotation()
     // Start motor if not spinning yet
     if (!_selectedDrive->getMotor())
     {
-        MLOGINFO("FDD motor started");
-        _selectedDrive->setMotor(true);
+        startFDDMotor();
     }
+}
+
+/// Activates FDD motor
+void WD1793::startFDDMotor()
+{
+    _selectedDrive->setMotor(true);
+
+    MLOGINFO("FDD motor started");
+}
+
+/// Stops FDD motor
+void WD1793::stopFDDMotor()
+{
+    _selectedDrive->setMotor(false);
+
+    MLOGINFO("FDD motor stopped");
 }
 
 uint8_t WD1793::getStatusRegister()
@@ -842,19 +868,6 @@ void  WD1793::type1CommandVerify()
 void WD1793::processIdle()
 {
     _statusRegister &= ~WDS_BUSY;   // Remove busy flag
-
-    // Stop motor after 3 seconds (3 * 5 revolutions per second) being idle
-    if (_indexPulseCounter > 3 * FDD_RPS || _time > _rotationCounter)
-    {
-        _indexPulseCounter = 3 * FDD_RPS;
-        _statusRegister = 0x00;                     // Clear status
-        _statusRegister |= WDS_NOTRDY;              // Set NOT READY status bit
-        _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
-
-        _selectedDrive->setMotor(false);    // Stop motor
-    }
-
-    _beta128status = INTRQ;
 }
 
 void WD1793::processWait()

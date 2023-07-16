@@ -370,6 +370,8 @@ protected:
     void processFDDMotorState();
     void processFDDIndexStrobe();
     void prolongFDDMotorRotation();
+    void startFDDMotor();
+    void stopFDDMotor();
     uint8_t getStatusRegister();
     bool isReady();
     /// endregion </Helper methods>
@@ -546,6 +548,10 @@ public:
     using WD1793::_stepDirectionIn;
     using WD1793::_stepCounter;
     using WD1793::_steppingMotorRate;
+    using WD1793::_motorTimeoutTStates;
+
+    using WD1793::_index;
+    using WD1793::_indexPulseCounter;
 
     virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
     {
@@ -585,6 +591,9 @@ public:
     using WD1793::processClockTimings;
     virtual void updateTimeFromEmulatorState() override {}; // Make it dummy stub and skip reading T-State counters from the emulator
     using WD1793::resetTime;
+    using WD1793::prolongFDDMotorRotation;
+    using WD1793::startFDDMotor;
+    using WD1793::stopFDDMotor;
 };
 
 #endif // _CODE_UNDER_TEST
