@@ -649,7 +649,11 @@ void MainWindow::handleFullScreenShortcut()
     else
     {
         // Enter full-screen mode
-        showFullScreen();
+#ifdef _WIN32
+        showMaximized();    // Windows flow: Normal -> Maximize -> FullScreen
+#else
+        showFullScreen();   // macOS and Linux - direct transition to FullScreen
+#endif // _WIN32
     }
 }
 
