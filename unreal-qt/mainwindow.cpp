@@ -8,6 +8,7 @@
 #include <QMimeData>
 #include <QTimer>
 #include <QFileInfo>
+#include <QShortcut>
 
 #include "emulator/filemanager.h"
 #include "emulator/soundmanager.h"
@@ -29,6 +30,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Store original palette
     _originalPalette = palette();
 
+    // Register fullscreen on/off shortcut
+    _fullScreenShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_F), this);
+    _fullScreenShortcut->setKey(Qt::CTRL | Qt::Key_F);
+    _fullScreenShortcut->setContext(Qt::ApplicationShortcut);
+    connect(_fullScreenShortcut, &QShortcut::activated, this, &MainWindow::handleFullScreenShortcut);
+
     // Put emulator screen into resizable content frame
     QFrame* contentFrame = ui->contentFrame;
     deviceScreen = new DeviceScreen(contentFrame);
@@ -45,7 +52,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 */
 
     // Connect button release signal to appropriate event handling slot
-    connect(startButton, SIGNAL (released()), this, SLOT (handleStartButton()));
+    connect(startButton, SIGNAL(released()), this, SLOT(handleStartButton()));
 
     // Create bridge between GUI and emulator
     _emulatorManager = EmulatorManager::defaultInstance();
@@ -428,7 +435,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             break;
     }
 
-    return false;
+    //return false;
+
+    // Forward the key event to QShortcut
+    QApplication::sendEvent(_fullScreenShortcut, event);
 
     return QMainWindow::eventFilter(watched, event);
 }
@@ -469,17 +479,6 @@ void MainWindow::adjust(QEvent* event, const QPoint& delta)
         QPoint targetPoint = this->geometry().topRight() + delta;
         logWindow->move(targetPoint);
     }
-}
-
-void MainWindow::showFullscreen()
-{
-    QWidget::showFullScreen();
-
-}
-
-void MainWindow::showNormal()
-{
-    QWidget::showNormal();
 }
 
 /// endregion </Protected members>
@@ -526,6 +525,7 @@ void MainWindow::handleStartButton()
                 //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
                 //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
                 //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
+                logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
 
                 std::string dumpSettings = logger.DumpSettings();
                 qDebug("%s", dumpSettings.c_str());
@@ -636,6 +636,20 @@ void MainWindow::handleStartButton()
         fflush(stderr);
         startButton->setText("Start");
         startButton->setEnabled(true);
+    }
+}
+
+void MainWindow::handleFullScreenShortcut()
+{
+    if (isFullScreen())
+    {
+        // Exit full-screen mode
+        showNormal();
+    }
+    else
+    {
+        // Enter full-screen mode
+        showFullScreen();
     }
 }
 

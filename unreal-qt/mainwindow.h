@@ -31,6 +31,7 @@ private slots:
     void handleStartButton();
     void handleMessageScreenRefresh(int id, Message* message);
     void resetEmulator();
+    void handleFullScreenShortcut();
 
     /// region <QWidget events override>
 protected:
@@ -59,8 +60,6 @@ protected:
 
     void arrangeWindows();
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
-    void showFullscreen();
-    void showNormal();
 
 private:
     Ui::MainWindow* ui = nullptr;
@@ -78,6 +77,7 @@ private:
     QPoint _lastCursorPos;
     QPalette _originalPalette;
 
+    QShortcut* _fullScreenShortcut = nullptr;
     bool _inTransitionToFullScreen = false;
 };
 #endif // MAINWINDOW_H
