@@ -192,21 +192,31 @@ void MainWindow::moveEvent(QMoveEvent *event)
 
 void MainWindow::changeEvent(QEvent* event)
 {
-    QWidget::changeEvent(event);
-
     // Make app fullscreen and removes window header on window maximize
     // Restores back on size restore
     if (event->type() == QEvent::WindowStateChange)
     {
         QWindowStateChangeEvent *stateEvent = (QWindowStateChangeEvent *)event;
 
+        Qt::WindowStates oldState = stateEvent->oldState();
         Qt::WindowStates state = windowState();
         switch (state)
         {
             case Qt::WindowMaximized:
-            case Qt::WindowFullScreen:
             {
                 qDebug() << "Maximized";
+
+                _inTransitionToFullScreen = true;
+
+                setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+                this->setWindowState(Qt::WindowFullScreen);
+
+                showFullScreen();
+                break;
+            }
+            case Qt::WindowFullScreen:
+            {
+                qDebug() << "FullScreen";
 
                 // Apply black background
                 QPalette palette;
@@ -217,8 +227,19 @@ void MainWindow::changeEvent(QEvent* event)
                 startButton->hide();
 
                 setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
-                showFullScreen();
+                this->setWindowState(Qt::WindowFullScreen);
+
+#ifdef _WIN32
+                if (_inTransitionToFullScreen)
+                {
+                    _inTransitionToFullScreen = false;
+                }
+#else
+                showFullScreen();   // Qt for macOS requires this call to switch rendering mode. If not called - screen will stay black
+#endif // _WIN32
+
                 update();   // Redraw screen
+
                 break;
             }
             case Qt::WindowMinimized:
@@ -226,6 +247,15 @@ void MainWindow::changeEvent(QEvent* event)
                 break;
             case Qt::WindowNoState:
                 qDebug() << "Restored";
+
+#ifdef _WIN32
+                // Do not react on intermediate events.
+                // On Windows the flow is: Maximize -> Restore -> FullScreen
+                if (_inTransitionToFullScreen && oldState == Qt::WindowMaximized)
+                {
+                    return;
+                }
+#endif // _WIN32
 
                 // Restore background color
                 setPalette(_originalPalette);
@@ -240,7 +270,11 @@ void MainWindow::changeEvent(QEvent* event)
             default:
                 break;
         }
+
+        event->accept();
     }
+
+    QWidget::changeEvent(event);
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)

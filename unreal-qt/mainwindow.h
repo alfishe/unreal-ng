@@ -77,5 +77,7 @@ private:
 
     QPoint _lastCursorPos;
     QPalette _originalPalette;
+
+    bool _inTransitionToFullScreen = false;
 };
 #endif // MAINWINDOW_H
