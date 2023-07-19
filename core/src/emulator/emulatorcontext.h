@@ -6,13 +6,13 @@
 #include "emulator/platform.h"
 #include "corestate.h"
 #include "emulator/io/tape/tape.h"
-#include <emulator/io/fdc/vg93.h>
 
 class Core;
 class Emulator;
 class Keyboard;
 class MainLoop;
 class Memory;
+class WD1793;
 class PortDecoder;
 class Screen;
 class SoundManager;
@@ -62,8 +62,8 @@ public:
     // Tape input instance
     Tape* pTape;
 
-    // BDI - Beta Disk Interfae
-    VG93* pBetaDisk;
+    // BDI - Beta Disk Interface controller instance
+    WD1793* pBetaDisk;
 
 	// Video controller parameters and logic
 	Screen* pScreen;

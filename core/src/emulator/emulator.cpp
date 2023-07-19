@@ -240,6 +240,12 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
+    if (!_context->pBetaDisk)
+    {
+        std::string error = "_context->pBetaDisk not available";
+        throw std::logic_error(error);
+    }
+
     if (!_context->pPortDecoder)
     {
         std::string error = "_context->pPortDecoder not available";

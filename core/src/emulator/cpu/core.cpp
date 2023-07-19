@@ -139,6 +139,24 @@ bool Core::Init()
 
     /// endregion </Tape>
 
+    /// region <BetaDisk128 Interface>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate BDI interface implementation
+        _betaDisk = new WD1793(_context);
+        if (_betaDisk)
+        {
+            _context->pBetaDisk = _betaDisk;
+
+            result = true;
+        }
+    }
+
+    /// endregion </BetaDisk128 Interface>
+
     /// region <Sound manager>
 
     if (result)
@@ -246,8 +264,6 @@ bool Core::Init()
         _sound->attachToPorts();
     }
 
-    //_betaDisk = new VG93(_context);
-    _betaDisk = new WD1793(_context);
     if (_betaDisk)
     {
         _betaDisk->attachToPorts();
