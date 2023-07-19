@@ -137,11 +137,11 @@ public:
 
     enum WD93_CMD_BITS : uint8_t
     {
-        CMD_SEEK_RATE     = 0x03,
-        CMD_SEEK_VERIFY   = 0x04,
-        CMD_SEEK_HEADLOAD = 0x08,
-        CMD_SEEK_TRKUPD   = 0x10,
-        CMD_SEEK_DIR      = 0x20,
+        CMD_SEEK_RATE_MASK  = 0b0000'0011,
+        CMD_SEEK_VERIFY     = 0b0000'0100,
+        CMD_SEEK_HEADLOAD   = 0b0000'1000,
+        CMD_SEEK_TRKUPD     = 0b0001'0000,
+        CMD_SEEK_DIR        = 0b0010'0000,
 
         CMD_WRITE_DEL     = 0x01,
         CMD_SIDE_CMP_FLAG = 0x02,
@@ -223,9 +223,10 @@ public:
     {
         DRQ   = 0x40,   // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
 
-        /// INTRQ = 0 - Command complete
-        /// INTRQ = 1 - Command in progress
-        INTRQ = 0x80    // Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
+        /// INTRQ = 1 - Command complete
+        /// INTRQ = 0 - Command in progress
+        /// Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
+        INTRQ = 0x80
     };
 
     enum WD_SYS : uint8_t
@@ -337,6 +338,7 @@ protected:
     // Internal state
     int8_t _stepDirectionIn = false;    // Head step direction. True - move head towards center cut (Step In). False - move outwards to Track 0 (Step Out)
     size_t _stepCounter = 0;            // Count each head positioning step during current Type 1 command
+    bool _headLoaded = false;
 
     // FDD state
     bool _index = false;                // Current state of index strobe
@@ -371,6 +373,8 @@ protected:
     void prolongFDDMotorRotation();
     void startFDDMotor();
     void stopFDDMotor();
+    void loadHead();
+    void unloadHead();
     uint8_t getStatusRegister();
     bool isReady();
     /// endregion </Helper methods>

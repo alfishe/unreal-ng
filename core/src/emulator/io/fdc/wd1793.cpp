@@ -39,6 +39,7 @@ void WD1793::reset()
 
     _indexPulseCounter = 0;
     _delayTStates = 0;
+    _headLoaded = false;
 
     // Execute RESTORE command
     uint8_t restoreValue = 0b0000'1111;
@@ -140,22 +141,21 @@ void WD1793::processFDDMotorState()
         _motorTimeoutTStates = 0;
 
         _statusRegister |= WDS_NOTRDY;              // Set NOT READY status bit
-        _loadHead = false;
-        _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
 
-        if (isType1Command(_commandRegister))
+        // Unload head (and set all required flags)
+        if (_headLoaded)
         {
-            _statusRegister &= ~WDS_HEADLOADED;
+            unloadHead();
         }
 
         // Send stop motor command to FDD
         if (_selectedDrive->getMotor())
         {
             stopFDDMotor();
-        }
 
-        // Notify via Beta128 status INTRQ bit about changes
-        _beta128status = INTRQ;
+            // Notify via Beta128 status INTRQ bit about changes
+            _beta128status = INTRQ;
+        }
     }
 }
 
@@ -240,6 +240,31 @@ void WD1793::stopFDDMotor()
     _selectedDrive->setMotor(false);
 
     MLOGINFO("FDD motor stopped");
+}
+
+/// Load head
+void WD1793::loadHead()
+{
+    _statusRegister |= WDS_HEADLOADED;
+    _extStatus |= SIG_OUT_HLD;
+    _headLoaded = true;
+
+    MLOGINFO("> Head loaded");
+}
+
+/// Unload head
+void WD1793::unloadHead()
+{
+    // Update status register only if Type1 command was executed
+    if (isType1Command(_commandRegister))
+    {
+        _statusRegister &= ~WDS_HEADLOADED;
+    }
+
+    _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
+    _headLoaded = false;
+
+    MLOGINFO("< Head unloaded");
 }
 
 uint8_t WD1793::getStatusRegister()
@@ -687,6 +712,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     MLOGINFO(message.c_str());
 
     bool noCommandExecuted = _state == S_IDLE;
+    WDSTATE prevState = _state;
 
     // Ensure we have only relevant parameter bits
     value &= 0b0000'1111;
@@ -759,6 +785,12 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         _statusRegister |= _selectedDrive->getTrack() == 0 ? WDS_TRK00 : 0x00;
         _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
+
+        MLOGINFO("<<== FORCE_INTERRUPT, no active command");
+    }
+    else
+    {
+        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s", getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str());
     }
 }
 
@@ -778,17 +810,17 @@ void WD1793::startType1Command()
     _steppingMotorRate = getPositioningRateForType1CommandMs(_commandRegister);
 
     // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
-    _verifySeek = _commandRegister & 0b0000'0100;
+    _verifySeek = _commandRegister & CMD_SEEK_VERIFY;
 
     // Determines if load should be loaded or unloaded during Type1 command
-    _loadHead = _commandRegister & 0b0000'1000;
+    _loadHead = _commandRegister & CMD_SEEK_HEADLOAD;
     if (_loadHead)
     {
-        _statusRegister |= WDS_HEADLOADED;
+        loadHead();
     }
     else
     {
-        _statusRegister &= ~WDS_HEADLOADED;
+        unloadHead();
     }
 
     // Reset head step counter
@@ -859,13 +891,14 @@ void WD1793::startType3Command()
 /// Each WD1793 command finishes with resetting BUSY flag
 void WD1793::endCommand()
 {
-    _statusRegister &= ~WDS_BUSY;                    // Reset BUSY flag
+    _statusRegister &= ~WDS_BUSY;   // Reset BUSY flag
+    _beta128status |= INTRQ;        // INTRQ must be set at a completion of any command
 
     // Transition to IDLE state
     transitionFSM(S_IDLE);
 
     // Debug logging
-    MLOGINFO("<<== End command. status %s", StringHelper::FormatBinary(_statusRegister).c_str());
+    MLOGINFO("<<== End command. status: %s beta128: %s", StringHelper::FormatBinary(_statusRegister).c_str(), StringHelper::FormatBinary(_beta128status).c_str());
 }
 
 /// Helper for Type1 command states to execute VERIFY using unified approach
@@ -876,8 +909,7 @@ void  WD1793::type1CommandVerify()
         // Yes, verification is required
 
         // Activate head load
-        _loadHead = true;
-        _statusRegister |= WDS_HEADLOADED;
+        loadHead();
 
         // Transition to FSM S_VERIFY state after the delay
         transitionFSMWithDelay(WDSTATE::S_VERIFY, WD93_VERIFY_DELAY_MS * TSTATES_PER_MS);
@@ -986,7 +1018,17 @@ void WD1793::processStep()
 
 void WD1793::processVerify()
 {
+    // If h=0 but V=1 (head not requested to load, but verification requests)
+    if (!_headLoaded && _verifySeek)
+    {
+        // Head must be loaded to read ID Address Mark
+        _statusRegister |= WDS_HEADLOADED;
+        _headLoaded = true;
+    }
 
+    // TODO: implement VERIFY
+    // Currently just end command
+    endCommand();
 }
 
 /// Process SEEK flow (attempting to reach track in Data Register)
@@ -1010,7 +1052,7 @@ void WD1793::processSeek()
     }
     else
     {
-        // Not on request track. Re-positioning required
+        // Not on the track requested. Further re-positioning required
         _stepDirectionIn = _dataRegister > _trackRegister;
 
         // Start re-positioning without additional delays
@@ -1033,7 +1075,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     switch (port)
     {
         case PORT_1F:   // Return status register value
-            _beta128status &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag
+            _beta128status &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag - status register is read
 
             result = getStatusRegister();
 
@@ -1078,6 +1120,8 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     switch (port)
     {
         case PORT_1F:   // Write to Command Register
+            _beta128status &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag - command register is written to
+
             processWD93Command(value);
 
             //TODO: remove debug
@@ -1241,6 +1285,7 @@ std::string WD1793::dumpStep()
     ss << StringHelper::Format("   FDD track: %d", _selectedDrive->getTrack()) << std::endl;
     ss << StringHelper::Format("   Direction: %s", direction.c_str()) << std::endl;
     ss << StringHelper::Format("      Status: %s", StringHelper::FormatBinary(_statusRegister).c_str());
+    ss << StringHelper::Format("     Beta128: %s", StringHelper::FormatBinary(_beta128status).c_str());
 
     std::string result = ss.str();
 

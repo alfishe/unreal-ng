@@ -168,6 +168,20 @@ TEST_F(WD1793_Test, isTypeNCommand)
 
 /// endregion </WD1793 commands>
 
+/// region <Status bits behavior>
+
+TEST_F(WD1793_Test, Beta128_Status_INTRQ)
+{
+    FAIL() << "Not Implemented yet";
+}
+
+TEST_F(WD1793_Test, Beta128_Status_DRQ)
+{
+    FAIL() << "Not Implemented yet";
+}
+
+/// endregion </Status bits behavior>
+
 /// region <FDD related>
 
 /// Test motor starts and auto-stops after 3 seconds
@@ -606,6 +620,9 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
         // Send command to FDC
         fdc.cmdRestore(commandValue);
 
+        // Check
+        EXPECT_EQ(fdc._beta128status & WD1793::INTRQ, 0) << "INTRQ must be reset at any command start";
+
         /// region <Perform simulation loop>
         size_t clk;
         for (clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
@@ -624,9 +641,9 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
             }
 
             if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == 0 &&              // FDC track set to 0
-                fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+                fdc._trackRegister == 0 &&                      // FDC track set to 0
+                fdc._selectedDrive->isTrack00() &&              // FDD has the same track 0
+                fdc._state == WD1793::S_IDLE)                   // FSM is in idle state
             {
                 // RESTORE operation finished
                 break;
@@ -641,9 +658,39 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
         bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
                                        fdc._trackRegister == 0 &&              // FDC track set to 0
                                        fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+                                       fdc._state == WD1793::S_IDLE &&         // FSM is in idle state
+                                       fdc._beta128status & WD1793::INTRQ;     // INTRQ is active
 
-        EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly";
+       std::stringstream se;
+       if (!isAccomplishedCorrectly)
+       {
+           if (fdc._statusRegister & WD1793::WDS_BUSY)
+           {
+               se << "BUSY was not reset" << std::endl;
+           }
+
+           if (fdc._trackRegister != 0)
+           {
+               se << "FDC Track Register is not on track 0" << std::endl;
+           }
+
+           if (!fdc._selectedDrive->isTrack00())
+           {
+               se << "FDD is not on track 0" << std::endl;
+           }
+
+           if (fdc._state != WD1793::S_IDLE)
+           {
+               se << "FSM state is not idle" << std::endl;
+           }
+
+           if (!(fdc._beta128status & WD1793::INTRQ))
+           {
+               se << "INTRQ is not set" << std::endl;
+           }
+       }
+
+        EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly" << se.str();
 
         size_t estimatedExecutionTime = i * 6; // Number of positioning steps, 6ms each
         EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 0.1 * estimatedExecutionTime) << "Abnormal execution time";
