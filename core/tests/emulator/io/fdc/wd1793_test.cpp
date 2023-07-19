@@ -589,6 +589,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
         // Mock parameters
         const uint8_t restoreCommand = 0b0000'0000; // RESTORE on reset is done with all bits zeroed: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(restoreCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, restoreCommand);
         fdc._commandRegister = restoreCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -603,7 +604,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_OnReset)
         /// endregion </Pre-checks>
 
         // Send command to FDC
-        fdc.cmdRestore(restoreCommand);
+        fdc.cmdRestore(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -679,6 +680,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     // Mock parameters
     const uint8_t restoreCommand = 0b0000'1000; // RESTORE with load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
     WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(restoreCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, restoreCommand);
     fdc._commandRegister = restoreCommand;
     fdc._lastDecodedCmd = decodedCommand;
 
@@ -693,7 +695,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
     /// endregion </Pre-checks>
 
     // Send command to FDC
-    fdc.cmdRestore(restoreCommand);
+    fdc.cmdRestore(commandValue);
 
     /// region <Perform simulation loop>
     size_t clk;
@@ -767,6 +769,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
         // Mock parameters
         const uint8_t restoreCommand = 0b0000'1100; // RESTORE on reset is done with all bits zeroed: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(restoreCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, restoreCommand);
         fdc._commandRegister = restoreCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -781,7 +784,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
         /// endregion </Pre-checks>
 
         // Send command to FDC
-        fdc.cmdRestore(restoreCommand);
+        fdc.cmdRestore(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -869,6 +872,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         // Mock parameters
         const uint8_t stepCommand = 0b0001'0000; // SEEK: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, stepCommand);
         fdc._commandRegister = stepCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -883,7 +887,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         /// endregion </Pre-checks>
 
         // Trigger SEEK command
-        fdc.cmdSeek(stepCommand);
+        fdc.cmdSeek(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -961,6 +965,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
             uint8_t stepCommand = 0b0001'0000;  // SEEK: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
             stepCommand |= stepRate;            // Apply r1r0 bits for speed rates
             WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepCommand);
+            uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, stepCommand);
             fdc._commandRegister = stepCommand;
             fdc._lastDecodedCmd = decodedCommand;
 
@@ -975,7 +980,7 @@ TEST_F(WD1793_Test, FSM_CMD_Seek_All_Rates)
             /// endregion </Pre-checks>
 
             // Trigger SEEK command
-            fdc.cmdSeek(stepCommand);
+            fdc.cmdSeek(commandValue);
 
             /// region <Perform simulation loop>
             size_t clk;
@@ -1059,6 +1064,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
         // Mock parameters
         const uint8_t stepCommand = 0b0010'0000; // STEP: no update, no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, stepCommand);
         fdc._commandRegister = stepCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -1074,7 +1080,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Increasing)
         /// endregion </Pre-checks>
 
         // Trigger STEP command
-        fdc.cmdStep(stepCommand);
+        fdc.cmdStep(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -1147,6 +1153,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
         // Mock parameters
         const uint8_t stepCommand = 0b0010'0000; // STEP: no update, no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, stepCommand);
         fdc._commandRegister = stepCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -1162,7 +1169,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Decreasing)
         /// endregion </Pre-checks>
 
         // Trigger STEP command
-        fdc.cmdStep(stepCommand);
+        fdc.cmdStep(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -1238,6 +1245,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
         // Mock parameters
         const uint8_t stepInCommand = 0b0100'0000; // StepIn: no update, no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepInCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, stepInCommand);
         fdc._commandRegister = stepInCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -1252,7 +1260,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_In)
         /// endregion </Pre-checks>
 
         // Trigger STEP_IN command
-        fdc.cmdStepIn(stepInCommand);
+        fdc.cmdStepIn(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -1327,6 +1335,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
         // Mock parameters
         const uint8_t stepOutCommand = 0b0110'0000; // StepOut: no update, no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(stepOutCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, stepOutCommand);
         fdc._commandRegister = stepOutCommand;
         fdc._lastDecodedCmd = decodedCommand;
 
@@ -1341,7 +1350,7 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
         /// endregion </Pre-checks>
 
         // Trigger STEP_Out command
-        fdc.cmdStepOut(stepOutCommand);
+        fdc.cmdStepOut(commandValue);
 
         /// region <Perform simulation loop>
         size_t clk;
@@ -1389,5 +1398,186 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
 }
 
 /// endregion </STEP_OUT>
+
+/// region <FORCE_INTERRUPT>
+
+TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
+{
+    FAIL() << "Not implemented yet";
+}
+
+TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
+{
+    FAIL() << "Not implemented yet";
+}
+
+TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
+{
+    FAIL() << "Not implemented yet";
+}
+
+TEST_F(WD1793_Test, ForceInterrupt_Terminate)
+{
+    static constexpr size_t const TEST_DURATION_SEC = 1;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
+    static constexpr size_t const TEST_TRACKS = 40;
+
+    // Disable all logging except error messages
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    /// region <Interrupt during idle>
+    {
+        // Mock parameters
+        const uint8_t forceInterruptCommand = 0b1101'0000; // FORCE_INTERRUPT with 4 lower bits zeroed - Terminate with no interrupt
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+        fdc._commandRegister = forceInterruptCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+
+        // Reset WDC internal time marks
+        fdc.resetTime();
+
+        fdc._state = WD1793::S_IDLE;
+        fdc._state2 = WD1793::S_IDLE;
+
+        /// region <Pre-checks>
+        EXPECT_EQ(decodedCommand, WD1793::WD_CMD_FORCE_INTERRUPT);
+        EXPECT_EQ(fdc._time, 0);
+        EXPECT_EQ(fdc._lastTime, 0);
+        EXPECT_EQ(fdc._diffTime, 0);
+        /// endregion </Pre-checks>
+
+        // Send command to FDC
+        fdc.cmdForceInterrupt(commandValue);
+
+        /// region <Check results>
+        bool isBusy = fdc._statusRegister & WD1793::WDS_BUSY;
+        bool isCRCError = fdc._statusRegister & WD1793::WDS_CRCERR;
+        bool isSeekError = fdc._statusRegister & WD1793::WDS_SEEKERR;
+        bool isTrack0 = (fdc._statusRegister & WD1793::WDS_TRK00);
+
+        EXPECT_EQ(isBusy, false);
+        EXPECT_EQ(isCRCError, false);
+        EXPECT_EQ(isSeekError, false);
+        EXPECT_EQ(isTrack0, fdc._selectedDrive->isTrack00());
+        /// endregion </Check results>
+    }
+    /// endregion </Interrupt during idle>
+
+    /// region <Interrupt during command>
+    {
+        // Reset WDC internal time marks
+        fdc.resetTime();
+
+        /// region <Execute RESTORE command>
+        {
+            // Put FDD head far enough from Track0
+            fdc._selectedDrive->setTrack(TEST_TRACKS);
+
+            const uint8_t restoreCommand = 0b0000'0000; // RESTORE on reset is done with all bits zeroed: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
+            WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(restoreCommand);
+            uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, restoreCommand);
+            fdc._commandRegister = restoreCommand;
+            fdc._lastDecodedCmd = decodedCommand;
+
+            /// region <Pre-checks>
+            EXPECT_EQ(decodedCommand, WD1793::WD_CMD_RESTORE);
+            EXPECT_EQ(fdc._time, 0);
+            EXPECT_EQ(fdc._lastTime, 0);
+            EXPECT_EQ(fdc._diffTime, 0);
+            /// endregion </Pre-checks>
+
+            // Send command to FDC
+            fdc.cmdRestore(commandValue);
+        }
+
+        int64_t estimateRestoreDuration = TEST_TRACKS * 6; // 6ms per step
+
+        /// endregion </Execute RESTORE command>
+
+        /// region <Perform simulation loop>
+        size_t positioningDuration = estimateRestoreDuration / 2 * TSTATES_IN_MS;  // Set timing position at 20 track
+        size_t clk;
+        for (clk = 0; clk < positioningDuration; clk += TEST_INCREMENT_TSTATES)
+        {
+            // Update time for FDC
+            fdc._time = clk;
+
+            // Process FSM state updates
+            fdc.process();
+        }
+
+        /// region <Pre-checks>
+        EXPECT_EQ(fdc._selectedDrive->getTrack(), TEST_TRACKS / 2); // Ensure we've reached Track 20
+        EXPECT_IN_RANGE(fdc._time, positioningDuration - TEST_INCREMENT_TSTATES, positioningDuration +  TEST_INCREMENT_TSTATES);
+        /// endregion </Pre-checks>
+
+        /// endregion </Perform simulation loop>
+
+
+        /// region <Execute FORCE_TERMINATE command>
+        {
+            const uint8_t forceInterruptCommand = 0b1101'0000; // FORCE_INTERRUPT with 4 lower bits zeroed - Terminate with no interrupt
+            WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+            uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+            fdc._commandRegister = forceInterruptCommand;
+            fdc._lastDecodedCmd = decodedCommand;
+
+
+            /// region <Pre-checks>
+            EXPECT_EQ(decodedCommand, WD1793::WD_CMD_FORCE_INTERRUPT);
+            EXPECT_GT(fdc._time, 0);
+            EXPECT_GT(fdc._lastTime, 0);
+            /// endregion </Pre-checks>
+
+            // Send command to FDC
+            fdc.cmdForceInterrupt(commandValue);
+        }
+
+        // Continue simulation loop
+        for (; clk < positioningDuration; clk += TEST_INCREMENT_TSTATES)
+        {
+            // Update time for FDC
+            fdc._time = clk;
+
+            // Process FSM state updates
+            fdc.process();
+
+            // Wait when FORCE_INTERRUPT will be handled
+            if (fdc._state == WD1793::S_IDLE)
+            {
+                break;
+            }
+        }
+
+        /// endregion </Execute FORCE_TERMINATE command>
+
+        /// region <Check results>
+
+        // Check timing - interrupt should happen within single simulation increment (ideally - immediately)
+        EXPECT_IN_RANGE(fdc._time, positioningDuration - TEST_INCREMENT_TSTATES, positioningDuration +  TEST_INCREMENT_TSTATES);
+
+        bool isBusy = fdc._statusRegister & WD1793::WDS_BUSY;
+        bool isCRCError = fdc._statusRegister & WD1793::WDS_CRCERR;
+        bool isSeekError = fdc._statusRegister & WD1793::WDS_SEEKERR;
+        bool isTrack0 = (fdc._statusRegister & WD1793::WDS_TRK00);
+        bool DRQ = fdc._beta128status & DRQ;
+        bool INTRQ = fdc._beta128status & INTRQ;
+
+        EXPECT_EQ(isBusy, false);
+        EXPECT_EQ(isCRCError, false);
+        EXPECT_EQ(isSeekError, false);
+        EXPECT_EQ(isTrack0, fdc._selectedDrive->isTrack00());
+        EXPECT_EQ(INTRQ, false);    // There should be no interrupt request
+        EXPECT_EQ(DRQ, false);      // No data request either
+        /// endregion </Check results>
+    }
+    /// endregion </Interrupt during idle>
+}
+
+/// endregion </FORCE_INTERRUPT>
 
 /// endregion </Commands>

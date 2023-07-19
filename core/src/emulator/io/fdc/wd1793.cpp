@@ -31,12 +31,14 @@ WD1793::~WD1793()
 void WD1793::reset()
 {
     _state = S_IDLE;
+    _state2 = S_IDLE;
     _statusRegister = 0;
     _trackRegister = 0;
-    _sectorRegister = 0;
+    _sectorRegister = 0x01; // As per datasheet. Sector is set to 1 after the RESTORE command
     _dataRegister = 0;
 
     _indexPulseCounter = 0;
+    _delayTStates = 0;
 
     // Execute RESTORE command
     uint8_t restoreValue = 0b0000'1111;
@@ -521,7 +523,6 @@ void WD1793::processWD93Command(uint8_t value)
             _statusRegister |= WDS_BUSY;
             _beta128status = 0;
             _indexPulseCounter = 0;
-            _rotationCounter = SIZE_MAX;
 
             // Call the corresponding command method
             (this->*handler)(commandValue);
@@ -682,11 +683,13 @@ void WD1793::cmdWriteTrack(uint8_t value)
 // If all bits [0:3] are not set (= 0) - terminate with no interrupt
 void WD1793::cmdForceInterrupt(uint8_t value)
 {
-    std::cout << "Command Force Interrupt: " << value << std::endl;
+    std::string message = StringHelper::Format("Command Force Interrupt: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
-    _indexPulseCounter = 0;
-    _rotationCounter = SIZE_MAX;
+    bool noCommandExecuted = _state == S_IDLE;
 
+    // Ensure we have only relevant parameter bits
+    value &= 0b0000'1111;
     if (value != 0)
     {
         // Handling interrupts in decreasing priority
@@ -695,43 +698,67 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         {
             // Not fully implemented
             _state = S_IDLE;
+            _state2 = S_IDLE;
+            _delayTStates = 0;
+
+            _statusRegister &= ~WDS_BUSY;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _statusRegister &= ~WDS_BUSY;
         }
 
-        if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)         // Bit2 (J2) - Index pulse
+        if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)         // Bit2 (J2) - Every index pulse
         {
             // Not fully implemented
             _state = S_IDLE;
+            _state2 = S_IDLE;
+            _delayTStates = 0;
+
+            _statusRegister &= ~WDS_BUSY;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _statusRegister &= ~WDS_BUSY;
         }
 
         if (value & WD_FORCE_INTERRUPT_READY)               // Bit1 (J1) - Ready to Not-Ready transition
         {
             // Not fully implemented
             _state = S_IDLE;
+            _state2 = S_IDLE;
+            _delayTStates = 0;
+
+            _statusRegister &= ~WDS_BUSY;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _statusRegister &= ~WDS_BUSY;
         }
 
         if (value & WD_FORCE_INTERRUPT_NOT_READY)           // Bit0 (J0) - Not-Ready to Ready transition
         {
             _state = S_IDLE;
+            _state2 = S_IDLE;
+            _delayTStates = 0;
+
+            _statusRegister &= ~WDS_BUSY;
             _beta128status |= INTRQ;
             _beta128status &= ~DRQ;
-            _statusRegister &= ~WDS_BUSY;
         }
     }
-    else
+    else    // Terminate with no interrupt
     {
-        // Terminate with no interrupt
+        // Currently executed command is terminated and BUSY flag is reset
         _state = S_IDLE;
-        _statusRegister &= ~WDS_BUSY;
-        _beta128status &= ~(DRQ | INTRQ);
+        _state2 = S_IDLE;
+        _delayTStates = 0;
+
+        _statusRegister &= ~WDS_BUSY;       // Deactivate busy flag
+        _beta128status &= ~(DRQ | INTRQ);   // Deactivate Data Request (DRQ) and Interrupt Request (INTRQ) signals
+    }
+
+    // Set status register according Type 1 command layout
+    if (noCommandExecuted)
+    {
+        _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED);
+        _statusRegister |= _selectedDrive->getTrack() == 0 ? WDS_TRK00 : 0x00;
+        _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
+        _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
     }
 }
 
@@ -1035,7 +1062,14 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
 
 void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
 {
-    MLOGINFO("Out port:0x%04X, value: 0x%02X", port, value);
+    /// region <Debug print>
+
+    uint16_t pc = _context->pCore->GetZ80()->m1_pc;
+    std::string memBankName = _context->pMemory->GetCurrentBankName(0);
+
+    MLOGINFO("Out port:0x%04X, value: 0x%02X pc: 0x%04X bank: %s", port, value, pc, memBankName.c_str());
+
+    /// endregion </Debug print>
 
     // Update FDC internal states
     process();

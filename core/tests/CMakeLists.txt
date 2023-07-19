@@ -67,6 +67,9 @@ message("SOURCES:${SOURCES}")
 # Compile tests into executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# Declare _ALWAYS_USE_LOGGING for compiler
+target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
+
 # Declare _DEBUG symbol for compiler
 if (CMAKE_BUILD_TYPE MATCHES Debug)
     message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")

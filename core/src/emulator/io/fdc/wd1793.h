@@ -341,7 +341,6 @@ protected:
     // FDD state
     bool _index = false;                // Current state of index strobe
     size_t _indexPulseCounter = 0;      // Index pulses counter
-    size_t _rotationCounter = 0;        // Tracks disk rotation
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
 
     /// endregion </Fields>
@@ -536,6 +535,7 @@ public:
     using WD1793::_sectorRegister;
     using WD1793::_dataRegister;
     using WD1793::_statusRegister;
+    using WD1793::_beta128status;
 
     using WD1793::_state;
     using WD1793::_state2;
