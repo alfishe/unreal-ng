@@ -75,26 +75,26 @@ struct RangeCommand
 {
     uint8_t rangeStart;
     uint8_t rangeEnd;
-    VG93::WD_COMMANDS command;
+    WD1793::WD_COMMANDS command;
 };
 
 class RangeLookup
 {
 private:
     static constexpr std::array<RangeCommand, 11> _referenceValues
-            {
-                    RangeCommand { 0x00, 0x0F, VG93CUT::WD_CMD_RESTORE },
-                    RangeCommand { 0x10, 0x1F, VG93CUT::WD_CMD_SEEK },
-                    RangeCommand { 0x20, 0x3F, VG93CUT::WD_CMD_STEP },
-                    RangeCommand { 0x40, 0x5F, VG93CUT::WD_CMD_STEP_IN },
-                    RangeCommand { 0x60, 0x7F, VG93CUT::WD_CMD_STEP_OUT },
-                    RangeCommand { 0x80, 0x9F, VG93CUT::WD_CMD_READ_SECTOR },
-                    RangeCommand { 0xA0, 0xBF, VG93CUT::WD_CMD_WRITE_SECTOR },
-                    RangeCommand { 0xC0, 0xDF, VG93CUT::WD_CMD_READ_ADDRESS },
-                    RangeCommand { 0xE0, 0xEF, VG93CUT::WD_CMD_READ_TRACK },
-                    RangeCommand { 0xF0, 0xFF, VG93CUT::WD_CMD_WRITE_TRACK },
-                    RangeCommand { 0xD0, 0xDF, VG93CUT::WD_CMD_FORCE_INTERRUPT },
-            };
+    {
+        RangeCommand { 0x00, 0x0F, WD1793::WD_CMD_RESTORE },
+        RangeCommand { 0x10, 0x1F, WD1793::WD_CMD_SEEK },
+        RangeCommand { 0x20, 0x3F, WD1793::WD_CMD_STEP },
+        RangeCommand { 0x40, 0x5F, WD1793::WD_CMD_STEP_IN },
+        RangeCommand { 0x60, 0x7F, WD1793::WD_CMD_STEP_OUT },
+        RangeCommand { 0x80, 0x9F, WD1793::WD_CMD_READ_SECTOR },
+        RangeCommand { 0xA0, 0xBF, WD1793::WD_CMD_WRITE_SECTOR },
+        RangeCommand { 0xC0, 0xDF, WD1793::WD_CMD_READ_ADDRESS },
+        RangeCommand { 0xE0, 0xEF, WD1793::WD_CMD_READ_TRACK },
+        RangeCommand { 0xF0, 0xFF, WD1793::WD_CMD_WRITE_TRACK },
+        RangeCommand { 0xD0, 0xDF, WD1793::WD_CMD_FORCE_INTERRUPT },
+    };
 
 public:
     bool isValueInRange(uint8_t value)
