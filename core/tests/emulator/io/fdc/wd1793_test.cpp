@@ -112,9 +112,9 @@ public:
         return result;
     }
 
-    VG93CUT::WD_COMMANDS getCommandForValue(uint8_t value)
+    WD1793CUT::WD_COMMANDS getCommandForValue(uint8_t value)
     {
-        VG93CUT::WD_COMMANDS result = VG93CUT::WD_CMD_RESTORE;
+        WD1793CUT::WD_COMMANDS result = WD1793CUT::WD_CMD_RESTORE;
 
         for (const auto& rangeCommand : _referenceValues)
         {
@@ -139,10 +139,10 @@ TEST_F(WD1793_Test, decodeWD93Command)
 
     for (int i = 0; i <= 255; i++)
     {
-        VG93::WD_COMMANDS result = VG93CUT::decodeWD93Command(i);
-        VG93::WD_COMMANDS reference = referenceValues.getCommandForValue(i);
+        WD1793::WD_COMMANDS result = WD1793CUT::decodeWD93Command(i);
+        WD1793::WD_COMMANDS reference = referenceValues.getCommandForValue(i);
 
-        EXPECT_EQ(result, reference) << StringHelper::Format("0x%02X -> %s", i, VG93CUT::getWD_COMMANDName(result));
+        EXPECT_EQ(result, reference) << StringHelper::Format("0x%02X -> %s", i, WD1793CUT::getWD_COMMANDName(result));
 
         //std::string message = StringHelper::Format("0x%02X -> %s", i, VG93CUT::getWD_COMMANDName(result));
         //std::cout << message << std::endl;
