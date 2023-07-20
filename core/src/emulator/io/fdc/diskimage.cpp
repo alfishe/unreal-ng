@@ -22,7 +22,7 @@ bool DiskImage::allocateMemory(uint8_t cylinders, uint8_t sides)
         for (size_t i = 0; i < trackNumber; i++)
         {
             Track track;
-            _tracks.push_back(track);
+            _tracks[i] = track;
         }
         /// endregion </Allocate objects for new disk>
 

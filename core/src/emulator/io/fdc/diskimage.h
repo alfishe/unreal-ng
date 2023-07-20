@@ -29,6 +29,16 @@ public:
             uint16_t crc = CRCHelper::crcWD1793(&id_address_mark, 5);
             id_crc = crc;
         }
+
+        /// Check if CRC valid
+        bool isCRCValid()
+        {
+            uint16_t crc = CRCHelper::crcWD1793(&id_address_mark, 5);
+
+            bool result = crc == id_crc;
+
+            return result;
+        }
         /// endregion </Methods>
     };
 
@@ -73,6 +83,17 @@ public:
             uint16_t crc = CRCHelper::crcWD1793(&data_address_mark, sizeof(data) + sizeof(data_address_mark));
             data_crc = crc;
         }
+
+        /// Check if CRC valid
+        bool isCRCValid()
+        {
+            uint16_t crc = CRCHelper::crcWD1793(&data_address_mark, sizeof(data) + sizeof(data_address_mark));
+
+            bool result = crc == data_crc;
+
+            return result;
+        }
+
         /// endregion </Methods>
     };
 
@@ -223,6 +244,9 @@ protected:
 public:
     uint8_t getCylinders() { return _cylinders; }
     uint8_t getSides() { return _sides; }
+
+    bool getLoaded() { return _loaded; }
+    void setLoaded(bool loaded) { _loaded = loaded; }
 
     Track* getTrackForCylinderAndSide(uint8_t cylinder, uint8_t side)
     {
