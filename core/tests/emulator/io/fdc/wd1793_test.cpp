@@ -466,6 +466,12 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     /// endregion </Check results>
 }
 
+/// Test index strobe timings and stability
+TEST_F(WD1793_Test, FDD_Rotation_Index_Stability)
+{
+    FAIL() << "Not implemented yet";
+}
+
 /// endregion <FDD related>
 
 /// region <FSM>
