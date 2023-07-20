@@ -643,6 +643,10 @@ void MainWindow::handleFullScreenShortcut()
 {
     if (isFullScreen())
     {
+#ifdef __APPLE__
+        setWindowFlags(Qt::Window); // Prevent horizontal transition from full screen to system desktop
+#endif // __APPLE__
+
         // Exit full-screen mode
         showNormal();
     }
