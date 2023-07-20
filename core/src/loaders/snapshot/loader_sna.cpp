@@ -219,7 +219,8 @@ bool LoaderSNA::load128kToStaging()
         fread(&_memoryPages[2], PAGE_SIZE, 1, _file);
         _memoryPagesUsed[2] = true;
 
-        // Read Bank 0 [C000:FFFF]
+        // Read Bank N [C000:FFFF]
+        // It will go to the page mapped by port #7FFD value
         fread(&_memoryPages[0], PAGE_SIZE, 1, _file);
         _memoryPagesUsed[0] = true;
 
@@ -356,6 +357,12 @@ bool LoaderSNA::applySnapshotFromStaging()
 
             // Switch to proper RAM/ROM pages configuration
             _context->pPortDecoder->DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc);
+
+            // Activate TR-DOS ROM if needed
+            if (_ext128Header.is_TRDOS)
+            {
+                _context->pMemory->SetROMDOS();
+            }
         }
 
         // Pre-fill border with color
