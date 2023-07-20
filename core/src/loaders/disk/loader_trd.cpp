@@ -12,7 +12,8 @@ bool LoaderTRD::loadImage()
         size_t fileSize = FileHelper::GetFileSize(_filepath);
         if (fileSize > 0)
         {
-            uint8_t* buffer = new uint8_t[fileSize];
+            uint8_t buffer[fileSize];
+
             if (FileHelper::ReadFileToBuffer(_filepath, buffer, fileSize))
             {
                 size_t cylinders = getTrackNoFromImageSize(fileSize);
@@ -26,6 +27,9 @@ bool LoaderTRD::loadImage()
 
                     // Transfer sector data from .TRD to prepared disk image
                     transferSectorData(_diskImage, buffer, fileSize);
+
+                    // Mark disk image as loaded
+                    _diskImage->setLoaded(true);
 
                     result = true;
                 }

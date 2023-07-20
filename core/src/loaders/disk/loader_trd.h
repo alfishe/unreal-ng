@@ -107,3 +107,18 @@ protected:
     bool transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize);
     /// endregion </Helper methods>
 };
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+#ifdef _CODE_UNDER_TEST
+
+class LoaderTRDCUT : public LoaderTRD
+{
+public:
+    LoaderTRDCUT(EmulatorContext* context, const std::string& filepath) : LoaderTRD(context, filepath) {};
+
+public:
+    using LoaderTRD::_diskImage;
+};
+#endif // _CODE_UNDER_TEST
