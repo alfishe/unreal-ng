@@ -30,6 +30,10 @@ WD1793::~WD1793()
 
 void WD1793::reset()
 {
+    // Clear operations FIFO
+    std::queue<WDSTATE> emptyQueue;
+    _operationFIFO.swap(emptyQueue);
+
     _state = S_IDLE;
     _state2 = S_IDLE;
     _statusRegister = 0;
@@ -654,6 +658,12 @@ void WD1793::cmdReadSector(uint8_t value)
     std::cout << "Command Read Sector: " << static_cast<int>(value) << std::endl;
 
     startType2Command();
+
+    // Step 1: search for ID address mark
+    _operationFIFO.push(WDSTATE::S_SEARCH_ID);
+
+    // Step 2: start sector reading
+    _operationFIFO.push(WDSTATE::S_READ_BYTE);
 }
 
 void WD1793::cmdWriteSector(uint8_t value)
@@ -713,6 +723,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
 
     bool noCommandExecuted = _state == S_IDLE;
     WDSTATE prevState = _state;
+    WDSTATE prevState2 = _state2;
 
     // Ensure we have only relevant parameter bits
     value &= 0b0000'1111;
@@ -778,6 +789,10 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         _beta128status &= ~(DRQ | INTRQ);   // Deactivate Data Request (DRQ) and Interrupt Request (INTRQ) signals
     }
 
+    // Clear operations FIFO
+    std::queue<WDSTATE> emptyQueue;
+    _operationFIFO.swap(emptyQueue);
+
     // Set status register according Type 1 command layout
     if (noCommandExecuted)
     {
@@ -790,7 +805,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     }
     else
     {
-        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s", getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str());
+        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s state2: %s", getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str()), WDSTATEToString(prevState2).c_str();
     }
 }
 
@@ -832,9 +847,9 @@ void WD1793::startType2Command()
     MLOGINFO("==>> Start Type 2 command");
 
     _statusRegister |= WDS_BUSY;                                // Set BUSY flag
-    _statusRegister &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type2 error flags
+    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |              // Reset Type2 error flags
                 WDS_RECORDTYPE | WDS_WRITEPROTECTED);
-    _dataRegisterWritten = false;                               // Type2 commands have timeout for data availability in Data Register
+    _dataRegisterAccessed = false;                               // Type2 commands have timeout for data availability in Data Register
 
     if (!isReady())
     {
@@ -845,6 +860,9 @@ void WD1793::startType2Command()
     {
         // Ensure motor is spinning
         prolongFDDMotorRotation();
+
+        // Head must be loaded
+        loadHead();
 
         if (_commandRegister & CMD_DELAY)
         {
@@ -863,7 +881,7 @@ void WD1793::startType3Command()
     MLOGINFO("==>> Start Type 3 command");
 
     _statusRegister |= WDS_BUSY;                                // Set BUSY flag
-    _statusRegister &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type3 error flags
+    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |              // Reset Type3 error flags
                  WDS_RECORDTYPE);
 
     if (!isReady())
@@ -875,6 +893,9 @@ void WD1793::startType3Command()
     {
         // Ensure motor is spinning
         prolongFDDMotorRotation();
+
+        // Head must be loaded
+        loadHead();
 
         if (_commandRegister & CMD_DELAY)
         {
@@ -943,6 +964,25 @@ void WD1793::processWait()
         _delayTStates = 0;
         transitionFSM(_state2);
     }
+}
+
+/// Fetch next state from FIFO
+void WD1793::processFetchFIFO()
+{
+    WDSTATE nextState = WDSTATE::S_IDLE;
+    if (!_operationFIFO.empty())
+    {
+        // Get next FIFO value (and remove it from the queue immediately)
+        nextState = _operationFIFO.front();
+        _operationFIFO.pop();
+    }
+    else
+    {
+        MLOGWARNING("WDSTATE::S_FETCH_FIFO state activated but no operations in queue");
+    }
+
+    // Transition to next state
+    transitionFSM(nextState);
 }
 
 void WD1793::processStep()
@@ -1060,6 +1100,50 @@ void WD1793::processSeek()
     }
 }
 
+/// Handles read single byte for sector or track operations
+/// _rawDataBuffer and _bytesToRead values must be set before reading the first byte
+void WD1793::processReadByte()
+{
+    if (!_dataRegisterAccessed)
+    {
+        // Data was not fetched by CPU from Data Register
+        // Set LOST_DATA error and terminate
+        _statusRegister |= WDS_LOSTDATA;
+        endCommand();
+    }
+    else if (_rawDataBuffer)
+    {
+        // Reset Data Register access flag
+        _dataRegisterAccessed = false;
+
+        // Put next byte read from disk into Data Register
+        _dataRegister = *(_rawDataBuffer++);
+        _bytesToRead--;
+
+        if (_bytesToRead > 0)
+        {
+            // Schedule next byte read
+            transitionFSMWithDelay(WD1793::S_READ_BYTE, TSTATES_PER_FDC_BYTE);
+        }
+        else
+        {
+            // No more bytes to read - finish operation
+            endCommand();
+        }
+    }
+    else
+    {
+        // For some reason data not available - treat it as NOT READY and abort
+        _statusRegister |= WDS_NOTRDY;
+        endCommand();
+    }
+}
+
+void WD1793::processWriteByte()
+{
+    throw new std::logic_error("Not implemented yet");
+}
+
 /// endregion </State machine handlers>
 
 /// region <PortDevice interface methods>
@@ -1089,7 +1173,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = getStatusRegister();
 
             // TODO: remove debug
-            //std::cout << dumpStatusRegister(_lastDecodedCmd);
+            MLOGINFO("%s", dumpStatusRegister(_lastDecodedCmd).c_str());
             break;
         case PORT_3F:   // Return current track number
             result = _trackRegister;
@@ -1161,6 +1245,9 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             {
                 _statusRegister &= ~WDS_DRQ;
             }
+
+            // Mark that Data Register was accessed (for Type 2 and Type 3 operations)
+            _dataRegisterAccessed = true;
 
             //TODO: remove debug
             MLOGINFO(StringHelper::Format("#7F - Set data: 0x%02X", _dataRegister).c_str());

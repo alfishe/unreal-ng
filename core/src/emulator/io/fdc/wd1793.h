@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include <queue>
 #include <common/stringhelper.h>
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -58,10 +59,16 @@ public:
     {
         S_IDLE = 0,
         S_WAIT,         // Dedicated state to handle timing delays
+        S_FETCH_FIFO,   // Fetch next state from _operationFIFO queue
 
         S_STEP,
         S_VERIFY,
         S_SEEK,
+
+        S_SEARCH_ID,
+
+        S_READ_BYTE,
+        S_WRITE_BYTE,
 
         S_DELAY_BEFORE_CMD,
         S_CMD_RW,
@@ -95,10 +102,16 @@ public:
         {
             "S_IDLE",
             "S_WAIT",
+            "S_FETCH_FIFO",
 
             "S_STEP",
             "S_VERIFY",
             "S_SEEK",
+
+            "S_SEARCH_ID",
+
+            "S_READ_BYTE",
+            "S_WRITE_BYTE",
 
             "S_DELAY_BEFORE_CMD",
             "S_CMD_RW",
@@ -203,7 +216,7 @@ public:
         WDS_INDEX          = 0x02,   // For Type 1 (Restore & Seek) commands only
         WDS_DRQ            = 0x02,   // For all read/write commands only
         WDS_TRK00          = 0x04,   // For Type 1 (Restore & Seek) commands only
-        WDS_LOST           = 0x04,   // For all read/write commands only
+        WDS_LOSTDATA           = 0x04,   // For all read/write commands only
         WDS_CRCERR         = 0x08,   // For Type 1 (Restore & Seek) commands + READ ADDRESS + READ SECTOR + WRITE SECTOR
         WDS_NOTFOUND       = 0x10,   // RNF (Record Not Found) - For READ ADDRESS + READ SECTOR + WRITE SECTOR
         WDS_SEEKERR        = 0x10,   // For Type 1 (Restore & Seek) commands only
@@ -258,12 +271,18 @@ protected:
 
     /// Time limit to retrieve single byte from WD1793
     /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
-    static constexpr const size_t T_STATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
+    static constexpr const size_t TSTATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
 
     static constexpr const size_t WD93_REVOLUTIONS_TILL_MOTOR_STOP = 15;
     static constexpr const size_t WD93_TSTATES_TILL_MOTOR_STOP = Z80_FREQUENCY * WD93_REVOLUTIONS_TILL_MOTOR_STOP / FDD_RPS;
+
+    // Type1 commands (with V=1 verify flag set) wait for index address mark no more than 5 disk revolutions
     static constexpr const size_t WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH = 5;
     static constexpr const size_t WD93_TSTATES_LIMIT_FOR_INDEX_MARK_SEARCH = Z80_FREQUENCY * WD93_REVOLUTIONS_LIMIT_FOR_INDEX_MARK_SEARCH /  FDD_RPS;
+
+    /// Type2 commands wait 4 disk revolutions at most to find index address mark field on disk
+    static constexpr const size_t WD93_REVOLUTIONS_LIMIT_FOR_TYPE2_INDEX_MARK_SEARCH = 4;
+    static constexpr const size_t WD93_TSTATES_LIMIT_FOR_TYPE2_INDEX_MARK_SEARCH = Z80_FREQUENCY * WD93_REVOLUTIONS_LIMIT_FOR_TYPE2_INDEX_MARK_SEARCH /  FDD_RPS;
 
     /// We can do no more than 255 head steps. Normally it cannot be more than 80-83 track positioning steps. If we reached 255 limit - FDD is broken
     static constexpr const size_t WD93_STEPS_MAX = 255;
@@ -271,6 +290,7 @@ protected:
     /// After the last directional step an additional 15 milliseconds of head settling time takes place if the Verify flag is set in Type I commands
     static constexpr const size_t WD93_VERIFY_DELAY_MS = 15;
 
+    /// How many WD1793 commands we support (used for array/table allocations)
     static constexpr const size_t WD93_COMMAND_COUNT = 11;
 
     // Decoded port addresses (physical address line matching done in platform port decoder)
@@ -278,7 +298,7 @@ protected:
     static constexpr const uint16_t PORT_3F = 0x003F;     // Track register
     static constexpr const uint16_t PORT_5F = 0x005F;     // Sector register
     static constexpr const uint16_t PORT_7F = 0x007F;     // Data register
-    static constexpr const uint16_t PORT_FF = 0x00FF;     // Write - BETA128 system controller; Read - FDC readiness (Bit6 - DRQ, bit7 - INTRQ)
+    static constexpr const uint16_t PORT_FF = 0x00FF;     // Write - BETA128 system controller; Read - data and interrupt request bits from WD1793 (Bit6 - DRQ, bit7 - INTRQ)
     static constexpr const uint16_t PORT_7FFD = 0x7FFD;   // DOS lock mode. Bit4 = 0 - block; Bit4 = 1 - allow
 
     // Stepping rates from WD93 datasheet
@@ -325,20 +345,24 @@ protected:
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
     WDSTATE _state = S_IDLE;
     WDSTATE _state2 = S_IDLE;
+    std::queue<WDSTATE> _operationFIFO;    // Holds FIFO queue for scheduled state transitions (when WD1793 command requires complex FSM flow)
 
     // Type 1 command params
     bool _loadHead = false;             // Determines if load should be loaded or unloaded during Type1 command
     bool _verifySeek = false;           // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
     uint8_t _steppingMotorRate = 6;     // Positioning speed rate. Value is resolved from Type1 command via STEP_TIMINGS_MS_1MHZ and STEP_TIMINGS_MS_2MHZ arrays depending on WD1793 clock speed
 
-    // Type 2 command params
-    bool _dataRegisterWritten = false;  // Type2 commands have timeout for data availability in Data Register
-
-
-    // Internal state
+    // Internal state for Type1 commands
     int8_t _stepDirectionIn = false;    // Head step direction. True - move head towards center cut (Step In). False - move outwards to Track 0 (Step Out)
     size_t _stepCounter = 0;            // Count each head positioning step during current Type 1 command
     bool _headLoaded = false;
+
+    // Type 2 command params
+    bool _dataRegisterAccessed = false;  // Type2 commands have timeout for data availability in Data Register
+    uint8_t* _rawDataBuffer = nullptr;      // Pointer to required sector data
+    size_t _bytesToRead = 0;            // How many more bytes to read from the disk
+    size_t _bytesToWrite = 0;           // How many more bytes to write to the disk
+
 
     // FDD state
     bool _index = false;                // Current state of index strobe
@@ -419,18 +443,24 @@ protected:
 protected:
     std::map<WDSTATE, FSMHandler> _stateHandlerMap =
     {
-        { S_IDLE,   &WD1793::processIdle },
-        { S_WAIT,   &WD1793::processWait },
-        { S_STEP,   &WD1793::processStep },
-        { S_VERIFY, &WD1793::processVerify },
-        { S_SEEK,   &WD1793::processSeek },
+        { S_IDLE,       &WD1793::processIdle },
+        { S_WAIT,       &WD1793::processWait },
+        { S_FETCH_FIFO, &WD1793::processFetchFIFO },
+        { S_STEP,       &WD1793::processStep },
+        { S_VERIFY,     &WD1793::processVerify },
+        { S_SEEK,       &WD1793::processSeek },
+        { S_READ_BYTE,  &WD1793::processReadByte },
+        { S_WRITE_BYTE, &WD1793::processWriteByte },
     };
 
     void processIdle();
     void processWait();
+    void processFetchFIFO();
     void processStep();
     void processVerify();
     void processSeek();
+    void processReadByte();
+    void processWriteByte();
 
     void transitionFSM(WDSTATE nextState)
     {
