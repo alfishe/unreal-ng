@@ -1068,6 +1068,15 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
 {
     uint8_t result = 0xFF;
 
+    /// region <Debug print>
+
+    uint16_t pc = _context->pCore->GetZ80()->m1_pc;
+    std::string memBankName = _context->pMemory->GetCurrentBankName(0);
+
+    MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName.c_str());
+
+    /// endregion </Debug print>
+
     // Update FDC internal states
     process();
 
@@ -1089,11 +1098,13 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = _sectorRegister;
             break;
         case PORT_7F:   // Return data byte and update internal state
-            _beta128status &= ~DRQ;
+            _beta128status &= ~DRQ;         // Reset DRQ (Data Request) flag
+            _dataRegisterAccessed = true;   // Mark that Data Register was accessed (for Type 2 and Type 3 operations)
             result = _dataRegister;
             break;
         case PORT_FF:   // Handle BETA128 system port (#FF)
             result = _beta128status | (_beta128 & 0x3F);
+            MLOGINFO("Beta128 status: %s", StringHelper::FormatBinary(result).c_str());
             break;
         default:
             break;
@@ -1284,7 +1295,7 @@ std::string WD1793::dumpStep()
     ss << StringHelper::Format("WD1793 track: %d", _trackRegister) << std::endl;
     ss << StringHelper::Format("   FDD track: %d", _selectedDrive->getTrack()) << std::endl;
     ss << StringHelper::Format("   Direction: %s", direction.c_str()) << std::endl;
-    ss << StringHelper::Format("      Status: %s", StringHelper::FormatBinary(_statusRegister).c_str());
+    ss << StringHelper::Format("      Status: %s", StringHelper::FormatBinary(_statusRegister).c_str()) << std::endl;
     ss << StringHelper::Format("     Beta128: %s", StringHelper::FormatBinary(_beta128status).c_str());
 
     std::string result = ss.str();
