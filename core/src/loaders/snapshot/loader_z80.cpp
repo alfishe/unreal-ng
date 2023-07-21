@@ -190,6 +190,9 @@ void LoaderZ80::commitFromStage()
         Z80Registers* actualRegisters = static_cast<Z80Registers*>(_context->pCore->GetZ80());
         memcpy(actualRegisters, &_z80Registers, sizeof(Z80Registers));
         /// endregion </Transfer Z80 registers>
+
+        // Trigger screen redraw to show snapshot screen immediately
+        screen.RenderOnlyMainScreen();
     }
 }
 

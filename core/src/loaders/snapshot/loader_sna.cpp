@@ -274,14 +274,14 @@ bool LoaderSNA::applySnapshotFromStaging()
 
     Memory& memory = *_context->pMemory;
     Screen& screen = *_context->pScreen;
-    Core& cpu = *_context->pCore;
+    Core& core = *_context->pCore;
     Z80& z80 = *_context->pCore->GetZ80();
     int ramPagesLoaded = 0;
 
     if (_stagingLoaded)
     {
         // Reset Z80 and all peripherals
-        cpu.Reset();
+        core.Reset();
 
         // Transfer RAM data to emulator (only pages existed in snapshot will be updated)
         for (int pageNum = 0; pageNum < 8; pageNum++)
@@ -367,6 +367,9 @@ bool LoaderSNA::applySnapshotFromStaging()
 
         // Pre-fill border with color
         screen.FillBorderWithColor(_borderColor);
+
+        // Trigger screen redraw to show snapshot screen immediately
+        screen.RenderOnlyMainScreen();
 
         result = true;
     }
