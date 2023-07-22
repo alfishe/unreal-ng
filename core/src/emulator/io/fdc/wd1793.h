@@ -332,7 +332,7 @@ protected:
     uint8_t _steppingMotorRate = 6;     // Positioning speed rate. Value is resolved from Type1 command via STEP_TIMINGS_MS_1MHZ and STEP_TIMINGS_MS_2MHZ arrays depending on WD1793 clock speed
 
     // Type 2 command params
-    bool _dataRegisterWritten = false;  // Type2 commands have timeout for data availability in Data Register
+    bool _dataRegisterAccessed = false;  // Type2 commands have timeout for data availability in Data Register
 
 
     // Internal state

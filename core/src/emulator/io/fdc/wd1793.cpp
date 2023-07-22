@@ -834,7 +834,7 @@ void WD1793::startType2Command()
     _statusRegister |= WDS_BUSY;                                // Set BUSY flag
     _statusRegister &= ~(WDS_LOST | WDS_NOTFOUND |              // Reset Type2 error flags
                 WDS_RECORDTYPE | WDS_WRITEPROTECTED);
-    _dataRegisterWritten = false;                               // Type2 commands have timeout for data availability in Data Register
+    _dataRegisterAccessed = false;                              // Type2 commands have timeout for data availability in Data Register
 
     if (!isReady())
     {
