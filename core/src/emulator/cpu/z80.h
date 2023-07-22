@@ -365,7 +365,7 @@ public:
 	// Event handlers
 public:
 	void HandleNMI(ROMModeEnum mode);
-	void HandleINT(uint8_t vector = 0);
+	void HandleINT(uint8_t vector = 0xFF);
 
 	// Debugger interfacing
 public:
