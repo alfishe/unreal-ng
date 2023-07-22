@@ -532,8 +532,7 @@ void ScreenZX::UpdateScreen()
 }
 
 /// Render for single t-state (ULA draws 2 pixels per each t-state)
-/// \param tstate
-/// \param borderColor
+/// @param tstate Clock time mark
 void ScreenZX::Draw(uint32_t tstate)
 {
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];

@@ -361,11 +361,12 @@ public:
     unsigned int_start,
     unsigned int_end);
 	void UpdateScreen();			                // Trigger screen update after each command cycle
+    void UpdateSound();
 
 	// Event handlers
 public:
 	void HandleNMI(ROMModeEnum mode);
-	void HandleINT(uint8_t vector = 0);
+	void HandleINT(uint8_t vector = 0xFF);
 
 	// Debugger interfacing
 public:

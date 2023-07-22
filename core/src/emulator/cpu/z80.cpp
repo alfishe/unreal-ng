@@ -341,6 +341,9 @@ void Z80::Z80FrameCycle()
 
         // Update screen buffer (including border draw)
         UpdateScreen();
+
+        // Update sound rendering
+        UpdateSound();
     }
 }
 
@@ -574,6 +577,12 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 void Z80::UpdateScreen()
 {
 	_context->pScreen->UpdateScreen();
+}
+
+void Z80::UpdateSound()
+{
+    // Update AY state after each CPU cycle (required for precise envelope control / digital music)
+    _context->pSoundManager->handleStep();
 }
 
 void Z80::HandleNMI(ROMModeEnum mode)
