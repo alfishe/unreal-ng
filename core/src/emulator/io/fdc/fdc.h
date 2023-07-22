@@ -9,8 +9,9 @@ static constexpr size_t FDD_RPS = 5;                    // FDD rotation speed
 static constexpr size_t MAX_TRACK_LEN = 6250;           //
 static constexpr size_t MAX_SECTOR_DATA_LEN = 6144;     //
 static constexpr size_t MAX_CYLINDERS = 86;             // Don't load images with track number exceeding this threshold
+static constexpr size_t MAX_SIDES = 2;                  // There can be single side disks
 static constexpr size_t MAX_PHYSICAL_CYLINDER = 86;     // FDC won't perform seek commands beyond this cylinder
-static constexpr size_t MAX_SECTOR = 256;               // Max sectors per track
+static constexpr size_t MAX_SECTOR = 32;               // Max sectors per track
 /// endregion </Constants>
 
 /// region <Types>

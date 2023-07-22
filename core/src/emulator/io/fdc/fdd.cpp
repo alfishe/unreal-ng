@@ -42,7 +42,7 @@ void FDD::process()
 
 void FDD::insertDisk(DiskImage* diskImage)
 {
-    if (_diskImage)
+    if (diskImage)
     {
         _diskImage = diskImage;
         _diskInserted = true;

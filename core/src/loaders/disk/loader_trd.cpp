@@ -91,7 +91,7 @@ DiskImage* LoaderTRD::getImage()
              /// region <Step 2: Fully re-initialize low-level formatting by applying default object state>
              track = DiskImage::Track();
 
-             // Apply interleave sector pattern used during formatting and re-index sector information
+             // Apply the interleave sector pattern used during formatting and re-index sector information
              track.applyInterleaveTable(INTERLEAVE_PATTERNS[interleavePatternIndex]);
 
              /// endregion </Step 2: Fully re-initialize low-level formatting by applying default object state>

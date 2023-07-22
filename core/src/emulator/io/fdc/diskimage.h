@@ -254,7 +254,7 @@ public:
 
         if (cylinder < MAX_CYLINDERS && side < 2)
         {
-            size_t trackNumber = cylinder * side;
+            size_t trackNumber = cylinder * _sides + side;
             result = getTrack(trackNumber);
         }
 

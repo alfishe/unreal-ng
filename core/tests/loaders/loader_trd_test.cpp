@@ -56,6 +56,44 @@ protected:
 /// endregion </Types>
 
 /// region <Tests>
+
+TEST_F(LoaderTRD_Test, DiskImage_getTrackForCylinderAndSide)
+{
+    constexpr const uint8_t MAX_SIDES = 2;
+
+    DiskImage* diskImage = new DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    if (diskImage)
+    {
+        std::set<DiskImage::Track*> uniqueTrackPointers;
+
+        for (size_t cylinder = 0; cylinder < MAX_CYLINDERS; cylinder++)
+        {
+            for (size_t side = 0; side < MAX_SIDES; side++)
+            {
+                DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(cylinder, side);
+
+                auto it = uniqueTrackPointers.find(track);
+                if (it == uniqueTrackPointers.end())
+                {
+                    // No such track pointer registered, we can add
+                    uniqueTrackPointers.insert(track);
+                }
+                else
+                {
+                    FAIL() << StringHelper::Format("Cylinder %d side %d pointer is not unique ", cylinder, side);
+                }
+            }
+        }
+
+
+        delete diskImage;
+    }
+    else
+    {
+        FAIL() << "Unable to create DiskImage";
+    }
+}
+
 TEST_F(LoaderTRD_Test, Load)
 {
     std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
