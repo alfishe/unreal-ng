@@ -78,7 +78,6 @@ protected:
     // Supported sound chips
     Beeper*           _beeper;
     SoundChip_AY8910* _ay8910;
-    SoundChip_YM2149* _ym2149;
     // SoundChip_TurboSound;
     // SoundChip_TurboSoundFM;
     // SoundChip_MoonSound;

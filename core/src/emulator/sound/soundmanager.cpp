@@ -14,13 +14,8 @@ SoundManager::SoundManager(EmulatorContext *context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    _beeper = new Beeper(_context, 3.5 * 1'000'000, AUDIO_SAMPLING_RATE);
+    _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE);
     _ay8910 = new SoundChip_AY8910(_context);
-    _ym2149 = new SoundChip_YM2149();
-
-    /// region <Debug functionality>
-    _pcmFile = fopen("/Users/dev/Downloads/int16.pcm", "rb");
-    /// endregion </Debug functionality>
 }
 
 SoundManager::~SoundManager()
@@ -33,11 +28,6 @@ SoundManager::~SoundManager()
 
     closeWaveFile();
     /// endregion /Debug functionality>
-
-    if (_ym2149)
-    {
-        delete _ym2149;
-    }
 
     if (_ay8910)
     {
@@ -176,8 +166,9 @@ void SoundManager::handleFrameStart()
     _audioBufferWrites = 0;
     _ayBufferIndex = 0;
 
-    // Initialize render buffer
+    // Initialize render buffers
     memset(_beeperBuffer, 0x00, _beeperAudioDescriptor.memoryBufferSizeInBytes);
+    memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
 }
 
 void SoundManager::handleStep()
