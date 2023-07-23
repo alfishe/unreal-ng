@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include "common/sound/filters/filter_dc.h"
+#include "common/sound/filters/filter_interpolate.h"
 #include "emulator/ports/portdecoder.h"
 
 /// Information:
@@ -340,6 +341,9 @@ protected:
     double _mixedLeft;
     double _mixedRight;
 
+    FilterInterpolate _leftFIR;
+    FilterInterpolate _rightFIR;
+
     // Remove DC offset (work as analog capacitors per channel)
     FilterDC<double> _filterDCLeft;
     FilterDC<double> _filterDCRight;
@@ -360,6 +364,9 @@ public:
 
     /// region <Properties>
 public:
+    FilterInterpolate& firLeft() { return _leftFIR; }
+    FilterInterpolate& firRight() { return _rightFIR; }
+
     double mixedLeft() { return _mixedLeft; }
     double mixedRight() { return _mixedRight; }
     int16_t outLeft() { return (int16_t)(_mixedLeft * (double)INT16_MAX); };

@@ -15,23 +15,14 @@ SoundManager::SoundManager(EmulatorContext *context)
     _logger = context->pModuleLogger;
 
     _beeper = new Beeper(_context, CPU_CLOCK_RATE, AUDIO_SAMPLING_RATE);
-    _ay8910 = new SoundChip_AY8910(_context);
+    _turboSound = new SoundChip_TurboSound(_context);
 }
 
 SoundManager::~SoundManager()
 {
-    /// region <Debug functionality
-    if (_pcmFile)
+    if (_turboSound)
     {
-        fclose(_pcmFile);
-    }
-
-    closeWaveFile();
-    /// endregion /Debug functionality>
-
-    if (_ay8910)
-    {
-        delete _ay8910;
+        delete _turboSound;
     }
 
     if (_beeper)
@@ -47,22 +38,10 @@ SoundManager::~SoundManager()
 void SoundManager::reset()
 {
     // Reset all chips state
-    _ay8910->reset();
+    _turboSound->reset();
 
-    _lastTStates = 0;
-    _ayPLL = 0.0;
-    _ayBufferIndex = 0;
-
-    _x = 0.0;
-    double oversample_stream_rate = AUDIO_SAMPLING_RATE * 8 * FilterInterpolate::DECIMATE_FACTOR; // 2822400 bits per second for 44100Hz sample rate
-    _clockStep = PSG_CLOCK_RATE / oversample_stream_rate;
     std::fill(_beeperBuffer, _beeperBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
-    std::fill(_ayBuffer, _ayBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
     std::fill(_outBuffer, _outBuffer + AUDIO_BUFFER_SAMPLES_PER_FRAME, 0);
-
-    // Set FIR parameters
-    _leftFIR.setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
-    _rightFIR.setRates(PSG_CLOCK_RATE, AUDIO_SAMPLING_RATE);
 
     // Reset sound rendering state
     _prevFrane = 0;
@@ -161,86 +140,27 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 /// region <Emulation events>
 void SoundManager::handleFrameStart()
 {
-    _lastTStates = 0;
-    _ayPLL = 0.0;
-    _audioBufferWrites = 0;
-    _ayBufferIndex = 0;
+    _turboSound->handleFrameStart();
 
     // Initialize render buffers
     memset(_beeperBuffer, 0x00, _beeperAudioDescriptor.memoryBufferSizeInBytes);
-    memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
 }
 
 void SoundManager::handleStep()
 {
-    size_t currentTStates = _context->pCore->GetZ80()->t;
-    int32_t diff =  currentTStates - _lastTStates;
-
-    if (diff > 0)
-    {
-        _ayPLL += diff * AUDIO_SAMPLE_TSTATE_INCREMENT;
-
-        while (_ayPLL > 1.0 && _ayBufferIndex < AUDIO_SAMPLES_PER_VIDEO_FRAME * AUDIO_CHANNELS)
-        {
-            _ayPLL -= 1.0;
-
-            int16_t leftSample;
-            int16_t rightSample;
-
-            _leftFIR.startOversamplingBlock();
-            _rightFIR.startOversamplingBlock();
-
-            // Oversample and apply LPF FIR
-            for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
-            {
-                _x += _clockStep;
-
-                if (_x >= 1.0)
-                {
-                    _x -= 1.0;
-                    _ay8910->updateState(true);
-                }
-
-                _leftFIR.recalculateInterpolationCoefficients(j, _ay8910->mixedLeft());
-                _rightFIR.recalculateInterpolationCoefficients(j, _ay8910->mixedRight());
-            }
-
-            leftSample = _leftFIR.endOversamplingBlock() * INT16_MAX;
-            rightSample = _rightFIR.endOversamplingBlock() * INT16_MAX;
-
-            // Store samples in output buffer
-            _ayBuffer[_ayBufferIndex++] = leftSample;
-            _ayBuffer[_ayBufferIndex++] = rightSample;
-        }
-    }
-
-    _lastTStates = currentTStates;
+   _turboSound->handleStep();
 }
 
 void SoundManager::handleFrameEnd()
 {
+    uint16_t* _ayBuffer = _turboSound->getAudioBuffer();
+
     /// region <Mix all channels to output buffer>
     for (size_t i = 0; i < AUDIO_BUFFER_SAMPLES_PER_FRAME; i++)
     {
         _outBuffer[i] = _ayBuffer[i] + _beeperBuffer[i];
     }
     /// endregion </Mix all channels to output buffer>
-
-    /// region <Debug functionality>
-    /*
-    // Replace generated audio stream with pcm file
-    if (false)
-    {
-        if (_pcmFile)
-        {
-            int read = fread(_outBuffer, 2, SAMPLES_PER_FRAME * AUDIO_CHANNELS, _pcmFile);
-            read = read;
-        }
-    }
-
-    writeToWaveFile((uint8_t*)_outBuffer, _outAudioDescriptor.memoryBufferSizeInBytes);
-    /// endregion </Debug functionality>
-*/
 
     // Enqueue generated sound data via previously registered application callback
     if (_context->pAudioCallback)
@@ -296,7 +216,10 @@ void SoundManager::SoundManager::writeToWaveFile(uint8_t* buffer, size_t len)
 
 bool SoundManager::attachToPorts()
 {
-    bool result = _ay8910->attachToPorts(_context->pPortDecoder);
+    bool result = false;
+
+    // result = _ay8910->attachToPorts(_context->pPortDecoder);
+    result = _turboSound->attachToPorts(_context->pPortDecoder);
 
     return result;
 }
@@ -305,7 +228,8 @@ bool SoundManager::detachFromPorts()
 {
     bool result = true;
 
-    _ay8910->detachFromPorts();
+    //_ay8910->detachFromPorts();
+    _turboSound->detachFromPorts();
 
     return result;
 }
