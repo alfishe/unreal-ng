@@ -3,7 +3,6 @@
 #include "stdafx.h"
 
 #include "emulator/platform.h"
-#include "emulator/sound/soundmanager.h"
 #include "common/sound/filters/filter_dc.h"
 #include "common/sound/filters/filter_lpf.h"
 
