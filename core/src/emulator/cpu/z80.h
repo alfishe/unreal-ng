@@ -350,7 +350,6 @@ public:
 	void Z80Step(bool skipBreakpoints = false);		// Single opcode execution
 
 public:
-    void CheckNextFrame();
     void Z80FrameCycle();
 
 	// Trigger updates
@@ -360,15 +359,15 @@ public:
 	inline void ProcessInterrupts(bool int_occured,	// Take care about incoming interrupts
     unsigned int_start,
     unsigned int_end);
-	void UpdateScreen();			                // Trigger screen update after each command cycle
-    void UpdateSound();
 
 	// Event handlers
 public:
 	void HandleNMI(ROMModeEnum mode);
 	void HandleINT(uint8_t vector = 0xFF);
+    void OnCPUStep();			                // Trigger state updates after each CPU command cycle
 
-	// Debugger interfacing
+
+    // Debugger interfacing
 public:
 	void ProcessDebuggerEvents();
 	void WaitUntilResumed();

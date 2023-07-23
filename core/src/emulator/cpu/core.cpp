@@ -490,5 +490,5 @@ void Core::AdjustFrameCounters()
 
 void Core::UpdateScreen()
 {
-	GetZ80()->UpdateScreen();
+	GetZ80()->OnCPUStep();
 }

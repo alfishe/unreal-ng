@@ -3,16 +3,19 @@
 #include "common/modulelogger.h"
 
 #include "mainloop.h"
+#include <algorithm>
+#include "3rdparty/message-center/eventqueue.h"
 #include <common/stringhelper.h>
 #include "common/timehelper.h"
-#include "3rdparty/message-center/eventqueue.h"
-#include <algorithm>
-
+#include "emulator/io/fdc/wd1793.h"
 
 MainLoop::MainLoop(EmulatorContext* context)
 {
 	_context = context;
     _logger = context->pModuleLogger;
+
+    // Auto-register mainloop in the context
+    _context->pMainLoop = this;
 
 	_state = &_context->emulatorState;
 	_cpu = _context->pCore;
@@ -39,6 +42,9 @@ MainLoop::~MainLoop()
 	_cpu = nullptr;
 	_state = nullptr;
 	_context = nullptr;
+
+    // De-register mainloop from the context
+    _context->pMainLoop = nullptr;
 
 	MLOGDEBUG("MainLoop::~MainLoop()");
 }
@@ -218,6 +224,14 @@ void MainLoop::OnFrameStart()
     _screen->InitFrame();
 }
 
+void MainLoop::OnCPUStep()
+{
+    _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
+
+    _context->pBetaDisk->handleStep();
+    _context->pSoundManager->handleStep();
+}
+
 void MainLoop::OnFrameEnd()
 {
     // Update counters
@@ -225,6 +239,7 @@ void MainLoop::OnFrameEnd()
 
     // Trigger events for peripherals
     _context->pTape->handleFrameEnd();
+    _context->pBetaDisk->handleFrameEnd();
     _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
 
     // Notify that video frame is composed and ready for rendering

@@ -53,11 +53,14 @@ public:
 
 protected:
 	void RunFrame();
-
-	void OnFrameStart();
-    void OnFrameEnd();
-
 	void ExecuteCPUFrameCycle();
+
+    /// region <Event handlers>
+public:
+    void OnFrameStart();
+    void OnCPUStep();
+    void OnFrameEnd();
+    /// endregion </Event handlers>
 
 public:
     void handleAudioBufferHalfFull(int id, Message* message);

@@ -47,6 +47,9 @@ public:
 	// Host system properties / context
 	HOST host;
 
+    // Main emulation loop
+    MainLoop* pMainLoop;
+
 	// Computer system instance
 	Core* pCore;
 

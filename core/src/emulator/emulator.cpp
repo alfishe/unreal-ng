@@ -693,7 +693,7 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 	// TODO: synchronize with all timings within frame and I/O
 
     z80.Z80Step(skipBreakpoints);
-    z80.UpdateScreen();
+    z80.OnCPUStep();
 
     // New frame to be started
     if (z80.t >= config.frame)

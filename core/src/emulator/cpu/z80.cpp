@@ -339,11 +339,8 @@ void Z80::Z80FrameCycle()
         // Perform single Z80 command cycle
         Z80Step();
 
-        // Update screen buffer (including border draw)
-        UpdateScreen();
-
-        // Update sound rendering
-        UpdateSound();
+        // Update peripheral states after CPU cycle
+        OnCPUStep();
     }
 }
 
@@ -574,17 +571,6 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 	/// endregion </INT (Non-masked interrupt)>
 }
 
-void Z80::UpdateScreen()
-{
-	_context->pScreen->UpdateScreen();
-}
-
-void Z80::UpdateSound()
-{
-    // Update AY state after each CPU cycle (required for precise envelope control / digital music)
-    _context->pSoundManager->handleStep();
-}
-
 void Z80::HandleNMI(ROMModeEnum mode)
 {
 	Z80& cpu = *this;
@@ -672,6 +658,12 @@ void Z80::HandleINT(uint8_t vector)
 	}
 
 	/// endregion </TSConf>
+}
+
+void Z80::OnCPUStep()
+{
+    // MainLoop will dispatch the call to all peripherals
+    _context->pMainLoop->OnCPUStep();
 }
 
 void Z80::WaitUntilResumed()
