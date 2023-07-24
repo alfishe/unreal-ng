@@ -2,7 +2,7 @@
 #include "pch.h"
 
 #include "portdecoder_pentagon128_test.h"
-
+#include <common/stringhelper.h>
 
 /// region <SetUp / TearDown>
 
@@ -52,5 +52,20 @@ TEST_F(PortDecoder_Pentagon128_Test, IsPort_7FFD)
             std::cout << message << std::endl;
         }
 #endif // _DEBUG
+    }
+}
+
+TEST_F(PortDecoder_Pentagon128_Test, DecodePort_FF)
+{
+    for (int i = 0; i <= 0xFFFF; i++)
+    {
+        uint16_t port = i & 0xFFFF;
+
+        if ((i & 0x00FF) == 0x00FF)
+        {
+            uint16_t result = _portDecoder->decodePort(i);
+
+            EXPECT_EQ(result, 0x00FF) << StringHelper::Format("Expected 0x00FF, found 0x%04X for i: %d", result, i);
+        }
     }
 }

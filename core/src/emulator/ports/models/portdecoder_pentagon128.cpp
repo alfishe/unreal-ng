@@ -237,7 +237,7 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
         { 0b1000'0000'0000'0010, 0b0000'0000'0000'0000, 0x7FFD },   // Mem #7FFD        Match value: (0x0000)
         { 0b0000'0000'0000'0001, 0b0000'0000'0000'0000, 0x00FE },   // Sys $00FE        Match value: (0x0000)
 
-        { 0b0000'0000'1111'1111, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
+        { 0b0000'0000'1000'0011, 0b0000'0000'1000'0011, 0x00FF },   // Beta128 #00FF    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x001F },   // Beta128 #001F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x003F },   // Beta128 #003F    Match value: (131, 0x0083)
         //{ 0b0000'0000'1001'1111, 0b0000'0000'0000'0011, 0x005F },   // Beta128 #005F    Match value: (131, 0x0083)
@@ -259,10 +259,15 @@ uint16_t PortDecoder_Pentagon128::decodePort(uint16_t port)
     }
     /// endregion </Full resolving>
 
+    if (result == 0x00FF)
+    {
+        result = result;
+    }
+
     if (result == 0x0000)
     {
         // Simplified resolving for BDI ports 1F, 3F, 5F, 7F
-        static constexpr const uint8_t portsMask = 0b1000'0011;     // 0x83 (131)
+        static constexpr const uint8_t portsMask  = 0b1000'0011;    // 0x83 (131)
         static constexpr const uint8_t portsMatch = 0b0000'0011;    // 0x03 (3)
         if ((port & portsMask) == portsMatch)
         {
