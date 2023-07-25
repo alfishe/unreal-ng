@@ -4,6 +4,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
 
+/// region <GTest helpers>
+
 // Addons to Gtest matchers
 #define EXPECT_IN_RANGE(VAL, MIN, MAX) \
     EXPECT_GE((VAL), (MIN));           \
@@ -12,6 +14,18 @@
 #define ASSERT_IN_RANGE(VAL, MIN, MAX) \
     ASSERT_GE((VAL), (MIN));           \
     ASSERT_LE((VAL), (MAX))
+
+bool areUint8ArraysEqual(const uint8_t* arr1, const uint8_t* arr2, size_t size);
+
+// Macro wrapper to compare two uint8_t arrays for equality
+#define EXPECT_ARRAYS_EQ(arr1, arr2, size) \
+    ASSERT_TRUE(areUint8ArraysEqual(arr1, arr2, size))
+
+// Macro wrapper to compare two uint8_t arrays for equality using ASSERT
+#define ASSERT_ARRAYS_EQ(arr1, arr2, size) \
+    ASSERT_TRUE(areUint8ArraysEqual(arr1, arr2, size))
+
+/// endregion <GTest helpers>
 
 class TestTimingHelper
 {

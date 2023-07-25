@@ -1469,11 +1469,15 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 10; // Time increments during simulation
 
+    // Test parameters
+    static constexpr const uint8_t TEST_TRACK = 0;
+    static constexpr const uint8_t TEST_SECTOR = 8;
+
     // Internal logging messages are done on Info level
     _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     // Sector read buffer
-    uint8_t sectorData[256] = {};
+    uint8_t sectorData[SECTORS_SIZE_BYTES] = {};
     size_t sectorDataIndex = 0;
 
     /// region <Load disk image>
@@ -1499,8 +1503,9 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     fdc._commandRegister = readSectorCommand;
     fdc._lastDecodedCmd = decodedCommand;
 
-    fdc._trackRegister = 0;
-    fdc._selectedDrive->setTrack(0);
+    fdc._trackRegister = TEST_TRACK;
+    fdc._selectedDrive->setTrack(TEST_TRACK);
+    fdc._sectorRegister = TEST_SECTOR;
     /// endregion </Create parameters for READ_SECTOR>
 
     // Trigger FDC command
@@ -1555,6 +1560,13 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
 
     EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
+
+    DiskImage::Track* track00 = diskImage->getTrackForCylinderAndSide(TEST_TRACK, 0);
+    uint8_t* referenceSector = track00->getDataForSector(TEST_SECTOR);
+
+    EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector read data is not expected";
+
+    std::cout << "Read sector dump:" << std::endl;
     std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
     /// endregion </Check results>
 }

@@ -13,10 +13,12 @@
 
 /// region <Constants>
 
+static constexpr const uint8_t TRD_SIGNATURE = 0x10;        // Unique signature for TR-DOS volume. Must be placed at offset
+static constexpr const uint8_t SECTORS_PER_TRACK = 16;      // TR-DOS uses 16 sectors per track
+static constexpr const uint16_t SECTORS_SIZE_BYTES = 256;   // TR-DOS uses 256 bytes sectors
+
 /// endregion </Constants>
 
-static constexpr const uint8_t TRD_SIGNATURE = 0x10;          // Unique signature for TR-DOS volume. Must be placed at offset
-static constexpr const uint8_t SECTORS_PER_TRACK = 16;  // TR-DOS uses 16 sectors per track
 /// region <Types>
 
 /// Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19)
