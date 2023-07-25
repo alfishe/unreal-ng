@@ -1,6 +1,8 @@
 #include "fdd.h"
 
 #include <random>
+#include "common/filehelper.h"
+#include "loaders/disk/loader_trd.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
 
@@ -21,7 +23,18 @@ FDD::FDD(EmulatorContext* context) : _context(context)
     /// endregion </Random track number on init>
 
     // TODO: remove debug
+    /// region <Debug image initialization>
+    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
+    filepath = FileHelper::AbsolutePath(filepath);
+    LoaderTRD trdLoader(_context, filepath);
+    bool imageLoaded = trdLoader.loadImage();
+
+    DiskImage* diskImage = trdLoader.getImage();
+    /// endregion </Load disk image>
+
+    _diskImage = diskImage;
     _diskInserted = true;
+    /// endregion </Debug Image initialization>
 }
 /// endregion </Constructors / destructors>
 

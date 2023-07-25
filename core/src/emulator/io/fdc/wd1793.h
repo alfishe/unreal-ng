@@ -63,9 +63,9 @@ public:
 
         S_STEP,
         S_VERIFY,
-        S_SEEK,
 
         S_SEARCH_ID,
+        S_READ_SECTOR,
 
         S_READ_BYTE,
         S_WRITE_BYTE,
@@ -79,12 +79,6 @@ public:
         S_WRITE,
         S_WRTRACK,
         S_WR_TRACK_DATA,
-
-        S_TYPE1_CMD,
-
-        S_SEEKSTART,
-        S_RESTORE,
-        S_VERIFY2,
 
         S_WAIT_HLT,
         S_WAIT_HLT_RW,
@@ -106,9 +100,9 @@ public:
 
             "S_STEP",
             "S_VERIFY",
-            "S_SEEK",
 
             "S_SEARCH_ID",
+            "S_READ_SECTOR",
 
             "S_READ_BYTE",
             "S_WRITE_BYTE",
@@ -122,12 +116,6 @@ public:
             "S_WRITE",
             "S_WRTRACK",
             "S_WR_TRACK_DATA",
-
-            "S_TYPE1_CMD",
-
-            "S_SEEKSTART",
-            "S_RESTORE",
-            "S_VERIFY2",
 
             "S_WAIT_HLT",
             "S_WAIT_HLT_RW",
@@ -257,10 +245,42 @@ public:
     using CommandHandler = void (WD1793::*)(uint8_t);
     using FSMHandler = void (WD1793::*)();
 
+    /// Class to handle FSM transition events
+    class FSMEvent
+    {
+    public:
+        FSMEvent(WDSTATE state, std::function<void()> action, size_t delayTStates = 0) :
+            _state(state),
+            _action(action),
+            _delayTStates(delayTStates)
+        {
+        }
+
+        WDSTATE getState() const
+        {
+            return _state;
+        }
+
+        size_t getDelay() const
+        {
+            return _delayTStates;
+        }
+
+        void executeAction() const
+        {
+            _action();
+        }
+
+    private:
+        WDSTATE _state;
+        size_t _delayTStates;
+        std::function<void()> _action;
+    };
+
     /// endregion </Types>
 
     /// region <Constants>
-protected:
+public:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
     static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
@@ -345,7 +365,7 @@ protected:
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
     WDSTATE _state = S_IDLE;
     WDSTATE _state2 = S_IDLE;
-    std::queue<WDSTATE> _operationFIFO;    // Holds FIFO queue for scheduled state transitions (when WD1793 command requires complex FSM flow)
+    std::queue<FSMEvent> _operationFIFO;    // Holds FIFO queue for scheduled state transitions (when WD1793 command requires complex FSM flow)
 
     // Type 1 command params
     bool _loadHead = false;             // Determines if load should be loaded or unloaded during Type1 command
@@ -358,10 +378,13 @@ protected:
     bool _headLoaded = false;
 
     // Type 2 command params
-    bool _dataRegisterAccessed = false;  // Type2 commands have timeout for data availability in Data Register
-    uint8_t* _rawDataBuffer = nullptr;      // Pointer to required sector data
-    size_t _bytesToRead = 0;            // How many more bytes to read from the disk
-    size_t _bytesToWrite = 0;           // How many more bytes to write to the disk
+    uint16_t _sectorSize = 256;         // Sector size in bytes (will be read from ID Address Mark during READ SECTOR command execution)
+    bool _dataRegisterAccessed = false; // Type2 commands have timeout for data availability in Data Register
+    uint8_t* _idamData = nullptr;
+    uint8_t* _sectorData = nullptr;
+    uint8_t* _rawDataBuffer = nullptr;   // Pointer to read/write data
+    int32_t _bytesToRead = 0;            // How many more bytes to read from the disk
+    int32_t _bytesToWrite = 0;           // How many more bytes to write to the disk
 
 
     // FDD state
@@ -443,14 +466,15 @@ protected:
 protected:
     std::map<WDSTATE, FSMHandler> _stateHandlerMap =
     {
-        { S_IDLE,       &WD1793::processIdle },
-        { S_WAIT,       &WD1793::processWait },
-        { S_FETCH_FIFO, &WD1793::processFetchFIFO },
-        { S_STEP,       &WD1793::processStep },
-        { S_VERIFY,     &WD1793::processVerify },
-        { S_SEEK,       &WD1793::processSeek },
-        { S_READ_BYTE,  &WD1793::processReadByte },
-        { S_WRITE_BYTE, &WD1793::processWriteByte },
+        { S_IDLE,           &WD1793::processIdle },
+        { S_WAIT,           &WD1793::processWait },
+        { S_FETCH_FIFO,     &WD1793::processFetchFIFO },
+        { S_STEP,           &WD1793::processStep },
+        { S_VERIFY,         &WD1793::processVerify },
+        { S_SEARCH_ID,      &WD1793::processSearchID },
+        { S_READ_SECTOR,    &WD1793::processReadSector },
+        { S_READ_BYTE,      &WD1793::processReadByte },
+        { S_WRITE_BYTE,     &WD1793::processWriteByte },
     };
 
     void processIdle();
@@ -458,7 +482,8 @@ protected:
     void processFetchFIFO();
     void processStep();
     void processVerify();
-    void processSeek();
+    void processSearchID();
+    void processReadSector();
     void processReadByte();
     void processWriteByte();
 
@@ -474,11 +499,46 @@ protected:
         _state2 = WDSTATE::S_IDLE;
     }
 
+    void transitionFSM(FSMEvent nextStateEvent)
+    {
+        WDSTATE nextState = nextStateEvent.getState();
+
+        /// region <Debug logging>
+        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, convertTStatesToMs(_time));
+        std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
+        MLOGINFO(message.c_str());
+        /// endregion </Debug logging>
+
+        nextStateEvent.executeAction();
+
+        _state = nextState;
+        _state2 = WDSTATE::S_IDLE;
+    }
+
     void transitionFSMWithDelay(WDSTATE nextState, size_t delayTStates)
     {
+        /// region <Debug logging>
+        std::string delayNote = StringHelper::Format(" delay(%d | %.02f ms)", delayTStates, convertTStatesToMsFloat(delayTStates));
+        std::string message = StringHelper::Format("%s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
+        MLOGINFO(message.c_str());
+        /// endregion </Debug logging>
+
+        _state2 = nextState;
+        _delayTStates = delayTStates - 1;
+        _state = WDSTATE::S_WAIT;  // Keep FSM in wait state until delay time elapsed
+    }
+
+    void transitionFSMWithDelay(FSMEvent nextStateEvent, size_t delayTStates)
+    {
+        WDSTATE nextState = nextStateEvent.getState();
+
+        /// region <Debug logging>
         std::string delayNote = StringHelper::Format(" delay(%d | %d ms)", delayTStates, convertTStatesToMs(delayTStates));
         std::string message = StringHelper::Format("%s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
         MLOGINFO(message.c_str());
+        /// endregion </Debug logging>
+
+        nextStateEvent.executeAction();
 
         _state2 = nextState;
         _delayTStates = delayTStates - 1;
@@ -520,7 +580,29 @@ protected:
         _diffTime = 0;
     };
 
+    /// Provide value stored in Data Register and update access flag
+    uint8_t readDataRegister()
+    {
+        uint8_t result = _dataRegister;
+        _dataRegisterAccessed = true;
+
+        return result;
+    }
+
+    void writeDataRegister(uint8_t value)
+    {
+        _dataRegister = value;
+        _dataRegisterAccessed = true;
+    }
+
     /// endregion </State machine handlers>
+
+    /// region <Emulation events>
+public:
+    void handleFrameStart();
+    void handleStep();
+    void handleFrameEnd();
+    /// endregion </Emulation events>
 
     /// region <PortDevice interface methods>
 public:
@@ -543,6 +625,13 @@ public:
     static inline size_t convertTStatesToMs(size_t tStates)
     {
         size_t result = tStates / TSTATES_PER_MS;
+
+        return result;
+    }
+
+    static inline double convertTStatesToMsFloat(size_t tStates)
+    {
+        double result = (double)tStates / (double)TSTATES_PER_MS;
 
         return result;
     }
@@ -583,6 +672,8 @@ public:
     using WD1793::_stepCounter;
     using WD1793::_steppingMotorRate;
     using WD1793::_motorTimeoutTStates;
+
+    using WD1793::_dataRegisterAccessed;
 
     using WD1793::_index;
     using WD1793::_indexPulseCounter;
@@ -625,6 +716,8 @@ public:
     using WD1793::processClockTimings;
     virtual void updateTimeFromEmulatorState() override {}; // Make it dummy stub and skip reading T-State counters from the emulator
     using WD1793::resetTime;
+    using WD1793::readDataRegister;
+    using WD1793::writeDataRegister;
     using WD1793::prolongFDDMotorRotation;
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;

@@ -38,13 +38,13 @@ MainLoop::~MainLoop()
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
     messageCenter.RemoveObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
+    // De-register mainloop from the context
+    _context->pMainLoop = nullptr;
+
     _screen = nullptr;
 	_cpu = nullptr;
 	_state = nullptr;
 	_context = nullptr;
-
-    // De-register mainloop from the context
-    _context->pMainLoop = nullptr;
 
 	MLOGDEBUG("MainLoop::~MainLoop()");
 }

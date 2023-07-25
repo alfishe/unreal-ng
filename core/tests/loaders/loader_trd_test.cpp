@@ -94,6 +94,7 @@ TEST_F(LoaderTRD_Test, DiskImage_getTrackForCylinderAndSide)
     }
 }
 
+/// Test that image load basically works
 TEST_F(LoaderTRD_Test, Load)
 {
     std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
@@ -104,4 +105,31 @@ TEST_F(LoaderTRD_Test, Load)
     EXPECT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
     EXPECT_EQ(loaderTrd._diskImage->getLoaded(), true);
 }
+
+/// Test that TR-DOS sector 9 (volume information) is parsed correctly
+TEST_F(LoaderTRD_Test, Sector9)
+{
+    /// region <Load test image>
+    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
+    filepath = FileHelper::AbsolutePath(filepath);
+    LoaderTRDCUT loaderTrd(_context, filepath);
+    bool result = loaderTrd.loadImage();
+
+    EXPECT_EQ(result, true) << StringHelper::Format("File '%s' was not loaded", filepath.c_str()) << std::endl;
+    EXPECT_EQ(loaderTrd._diskImage->getLoaded(), true);
+    /// endregion </Load test image>
+
+    DiskImage* diskImage = loaderTrd.getImage();
+    EXPECT_NE(diskImage, nullptr);
+
+    DiskImage::Track* track00 = diskImage->getTrackForCylinderAndSide(0, 0);
+    EXPECT_NE(track00, nullptr);
+
+    uint8_t* sector09 = track00->getDataForSector(8);
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector09;
+
+    EXPECT_EQ(volumeInfo->trDOSSignature, TRD_SIGNATURE);
+    EXPECT_EQ(volumeInfo->deletedFileCount, 0);
+}
+
 /// endregion </Tests>

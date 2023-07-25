@@ -4,10 +4,13 @@
 
 #include <cmath>
 #include <random>
+#include "common/dumphelper.h"
+#include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
-#include <emulator/io/fdc/wd1793.h>
-#include <emulator/cpu/z80.h>
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/cpu/z80.h"
+#include "loaders/disk/loader_trd.h"
 
 /// region <Test types>
 
@@ -192,7 +195,7 @@ TEST_F(WD1793_Test, FDD_Motor_StartStop)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+    _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     WD1793CUT fdc(_context);
 
@@ -921,6 +924,8 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         fdc._selectedDrive->setTrack(i);
         fdc._trackRegister = i;
         fdc._dataRegister = targetTrack;
+        fdc._statusRegister &= ~WD1793::WDS_BUSY;
+        fdc._beta128status &= ~(WD1793::INTRQ | WD1793::DRQ);
 
         // Mock parameters
         const uint8_t stepCommand = 0b0001'0000; // SEEK: no load head, no verify and fastest stepping rate 00 (3ms @ 2MHz, 6ms @ 1MHz)
@@ -933,10 +938,13 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
         fdc.resetTime();
 
         /// region <Pre-checks>
+        std::string error = StringHelper::Format("Track %d", i);
         EXPECT_EQ(decodedCommand, WD1793::WD_CMD_SEEK);
         EXPECT_EQ(fdc._time, 0);
         EXPECT_EQ(fdc._lastTime, 0);
         EXPECT_EQ(fdc._diffTime, 0);
+        EXPECT_EQ(fdc._statusRegister & WD1793::WDS_BUSY, 0) << error;
+        EXPECT_EQ(fdc._beta128status & WD1793::INTRQ, 0) << error;
         /// endregion </Pre-checks>
 
         // Trigger SEEK command
@@ -978,8 +986,10 @@ TEST_F(WD1793_Test, FSM_CMD_Seek)
                                        fdc._trackRegister == targetTrack &&             // FDC track set to <next track>
                                        fdc._selectedDrive->getTrack() == targetTrack && // FDD has the same track
                                        fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
-
         EXPECT_EQ(isAccomplishedCorrectly, true) << "SEEK didn't end up correctly";
+
+        bool intrqSet = fdc._beta128status & WD1793::INTRQ;
+        EXPECT_EQ(intrqSet, true) << "INTRQ was not set at the end of SEEK";
 
         size_t estimatedExecutionTime = std::abs(targetTrack - i) * fdc._steppingMotorRate; // We're performing single positioning step 6ms long
         size_t estimationError = std::abs(targetTrack - i) * 0.5; // No more than 0.5ms estimation error per step
@@ -1451,6 +1461,104 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
 }
 
 /// endregion </STEP_OUT>
+
+/// region <READ_SECTOR>
+TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
+{
+    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 1;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 10; // Time increments during simulation
+
+    // Internal logging messages are done on Info level
+    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+
+    // Sector read buffer
+    uint8_t sectorData[256] = {};
+    size_t sectorDataIndex = 0;
+
+    /// region <Load disk image>
+    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
+    filepath = FileHelper::AbsolutePath(filepath);
+    LoaderTRDCUT trdLoader(_context, filepath);
+    bool imageLoaded = trdLoader.loadImage();
+
+    EXPECT_EQ(imageLoaded, true) << "Test TRD image was not loaded";
+
+    DiskImage* diskImage = trdLoader.getImage();
+
+    EXPECT_NE(diskImage, nullptr);
+    /// endregion </Load disk image>
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(diskImage);
+
+    /// region <Create parameters for READ_SECTOR>
+    const uint8_t readSectorCommand = 0b0100'0000;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(readSectorCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, readSectorCommand);
+    fdc._commandRegister = readSectorCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    /// endregion </Create parameters for READ_SECTOR>
+
+    // Trigger FDC command
+    fdc.cmdReadSector(commandValue);
+
+    /// region <Perform simulation loop>
+    size_t clk;
+    for (clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        // Update time for FDC
+        fdc._time = clk;
+
+        // Process FSM state updates
+        fdc.process();
+
+        // Check that BUSY flag is set for the whole duration of head positioning
+        if (fdc._state != WD1793::S_IDLE)
+        {
+            bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+            EXPECT_EQ(busyFlag, true);
+        }
+
+        // Fetch data bytes with marking Data Register accessed so no DATA LOSS error occurs
+        if (fdc._state == WD1793::S_READ_BYTE && !fdc._dataRegisterAccessed)
+        {
+            uint8_t readValue = fdc.readDataRegister();
+            std::cout << StringHelper::Format("Byte '%c' %d (0x%02X) read", readValue, readValue, readValue) << std::endl;
+
+            sectorData[sectorDataIndex++] = readValue;
+        }
+
+        // Check if test sequence already finished
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+    /// endregion </Perform simulation loop>
+
+    /// region <Check results>
+    size_t elapsedTimeTStates = clk;
+    size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
+
+    bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&     // Controller is not BUSY anymore
+                                   fdc._trackRegister == 0 &&                       // FDC track set to <next track>
+                                   fdc._selectedDrive->getTrack() == 0 &&           // FDD has the same track
+                                   fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
+
+    EXPECT_EQ(isAccomplishedCorrectly, true) << "READ_SECTOR didn't end up correctly";
+
+    size_t estimatedExecutionTime = 256 * WD1793::TSTATES_PER_FDC_BYTE / TSTATES_IN_MS; // We're performing single positioning step 6ms long
+    EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
+
+    EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
+    std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
+    /// endregion </Check results>
+}
+/// endregion </READ_SECTOR>
 
 /// region <FORCE_INTERRUPT>
 

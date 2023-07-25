@@ -175,6 +175,9 @@ public:
             return result;
         }
 
+        /// Returns pointer to sector data
+        /// @param sectorNo (Sector numeration starts from 1)
+        /// @return Sector
         uint8_t* getDataForSector(uint8_t sectorNo)
         {
             // Ensure sector number is in range [0..15]
@@ -189,7 +192,7 @@ public:
         /// region <Constructors / destructors>
         Track()
         {
-            // Apply default interleaving and re-index
+            // Apply default interleaving and do re-index
             reindexSectors();
         }
         ~Track() = default;
