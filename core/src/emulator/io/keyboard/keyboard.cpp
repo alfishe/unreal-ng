@@ -333,12 +333,26 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
 
     if (portFE == 0xFE)
     {
-        // Find index of single set bit (corresponds to reset bit in high-byte of #FE port IN request)
-        matrix_index = BitHelper::GetFirstSetBitPosition(subport_inv);
-
-        if (matrix_index != 0xFF)
+        if (subport != 0x00)
         {
-            result = _keyboardMatrixState[matrix_index];
+            // Find index of single set bit (corresponds to reset bit in high-byte of #FE port IN request)
+            matrix_index = BitHelper::GetFirstSetBitPosition(subport_inv);
+
+            if (matrix_index != 0xFF) {
+                result = _keyboardMatrixState[matrix_index];
+            }
+        }
+        else
+        {
+            // IN #FE request was made - so any key will work
+            for (uint8_t i; i < sizeof(_keyboardMatrixState) / sizeof(_keyboardMatrixState[0]); i++)
+            {
+                if (_keyboardMatrixState[i] != 0xFF)
+                {
+                    result = _keyboardMatrixState[i];
+                    break;
+                }
+            }
         }
     }
     else
