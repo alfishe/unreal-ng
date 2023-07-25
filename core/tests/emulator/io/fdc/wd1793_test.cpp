@@ -1471,7 +1471,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 
     // Test parameters
     static constexpr const uint8_t TEST_TRACK = 0;
-    static constexpr const uint8_t TEST_SECTOR = 8;
+    static constexpr const uint8_t TEST_SECTOR = 9;
 
     // Internal logging messages are done on Info level
     _context->pModuleLogger->SetLoggingLevel(LogInfo);

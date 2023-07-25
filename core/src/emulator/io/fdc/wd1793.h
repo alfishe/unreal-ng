@@ -410,6 +410,13 @@ public:
 public:
     virtual void reset();
     void process();
+    void ejectDisk()
+    {
+        if (_selectedDrive)
+        {
+            _selectedDrive->ejectDisk();
+        }
+    }
     /// endregion </Methods>
 
     /// region <Helper methods>

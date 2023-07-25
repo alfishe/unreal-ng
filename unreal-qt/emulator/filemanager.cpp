@@ -16,6 +16,8 @@ PatternCategoryMap FileManager::_extensions =
 
     { "trd", SupportedFileCategoriesEnum::FileDisk },
     { "scl", SupportedFileCategoriesEnum::FileDisk },
+    { "udi", SupportedFileCategoriesEnum::FileDisk },
+    { "fdi", SupportedFileCategoriesEnum::FileDisk },
 
     { "gz", SupportedFileCategoriesEnum::FileArchive },
     { "tar", SupportedFileCategoriesEnum::FileArchive },
@@ -24,6 +26,8 @@ PatternCategoryMap FileManager::_extensions =
     { "7z", SupportedFileCategoriesEnum::FileArchive },
 };
 
+/// Detect file type/category based on its extension
+/// List of supported types is in FileManager::_extensions map
 SupportedFileCategoriesEnum FileManager::determineFileCategoryByExtension(QString filepath)
 {
     SupportedFileCategoriesEnum result = SupportedFileCategoriesEnum::FileUnknown;

@@ -14,6 +14,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/memory/memory.h"
 #include "loaders/snapshot/loader_sna.h"
+#include "emulator/io/fdc/wd1793.h"
 
 /// region <Constructors / Destructors>
 
@@ -326,6 +327,13 @@ void Emulator::ReleaseNoGuard()
     for (size_t i = 0; i < 4; i++)
     {
         DiskImage* diskImage = _context->coreState.diskImages[i];
+        FDD* diskDrive = _context->coreState.diskDrives[i];
+
+        if (diskDrive != nullptr)
+        {
+            diskDrive->ejectDisk();
+            delete diskDrive;
+        }
 
         if (diskImage)
         {
@@ -671,8 +679,26 @@ bool Emulator::LoadDisk(const std::string &path)
         if (loaderTrd.loadImage())
         {
             // FIXME: use active drive, not fixed A:
-            DiskImage* diskImage = loaderTrd.getImage();
+
+            /// region <Free memory from previous disk image>
+            _context->pBetaDisk->ejectDisk();
+            _context->coreState.diskDrives[0]->ejectDisk();
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loaderTrd.getImage();
             _context->coreState.diskImages[0] = diskImage;
+
+            _context->coreState.diskDrives[0]->insertDisk(diskImage);
+
+            /// endregion </Load new disk image and mount it>
         }
     }
 

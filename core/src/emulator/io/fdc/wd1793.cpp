@@ -12,15 +12,35 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    // Attach single drive by default
-    _selectedDrive = new FDD(_context);
+    /// region <Create FDD instances
+
+    for (size_t i = 0; i < 4; i++)
+    {
+        _context->coreState.diskDrives[i] = new FDD(_context);
+    }
+
+    /// endregion </Create FDD instances>
+
+    // Set drive A: as default
+    _selectedDrive = _context->coreState.diskDrives[0];
 }
 
 WD1793::~WD1793()
 {
-    if (_selectedDrive)
+    for (size_t i = 0; i < 4; i++)
     {
-        delete _selectedDrive;
+        FDD* diskDrive = _context->coreState.diskDrives[i];
+        if (diskDrive)
+        {
+            diskDrive->ejectDisk();
+            delete diskDrive;
+        }
+
+        DiskImage* diskImage = _context->coreState.diskImages[i];
+        if (diskImage)
+        {
+            delete diskImage;
+        }
     }
 }
 
@@ -682,7 +702,7 @@ void WD1793::cmdReadSector(uint8_t value)
             // Position to the sector requested
             DiskImage* diskImage = this->_selectedDrive->getDiskImage();
             DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-            this->_sectorData = track->getDataForSector(this->_sectorRegister);
+            this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
             this->_rawDataBuffer = this->_sectorData;
         });
     _operationFIFO.push(readSector);
@@ -1138,9 +1158,9 @@ void WD1793::processSearchID()
 {
     DiskImage* diskImage = _selectedDrive->getDiskImage();
     DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp ? 1 : 0);
-    DiskImage::AddressMarkRecord* idAddressMark = track->getIDForSector(_sectorRegister);
+    DiskImage::AddressMarkRecord* idAddressMark;
 
-    if (idAddressMark != nullptr)
+    if (track != nullptr && (idAddressMark = track->getIDForSector(_sectorRegister)) != nullptr)
     {
         // ID Address mark found
 
@@ -1195,7 +1215,7 @@ void WD1793::processReadSector()
                 {
 
                     DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-                    this->_sectorData = track->getDataForSector(this->_sectorRegister);
+                    this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
 
                     this->_rawDataBuffer = this->_sectorData;
                     this->_bytesToRead = this->_sectorSize;
@@ -1408,12 +1428,22 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             _trackRegister = value;
 
             //TODO: remove debug
+            if (_trackRegister >= MAX_CYLINDERS)
+            {
+                _trackRegister = _trackRegister;
+
+                _trackRegister = 79;
+            }
             MLOGINFO(StringHelper::Format("  #3F - Set track: 0x%02X", _trackRegister).c_str());
             break;
         case PORT_5F:   // Write to Sector Register
             _sectorRegister = value;
 
             //TODO: remove debug
+            if (_sectorRegister == 0 || _sectorRegister > 16)
+            {
+                _sectorRegister = _sectorRegister;
+            }
             MLOGINFO(StringHelper::Format("  #5F - Set sector: 0x%02X", _sectorRegister).c_str());
             break;
         case PORT_7F:   // Write to Data Register
