@@ -345,7 +345,7 @@ uint8_t Keyboard::HandlePortIn(uint16_t port)
         else
         {
             // IN #FE request was made - so any key will work
-            for (uint8_t i; i < sizeof(_keyboardMatrixState) / sizeof(_keyboardMatrixState[0]); i++)
+            for (uint8_t i = 0; i < sizeof(_keyboardMatrixState) / sizeof(_keyboardMatrixState[0]); i++)
             {
                 if (_keyboardMatrixState[i] != 0xFF)
                 {
