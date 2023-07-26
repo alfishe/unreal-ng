@@ -34,12 +34,16 @@ WD1793::~WD1793()
         {
             diskDrive->ejectDisk();
             delete diskDrive;
+
+            _context->coreState.diskDrives[i] = nullptr;
         }
 
         DiskImage* diskImage = _context->coreState.diskImages[i];
         if (diskImage)
         {
             delete diskImage;
+
+            _context->coreState.diskImages[i] = nullptr;
         }
     }
 }

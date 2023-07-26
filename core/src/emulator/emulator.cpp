@@ -326,18 +326,22 @@ void Emulator::ReleaseNoGuard()
     // Floppy
     for (size_t i = 0; i < 4; i++)
     {
-        DiskImage* diskImage = _context->coreState.diskImages[i];
         FDD* diskDrive = _context->coreState.diskDrives[i];
+        DiskImage* diskImage = _context->coreState.diskImages[i];
 
         if (diskDrive != nullptr)
         {
             diskDrive->ejectDisk();
             delete diskDrive;
+
+            _context->coreState.diskDrives[i] = nullptr;
         }
 
         if (diskImage)
         {
             delete diskImage;
+
+            _context->coreState.diskImages[i] = nullptr;
         }
     }
 
