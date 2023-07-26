@@ -165,7 +165,7 @@ void Screen::InitRaster()
 	}
 
 	// Sinclair
-	video.mode = M_ZX48;
+	//video.mode = M_ZX48;
 
 	///endregion
 
@@ -229,7 +229,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
 
     // Invisible blank area on top
     _rasterState.blankAreaStart = 0;
-    _rasterState.blankAreaEnd = _rasterState.tstatesPerLine * (rasterDescriptor.vBlankLines + rasterDescriptor.vSyncLines) - 1;
+    _rasterState.blankAreaEnd = _rasterState.tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines) - 1;
 
     // Top border
     _rasterState.topBorderAreaStart = _rasterState.blankAreaEnd + 1;
@@ -248,7 +248,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     /// region <Horizontal timings>
 
     _rasterState.blankLineAreaStart = 0;
-    _rasterState.blankLineAreaEnd = ((rasterDescriptor.hBlankPixels + rasterDescriptor.hSyncPixels) / _rasterState.pixelsPerTState) - 1;
+    _rasterState.blankLineAreaEnd = ((rasterDescriptor.hSyncPixels + rasterDescriptor.hBlankPixels) / _rasterState.pixelsPerTState) - 1;
 
     _rasterState.leftBorderAreaStart = _rasterState.blankLineAreaEnd + 1;
     _rasterState.leftBorderAreaEnd = _rasterState.leftBorderAreaStart + (rasterDescriptor.screenOffsetLeft / _rasterState.pixelsPerTState) - 1;
@@ -371,7 +371,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 	{
 		case M_ZX48:
 		case M_ZX128:
-		case M_PMC:
+        case M_PENTAGON128K:
 			break;
 		default:
 			MLOGWARNING("AllocateFramebuffer: Unknown video mode");
@@ -407,6 +407,7 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 	else
     {
 	    MLOGERROR("Unable to allocate framebuffer, unknown video mode");
+        throw new std::logic_error("Unable to allocate framebuffer, unknown video mode");
     }
 }
 
@@ -775,7 +776,8 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
         [M_NUL] = "Null",	                // Non-existing mode
         [M_ZX48] = "ZX-Spectrum 48k",		// Sinclair ZX Spectrum 48k
         [M_ZX128] = "ZX-Spectrum 128k",		// Sinclair ZX Spectrum 128k
-        [M_PMC] = "Pentagon",		        // Pentagon Multicolor
+        [M_PENTAGON128K] = "Pengagon 128k",	// Pentagon 128k
+        [M_PMC] = "Pentagon multicolor",    // Pentagon Multicolor
         [M_P16] = "Pentagon 16c",   		// Pentagon 16c
         [M_P384] = "Pentagon 384x384",		// Pentagon 384x304
         [M_PHR] = "Pentagon HiRes", 		// Pentagon HiRes

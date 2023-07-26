@@ -9,7 +9,7 @@
 
 ScreenZX::ScreenZX(EmulatorContext *context) : Screen(context)
 {
-    SetVideoMode(M_ZX48);
+    SetVideoMode(M_PENTAGON128K);
     CreateTables();
 }
 
@@ -22,6 +22,7 @@ ScreenZX::~ScreenZX()
 
 /// region <Genuine ZX-Spectrum ULA specifics>
 
+/// Populate lookup tables for ZX-Spectrum pixel and attribute coordinates
 void ScreenZX::CreateTables()
 {
     // Pre-calculate line offsets for ZX-Spectrum ULA screen
@@ -539,7 +540,7 @@ void ScreenZX::Draw(uint32_t tstate)
     const uint16_t tstatesPerLine = rasterDescriptor.pixelsPerLine / 2;
     const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
 
-    if (tstate < maxFrameTiming)
+    if (_mode != M_NUL && tstate < maxFrameTiming)
     {
         uint16_t zxX;
         uint16_t zxY;

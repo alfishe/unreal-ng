@@ -36,27 +36,28 @@ enum SpectrumScreenEnum : uint8_t
 
 enum VideoModeEnum : uint8_t
 {
-    M_NUL = 0,	// Non-existing mode / headless
-    M_ZX48,		// Sinclair ZX-Spectrum 48k
-    M_ZX128,    // Sinclair ZX-Spectrum 128k / +2 / +3
-    M_PMC,		// Pentagon Multicolor
-    M_P16,		// Pentagon 16c
-    M_P384,		// Pentagon 384x304
-    M_PHR,		// Pentagon HiRes
+    M_NUL = 0,      // Non-existing mode / headless
+    M_ZX48,		    // Sinclair ZX-Spectrum 48k
+    M_ZX128,        // Sinclair ZX-Spectrum 128k / +2 / +3
+    M_PENTAGON128K, // Pentagon 128k timings
+    M_PMC,		    // Pentagon Multicolor
+    M_P16,		    // Pentagon 16c
+    M_P384,		    // Pentagon 384x304
+    M_PHR,		    // Pentagon HiRes
 
-	M_TIMEX,     // Timex with 32 x 192 attributes (2 colors per line)
+	M_TIMEX,        // Timex with 32 x 192 attributes (2 colors per line)
 
-	M_TS16,		// TS 16c
-	M_TS256,	// TS 256c
-	M_TSTX,		// TS Text
-	M_ATM16,	// ATM 16c
-	M_ATMHR,	// ATM HiRes
-	M_ATMTX,	// ATM Text
-	M_ATMTL,	// ATM Text Linear
-	M_PROFI,	// Profi
-	M_GMX,		// GMX
+	M_TS16,		    // TS 16c
+	M_TS256,	    // TS 256c
+	M_TSTX,		    // TS Text
+	M_ATM16,	    // ATM 16c
+	M_ATMHR,	    // ATM HiRes
+	M_ATMTX,	    // ATM Text
+	M_ATMTL,	    // ATM Text Linear
+	M_PROFI,	    // Profi
+	M_GMX,		    // GMX
 
-    M_BRD,  	// Border only
+    M_BRD,  	    // Border only
 
 	M_MAX
 };
@@ -295,11 +296,27 @@ public:
 
 	/// Raster descriptors for each video mode
 	/// All values are in pixel units!
+	//    uint16_t fullFrameWidth;
+    //    uint16_t fullFrameHeight;
+    //
+    //    uint16_t screenWidth;
+    //    uint16_t screenHeight;
+    //
+    //    uint16_t screenOffsetLeft;
+    //    uint16_t screenOffsetTop;
+    //
+    //    uint16_t pixelsPerLine;
+    //
+    //    uint16_t hSyncPixels;
+    //    uint16_t hBlankPixels;
+    //    uint16_t vSyncLines;
+    //    uint16_t vBlankLines;
 	const RasterDescriptor rasterDescriptors[M_MAX] =
     {
 	    { 0, 0, 0, 0, 0, 0 ,0, 0, 0, 0, 0},                     // M_NUL
 	    { 352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16 },     // M_ZX48k
         { 352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 16 },     // M_ZX128 - Not ready!
+        { 352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16 },    // M_PENTAGON128K
 	    { 352, 288, 256, 192, 48, 48, 448, 64, 32, 16, 16 }     // M_PMC - Not Ready!
     };
 
