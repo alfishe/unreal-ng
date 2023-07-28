@@ -291,11 +291,9 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
 
     EmulatorState& state = _context->emulatorState;
     Memory& memory = *_context->pMemory;
-    Screen& screen = *_context->pScreen;
 
-    uint8_t bankRAM = value & 0b0000'0111;              // Bits [0:2]
     uint8_t screenNumber = (value & 0b0000'1000) >> 3;  // Bit 3: 0 = Normal (Bank 5), 1 = Shadow (Bank 7)
-    uint8_t romPage = (value & 0b000'10000) >> 4;       // Bit 4: 0 = 128K, 1 = 48K
+    uint8_t romPage = (value & 0b0001'0000) >> 4;       // Bit 4: 0 = 128K, 1 = 48K
     bool isPagingDisabled = value & 0b0010'0000;        // Bit 5: 0 = none, 1 = blocked
 
     // Disabling latch is kept until reset
@@ -303,10 +301,16 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
     {
         romPage |= 0b0000'0010; // Pentagon has 128K/48K ROMs in pages 2 and 3, not 0 and 1. So we need make correction (add 2 or set bit 1)
 
-        memory.SetRAMPageToBank3(bankRAM);
+        switchRAMPage(value);   // Separate virtual method is used to unify 128k and 512k behavior
         memory.SetROMPage(romPage);
 
         _7FFD_Locked = isPagingDisabled;
+    }
+    else
+    {
+        // Set 48k ROM and lock RAM page0 at 0xC000...0xFFFF address window
+        switchRAMPage(0);
+        memory.SetROMPage(3);
     }
 
     // Detect if screen switch requested. Do not switch screen if state not changed
@@ -330,6 +334,17 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
 
     /// endregion </Debug logging>
 }
+
+/// Pentagon 128k RAM page switching. Uses only 8 pages [0..7] via port #7FFD bits [0..2]
+void PortDecoder_Pentagon128::switchRAMPage(uint8_t value)
+{
+    Memory& memory = *_context->pMemory;
+
+    uint8_t bankRAM = value & 0b0000'0111;              // Bits [0:2]
+    memory.SetRAMPageToBank3(bankRAM);
+}
+
+/// endregion </Helper methods>
 
 /// region <Debug information>
 

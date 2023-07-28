@@ -54,12 +54,15 @@ public:
 
     uint16_t decodePort(uint16_t port);
 
-    /// endregion <Helper methods>
-
 protected:
     void Port_7FFD_Out(uint16_t port, uint8_t value, uint16_t pc);
+    virtual void switchRAMPage(uint8_t value);
+    /// endregion <Helper methods>
 
+    /// region <Debug methods>
+protected:
     std::string Dump_7FFD_value(uint8_t value);
     std::string Dump_BFFD_value(uint8_t value);
     std::string Dump_FFFD_value(uint8_t value);
+    /// endregion </Debug methods>
 };

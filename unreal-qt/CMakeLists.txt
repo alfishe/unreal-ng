@@ -122,7 +122,7 @@ add_custom_command(
 )
 
 # Copy default config file to binary folder after successful compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
+SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon512k/unreal.ini)
 message("CONFIG_FILE: ${CONFIG_FILE}")
 message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 add_custom_command(

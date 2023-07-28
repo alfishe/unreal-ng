@@ -446,7 +446,7 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
         _context->pPortDecoder->SetROMPage(page);
 
     /// region <Debug info>
-    MLOGDEBUG("ROM page %d activated", page);
+    MLOGDEBUG("ROM page %d activated. pc: 0x%04X", page, _context->pCore->GetZ80()->pc);
     /// endregion </Debug info>
 }
 
