@@ -12,7 +12,7 @@ struct TRDOSDirectoryEntryBase
     uint8_t Type;
     uint16_t Start;
     uint16_t Length;
-    uint8_t FullSectorsSize;
+    uint8_t SizeInSectors;
 };
 
 struct TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase

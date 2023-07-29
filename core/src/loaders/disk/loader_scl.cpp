@@ -50,7 +50,7 @@ bool LoaderSCL::loadSCL()
             uint8_t* buffer = new uint8_t [fileSize];
             std::fill(buffer, buffer + fileSize, 0xBB);
 
-            // Read whole SCL file to the buffer
+            // Read whole SCL file to the buffer and check it's CRC
             if (FileHelper::ReadFileToBuffer(_filepath, buffer, fileSize) == fileSize && checkSCLFileCRC(buffer, fileSize))
             {
                 SCLHeader* header = (SCLHeader*)buffer;
@@ -58,11 +58,15 @@ bool LoaderSCL::loadSCL()
                 // Ensure it is SCL file and signature matches
                 if (areUint8ArraysEqual(header->Signature, (uint8_t*)"SINCLAIR", 8))
                 {
+                    // File data blocks start immediately after all file descriptors
+                    uint8_t* dataBlocks = buffer + sizeof(SCLHeader) + header->FileCount * sizeof(TRDOSDirectoryEntryBase);
+                    uint8_t* currentFileData = dataBlocks;
+
                     size_t totalSizeSectors = 0;
 
                     for (size_t i = 0; i < header->FileCount; i++)
                     {
-                        totalSizeSectors += header->Files[i].FullSectorsSize;
+                        totalSizeSectors += header->Files[i].SizeInSectors;
                     }
 
                     // Check if all files in SCL image fit into the empty disk
@@ -72,9 +76,12 @@ bool LoaderSCL::loadSCL()
                         for (size_t i = 0; i < header->FileCount; i++)
                         {
                             TRDOSDirectoryEntryBase fileDescriptor = header->Files[i];
-                            uint8_t* fileData = nullptr;
 
-                            addFile(&fileDescriptor, fileData);
+                            // Add file to DiskImage and update TR-DOS catalog
+                            addFile(&fileDescriptor, currentFileData);
+
+                            // Move pointer to next file data
+                            currentFileData += fileDescriptor.SizeInSectors * SECTORS_SIZE_BYTES;
                         }
                     }
                 }
@@ -97,7 +104,19 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
 
     if (volumeInfo != nullptr && volumeInfo->numFiles < TRDOS_MAX_FILES)
     {
+        /// region <Locate next empty file record in TR-DOS catalog>
+        size_t fileLengthSectors  = fileDescriptor->SizeInSectors;
+        size_t catalogOffset = volumeInfo->numFiles * sizeof(TRDOSDirectoryEntry);
 
+        uint8_t* catalogSector = track->getDataForSector(1 + catalogOffset / SECTORS_SIZE_BYTES);
+
+        /// endregion </Locate next empty file record in TR-DOS catalog>
+
+        /// region <Create new file descriptor>
+        /// endregion </Create new file descriptor>
+
+        /// region <Recalculate free TR-DOS disk values>
+        /// endregion </Recalculate free TR-DOS disk values>
     }
 
     return result;
