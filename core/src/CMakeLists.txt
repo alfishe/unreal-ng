@@ -62,7 +62,7 @@ if (UNIX AND NOT APPLE)
 endif (UNIX AND NOT APPLE)
 
 if (WIN32)
-    set(common_libraries -static-libstdc++ Shlwapi)
+    set(common_libraries -static-libstdc++ Shlwapi ws2_32)
 endif()
 
 # Link all components into target binary
