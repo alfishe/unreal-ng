@@ -110,6 +110,8 @@ DiskImage* LoaderTRD::getImage()
                  markRecord.recalculateCRC();
              }
              /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>
+
+             result = true;
          }
      }
 
