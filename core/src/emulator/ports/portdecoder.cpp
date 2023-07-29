@@ -15,9 +15,9 @@
 #include "emulator/ports/models/portdecoder_scorpion256.h"
 #include "emulator/ports/models/portdecoder_spectrum48.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
+#include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_spectrum3.h"
 #include <cassert>
-#include <ports/models/portdecoder_pentagon512.h>
 
 /// region <Constructors / Destructors>
 PortDecoder::PortDecoder(EmulatorContext* context)
