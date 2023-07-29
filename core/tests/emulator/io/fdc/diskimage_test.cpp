@@ -167,7 +167,7 @@ TEST_F(DiskImage_Test, FormatTrack)
 
     for (size_t i = 0; i < 16; i++)
     {
-        DiskImage::RawSectorBytes* sectorBytes = track.getRawSectorBytes(i);
+        DiskImage::RawSectorBytes* sectorBytes = track.getRawSector(i);
         uint8_t *pSectorBytes = (uint8_t*)sectorBytes;
 
         // Check all gaps / clock sync marks
@@ -190,7 +190,7 @@ TEST_F(DiskImage_Test, FormatTrack)
     /// region <Check track ID information>
     for (size_t i = 0; i < DiskImage::RawTrack::SECTORS_PER_TRACK; i++)
     {
-        DiskImage::RawSectorBytes& sectorBytes = *track.getRawSectorBytes(i);
+        DiskImage::RawSectorBytes& sectorBytes = *track.getRawSector(i);
         DiskImage::AddressMarkRecord& markRecord = sectorBytes.address_record;
 
         EXPECT_EQ(markRecord.cylinder, 72) << StringHelper::Format("Sector %d ID block must contain cylinder no. = 72. Found: %d", i, markRecord.cylinder);

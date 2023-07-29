@@ -14,8 +14,13 @@
 /// region <Constants>
 
 static constexpr const uint8_t TRD_SIGNATURE = 0x10;        // Unique signature for TR-DOS volume. Must be placed at offset
+static constexpr const uint8_t DS_80_TRACKS = 80;           // TR-DOS uses 80 tracks for Double-Side (DS) disks
 static constexpr const uint8_t SECTORS_PER_TRACK = 16;      // TR-DOS uses 16 sectors per track
 static constexpr const uint16_t SECTORS_SIZE_BYTES = 256;   // TR-DOS uses 256 bytes sectors
+static constexpr const uint16_t FREE_SECTORS_ON_EMPTY_DISK = (DS_80_TRACKS * MAX_SIDES - 1) * SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
+
+static constexpr const uint8_t TRDOS_MAX_FILES = 128;       // TR-DOS catalog can handle only up to 128 files
+static constexpr const uint8_t TRDOS_VOLUME_SECTOR = 9;     // Sector 9 on track 0 stores volume information
 
 /// endregion </Constants>
 

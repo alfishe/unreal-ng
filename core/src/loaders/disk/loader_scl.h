@@ -63,8 +63,9 @@ public:
 
     /// region <Helper methods>
 protected:
-    bool loadSCL(DiskImage* diskImage);
-    bool addFile();
+    bool loadSCL();
+    bool addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileData);
+    bool checkSCLFileCRC(uint8_t* data, size_t length);
 
     static inline bool areUint8ArraysEqual(const uint8_t* arr1, const uint8_t* arr2, size_t size)
     {

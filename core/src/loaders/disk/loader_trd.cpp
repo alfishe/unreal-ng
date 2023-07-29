@@ -115,6 +115,9 @@ DiskImage* LoaderTRD::getImage()
          }
      }
 
+     // Step 4: write volume information
+     populateEmptyVolumeInfo(diskImage);
+
     return result;
  }
  /// endregion </Methods>
@@ -156,7 +159,7 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
             size_t offset = trackNo * TRD_TRACK_SIZE + sectorNo * TRD_SECTOR_SIZE;
             uint8_t* srcSector = buffer + offset;
 
-            DiskImage::RawSectorBytes* dstSectorObj = track.getRawSectorBytes(sectorNo);
+            DiskImage::RawSectorBytes* dstSectorObj = track.getRawSector(sectorNo);
             uint8_t* dstSector = dstSectorObj->data;
 
             // Transfer sector data
@@ -168,6 +171,26 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
     }
 
     return result;
+}
+
+void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
+{
+    DiskImage::Track* track = diskImage->getTrack(0);
+    DiskImage::RawSectorBytes* sector = track->getRawSector(TRDOS_VOLUME_SECTOR);
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
+
+    volumeInfo->trDOSSignature = TRD_SIGNATURE;
+    volumeInfo->diskType = DS_80;
+    volumeInfo->freeSectorCount = FREE_SECTORS_ON_EMPTY_DISK;
+    volumeInfo->firstFreeTrack = 1;
+    volumeInfo->firstFreeSector = 1;
+    volumeInfo->deletedFileCount = 0;
+
+    // Similar to: volumeInfo->label = "        ";
+    std::fill(std::begin(volumeInfo->label), std::end(volumeInfo->label), 0x20);
+
+    // Update sector CRC
+    sector->recalculateDataCRC();
 }
 
 /// endregion </Helper methods>

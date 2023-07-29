@@ -155,7 +155,7 @@ public:
 
         /// region <Properties>
     public:
-        RawSectorBytes* getRawSectorBytes(uint8_t sector)
+        RawSectorBytes* getRawSector(uint8_t sector)
         {
             // Ensure sector number is in range [0..15]
             sector &= 0x0F;
@@ -221,7 +221,7 @@ public:
             for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
             {
                 uint8_t sectorIdx = sectorInterleaveTable[i];
-                RawSectorBytes* sectorRef = getRawSectorBytes(sectorIdx);
+                RawSectorBytes* sectorRef = getRawSector(sectorIdx);
 
                 sectorsOrderedRef[i] = sectorRef;                       // Store sector reference
                 sectorIDsOrderedRef[i] = &sectorRef->address_record;    // Store ID record reference

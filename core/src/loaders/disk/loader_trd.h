@@ -56,6 +56,7 @@ public:
 protected:
     uint8_t getTrackNoFromImageSize(size_t filesize);
     bool transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize);
+    void populateEmptyVolumeInfo(DiskImage* diskImage);
     /// endregion </Helper methods>
 };
 
