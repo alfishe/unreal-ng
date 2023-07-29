@@ -277,7 +277,7 @@ size_t FileHelper::ReadFileToBuffer(const std::string& filePath, uint8_t* buffer
 {
     size_t result = 0;
 
-    FILE* file = FileHelper::OpenFile(filePath, "r");
+    FILE* file = FileHelper::OpenFile(filePath, "rb");
     if (file != nullptr)
     {
         result = FileHelper::ReadFileToBuffer(file, buffer, size);
