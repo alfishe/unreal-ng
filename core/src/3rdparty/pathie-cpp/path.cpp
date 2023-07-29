@@ -3219,7 +3219,7 @@ std::vector<Path> Path::glob(const std::string& pattern, int flags /* = 0 */)
    * FindNextFile() don’t support recursive matching anyway, so this is safe. */
   std::string stem;
   size_t pos = 0;
-  if ((pos = pattern.rfind("/")) != string::npos) // Single = intended
+  if ((pos = pattern.rfind("/")) != std::string::npos) // Single = intended
     stem = pattern.substr(0, pos + 1); // Trailing / included
 
   // Prepare
