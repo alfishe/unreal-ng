@@ -189,6 +189,7 @@ void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
 
     // Similar to: volumeInfo->label = "        ";
     std::fill(std::begin(volumeInfo->label), std::end(volumeInfo->label), 0x20);
+    std::fill(std::begin(volumeInfo->reserved2), std::end(volumeInfo->reserved2), 0x20);
 
     // Update sector data CRC
     sector->recalculateDataCRC();

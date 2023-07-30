@@ -41,19 +41,19 @@ enum TRDDiskType : uint8_t
 struct TRDVolumeInfo
 {
     uint8_t zeroMarker = 0;
-    uint8_t reserved[224];              // Unused (Usually filled with zeroes, but can be used for creation program, author, etc.)
+    uint8_t reserved[224] = {};         // Unused (Usually filled with zeroes, but can be used for creation program, author, etc.)
     uint8_t firstFreeSector = 1;
     uint8_t firstFreeTrack = 1;
     uint8_t diskType = DS_80;           // Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19).
     uint8_t fileCount = 0;
     uint16_t freeSectorCount = 79 * SECTORS_PER_TRACK;
     uint8_t trDOSSignature = TRD_SIGNATURE;   // TR-DOS system signature
-    uint8_t reserved1[2];
-    uint8_t reserved2[9];               // Password?
+    uint8_t reserved1[2] = { 0x00 };
+    uint8_t reserved2[9] = { 0x20 };    // Password?
     uint8_t reserved3;
     uint8_t deletedFileCount = 0;       // Number of deleted files
     uint8_t label[8];                   // Disk label
-    uint8_t reserved4[3] = { 0, 0, 0 }; // Must always be zero
+    uint8_t reserved4[3] = { 0, 0, 0 }; // Must always be filled with zeroes
 };
 
 struct TRDFile
