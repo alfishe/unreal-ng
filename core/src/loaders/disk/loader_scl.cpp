@@ -17,7 +17,7 @@ bool LoaderSCL::loadImage()
     {
         _diskImage = diskImage;
 
-        //result = loadSCL();
+        result = loadSCL();
     }
 
     return result;
