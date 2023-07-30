@@ -188,7 +188,7 @@ TEST_F(LoaderTAP_Test, readNextBlock)
     LoaderTAPCUT loader(_context);
     std::vector<TapeBlock> allBlocks;
 
-    FILE* file = FileHelper::OpenFile(testTapePath);
+    FILE* file = FileHelper::OpenExistingFile(testTapePath);
     EXPECT_NE(file, nullptr);
 
     size_t blockCount = 0;

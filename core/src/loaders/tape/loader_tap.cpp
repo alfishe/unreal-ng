@@ -26,7 +26,7 @@ std::vector<TapeBlock> LoaderTAP::loadTAP(std::string filePath)
 {
     std::vector<TapeBlock> result;
 
-    FILE* file = FileHelper::OpenFile(filePath);
+    FILE* file = FileHelper::OpenExistingFile(filePath);
     if (file)
     {
         size_t index = 0;

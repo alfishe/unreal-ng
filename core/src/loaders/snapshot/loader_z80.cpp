@@ -50,7 +50,7 @@ bool LoaderZ80::validate()
     // 1. Check that file exists
     if (FileHelper::FileExists(_path))
     {
-        _file = FileHelper::OpenFile(_path);
+        _file = FileHelper::OpenExistingFile(_path);
         if (_file != nullptr)
         {
             // 2. Check file has appropriate size (header + data bytes)

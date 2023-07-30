@@ -36,6 +36,12 @@ protected:
     DiskImage* _diskImage = nullptr;
     /// endregion </Fields>
 
+    /// region <Properties>
+public:
+    DiskImage* getImage();
+    void setImage(DiskImage* diskImage);
+    /// endregion </Properties>
+
     /// region <Constructors / destructors>
 public:
     LoaderTRD(EmulatorContext* context, const std::string& filepath) : _context(context), _filepath(filepath) {};
@@ -46,7 +52,6 @@ public:
 public:
     bool loadImage();
     bool writeImage();
-    DiskImage* getImage();
 
     bool format(DiskImage* diskImage);
 

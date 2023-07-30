@@ -30,11 +30,13 @@ public:
 
 	static std::string PrintablePath(const std::string& path);
 
-	static FILE* OpenFile(const std::string& path, const char* mode = "rb");
+	static FILE* OpenExistingFile(const std::string& path, const char* mode = "rb");
+    static FILE* OpenFile(const std::string& path, const char* mode = "rb");
 	static void CloseFile(FILE* file);
 
 	static size_t ReadFileToBuffer(FILE* file, uint8_t* buffer, size_t size);
     static size_t ReadFileToBuffer(const std::string& filePath, uint8_t* buffer, size_t size);
+    static bool SaveBufferToFile(FILE* file, uint8_t* buffer, size_t size);
 	static bool SaveBufferToFile(const std::string& filePath, uint8_t* buffer, size_t size);
 
 private:

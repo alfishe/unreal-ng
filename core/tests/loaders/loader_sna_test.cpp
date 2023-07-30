@@ -77,7 +77,7 @@ TEST_F(LoaderSNA_Test, is48kSnapshot)
 
     LoaderSNACUT loader(_context, absolute128kSnapshotPath);
 
-    FILE* file = FileHelper::OpenFile(absolute128kSnapshotPath);
+    FILE* file = FileHelper::OpenExistingFile(absolute128kSnapshotPath);
     if (file != nullptr)
     {
         bool result = loader.is48kSnapshot(file);
@@ -111,7 +111,7 @@ TEST_F(LoaderSNA_Test, is128kSnapshot)
 
     LoaderSNACUT loader(_context, absolute128kSnapshotPath);
 
-    FILE* file = FileHelper::OpenFile(absolute128kSnapshotPath);
+    FILE* file = FileHelper::OpenExistingFile(absolute128kSnapshotPath);
     if (file != nullptr)
     {
         bool result = loader.is128kSnapshot(file);

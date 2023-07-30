@@ -6,6 +6,7 @@
 
 #pragma pack(push, 1)
 
+/// SCL files use minimal 14-bytes catalog records (without start sector and track)
 struct TRDOSDirectoryEntryBase
 {
     char Name[8];
@@ -15,6 +16,7 @@ struct TRDOSDirectoryEntryBase
     uint8_t SizeInSectors;
 };
 
+/// Full 16 bytes TR-DOS catalog record with sector/track positioning on disk
 struct TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase
 {
     uint8_t StartSector;

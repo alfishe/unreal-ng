@@ -2,6 +2,23 @@
 
 #include "common/filehelper.h"
 
+/// region <Properties>
+DiskImage* LoaderTRD::getImage()
+{
+    return _diskImage;
+}
+
+void LoaderTRD::setImage(DiskImage* diskImage)
+{
+    if (_diskImage)
+    {
+        delete _diskImage;
+    }
+
+    _diskImage = diskImage;
+}
+/// endregion </Properties>
+
  /// region <Methods>
 bool LoaderTRD::loadImage()
  {
@@ -44,12 +61,29 @@ bool LoaderTRD::writeImage()
 {
     bool result = false;
 
-    return result;
-}
+    if (_diskImage)
+    {
+        FILE* file = FileHelper::OpenFile("test.trd", "wb");
 
-DiskImage* LoaderTRD::getImage()
-{
-    return _diskImage;
+        if (file)
+        {
+            size_t trackCount = _diskImage->getCylinders() * _diskImage->getSides();
+            for (size_t tracks = 0; tracks < trackCount; tracks++)
+            {
+                DiskImage::Track *track = _diskImage->getTrack(tracks);
+
+                for (size_t sectors = 0; sectors < SECTORS_PER_TRACK; sectors++)
+                {
+                    uint8_t *sectorData = track->getDataForSector(sectors);
+                    FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
+                }
+            }
+
+            FileHelper::CloseFile(file);
+        }
+    }
+
+    return result;
 }
 
  bool LoaderTRD::format(DiskImage* diskImage)
@@ -184,7 +218,7 @@ void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
     volumeInfo->diskType = DS_80;
     volumeInfo->freeSectorCount = FREE_SECTORS_ON_EMPTY_DISK;
     volumeInfo->firstFreeTrack = 1;
-    volumeInfo->firstFreeSector = 1;
+    volumeInfo->firstFreeSector = 0;
     volumeInfo->deletedFileCount = 0;
 
     // Similar to: volumeInfo->label = "        ";

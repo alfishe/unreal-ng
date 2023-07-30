@@ -229,7 +229,7 @@ std::string FileHelper::PrintablePath(const std::string& path)
 	return result;
 }
 
-FILE* FileHelper::OpenFile(const std::string& path, const char* mode)
+FILE* FileHelper::OpenExistingFile(const std::string& path, const char* mode)
 {
     FILE* result = nullptr;
 
@@ -237,6 +237,15 @@ FILE* FileHelper::OpenFile(const std::string& path, const char* mode)
     {
         result = fopen(path.c_str(), mode);
     }
+
+    return result;
+}
+
+FILE* FileHelper::OpenFile(const std::string& path, const char* mode)
+{
+    FILE* result = nullptr;
+
+    result = fopen(path.c_str(), mode);
 
     return result;
 }
@@ -277,12 +286,31 @@ size_t FileHelper::ReadFileToBuffer(const std::string& filePath, uint8_t* buffer
 {
     size_t result = 0;
 
-    FILE* file = FileHelper::OpenFile(filePath, "rb");
+    FILE* file = FileHelper::OpenExistingFile(filePath, "rb");
     if (file != nullptr)
     {
         result = FileHelper::ReadFileToBuffer(file, buffer, size);
 
         FileHelper::CloseFile(file);
+    }
+
+    return result;
+}
+
+bool FileHelper::SaveBufferToFile(FILE* file, uint8_t* buffer, size_t size)
+{
+    bool result = false;
+
+    if (file == nullptr || buffer == nullptr || size == 0)
+    {
+        return result;
+    }
+
+    size_t bytesWritten = fwrite(buffer, 1, size, file);
+
+    if (bytesWritten == size)
+    {
+        result = true;
     }
 
     return result;

@@ -65,7 +65,7 @@ bool LoaderSNA::validate()
 
     if (FileHelper::FileExists(_path))
     {
-        _file = FileHelper::OpenFile(_path);
+        _file = FileHelper::OpenExistingFile(_path);
         if (_file != nullptr)
         {
             _fileSize = FileHelper::GetFileSize(_file);
