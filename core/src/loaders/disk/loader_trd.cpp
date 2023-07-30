@@ -75,8 +75,10 @@ bool LoaderTRD::writeImage()
                 for (size_t sectors = 0; sectors < SECTORS_PER_TRACK; sectors++)
                 {
                     uint8_t *sectorData = track->getDataForSector(sectors);
-                    FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
+                    bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
                 }
+
+                result = true;
             }
 
             FileHelper::CloseFile(file);

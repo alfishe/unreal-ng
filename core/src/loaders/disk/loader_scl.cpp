@@ -20,11 +20,11 @@ bool LoaderSCL::loadImage()
         result = loadSCL();
 
         // TODO: remove debug
-        if (result)
-        {
-            loaderTrd.setImage(diskImage);
-            loaderTrd.writeImage();
-        }
+//        if (result)
+//        {
+//            loaderTrd.setImage(diskImage);
+//            loaderTrd.writeImage();
+//        }
     }
 
     return result;
@@ -150,7 +150,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
             /// region <Write file content - sector by sector>
             uint16_t fileSectorLocator = freeSectorLocator;
 
-            for (size_t i = 0; i < fileLengthSectors; i++)
+            for (size_t i = 0; i < fileLengthSectors; i++, fileSectorLocator++)
             {
                 uint8_t fileTrackNo = fileSectorLocator / SECTORS_PER_TRACK;
                 uint8_t fileSectorNo = (fileSectorLocator % SECTORS_PER_TRACK);
@@ -166,8 +166,6 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
 
                 // Update sector CRC
                 fileSector->recalculateDataCRC();
-
-                freeSectorLocator++;
             }
             /// endregion </Write file content - sector by sector>
 
