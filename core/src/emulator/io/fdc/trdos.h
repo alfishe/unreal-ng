@@ -20,7 +20,7 @@ static constexpr const uint16_t SECTORS_SIZE_BYTES = 256;   // TR-DOS uses 256 b
 static constexpr const uint16_t FREE_SECTORS_ON_EMPTY_DISK = (DS_80_TRACKS * MAX_SIDES - 1) * SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
 
 static constexpr const uint8_t TRDOS_MAX_FILES = 128;       // TR-DOS catalog can handle only up to 128 files
-static constexpr const uint8_t TRDOS_VOLUME_SECTOR = 9;     // Sector 9 on track 0 stores volume information
+static constexpr const uint8_t TRDOS_VOLUME_SECTOR = 9 - 1; // Sector 9 on track 0 stores volume information
 
 /// endregion </Constants>
 
@@ -45,7 +45,7 @@ struct TRDVolumeInfo
     uint8_t firstFreeSector = 1;
     uint8_t firstFreeTrack = 1;
     uint8_t diskType = DS_80;           // Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19).
-    uint8_t numFiles = 0;
+    uint8_t fileCount = 0;
     uint16_t freeSectorCount = 79 * SECTORS_PER_TRACK;
     uint8_t trDOSSignature = TRD_SIGNATURE;   // TR-DOS system signature
     uint8_t reserved1[2];

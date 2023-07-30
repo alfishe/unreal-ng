@@ -17,7 +17,7 @@ bool LoaderSCL::loadImage()
     {
         _diskImage = diskImage;
 
-        result = loadSCL();
+        //result = loadSCL();
     }
 
     return result;
@@ -83,6 +83,8 @@ bool LoaderSCL::loadSCL()
                             // Move pointer to next file data
                             currentFileData += fileDescriptor.SizeInSectors * SECTORS_SIZE_BYTES;
                         }
+
+                        result = true;
                     }
                 }
             }
@@ -99,24 +101,73 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
     bool result = false;
 
     DiskImage::Track* track = _diskImage->getTrack(0);
-    uint8_t* sector = track->getDataForSector(TRDOS_VOLUME_SECTOR);
-    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector;
+    DiskImage::RawSectorBytes* systemSector = track->getSector(TRDOS_VOLUME_SECTOR);
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)systemSector->data;
 
-    if (volumeInfo != nullptr && volumeInfo->numFiles < TRDOS_MAX_FILES)
+    if (volumeInfo != nullptr && volumeInfo->fileCount < TRDOS_MAX_FILES)
     {
         /// region <Locate next empty file record in TR-DOS catalog>
-        size_t fileLengthSectors  = fileDescriptor->SizeInSectors;
-        size_t catalogOffset = volumeInfo->numFiles * sizeof(TRDOSDirectoryEntry);
+        size_t fileLengthSectors = fileDescriptor->SizeInSectors;
+        uint16_t catalogOffset = volumeInfo->fileCount * sizeof(TRDOSDirectoryEntry);
 
         uint8_t* catalogSector = track->getDataForSector(1 + catalogOffset / SECTORS_SIZE_BYTES);
 
         /// endregion </Locate next empty file record in TR-DOS catalog>
 
-        /// region <Create new file descriptor>
-        /// endregion </Create new file descriptor>
+        if (volumeInfo->freeSectorCount >= fileLengthSectors)
+        {
+            /// region <Create new file descriptor>
+            uint8_t dirSectorNo = (catalogOffset / SECTORS_SIZE_BYTES) & 0x0F + 1;
+            DiskImage::RawSectorBytes* dirSector = track->getRawSector(dirSectorNo);
 
-        /// region <Recalculate free TR-DOS disk values>
-        /// endregion </Recalculate free TR-DOS disk values>
+            TRDOSDirectoryEntry* dstFileDescriptor = (TRDOSDirectoryEntry*)(dirSector->data + (catalogOffset & 0x00FF));
+            memcpy(dstFileDescriptor, fileDescriptor, sizeof(TRDOSDirectoryEntryBase));
+            dstFileDescriptor->StartTrack = volumeInfo->firstFreeTrack;
+            dstFileDescriptor->StartSector = volumeInfo->firstFreeSector;
+
+            // Update sector data CRC
+            dirSector->recalculateDataCRC();
+            /// endregion </Create new file descriptor>
+
+            /// region <Recalculate free TR-DOS disk values>
+            uint16_t freeSectorLocator = volumeInfo->firstFreeTrack * SECTORS_PER_TRACK + volumeInfo->firstFreeSector;
+            uint16_t newFreeSectorLocator = freeSectorLocator + fileLengthSectors;
+
+            volumeInfo->firstFreeSector = newFreeSectorLocator & 0x0F;
+            volumeInfo->firstFreeTrack = newFreeSectorLocator >> 4;
+            volumeInfo->fileCount++;
+            volumeInfo->freeSectorCount -= fileLengthSectors;
+
+            // Update sector CRC
+            systemSector->recalculateDataCRC();
+            /// endregion </Recalculate free TR-DOS disk values>
+
+            /// region <Write file content - sector by sector>
+            uint16_t fileSectorLocator = freeSectorLocator;
+
+            for (size_t i = 0; i < fileLengthSectors; i++)
+            {
+                uint8_t fileTrackNo = fileSectorLocator / SECTORS_PER_TRACK;
+                uint8_t fileSectorNo = (fileSectorLocator % SECTORS_PER_TRACK) + 1;
+
+                DiskImage::Track* fileTrack = _diskImage->getTrack(fileTrackNo);
+                DiskImage::RawSectorBytes* fileSector = fileTrack->getSector(fileSectorNo);
+
+                uint8_t* srcSectorData = fileData + i * SECTORS_SIZE_BYTES;
+                uint8_t* dstSectorData = fileSector->data;
+
+                // Transfer sector content
+                memcpy(dstSectorData, srcSectorData,SECTORS_SIZE_BYTES);
+
+                // Update sector CRC
+                fileSector->recalculateDataCRC();
+
+                freeSectorLocator++;
+            }
+            /// endregion </Write file content - sector by sector>
+
+            result = true;
+        }
     }
 
     return result;

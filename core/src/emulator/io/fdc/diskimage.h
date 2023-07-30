@@ -112,10 +112,10 @@ public:
         /// endregion </Constants>
 
         // Fields
-        RawSectorBytes sectors[SECTORS_PER_TRACK];
-        uint8_t endGap[TRACK_END_GAP_BYTES];
-        uint8_t clockMarksBitmap[TRACK_BITMAP_SIZE_BYTES];
-        uint8_t badBytesBitmap[TRACK_BITMAP_SIZE_BYTES];
+        RawSectorBytes sectors[SECTORS_PER_TRACK] = {};
+        uint8_t endGap[TRACK_END_GAP_BYTES] = {};
+        uint8_t clockMarksBitmap[TRACK_BITMAP_SIZE_BYTES] = {};
+        uint8_t badBytesBitmap[TRACK_BITMAP_SIZE_BYTES] {};
 
         /// region <Constructors / destructors>
     public:
@@ -149,8 +149,8 @@ public:
         /// region <Fields>
     public:
         uint8_t sectorInterleaveTable[SECTORS_PER_TRACK] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
-        RawSectorBytes* sectorsOrderedRef[SECTORS_PER_TRACK];
-        AddressMarkRecord* sectorIDsOrderedRef[SECTORS_PER_TRACK];
+        RawSectorBytes* sectorsOrderedRef[SECTORS_PER_TRACK] = {};
+        AddressMarkRecord* sectorIDsOrderedRef[SECTORS_PER_TRACK] = {};
         /// endregion </Fields>
 
         /// region <Properties>
@@ -161,6 +161,16 @@ public:
             sector &= 0x0F;
 
             RawSectorBytes* result = &sectors[sector];
+
+            return result;
+        }
+
+        RawSectorBytes* getSector(uint8_t sectorNo)
+        {
+            // Ensure sector number is in range [0..15]
+            sectorNo &= 0x0F;
+
+            RawSectorBytes* result = sectorsOrderedRef[sectorNo];
 
             return result;
         }

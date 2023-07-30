@@ -76,6 +76,7 @@ DiskImage* LoaderTRD::getImage()
      {
          interleavePatternIndex = 1;    // Turbo pattern from TR-DOS 5.04T by default
      }
+
      /// endregion </Get preferred interleave pattern from config>
 
      uint8_t cylinders = diskImage->getCylinders();
@@ -105,8 +106,8 @@ DiskImage* LoaderTRD::getImage()
                  DiskImage::AddressMarkRecord& markRecord = *track.getIDForSector(sector);
                  markRecord.cylinder = cylinder;
                  markRecord.head = 0;
-                 markRecord.sector = sectorNumber;
-                 markRecord.sector_len = 0x01;  // Default TR-DOS 1 - 256 bytes sector
+                 markRecord.sector = sector + 1;
+                 markRecord.sector_len = 0x01;  // Default TR-DOS: 1 - 256 bytes sector
                  markRecord.recalculateCRC();
              }
              /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>
@@ -176,7 +177,7 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
 void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
 {
     DiskImage::Track* track = diskImage->getTrack(0);
-    DiskImage::RawSectorBytes* sector = track->getRawSector(TRDOS_VOLUME_SECTOR);
+    DiskImage::RawSectorBytes* sector = track->getSector(TRDOS_VOLUME_SECTOR);
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
 
     volumeInfo->trDOSSignature = TRD_SIGNATURE;
@@ -189,7 +190,7 @@ void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
     // Similar to: volumeInfo->label = "        ";
     std::fill(std::begin(volumeInfo->label), std::end(volumeInfo->label), 0x20);
 
-    // Update sector CRC
+    // Update sector data CRC
     sector->recalculateDataCRC();
 }
 

@@ -1,5 +1,6 @@
 #include <loaders/snapshot/loader_z80.h>
 #include <loaders/disk/loader_trd.h>
+#include <loaders/disk/loader_scl.h>
 #include "stdafx.h"
 
 #include "emulator.h"
@@ -702,6 +703,34 @@ bool Emulator::LoadDisk(const std::string &path)
 
             _context->coreState.diskDrives[0]->insertDisk(diskImage);
 
+            /// endregion </Load new disk image and mount it>
+        }
+    }
+
+    if (ext == "scl")
+    {
+        LoaderSCL loader(_context, path);
+        if (loader.loadImage())
+        {
+            // FIXME: use active drive, not fixed A:
+
+            /// region <Free memory from previous disk image>
+            _context->pBetaDisk->ejectDisk();
+            _context->coreState.diskDrives[0]->ejectDisk();
+
+            DiskImage* diskImage = _context->coreState.diskImages[0];
+
+            if (diskImage != nullptr)
+            {
+                delete diskImage;
+            }
+            /// endregion </ree memory from previous disk image>
+
+            /// region <Load new disk image and mount it>
+            diskImage = loader.getImage();
+            _context->coreState.diskImages[0] = diskImage;
+
+            _context->coreState.diskDrives[0]->insertDisk(diskImage);
             /// endregion </Load new disk image and mount it>
         }
     }
