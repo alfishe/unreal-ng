@@ -88,6 +88,7 @@ public:
 
         WDSTATE_MAX
     };
+
     static std::string WDSTATEToString(WDSTATE state)
     {
         std::string result;
