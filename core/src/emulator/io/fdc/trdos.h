@@ -26,7 +26,9 @@ static constexpr const uint8_t TRDOS_VOLUME_SECTOR = 9 - 1; // Sector 9 on track
 
 /// region <Types>
 
-/// Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19)
+/// Disk type. Acceptable values 0x16..0x19
+/// Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides.
+/// Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks
 enum TRDDiskType : uint8_t
 {
     DS_80 = 0x16,

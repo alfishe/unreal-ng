@@ -32,8 +32,13 @@ protected:
         _context = new EmulatorContext(LoggerLevel::LogError);
 
         // Set-up module logger only for FDC messages
-        _context->pModuleLogger->TurnOffLoggingForAll();
-        _context->pModuleLogger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
+        ModuleLogger& logger = *_context->pModuleLogger;
+        logger.TurnOffLoggingForAll();
+        logger.TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
+        // Show more info if needed
+        //logger.SetLoggingLevel(LoggerLevel::LogInfo);
+        //logger.SetLoggingLevel(LoggerLevel::LogDebug);
+
 
         // Mock Core and Z80 to make timings work
         _core = new CoreCUT(_context);
@@ -805,6 +810,7 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_NoVerify)
 
 TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
 {
+    static constexpr size_t const STEP_DURATION_MS = 6; // HEAD movement duration (from track to track)
     static constexpr size_t const RESTORE_TEST_DURATION_SEC = 3;
     static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100; // Time increments during simulation
@@ -860,9 +866,9 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
             }
 
             if (!(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                fdc._trackRegister == 0 &&              // FDC track set to 0
-                fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
-                fdc._state == WD1793::S_IDLE)           // FSM is in idle state
+                fdc._trackRegister == 0 &&                      // FDC track set to 0
+                fdc._selectedDrive->isTrack00() &&              // FDD has the same track 0
+                fdc._state == WD1793::S_IDLE)                   // FSM is in idle state
             {
                 // RESTORE operation finished
                 break;
@@ -874,22 +880,27 @@ TEST_F(WD1793_Test, FSM_CMD_Restore_Verify)
         size_t elapsedTimeTStates = clk;
         size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
 
-        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&    // Controller is not BUSY anymore
-                                       fdc._trackRegister == 0 &&              // FDC track set to 0
-                                       fdc._selectedDrive->isTrack00() &&      // FDD has the same track 0
-                                       fdc._state == WD1793::S_IDLE;           // FSM is in idle state
+        bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) && // Controller is not BUSY anymore
+                                       fdc._trackRegister == 0 &&                   // FDC track set to 0
+                                       fdc._selectedDrive->isTrack00() &&           // FDD has the same track 0
+                                       fdc._state == WD1793::S_IDLE;                // FSM is in idle state
 
         EXPECT_EQ(isAccomplishedCorrectly, true) << "RESTORE didn't end up correctly";
 
-        size_t estimatedExecutionTime = i * 6; // Number of positioning steps, 6ms each
-        EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 0.1 * estimatedExecutionTime) << "Abnormal execution time";
+        size_t estimatedExecutionTime = i * STEP_DURATION_MS;       // Number of positioning steps, 6ms each
+        estimatedExecutionTime += WD1793CUT::WD93_VERIFY_DELAY_MS;  // Add verification time after the positioning
+
+        size_t timeTolerance = 0.1 * estimatedExecutionTime;
+        if (timeTolerance == 0)
+            timeTolerance = 3 * STEP_DURATION_MS;
+        EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + timeTolerance) << "Abnormal execution time";
         /// endregion </Check results>
 
         /// region <Get simulation stats>
         std::stringstream ss;
         ss << "RESTORE test stats:" << std::endl;
-        ss << StringHelper::Format("TStates: %d, time: %d ms", elapsedTimeTStates, elapsedTimeMs) << std::endl;
         ss << StringHelper::Format("From track: %d to track %d", i, fdc._selectedDrive->getTrack()) << std::endl;
+        ss << StringHelper::Format("TStates: %d, time: %d ms", elapsedTimeTStates, elapsedTimeMs) << std::endl;
         ss << "------------------------------" << std::endl;
 
         std::cout << ss.str();

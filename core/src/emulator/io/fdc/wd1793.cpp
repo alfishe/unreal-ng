@@ -88,7 +88,7 @@ void WD1793::process()
     // Emulate disk rotation and index strobe changes
     processFDDIndexStrobe();
 
-    /// region <Replacement for lengthy switch()>
+    /// region <HandlerMap as the replacement for lengthy switch()>
 
     // Get the handler for State1
     FSMHandler handler = _stateHandlerMap[_state];
@@ -100,10 +100,10 @@ void WD1793::process()
     }
     else            // Handler is not available
     {
-
+        MLOGERROR("No handler available for the state %d (%s)", _state, WDSTATEToString(_state).c_str());
     }
 
-    /// endregion </Replacement for lengthy switch()>
+    /// endregion </HandlerMap as the replacement for lengthy switch()>
 }
 
 /// endregion </Methods>
@@ -1138,8 +1138,11 @@ void WD1793::processStep()
         }
     }
 
+    // Info print
+    MLOGINFO("STEP track: %d, direction: %s", _trackRegister, _stepDirectionIn ? "In" : "Out");
+
     // Debug print
-    MLOGINFO(dumpStep().c_str());
+    MLOGDEBUG(dumpStep().c_str());
 }
 
 void WD1793::processVerify()

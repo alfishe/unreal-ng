@@ -15,7 +15,7 @@ class WD1793 : public PortDecoder, public PortDevice
 {
     /// region <Types>
 public:
-    /// WD1793 / VG93 commands
+    /// region <WD1793 / VG93 commands>
     enum WD_COMMANDS : uint8_t
     {
         WD_CMD_RESTORE = 0,     // Restore         - Move the read/write head to the outermost track (track 0)
@@ -53,8 +53,9 @@ public:
 
         return names[command];
     }
+    /// endregion </WD1793 / VG93 commands>
 
-    /// WD1793 / VG93 state machine states
+    /// region <WD1793 / VG93 state machine states>
     enum WDSTATE : uint8_t
     {
         S_IDLE = 0,
@@ -136,6 +137,7 @@ public:
 
         return result;
     }
+    /// endregion </WD1793 / VG93 state machine states>
 
     enum WD93_CMD_BITS : uint8_t
     {
@@ -205,7 +207,7 @@ public:
         WDS_INDEX          = 0x02,   // For Type 1 (Restore & Seek) commands only
         WDS_DRQ            = 0x02,   // For all read/write commands only
         WDS_TRK00          = 0x04,   // For Type 1 (Restore & Seek) commands only
-        WDS_LOSTDATA           = 0x04,   // For all read/write commands only
+        WDS_LOSTDATA       = 0x04,   // For all read/write commands only
         WDS_CRCERR         = 0x08,   // For Type 1 (Restore & Seek) commands + READ ADDRESS + READ SECTOR + WRITE SECTOR
         WDS_NOTFOUND       = 0x10,   // RNF (Record Not Found) - For READ ADDRESS + READ SECTOR + WRITE SECTOR
         WDS_SEEKERR        = 0x10,   // For Type 1 (Restore & Seek) commands only
@@ -527,7 +529,7 @@ protected:
     {
         /// region <Debug logging>
         std::string delayNote = StringHelper::Format(" delay(%d | %.02f ms)", delayTStates, convertTStatesToMsFloat(delayTStates));
-        std::string message = StringHelper::Format("%s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
+        std::string message = StringHelper::Format("  %s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
         MLOGINFO(message.c_str());
         /// endregion </Debug logging>
 
@@ -542,7 +544,7 @@ protected:
 
         /// region <Debug logging>
         std::string delayNote = StringHelper::Format(" delay(%d | %d ms)", delayTStates, convertTStatesToMs(delayTStates));
-        std::string message = StringHelper::Format("%s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
+        std::string message = StringHelper::Format("  %s -> %s %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), delayNote.c_str());
         MLOGINFO(message.c_str());
         /// endregion </Debug logging>
 
