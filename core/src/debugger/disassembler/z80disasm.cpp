@@ -1425,73 +1425,73 @@ OpCode Z80Disassembler::fdOpcodes[256]
 
 OpCode Z80Disassembler::ddcbOpcodes[256]
 {
-    { OF_DISP, 23, 0, 0, "rlc b,(ix+:1)" },                 // 0x00
-    { OF_DISP, 23, 0, 0, "rlc c,(ix+:1)" },                 // 0x01
-    { OF_DISP, 23, 0, 0, "rlc d,(ix+:1)" },                 // 0x02
-    { OF_DISP, 23, 0, 0, "rlc e,(ix+:1)" },                 // 0x03
-    { OF_DISP, 23, 0, 0, "rlc h,(ix+:1)" },                 // 0x04
-    { OF_DISP, 23, 0, 0, "rlc l,(ix+:1)" },                 // 0x05
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),b" },                 // 0x00
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),c" },                 // 0x01
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),d" },                 // 0x02
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),e" },                 // 0x03
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),h" },                 // 0x04
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),l" },                 // 0x05
     { OF_DISP, 23, 0, 0, "rlc (ix+:1)" },                   // 0x06
-    { OF_DISP, 23, 0, 0, "rlc a,(ix+:1)" },                 // 0x07
-    { OF_DISP, 23, 0, 0, "rrc b,(ix+:1)" },                 // 0x08
-    { OF_DISP, 23, 0, 0, "rrc c,(ix+:1)" },                 // 0x09
-    { OF_DISP, 23, 0, 0, "rrc d,(ix+:1)" },                 // 0x0A
-    { OF_DISP, 23, 0, 0, "rrc e,(ix+:1)" },                 // 0x0B
-    { OF_DISP, 23, 0, 0, "rrc h,(ix+:1)" },                 // 0x0C
-    { OF_DISP, 23, 0, 0, "rrc l,(ix+:1)" },                 // 0x0D
+    { OF_DISP, 23, 0, 0, "rlc (ix+:1),a" },                 // 0x07
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),b" },                 // 0x08
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),c" },                 // 0x09
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),d" },                 // 0x0A
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),e" },                 // 0x0B
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),h" },                 // 0x0C
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),l" },                 // 0x0D
     { OF_DISP, 23, 0, 0, "rrc (ix+:1)" },                   // 0x0E
-    { OF_DISP, 23, 0, 0, "rrc a,(ix+:1)" },                 // 0x0F
+    { OF_DISP, 23, 0, 0, "rrc (ix+:1),a" },                 // 0x0F
 
-    { OF_DISP, 23, 0, 0, "rl b,(ix+:1)" },                  // 0x10
-    { OF_DISP, 23, 0, 0, "rl c,(ix+:1)" },                  // 0x11
-    { OF_DISP, 23, 0, 0, "rl d,(ix+:1)" },                  // 0x12
-    { OF_DISP, 23, 0, 0, "rl e,(ix+:1)" },                  // 0x13
-    { OF_DISP, 23, 0, 0, "rl h,(ix+:1)" },                  // 0x14
-    { OF_DISP, 23, 0, 0, "rl l,(ix+:1)" },                  // 0x15
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),b" },                  // 0x10
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),c" },                  // 0x11
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),d" },                  // 0x12
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),e" },                  // 0x13
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),h" },                  // 0x14
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),l" },                  // 0x15
     { OF_DISP, 23, 0, 0, "rl (ix+:1)" },                    // 0x16
-    { OF_DISP, 23, 0, 0, "rl a,(ix+:1)" },                  // 0x17
-    { OF_DISP, 23, 0, 0, "rr b,(ix+:1)" },                  // 0x18
-    { OF_DISP, 23, 0, 0, "rr c,(ix+:1)" },                  // 0x19
-    { OF_DISP, 23, 0, 0, "rr d,(ix+:1)" },                  // 0x1A
-    { OF_DISP, 23, 0, 0, "rr e,(ix+:1)" },                  // 0x1B
-    { OF_DISP, 23, 0, 0, "rr h,(ix+:1)" },                  // 0x1C
-    { OF_DISP, 23, 0, 0, "rr l,(ix+:1)" },                  // 0x1D
+    { OF_DISP, 23, 0, 0, "rl (ix+:1),a" },                  // 0x17
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),b" },                  // 0x18
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),c" },                  // 0x19
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),d" },                  // 0x1A
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),e" },                  // 0x1B
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),h" },                  // 0x1C
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),l" },                  // 0x1D
     { OF_DISP, 23, 0, 0, "rr (hl+:1)" },                    // 0x1E
-    { OF_DISP, 23, 0, 0, "rr a,(ix+:1)" },                  // 0x1F
+    { OF_DISP, 23, 0, 0, "rr (ix+:1),a" },                  // 0x1F
 
-    { OF_DISP, 23, 0, 0, "sla b,(ix+:1)" },                 // 0x20
-    { OF_DISP, 23, 0, 0, "sla c,(ix+:1)" },                 // 0x21
-    { OF_DISP, 23, 0, 0, "sla d,(ix+:1)" },                 // 0x22
-    { OF_DISP, 23, 0, 0, "sla e,(ix+:1)" },                 // 0x23
-    { OF_DISP, 23, 0, 0, "sla h,(ix+:1)" },                 // 0x24
-    { OF_DISP, 23, 0, 0, "sla l,(ix+:1)" },                 // 0x25
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),b" },                 // 0x20
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),c" },                 // 0x21
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),d" },                 // 0x22
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),e" },                 // 0x23
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),h" },                 // 0x24
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),l" },                 // 0x25
     { OF_DISP, 23, 0, 0, "sla (ix+:1)" },                   // 0x26
-    { OF_DISP, 23, 0, 0, "sla a,(ix+:1)" },                 // 0x27
-    { OF_DISP, 23, 0, 0, "sra b,(ix+:1)" },                 // 0x28
-    { OF_DISP, 23, 0, 0, "sra c,(ix+:1)" },                 // 0x29
-    { OF_DISP, 23, 0, 0, "sra d,(ix+:1)" },                 // 0x2A
-    { OF_DISP, 23, 0, 0, "sra e,(ix+:1)" },                 // 0x2B
-    { OF_DISP, 23, 0, 0, "sra h,(ix+:1)" },                 // 0x2C
-    { OF_DISP, 23, 0, 0, "sra l,(ix+:1)" },                 // 0x2D
+    { OF_DISP, 23, 0, 0, "sla (ix+:1),a" },                 // 0x27
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),b" },                 // 0x28
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),c" },                 // 0x29
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),d" },                 // 0x2A
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),e" },                 // 0x2B
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),h" },                 // 0x2C
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),l" },                 // 0x2D
     { OF_DISP, 23, 0, 0, "sra (ix+:1)" },                   // 0x2E
-    { OF_DISP, 23, 0, 0, "sra a,(ix+:1)" },                 // 0x2F
+    { OF_DISP, 23, 0, 0, "sra (ix+:1),a" },                 // 0x2F
 
-    { OF_DISP, 23, 0, 0, "sll b,(ix+:1)" },                 // 0x30
-    { OF_DISP, 23, 0, 0, "sll c,(ix+:1)" },                 // 0x31
-    { OF_DISP, 23, 0, 0, "sll d,(ix+:1)" },                 // 0x32
-    { OF_DISP, 23, 0, 0, "sll e,(ix+:1)" },                 // 0x33
-    { OF_DISP, 23, 0, 0, "sll h,(ix+:1)" },                 // 0x34
-    { OF_DISP, 23, 0, 0, "sll l,(ix+:1)" },                 // 0x35
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),b" },                 // 0x30
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),c" },                 // 0x31
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),d" },                 // 0x32
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),e" },                 // 0x33
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),h" },                 // 0x34
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),l" },                 // 0x35
     { OF_DISP, 23, 0, 0, "sll (ix+:1)" },                   // 0x36
-    { OF_DISP, 23, 0, 0, "sll a,(ix+:1)" },                 // 0x37
-    { OF_DISP, 23, 0, 0, "srl b,(ix+:1)" },                 // 0x38
-    { OF_DISP, 23, 0, 0, "srl c,(ix+:1)" },                 // 0x39
-    { OF_DISP, 23, 0, 0, "srl d,(ix+:1)" },                 // 0x3A
-    { OF_DISP, 23, 0, 0, "srl e,(ix+:1)" },                 // 0x3B
-    { OF_DISP, 23, 0, 0, "srl h,(ix+:1)" },                 // 0x3C
-    { OF_DISP, 23, 0, 0, "srl l,(ix+:1)" },                 // 0x3D
+    { OF_DISP, 23, 0, 0, "sll (ix+:1),a" },                 // 0x37
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),b" },                 // 0x38
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),c" },                 // 0x39
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),d" },                 // 0x3A
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),e" },                 // 0x3B
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),h" },                 // 0x3C
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),l" },                 // 0x3D
     { OF_DISP, 23, 0, 0, "srl (ix+:1)" },                   // 0x3E
-    { OF_DISP, 23, 0, 0, "srl a,(ix+:1)" },                 // 0x3F
+    { OF_DISP, 23, 0, 0, "srl (ix+:1),a" },                 // 0x3F
 
     { OF_DISP, 20, 0, 0, "bit 0,(ix+:1)" },                 // 0x40
     { OF_DISP, 20, 0, 0, "bit 0,(ix+:1)" },                 // 0x41
@@ -1561,141 +1561,141 @@ OpCode Z80Disassembler::ddcbOpcodes[256]
     { OF_DISP, 20, 0, 0, "bit 7,(ix+:1)" },                 // 0x7E
     { OF_DISP, 20, 0, 0, "bit 7,(ix+:1)" },                 // 0x7F
 
-    { OF_DISP, 23, 0, 0, "res 0,b,(ix+:1)" },               // 0x80
-    { OF_DISP, 23, 0, 0, "res 0,c,(ix+:1)" },               // 0x81
-    { OF_DISP, 23, 0, 0, "res 0,d,(ix+:1)" },               // 0x82
-    { OF_DISP, 23, 0, 0, "res 0,e,(ix+:1)" },               // 0x83
-    { OF_DISP, 23, 0, 0, "res 0,h,(ix+:1)" },               // 0x84
-    { OF_DISP, 23, 0, 0, "res 0,l,(ix+:1)" },               // 0x85
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),b" },               // 0x80
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),c" },               // 0x81
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),d" },               // 0x82
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),e" },               // 0x83
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),h" },               // 0x84
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),l" },               // 0x85
     { OF_DISP, 23, 0, 0, "res 0,(ix+:1)" },                 // 0x86
-    { OF_DISP, 23, 0, 0, "res 0,a,(ix+:1)" },               // 0x87
-    { OF_DISP, 23, 0, 0, "res 1,b,(ix+:1)" },               // 0x88
-    { OF_DISP, 23, 0, 0, "res 1,c,(ix+:1)" },               // 0x89
-    { OF_DISP, 23, 0, 0, "res 1,d,(ix+:1)" },               // 0x8A
-    { OF_DISP, 23, 0, 0, "res 1,e,(ix+:1)" },               // 0x8B
-    { OF_DISP, 23, 0, 0, "res 1,h,(ix+:1)" },               // 0x8C
-    { OF_DISP, 23, 0, 0, "res 1,l,(ix+:1)" },               // 0x8D
+    { OF_DISP, 23, 0, 0, "res 0,(ix+:1),a" },               // 0x87
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),b" },               // 0x88
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),c" },               // 0x89
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),d" },               // 0x8A
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),e" },               // 0x8B
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),h" },               // 0x8C
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),l" },               // 0x8D
     { OF_DISP, 23, 0, 0, "res 1,(ix+:1)" },                 // 0x8E
-    { OF_DISP, 23, 0, 0, "res 1,a,(ix+:1)" },               // 0x8F
+    { OF_DISP, 23, 0, 0, "res 1,(ix+:1),a" },               // 0x8F
 
-    { OF_DISP, 23, 0, 0, "res 2,b,(ix+:1)" },               // 0x90
-    { OF_DISP, 23, 0, 0, "res 2,c,(ix+:1)" },               // 0x91
-    { OF_DISP, 23, 0, 0, "res 2,d,(ix+:1)" },               // 0x92
-    { OF_DISP, 23, 0, 0, "res 2,e,(ix+:1)" },               // 0x93
-    { OF_DISP, 23, 0, 0, "res 2,h,(ix+:1)" },               // 0x94
-    { OF_DISP, 23, 0, 0, "res 2,l,(ix+:1)" },               // 0x95
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),b" },               // 0x90
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),c" },               // 0x91
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),d" },               // 0x92
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),e" },               // 0x93
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),h" },               // 0x94
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),l" },               // 0x95
     { OF_DISP, 23, 0, 0, "res 2,(ix+:1)" },                 // 0x96
-    { OF_DISP, 23, 0, 0, "res 2,a,(ix+:1)" },               // 0x97
-    { OF_DISP, 23, 0, 0, "res 3,b,(ix+:1)" },               // 0x98
-    { OF_DISP, 23, 0, 0, "res 3,c,(ix+:1)" },               // 0x99
-    { OF_DISP, 23, 0, 0, "res 3,d,(ix+:1)" },               // 0x9A
-    { OF_DISP, 23, 0, 0, "res 3,e,(ix+:1)" },               // 0x9B
-    { OF_DISP, 23, 0, 0, "res 3,h,(ix+:1)" },               // 0x9C
-    { OF_DISP, 23, 0, 0, "res 3,l,(ix+:1)" },               // 0x9D
+    { OF_DISP, 23, 0, 0, "res 2,(ix+:1),a" },               // 0x97
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),b" },               // 0x98
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),c" },               // 0x99
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),d" },               // 0x9A
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),e" },               // 0x9B
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),h" },               // 0x9C
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),l" },               // 0x9D
     { OF_DISP, 23, 0, 0, "res 3,(ix+:1)" },                 // 0x9E
-    { OF_DISP, 23, 0, 0, "res 3,a,(ix+:1)" },               // 0x9F
+    { OF_DISP, 23, 0, 0, "res 3,(ix+:1),a" },               // 0x9F
 
-    { OF_DISP, 23, 0, 0, "res 4,b,(ix+:1)" },               // 0xA0
-    { OF_DISP, 23, 0, 0, "res 4,c,(ix+:1)" },               // 0xA1
-    { OF_DISP, 23, 0, 0, "res 4,d,(ix+:1)" },               // 0xA2
-    { OF_DISP, 23, 0, 0, "res 4,e,(ix+:1)" },               // 0xA3
-    { OF_DISP, 23, 0, 0, "res 4,h,(ix+:1)" },               // 0xA4
-    { OF_DISP, 23, 0, 0, "res 4,l,(ix+:1)" },               // 0xA5
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),b" },               // 0xA0
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),c" },               // 0xA1
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),d" },               // 0xA2
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),e" },               // 0xA3
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),h" },               // 0xA4
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),l" },               // 0xA5
     { OF_DISP, 23, 0, 0, "res 4,(ix+:1)" },                 // 0xA6
-    { OF_DISP, 23, 0, 0, "res 4,a,(ix+:1)" },               // 0xA7
-    { OF_DISP, 23, 0, 0, "res 5,b,(ix+:1)" },               // 0xA8
-    { OF_DISP, 23, 0, 0, "res 5,c,(ix+:1)" },               // 0xA9
-    { OF_DISP, 23, 0, 0, "res 5,d,(ix+:1)" },               // 0xAA
-    { OF_DISP, 23, 0, 0, "res 5,e,(ix+:1)" },               // 0xAB
-    { OF_DISP, 23, 0, 0, "res 5,h,(ix+:1)" },               // 0xAC
-    { OF_DISP, 23, 0, 0, "res 5,l,(ix+:1)" },               // 0xAD
+    { OF_DISP, 23, 0, 0, "res 4,(ix+:1),a" },               // 0xA7
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),b" },               // 0xA8
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),c" },               // 0xA9
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),d" },               // 0xAA
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),e" },               // 0xAB
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),h" },               // 0xAC
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),l" },               // 0xAD
     { OF_DISP, 23, 0, 0, "res 5,(ix+:1)" },                 // 0xAE
-    { OF_DISP, 23, 0, 0, "res 5,a,(ix+:1)" },               // 0xAF
+    { OF_DISP, 23, 0, 0, "res 5,(ix+:1),a" },               // 0xAF
 
-    { OF_DISP, 23, 0, 0, "res 6,b,(ix+:1)" },               // 0xB0
-    { OF_DISP, 23, 0, 0, "res 6,c,(ix+:1)" },               // 0xB1
-    { OF_DISP, 23, 0, 0, "res 6,d,(ix+:1)" },               // 0xB2
-    { OF_DISP, 23, 0, 0, "res 6,e,(ix+:1)" },               // 0xB3
-    { OF_DISP, 23, 0, 0, "res 6,h,(ix+:1)" },               // 0xB4
-    { OF_DISP, 23, 0, 0, "res 6,l,(ix+:1)" },               // 0xB5
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),b" },               // 0xB0
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),c" },               // 0xB1
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),d" },               // 0xB2
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),e" },               // 0xB3
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),h" },               // 0xB4
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),l" },               // 0xB5
     { OF_DISP, 23, 0, 0, "res 6,(ix+:1)" },                 // 0xB6
-    { OF_DISP, 23, 0, 0, "res 6,a,(ix+:1)" },               // 0xB7
-    { OF_DISP, 23, 0, 0, "res 7,b,(ix+:1)" },               // 0xB8
-    { OF_DISP, 23, 0, 0, "res 7,c,(ix+:1)" },               // 0xB9
-    { OF_DISP, 23, 0, 0, "res 7,d,(ix+:1)" },               // 0xBA
-    { OF_DISP, 23, 0, 0, "res 7,e,(ix+:1)" },               // 0xBB
-    { OF_DISP, 23, 0, 0, "res 7,h,(ix+:1)" },               // 0xBC
-    { OF_DISP, 23, 0, 0, "res 7,l,(ix+:1)" },               // 0xBD
+    { OF_DISP, 23, 0, 0, "res 6,(ix+:1),a" },               // 0xB7
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),b" },               // 0xB8
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),c" },               // 0xB9
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),d" },               // 0xBA
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),e" },               // 0xBB
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),h" },               // 0xBC
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),l" },               // 0xBD
     { OF_DISP, 23, 0, 0, "res 7,(ix+:1)" },                 // 0xBE
-    { OF_DISP, 23, 0, 0, "res 7,a,(ix+:1)" },               // 0xBF
+    { OF_DISP, 23, 0, 0, "res 7,(ix+:1),a" },               // 0xBF
 
-    { OF_DISP, 23, 0, 0, "set 0,b,(ix+:1)" },               // 0xC0
-    { OF_DISP, 23, 0, 0, "set 0,c,(ix+:1)" },               // 0xC1
-    { OF_DISP, 23, 0, 0, "set 0,d,(ix+:1)" },               // 0xC2
-    { OF_DISP, 23, 0, 0, "set 0,e,(ix+:1)" },               // 0xC3
-    { OF_DISP, 23, 0, 0, "set 0,h,(ix+:1)" },               // 0xC4
-    { OF_DISP, 23, 0, 0, "set 0,l,(ix+:1)" },               // 0xC5
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),b" },               // 0xC0
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),c" },               // 0xC1
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),d" },               // 0xC2
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),e" },               // 0xC3
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),h" },               // 0xC4
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),l" },               // 0xC5
     { OF_DISP, 23, 0, 0, "set 0,(ix+:1)" },                 // 0xC6
-    { OF_DISP, 23, 0, 0, "set 0,a,(ix+:1)" },               // 0xC7
-    { OF_DISP, 23, 0, 0, "set 1,b,(ix+:1)" },               // 0xC8
-    { OF_DISP, 23, 0, 0, "set 1,c,(ix+:1)" },               // 0xC9
-    { OF_DISP, 23, 0, 0, "set 1,d,(ix+:1)" },               // 0xCA
-    { OF_DISP, 23, 0, 0, "set 1,e,(ix+:1)" },               // 0xCB
-    { OF_DISP, 23, 0, 0, "set 1,h,(ix+:1)" },               // 0xCC
-    { OF_DISP, 23, 0, 0, "set 1,l,(ix+:1)" },               // 0xCD
+    { OF_DISP, 23, 0, 0, "set 0,(ix+:1),a" },               // 0xC7
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),b" },               // 0xC8
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),c" },               // 0xC9
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),d" },               // 0xCA
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),e" },               // 0xCB
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),h" },               // 0xCC
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),l" },               // 0xCD
     { OF_DISP, 23, 0, 0, "set 1,(ix+:1)" },                 // 0xCE
-    { OF_DISP, 23, 0, 0, "set 1,a,(ix+:1)" },               // 0xCF
+    { OF_DISP, 23, 0, 0, "set 1,(ix+:1),a" },               // 0xCF
 
-    { OF_DISP, 23, 0, 0, "set 2,b,(ix+:1)" },               // 0xD0
-    { OF_DISP, 23, 0, 0, "set 2,c,(ix+:1)" },               // 0xD1
-    { OF_DISP, 23, 0, 0, "set 2,d,(ix+:1)" },               // 0xD2
-    { OF_DISP, 23, 0, 0, "set 2,e,(ix+:1)" },               // 0xD3
-    { OF_DISP, 23, 0, 0, "set 2,h,(ix+:1)" },               // 0xD4
-    { OF_DISP, 23, 0, 0, "set 2,l,(ix+:1)" },               // 0xD5
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),b" },               // 0xD0
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),c" },               // 0xD1
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),d" },               // 0xD2
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),e" },               // 0xD3
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),h" },               // 0xD4
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),l" },               // 0xD5
     { OF_DISP, 23, 0, 0, "set 2,(ix+:1)" },                 // 0xD6
-    { OF_DISP, 23, 0, 0, "set 2,a,(ix+:1)" },               // 0xD7
-    { OF_DISP, 23, 0, 0, "set 3,b,(ix+:1)" },               // 0xD8
-    { OF_DISP, 23, 0, 0, "set 3,c,(ix+:1)" },               // 0xD9
-    { OF_DISP, 23, 0, 0, "set 3,d,(ix+:1)" },               // 0xDA
-    { OF_DISP, 23, 0, 0, "set 3,e,(ix+:1)" },               // 0xDB
-    { OF_DISP, 23, 0, 0, "set 3,h,(ix+:1)" },               // 0xDC
-    { OF_DISP, 23, 0, 0, "set 3,l,(ix+:1)" },               // 0xDD
+    { OF_DISP, 23, 0, 0, "set 2,(ix+:1),a" },               // 0xD7
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),b" },               // 0xD8
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),c" },               // 0xD9
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),d" },               // 0xDA
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),e" },               // 0xDB
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),h" },               // 0xDC
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),l" },               // 0xDD
     { OF_DISP, 23, 0, 0, "set 3,(ix+:1)" },                 // 0xDE
-    { OF_DISP, 23, 0, 0, "set 3,a,(ix+:1)" },               // 0xDF
+    { OF_DISP, 23, 0, 0, "set 3,(ix+:1),a" },               // 0xDF
 
-    { OF_DISP, 23, 0, 0, "set 4,b,(ix+:1)" },               // 0xE0
-    { OF_DISP, 23, 0, 0, "set 4,c,(ix+:1)" },               // 0xE1
-    { OF_DISP, 23, 0, 0, "set 4,d,(ix+:1)" },               // 0xE2
-    { OF_DISP, 23, 0, 0, "set 4,e,(ix+:1)" },               // 0xE3
-    { OF_DISP, 23, 0, 0, "set 4,h,(ix+:1)" },               // 0xE4
-    { OF_DISP, 23, 0, 0, "set 4,l,(ix+:1)" },               // 0xE5
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),b" },               // 0xE0
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),c" },               // 0xE1
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),d" },               // 0xE2
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),e" },               // 0xE3
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),h" },               // 0xE4
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),l" },               // 0xE5
     { OF_DISP, 23, 0, 0, "set 4,(ix+:1)" },                 // 0xE6
-    { OF_DISP, 23, 0, 0, "set 4,a,(ix+:1)" },               // 0xE7
-    { OF_DISP, 23, 0, 0, "set 5,b,(ix+:1)" },               // 0xE8
-    { OF_DISP, 23, 0, 0, "set 5,c,(ix+:1)" },               // 0xE9
-    { OF_DISP, 23, 0, 0, "set 5,d,(ix+:1)" },               // 0xEA
-    { OF_DISP, 23, 0, 0, "set 5,e,(ix+:1)" },               // 0xEB
-    { OF_DISP, 23, 0, 0, "set 5,h,(ix+:1)" },               // 0xEC
-    { OF_DISP, 23, 0, 0, "set 5,l,(ix+:1)" },               // 0xED
+    { OF_DISP, 23, 0, 0, "set 4,(ix+:1),a" },               // 0xE7
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),b" },               // 0xE8
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),c" },               // 0xE9
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),d" },               // 0xEA
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),e" },               // 0xEB
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),h" },               // 0xEC
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),l" },               // 0xED
     { OF_DISP, 23, 0, 0, "set 5,(ix+:1)" },                 // 0xEE
-    { OF_DISP, 23, 0, 0, "set 5,a,(ix+:1)" },               // 0xEF
+    { OF_DISP, 23, 0, 0, "set 5,(ix+:1),a" },               // 0xEF
 
-    { OF_DISP, 23, 0, 0, "set 6,b,(ix+:1)" },               // 0xF0
-    { OF_DISP, 23, 0, 0, "set 6,c,(ix+:1)" },               // 0xF1
-    { OF_DISP, 23, 0, 0, "set 6,d,(ix+:1)" },               // 0xF2
-    { OF_DISP, 23, 0, 0, "set 6,e,(ix+:1)" },               // 0xF3
-    { OF_DISP, 23, 0, 0, "set 6,h,(ix+:1)" },               // 0xF4
-    { OF_DISP, 23, 0, 0, "set 6,l,(ix+:1)" },               // 0xF5
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),b" },               // 0xF0
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),c" },               // 0xF1
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),d" },               // 0xF2
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),e" },               // 0xF3
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),h" },               // 0xF4
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),l" },               // 0xF5
     { OF_DISP, 23, 0, 0, "set 6,(ix+:1)" },                 // 0xF6
-    { OF_DISP, 23, 0, 0, "set 6,a,(ix+:1)" },               // 0xF7
-    { OF_DISP, 23, 0, 0, "set 7,b,(ix+:1)" },               // 0xF8
-    { OF_DISP, 23, 0, 0, "set 7,c,(ix+:1)" },               // 0xF9
-    { OF_DISP, 23, 0, 0, "set 7,d,(ix+:1)" },               // 0xFA
-    { OF_DISP, 23, 0, 0, "set 7,e,(ix+:1)" },               // 0xFB
-    { OF_DISP, 23, 0, 0, "set 7,h,(ix+:1)" },               // 0xFC
-    { OF_DISP, 23, 0, 0, "set 7,l,(ix+:1)" },               // 0xFD
+    { OF_DISP, 23, 0, 0, "set 6,(ix+:1),a" },               // 0xF7
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),b" },               // 0xF8
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),c" },               // 0xF9
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),d" },               // 0xFA
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),e" },               // 0xFB
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),h" },               // 0xFC
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),l" },               // 0xFD
     { OF_DISP, 23, 0, 0, "set 7,(ix+:1)" },                 // 0xFE
-    { OF_DISP, 23, 0, 0, "set 7,a,(ix+:1)" },               // 0xFF
+    { OF_DISP, 23, 0, 0, "set 7,(ix+:1),a" },               // 0xFF
 };
 
 /// endregion </#DDCB prefix opcodes>
@@ -1704,73 +1704,73 @@ OpCode Z80Disassembler::ddcbOpcodes[256]
 
 OpCode Z80Disassembler::fdcbOpcodes[256]
 {
-    { OF_DISP, 23, 0, 0, "rlc b,(iy+:1)" },                 // 0x00
-    { OF_DISP, 23, 0, 0, "rlc c,(iy+:1)" },                 // 0x01
-    { OF_DISP, 23, 0, 0, "rlc d,(iy+:1)" },                 // 0x02
-    { OF_DISP, 23, 0, 0, "rlc e,(iy+:1)" },                 // 0x03
-    { OF_DISP, 23, 0, 0, "rlc h,(iy+:1)" },                 // 0x04
-    { OF_DISP, 23, 0, 0, "rlc l,(iy+:1)" },                 // 0x05
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),b" },                 // 0x00
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),c" },                 // 0x01
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),d" },                 // 0x02
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),e" },                 // 0x03
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),h" },                 // 0x04
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),l" },                 // 0x05
     { OF_DISP, 23, 0, 0, "rlc (iy+:1)" },                   // 0x06
-    { OF_DISP, 23, 0, 0, "rlc a,(iy+:1)" },                 // 0x07
-    { OF_DISP, 23, 0, 0, "rrc b,(iy+:1)" },                 // 0x08
-    { OF_DISP, 23, 0, 0, "rrc c,(iy+:1)" },                 // 0x09
-    { OF_DISP, 23, 0, 0, "rrc d,(iy+:1)" },                 // 0x0A
-    { OF_DISP, 23, 0, 0, "rrc e,(iy+:1)" },                 // 0x0B
-    { OF_DISP, 23, 0, 0, "rrc h,(iy+:1)" },                 // 0x0C
-    { OF_DISP, 23, 0, 0, "rrc l,(iy+:1)" },                 // 0x0D
+    { OF_DISP, 23, 0, 0, "rlc (iy+:1),a" },                 // 0x07
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),b" },                 // 0x08
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),c" },                 // 0x09
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),d" },                 // 0x0A
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),e" },                 // 0x0B
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),h" },                 // 0x0C
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),l" },                 // 0x0D
     { OF_DISP, 23, 0, 0, "rrc (iy+:1)" },                   // 0x0E
-    { OF_DISP, 23, 0, 0, "rrc a,(iy+:1)" },                 // 0x0F
+    { OF_DISP, 23, 0, 0, "rrc (iy+:1),a" },                 // 0x0F
 
-    { OF_DISP, 23, 0, 0, "rl b,(iy+:1)" },                  // 0x10
-    { OF_DISP, 23, 0, 0, "rl c,(iy+:1)" },                  // 0x11
-    { OF_DISP, 23, 0, 0, "rl d,(iy+:1)" },                  // 0x12
-    { OF_DISP, 23, 0, 0, "rl e,(iy+:1)" },                  // 0x13
-    { OF_DISP, 23, 0, 0, "rl h,(iy+:1)" },                  // 0x14
-    { OF_DISP, 23, 0, 0, "rl l,(iy+:1)" },                  // 0x15
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),b" },                  // 0x10
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),c" },                  // 0x11
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),d" },                  // 0x12
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),e" },                  // 0x13
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),h" },                  // 0x14
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),l" },                  // 0x15
     { OF_DISP, 23, 0, 0, "rl (iy+:1)" },                    // 0x16
-    { OF_DISP, 23, 0, 0, "rl a,(iy+:1)" },                  // 0x17
-    { OF_DISP, 23, 0, 0, "rr b,(iy+:1)" },                  // 0x18
-    { OF_DISP, 23, 0, 0, "rr c,(iy+:1)" },                  // 0x19
-    { OF_DISP, 23, 0, 0, "rr d,(iy+:1)" },                  // 0x1A
-    { OF_DISP, 23, 0, 0, "rr e,(iy+:1)" },                  // 0x1B
-    { OF_DISP, 23, 0, 0, "rr h,(iy+:1)" },                  // 0x1C
-    { OF_DISP, 23, 0, 0, "rr l,(iy+:1)" },                  // 0x1D
+    { OF_DISP, 23, 0, 0, "rl (iy+:1),a" },                  // 0x17
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),b" },                  // 0x18
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),c" },                  // 0x19
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),d" },                  // 0x1A
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),e" },                  // 0x1B
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),h" },                  // 0x1C
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),l" },                  // 0x1D
     { OF_DISP, 23, 0, 0, "rr (hl+:1)" },                    // 0x1E
-    { OF_DISP, 23, 0, 0, "rr a,(iy+:1)" },                  // 0x1F
+    { OF_DISP, 23, 0, 0, "rr (iy+:1),a" },                  // 0x1F
 
-    { OF_DISP, 23, 0, 0, "sla b,(iy+:1)" },                 // 0x20
-    { OF_DISP, 23, 0, 0, "sla c,(iy+:1)" },                 // 0x21
-    { OF_DISP, 23, 0, 0, "sla d,(iy+:1)" },                 // 0x22
-    { OF_DISP, 23, 0, 0, "sla e,(iy+:1)" },                 // 0x23
-    { OF_DISP, 23, 0, 0, "sla h,(iy+:1)" },                 // 0x24
-    { OF_DISP, 23, 0, 0, "sla l,(iy+:1)" },                 // 0x25
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),b" },                 // 0x20
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),c" },                 // 0x21
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),d" },                 // 0x22
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),e" },                 // 0x23
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),h" },                 // 0x24
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),l" },                 // 0x25
     { OF_DISP, 23, 0, 0, "sla (iy+:1)" },                   // 0x26
-    { OF_DISP, 23, 0, 0, "sla a,(iy+:1)" },                 // 0x27
-    { OF_DISP, 23, 0, 0, "sra b,(iy+:1)" },                 // 0x28
-    { OF_DISP, 23, 0, 0, "sra c,(iy+:1)" },                 // 0x29
-    { OF_DISP, 23, 0, 0, "sra d,(iy+:1)" },                 // 0x2A
-    { OF_DISP, 23, 0, 0, "sra e,(iy+:1)" },                 // 0x2B
-    { OF_DISP, 23, 0, 0, "sra h,(iy+:1)" },                 // 0x2C
-    { OF_DISP, 23, 0, 0, "sra l,(iy+:1)" },                 // 0x2D
+    { OF_DISP, 23, 0, 0, "sla (iy+:1),a" },                 // 0x27
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),b" },                 // 0x28
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),c" },                 // 0x29
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),d" },                 // 0x2A
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),e" },                 // 0x2B
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),h" },                 // 0x2C
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),l" },                 // 0x2D
     { OF_DISP, 23, 0, 0, "sra (iy+:1)" },                   // 0x2E
-    { OF_DISP, 23, 0, 0, "sra a,(iy+:1)" },                 // 0x2F
+    { OF_DISP, 23, 0, 0, "sra (iy+:1),a" },                 // 0x2F
 
-    { OF_DISP, 23, 0, 0, "sll b,(iy+:1)" },                 // 0x30
-    { OF_DISP, 23, 0, 0, "sll c,(iy+:1)" },                 // 0x31
-    { OF_DISP, 23, 0, 0, "sll d,(iy+:1)" },                 // 0x32
-    { OF_DISP, 23, 0, 0, "sll e,(iy+:1)" },                 // 0x33
-    { OF_DISP, 23, 0, 0, "sll h,(iy+:1)" },                 // 0x34
-    { OF_DISP, 23, 0, 0, "sll l,(iy+:1)" },                 // 0x35
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),b" },                 // 0x30
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),c" },                 // 0x31
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),d" },                 // 0x32
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),e" },                 // 0x33
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),h" },                 // 0x34
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),l" },                 // 0x35
     { OF_DISP, 23, 0, 0, "sll (iy+:1)" },                   // 0x36
-    { OF_DISP, 23, 0, 0, "sll a,(iy+:1)" },                 // 0x37
-    { OF_DISP, 23, 0, 0, "srl b,(iy+:1)" },                 // 0x38
-    { OF_DISP, 23, 0, 0, "srl c,(iy+:1)" },                 // 0x39
-    { OF_DISP, 23, 0, 0, "srl d,(iy+:1)" },                 // 0x3A
-    { OF_DISP, 23, 0, 0, "srl e,(iy+:1)" },                 // 0x3B
-    { OF_DISP, 23, 0, 0, "srl h,(iy+:1)" },                 // 0x3C
-    { OF_DISP, 23, 0, 0, "srl l,(iy+:1)" },                 // 0x3D
+    { OF_DISP, 23, 0, 0, "sll (iy+:1),a" },                 // 0x37
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),b" },                 // 0x38
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),c" },                 // 0x39
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),d" },                 // 0x3A
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),e" },                 // 0x3B
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),h" },                 // 0x3C
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),l" },                 // 0x3D
     { OF_DISP, 23, 0, 0, "srl (iy+:1)" },                   // 0x3E
-    { OF_DISP, 23, 0, 0, "srl a,(iy+:1)" },                 // 0x3F
+    { OF_DISP, 23, 0, 0, "srl (iy+:1),a" },                 // 0x3F
 
     { OF_DISP, 20, 0, 0, "bit 0,(iy+:1)" },                 // 0x40
     { OF_DISP, 20, 0, 0, "bit 0,(iy+:1)" },                 // 0x41
@@ -1840,141 +1840,141 @@ OpCode Z80Disassembler::fdcbOpcodes[256]
     { OF_DISP, 20, 0, 0, "bit 7,(iy+:1)" },                 // 0x7E
     { OF_DISP, 20, 0, 0, "bit 7,(iy+:1)" },                 // 0x7F
 
-    { OF_DISP, 23, 0, 0, "res 0,b,(iy+:1)" },               // 0x80
-    { OF_DISP, 23, 0, 0, "res 0,c,(iy+:1)" },               // 0x81
-    { OF_DISP, 23, 0, 0, "res 0,d,(iy+:1)" },               // 0x82
-    { OF_DISP, 23, 0, 0, "res 0,e,(iy+:1)" },               // 0x83
-    { OF_DISP, 23, 0, 0, "res 0,h,(iy+:1)" },               // 0x84
-    { OF_DISP, 23, 0, 0, "res 0,l,(iy+:1)" },               // 0x85
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),b" },               // 0x80
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),c" },               // 0x81
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),d" },               // 0x82
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),e" },               // 0x83
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),h" },               // 0x84
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),l" },               // 0x85
     { OF_DISP, 23, 0, 0, "res 0,(iy+:1)" },                 // 0x86
-    { OF_DISP, 23, 0, 0, "res 0,a,(iy+:1)" },               // 0x87
-    { OF_DISP, 23, 0, 0, "res 1,b,(iy+:1)" },               // 0x88
-    { OF_DISP, 23, 0, 0, "res 1,c,(iy+:1)" },               // 0x89
-    { OF_DISP, 23, 0, 0, "res 1,d,(iy+:1)" },               // 0x8A
-    { OF_DISP, 23, 0, 0, "res 1,e,(iy+:1)" },               // 0x8B
-    { OF_DISP, 23, 0, 0, "res 1,h,(iy+:1)" },               // 0x8C
-    { OF_DISP, 23, 0, 0, "res 1,l,(iy+:1)" },               // 0x8D
+    { OF_DISP, 23, 0, 0, "res 0,(iy+:1),a" },               // 0x87
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),b" },               // 0x88
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),c" },               // 0x89
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),d" },               // 0x8A
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),e" },               // 0x8B
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),h" },               // 0x8C
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),l" },               // 0x8D
     { OF_DISP, 23, 0, 0, "res 1,(iy+:1)" },                 // 0x8E
-    { OF_DISP, 23, 0, 0, "res 1,a,(iy+:1)" },               // 0x8F
+    { OF_DISP, 23, 0, 0, "res 1,(iy+:1),a" },               // 0x8F
 
-    { OF_DISP, 23, 0, 0, "res 2,b,(iy+:1)" },               // 0x90
-    { OF_DISP, 23, 0, 0, "res 2,c,(iy+:1)" },               // 0x91
-    { OF_DISP, 23, 0, 0, "res 2,d,(iy+:1)" },               // 0x92
-    { OF_DISP, 23, 0, 0, "res 2,e,(iy+:1)" },               // 0x93
-    { OF_DISP, 23, 0, 0, "res 2,h,(iy+:1)" },               // 0x94
-    { OF_DISP, 23, 0, 0, "res 2,l,(iy+:1)" },               // 0x95
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),b" },               // 0x90
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),c" },               // 0x91
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),d" },               // 0x92
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),e" },               // 0x93
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),h" },               // 0x94
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),l" },               // 0x95
     { OF_DISP, 23, 0, 0, "res 2,(iy+:1)" },                 // 0x96
-    { OF_DISP, 23, 0, 0, "res 2,a,(iy+:1)" },               // 0x97
-    { OF_DISP, 23, 0, 0, "res 3,b,(iy+:1)" },               // 0x98
-    { OF_DISP, 23, 0, 0, "res 3,c,(iy+:1)" },               // 0x99
-    { OF_DISP, 23, 0, 0, "res 3,d,(iy+:1)" },               // 0x9A
-    { OF_DISP, 23, 0, 0, "res 3,e,(iy+:1)" },               // 0x9B
-    { OF_DISP, 23, 0, 0, "res 3,h,(iy+:1)" },               // 0x9C
-    { OF_DISP, 23, 0, 0, "res 3,l,(iy+:1)" },               // 0x9D
+    { OF_DISP, 23, 0, 0, "res 2,(iy+:1),a" },               // 0x97
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),b" },               // 0x98
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),c" },               // 0x99
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),d" },               // 0x9A
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),e" },               // 0x9B
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),h" },               // 0x9C
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),l" },               // 0x9D
     { OF_DISP, 23, 0, 0, "res 3,(iy+:1)" },                 // 0x9E
-    { OF_DISP, 23, 0, 0, "res 3,a,(iy+:1)" },               // 0x9F
+    { OF_DISP, 23, 0, 0, "res 3,(iy+:1),a" },               // 0x9F
 
-    { OF_DISP, 23, 0, 0, "res 4,b,(iy+:1)" },               // 0xA0
-    { OF_DISP, 23, 0, 0, "res 4,c,(iy+:1)" },               // 0xA1
-    { OF_DISP, 23, 0, 0, "res 4,d,(iy+:1)" },               // 0xA2
-    { OF_DISP, 23, 0, 0, "res 4,e,(iy+:1)" },               // 0xA3
-    { OF_DISP, 23, 0, 0, "res 4,h,(iy+:1)" },               // 0xA4
-    { OF_DISP, 23, 0, 0, "res 4,l,(iy+:1)" },               // 0xA5
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),b" },               // 0xA0
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),c" },               // 0xA1
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),d" },               // 0xA2
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),e" },               // 0xA3
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),h" },               // 0xA4
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),l" },               // 0xA5
     { OF_DISP, 23, 0, 0, "res 4,(iy+:1)" },                 // 0xA6
-    { OF_DISP, 23, 0, 0, "res 4,a,(iy+:1)" },               // 0xA7
-    { OF_DISP, 23, 0, 0, "res 5,b,(iy+:1)" },               // 0xA8
-    { OF_DISP, 23, 0, 0, "res 5,c,(iy+:1)" },               // 0xA9
-    { OF_DISP, 23, 0, 0, "res 5,d,(iy+:1)" },               // 0xAA
-    { OF_DISP, 23, 0, 0, "res 5,e,(iy+:1)" },               // 0xAB
-    { OF_DISP, 23, 0, 0, "res 5,h,(iy+:1)" },               // 0xAC
-    { OF_DISP, 23, 0, 0, "res 5,l,(iy+:1)" },               // 0xAD
+    { OF_DISP, 23, 0, 0, "res 4,(iy+:1),a" },               // 0xA7
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),b" },               // 0xA8
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),c" },               // 0xA9
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),d" },               // 0xAA
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),e" },               // 0xAB
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),h" },               // 0xAC
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),l" },               // 0xAD
     { OF_DISP, 23, 0, 0, "res 5,(iy+:1)" },                 // 0xAE
-    { OF_DISP, 23, 0, 0, "res 5,a,(iy+:1)" },               // 0xAF
+    { OF_DISP, 23, 0, 0, "res 5,(iy+:1),a" },               // 0xAF
 
-    { OF_DISP, 23, 0, 0, "res 6,b,(iy+:1)" },               // 0xB0
-    { OF_DISP, 23, 0, 0, "res 6,c,(iy+:1)" },               // 0xB1
-    { OF_DISP, 23, 0, 0, "res 6,d,(iy+:1)" },               // 0xB2
-    { OF_DISP, 23, 0, 0, "res 6,e,(iy+:1)" },               // 0xB3
-    { OF_DISP, 23, 0, 0, "res 6,h,(iy+:1)" },               // 0xB4
-    { OF_DISP, 23, 0, 0, "res 6,l,(iy+:1)" },               // 0xB5
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),b" },               // 0xB0
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),c" },               // 0xB1
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),d" },               // 0xB2
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),e" },               // 0xB3
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),h" },               // 0xB4
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),l" },               // 0xB5
     { OF_DISP, 23, 0, 0, "res 6,(iy+:1)" },                 // 0xB6
-    { OF_DISP, 23, 0, 0, "res 6,a,(iy+:1)" },               // 0xB7
-    { OF_DISP, 23, 0, 0, "res 7,b,(iy+:1)" },               // 0xB8
-    { OF_DISP, 23, 0, 0, "res 7,c,(iy+:1)" },               // 0xB9
-    { OF_DISP, 23, 0, 0, "res 7,d,(iy+:1)" },               // 0xBA
-    { OF_DISP, 23, 0, 0, "res 7,e,(iy+:1)" },               // 0xBB
-    { OF_DISP, 23, 0, 0, "res 7,h,(iy+:1)" },               // 0xBC
-    { OF_DISP, 23, 0, 0, "res 7,l,(iy+:1)" },               // 0xBD
+    { OF_DISP, 23, 0, 0, "res 6,(iy+:1),a" },               // 0xB7
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),b" },               // 0xB8
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),c" },               // 0xB9
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),d" },               // 0xBA
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),e" },               // 0xBB
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),h" },               // 0xBC
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),l" },               // 0xBD
     { OF_DISP, 23, 0, 0, "res 7,(iy+:1)" },                 // 0xBE
-    { OF_DISP, 23, 0, 0, "res 7,a,(iy+:1)" },               // 0xBF
+    { OF_DISP, 23, 0, 0, "res 7,(iy+:1),a" },               // 0xBF
 
-    { OF_DISP, 23, 0, 0, "set 0,b,(iy+:1)" },               // 0xC0
-    { OF_DISP, 23, 0, 0, "set 0,c,(iy+:1)" },               // 0xC1
-    { OF_DISP, 23, 0, 0, "set 0,d,(iy+:1)" },               // 0xC2
-    { OF_DISP, 23, 0, 0, "set 0,e,(iy+:1)" },               // 0xC3
-    { OF_DISP, 23, 0, 0, "set 0,h,(iy+:1)" },               // 0xC4
-    { OF_DISP, 23, 0, 0, "set 0,l,(iy+:1)" },               // 0xC5
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),b" },               // 0xC0
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),c" },               // 0xC1
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),d" },               // 0xC2
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),e" },               // 0xC3
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),h" },               // 0xC4
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),l" },               // 0xC5
     { OF_DISP, 23, 0, 0, "set 0,(iy+:1)" },                 // 0xC6
-    { OF_DISP, 23, 0, 0, "set 0,a,(iy+:1)" },               // 0xC7
-    { OF_DISP, 23, 0, 0, "set 1,b,(iy+:1)" },               // 0xC8
-    { OF_DISP, 23, 0, 0, "set 1,c,(iy+:1)" },               // 0xC9
-    { OF_DISP, 23, 0, 0, "set 1,d,(iy+:1)" },               // 0xCA
-    { OF_DISP, 23, 0, 0, "set 1,e,(iy+:1)" },               // 0xCB
-    { OF_DISP, 23, 0, 0, "set 1,h,(iy+:1)" },               // 0xCC
-    { OF_DISP, 23, 0, 0, "set 1,l,(iy+:1)" },               // 0xCD
+    { OF_DISP, 23, 0, 0, "set 0,(iy+:1),a" },               // 0xC7
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),b" },               // 0xC8
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),c" },               // 0xC9
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),d" },               // 0xCA
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),e" },               // 0xCB
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),h" },               // 0xCC
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),l" },               // 0xCD
     { OF_DISP, 23, 0, 0, "set 1,(iy+:1)" },                 // 0xCE
-    { OF_DISP, 23, 0, 0, "set 1,a,(iy+:1)" },               // 0xCF
+    { OF_DISP, 23, 0, 0, "set 1,(iy+:1),a" },               // 0xCF
 
-    { OF_DISP, 23, 0, 0, "set 2,b,(iy+:1)" },               // 0xD0
-    { OF_DISP, 23, 0, 0, "set 2,c,(iy+:1)" },               // 0xD1
-    { OF_DISP, 23, 0, 0, "set 2,d,(iy+:1)" },               // 0xD2
-    { OF_DISP, 23, 0, 0, "set 2,e,(iy+:1)" },               // 0xD3
-    { OF_DISP, 23, 0, 0, "set 2,h,(iy+:1)" },               // 0xD4
-    { OF_DISP, 23, 0, 0, "set 2,l,(iy+:1)" },               // 0xD5
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),b" },               // 0xD0
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),c" },               // 0xD1
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),d" },               // 0xD2
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),e" },               // 0xD3
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),h" },               // 0xD4
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),l" },               // 0xD5
     { OF_DISP, 23, 0, 0, "set 2,(iy+:1)" },                 // 0xD6
-    { OF_DISP, 23, 0, 0, "set 2,a,(iy+:1)" },               // 0xD7
-    { OF_DISP, 23, 0, 0, "set 3,b,(iy+:1)" },               // 0xD8
-    { OF_DISP, 23, 0, 0, "set 3,c,(iy+:1)" },               // 0xD9
-    { OF_DISP, 23, 0, 0, "set 3,d,(iy+:1)" },               // 0xDA
-    { OF_DISP, 23, 0, 0, "set 3,e,(iy+:1)" },               // 0xDB
-    { OF_DISP, 23, 0, 0, "set 3,h,(iy+:1)" },               // 0xDC
-    { OF_DISP, 23, 0, 0, "set 3,l,(iy+:1)" },               // 0xDD
+    { OF_DISP, 23, 0, 0, "set 2,(iy+:1),a" },               // 0xD7
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),b" },               // 0xD8
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),c" },               // 0xD9
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),d" },               // 0xDA
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),e" },               // 0xDB
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),h" },               // 0xDC
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),l" },               // 0xDD
     { OF_DISP, 23, 0, 0, "set 3,(iy+:1)" },                 // 0xDE
-    { OF_DISP, 23, 0, 0, "set 3,a,(iy+:1)" },               // 0xDF
+    { OF_DISP, 23, 0, 0, "set 3,(iy+:1),a" },               // 0xDF
 
-    { OF_DISP, 23, 0, 0, "set 4,b,(iy+:1)" },               // 0xE0
-    { OF_DISP, 23, 0, 0, "set 4,c,(iy+:1)" },               // 0xE1
-    { OF_DISP, 23, 0, 0, "set 4,d,(iy+:1)" },               // 0xE2
-    { OF_DISP, 23, 0, 0, "set 4,e,(iy+:1)" },               // 0xE3
-    { OF_DISP, 23, 0, 0, "set 4,h,(iy+:1)" },               // 0xE4
-    { OF_DISP, 23, 0, 0, "set 4,l,(iy+:1)" },               // 0xE5
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),b" },               // 0xE0
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),c" },               // 0xE1
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),d" },               // 0xE2
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),e" },               // 0xE3
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),h" },               // 0xE4
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),l" },               // 0xE5
     { OF_DISP, 23, 0, 0, "set 4,(iy+:1)" },                 // 0xE6
-    { OF_DISP, 23, 0, 0, "set 4,a,(iy+:1)" },               // 0xE7
-    { OF_DISP, 23, 0, 0, "set 5,b,(iy+:1)" },               // 0xE8
-    { OF_DISP, 23, 0, 0, "set 5,c,(iy+:1)" },               // 0xE9
-    { OF_DISP, 23, 0, 0, "set 5,d,(iy+:1)" },               // 0xEA
-    { OF_DISP, 23, 0, 0, "set 5,e,(iy+:1)" },               // 0xEB
-    { OF_DISP, 23, 0, 0, "set 5,h,(iy+:1)" },               // 0xEC
-    { OF_DISP, 23, 0, 0, "set 5,l,(iy+:1)" },               // 0xED
+    { OF_DISP, 23, 0, 0, "set 4,(iy+:1),a" },               // 0xE7
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),b" },               // 0xE8
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),c" },               // 0xE9
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),d" },               // 0xEA
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),e" },               // 0xEB
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),h" },               // 0xEC
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),l" },               // 0xED
     { OF_DISP, 23, 0, 0, "set 5,(iy+:1)" },                 // 0xEE
-    { OF_DISP, 23, 0, 0, "set 5,a,(iy+:1)" },               // 0xEF
+    { OF_DISP, 23, 0, 0, "set 5,(iy+:1),a" },               // 0xEF
 
-    { OF_DISP, 23, 0, 0, "set 6,b,(iy+:1)" },               // 0xF0
-    { OF_DISP, 23, 0, 0, "set 6,c,(iy+:1)" },               // 0xF1
-    { OF_DISP, 23, 0, 0, "set 6,d,(iy+:1)" },               // 0xF2
-    { OF_DISP, 23, 0, 0, "set 6,e,(iy+:1)" },               // 0xF3
-    { OF_DISP, 23, 0, 0, "set 6,h,(iy+:1)" },               // 0xF4
-    { OF_DISP, 23, 0, 0, "set 6,l,(iy+:1)" },               // 0xF5
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),b" },               // 0xF0
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),c" },               // 0xF1
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),d" },               // 0xF2
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),e" },               // 0xF3
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),h" },               // 0xF4
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),l" },               // 0xF5
     { OF_DISP, 23, 0, 0, "set 6,(iy+:1)" },                 // 0xF6
-    { OF_DISP, 23, 0, 0, "set 6,a,(iy+:1)" },               // 0xF7
-    { OF_DISP, 23, 0, 0, "set 7,b,(iy+:1)" },               // 0xF8
-    { OF_DISP, 23, 0, 0, "set 7,c,(iy+:1)" },               // 0xF9
-    { OF_DISP, 23, 0, 0, "set 7,d,(iy+:1)" },               // 0xFA
-    { OF_DISP, 23, 0, 0, "set 7,e,(iy+:1)" },               // 0xFB
-    { OF_DISP, 23, 0, 0, "set 7,h,(iy+:1)" },               // 0xFC
-    { OF_DISP, 23, 0, 0, "set 7,l,(iy+:1)" },               // 0xFD
+    { OF_DISP, 23, 0, 0, "set 6,(iy+:1),a" },               // 0xF7
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),b" },               // 0xF8
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),c" },               // 0xF9
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),d" },               // 0xFA
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),e" },               // 0xFB
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),h" },               // 0xFC
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),l" },               // 0xFD
     { OF_DISP, 23, 0, 0, "set 7,(iy+:1)" },                 // 0xFE
-    { OF_DISP, 23, 0, 0, "set 7,a,(iy+:1)" },               // 0xFF
+    { OF_DISP, 23, 0, 0, "set 7,(iy+:1),a" },               // 0xFF
 };
 
 /// endregion </#FDCB prefix opcodes>
