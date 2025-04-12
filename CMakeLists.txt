@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.16)
 
 message(">> Unreal CMakeLists.txt")
 
+# Set C++ standard to 17 globally
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # THIS HAS TO COME BEFORE THE PROJECT LINE
 #if (APPLE)
 #	execute_process(COMMAND sw_vers OUTPUT_VARIABLE OSX_VERSION)
@@ -42,19 +46,23 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+# Build core library first
+add_subdirectory(core/src)
+
 # Emulator test console client
 add_subdirectory(testclient)
 
 # Unit tests
-#add_subdirectory(core/tests)
 if (TESTS)
 	message("Building tests")
-	enable_testing()
 	add_subdirectory(core/tests)
 endif (TESTS)
 
 # Benchmarks
 if (BENCHMARK)
 	message("Building benchmarks")
+
+	# Prevent Google benchmark from building it's own tests
+	set(BENCHMARK_ENABLE_TESTING OFF)
 	add_subdirectory(core/benchmarks)
 endif (BENCHMARK)
