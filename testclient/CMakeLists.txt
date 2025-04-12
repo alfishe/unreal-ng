@@ -7,12 +7,17 @@ project(testclient LANGUAGES CXX)
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
     set (CMAKE_BUILD_TYPE Release)
 endif ()
+
+# Set output directories to match root CMakeLists.txt
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Diagnostics
 message("CMAKE_BUILD_TYPE: '${CMAKE_BUILD_TYPE}'")
@@ -21,8 +26,23 @@ message("CMAKE_BUILD_TYPE: '${CMAKE_BUILD_TYPE}'")
 get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Resolve base paths for Core library and Data
+get_filename_component(CORE_LIBRARY_PATH
+                       "${CMAKE_CURRENT_LIST_DIR}/../core"
+                       ABSOLUTE)
+message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
+get_filename_component(DATA_PATH
+        "${CMAKE_CURRENT_LIST_DIR}/../data"
+        ABSOLUTE)
+message("DATA_PATH: ${DATA_PATH}")
+
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
+
+# Add core library dependency (if not built from the root CMakeLists.txt)
+if (NOT TARGET core)
+    add_subdirectory(${CORE_LIBRARY_PATH}/src core)
+endif (NOT TARGET core)
 
 # Use /src as root for include files
 include_directories(
@@ -54,16 +74,6 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
 
-# Resolve base paths for Core library and Data
-get_filename_component(CORE_LIBRARY_PATH
-                       "${CMAKE_CURRENT_LIST_DIR}/../core"
-                       ABSOLUTE)
-message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
-get_filename_component(DATA_PATH
-        "${CMAKE_CURRENT_LIST_DIR}/../data"
-        ABSOLUTE)
-message("DATA_PATH: ${DATA_PATH}")
-
 # Add core library includes path for testclient
 target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
 
@@ -84,30 +94,14 @@ if (WIN32 AND MINGW)
 endif (WIN32 AND MINGW)
 
 # Link with core library
-target_link_directories(${PROJECT_NAME} PRIVATE ${ROOT_DIR}/cmake-build-debug/core/src)
 target_link_libraries(${PROJECT_NAME} PRIVATE core)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${common_libraries})
 
-# Copy default config file to binary folder after successful compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon/unreal.ini)
-message("CONFIG_FILE: ${CONFIG_FILE}")
-message("Binary: ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}")
+# Copy ROM and INI files to build/bin directory
 add_custom_command(
         TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy ${CONFIG_FILE} "${CMAKE_CURRENT_BINARY_DIR}/unreal.ini"
-)
-
-# Copy all ROM files to /rom sub-folder
-add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/rom ${CMAKE_CURRENT_BINARY_DIR}/rom
-)
-
-# Copy all test ROM files to /rom sub-folder
-add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/testrom ${CMAKE_CURRENT_BINARY_DIR}/rom
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/bin"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/rom "${CMAKE_BINARY_DIR}/bin/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${DATA_PATH}/testrom "${CMAKE_BINARY_DIR}/bin/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy ${DATA_PATH}/configs/pentagon128k/unreal.ini "${CMAKE_BINARY_DIR}/bin/unreal.ini"
 )

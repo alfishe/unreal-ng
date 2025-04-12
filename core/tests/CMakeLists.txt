@@ -7,7 +7,7 @@ project(core-tests LANGUAGES CXX)
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Root directory
 get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -43,13 +43,11 @@ if (WIN32 AND NOT MSVC)
             ${GOOGLETEST_DIR}/googletest/src/gtest-test-part.cc
             ${GOOGLETEST_DIR}/googletest/src/gtest-typed-test.cc
             ${GOOGLETEST_DIR}/googletest/src/gtest-internal-inl.h
-            )
+    )
+else (WIN32 AND NOT MSVC)
+    # Compile GoogleTest to <binary>/googletest subfolder
+    add_subdirectory(${GOOGLETEST_DIR} ${CMAKE_CURRENT_BINARY_DIR}/googletest)
 endif (WIN32 AND NOT MSVC)
-
-# Compile GoogleTest to <binary>/googletest subfolder
-add_subdirectory(${GOOGLETEST_DIR} ${CMAKE_CURRENT_BINARY_DIR}/googletest)
-
-
 
 # Compile all *.cpp files both from core/src and core/tests folders
 file (GLOB_RECURSE TEST_CPP_FILES ${TESTS_DIR}/*.cpp)
