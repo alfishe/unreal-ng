@@ -669,8 +669,8 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld c,d" },                        // 0x4A
     { OF_NONE,  8, 0, 0, "ld c,e" },                        // 0x4B
     { OF_NONE,  8, 0, 0, "ld c,hx" },                       // 0x4C
-    { OF_NONE,  8, 0, 0, "lc c,lx" },                       // 0x4D
-    { OF_DISP, 19, 0, 0, "lc c,(ix+:1)" },                  // 0x4E
+    { OF_NONE,  8, 0, 0, "ld c,lx" },                       // 0x4D
+    { OF_DISP, 19, 0, 0, "ld c,(ix+:1)" },                  // 0x4E
     { OF_NONE,  8, 0, 0, "ld c,a" },                        // 0x4F
 
     { OF_NONE,  8, 0, 0, "ld d,b" },                        // 0x50
