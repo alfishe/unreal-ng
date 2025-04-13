@@ -225,7 +225,7 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
                 }
                 case TW_INLINE:
                 {
-                    const int16_t *const x = (const int16_t *const)in;
+                    const int16_t *x = (const int16_t *)in;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -237,7 +237,7 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
                 }
                 case TW_SPLIT:
                 {
-                    const int16_t **const x = (const int16_t **const) in;
+                    const int16_t **x = (const int16_t **)in;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -268,7 +268,7 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
             {
                 case TW_INTERLEAVED:
                 {
-                    const int16_t *const x = (const int16_t *const)in;
+                    const int16_t *x = (const int16_t *)in;
                     for (int i = 0; i < tw->numChannels * lenSamples; ++i)
                     {
                         z[i] = (float)x[i] / (float)INT16_MAX;
@@ -277,7 +277,7 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
                 }
                 case TW_INLINE:
                 {
-                    const int16_t *const x = (const int16_t *const)in;
+                    const int16_t *x = (const int16_t *)in;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -289,7 +289,7 @@ int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
                 }
                 case TW_SPLIT:
                 {
-                    const int16_t **const x = (const int16_t **const)in;
+                    const int16_t **x = (const int16_t **)in;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -345,7 +345,7 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
             {
                 case TW_INTERLEAVED:
                 {
-                    const float *const x = (const float *const) f;
+                    const float *x = (const float *) f;
                     for (int i = 0; i < tw->numChannels * lenSamples; ++i)
                     {
                         z[i] = (int16_t) (x[i] * (float) INT16_MAX);
@@ -354,7 +354,7 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                 }
                 case TW_INLINE:
                 {
-                    const float *const x = (const float *const) f;
+                    const float *x = (const float *) f;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -366,7 +366,7 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                 }
                 case TW_SPLIT:
                 {
-                    const float **const x = (const float **const) f;
+                    const float **x = (const float **) f;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -388,6 +388,8 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                 size_t samples_written = fwrite(z, sizeof(int16_t), tw->numChannels * lenSamples, tw->file);
                 result = (int)samples_written / tw->numChannels;
             }
+
+            break;
         }
         case TW_FLOAT32:
         {
@@ -405,7 +407,7 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                 }
                 case TW_INLINE:
                 {
-                    const float *const x = (const float *const) f;
+                    const float *x = (const float *) f;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -417,7 +419,7 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                 }
                 case TW_SPLIT:
                 {
-                    const float **const x = (const float **const) f;
+                    const float **x = (const float **) f;
                     for (int i = 0, k = 0; i < lenSamples; ++i)
                     {
                         for (int j = 0; j < tw->numChannels; ++j)
@@ -439,6 +441,8 @@ int tinywav_write_f(TinyWav *tw, void *f, int lenSamples)
                 size_t samples_written = fwrite(z, sizeof(float), tw->numChannels * lenSamples, tw->file);
                 result = (int)samples_written / tw->numChannels;
             }
+
+            break;
         }
         default:
             result = 0;
