@@ -9,6 +9,7 @@ on:
 env:
   BUILD_TYPE: Release
   CCACHE_DIR: /tmp/ccache
+  LD_LIBRARY_PATH: /usr/local/lib  # Add ICU library path
 
 jobs:
   build-linux:
@@ -52,7 +53,8 @@ jobs:
             cmake \
             git \
             ccache \
-            ninja-build
+            ninja-build \
+            libicu-dev  # Add system ICU dev package
 
       - name: Build ICU (if not cached)
         if: steps.cache-icu.outputs.cache-hit != 'true'
@@ -64,6 +66,8 @@ jobs:
           make -j$(nproc)
           sudo make install
           sudo ldconfig
+          # Create symlinks for version 56
+          sudo ln -s /usr/local/lib/libicu*.so.56 /usr/lib/ || true
 
       - name: Install Qt (if not cached)
         if: steps.cache-qt.outputs.cache-hit != 'true'
@@ -84,6 +88,7 @@ jobs:
         run: |
           echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
           echo "/usr/lib/ccache" >> $GITHUB_PATH
+          echo "LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Build and Test
         run: |
