@@ -87,19 +87,47 @@ std::string FileHelper::AbsolutePath(const std::string& path)
     if (length != 0)
     {
         result = std::string(buffer, length);
+        result = NormalizePath(result);
     }
-#endif
-
-#ifdef __linux__
+#else // Unix-like systems (Linux and macOS)
     char buffer[PATH_MAX];
-    realpath(path.c_str(), buffer);
-    result = std::string(buffer);
-#endif
+    char* resolved = realpath(path.c_str(), buffer);
+    if (resolved != nullptr)
+    {
+        result = std::string(resolved);
+        result = NormalizePath(result);
+    }
+    else if (errno == ENOENT) // Path doesn't exist, but might be valid
+    {
+        // Try to resolve the parent directory
+        size_t lastSlash = path.find_last_of('/');
+        if (lastSlash != std::string::npos)
+        {
+            std::string parentDir = path.substr(0, lastSlash);
+            char* resolvedParent = realpath(parentDir.c_str(), buffer);
+            if (resolvedParent != nullptr)
+            {
+                result = std::string(resolvedParent) + path.substr(lastSlash);
+                result = NormalizePath(result);
+                return result;
+            }
+        }
 
-#ifdef __APPLE__
-    char buffer[PATH_MAX];
-    realpath(path.c_str(), buffer);
-    result = std::string(buffer);
+        // If parent directory resolution fails, handle as before
+        if (path[0] == '/') // Absolute path
+        {
+            result = path;
+        }
+        else // Relative path, convert to absolute
+        {
+            char cwd[PATH_MAX];
+            if (getcwd(cwd, sizeof(cwd)) != nullptr)
+            {
+                result = std::string(cwd) + "/" + path;
+            }
+        }
+        result = NormalizePath(result);
+    }
 #endif
 
     return result;
