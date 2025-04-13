@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #endif
 #include "tinywav.h"
+#include <cstdlib>
 
 int tinywav_open_write(TinyWav *tw,
                        int16_t numChannels, int32_t sampleRate,

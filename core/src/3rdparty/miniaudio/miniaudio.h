@@ -28081,7 +28081,8 @@ static ma_result ma_device_stop__alsa(ma_device* pDevice)
     resultPoll = poll((struct pollfd*)pDevice->alsa.pPollDescriptorsCapture, 1, 0);
     if (resultPoll > 0) {
         ma_uint64 t;
-        read(((struct pollfd*)pDevice->alsa.pPollDescriptorsCapture)[0].fd, &t, sizeof(t));
+        ssize_t bytes_read = read(((struct pollfd*)pDevice->alsa.pPollDescriptorsCapture)[0].fd, &t, sizeof(t));
+        (void)bytes_read; /* Suppress unused result warning */
     }
     }
 
@@ -28102,7 +28103,8 @@ static ma_result ma_device_stop__alsa(ma_device* pDevice)
     resultPoll = poll((struct pollfd*)pDevice->alsa.pPollDescriptorsPlayback, 1, 0);
     if (resultPoll > 0) {
         ma_uint64 t;
-        read(((struct pollfd*)pDevice->alsa.pPollDescriptorsPlayback)[0].fd, &t, sizeof(t));
+        ssize_t bytes_read = read(((struct pollfd*)pDevice->alsa.pPollDescriptorsPlayback)[0].fd, &t, sizeof(t));
+        (void)bytes_read; /* Suppress unused result warning */
     }
 
     }
