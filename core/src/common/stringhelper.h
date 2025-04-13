@@ -68,36 +68,6 @@ public:
         return result;
     }
 
-    /// Format string using std::string primitives only
-    /// @tparam Args Variadic argument(s)
-    /// @param format Format string as std::string object reference
-    /// @param args Format arguments
-    /// @return Formatted string as std::string object
-    template<typename ... Args>
-    static std::string Format(const std::string& format, Args ... args)
-    {
-        std::string result;
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-nonliteral"
-#pragma clang diagnostic ignored "-Wformat-security"
-
-        // Pre-calculate resulting buffer size (adding +1 byte for trailing '\0')
-        size_t size = snprintf(nullptr, 0, format.c_str(), args ...) + 1;
-        if (size > 0)
-        {
-            std::unique_ptr<char[]> buf(new char[size]);
-            snprintf(buf.get(), size, format.c_str(), args ...);
-
-            // Create output string (without trailing '\0')
-            result = std::string(buf.get(),buf.get() + size - 1);
-        }
-
-#pragma clang diagnostic pop
-
-        return result;
-    }
-
     static std::string FormatWithThousandsDelimiter(int64_t n);
 
     /// Format any integer number to bit quads
@@ -137,4 +107,104 @@ public:
 
         return result;
     }
+
+    /// region <Format>
+public:
+    /// Format string using std::string primitives only
+    /// @tparam Args Variadic argument(s)
+    /// @param format Format string as std::string object reference
+    /// @param args Format arguments
+    /// @return Formatted string as std::string object
+    template<typename ... Args>
+    static std::string Format(const std::string& format, Args ... args)
+    {
+        //std::cout << "Format called with format string: " << format << std::endl;
+
+        return Format_Impl(format, ConvertArg(args)...);
+    }
+
+private:
+    // Helper function to convert std::string to const char*
+    static const char* ConvertArg(const std::string& s)
+    {
+        //std::cout << "Converting std::string to const char*: " << s << std::endl;
+
+        return s.c_str();
+    }
+
+    // Pass-through for all other types
+    template<typename T>
+    static typename std::enable_if<!std::is_same<T, std::string>::value, T>::type
+    ConvertArg(T arg)
+    {
+        /*
+        if constexpr (std::is_same<T, int>::value)
+            std::cout << "Integer passed through: " << arg << std::endl;
+        else if constexpr (std::is_same<T, float>::value || std::is_same<T, double>::value)
+            std::cout << "Float/double passed through: " << arg << std::endl;
+        else if constexpr (std::is_same<T, const char*>::value)
+            std::cout << "const char* passed through: " << arg << std::endl;
+        else
+            std::cout << "Other type passed through" << std::endl;
+        */
+
+        return arg;
+    }
+
+    /// Format string using std::string primitives only
+    /// @tparam Args Variadic argument(s)
+    /// @param format Format string as std::string object reference
+    /// @param args Format arguments
+    /// @return Formatted string as std::string object
+    template<typename ... Args>
+    static std::string Format_Impl(const std::string& format, Args ... args)
+    {
+        // Early return for empty format string
+        if (format.empty())
+        {
+            return "";
+        }
+
+        // Handle case with no arguments (just return the format string as-is)
+        if constexpr (sizeof...(Args) == 0)
+        {
+            return format;
+        }
+
+        std::string result;
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wformat-nonliteral"
+#pragma clang diagnostic ignored "-Wformat-security"
+
+        // Calculate required buffer size
+        size_t size = snprintf(nullptr, 0, format.c_str(), args...) + 1;
+        if (size <= 1) // size <= 1 means either error or empty result
+        {
+            return format; // or return "" if you prefer
+        }
+
+        try
+        {
+            std::unique_ptr<char[]> buf(new char[size]);
+            int written = snprintf(buf.get(), size, format.c_str(), args...);
+
+            if (written < 0 || static_cast<size_t>(written) >= size)
+            {
+                // Formatting error occurred
+                return format; // Fallback to original string
+            }
+
+            result.assign(buf.get(), written);
+        }
+        catch (...) // Memory allocation failed
+        {
+            result = format; // Fallback to original string
+        }
+
+#pragma clang diagnostic pop
+
+        return result;
+    }
+    /// endregion </Format>
 };
