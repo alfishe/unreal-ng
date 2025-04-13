@@ -83,7 +83,10 @@ int tinywav_open_read(TinyWav *tw, const char *path, TinyWavChannelFormat chanFm
   bool additionalHeaderDataPresent = false;
   while (tw->h.Subchunk2ID != htonl(0x64617461)) {   // "data"
     fseek(tw->file, 4, SEEK_CUR);
-    fread(&tw->h.Subchunk2ID, 4, 1, tw->file);
+    size_t bytes_read = fread(&tw->h.Subchunk2ID, 4, 1, tw->file);
+    if (bytes_read != 1) {
+      return -1; // Error reading file
+    }
     additionalHeaderDataPresent = true;
   }
   assert(tw->h.Subchunk2ID == htonl(0x64617461));    // "data"
