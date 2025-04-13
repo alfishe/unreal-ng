@@ -25,6 +25,7 @@ protected:
 public:
     Beeper() = delete;
     Beeper(EmulatorContext* context, size_t clockRate, size_t samplingRate) : SoundDevice(clockRate, samplingRate), _context(context) {}
+    virtual ~Beeper() = default;
     /// endregion </Constructors / destructors>
 
     /// region <Methods>

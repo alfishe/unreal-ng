@@ -36,6 +36,7 @@ protected:
     void CreateTables() override;
     void CreateTimingTable();
 
+public:
     uint16_t CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
     uint16_t CalculateXYScreenAddressOptimized(uint8_t x, uint8_t y, uint16_t baseAddress = 0x4000);
 

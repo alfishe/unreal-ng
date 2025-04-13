@@ -122,12 +122,12 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
 
 void PortDecoder_Spectrum128::SetRAMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 void PortDecoder_Spectrum128::SetROMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 
@@ -144,6 +144,9 @@ bool PortDecoder_Spectrum128::IsPort_FE(uint16_t port)
     static const uint16_t port_FE_full      = 0b0000'0000'1111'1110;
     static const uint16_t port_FE_mask      = 0b0000'0000'0000'0001;
     static const uint16_t port_FE_match     = 0b0000'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_FE_full & port_FE_mask) == port_FE_match && "Mask pattern incorrect");
 
     bool result = (port & port_FE_mask) == port_FE_match;
 
@@ -163,6 +166,9 @@ bool PortDecoder_Spectrum128::IsPort_7FFD(uint16_t port)
     static const uint16_t port_7FFD_mask    = 0b1000'0000'0000'0010;
     static const uint16_t port_7FFD_match   = 0b0000'0000'0000'0000;
 
+    // Compile-time check
+    static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");
+
     bool result = (port & port_7FFD_mask) == port_7FFD_match;
 
     return result;
@@ -179,6 +185,9 @@ bool PortDecoder_Spectrum128::IsPort_BFFD(uint16_t port)
     static const uint16_t port_BFFD_mask    = 0b1100'0000'0000'0010;
     static const uint16_t port_BFFD_match   = 0b1000'0000'0000'0000;
 
+    // Compile-time check
+    static_assert((port_BFFD_full & port_BFFD_mask) == port_BFFD_match && "Mask pattern incorrect");
+
     bool result = (port & port_BFFD_mask) == port_BFFD_match;
 
     return result;
@@ -194,6 +203,9 @@ bool PortDecoder_Spectrum128::IsPort_FFFD(uint16_t port)
     static const uint16_t port_FFFD_full    = 0b1111'1111'1111'1101;
     static const uint16_t port_FFFD_mask    = 0b1100'0000'0000'0010;
     static const uint16_t port_FFFD_match   = 0b1100'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_FFFD_full & port_FFFD_mask) == port_FFFD_match && "Mask pattern incorrect");
 
     bool result = (port & port_FFFD_mask) == port_FFFD_match;
 

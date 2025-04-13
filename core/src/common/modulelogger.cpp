@@ -455,7 +455,7 @@ std::string ModuleLogger::GetModuleSubmoduleHexString(PlatformModulesEnum module
 /// region <Handle MessageCenter settings events>
 
 /// Full logging settings change requested
-void ModuleLogger::OnSettingsChangeRequested(int id, Message* message)
+void ModuleLogger::OnSettingsChangeRequested([[maybe_unused]] int id, Message* message)
 {
     if (message && message->obj)
     {
@@ -469,7 +469,7 @@ void ModuleLogger::OnSettingsChangeRequested(int id, Message* message)
 }
 
 /// Single module logging settings change requested
-void ModuleLogger::OnModuleSettingsChangeRequested(int id, Message* message)
+void ModuleLogger::OnModuleSettingsChangeRequested([[maybe_unused]] int id, Message* message)
 {
     if (message && message->obj)
     {
@@ -509,7 +509,7 @@ std::string ModuleLogger::DumpModules(uint32_t moduleFlags)
     else
     {
         bool isFirstModule = true;
-        for (int i = 0; i < sizeof(moduleNames) / sizeof(moduleNames[0]); i++)
+        for (unsigned i = 0; i < sizeof(moduleNames) / sizeof(moduleNames[0]); i++)
         {
             if (moduleFlags & (1 << i))
             {

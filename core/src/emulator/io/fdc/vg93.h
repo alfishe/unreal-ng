@@ -127,7 +127,7 @@ public:
         WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
 
-    inline static const char* const getWD_COMMANDName(WD_COMMANDS command)
+    inline static const char* getWD_COMMANDName(WD_COMMANDS command)
     {
         static const char* const names[] =
         {
@@ -354,7 +354,7 @@ protected:
         _state = S_WAIT;
     }
 
-    void switchStateTo(WDSTATE nextState)
+    void switchStateTo([[maybe_unused]] WDSTATE nextState)
     {
         _state = _state2;
         _state2 = S_IDLE;

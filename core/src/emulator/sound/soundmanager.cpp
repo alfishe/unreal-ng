@@ -85,7 +85,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
         _prevFrameTState -= config.frame;
     }
 
-    int32_t deltaTime = (frameTState - _prevFrameTState) % config.frame;
+    [[maybe_unused]] int32_t deltaTime = (frameTState - _prevFrameTState) % config.frame;
 
     /*
     const double ratio = (double)config.frame / (double)SAMPLES_PER_FRAME;

@@ -34,7 +34,7 @@ public:
         WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
 
-    inline static const char* const getWD_COMMANDName(WD_COMMANDS command)
+    inline static const char* getWD_COMMANDName(WD_COMMANDS command)
     {
         static const char* const names[] =
         {
@@ -254,8 +254,8 @@ public:
     public:
         FSMEvent(WDSTATE state, std::function<void()> action, size_t delayTStates = 0) :
             _state(state),
-            _action(action),
-            _delayTStates(delayTStates)
+            _delayTStates(delayTStates),
+            _action(action)
         {
         }
 
@@ -564,7 +564,7 @@ protected:
 
         // If we're waiting more than 15 disk revolutions - something goes wrong on Z80 side,
         // and we need to recover into
-        if (_diffTime > Z80_FREQUENCY * 15 / FDD_RPS)
+        if (_diffTime > (int64_t)(Z80_FREQUENCY * 15 / FDD_RPS))
         {
             // TODO: handle the case
             //throw std::logic_error("Not implemented yet");

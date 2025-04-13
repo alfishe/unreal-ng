@@ -163,7 +163,7 @@ void Keyboard::ReleaseKey(ZXKeysEnum key)
 
 void Keyboard::TypeSymbol(char symbol)
 {
-
+    (void)symbol;
 }
 
 void Keyboard::SendKeyCombination()
@@ -380,13 +380,17 @@ void Keyboard::OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool
     // Up Arrow     - Caps Shift + 7
     // Down Arrow   - Caps Shift + 6
 
-
+    (void)key;
+    (void)isPressed;
+    (void)shift;
+    (void)ctrl;
+    (void)alt;
 }
 
 /// endregion </Handle keyboard events>
 
 /// region <Handle MessageCenter keyboard events>
-void Keyboard::OnKeyPressed(int id, Message* message)
+void Keyboard::OnKeyPressed([[maybe_unused]] int id, Message* message)
 {
     if (message == nullptr || message->obj == nullptr)
         return;
@@ -426,7 +430,7 @@ void Keyboard::OnKeyPressed(int id, Message* message)
     }
 }
 
-void Keyboard::OnKeyReleased(int id, Message* message)
+void Keyboard::OnKeyReleased([[maybe_unused]] int id, Message* message)
 {
     if (message == nullptr || message->obj == nullptr)
         return;

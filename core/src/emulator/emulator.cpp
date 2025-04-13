@@ -70,7 +70,7 @@ bool Emulator::Init()
     }
 
 	// Ensure that MessageCenter instance is up and running
-	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
+    [[maybe_unused]] MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
 
 	// Get host system info
 	GetSystemInfo();
@@ -745,9 +745,9 @@ bool Emulator::LoadDisk(const std::string &path)
 
 void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
-    const CONFIG& config = _context->config;
-    Z80& z80 = *_core->GetZ80();
-    Memory& memory = *_context->pMemory;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] Z80& z80 = *_core->GetZ80();
+    [[maybe_unused]] Memory& memory = *_context->pMemory;
 
 	// TODO: synchronize with all timings within frame and I/O
 

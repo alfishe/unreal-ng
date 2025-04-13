@@ -49,7 +49,7 @@ bool AudioFileHelper::saveFloat32PCMSamples(const std::vector<float>& samplesLef
 
         auto itLeft = samplesLeft.begin();
         auto itRight = samplesRight.begin();
-        for (int i = 0; i < samplesLeft.size(); i++)
+        for (unsigned i = 0; i < samplesLeft.size(); i++)
         {
             samplesInterleaved.push_back(*itLeft);
             samplesInterleaved.push_back(*itRight);

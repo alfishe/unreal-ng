@@ -35,7 +35,7 @@ protected:
     uint32_t _audioBufferWrites = 0;
 
     // Supported sound chips
-    Beeper*           _beeper;
+    Beeper* _beeper;
     SoundChip_TurboSound* _turboSound;
     // SoundChip_TurboSoundFM;
     // SoundChip_MoonSound;

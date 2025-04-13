@@ -3,6 +3,8 @@
 void ThreadHelper::setThreadName(const char* name)
 {
     size_t len = strlen(name);
+    if (len == 0)
+        return;
 
 #ifdef __APPLE__
 #include <pthread.h>

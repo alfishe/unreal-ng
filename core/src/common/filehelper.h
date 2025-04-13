@@ -10,7 +10,7 @@
 class FileHelper
 {
 public:
-    static const char GetPathSeparator();
+    static char GetPathSeparator();
 
 	static std::string GetExecutablePath();
 	static std::string NormalizePath(const std::string& path, char separator);

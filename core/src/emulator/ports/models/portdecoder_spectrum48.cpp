@@ -39,6 +39,7 @@ void PortDecoder_Spectrum48::reset()
 uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
 
@@ -63,6 +64,7 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
 void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
@@ -80,12 +82,12 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
 
 void PortDecoder_Spectrum48::SetRAMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 void PortDecoder_Spectrum48::SetROMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 /// endregion </Interface methods>
@@ -101,6 +103,9 @@ bool PortDecoder_Spectrum48::IsPort_FE(uint16_t port)
     static const uint16_t port_FE_full      = 0b0000'0000'1111'1110;
     static const uint16_t port_FE_mask      = 0b0000'0000'0000'0001;
     static const uint16_t port_FE_match     = 0b0000'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_FE_full & port_FE_mask) == port_FE_match && "Mask pattern incorrect");
 
     bool result = (port & port_FE_mask) == port_FE_match;
 
@@ -118,7 +123,7 @@ bool PortDecoder_Spectrum48::IsPort_FE(uint16_t port)
 void PortDecoder_Spectrum48::Port_FE(uint16_t port, uint8_t value, uint16_t pc)
 {
     uint8_t borderColor = value & 0b000'00111;
-    bool beeperBit = value & 0b0001'0000;
+    //bool beeperBit = value & 0b0001'0000;
 
     _screen->SetBorderColor(borderColor);
 

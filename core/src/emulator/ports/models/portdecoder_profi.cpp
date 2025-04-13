@@ -27,6 +27,9 @@ void PortDecoder_Profi::reset()
 
 uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
 {
+    (void)port;
+    (void)pc;
+
     uint8_t result = 0xFF;
 
     return result;
@@ -53,12 +56,12 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 
 void PortDecoder_Profi::SetRAMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 void PortDecoder_Profi::SetROMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 /// endregion </Interface methods>
@@ -74,6 +77,9 @@ bool PortDecoder_Profi::IsPort_7FFD(uint16_t port)
     static const uint16_t port_7FFD_full        = 0b0111'1111'1111'1101;
     static const uint16_t port_7FFD_mask        = 0b1000'0000'0000'0010;
     static const uint16_t port_7FFD_match       = 0b0000'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");
 
     bool result = (port & port_7FFD_mask) == port_7FFD_match;
 
@@ -91,6 +97,9 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
     static const uint16_t port_DFFD_mask        = 0b0010'0000'0000'0010;
     static const uint16_t port_DFFD_match       = 0b0000'0000'0000'0000;
 
+    // Compile-time check
+    static_assert((port_DFFD_full & port_DFFD_mask) == port_DFFD_match && "Mask pattern incorrect");
+
     bool result = (port & port_DFFD_mask) == port_DFFD_match;
 
     return result;
@@ -99,7 +108,7 @@ bool PortDecoder_Profi::IsPort_DFFD(uint16_t port)
 
 /// Port #7FFD (Memory) handler
 /// \param value
-void PortDecoder_Profi::Port_7FFD(uint8_t value, uint16_t pc)
+void PortDecoder_Profi::Port_7FFD(uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     //  Port: #7FFD
     //  Bits:
@@ -138,5 +147,6 @@ void PortDecoder_Profi::Port_7FFD(uint8_t value, uint16_t pc)
 /// \param value
 void PortDecoder_Profi::Port_DFFD(uint8_t value, uint16_t pc)
 {
-
+    (void)value;
+    (void)pc;
 }

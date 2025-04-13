@@ -296,7 +296,7 @@ std::string EventQueue::GetTopicByID(int id)
 {
     std::string result;
 
-    if (id > 0 && id < MAX_TOPICS)
+    if (id > 0 && (unsigned)id < MAX_TOPICS)
     {
         result = m_topics[id];
     }

@@ -37,7 +37,7 @@ public:
     {
         std::stringstream ss;
 
-        for (int i = 0; i < sampleLen; i += 2)
+        for (size_t i = 0; i < sampleLen; i += 2)
         {
             const T left = samples[i];
             const T right = samples[i + 1];

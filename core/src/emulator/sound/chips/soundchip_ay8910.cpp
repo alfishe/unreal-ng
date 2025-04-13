@@ -265,12 +265,12 @@ void SoundChip_AY8910::EnvelopeGenerator::slideDown(EnvelopeGenerator* obj)
     }
 }
 
-void SoundChip_AY8910::EnvelopeGenerator::holdTop(EnvelopeGenerator* obj)
+void SoundChip_AY8910::EnvelopeGenerator::holdTop([[maybe_unused]] EnvelopeGenerator* obj)
 {
     // Do nothing
 }
 
-void SoundChip_AY8910::EnvelopeGenerator::holdBottom(EnvelopeGenerator* obj)
+void SoundChip_AY8910::EnvelopeGenerator::holdBottom([[maybe_unused]] EnvelopeGenerator* obj)
 {
     // Do nothing
 }
@@ -411,7 +411,7 @@ void SoundChip_AY8910::updateMixer()
         // Note: disabling both noise and tone does not turn off a channel.
         // Turning a channel off can only be accomplished by writing all zeroes
         // Into corresponding bits of R10, R11 and R12 for corresponding channel
-        channelOut = (toneGenerator.out() | !toneGenerator.toneEnabled()) & (_noiseGenerator.out() | !toneGenerator.noiseEnabled());
+        channelOut = (toneGenerator.out() || !toneGenerator.toneEnabled()) && (_noiseGenerator.out() || !toneGenerator.noiseEnabled());
 
         // Apply volume (set via register or controlled by envelope generator)
         uint8_t volume = toneGenerator.envelopeEnabled() ? _envelopeGenerator.out() : toneGenerator.volume() * 2 + 1;
@@ -502,7 +502,7 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
     }
 
     // XOR value with previous state => all non-zeroed bits indicate the change
-    uint8_t changedBits = _registers[regAddr] ^ value;
+    //uint8_t changedBits = _registers[regAddr] ^ value;
 
     // Apply new register value
     _registers[regAddr] = value;
@@ -594,7 +594,7 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
 
 /// region <PortDevice interface methods>
 
-uint8_t SoundChip_AY8910::portDeviceInMethod(uint16_t port)
+uint8_t SoundChip_AY8910::portDeviceInMethod([[maybe_unused]] uint16_t port)
 {
     uint8_t result = 0xFF;
 
@@ -633,7 +633,7 @@ bool SoundChip_AY8910::attachToPorts(PortDecoder* decoder)
     {
         _portDecoder = decoder;
 
-        PortDevice* device = this;
+        [[maybe_unused]] PortDevice* device = this;
         result = decoder->RegisterPortHandler(0xBFFD, this);
         result &= decoder->RegisterPortHandler(0xFFFD, this);
 
@@ -674,7 +674,7 @@ uint32_t SoundChip_AY8910::getToneGeneratorDivisor(uint8_t fine, uint8_t coarse)
     return result;
 }
 
-double SoundChip_AY8910::getToneGeneratorFrequency(size_t baseFrequency, uint8_t fine, uint8_t coarse)
+double SoundChip_AY8910::getToneGeneratorFrequency([[maybe_unused]] size_t baseFrequency, uint8_t fine, uint8_t coarse)
 {
     uint16_t divisor = (coarse & 0b0000'1111) << 8 | fine;
 

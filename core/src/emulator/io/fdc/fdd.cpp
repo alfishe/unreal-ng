@@ -29,7 +29,7 @@ FDD::FDD(EmulatorContext* context) : _context(context)
         std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
         filepath = FileHelper::AbsolutePath(filepath);
         LoaderTRD trdLoader(_context, filepath);
-        bool imageLoaded = trdLoader.loadImage();
+        [[maybe_unused]] bool imageLoaded = trdLoader.loadImage();
 
         DiskImage *diskImage = trdLoader.getImage();
         /// endregion </Load disk image>

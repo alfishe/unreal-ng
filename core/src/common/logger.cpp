@@ -72,6 +72,8 @@ void Logger::EmptyLine()
 void Logger::OutEnriched(const char* fmt)
 {
     va_list emptyArgs;
+    // Portable empty initialization
+    memset(&emptyArgs, 0, sizeof(emptyArgs));
 
     string format = fmt;
     OutEnriched(format, emptyArgs);
@@ -124,6 +126,6 @@ void Logger::OutEnriched(string fmt, va_list args)
 void Logger::Out(const char* value)
 {
     // If unmuted - pass value to stdout
-    //if (!g_mute)
-    //    fprintf(stdout, "%s", value);
+    if (!g_mute)
+        fprintf(stdout, "%s", value);
 }

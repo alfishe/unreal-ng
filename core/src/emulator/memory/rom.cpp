@@ -279,7 +279,7 @@ bool ROM::LoadROM()
 			// Check loaded ROM size
 			if (config.mem_model == MM_PROFSCORP)
 			{
-				if (loadedBanks != 4 || loadedBanks != 8 || loadedBanks != 16)
+				if (loadedBanks != 4 && loadedBanks != 8 && loadedBanks != 16)
 				{
 					LOGERROR("Incorrect ROM size for Scorpion ZS256 Prof. Should be 64|128|256 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
@@ -287,8 +287,8 @@ bool ROM::LoadROM()
 			}
 			else if (config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3)
 			{
-				if (loadedBanks != 4 || loadedBanks != 8 || loadedBanks != 32 || loadedBanks != 64)
-				{
+                if (loadedBanks != 4 && loadedBanks != 8 && loadedBanks != 32 && loadedBanks != 64)
+                {
 					MLOGERROR("Incorrect ROM size for ATM3/7.10. Should be 64|128|512|1024 KB. Found %d", loadedBanks * PAGE_SIZE);
 					result = false;
 				}
@@ -461,8 +461,8 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 
 void ROM::CalculateSignatures()
 {
-	CONFIG& config = _context->config;
-	Memory& memory = *_context->pMemory;
+    [[maybe_unused]] CONFIG& config = _context->config;
+    [[maybe_unused]] Memory& memory = *_context->pMemory;
 
 	if (_ROMBanksLoaded == 0)
 	{

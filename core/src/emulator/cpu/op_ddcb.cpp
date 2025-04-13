@@ -100,67 +100,67 @@ Z80LOGIC oplx_78(Z80 *cpu, uint8_t byte) { // bit 7,(ix+nn)
    bitmem(cpu, byte, 7); return byte;
 }
 
-Z80LOGIC oplx_80(Z80 *cpu, uint8_t byte) { // res 0,(ix+nn)
+Z80LOGIC oplx_80([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 0,(ix+nn)
    return resbyte(byte, 0);
 }
 
-Z80LOGIC oplx_88(Z80 *cpu, uint8_t byte) { // res 1,(ix+nn)
+Z80LOGIC oplx_88([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 1,(ix+nn)
    return resbyte(byte, 1);
 }
 
-Z80LOGIC oplx_90(Z80 *cpu, uint8_t byte) { // res 2,(ix+nn)
+Z80LOGIC oplx_90([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 2,(ix+nn)
    return resbyte(byte, 2);
 }
 
-Z80LOGIC oplx_98(Z80 *cpu, uint8_t byte) { // res 3,(ix+nn)
+Z80LOGIC oplx_98([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 3,(ix+nn)
    return resbyte(byte, 3);
 }
 
-Z80LOGIC oplx_A0(Z80 *cpu, uint8_t byte) { // res 4,(ix+nn)
+Z80LOGIC oplx_A0([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 4,(ix+nn)
    return resbyte(byte, 4);
 }
 
-Z80LOGIC oplx_A8(Z80 *cpu, uint8_t byte) { // res 5,(ix+nn)
+Z80LOGIC oplx_A8([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 5,(ix+nn)
    return resbyte(byte, 5);
 }
 
-Z80LOGIC oplx_B0(Z80 *cpu, uint8_t byte) { // res 6,(ix+nn)
+Z80LOGIC oplx_B0([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 6,(ix+nn)
    return resbyte(byte, 6);
 }
 
-Z80LOGIC oplx_B8(Z80 *cpu, uint8_t byte) { // res 7,(ix+nn)
+Z80LOGIC oplx_B8([[maybe_unused]] Z80 *cpu, uint8_t byte) { // res 7,(ix+nn)
    return resbyte(byte, 7);
 }
 
-Z80LOGIC oplx_C0(Z80 *cpu, uint8_t byte) { // set 0,(ix+nn)
+Z80LOGIC oplx_C0([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 0,(ix+nn)
    return setbyte(byte, 0);
 }
 
-Z80LOGIC oplx_C8(Z80 *cpu, uint8_t byte) { // set 1,(ix+nn)
+Z80LOGIC oplx_C8([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 1,(ix+nn)
    return setbyte(byte, 1);
 }
 
-Z80LOGIC oplx_D0(Z80 *cpu, uint8_t byte) { // set 2,(ix+nn)
+Z80LOGIC oplx_D0([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 2,(ix+nn)
    return setbyte(byte, 2);
 }
 
-Z80LOGIC oplx_D8(Z80 *cpu, uint8_t byte) { // set 3,(ix+nn)
+Z80LOGIC oplx_D8([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 3,(ix+nn)
    return setbyte(byte, 3);
 }
 
-Z80LOGIC oplx_E0(Z80 *cpu, uint8_t byte) { // set 4,(ix+nn)
+Z80LOGIC oplx_E0([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 4,(ix+nn)
    return setbyte(byte, 4);
 }
 
-Z80LOGIC oplx_E8(Z80 *cpu, uint8_t byte) { // set 5,(ix+nn)
+Z80LOGIC oplx_E8([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 5,(ix+nn)
    return setbyte(byte, 5);
 }
 
-Z80LOGIC oplx_F0(Z80 *cpu, uint8_t byte) { // set 6,(ix+nn)
+Z80LOGIC oplx_F0([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 6,(ix+nn)
    return setbyte(byte, 6);
 }
 
-Z80LOGIC oplx_F8(Z80 *cpu, uint8_t byte) { // set 7,(ix+nn)
+Z80LOGIC oplx_F8([[maybe_unused]] Z80 *cpu, uint8_t byte) { // set 7,(ix+nn)
    return setbyte(byte, 7);
 }
 

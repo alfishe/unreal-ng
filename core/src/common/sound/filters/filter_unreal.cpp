@@ -95,8 +95,8 @@ void UnrealFilter::interpolate(uint32_t startTick, uint32_t endTick, uint32_t le
         size_t index = (tick & OVERSAMPLING_FACTOR_BITMASK) + OVERSAMPLING_FACTOR;
         scale = _filterSumFullUnsigned - _stepResponseCoefficients[index];
 
-        uint16_t outputLeft = left * scale + s2_l;
-        uint16_t outputRight = right * scale + s2_r;
+        //uint16_t outputLeft = left * scale + s2_l;
+        //uint16_t outputRight = right * scale + s2_r;
         // TODO: write to output buffer
 
         index = tick & OVERSAMPLING_FACTOR_BITMASK;
@@ -116,8 +116,8 @@ void UnrealFilter::interpolate(uint32_t startTick, uint32_t endTick, uint32_t le
             // Perform interpolation until meet oversampling window end
             do
             {
-                uint16_t outputLeft = s2_l + val_l;
-                uint16_t outputRight = s2_r + val_r;
+                //uint16_t outputLeft = s2_l + val_l;
+                //uint16_t outputRight = s2_r + val_r;
                 // TODO: write to output buffer
 
                 tick += OVERSAMPLING_FACTOR;
@@ -143,11 +143,16 @@ void UnrealFilter::interpolate(uint32_t startTick, uint32_t endTick, uint32_t le
 
 void UnrealFilter::applyFilter(uint16_t* input, uint16_t* output, size_t samplesLen)
 {
-    static double state[FILTER_ARRAY_SIZE] = { 0 };
+    // Mute unused param warnings until implemented
+    (void)input;
+    (void)output;
+    (void)samplesLen;
+
+    //static double state[FILTER_ARRAY_SIZE] = { 0 };
 
     for (size_t i = 0; i < samplesLen; i++)
     {
-        double sampleResult = 0.0;
+        //double sampleResult = 0.0;
 
     }
 }

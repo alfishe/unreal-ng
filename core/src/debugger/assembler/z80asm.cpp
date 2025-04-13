@@ -281,9 +281,10 @@ void disasm_address(char *line, unsigned addr, char labels)
 }
 */
 
-uint8_t *Z80Assembler::disasm(uint8_t *cmd, unsigned current, char labels)
+uint8_t *Z80Assembler::disasm(uint8_t *cmd, [[maybe_unused]] unsigned current, [[maybe_unused]] char labels)
 {
-    uint8_t *st = cmd, z80p;
+    //uint8_t *st = cmd;
+    uint8_t z80p;
     char *z80r16, *z80r8;
 
     z80r16 = z80r16_1, z80r8 = z80r8_1, z80p = 0;

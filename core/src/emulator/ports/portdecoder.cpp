@@ -53,13 +53,14 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             result = new PortDecoder_Spectrum48(context);
             break;
         case MM_PENTAGON:
-            if (ramSize == 128)
-            {
-                result = new PortDecoder_Pentagon128(context);
-            }
-            else if (ramSize == 512)
+            if (ramSize == 512)
             {
                 result = new PortDecoder_Pentagon512(context);
+            }
+            else
+            {
+                // Make 128k port decoder default
+                result = new PortDecoder_Pentagon128(context);
             }
             break;
         case MM_SPECTRUM128:
@@ -87,7 +88,7 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
 
 /// region <Interface methods>
 
-uint8_t PortDecoder::DecodePortIn(uint16_t addr, uint16_t pc)
+uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
 {
     uint8_t result = 0xFF;
 
@@ -118,7 +119,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, uint16_t pc)
     return result;
 }
 
-void PortDecoder::DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc)
+void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [[maybe_unused]] uint16_t pc)
 {
     /// region <Port Out breakpoint logic>
 
@@ -160,6 +161,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, uint8_t value, uint16_t pc)
 bool PortDecoder::IsFEPort(uint16_t port)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
 
@@ -167,6 +169,9 @@ bool PortDecoder::IsFEPort(uint16_t port)
     static const uint16_t port_FE_full    = 0b0000'0000'1111'1110;
     static const uint16_t port_FE_mask    = 0b0000'0000'0000'0001;
     static const uint16_t port_FE_match   = 0b0000'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_FE_full & port_FE_mask) == port_FE_match && "Mask pattern incorrect");
 
     bool result = (port & port_FE_mask) == port_FE_match;
 
@@ -179,7 +184,7 @@ bool PortDecoder::IsFEPort(uint16_t port)
 /// \param port
 /// \param pc
 /// \return
-uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, uint16_t pc)
+uint8_t PortDecoder::Default_Port_FE_In(uint16_t port, [[maybe_unused]] uint16_t pc)
 {
     uint8_t result = 0xFF;
 
@@ -211,14 +216,14 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
 
-    const uint32_t tState = _context->pCore->GetZ80()->t;
+    [[maybe_unused]] const uint32_t tState = _context->pCore->GetZ80()->t;
 
     // Persist output value
     _context->emulatorState.pFE = value;
 
     uint8_t borderColor = value & 0b000'00111;
-    bool micBit = (value & 0b0000'1000) > 0;
-    bool beeperBit = (value & 0b0001'0000) > 0;
+    [[maybe_unused]] bool micBit = (value & 0b0000'1000) > 0;
+    [[maybe_unused]] bool beeperBit = (value & 0b0001'0000) > 0;
 
     // Pass value to the tape and beeper sound generator
     _tape->handlePortOut(value);

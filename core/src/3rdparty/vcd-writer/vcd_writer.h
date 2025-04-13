@@ -45,6 +45,7 @@ class VCDException : public std::exception
 {
 public:
     explicit VCDException(const std::string & message) : m_message("VCD error: " + message) {}
+    virtual ~VCDException() = default;
     virtual const char* what() const throw () { return m_message.c_str(); }
 
 private:

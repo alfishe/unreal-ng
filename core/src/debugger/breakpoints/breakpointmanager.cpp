@@ -71,6 +71,8 @@ uint16_t BreakpointManager::AddBreakpoint(BreakpointDescriptor* descriptor)
 
 bool BreakpointManager::RemoveBreakpoint(BreakpointDescriptor* descriptor)
 {
+    (void)descriptor;
+
     bool result = false;
 
     throw std::logic_error("BreakpointManager::RemoveBreakpoint(BreakpointDescriptor* descriptor) - Not implemented");

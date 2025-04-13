@@ -553,7 +553,7 @@ void VG93::reset()
 }
 
 /// Initiate disk ejection sequence
-void VG93::eject(uint8_t drive)
+void VG93::eject([[maybe_unused]] uint8_t drive)
 {
     _status |= WDS_WRITEPROTECTED;  // Write protection sensor is covered when disk is partially inserted / ejected
     _state = S_EJECT1;

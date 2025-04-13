@@ -55,7 +55,7 @@ std::string DumpHelper::HexDumpBuffer(uint8_t* buffer, size_t size, const std::s
     result.resize(bufferSize);
 
     size_t realDumpLen = DumpHelper::HexDumpBuffer(result.data(), result.length(), buffer, size, delimiter, prefix);
-    if (realDumpLen <= bufferSize)
+    if (realDumpLen <= static_cast<size_t>(bufferSize))
     {
         result.resize(realDumpLen);
     }
@@ -113,7 +113,7 @@ size_t DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffe
             {
                 outPos += symbolsPrinted;
 
-                if (delimiterEnabled && !lastColumn && outPos < outSize)
+                if (delimiterEnabled && !lastColumn && static_cast<size_t>(outPos) < outSize)
                 {
                     symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%s", delimiter.c_str());
                     outPos += symbolsPrinted;
@@ -121,7 +121,7 @@ size_t DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffe
             }
         }
 
-        if (!lastLine && outPos < outSize)
+        if (!lastLine && static_cast<size_t>(outPos) < outSize)
         {
             *(outBuffer + outPos) = '\n';
             outPos++;

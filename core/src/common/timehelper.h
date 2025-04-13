@@ -171,14 +171,14 @@ To round_down(const std::chrono::duration<Rep, Period>& d)
 	return t;
 }
 
-// Originl algorithm source: https://stackoverflow.com/questions/16773285/how-to-convert-stdchronotime-point-to-stdtm-without-using-time-t
+// Original algorithm source: https://stackoverflow.com/questions/16773285/how-to-convert-stdchronotime-point-to-stdtm-without-using-time-t
 template <class Duration>
 std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration> tp)
 {
-	typedef unsigned int timeRepresentation;
-	typedef std::chrono::duration<timeRepresentation> seconds;
-	typedef std::chrono::duration<timeRepresentation, std::ratio<60>> minutes;
-	typedef std::chrono::duration<timeRepresentation, std::ratio<3600>> hours;
+    typedef unsigned int timeRepresentation;
+    typedef std::chrono::duration<timeRepresentation> seconds;
+    typedef std::chrono::duration<timeRepresentation, std::ratio<60>> minutes;
+    typedef std::chrono::duration<timeRepresentation, std::ratio<3600>> hours;
     typedef std::chrono::duration<timeRepresentation, std::ratio_multiply<hours::period, std::ratio<24>>> days;
 
     // t is time duration since 1970-01-01
@@ -196,19 +196,31 @@ std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration>
     unsigned day;
     std::tie(year, month, day) = civil_from_days(d.count());
 
-    // start filling in the tm with calendar info
-    std::tm tm = {0};
+    // Initialize tm struct with all fields
+    std::tm tm;
+    tm.tm_sec = 0;
+    tm.tm_min = 0;
+    tm.tm_hour = 0;
+    tm.tm_mday = static_cast<int>(day);
+    tm.tm_mon = static_cast<int>(month) - 1;
     tm.tm_year = year - 1900;
-    tm.tm_mon = month - 1;
-    tm.tm_mday = day;
-    tm.tm_wday = weekday_from_days(d.count());
-    tm.tm_yday = d.count() - days_from_civil(year, 1, 1);
+    tm.tm_wday = static_cast<int>(weekday_from_days(static_cast<int>(d.count())));
+    tm.tm_yday = static_cast<int>(d.count() - days_from_civil(year, 1, 1));
+    tm.tm_isdst = 0;
+    tm.tm_gmtoff = 0;
+    tm.tm_zone = nullptr;
+
     // Fill in the time
-    tm.tm_hour = std::chrono::duration_cast<hours>(t).count();
-    t -= hours(tm.tm_hour);
-    tm.tm_min = std::chrono::duration_cast<minutes>(t).count();
-    t -= minutes(tm.tm_min);
-    tm.tm_sec = std::chrono::duration_cast<seconds>(t).count();
+    auto hours_count = std::chrono::duration_cast<hours>(t).count();
+    tm.tm_hour = static_cast<int>(hours_count);
+    t -= hours(hours_count);
+
+    auto minutes_count = std::chrono::duration_cast<minutes>(t).count();
+    tm.tm_min = static_cast<int>(minutes_count);
+    t -= minutes(minutes_count);
+
+    auto seconds_count = std::chrono::duration_cast<seconds>(t).count();
+    tm.tm_sec = static_cast<int>(seconds_count);
 
     return tm;
 }

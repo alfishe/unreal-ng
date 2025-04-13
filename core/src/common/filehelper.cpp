@@ -4,7 +4,7 @@
 #include "common/stringhelper.h"
 #include <algorithm>
 
-const char FileHelper::GetPathSeparator()
+char FileHelper::GetPathSeparator()
 {
 #ifdef _WIN32
     return '\\';

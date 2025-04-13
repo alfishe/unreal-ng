@@ -9,7 +9,7 @@
 //  Non-prefixed opcodes
 // Important note: M1 cycle lasts 4 clocks. This is the bare minimum for any opcode. So only additional deltas added here with cputact(n) macro
 
-Z80OPCODE op_00(Z80 *cpu) { // nop [4]
+Z80OPCODE op_00([[maybe_unused]] Z80 *cpu) { // nop [4]
 	// No increment for CPU cycles counter (t) is required
 	// 4 cycles already spent in m1_cycle();
 }
@@ -61,8 +61,8 @@ Z80OPCODE op_09(Z80 *cpu) { // add hl,bc
     int hl = cpu->hl & 0xFFFF;
     int bc = cpu->bc & 0xFFFF;
 
-    int halfHL = hl & 0x0FFF;
-    int halfBC = bc & 0x0FFF;
+    //int halfHL = hl & 0x0FFF;
+    //int halfBC = bc & 0x0FFF;
 
     // Calculate half-carry flag (HF)
     flags = (flags & ~(NF | CF | F5 | F3 | HF));

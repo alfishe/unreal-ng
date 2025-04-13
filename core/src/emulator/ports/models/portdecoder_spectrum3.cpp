@@ -91,12 +91,12 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
 
 void PortDecoder_Spectrum3::SetRAMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 void PortDecoder_Spectrum3::SetROMPage(uint8_t page)
 {
-
+    (void)page;
 }
 
 /// endregion </Interface methods>
@@ -112,6 +112,9 @@ bool PortDecoder_Spectrum3::IsPort_FE(uint16_t port)
     static const uint16_t port_FE_full      = 0b0000'0000'1111'1110;
     static const uint16_t port_FE_mask      = 0b0000'0000'0000'0001;
     static const uint16_t port_FE_match     = 0b0000'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_FE_full & port_FE_mask) == port_FE_match && "Mask pattern incorrect");
 
     bool result = (port & port_FE_mask) == port_FE_match;
 
@@ -131,6 +134,9 @@ bool PortDecoder_Spectrum3::IsPort_7FFD(uint16_t port)
     static const uint16_t port_7FFD_mask    = 0b1100'0000'0000'0010;
     static const uint16_t port_7FFD_match   = 0b0100'0000'0000'0000;
 
+    // Compile-time check
+    static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");
+
     bool result = (port & port_7FFD_mask) == port_7FFD_match;
 
     return result;
@@ -145,6 +151,9 @@ bool PortDecoder_Spectrum3::IsPort_1FFD(uint16_t port)
     static const uint16_t port_1FFD_full    = 0b0001'1111'1111'1101;
     static const uint16_t port_1FFD_mask    = 0b1111'0000'0000'0010;
     static const uint16_t port_1FFD_match   = 0b0001'0000'0000'0000;
+
+    // Compile-time check
+    static_assert((port_1FFD_full & port_1FFD_mask) == port_1FFD_match && "Mask pattern incorrect");
 
     bool result = (port & port_1FFD_mask) == port_1FFD_match;
 
@@ -193,5 +202,6 @@ void PortDecoder_Spectrum3::Port_7FFD(uint8_t value, uint16_t pc)
 /// \param value
 void PortDecoder_Spectrum3::Port_1FFD(uint8_t value, uint16_t pc)
 {
-
+    (void)value;
+    (void)pc;
 }

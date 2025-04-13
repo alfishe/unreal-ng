@@ -25,8 +25,10 @@ void GIFAnimationHelper::StopAnimation()
     _started = false;
 }
 
-void GIFAnimationHelper::WriteFrame(uint32_t* buffer, size_t size)
+void GIFAnimationHelper::WriteFrame(uint32_t* buffer, [[maybe_unused]] size_t size)
 {
+    (void)size; // Mark as intentionally unused
+
     if (_started)
     {
         GifWriteFrame(&_gifWriter, (uint8_t *)buffer, _width, _height, _delayMs / 10);

@@ -133,7 +133,8 @@ class hasher : public Mixin<HashProvider>
 	{
 		const int tmp_buffer_size = 10000;
 		unsigned char buffer[tmp_buffer_size];
-		size_t len = 0;
+        [[maybe_unused]] size_t len = 0;
+
 		while (istr.read(reinterpret_cast<T*>(buffer), sizeof(buffer)))
 		{
 			provider.update(buffer, sizeof(buffer));

@@ -26,17 +26,20 @@ void SoundDevice::frameEnd(size_t tacts)
 
 void SoundDevice::update(size_t tact, float monoSample)
 {
-
+    (void)tact;
+    (void)monoSample;
 }
 void SoundDevice::update(size_t tact, float leftSample, float rightSample)
 {
-
+    (void)tact;
+    (void)leftSample;
+    (void)rightSample;
 }
 /// region </Methods>
 
 /// region <Helper methods>
 void SoundDevice::flush(size_t endCTick)
 {
-
+    (void)endCTick;
 }
 /// endregion </Helper methods>

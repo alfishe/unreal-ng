@@ -153,12 +153,12 @@ void Z80::Resume()
 /// Single CPU command cycle (non-interruptable)
 void Z80::Z80Step(bool skipBreakpoints)
 {
-    Z80& cpu = *this;
-    const CONFIG& config = _context->config;
-    EmulatorState& state = _context->emulatorState;
-    TEMP& temporary = _context->temporary;
-    Memory& memory = *_context->pMemory;
-    Emulator& emulator = *_context->pEmulator;
+    [[maybe_unused]] Z80& cpu = *this;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] TEMP& temporary = _context->temporary;
+    [[maybe_unused]] Memory& memory = *_context->pMemory;
+    [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     // Let debugger process step event
     if (cpu.isDebugMode && skipBreakpoints == false)
@@ -311,9 +311,9 @@ void Z80::Z80Step(bool skipBreakpoints)
 /// Execute number of cpu cycles equivalent to full frame screen render
 void Z80::Z80FrameCycle()
 {
-    const CONFIG& config = _context->config;
-    Z80& cpu = *this;
-    EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] Z80& cpu = *this;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
 
     // Video Interrupt position calculation
     bool int_occurred = false;
@@ -352,14 +352,15 @@ void Z80::Z80FrameCycle()
 uint8_t Z80::m1_cycle()
 {
     /// region <Overriding submodule for module logger>
+    [[maybe_unused]]
     const uint16_t _SUBMODULE = PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1;
     /// endregion </Overriding submodule for module logger>
 
-	Z80& cpu = *this;
-    const CONFIG& config = _context->config;
-    EmulatorState& state = _context->emulatorState;
-    const TEMP& temporary = _context->temporary;
-    const PortDecoder& portDecoder = *_context->pPortDecoder;
+    [[maybe_unused]] Z80& cpu = *this;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const TEMP& temporary = _context->temporary;
+    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
 
 	// Record PC for current opcode (prefixes should not alter original PC)
 	if (prefix == 0x0000)
@@ -573,7 +574,9 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 
 void Z80::HandleNMI(ROMModeEnum mode)
 {
-	Z80& cpu = *this;
+    (void)mode;
+
+    [[maybe_unused]] Z80& cpu = *this;
 }
 
 void Z80::HandleINT(uint8_t vector)
@@ -792,7 +795,7 @@ void Z80::ts_line_int(bool vdos)
 	}
 }
 
-void Z80::ts_dma_int(bool vdos)
+void Z80::ts_dma_int([[maybe_unused]] bool vdos)
 {
 	EmulatorState& state = _context->emulatorState;
 

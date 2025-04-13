@@ -29,9 +29,10 @@ bool LoaderTRD::loadImage()
         size_t fileSize = FileHelper::GetFileSize(_filepath);
         if (fileSize > 0)
         {
-            uint8_t buffer[fileSize];
+            // Allocate buffer for the whole file
+            std::vector<uint8_t> buffer(fileSize);
 
-            if (FileHelper::ReadFileToBuffer(_filepath, buffer, fileSize))
+            if (FileHelper::ReadFileToBuffer(_filepath, buffer.data(), fileSize))
             {
                 size_t cylinders = getTrackNoFromImageSize(fileSize);
                 if (cylinders < MAX_CYLINDERS)
@@ -43,7 +44,7 @@ bool LoaderTRD::loadImage()
                     format(_diskImage);
 
                     // Transfer sector data from .TRD to prepared disk image
-                    transferSectorData(_diskImage, buffer, fileSize);
+                    transferSectorData(_diskImage, buffer.data(), fileSize);
 
                     // Mark disk image as loaded
                     _diskImage->setLoaded(true);
@@ -75,7 +76,7 @@ bool LoaderTRD::writeImage()
                 for (size_t sectors = 0; sectors < SECTORS_PER_TRACK; sectors++)
                 {
                     uint8_t *sectorData = track->getDataForSector(sectors);
-                    bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
+                    [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
                 }
 
                 result = true;
@@ -136,7 +137,7 @@ bool LoaderTRD::writeImage()
              /// region <Step 3: format the track on logical level (put valid ID records to each sector)>
              for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; sector++)
              {
-                 uint8_t sectorNumber = INTERLEAVE_PATTERNS[interleavePatternIndex][sector];
+                 [[maybe_unused]] uint8_t sectorNumber = INTERLEAVE_PATTERNS[interleavePatternIndex][sector];
 
                  // Populate sector ID information and recalculate ID CRC
                  DiskImage::AddressMarkRecord& markRecord = *track.getIDForSector(sector);

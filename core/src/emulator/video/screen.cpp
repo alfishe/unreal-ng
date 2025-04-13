@@ -504,9 +504,9 @@ std::string Screen::GetVideoModeName(VideoModeEnum mode)
 
 void Screen::DrawScreenBorder(uint32_t n)
 {
-    Z80& cpu = *_cpu;
+    [[maybe_unused]] Z80& cpu = *_cpu;
     EmulatorState& state = _context->emulatorState;
-    CONFIG& config = _context->config;
+    [[maybe_unused]] CONFIG& config = _context->config;
     VideoControl& video = _context->pScreen->_vid;
 
     video.t_next += n;
@@ -531,7 +531,7 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     /// region <Sanity checks>
     constexpr int MAX_FRAME_DURATION_TOLERANCE = 100;   // We can allow up to 100 t-state cycles after frame ends since CPU can be in the middle of current command proceesing
 
-    EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     CONFIG& config = _context->config;
     uint32_t maxFrameDuration = config.frame + MAX_FRAME_DURATION_TOLERANCE;
 
@@ -580,7 +580,7 @@ void Screen::Draw(uint32_t tstate)
 // Skip render
 void Screen::DrawNull(uint32_t n)
 {
-
+    (void)n;
 }
 
 // Genuine Sinclair ZX Spectrum
@@ -626,7 +626,7 @@ void Screen::DrawZX(uint32_t n)
 	uint32_t vptr = video.vptr;
 	uint16_t vcyc = video.memvidcyc[video.line];
 	uint8_t upmod = config.ulaplus;
-	uint8_t tsgpal = state.ts.gpal << 4;
+    [[maybe_unused]] uint8_t tsgpal = state.ts.gpal << 4;
 
 	for (int i = n; i > 0; i -= 4, video.t_next += 4, video.xctr++, g++, a++)
 	{
@@ -680,79 +680,79 @@ void Screen::DrawZX(uint32_t n)
 
 void Screen::DrawPMC(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawP16(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawP384(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawPHR(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawTimex(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawTS16(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawTS256(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawTSText(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawATM16(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawATMHiRes(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawATM2Text(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawATM3Text(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawProfi(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawGMX(uint32_t n)
 {
-
+    (void)n;
 }
 
 void Screen::DrawBorder(uint32_t n)
 {
-    EmulatorState& state = _context->emulatorState;
-    const CONFIG& config = _context->config;
-    VideoControl& video = _context->pScreen->_vid;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] VideoControl& video = _context->pScreen->_vid;
 
     video.t_next += n;
     uint32_t vptr = video.vptr;

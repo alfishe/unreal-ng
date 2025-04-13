@@ -257,7 +257,7 @@ bool LoaderZ80::loadZ80v1()
 
     if (_fileValidated && _snapshotVersion == Z80v1)
     {
-        Z80MemoryMode memoryMode = Z80_48K;
+        [[maybe_unused]] Z80MemoryMode memoryMode = Z80_48K;
 
         auto buffer = std::unique_ptr<uint8_t[]>(new uint8_t[_fileSize]);
         uint8_t* pBuffer = buffer.get();
@@ -278,7 +278,7 @@ bool LoaderZ80::loadZ80v1()
         _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
 
         auto unpackedMemory = std::unique_ptr<uint8_t[]>(new uint8_t[3 * PAGE_SIZE]);
-        size_t dataSize = _fileSize - sizeof(headerV1);
+        [[maybe_unused]] size_t dataSize = _fileSize - sizeof(headerV1);
 
         throw std::logic_error("Not supported yet");
     }
@@ -532,7 +532,7 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
 
 void LoaderZ80::applyPeripheralState(const Z80Header_v2& header)
 {
-
+    (void)header;
 }
 
 void LoaderZ80::decompressPage(uint8_t *src, size_t srcLen, uint8_t *dst, size_t dstLen)

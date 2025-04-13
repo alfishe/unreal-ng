@@ -267,7 +267,7 @@ uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPix
     uint8_t paper = (attribute & 0b00111000) >> 3;
     uint8_t ink = attribute & 0b00000111;
     bool brightness = (attribute & 0b01000000) > 0;
-    bool flash = (attribute & 0b10000000) > 0;
+    [[maybe_unused]] bool flash = (attribute & 0b10000000) > 0;
 
     // Set resulting pixel color based on ZX-Spectrum pixel information (not set => paper color, set => ink color)
     uint8_t paletteIndex = isPixelSet ? ink : paper;
@@ -473,7 +473,7 @@ RenderTypeEnum ScreenZX::GetRenderType(uint16_t line, uint16_t col)
     /// endregion </Sanity checks>
 
     uint16_t lineStart = _rasterState.tstatesPerLine * line;
-    uint16_t lineEnd = lineStart + _rasterState.tstatesPerLine - 1;
+    [[maybe_unused]] uint16_t lineEnd = lineStart + _rasterState.tstatesPerLine - 1;
     uint32_t posTstate = lineStart + col;
 
     RenderTypeEnum lineType = GetLineRenderTypeByTiming(posTstate);
@@ -520,7 +520,7 @@ void ScreenZX::UpdateScreen()
     Screen& screen = *this;
 
     // Border color is latched in PortDecoder (or model-specific override) after each 'out (#FE)' port command and stored in Screen object property
-    uint8_t borderColor = screen.GetBorderColor();
+    [[maybe_unused]] uint8_t borderColor = screen.GetBorderColor();
 
     // Get current t-state (value corresponds to CPU cycles relative to current video frame)
     uint32_t tstate = screen.GetCurrentTstate();
@@ -568,7 +568,7 @@ void ScreenZX::Draw(uint32_t tstate)
                     uint32_t colorPaper = _rgbaFlashColors[attributes];
 
                     uint32_t resultingPixelColor = ((pixels << pixelXBit) & 0b1000'0000) ? colorInk : colorPaper;
-                    int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
+                    size_t framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
 
                     if (framebufferOffset < framebufferARGBSize)
                     {
@@ -615,7 +615,7 @@ void ScreenZX::RenderOnlyMainScreen()
     // Get host memory address for selected ZX-Spectrum screen (Bank 5 for Normal and Bank 7 for Shadow screen modes)
     uint8_t* zxScreen = _activeScreenMemoryOffset;
     //uint8_t* zxScreen = memory.RemapAddressToCurrentBank(0x4000);
-    uint8_t ramPage = memory.GetRAMPageFromAddress(zxScreen);
+    [[maybe_unused]] uint8_t ramPage = memory.GetRAMPageFromAddress(zxScreen);
     if (zxScreen != bank5Base && zxScreen != bank7Base)
     {
         MLOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
@@ -643,7 +643,7 @@ void ScreenZX::RenderOnlyMainScreen()
                 for (int destX = 0; destX < 8; destX++)
                 {
                     offset = (rasterDescriptor.screenOffsetTop + y) * rasterDescriptor.fullFrameWidth + (rasterDescriptor.screenOffsetLeft + x * 8 + destX);
-                    if (offset < size / sizeof(uint32_t))
+                    if (offset < (int)(size / sizeof(uint32_t)))
                     {
                         // Write RGBA pixel to framebuffer with x,y coordinates and calculated color
                         *(framebuffer + offset) = ((pixels << destX) & 0b10000000) ? colorInk : colorPaper;
@@ -668,7 +668,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     const uint32_t borderColor = _rgbaColors[color];
 
     uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
-    const size_t framebufferARGBSizePixels = _framebuffer.memoryBufferSize / sizeof (uint32_t);
+    [[maybe_unused]] const size_t framebufferARGBSizePixels = _framebuffer.memoryBufferSize / sizeof (uint32_t);
 
     VideoModeEnum mode = GetVideoMode();
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];

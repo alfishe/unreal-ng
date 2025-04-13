@@ -80,7 +80,7 @@ MemoryInterface* Memory::GetDebugMemoryInterface()
 /// Used from: Z80::FastMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadFast(uint16_t addr, bool isExecution)
+uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 {
     // Determine CPU bank (from address bits 14 and 15)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
@@ -330,9 +330,9 @@ void Memory::SetROMMode(ROMModeEnum mode)
 {
     throw std::runtime_error("SetROMMode is deprecated");
 
-    EmulatorState& state = _context->emulatorState;
-    const CONFIG& config = _context->config;
-    const PortDecoder& portDecoder = *_context->pPortDecoder;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] const PortDecoder& portDecoder = *_context->pPortDecoder;
 
 	if (mode == RM_NOCHANGE)
 		return;
@@ -453,9 +453,10 @@ void Memory::SetROMPage(uint16_t page, bool updatePorts)
 /// Switch to specified RAM Bank in RAM Page 3
 /// Address space: [0x0000 - 0x3FFF]
 /// \param page Page number (in 16KiB pages)
-void Memory::SetRAMPageToBank0(uint16_t page, bool updatePorts)
+void Memory::SetRAMPageToBank0(uint16_t page, [[maybe_unused]] bool updatePorts)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
@@ -477,6 +478,7 @@ void Memory::SetRAMPageToBank0(uint16_t page, bool updatePorts)
 void Memory::SetRAMPageToBank1(uint16_t page)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
@@ -498,6 +500,7 @@ void Memory::SetRAMPageToBank1(uint16_t page)
 void Memory::SetRAMPageToBank2(uint16_t page)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
@@ -519,6 +522,7 @@ void Memory::SetRAMPageToBank2(uint16_t page)
 void Memory::SetRAMPageToBank3(uint16_t page, bool updatePorts)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 
@@ -710,6 +714,7 @@ uint16_t Memory::GetRAMPageFromAddress(uint8_t* hostAddress)
 uint16_t Memory::GetROMPageFromAddress(uint8_t* hostAddress)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM;
     /// endregion </Override submodule>
 
@@ -846,7 +851,7 @@ size_t Memory::GetZ80BankTotalAccessCount(uint8_t bank)
 
     /// endregion </Sanity checks>
 
-    uint16_t absolutePage = GetPageForBank(bank);
+    [[maybe_unused]] uint16_t absolutePage = GetPageForBank(bank);
     uint8_t bankBit = 1 << bank;
     bool bankWasRead = _memZ80BankReadMarks & bankBit;
     bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
@@ -1150,6 +1155,8 @@ size_t Memory::GetZ80BankExecuteAccessCountExclScreen(uint8_t bank)
 
 void Memory::SetROM48k(bool updatePorts)
 {
+    (void)updatePorts;
+
     // Switch to 48k ROM page
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1157,6 +1164,8 @@ void Memory::SetROM48k(bool updatePorts)
 
 void Memory::SetROM128k(bool updatePorts)
 {
+    (void)updatePorts;
+
     // Switch to 128k ROM page
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1164,6 +1173,8 @@ void Memory::SetROM128k(bool updatePorts)
 
 void Memory::SetROMDOS(bool updatePorts)
 {
+    (void)updatePorts;
+
     // Switch to DOS ROM page
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1171,6 +1182,8 @@ void Memory::SetROMDOS(bool updatePorts)
 
 void Memory::SetROMSystem(bool updatePorts)
 {
+    (void)updatePorts;
+
     // Switch to DOS ROM page
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;;
@@ -1217,6 +1230,7 @@ void Memory::LoadContentToMemory(uint8_t* contentBuffer, size_t size, uint16_t z
 void Memory::LoadRAMPageData(uint8_t page, uint8_t* fromBuffer, size_t bufferSize)
 {
     /// region <Override submodule>
+    [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformMemorySubmodulesEnum::SUBMODULE_MEM_RAM;
     /// endregion </Override submodule>
 

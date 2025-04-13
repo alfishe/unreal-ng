@@ -143,7 +143,7 @@ protected:
 protected:
     std::string m_topics[MAX_TOPICS];
     TopicResolveMap m_topicsResolveMap;
-    int m_topicMax = 0;
+    unsigned m_topicMax = 0;
 
     TopicObserversMap m_topicObservers;
 

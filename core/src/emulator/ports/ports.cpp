@@ -26,18 +26,19 @@ void Ports::SetBanks()
 void Ports::Reset()
 {
 	// Call reset handler for each registered module
-	for_each(_resetHandlers._callbacks.begin(), _resetHandlers._callbacks.end(), [](auto x)
-	{
+	//for_each(_resetHandlers._callbacks.begin(), _resetHandlers._callbacks.end(), [](auto x)
+	//{
 
-	});
+   //});
 }
 
 void Ports::Out(uint16_t port, uint8_t val)
 {
+    [[maybe_unused]]
     const CONFIG& config = _context->config;
 
-	uint8_t p1 = (port & 0xFF);          // lower 8 bits of port address
-	uint8_t p2 = ((port >> 8) & 0xFF);   // higher 8 bits of port address
+    [[maybe_unused]] uint8_t p1 = (port & 0xFF);          // lower 8 bits of port address
+    [[maybe_unused]] uint8_t p2 = ((port >> 8) & 0xFF);   // higher 8 bits of port address
 	_brk_port_out = port;
 	_brk_port_val = val;
 
@@ -53,8 +54,8 @@ uint8_t Ports::In(uint16_t port)
 
 	_brk_port_in = port;
 
-	uint8_t p1 = (port & 0xFF);
-	uint8_t p2 = ((port >> 8) & 0xFF);
+    [[maybe_unused]] uint8_t p1 = (port & 0xFF);
+    [[maybe_unused]] uint8_t p2 = ((port >> 8) & 0xFF);
 
 	if (config.ulaplus)
 	{

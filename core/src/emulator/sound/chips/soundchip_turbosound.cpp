@@ -121,7 +121,7 @@ bool SoundChip_TurboSound::attachToPorts(PortDecoder* decoder)
     {
         _portDecoder = decoder;
 
-        PortDevice* device = this;
+        [[maybe_unused]] PortDevice* device = this;
         result = decoder->RegisterPortHandler(0xBFFD, this);
         result &= decoder->RegisterPortHandler(0xFFFD, this);
 

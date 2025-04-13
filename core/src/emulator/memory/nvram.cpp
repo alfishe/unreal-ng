@@ -21,7 +21,7 @@ void NVRAM::SetNVRAMAddress(uint32_t addr)
 
 void NVRAM::WriteNVRAM(uint8_t val)
 {
-
+    (void)val;
 }
 
 uint8_t NVRAM::ReadNVRAM()

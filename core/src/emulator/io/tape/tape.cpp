@@ -68,12 +68,12 @@ uint8_t Tape::handlePortIn()
 {
     uint8_t result = 0;
 
-    CONFIG& config = _context->config;
+    [[maybe_unused]] CONFIG& config = _context->config;
     Z80& cpu = *_context->pCore->GetZ80();
     Memory& memory = *_context->pMemory;
 
     const uint32_t tState = _context->pCore->GetZ80()->t;
-    uint8_t prevPortValue = _context->emulatorState.pFE;
+    [[maybe_unused]] uint8_t prevPortValue = _context->emulatorState.pFE;
 
     if (_tapeStarted)
     {
@@ -84,8 +84,8 @@ uint8_t Tape::handlePortIn()
 
         // Only mic sound is heard to prevent clicks from keyboard polling out (#FE)
         int16_t micSample = tapeBit ? 1000 : -1000;
-        int16_t sample = _lpfFilter.filter(sample);// Apply LPF filtering to remove high-frequency noise
-        sample = _dcFilter.filter(micSample);
+        int16_t sample = _lpfFilter.filter(micSample);// Apply LPF filtering to remove high-frequency noise
+        sample = _dcFilter.filter(sample);
 
         _context->pSoundManager->updateDAC(tState, sample, sample);
     }
@@ -93,7 +93,7 @@ uint8_t Tape::handlePortIn()
     {
         /// region <Imitate analogue noise>
         static uint16_t counter = 0;
-        static uint8_t prevValue = 0;
+        [[maybe_unused]] static uint8_t prevValue = 0;
         static uint16_t prngState = std::rand();
 
         if (counter == 0)
@@ -150,11 +150,11 @@ uint8_t Tape::handlePortIn()
 void Tape::handlePortOut(uint8_t value)
 {
     // Fetch clock counter for precise timing
-    size_t clockCount = _context->pCore->GetZ80()->clock_count;
+    [[maybe_unused]] size_t clockCount = _context->pCore->GetZ80()->clock_count;
     uint32_t tState = _context->pCore->GetZ80()->t;
 
     bool outBit = value & 0b0001'0000;
-    bool micBit = value & 0b0000'1000;
+    [[maybe_unused]] bool micBit = value & 0b0000'1000;
 
     int16_t sample;
     if (!_muteEAR)
@@ -236,7 +236,7 @@ void Tape::handleFrameStart()
 void Tape::handleFrameEnd()
 {
     // Fetch clock counter for precise timing
-    size_t clockCount = _context->pCore->GetZ80()->clock_count;
+    [[maybe_unused]] size_t clockCount = _context->pCore->GetZ80()->clock_count;
 }
 
 /// endregion </Emulation events>
@@ -257,7 +257,7 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
         uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
 
         // Forward playback for the whole deltaTime period
-        for (int i = 0; i < deltaTime; i++)
+        for (uint64_t i = 0; i < deltaTime; i++)
         {
             // Create signal edge by inverting tape bit
             if (currentPulseDuration > 0 && _currentPulseIdxInBlock == 0)
@@ -419,7 +419,7 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock,
 // TODO: just experimentation method
 bool Tape::getPilotSample(size_t clockCount)
 {
-    static uint16_t counter = 0;
+    [[maybe_unused]] static uint16_t counter = 0;
     static constexpr uint16_t PILOT_HALF_PERIOD = 2168;
     static constexpr uint16_t PILOT_PERIOD = PILOT_HALF_PERIOD * 2;
 

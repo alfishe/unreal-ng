@@ -793,7 +793,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
 
     bool noCommandExecuted = _state == S_IDLE;
     WDSTATE prevState = _state;
-    WDSTATE prevState2 = _state2;
+    [[maybe_unused]] WDSTATE prevState2 = _state2;
 
     // Ensure we have only relevant parameter bits
     value &= 0b0000'1111;
@@ -1196,7 +1196,7 @@ void WD1793::processSearchID()
 
         // Set typical timeout delay
         // TODO: apply the delay
-        size_t delay = WD93_REVOLUTIONS_LIMIT_FOR_TYPE2_INDEX_MARK_SEARCH * Z80_FREQUENCY / FDD_RPS;
+        [[maybe_unused]] size_t delay = WD93_REVOLUTIONS_LIMIT_FOR_TYPE2_INDEX_MARK_SEARCH * Z80_FREQUENCY / FDD_RPS;
 
         _statusRegister |= WDS_NOTFOUND;
     }
@@ -1349,7 +1349,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
 
     /// region <Debug print>
 
-    uint16_t pc = _context->pCore->GetZ80()->m1_pc;
+    [[maybe_unused]] uint16_t pc = _context->pCore->GetZ80()->m1_pc;
     std::string memBankName = _context->pMemory->GetCurrentBankName(0);
 
     //MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName.c_str());
@@ -1580,7 +1580,7 @@ std::string WD1793::dumpCommand(uint8_t value)
     std::stringstream ss;
 
     WD1793::WD_COMMANDS command = decodeWD93Command(value);
-    uint8_t commandValue = getWD93CommandValue(command, value);
+    [[maybe_unused]] uint8_t commandValue = getWD93CommandValue(command, value);
     std::string commandName = getWD_COMMANDName(command);
     std::string commandBits = StringHelper::FormatBinary<uint8_t>(value);
 

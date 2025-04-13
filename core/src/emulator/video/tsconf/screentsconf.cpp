@@ -90,7 +90,7 @@ void ScreenTSConf::UpdateScreen()
 			{
 				uint32_t m = min((uint32_t)n, video.raster.r_brd - video.line_pos);
 				uint32_t t = video.t_next; // store tact of video controller
-				uint32_t vptr = video.vptr;
+                [[maybe_unused]] uint32_t vptr = video.vptr;
 
 				// Execute render to framebuffer using current videomode renderer
 				DrawCallback draw = _drawCallbacks[video.mode];
@@ -138,9 +138,9 @@ void ScreenTSConf::UpdateScreen()
 //region TSConf specific methods
 uint32_t ScreenTSConf::TSConf_GetAvailableFrameMemcycles(uint32_t dram_t)
 {
-	Z80& cpu = *_cpu;
-	EmulatorState& state = _context->emulatorState;
-    const CONFIG& config = _context->config;
+    [[maybe_unused]] Z80& cpu = *_cpu;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] const CONFIG& config = _context->config;
 	VideoControl& video = _context->pScreen->_vid;
 
 	uint32_t result = 0;
@@ -161,20 +161,20 @@ uint32_t ScreenTSConf::TSConf_GetAvailableFrameMemcycles(uint32_t dram_t)
 
 void ScreenTSConf::TSConf_Draw(uint32_t vptr)
 {
-
+    (void)vptr;
 }
 
-uint32_t ScreenTSConf::TSConf_Render(uint32_t tacts)
+uint32_t ScreenTSConf::TSConf_Render([[maybe_unused]] uint32_t tacts)
 {
-	Z80& cpu = *_cpu;
+    [[maybe_unused]] Z80& cpu = *_cpu;
 	EmulatorState& state = _context->emulatorState;
-    const CONFIG& config = _context->config;
-	VideoControl& video = _context->pScreen->_vid;
+    [[maybe_unused]] const CONFIG& config = _context->config;
+    [[maybe_unused]] VideoControl& video = _context->pScreen->_vid;
 
 	// save and set toggle bits
-	uint8_t old_s_en = state.ts.s_en;
-	uint8_t old_t0_en = state.ts.t0_en;
-	uint8_t old_t1_en = state.ts.t1_en;
+    [[maybe_unused]] uint8_t old_s_en = state.ts.s_en;
+    [[maybe_unused]] uint8_t old_t0_en = state.ts.t0_en;
+    [[maybe_unused]] uint8_t old_t1_en = state.ts.t1_en;
 	uint32_t rtn = 0;
 
 	/*
@@ -245,12 +245,12 @@ fin:
 	return rtn; // return number of CPU cycles available for current frame
 }
 
-void ScreenTSConf::TSConf_DMA(uint32_t tacts)
+void ScreenTSConf::TSConf_DMA([[maybe_unused]] uint32_t tacts)
 {
-	Z80& cpu = *_cpu;
-	EmulatorState& state = _context->emulatorState;
-	CONFIG& config = _context->config;
-	VideoControl& video = _context->pScreen->_vid;
+    [[maybe_unused]] Z80& cpu = *_cpu;
+    [[maybe_unused]] EmulatorState& state = _context->emulatorState;
+    [[maybe_unused]] CONFIG& config = _context->config;
+    [[maybe_unused]] VideoControl& video = _context->pScreen->_vid;
 
 	/*
 	if (state.ts.dma.state != DMA_ST_NOP)

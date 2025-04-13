@@ -9,8 +9,8 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
         return result;
     }
 
-    int16_t lineNumber;
-    int16_t lineLength;
+    //int16_t lineNumber;
+    //int16_t lineLength;
 
 
     return result;

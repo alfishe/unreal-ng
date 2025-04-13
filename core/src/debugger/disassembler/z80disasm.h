@@ -66,81 +66,188 @@ struct DecodedInstruction
 
     /// region <Constructors / Destructors>
 
-    /// Default constructor
-    DecodedInstruction() {};
+    // Default constructor
+    DecodedInstruction() = default;
 
-    /// Copy constructor - used during full struct copy operations
-    /// \param source
-    DecodedInstruction(const DecodedInstruction& source)
-    {
-        isValid = source.isValid;
-        hasRuntime = source.hasRuntime;
+    // Copy constructor
+    DecodedInstruction(const DecodedInstruction&) = default;
 
-        /// region <Raw data>
+    // Move constructor
+    DecodedInstruction(DecodedInstruction&&) = default;
 
-        opcode = source.opcode;
-        instructionBytes = source.instructionBytes;
-        operandBytes = source.operandBytes;
+    // Copy assignment operator
+    DecodedInstruction& operator=(const DecodedInstruction&) = default;
 
-        fullCommandLen = source.fullCommandLen;
-        operandsLen = source.operandsLen;
+    // Move assignment operator
+    DecodedInstruction& operator=(DecodedInstruction&&) = default;
 
-        prefix = source.prefix;
-        command = source.command;
-
-        hasJump = source.hasJump;
-        hasRelativeJump = source.hasRelativeJump;
-        hasDisplacement = source.hasDisplacement;
-        hasReturn = source.hasReturn;
-        hasByteOperand = source.hasByteOperand;
-        hasWordOperand = source.hasWordOperand;
-
-        hasCondition = source.hasCondition;
-        hasVariableCycles = source.hasVariableCycles;
-
-        displacement = source.displacement;
-        relJumpOffset = source.relJumpOffset;
-        byteOperand = source.byteOperand;
-        wordOperand = source.wordOperand;
-
-        /// endregion </Raw data>
-
-        /// region <Runtime data>
-        instructionAddr = source.instructionAddr;
-        jumpAddr = source.jumpAddr;
-        relJumpAddr = source.relJumpAddr;
-        displacementAddr = source.displacementAddr;
-        returnAddr = source.returnAddr;
-        /// endregion </Runtime data>
-
-        hexDump = source.hexDump;
-        mnemonic = source.mnemonic;
-        mnemonicWithLabel = source.mnemonicWithLabel;
-    }
+    // Destructor
+    virtual ~DecodedInstruction() = default;
 
     /// endregion </Constructors / Destructors>
+
+    /// region <Helper methods>
+    void clear()
+    {
+        *this = DecodedInstruction{}; // Reset to the default state
+    }
+
+    /// endregion </Helper methods>
 };
 
-constexpr uint16_t OF_NONE = 0;
-constexpr uint16_t OF_PREFIX = 1;               // current byte is opcode prefix
-constexpr uint16_t OF_EXT = OF_PREFIX;          // alias to opcode prefix
-constexpr uint16_t OF_MBYTE = (1 << 1);		    // operand is byte from memory
-constexpr uint16_t OF_MWORD = (1 << 2);		    // operand is word from memory
-constexpr uint16_t OF_DISP = (1 << 3);          // opcode uses index register displacement, like: bit 0,(ix+<d>) or srl (iy+<d>),h
-constexpr uint16_t OF_MEMADR = (1 << 4);	    // operand contains memory address (nn)
-constexpr uint16_t OF_CONDITION = (1 << 5);     // operation checks condition
-constexpr uint16_t OF_RELJUMP = (1 << 6);       // opcode uses relative jump offset as operand
-constexpr uint16_t OF_VAR_T = (1 << 7);         // operation takes variable number of t-states (i.e. cycles)
-constexpr uint16_t OF_JUMP = (1 << 8);          // operand is jump or call address
-constexpr uint16_t OF_RET = (1 << 9);           // operation will take next PC address from stack
-constexpr uint16_t OF_RST = (1 << 10);          // operation will jump to pre-defined address (RST n)
+constexpr uint32_t OF_NONE = 0;
+constexpr uint32_t OF_PREFIX = 1;                   // current byte is opcode prefix
+constexpr uint32_t OF_EXT = OF_PREFIX;              // alias to opcode prefix
+constexpr uint32_t OF_MBYTE = (1UL << 1);           // operand is byte from memory
+constexpr uint32_t OF_MWORD = (1UL << 2);           // operand is word from memory
+constexpr uint32_t OF_DISP = (1UL << 3);            // opcode uses index register displacement, like: bit 0,(ix+<d>) or srl (iy+<d>),h
+constexpr uint32_t OF_MEMADR = (1UL << 4);          // operand contains memory address (nn)
+constexpr uint32_t OF_CONDITION = (1UL << 5);       // operation checks condition
+constexpr uint32_t OF_RELJUMP = (1UL << 6);         // opcode uses relative jump offset as operand
+constexpr uint32_t OF_VAR_T = (1UL << 7);           // operation takes variable number of t-states (i.e. cycles)
+constexpr uint32_t OF_JUMP = (1UL << 8);            // operand is jump or call address
+constexpr uint32_t OF_RET = (1UL << 9);             // operation will take next PC address from stack
+constexpr uint32_t OF_RST = (1UL << 10);            // operation will jump to pre-defined address (RST n)
+constexpr uint32_t OF_FLAGS_AFFECTED = (1UL << 11); // Instruction modifies flags
+constexpr uint32_t OF_FLAGS_ALL = (1UL << 12);      // All flags affected (like AND, OR, XOR)
+constexpr uint32_t OF_FLAGS_SZ = (1UL << 13);       // Only S and Z flags affected
+constexpr uint32_t OF_REG_EXCHANGE = (1UL << 14);   // Register exchange operations (EX)
+constexpr uint32_t OF_BLOCK = (1UL << 15);          // Block operations (LDI, LDIR, etc.)
+constexpr uint32_t OF_IO = (1UL << 16);             // I/O operations (IN, OUT)
+constexpr uint32_t OF_INTERRUPT = (1UL << 17);      // Interrupt-related (EI, DI, IM)
 
-constexpr uint16_t OF_SKIPABLE = (1 << 15);      // opcode is skippable during single step debug
+constexpr uint32_t OF_SKIPABLE = (1UL << 31);       // opcode is skippable during single step debug
+
+namespace OpFlags
+{
+    struct Flag
+    {
+        uint32_t value;
+        const char* name;
+        const char* description;
+
+        constexpr Flag(uint32_t v, const char* n, const char* desc) : 
+            value(v), name(n), description(desc)
+        {
+        }
+
+        constexpr operator uint32_t() const
+        {
+            return value;
+        }
+    };
+
+    // Basic flags
+    namespace Basic
+    {
+        constexpr Flag None{0, "None", "No flags set"};
+        constexpr Flag Prefix{1, "Prefix", "Current byte is opcode prefix"};
+        constexpr Flag Ext = Prefix;  // Alias
+    }
+
+    // Memory-related flags
+    namespace Memory
+    {
+        constexpr Flag Byte{1UL << 1, "MByte", "Operand is byte from memory"};
+        constexpr Flag Word{1UL << 2, "MWord", "Operand is word from memory"};
+        constexpr Flag Disp{1UL << 3, "Disp", "Uses index register displacement"};
+        constexpr Flag Addr{1UL << 4, "MemAddr", "Contains memory address"};
+    }
+
+    // Control flow flags
+    namespace Flow
+    {
+        constexpr Flag Condition{1UL << 5, "Condition", "Operation checks condition"};
+        constexpr Flag RelJump{1UL << 6, "RelJump", "Uses relative jump offset"};
+        constexpr Flag Jump{1UL << 8, "Jump", "Jump or call address"};
+        constexpr Flag Ret{1UL << 9, "Ret", "Takes next PC from stack"};
+        constexpr Flag Rst{1UL << 10, "Rst", "Jumps to pre-defined address"};
+    }
+
+    // CPU flags
+    namespace Flags
+    {
+        constexpr Flag Affected{1UL << 11, "FlagsAffected", "Instruction modifies flags"};
+        constexpr Flag All{1UL << 12, "FlagsAll", "All flags affected"};
+        constexpr Flag SZ{1UL << 13, "FlagsSZ", "Only S and Z flags affected"};
+    }
+
+    // Operation type flags
+    namespace Operation
+    {
+        constexpr Flag RegExchange{1UL << 14, "RegExchange", "Register exchange operations"};
+        constexpr Flag Block{1UL << 15, "Block", "Block operations (LDI, LDIR, etc.)"};
+        constexpr Flag IO{1UL << 16, "IO", "I/O operations (IN, OUT)"};
+        constexpr Flag Interrupt{1UL << 17, "Interrupt", "Interrupt-related (EI, DI, IM)"};
+        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
+    }
+
+    // Debug flags
+    namespace Debug
+    {
+        constexpr Flag Skipable{1UL << 31, "Skipable", "Skippable during single step debug"};
+    }
+
+    // Helper functions
+    inline std::string getFlagName(uint32_t flag)
+    {
+        if (flag == 0) return Basic::None.name;
+        std::string result;
+        // Check all flag groups
+        const Flag* allFlags[] = 
+        {
+            &Basic::Prefix,
+            &Memory::Byte, &Memory::Word, &Memory::Disp, &Memory::Addr,
+            &Flow::Condition, &Flow::RelJump, &Flow::Jump, &Flow::Ret, &Flow::Rst,
+            &Flags::Affected, &Flags::All, &Flags::SZ,
+            &Operation::RegExchange, &Operation::Block, &Operation::IO,
+            &Operation::Interrupt, &Operation::VarCycles,
+            &Debug::Skipable
+        };
+        
+        for (const Flag* f : allFlags)
+        {
+            if (flag & f->value)
+            {
+                if (!result.empty()) result += " | ";
+                result += f->name;
+            }
+        }
+        return result;
+    }
+
+    inline std::string getFlagDescription(uint32_t flag)
+    {
+        if (flag == 0) return Basic::None.description;
+        std::string result;
+        // Similar to getFlagName but returns descriptions
+        const Flag* allFlags[] = 
+        {
+            &Basic::Prefix,
+            &Memory::Byte, &Memory::Word, &Memory::Disp, &Memory::Addr,
+            &Flow::Condition, &Flow::RelJump, &Flow::Jump, &Flow::Ret, &Flow::Rst,
+            &Flags::Affected, &Flags::All, &Flags::SZ,
+            &Operation::RegExchange, &Operation::Block, &Operation::IO,
+            &Operation::Interrupt, &Operation::VarCycles,
+            &Debug::Skipable
+        };
+        
+        for (const Flag* f : allFlags)
+        {
+            if (flag & f->value)
+            {
+                if (!result.empty()) result += "; ";
+                result += f->description;
+            }
+        }
+        return result;
+    }
+}
 
 /// endregion </Types>
 
 class ModuleLogger;
-class Z80Registers;
+struct Z80Registers;
 class Memory;
 
 class Z80Disassembler

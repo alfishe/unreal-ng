@@ -86,7 +86,7 @@ public:
 
         ss << "b";
 
-        for (int i = 0; i < size; i++)
+        for (unsigned i = 0; i < size; i++)
         {
             if ((i % 4) == 0)
             {
@@ -156,18 +156,16 @@ private:
     /// @param format Format string as std::string object reference
     /// @param args Format arguments
     /// @return Formatted string as std::string object
-    template<typename ... Args>
-    static std::string Format_Impl(const std::string& format, Args ... args)
+    template<typename... Args>
+    static std::string Format_Impl(const std::string& format, Args... args)
     {
         // Early return for empty format string
-        if (format.empty())
-        {
+        if (format.empty()) {
             return "";
         }
 
         // Handle case with no arguments (just return the format string as-is)
-        if constexpr (sizeof...(Args) == 0)
-        {
+        if constexpr (sizeof...(Args) == 0) {
             return format;
         }
 
@@ -177,29 +175,26 @@ private:
 #pragma clang diagnostic ignored "-Wformat-nonliteral"
 #pragma clang diagnostic ignored "-Wformat-security"
 
-        // Calculate required buffer size
+        // Calculate required buffer size with actual arguments
         size_t size = snprintf(nullptr, 0, format.c_str(), args...) + 1;
-        if (size <= 1) // size <= 1 means either error or empty result
-        {
-            return format; // or return "" if you prefer
+        if (size <= 1) {  // size <= 1 means either error or empty result
+            return format;
         }
 
-        try
-        {
+        try {
             std::unique_ptr<char[]> buf(new char[size]);
             int written = snprintf(buf.get(), size, format.c_str(), args...);
 
-            if (written < 0 || static_cast<size_t>(written) >= size)
-            {
+            if (written < 0 || static_cast<size_t>(written) >= size) {
                 // Formatting error occurred
-                return format; // Fallback to original string
+                return format;
             }
 
             result.assign(buf.get(), written);
         }
-        catch (...) // Memory allocation failed
-        {
-            result = format; // Fallback to original string
+        catch (...) {
+            // Memory allocation failed
+            return format;
         }
 
 #pragma clang diagnostic pop

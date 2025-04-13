@@ -5,7 +5,7 @@
 /// @param samples Mono audio samples in IEEE Float32 format
 /// @param sampleRate Sampling rate in Hz
 /// @return Determined base frequency (in Hz)
-uint32_t AudioHelper::detectBaseFrequencyFFT(AudioSamplesArray samples, uint32_t sampleRate)
+uint32_t AudioHelper::detectBaseFrequencyFFT(AudioSamplesArray samples, [[maybe_unused]] uint32_t sampleRate)
 {
     uint32_t result = std::numeric_limits<uint32_t>().max();
 
@@ -76,7 +76,7 @@ uint32_t AudioHelper::detectBaseFrequencyZeroCross(AudioSamplesArray samples, ui
 
     // Count rising edges only
     int risingEdges = 0;
-    for (int i = 0; i < N - 1; i++)
+    for (uint32_t i = 0; i < N - 1; i++)
     {
         if (samples[i] < 0 && samples[i + 1] > 0)
         {

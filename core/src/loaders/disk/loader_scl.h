@@ -4,7 +4,11 @@
 
 #include "loaders/disk/loader_trd.h"
 
+#if defined(_MSC_VER)
 #pragma pack(push, 1)
+#else
+#define PACKED __attribute__((packed))
+#endif
 
 /// SCL files use minimal 14-bytes catalog records (without start sector and track)
 struct TRDOSDirectoryEntryBase
@@ -23,16 +27,18 @@ struct TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase
     uint8_t StartTrack;
 };
 
-struct SCLHeader
+struct PACKED SCLHeader
 {
     uint8_t Signature[8];  // Should be 'SINCLAIR'
     uint8_t FileCount;
-#pragma warning(push)
-#pragma warning(disable: 4200)
     TRDOSDirectoryEntryBase Files[];
-#pragma warning(pop)
 };
+
+#if defined(_MSC_VER)
 #pragma pack(pop)
+#else
+#undef PACKED
+#endif
 
 
 class LoaderSCL

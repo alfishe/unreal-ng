@@ -6,16 +6,19 @@
 class SystemHelper
 {
 public:
-	static void GetCPUID(unsigned cpuInfo[4], unsigned _eax)
-	{
-		#ifdef _MSC_VER
-			__cpuid((int *)cpuInfo, _eax);
-		#endif
+    static void GetCPUID([[maybe_unused]] unsigned cpuInfo[4], [[maybe_unused]] unsigned _eax)
+    {
+        (void)cpuInfo;  // Mark as intentionally unused
+        (void)_eax;     // Mark as intentionally unused
 
-		#if defined __GNUC__ && defined __x86_64__
-			__cpuid(_eax, cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
-		#endif
-	}
+#ifdef _MSC_VER
+        __cpuid((int *)cpuInfo, _eax);
+#endif
+
+#if defined(__GNUC__) && defined(__x86_64__)
+        __cpuid(_eax, cpuInfo[0], cpuInfo[1], cpuInfo[2], cpuInfo[3]);
+#endif
+    }
 
 	static unsigned GetCPUID(unsigned _eax, int ext)
 	{

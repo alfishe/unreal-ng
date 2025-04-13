@@ -14,8 +14,8 @@ void Beeper::handlePortOut(uint8_t value, uint32_t frameTState)
     // Port #FE
     // Bit  [3]    - MIC output bit
     // Bit  [4]    - EAR output bit
-    uint8_t maskedValue = value & 0b0001'1000;
-    uint8_t micValue = value & 0b0000'1000;
+    //uint8_t maskedValue = value & 0b0001'1000;
+    //uint8_t micValue = value & 0b0000'1000;
     uint8_t earValue = value & 0b0001'0000;
 
     bool beeperBit = earValue > 0;

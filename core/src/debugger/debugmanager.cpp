@@ -61,12 +61,14 @@ Z80Disassembler* DebugManager::GetDisassembler()
 
 void DebugManager::AddBreakpoint(BreakpointTypeEnum type, uint16_t address)
 {
-
+    (void)type;
+    (void)address;
 }
 
 void DebugManager::RemoveBreakpoint(BreakpointTypeEnum type, uint16_t address)
 {
-
+    (void)type;
+    (void)address;
 }
 
 void DebugManager::RemoveAllBreakpoints()
@@ -76,12 +78,14 @@ void DebugManager::RemoveAllBreakpoints()
 
 void DebugManager::DisableBreakpoint(BreakpointTypeEnum type, uint16_t address)
 {
-
+    (void)type;
+    (void)address;
 }
 
 void DebugManager::EnableBreakpoint(BreakpointTypeEnum type, uint16_t address)
 {
-
+    (void)type;
+    (void)address;
 }
 
 /// endregion </Breakpoint management>

@@ -75,21 +75,21 @@ void MainLoop::Run(volatile bool& stopRequested)
 	/// region <Debug>
 
 	// Initialize animation
-    FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
-    //gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
+    [[maybe_unused]] FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
+    gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
 
 	/// endregion </Debug>
 
     static std::chrono::milliseconds timeout(20); // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
-    uint64_t betweenIterations = 0;
+    [[maybe_unused]] uint64_t betweenIterations = 0;
 
 	while (!stopRequested)
 	{
         uint64_t startTime = TimeHelper::GetTimestampUs();
         betweenIterations = startTime - lastRun;
 
-		unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
+        [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
 
 		/// region <Handle Pause>
 		if (_pauseRequested)
@@ -247,7 +247,7 @@ void MainLoop::OnFrameEnd()
     messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
 }
 
-void MainLoop::handleAudioBufferHalfFull(int id, Message* message)
+void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused]] Message* message)
 {
     std::unique_lock<std::mutex> lock(_audioBufferMutex);
 
