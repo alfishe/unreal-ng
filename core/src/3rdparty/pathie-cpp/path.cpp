@@ -2287,7 +2287,8 @@ std::string Path::get_xdg_userdir_setting(const std::string& setting)
       memset(line, 0, 256);
       memset(buf, 0, 256);
 
-      fgets(line, 256, p_file);
+      if (fgets(line, 256, p_file) == nullptr)
+        break;  // EOF or error occurred
 
       // Ignore comments and empty lines
       if (line[0] == '#' || line[0] == '\n')
