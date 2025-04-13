@@ -9,12 +9,21 @@ project (core-benchmarks LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    target_compile_options(core-benchmarks PRIVATE -Wno-error=unresolved)
+endif()
+
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
     set (CMAKE_BUILD_TYPE Release)
 endif (NOT CMAKE_BUILD_TYPE)
-
 message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+
+# Set output directories to match root CMakeLists.txt
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
 
 # Root directory
 get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -22,11 +31,9 @@ get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_
 # Set paths
 set(CORE_DIR ${ROOT_DIR}/core/src)
 set(BENCHMARKS_DIR ${ROOT_DIR}/core/benchmarks)
-set(GOOGLETEST_DIR ${ROOT_DIR}/lib/googletest)
 set(GOOGLEBENCHMARK_DIR ${ROOT_DIR}/lib/benchmark)
 message("CORE_DIR:${CORE_DIR}")
 message("BENCHMARKS_DIR:${BENCHMARKS_DIR}")
-message("GOOGLETEST_DIR:${GOOGLETEST_DIR}")
 message("GOOGLEBENCHMARK_DIR:${GOOGLEBENCHMARK_DIR}")
 
 # Allow CMake to find modules in /cmake
@@ -36,91 +43,69 @@ set(CMAKE_MODULE_PATH "${ROOT_DIR}/cmake" ${CMAKE_MODULE_PATH})
 include(${ROOT_DIR}/cmake/func.cmake)
 
 if (WIN32 AND MINGW)
-set(BENCHMARK_FILES
-    ${GOOGLEBENCHMARK_DIR}/src/benchmark.cc
-    ${GOOGLEBENCHMARK_DIR}/src/benchmark_api_internal.cc
-    ${GOOGLEBENCHMARK_DIR}/src/benchmark_main.cc
-    ${GOOGLEBENCHMARK_DIR}/src/benchmark_name.cc
-    ${GOOGLEBENCHMARK_DIR}/src/benchmark_register.cc
-    ${GOOGLEBENCHMARK_DIR}/src/benchmark_runner.cc
-    ${GOOGLEBENCHMARK_DIR}/src/colorprint.cc
-    ${GOOGLEBENCHMARK_DIR}/src/commandlineflags.cc
-    ${GOOGLEBENCHMARK_DIR}/src/complexity.cc
-    ${GOOGLEBENCHMARK_DIR}/src/console_reporter.cc
-    ${GOOGLEBENCHMARK_DIR}/src/counter.cc
-    ${GOOGLEBENCHMARK_DIR}/src/csv_reporter.cc
-    ${GOOGLEBENCHMARK_DIR}/src/json_reporter.cc
-    ${GOOGLEBENCHMARK_DIR}/src/reporter.cc
-    ${GOOGLEBENCHMARK_DIR}/src/sleep.cc
-    ${GOOGLEBENCHMARK_DIR}/src/statistics.cc
-    ${GOOGLEBENCHMARK_DIR}/src/string_util.cc
-    ${GOOGLEBENCHMARK_DIR}/src/sysinfo.cc
-    ${GOOGLEBENCHMARK_DIR}/src/timers.cc
+    set(BENCHMARK_FILES
+        ${GOOGLEBENCHMARK_DIR}/src/benchmark.cc
+        ${GOOGLEBENCHMARK_DIR}/src/benchmark_api_internal.cc
+        ${GOOGLEBENCHMARK_DIR}/src/benchmark_main.cc
+        ${GOOGLEBENCHMARK_DIR}/src/benchmark_name.cc
+        ${GOOGLEBENCHMARK_DIR}/src/benchmark_register.cc
+        ${GOOGLEBENCHMARK_DIR}/src/benchmark_runner.cc
+        ${GOOGLEBENCHMARK_DIR}/src/colorprint.cc
+        ${GOOGLEBENCHMARK_DIR}/src/commandlineflags.cc
+        ${GOOGLEBENCHMARK_DIR}/src/complexity.cc
+        ${GOOGLEBENCHMARK_DIR}/src/console_reporter.cc
+        ${GOOGLEBENCHMARK_DIR}/src/counter.cc
+        ${GOOGLEBENCHMARK_DIR}/src/csv_reporter.cc
+        ${GOOGLEBENCHMARK_DIR}/src/json_reporter.cc
+        ${GOOGLEBENCHMARK_DIR}/src/reporter.cc
+        ${GOOGLEBENCHMARK_DIR}/src/sleep.cc
+        ${GOOGLEBENCHMARK_DIR}/src/statistics.cc
+        ${GOOGLEBENCHMARK_DIR}/src/string_util.cc
+        ${GOOGLEBENCHMARK_DIR}/src/sysinfo.cc
+        ${GOOGLEBENCHMARK_DIR}/src/timers.cc
     )
 
     # Suppress benchmark deprecation messages
     set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations)
+else (WIN32 AND MINGW)
+    # Google benchmark folder
+    set(BENCHMARK_ENABLE_TESTING OFF)   # Disable Google Benchmark self-testing
+    add_subdirectory(${GOOGLEBENCHMARK_DIR} ${CMAKE_CURRENT_BINARY_DIR}/googlebenchmark)
 endif (WIN32 AND MINGW)
 
-# Google test (explicit sources added to prevent conflicts when gtest and benchmark targets built simultaneously from top level CMakeLists.txt)
-set(GOOGLETEST_PATH ${GOOGLETEST_DIR} CACHE PATH "")                            # Hint for Google Benchmark where to find googletest sources
-set(GOOGLETEST_FILES
-        ${GOOGLETEST_DIR}/googletest/src/gtest.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-death-test.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-filepath.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-matchers.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-port.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-printers.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-test-part.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-typed-test.cc
-        ${GOOGLETEST_DIR}/googletest/src/gtest-internal-inl.h
-        )
+# Compile all *.cpp files both from core/src and core/benchmarks folders
+file (GLOB_RECURSE BENCHMARK_CPP_FILES ${BENCHMARKS_DIR}/*.cpp)
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${BENCHMARK_CPP_FILES}" "/build/" FALSE OUTVAR BENCHMARK_CPP_FILES)      # Exclude /benchmarks/build folder
+EXCLUDE_FILES_FROM_DIR_IN_LIST("${BENCHMARK_CPP_FILES}" "/CMakeFiles/" FALSE OUTVAR BENCHMARK_CPP_FILES) # Exclude /CMakeFile autogenerated files
 
-# Google benchmark folder
-if (UNIX)
-    add_subdirectory(${GOOGLEBENCHMARK_DIR} ${CMAKE_CURRENT_BINARY_DIR}/googlebenchmark)
-endif (UNIX)
+set(SOURCES ${BENCHMARK_CPP_FILES})
+message("BENCHMARKS:${BENCHMARK_CPP_FILES}")
+message("SOURCES:${SOURCES}")
 
-if (MSVC)
-    # Recommendation from: https://cmake.org/pipermail/cmake/2016-April/063337.html
-    if (NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
-    endif ()
-    if (NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
-        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/lib")
-    endif()
-    if (NOT CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
-        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/lib")
-    endif()
+# Set include files search paths
+include_directories(
+    ${BENCHMARKS_DIR}
+    ${CORE_DIR}
+    ${GOOGLEBENCHMARK_DIR}/include
+)
 
-    file (GLOB_RECURSE BENCHMARK_SOURCES ${GOOGLEBENCHMARK_DIR}/src/*.cc)
-endif (MSVC)
-set(BENCHMARK_ENABLE_TESTING OFF)   # Disable Google Benchmark self-testing
-
-
-# Compiler include folders
-include_directories(${CORE_DIR})
-include_directories(${GOOGLETEST_DIR}/googletest)                                   # To serve src/gtest-internal-inl.h include
-include_directories(${GOOGLETEST_DIR}/googletest/include)
-include_directories(${GOOGLEBENCHMARK_DIR}/include)
-
-# Store executable into /bin subfolder
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
-# All sources in /benchmarks and subfolders will be compiled
-file (GLOB_RECURSE SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp)
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${SOURCES}" "/build/" FALSE OUTVAR SOURCES)         # Exclude /benchmarks/build folder
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${SOURCES}" "/CMakeFiles/" FALSE OUTVAR SOURCES)    # Exclude /CMakeFile autogenerated files
-
-# All core sources
-file (GLOB_RECURSE CORE_SRC ${CORE_DIR}/*.cpp)
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${CORE_SRC}" "/build/" FALSE OUTVAR CORE_SRC)       # Exclude /src/build folder
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${CORE_SRC}" "/CMakeFiles/" FALSE OUTVAR CORE_SRC)  # Exclude /CMakeFile autogenerated files
-EXCLUDE_FILES_FROM_DIR_IN_LIST("${CORE_SRC}" "/main.cpp" FALSE OUTVAR CORE_SRC)     # Exclude main.cpp file if exists
-set(SOURCES "${SOURCES};${CORE_SRC};${GOOGLETEST_FILES};${BENCHMARK_FILES}")
+# Check if we're being included from the top CMakeLists.txt
+if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    # We're being built directly, so build core first
+    add_subdirectory(${CORE_DIR} core)
+else()
+    # I am called from other project with add_subdirectory()
+    # So skip /src/core dependency build
+endif()
 
 # Compile benchmarks into executable
 add_executable(${PROJECT_NAME} ${SOURCES})
+
+# Enable benchmark wrappers in code
+target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_BENCHMARK)
+
+# Declare _ALWAYS_USE_LOGGING for compiler
+target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
 
 # Declare _DEBUG symbol for compiler
 if (CMAKE_BUILD_TYPE MATCHES Debug)
@@ -128,36 +113,30 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
-# Enable test wrappers in code
-target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
-
-# Link with following libraries
-if (APPLE)
-    set(common_libraries pthread iconv benchmark benchmark_main)
-
-    target_link_libraries(${PROJECT_NAME} ${common_libraries})
-endif (APPLE)
-
-if (UNIX AND NOT APPLE)
-    set(common_libraries stdc++ pthread benchmark benchmark_main)
-
-    target_link_libraries(${PROJECT_NAME} ${common_libraries})
-endif (UNIX AND NOT APPLE)
+# All standard libraries required
+if (WIN32 AND MSVC)
+    set(common_libraries stdc++ iconv)
+endif (WIN32 AND MSVC)
 
 if (WIN32 AND MINGW)
     # Link all as static
-    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
-
-    set(common_libraries shlwapi)
-    target_link_libraries(${PROJECT_NAME} ${common_libraries})
+    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
+    set(common_libraries shlwapi ws2_32)
 endif (WIN32 AND MINGW)
 
-if (MSVC)
-    # Match runtime library with default google benchmark settings. See: https://stackoverflow.com/questions/14172856/compile-with-mt-instead-of-md-using-cmake
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /MT")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MTd")
+if (UNIX AND NOT APPLE)
+    set(CMAKE_CXX_FLAGS " -static-libstdc++")
+    set(common_libraries -static-libstdc++ pthread)
+endif (UNIX AND NOT APPLE)
 
-    set(common_libraries shlwapi)
+if (APPLE)
+    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
+    set(common_libraries pthread iconv)
+endif (APPLE)
 
-    target_link_libraries(${PROJECT_NAME} ${common_libraries})
-endif (MSVC)
+# Link with Google Benchmark libraries
+target_link_libraries(${PROJECT_NAME} PRIVATE 
+    ${common_libraries}
+    core
+    benchmark::benchmark_main
+)

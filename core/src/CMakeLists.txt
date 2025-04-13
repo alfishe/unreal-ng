@@ -14,6 +14,20 @@ if (NOT CMAKE_BUILD_TYPE)
     set (CMAKE_BUILD_TYPE Release)
 endif ()
 
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    # GCC-specific flags
+    add_compile_options(-Wall -Wextra -Werror -Wno-format-security)
+
+    # Treat specific warnings as errors
+    add_compile_options(-Werror=unused-result -Werror=format-security)
+
+    # Disable specific warnings if needed
+    add_compile_options(-Wno-error=deprecated-declarations)  # Example for disabling specific warnings
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "AppleClang" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # Clang-specific flags
+    add_compile_options(-Wall -Wextra -Werror)
+endif (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+
 # Set paths
 get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -54,11 +68,11 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 # Link all dependencies into static lib
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries pthread iconv)
+    set(common_libraries)
 endif (APPLE)
 
 if (UNIX AND NOT APPLE)
-    set(common_libraries -static-libstdc++ pthread)
+    set(common_libraries -static-libstdc++)
 endif (UNIX AND NOT APPLE)
 
 if (WIN32)
@@ -71,4 +85,3 @@ target_link_libraries(
 
     ${common_libraries}
 )
-
