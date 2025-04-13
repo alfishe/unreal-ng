@@ -9,7 +9,7 @@ on:
 env:
   BUILD_TYPE: Release
   CCACHE_DIR: /tmp/ccache
-  LD_LIBRARY_PATH: /usr/local/lib  # Add ICU library path
+  LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
 
 jobs:
   build-linux:
@@ -18,46 +18,24 @@ jobs:
       matrix:
         qt-version: [6.5.0]
     steps:
-      - name: Cache ICU build
-        uses: actions/cache@v3
-        id: cache-icu
-        with:
-          path: icu
-          key: ${{ runner.os }}-icu-56.1
-
-      - name: Cache Qt installation
-        uses: actions/cache@v3
-        id: cache-qt
-        with:
-          path: /opt/qt
-          key: ${{ runner.os }}-qt-${{ matrix.qt-version }}
-
-      - name: Cache ccache
-        uses: actions/cache@v3
-        with:
-          path: /tmp/ccache
-          key: ${{ runner.os }}-ccache-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           submodules: recursive
 
-      - name: Install build dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
             git \
-            ccache \
             ninja-build \
-            libicu-dev  # Add system ICU dev package
+            ccache \
+            libtool \
+            autoconf \
+            automake
 
-      - name: Build ICU (if not cached)
-        if: steps.cache-icu.outputs.cache-hit != 'true'
+      - name: Build and install ICU 56 from source
         run: |
           wget -q https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz
           tar -xzf icu4c-56_1-src.tgz
@@ -66,33 +44,20 @@ jobs:
           make -j$(nproc)
           sudo make install
           sudo ldconfig
-          # Create symlinks for version 56
-          sudo ln -s /usr/local/lib/libicu*.so.56 /usr/lib/ || true
+          # Verify installation
+          ls -l /usr/local/lib/libicui18n.so*
 
-      - name: Install Qt (if not cached)
-        if: steps.cache-qt.outputs.cache-hit != 'true'
+      - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          aqtversion: '==3.1.*'
-          py7zrversion: '>=0.20.2'
           version: ${{ matrix.qt-version }}
           host: 'linux'
           target: 'desktop'
-          arch: gcc_64
-          install-deps: 'true'
-          tools-only: 'false'
+          arch: 'gcc_64'
           modules: 'qtmultimedia qt5compat'
-          archives: 'qttools qtbase'
 
-      - name: Configure ccache
+      - name: Build project
         run: |
-          echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
-          echo "/usr/lib/ccache" >> $GITHUB_PATH
-          echo "LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-
-      - name: Build and Test
-        run: |
-          cd ${{ github.workspace }}/unreal-qt
-          mkdir -p build && cd build
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ..
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ..
           ninja
