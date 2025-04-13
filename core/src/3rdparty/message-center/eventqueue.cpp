@@ -307,7 +307,10 @@ std::string EventQueue::GetTopicByID(int id)
 void EventQueue::ClearTopics()
 {
     m_topicsResolveMap.clear();
-    memset(m_topics, 0, sizeof m_topics);
+    for (unsigned i = 0; i < MAX_TOPICS; ++i)
+    {
+        m_topics[i] = "";
+    }
     m_topicMax = 0;
 }
 
