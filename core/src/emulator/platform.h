@@ -869,7 +869,7 @@ struct zxkey
 	/*const*/ uint8_t mask; //Alone Coder
 };
 
-struct zxkeymap
+struct zxkeymap1
 {
 	const char *name;
 	zxkey *zxk;

@@ -24,16 +24,19 @@ FDD::FDD(EmulatorContext* context) : _context(context)
 
     // TODO: remove debug
     /// region <Debug image initialization>
-    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
-    filepath = FileHelper::AbsolutePath(filepath);
-    LoaderTRD trdLoader(_context, filepath);
-    bool imageLoaded = trdLoader.loadImage();
+    if (false)
+    {
+        std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
+        filepath = FileHelper::AbsolutePath(filepath);
+        LoaderTRD trdLoader(_context, filepath);
+        bool imageLoaded = trdLoader.loadImage();
 
-    DiskImage* diskImage = trdLoader.getImage();
-    /// endregion </Load disk image>
+        DiskImage *diskImage = trdLoader.getImage();
+        /// endregion </Load disk image>
 
-    _diskImage = diskImage;
-    _diskInserted = true;
+        _diskImage = diskImage;
+        _diskInserted = true;
+    }
     /// endregion </Debug Image initialization>
 }
 /// endregion </Constructors / destructors>

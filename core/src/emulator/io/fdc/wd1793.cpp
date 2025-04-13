@@ -1437,7 +1437,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             //TODO: remove debug
             if (_trackRegister >= MAX_CYLINDERS)
             {
-                _trackRegister = _trackRegister;
+                //_trackRegister = _trackRegister;
 
                 _trackRegister = 79;
             }
@@ -1449,7 +1449,9 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             //TODO: remove debug
             if (_sectorRegister == 0 || _sectorRegister > 16)
             {
-                _sectorRegister = _sectorRegister;
+                //_sectorRegister = _sectorRegister;
+
+                _sectorRegister = 16;
             }
             MLOGINFO(StringHelper::Format("  #5F - Set sector: 0x%02X", _sectorRegister).c_str());
             break;
