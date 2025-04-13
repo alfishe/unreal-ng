@@ -6,15 +6,16 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/zx/screenzx.h"
+#include "emulator/cpu/z80.h"
 
 static void BM_CalculateXYAddress(benchmark::State& state)
 {
     /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
-    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error);
-    CPU* cpu = new CPU(context);
+    EmulatorContext* context = new EmulatorContext();
+    Core* cpu = new Core(context);
     bool initResult = cpu->Init();
-    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    ScreenZX* screenzx = new ScreenZX(context);
     /// endregion </Setup>
 
     for (auto _ : state)
@@ -53,9 +54,9 @@ static void BM_CalculateXYAddressOptimized(benchmark::State& state)
     /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error
-    CPU* cpu = new CPU(context);
+    Core* cpu = new Core(context);
     bool initResult = cpu->Init();
-    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    ScreenZX* screenzx = new ScreenZX(context);
     /// endregion </Setup>
 
     for (auto _ : state)
@@ -94,9 +95,9 @@ static void BM_CalculateXYColorAttrAddress(benchmark::State& state)
     /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error
-    CPU* cpu = new CPU(context);
+    Core* cpu = new Core(context);
     bool initResult = cpu->Init();
-    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    ScreenZX* screenzx = new ScreenZX(context);
     /// endregion </Setup>
 
     for (auto _ : state)
@@ -136,9 +137,9 @@ static void BM_CalculateXYColorAttrAddressOptimized(benchmark::State& state)
     /// region <SetUp>
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error
-    CPU* cpu = new CPU(context);
+    Core* cpu = new Core(context);
     bool initResult = cpu->Init();
-    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    ScreenZX* screenzx = new ScreenZX(context);
     /// endregion </Setup>
 
     for (auto _ : state)
@@ -175,15 +176,14 @@ BENCHMARK(BM_CalculateXYColorAttrAddressOptimized)->Iterations(100);
 static void BM_RenderOnlyMainScreen(benchmark::State& state)
 {
     /// region <SetUp>
-
     // Instantiate emulator with all peripherals, but no configuration loaded
     EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error
-    CPU* cpu = new CPU(context);
+    Core* cpu = new Core(context);
     bool initResult = cpu->Init();
     // Use Spectrum48K / Pentagon memory layout
     cpu->GetMemory()->DefaultBanksFor48k();
 
-    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    ScreenZX* screenzx = new ScreenZX(context);
     screenzx->InitFrame();
 
     /// endregion </Setup>
