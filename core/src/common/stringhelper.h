@@ -171,9 +171,15 @@ private:
 
         std::string result;
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wformat-nonliteral"
-#pragma clang diagnostic ignored "-Wformat-security"
+#if defined(__clang__)
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wformat-nonliteral"
+    #pragma clang diagnostic ignored "-Wformat-security"
+#elif defined(__GNUC__) || defined(__GNUG__)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wformat-nonliteral"
+    #pragma GCC diagnostic ignored "-Wformat-security"
+#endif
 
         // Calculate required buffer size with actual arguments
         size_t size = snprintf(nullptr, 0, format.c_str(), args...) + 1;
@@ -197,7 +203,11 @@ private:
             return format;
         }
 
-#pragma clang diagnostic pop
+#if defined(__clang__)
+    #pragma clang diagnostic pop
+#elif defined(__GNUC__) || defined(__GNUG__)
+    #pragma GCC diagnostic pop
+#endif
 
         return result;
     }
