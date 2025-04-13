@@ -9,10 +9,6 @@ project (core-benchmarks LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    target_compile_options(core-benchmarks PRIVATE -Wno-error=unresolved)
-endif()
-
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
     set (CMAKE_BUILD_TYPE Release)

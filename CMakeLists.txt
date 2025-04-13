@@ -7,6 +7,9 @@ message(">> Unreal CMakeLists.txt")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(TESTS "Enable tests" ON)
+option(BENCHMARKS "Enable benchmarks" ON)
+
 # THIS HAS TO COME BEFORE THE PROJECT LINE
 #if (APPLE)
 #	execute_process(COMMAND sw_vers OUTPUT_VARIABLE OSX_VERSION)
@@ -59,10 +62,10 @@ if (TESTS)
 endif (TESTS)
 
 # Benchmarks
-if (BENCHMARK)
+if (BENCHMARKS)
 	message("Building benchmarks")
 
 	# Prevent Google benchmark from building it's own tests
 	set(BENCHMARK_ENABLE_TESTING OFF)
 	add_subdirectory(core/benchmarks)
-endif (BENCHMARK)
+endif (BENCHMARKS)

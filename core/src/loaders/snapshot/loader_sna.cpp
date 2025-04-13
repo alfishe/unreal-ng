@@ -209,60 +209,102 @@ bool LoaderSNA::load128kToStaging()
         rewind(_file);
 
         // Read SNA common header
-        [[maybe_unused]] size_t headerRead = fread(&_header, sizeof(_header), 1, _file);
+        if (fread(&_header, sizeof(_header), 1, _file) != 1)
+        {
+            result = false;
+        }
 
         // Read Bank 5 [4000:7FFF]
-        if (fread(&_memoryPages[5], PAGE_SIZE, 1, _file) != 1) return false;
-        _memoryPagesUsed[5] = true;
+        if (result)
+        {
+            if (fread(&_memoryPages[5], PAGE_SIZE, 1, _file) != 1)
+            {
+                result = false;
+            }
+            else
+            {
+                _memoryPagesUsed[5] = true;
+            }
+        }
 
         // Read Bank 2 [8000:BFFF]
-        if (fread(&_memoryPages[2], PAGE_SIZE, 1, _file) != 1) return false;
-        _memoryPagesUsed[2] = true;
+        if (result)
+        {
+            if (fread(&_memoryPages[2], PAGE_SIZE, 1, _file) != 1)
+            {
+                result = false;
+            }
+            else
+            {
+                _memoryPagesUsed[2] = true;
+            }
+        }
 
         // Read Bank N [C000:FFFF]
         // It will go to the page mapped by port #7FFD value
-        if (fread(&_memoryPages[0], PAGE_SIZE, 1, _file) != 1) return false;
-        _memoryPagesUsed[0] = true;
-
-        // Read extended SNA header
-        if (fread(&_ext128Header, sizeof(_ext128Header), 1, _file) != 1) return false;
-
-        // Memory page mapped to [C000:FFFF]
-        uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
-
-        // Move Page 0 content loaded previously to mapped RAM page
-        if (currentTopPage != 0)
+        if (result)
         {
-            _memoryPagesUsed[0] = false;
-            memcpy(&_memoryPages[currentTopPage], &_memoryPages[0], PAGE_SIZE);
-            memset(&_memoryPages[0], 0x00, PAGE_SIZE);
-            _memoryPagesUsed[currentTopPage] = true;
+            if (fread(&_memoryPages[0], PAGE_SIZE, 1, _file) != 1)
+            {
+                result = false;
+            }
+            else
+            {
+                _memoryPagesUsed[0] = true;
+            }
         }
 
-        // Load all the rest RAM pages from 128k extended section
-        if (memoryPagesToLoad > 0)
+        // Read extended SNA header
+        if (result)
         {
-            int pagesRead = 0;
-            for (int pageNum = 0; pageNum < 8; pageNum++)
+            if (fread(&_ext128Header, sizeof(_ext128Header), 1, _file) != 1)
             {
-                if (pagesRead == memoryPagesToLoad)
-                    break;
+                result = false;
+            }
+        }
 
-                // All those pages were already loaded
-                if (_memoryPagesUsed[pageNum])
-                    continue;
+        // Memory page mapped to [C000:FFFF]
+        if (result)
+        {
+            uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
 
-                // Load next page
-                if (fread(&_memoryPages[pageNum], PAGE_SIZE, 1, _file) != 1) return false;
-                pagesRead++;
-                _memoryPagesUsed[pageNum] = true;
+            // Move Page 0 content loaded previously to mapped RAM page
+            if (currentTopPage != 0)
+            {
+                _memoryPagesUsed[0] = false;
+                memcpy(&_memoryPages[currentTopPage], &_memoryPages[0], PAGE_SIZE);
+                memset(&_memoryPages[0], 0x00, PAGE_SIZE);
+                _memoryPagesUsed[currentTopPage] = true;
+            }
+
+            // Load all the rest RAM pages from 128k extended section
+            if (memoryPagesToLoad > 0)
+            {
+                int pagesRead = 0;
+                for (int pageNum = 0; pageNum < 8; pageNum++)
+                {
+                    if (pagesRead == memoryPagesToLoad)
+                        break;
+
+                    // All those pages were already loaded
+                    if (_memoryPagesUsed[pageNum])
+                        continue;
+
+                    // Load next page
+                    if (fread(&_memoryPages[pageNum], PAGE_SIZE, 1, _file) != 1)
+                    {
+                        result = false;
+                        break;
+                    }
+                    pagesRead++;
+                    _memoryPagesUsed[pageNum] = true;
+                }
             }
         }
 
         _borderColor = _header.border & 0b0000'0111;
 
         _stagingLoaded = true;
-        result = true;
     }
 
     return result;
