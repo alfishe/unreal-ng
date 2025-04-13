@@ -324,7 +324,7 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
     #if defined _WIN32 && defined MSVC
         time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03lld.%03lld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
     #else
-        time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03d.%03d]", tv.tv_usec / 1000, tv.tv_usec % 1000);
+        time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03d.%03d]", (int)(tv.tv_usec / 1000), (int)(tv.tv_usec % 1000));
     #endif
 
     /// endregion </Print timestamp>

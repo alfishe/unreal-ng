@@ -521,8 +521,8 @@ struct CONFIG
 	uint8_t zc;
 	char zc_sd_card_path[FILENAME_MAX];
 
-	char atariset[64]; // preset for atari mode
-	char zxkeymap[64]; // name of ZX keys map
+	char atariset[64]; // preset for atari
+	char keymap_name[64]; // name of ZX keys map
 	char keyset[64]; // short name of keyboard layout
 	char appendboot[FILENAME_MAX];
 	char workdir[FILENAME_MAX];
