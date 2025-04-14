@@ -35,7 +35,7 @@ public:
     static std::string ToLower(const std::string& str);
 
     template <typename T>
-    static std::string ToHex(T n, bool upperCase = true)
+    static std::string ToHex(T n, bool upperCase = false)
     {
         std::stringstream ss;
 
@@ -62,7 +62,7 @@ public:
     }
 
     template <typename T>
-    static std::string ToHexWithPrefix(T n, const char* prefix = "0x", bool upperCase = false)
+    static std::string ToHexWithPrefix(T n, const char* prefix = "0x", bool upperCase = true)
     {
         std::stringstream ss;
 

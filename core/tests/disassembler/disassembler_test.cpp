@@ -280,5 +280,102 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
 /// Test how disassembler sets support flags in DecodedInstruction structure
 TEST_F(Disassembler_Test, commandType)
 {
-    FAIL() << "Not implemented yet";
+    struct TestCase
+    {
+        std::vector<uint8_t> bytes;    // Input bytes
+        bool hasJump;                  // Expected flags
+        bool hasRelativeJump;
+        bool hasDisplacement;
+        bool hasReturn;
+        bool hasByteOperand;
+        bool hasWordOperand;
+        bool hasCondition;
+        bool hasVariableCycles;
+    };
+
+    std::vector<TestCase> testCases =
+    {
+        // NOP - no special flags
+        { {0x00}, false, false, false, false, false, false, false, false },
+        
+        // LD BC,nn - has word operand
+        { {0x01, 0x34, 0x12}, false, false, false, false, false, true, false, false },
+        
+        // JR NZ,d - conditional relative jump with variable cycles
+        { {0x20, 0x05}, false, true, false, false, false, false, true, false },
+        
+        // LD (IX+d),n - has displacement and byte operand
+        { {0xDD, 0x36, 0x05, 0x42}, false, false, true, false, true, false, false, false },
+        
+        // CALL nn - unconditional jump
+        { {0xCD, 0x34, 0x12}, true, false, false, false, false, true, false, false },
+        
+        // RET NZ - conditional return
+        { {0xC0}, false, false, false, true, false, false, true, false },
+        
+        // RST 0 - reset instruction (special kind of jump)
+        { {0xC7}, true, false, false, false, false, false, false, false },
+
+        // Extended instructions (ED prefix)
+        // LDIR - block transfer instruction with variable cycles
+        { {0xED, 0xB0}, false, false, false, false, false, false, false, true },
+        
+        // SBC HL,BC - extended arithmetic
+        { {0xED, 0x42}, false, false, false, false, false, false, false, false },
+        
+        // Bit operations (CB prefix)
+        // BIT 7,H - test bit instruction
+        { {0xCB, 0x7C}, false, false, false, false, false, false, false, false },
+        
+        // RLC (IX+d) - rotated bit operation with displacement
+        { {0xDD, 0xCB, 0x05, 0x06}, false, false, true, false, false, false, false, false },
+        
+        // Complex addressing modes
+        // LD A,(BC) - indirect addressing
+        { {0x0A}, false, false, false, false, false, false, false, false },
+        
+        // LD (nn),HL - direct addressing with word operand
+        { {0x22, 0x34, 0x12}, false, false, false, false, false, true, false, false },
+        
+        // Edge cases for displacement
+        // LD (IX-128),A - minimum displacement
+        { {0xDD, 0x77, 0x80}, false, false, true, false, false, false, false, false },
+        
+        // LD (IY+127),A - maximum displacement
+        { {0xFD, 0x77, 0x7F}, false, false, true, false, false, false, false, false }
+    };
+
+    for (size_t i = 0; i < testCases.size(); i++)
+    {
+        const auto& test = testCases[i];
+        const uint8_t* bytes = test.bytes.data();
+        const size_t len = test.bytes.size();
+
+        DecodedInstruction decoded = _disasm->decodeInstruction(bytes, len);
+
+        // Convert the bytes to a hex string and get mnemonic for error messages
+        std::string hexBytes;
+        for (uint8_t byte : test.bytes)
+            hexBytes += StringHelper::Format("%02X ", byte);
+        
+        std::string mnemonic = _disasm->disassembleSingleCommand(bytes, len);
+        std::string errorPrefix = StringHelper::Format("Test case %zu [%s] '%s': ", i, hexBytes.c_str(), mnemonic.c_str());
+
+        EXPECT_EQ(decoded.hasJump, test.hasJump)
+            << errorPrefix << "hasJump mismatch. Expected: " << test.hasJump << ", Got: " << decoded.hasJump;
+        EXPECT_EQ(decoded.hasRelativeJump, test.hasRelativeJump)
+            << errorPrefix << "hasRelativeJump mismatch. Expected: " << test.hasRelativeJump << ", Got: " << decoded.hasRelativeJump;
+        EXPECT_EQ(decoded.hasDisplacement, test.hasDisplacement)
+            << errorPrefix << "hasDisplacement mismatch. Expected: " << test.hasDisplacement << ", Got: " << decoded.hasDisplacement;
+        EXPECT_EQ(decoded.hasReturn, test.hasReturn)
+            << errorPrefix << "hasReturn mismatch. Expected: " << test.hasReturn << ", Got: " << decoded.hasReturn;
+        EXPECT_EQ(decoded.hasByteOperand, test.hasByteOperand)
+            << errorPrefix << "hasByteOperand mismatch. Expected: " << test.hasByteOperand << ", Got: " << decoded.hasByteOperand;
+        EXPECT_EQ(decoded.hasWordOperand, test.hasWordOperand)
+            << errorPrefix << "hasWordOperand mismatch. Expected: " << test.hasWordOperand << ", Got: " << decoded.hasWordOperand;
+        EXPECT_EQ(decoded.hasCondition, test.hasCondition)
+            << errorPrefix << "hasCondition mismatch. Expected: " << test.hasCondition << ", Got: " << decoded.hasCondition;
+        EXPECT_EQ(decoded.hasVariableCycles, test.hasVariableCycles)
+            << errorPrefix << "hasVariableCycles mismatch. Expected: " << test.hasVariableCycles << ", Got: " << decoded.hasVariableCycles;
+    }
 }

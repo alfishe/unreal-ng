@@ -27,8 +27,13 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
 {
     for (unsigned opcode = 0; opcode < 256; opcode++)
     {
+        // Exclude prefixes from processing
+        if (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD)
+            continue;
+
         // Get the opcode structure
         const OpCode& op = _disasm->getOpcode(0, opcode); // 0 prefix means no prefix
+        const std::string mnemonic = op.mnem;
 
         // Create a buffer with the opcode and random parameters
         uint8_t buffer[4] = { (uint8_t)opcode }; // Start with opcode
@@ -51,21 +56,21 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
         std::string result = _disasm->disassembleSingleCommand(buffer, bufferLen);
 
         // Get expected result using the opcode mnemonic
-        std::string referenceResult = op.mnem;
+        std::string referenceResult = mnemonic;
 
         // Format expected result with random values
         uint8_t commandLength = bufferLen;
         if (op.flags & OF_MBYTE)
         {
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":1"), string("%s"));
-            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(buffer[1], "#"));
+            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(buffer[1], "#", true));
         }
         else if (op.flags & OF_MWORD)
         {
             uint16_t word = (buffer[2] << 8) | buffer[1];
 
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":2"), string("%s"));
-            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(word, "#"));
+            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(word, "#", true));
         }
 
         if (result != referenceResult)

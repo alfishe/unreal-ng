@@ -47,7 +47,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
     { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
     
-    { OF_CONDITION | OF_RELJUMP | OF_VAR_T, 0, 13, 8, "djnz :1" },  // 0x10
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 13, 8, "djnz :1" },  // 0x10
     { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
     { OF_MWORD,  7, 0, 0, "ld (de),:2" },                           // 0x12
     { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
@@ -55,7 +55,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "dec d" },                                // 0x15
     { OF_MBYTE,  7, 0, 0, "ld d,:1" },                              // 0x16
     { OF_NONE,   4, 0, 0, "rla" },                                  // 0x17
-    { OF_RELJUMP, 12, 0, 0, "jr :1" },                              // 0x18
+    { OF_RELJUMP | OF_MBYTE, 12, 0, 0, "jr :1" },                   // 0x18
     { OF_NONE,  11, 0, 0, "add hl,de" },                            // 0x19
     { OF_NONE,   7, 0, 0, "ld a,(de)" },                            // 0x1A
     { OF_NONE,   6, 0, 0, "dec de" },                               // 0x1B
@@ -64,7 +64,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld e,:1" },                              // 0x1E
     { OF_NONE,   4, 0, 0, "rra" },                                  // 0x1F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr nz,:1" },            // 0x20
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr nz,:1" }, // 0x20
     { OF_MWORD, 10, 0, 0, "ld hl,:2" },                             // 0x21
     { OF_MWORD, 16, 0, 0, "ld (:2),hl" },                           // 0x22
     { OF_NONE,   6, 0, 0, "inc hl" },                               // 0x23
@@ -72,7 +72,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "dec h" },                                // 0x25
     { OF_MBYTE,  7, 0, 0, "ld h,:1" },                              // 0x26
     { OF_NONE,   4, 0, 0, "daa" },                                  // 0x27
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr z,:1" },             // 0x28
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr z,:1" },  // 0x28
     { OF_NONE,  11, 0, 0, "add hl,hl" },                            // 0x29
     { OF_MWORD, 16, 0, 0, "ld hl,(:2)" },                           // 0x2A
     { OF_NONE,   6, 0, 0, "dec hl" },                               // 0x2B
@@ -81,7 +81,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld l,:1" },                              // 0x2E
     { OF_NONE,   4, 0, 0, "cpl" },                                  // 0x2F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr nc,:1" },            // 0x30
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr nc,:1" }, // 0x30
     { OF_MWORD, 10, 0, 0, "ld sp,:2" },                             // 0x31
     { OF_MWORD, 13, 0, 0, "ld (:2),a" },                            // 0x32
     { OF_NONE,   6, 0, 0, "inc sp" },                               // 0x33
@@ -89,7 +89,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,  11, 0, 0, "dec (hl)" },                             // 0x35
     { OF_MBYTE,  7, 0, 0, "ld (hl),:1" },                           // 0x36
     { OF_NONE,   4, 0, 0, "scf" },                                  // 0x37
-    { OF_CONDITION | OF_RELJUMP, 0, 12, 7, "jr c,:1" },             // 0x38
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr c,:1" },  // 0x38
     { OF_NONE,  11, 0, 0, "add hl,sp" },                            // 0x39
     { OF_MWORD, 13, 0, 0, "ld a,(:2)" },                            // 0x3A
     { OF_NONE,   6, 0, 0, "dec sp" },                               // 0x3B
@@ -612,7 +612,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "dec d" },                         // 0x15
     { OF_MBYTE, 11, 0, 0, "ld d,:1" },                      // 0x16
     { OF_NONE,  8, 0, 0, "rla" },                           // 0x17
-    { OF_RELJUMP,  16, 0, 0, "jr :1" },                     // 0x18
+    { OF_RELJUMP | OF_MBYTE,  16, 0, 0, "jr :1" },          // 0x18
     { OF_NONE,  15, 0, 0, "add ix,de" },                    // 0x19
     { OF_NONE,  11, 0, 0, "ld a,(de)" },                    // 0x1A
     { OF_NONE,  10, 0, 0, "dec de" },                       // 0x1B
@@ -621,7 +621,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE,  11, 0, 0, "ld e,:1" },                     // 0x1E
     { OF_NONE,   8, 0, 0, "rra" },                          // 0x1F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr nz,:1" },   // 0x20
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nz,:1" },   // 0x20
     { OF_MWORD, 18, 0, 0, "ld ix,:2" },                     // 0x21
     { OF_MWORD, 24, 0, 0, "ld (:2),ix" },                   // 0x22
     { OF_NONE, 14, 0, 0, "inc ix" },                        // 0x23
@@ -629,7 +629,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "dec hx" },                        // 0x25
     { OF_MBYTE, 11, 0, 0, "ld hx,:1" },                     // 0x26
     { OF_NONE,  8, 0, 0, "daa" },                           // 0x27
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr z,:1" },    // 0x28
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr z,:1" },    // 0x28
     { OF_NONE, 15, 0, 0, "add ix,ix" },                     // 0x29
     { OF_MWORD, 20, 0, 0, "ld ix,(:2)" },                   // 0x2A
     { OF_NONE, 14, 0, 0, "dec ix" },                        // 0x2B
@@ -638,15 +638,15 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld lx,:1" },                     // 0x2E
     { OF_NONE,  8, 0, 0, "cpl" },                           // 0x2F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr nc,:1" },   // 0x30
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nc,:1" },   // 0x30
     { OF_MWORD, 11, 0, 0, "ld sp,:2" },                     // 0x31
     { OF_MWORD, 17, 0, 0, "ld (:2),a" },                    // 0x32
     { OF_NONE, 10, 0, 0, "inc sp" },                        // 0x33
-    { OF_DISP, 19, 0, 0, "inc (ix+:1)" },                   // 0x34
-    { OF_DISP, 19, 0, 0, "dec (ix+:1)" },                   // 0x35
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "inc (ix+:1)" },       // 0x34
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "dec (ix+:1)" },       // 0x35
     { OF_DISP | OF_MBYTE, 15, 0, 0, "ld (ix+:1),:1" },      // 0x36
     { OF_NONE,  8, 0, 0, "scf" },                           // 0x37
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr c,:1" },    // 0x38
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr c,:1" },    // 0x38
     { OF_NONE, 15, 0, 0, "add ix,sp" },                     // 0x39
     { OF_MWORD, 17, 0, 0, "ld a,(:2)" },                    // 0x3A
     { OF_NONE, 10, 0, 0, "dec sp" },                        // 0x3B
@@ -661,7 +661,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld b,e" },                        // 0x43
     { OF_NONE,  8, 0, 0, "ld b,hx" },                       // 0x44
     { OF_NONE,  8, 0, 0, "ld b,lx" },                       // 0x45
-    { OF_DISP, 19, 0, 0, "ld b,(ix+:1)" },                  // 0x46
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld b,(ix+:1)" },       // 0x46
     { OF_NONE,  8, 0, 0, "ld b,a" },                        // 0x47
     { OF_NONE,  8, 0, 0, "ld c,b" },                        // 0x48
     { OF_NONE,  8, 0, 0, "ld c,c" },                        // 0x49
@@ -669,7 +669,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld c,e" },                        // 0x4B
     { OF_NONE,  8, 0, 0, "ld c,hx" },                       // 0x4C
     { OF_NONE,  8, 0, 0, "ld c,lx" },                       // 0x4D
-    { OF_DISP, 19, 0, 0, "ld c,(ix+:1)" },                  // 0x4E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld c,(ix+:1)" },       // 0x4E
     { OF_NONE,  8, 0, 0, "ld c,a" },                        // 0x4F
 
     { OF_NONE,  8, 0, 0, "ld d,b" },                        // 0x50
@@ -678,7 +678,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld d,e" },                        // 0x53
     { OF_NONE,  8, 0, 0, "ld d,hx" },                       // 0x54
     { OF_NONE,  8, 0, 0, "ld d,lx" },                       // 0x55
-    { OF_DISP, 19, 0, 0, "ld d,(ix+:1)" },                  // 0x56
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld d,(ix+:1)" },       // 0x56
     { OF_NONE,  8, 0, 0, "ld d,a" },                        // 0x57
     { OF_NONE,  8, 0, 0, "ld e,b" },                        // 0x58
     { OF_NONE,  8, 0, 0, "ld e,c" },                        // 0x59
@@ -686,7 +686,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld e,e" },                        // 0x5B
     { OF_NONE,  8, 0, 0, "ld e,hx" },                       // 0x5C
     { OF_NONE,  8, 0, 0, "ld e,lx" },                       // 0x5D
-    { OF_DISP, 19, 0, 0, "ld e,(ix+:1)" },                  // 0x5E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld e,(ix+:1)" },       // 0x5E
     { OF_NONE,  8, 0, 0, "ld e,a" },                        // 0x5F
 
     { OF_NONE,  8, 0, 0, "ld hx,b" },                       // 0x60
@@ -713,14 +713,14 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_DISP, 19, 0, 0, "ld (ix+:1),h" },                  // 0x74
     { OF_DISP, 19, 0, 0, "ld (ix+:1),l" },                  // 0x75
     { OF_NONE,  8, 0, 0, "halt" },                          // 0x76
-    { OF_DISP, 19, 0, 0, "ld (ix+:1),a" },                  // 0x77
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld (ix+:1),a" },       // 0x77
     { OF_NONE,  8, 0, 0, "ld a,b" },                        // 0x78
     { OF_NONE,  8, 0, 0, "ld a,c" },                        // 0x79
     { OF_NONE,  8, 0, 0, "ld a,d" },                        // 0x7A
     { OF_NONE,  8, 0, 0, "ld a,e" },                        // 0x7B
     { OF_NONE,  8, 0, 0, "ld a,hx" },                       // 0x7C
     { OF_NONE,  8, 0, 0, "ld a,lx" },                       // 0x7D
-    { OF_DISP, 19, 0, 0, "ld a,(ix+:1)" },                  // 0x7E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld a,(ix+:1)" },       // 0x7E
     { OF_NONE,  8, 0, 0, "ld a,a" },                        // 0x7F
 
     { OF_NONE,  8, 0, 0, "add a,b" },                       // 0x80
@@ -729,7 +729,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "add a,e" },                       // 0x83
     { OF_NONE,  8, 0, 0, "add a,hx" },                      // 0x84
     { OF_NONE,  8, 0, 0, "add a,lx" },                      // 0x85
-    { OF_DISP, 19, 0, 0, "add a,(ix+:1)" },                 // 0x86
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "add a,(ix+:1)" },      // 0x86
     { OF_NONE,  8, 0, 0, "add a,a" },                       // 0x87
     { OF_NONE,  8, 0, 0, "adc a,b" },                       // 0x88
     { OF_NONE,  8, 0, 0, "adc a,c" },                       // 0x89
@@ -737,7 +737,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "adc a,e" },                       // 0x8B
     { OF_NONE,  8, 0, 0, "adc a,hx" },                      // 0x8C
     { OF_NONE,  8, 0, 0, "adc a,lx" },                      // 0x8D
-    { OF_DISP, 19, 0, 0, "adc a,(ix+:1)" },                 // 0x8E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "adc a,(ix+:1)" },      // 0x8E
     { OF_NONE,  8, 0, 0, "adc a,a" },                       // 0x8F
 
     { OF_NONE,  8, 0, 0, "sub b" },                         // 0x90
@@ -763,7 +763,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "and e" },                         // 0xA3
     { OF_NONE,  8, 0, 0, "and hx" },                        // 0xA4
     { OF_NONE,  8, 0, 0, "and lx" },                        // 0xA5
-    { OF_DISP, 19, 0, 0, "and (ix+:1)" },                   // 0xA6
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "and (ix+:1)" },        // 0xA6
     { OF_NONE,  8, 0, 0, "and a" },                         // 0xA7
     { OF_NONE,  8, 0, 0, "xor b" },                         // 0xA8
     { OF_NONE,  8, 0, 0, "xor c" },                         // 0xA9
@@ -771,7 +771,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "xor e" },                         // 0xAB
     { OF_NONE,  8, 0, 0, "xor hx" },                        // 0xAC
     { OF_NONE,  8, 0, 0, "xor lx" },                        // 0xAD
-    { OF_DISP, 19, 0, 0, "xor (ix+:1)" },                   // 0xAE
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "xor (ix+:1)" },        // 0xAE
     { OF_NONE,  8, 0, 0, "xor a" },                         // 0xAF
 
     { OF_NONE,  8, 0, 0, "or b" },                          // 0xB0
@@ -780,7 +780,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "or e" },                          // 0xB3
     { OF_NONE,  8, 0, 0, "or hx" },                         // 0xB4
     { OF_NONE,  8, 0, 0, "or lx" },                         // 0xB5
-    { OF_DISP, 19, 0, 0, "or (ix+:1)" },                    // 0xB6
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "or (ix+:1)" },         // 0xB6
     { OF_NONE,  8, 0, 0, "or a" },                          // 0xB7
     { OF_NONE,  8, 0, 0, "cp b" },                          // 0xB8
     { OF_NONE,  8, 0, 0, "cp c" },                          // 0xB9
@@ -788,7 +788,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "cp e" },                          // 0xBB
     { OF_NONE,  8, 0, 0, "cp hx" },                         // 0xBC
     { OF_NONE,  8, 0, 0, "cp lx" },                         // 0xBD
-    { OF_DISP, 19, 0, 0, "cp (ix+:1)" },                    // 0xBE
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "cp (ix+:1)" },         // 0xBE
     { OF_NONE,  8, 0, 0, "cp a" },                          // 0xBF
 
     { OF_CONDITION,  0, 15, 9, "ret nz" },                  // 0xC0
@@ -1170,7 +1170,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "dec d" },                         // 0x15
     { OF_MBYTE, 11, 0, 0, "ld d,:1" },                      // 0x16
     { OF_NONE,  8, 0, 0, "rla" },                           // 0x17
-    { OF_RELJUMP,  16, 0, 0, "jr :1" },                     // 0x18
+    { OF_RELJUMP | OF_MBYTE,  16, 0, 0, "jr :1" },          // 0x18
     { OF_NONE,  15, 0, 0, "add iy,de" },                    // 0x19
     { OF_NONE,  11, 0, 0, "ld a,(de)" },                    // 0x1A
     { OF_NONE,  10, 0, 0, "dec de" },                       // 0x1B
@@ -1179,7 +1179,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE,  11, 0, 0, "ld e,:1" },                     // 0x1E
     { OF_NONE,   8, 0, 0, "rra" },                          // 0x1F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr nz,:1" },   // 0x20
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nz,:1" },   // 0x20
     { OF_NONE, 18, 0, 0, "ld iy,:2" },                      // 0x21
     { OF_NONE, 24, 0, 0, "ld (:2),iy" },                    // 0x22
     { OF_NONE, 14, 0, 0, "inc ix" },                        // 0x23
@@ -1187,7 +1187,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "dec hy" },                        // 0x25
     { OF_MBYTE, 11, 0, 0, "ld hy,:1" },                     // 0x26
     { OF_NONE,  8, 0, 0, "daa" },                           // 0x27
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr z,:1" },    // 0x28
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr z,:1" },    // 0x28
     { OF_NONE, 15, 0, 0, "add iy,iy" },                     // 0x29
     { OF_MWORD, 20, 0, 0, "ld iy,(:2)" },                   // 0x2A
     { OF_NONE, 14, 0, 0, "dec iy" },                        // 0x2B
@@ -1196,7 +1196,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld ly,:1" },                     // 0x2E
     { OF_NONE,  8, 0, 0, "cpl" },                           // 0x2F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr nc,:1" },   // 0x30
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nc,:1" },   // 0x30
     { OF_MWORD, 11, 0, 0, "ld sp,:2" },                     // 0x31
     { OF_MWORD, 17, 0, 0, "ld (:2),a" },                    // 0x32
     { OF_NONE, 10, 0, 0, "inc sp" },                        // 0x33
@@ -1204,7 +1204,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_DISP, 19, 0, 0, "dec (iy+:1)" },                   // 0x35
     { OF_DISP | OF_MBYTE, 15, 0, 0, "ld (iy+:1),:1" },      // 0x36
     { OF_NONE,  8, 0, 0, "scf" },                           // 0x37
-    { OF_CONDITION | OF_RELJUMP, 0, 16, 11, "jr c,:1" },    // 0x38
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr c,:1" },    // 0x38
     { OF_NONE, 15, 0, 0, "add iy,sp" },                     // 0x39
     { OF_MWORD, 17, 0, 0, "ld a,(:2)" },                    // 0x3A
     { OF_NONE, 10, 0, 0, "dec sp" },                        // 0x3B
@@ -1219,7 +1219,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld b,e" },                        // 0x43
     { OF_NONE,  8, 0, 0, "ld b,hy" },                       // 0x44
     { OF_NONE,  8, 0, 0, "ld b,ly" },                       // 0x45
-    { OF_DISP, 19, 0, 0, "ld b,(iy+:1)" },                  // 0x46
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld b,(iy+:1)" },       // 0x46
     { OF_NONE,  8, 0, 0, "ld b,a" },                        // 0x47
     { OF_NONE,  8, 0, 0, "ld c,b" },                        // 0x48
     { OF_NONE,  8, 0, 0, "ld c,c" },                        // 0x49
@@ -1227,7 +1227,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld c,e" },                        // 0x4B
     { OF_NONE,  8, 0, 0, "ld c,hy" },                       // 0x4C
     { OF_NONE,  8, 0, 0, "lc c,ly" },                       // 0x4D
-    { OF_DISP, 19, 0, 0, "lc c,(iy+:1)" },                  // 0x4E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "lc c,(iy+:1)" },       // 0x4E
     { OF_NONE,  8, 0, 0, "ld c,a" },                        // 0x4F
 
     { OF_NONE,  8, 0, 0, "ld d,b" },                        // 0x50
@@ -1236,7 +1236,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld d,e" },                        // 0x53
     { OF_NONE,  8, 0, 0, "ld d,hy" },                       // 0x54
     { OF_NONE,  8, 0, 0, "ld d,ly" },                       // 0x55
-    { OF_DISP, 19, 0, 0, "ld d,(iy+:1)" },                  // 0x56
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld d,(iy+:1)" },       // 0x56
     { OF_NONE,  8, 0, 0, "ld d,a" },                        // 0x57
     { OF_NONE,  8, 0, 0, "ld e,b" },                        // 0x58
     { OF_NONE,  8, 0, 0, "ld e,c" },                        // 0x59
@@ -1261,7 +1261,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "ld ly,e" },                       // 0x6B
     { OF_NONE,  8, 0, 0, "ld ly,hy" },                      // 0x6C
     { OF_NONE,  8, 0, 0, "ld ly,ly" },                      // 0x6D
-    { OF_DISP, 19, 0, 0, "ld l,(iy+:1)" },                  // 0x6E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld l,(iy+:1)" },       // 0x6E
     { OF_NONE,  8, 0, 0, "ld ly,a" },                       // 0x6F
 
     { OF_DISP, 19, 0, 0, "ld (iy+:1),b" },                  // 0x70
@@ -1271,14 +1271,14 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_DISP, 19, 0, 0, "ld (iy+:1),h" },                  // 0x74
     { OF_DISP, 19, 0, 0, "ld (iy+:1),l" },                  // 0x75
     { OF_NONE,  8, 0, 0, "halt" },                          // 0x76
-    { OF_DISP, 19, 0, 0, "ld (iy+:1),a" },                  // 0x77
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld (iy+:1),a" },       // 0x77
     { OF_NONE,  8, 0, 0, "ld a,b" },                        // 0x78
     { OF_NONE,  8, 0, 0, "ld a,c" },                        // 0x79
     { OF_NONE,  8, 0, 0, "ld a,d" },                        // 0x7A
     { OF_NONE,  8, 0, 0, "ld a,e" },                        // 0x7B
     { OF_NONE,  8, 0, 0, "ld a,hy" },                       // 0x7C
     { OF_NONE,  8, 0, 0, "ld a,ly" },                       // 0x7D
-    { OF_DISP, 19, 0, 0, "ld a,(iy+:1)" },                  // 0x7E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "ld a,(iy+:1)" },       // 0x7E
     { OF_NONE,  8, 0, 0, "ld a,a" },                        // 0x7F
 
     { OF_NONE,  8, 0, 0, "add a,b" },                       // 0x80
@@ -1287,7 +1287,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "add a,e" },                       // 0x83
     { OF_NONE,  8, 0, 0, "add a,hy" },                      // 0x84
     { OF_NONE,  8, 0, 0, "add a,ly" },                      // 0x85
-    { OF_DISP, 19, 0, 0, "add a,(iy+:1)" },                 // 0x86
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "add a,(iy+:1)" },      // 0x86
     { OF_NONE,  8, 0, 0, "add a,a" },                       // 0x87
     { OF_NONE,  8, 0, 0, "adc a,b" },                       // 0x88
     { OF_NONE,  8, 0, 0, "adc a,c" },                       // 0x89
@@ -1295,7 +1295,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "adc a,e" },                       // 0x8B
     { OF_NONE,  8, 0, 0, "adc a,hy" },                      // 0x8C
     { OF_NONE,  8, 0, 0, "adc a,ly" },                      // 0x8D
-    { OF_DISP, 19, 0, 0, "adc a,(iy+:1)" },                 // 0x8E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "adc a,(iy+:1)" },      // 0x8E
     { OF_NONE,  8, 0, 0, "adc a,a" },                       // 0x8F
 
     { OF_NONE,  8, 0, 0, "sub b" },                         // 0x90
@@ -1304,7 +1304,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "sub e" },                         // 0x93
     { OF_NONE,  8, 0, 0, "sub hy" },                        // 0x94
     { OF_NONE,  8, 0, 0, "sub ly" },                        // 0x95
-    { OF_DISP, 19, 0, 0, "sub (iy+:1)" },                   // 0x96
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "sub (iy+:1)" },       // 0x96
     { OF_NONE,  8, 0, 0, "sub a" },                         // 0x97
     { OF_NONE,  8, 0, 0, "sbc a,b" },                       // 0x98
     { OF_NONE,  8, 0, 0, "sbc a,c" },                       // 0x99
@@ -1312,7 +1312,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "sbc a,e" },                       // 0x9B
     { OF_NONE,  8, 0, 0, "sbc a,hy" },                      // 0x9C
     { OF_NONE,  8, 0, 0, "sbc a,ly" },                      // 0x9D
-    { OF_DISP, 19, 0, 0, "sbc (iy+:1)" },                   // 0x9E
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "sbc (iy+:1)" },        // 0x9E
     { OF_NONE,  8, 0, 0, "sbc a,a" },                       // 0x9F
 
     { OF_NONE,  8, 0, 0, "and b" },                         // 0xA0
@@ -1321,7 +1321,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "and e" },                         // 0xA3
     { OF_NONE,  8, 0, 0, "and hy" },                        // 0xA4
     { OF_NONE,  8, 0, 0, "and ly" },                        // 0xA5
-    { OF_DISP, 19, 0, 0, "and (iy+:1)" },                   // 0xA6
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "and (iy+:1)" },        // 0xA6
     { OF_NONE,  8, 0, 0, "and a" },                         // 0xA7
     { OF_NONE,  8, 0, 0, "xor b" },                         // 0xA8
     { OF_NONE,  8, 0, 0, "xor c" },                         // 0xA9
@@ -1329,7 +1329,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "xor e" },                         // 0xAB
     { OF_NONE,  8, 0, 0, "xor hy" },                        // 0xAC
     { OF_NONE,  8, 0, 0, "xor ly" },                        // 0xAD
-    { OF_DISP, 19, 0, 0, "xor (iy+:1)" },                   // 0xAE
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "xor (iy+:1)" },        // 0xAE
     { OF_NONE,  8, 0, 0, "xor a" },                         // 0xAF
 
     { OF_NONE,  8, 0, 0, "or b" },                          // 0xB0
@@ -1338,7 +1338,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "or e" },                          // 0xB3
     { OF_NONE,  8, 0, 0, "or hy" },                         // 0xB4
     { OF_NONE,  8, 0, 0, "or ly" },                         // 0xB5
-    { OF_DISP, 19, 0, 0, "or (iy+:1)" },                    // 0xB6
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "or (iy+:1)" },         // 0xB6
     { OF_NONE,  8, 0, 0, "or a" },                          // 0xB7
     { OF_NONE,  8, 0, 0, "cp b" },                          // 0xB8
     { OF_NONE,  8, 0, 0, "cp c" },                          // 0xB9
@@ -1346,7 +1346,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_NONE,  8, 0, 0, "cp e" },                          // 0xBB
     { OF_NONE,  8, 0, 0, "cp hy" },                         // 0xBC
     { OF_NONE,  8, 0, 0, "cp ly" },                         // 0xBD
-    { OF_DISP, 19, 0, 0, "cp (iy+:1)" },                    // 0xBE
+    { OF_DISP | OF_MBYTE, 19, 0, 0, "cp (iy+:1)" },         // 0xBE
     { OF_NONE,  8, 0, 0, "cp a" },                          // 0xBF
 
     { OF_CONDITION,  0, 15, 9, "ret nz" },                  // 0xC0
