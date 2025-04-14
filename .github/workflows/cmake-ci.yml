@@ -8,6 +8,8 @@ on:
 
 env:
   BUILD_TYPE: Release
+  CCACHE_DIR: /tmp/ccache
+  LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
 
 jobs:
   build-linux:
@@ -15,55 +17,40 @@ jobs:
     strategy:
       matrix:
         qt-version: [6.5.0]
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
-          submodules: true
+          submodules: recursive
 
-      - name: Cache ICU build
-        id: cache-icu
-        uses: actions/cache@v3
-        with:
-          path: /usr/local
-          key: icu-56-linux
-
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
-          sudo apt-get update -y
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake git wget tar
 
-      - name: Build and Install ICU if not cached
-        if: steps.cache-icu.outputs.cache-hit != 'true'
+
+      - name: Build and install ICU 56 from source
         run: |
           wget -q https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz
-          tar -xzvf icu4c-56_1-src.tgz
+          tar -xzf icu4c-56_1-src.tgz
           cd icu/source
           ./configure --prefix=/usr/local
           make -j$(nproc)
           sudo make install
           sudo ldconfig
-          cd ../..
-          rm -rf icu4c-56_1-src.tgz icu
+          # Verify installation
+          ls -l /usr/local/lib/libicui18n.so*
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          aqtversion: '==3.1.*'
-          py7zrversion: '>=0.20.2'
           version: ${{ matrix.qt-version }}
           host: 'linux'
           target: 'desktop'
-          arch: gcc_64
-          install-deps: 'true'
-          tools-only: 'false'
+          arch: 'gcc_64'
           modules: 'qtmultimedia qt5compat'
-          archives: 'qttools qtbase'
-          cache: true
 
-      - name: Build and Test
+      - name: Build project
         run: |
           cd ${{ github.workspace }}/unreal-qt
           mkdir build
