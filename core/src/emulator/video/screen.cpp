@@ -361,7 +361,9 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
 {
     // Buffer already allocated for the selected video mode
     if (_framebuffer.memoryBuffer != nullptr && _framebuffer.videoMode == mode)
+    {
         return;
+    }
 
 	// Deallocate existing framebuffer memory
 	DeallocateFramebuffer();

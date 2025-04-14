@@ -1133,7 +1133,7 @@ void WD1793::processStep()
         }
         else
         {
-            int a = a;
+            //int a = a;
             //throw std::logic_error("Only Type 1 commands can have S_STEP state");
         }
     }
