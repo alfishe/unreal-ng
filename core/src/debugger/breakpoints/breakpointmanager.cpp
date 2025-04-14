@@ -368,7 +368,7 @@ uint16_t BreakpointManager::AddPortBreakpoint(BreakpointDescriptor* descriptor)
         result = GenerateNewBreakpointID();
         descriptor->breakpointID = result;
 
-        _breakpointMapByAddress.insert( { key, descriptor });
+        _breakpointMapByPort.insert( { key, descriptor });
         _breakpointMapByID.insert( { result, descriptor });
     }
 

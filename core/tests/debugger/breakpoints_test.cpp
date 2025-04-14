@@ -223,7 +223,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     breakpoint->z80address = breakpointAddress;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(6);
+    emulator->RunNCPUCycles(6, false);
 
     if (!breakpointTriggered)
     {
@@ -241,10 +241,115 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
 TEST_F(BreakpointManager_test, portInBreakpoint)
 {
-    FAIL() << "Not implemented yet";
+    volatile bool breakpointTriggered = false;
+    uint8_t testCommands[] =
+    {
+        0xAF,                   // $0000 XOR A - Ensure A = 0
+        0xED, 0x70, 0x00, 0x00, // $0001 IN A, ($00)
+        0x76                    // $0005 HALT
+    };
+    uint8_t portNumber = 0x00;  // Test port input from port 0
+
+    /// region <Initialize>
+    Emulator* emulator = new Emulator(LoggerLevel::LogError);
+    bool init = emulator->Init();
+    emulator->DebugOn();
+
+    EmulatorContext* context = emulator->GetContext();
+    BreakpointManager* breakpointManager = emulator->GetBreakpointManager();
+
+    // Transfer test Z80 command sequence to ROM space (From address $0000)
+    Memory* memory = emulator->GetMemory();
+    for (int i = 0; i < sizeof(testCommands) / sizeof(testCommands[0]); i++)
+    {
+        memory->DirectWriteToZ80Memory(i, testCommands[i]);
+    }
+
+    // Register MessageCenter event handler as lambda
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
+    {
+        breakpointTriggered = true;
+        emulator->Resume();
+    });
+
+    /// endregion </Initialize>
+
+    // Create port input breakpoint
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_IN;
+    breakpoint->z80address = portNumber;
+    breakpointManager->AddBreakpoint(breakpoint);
+
+    emulator->RunNCPUCycles(4, false);
+
+    if (!breakpointTriggered)
+    {
+        FAIL() << StringHelper::Format("Port input breakpoint on port: $%02X wasn't triggered", portNumber) << std::endl;
+    }
+
+    /// region <Release>
+    emulator->Stop();
+    emulator->Release();
+    delete emulator;
+    /// endregion </Release>
 }
 
 TEST_F(BreakpointManager_test, portOutBreakpoint)
 {
-    FAIL() << "Not implemented yet";
+    volatile bool breakpointTriggered = false;
+    uint8_t testCommands[] =
+    {
+        0xAF,                   // $0000 XOR A - Ensure A = 0
+        0xD3, 0xFE,             // $0001 OUT ($FE), A
+        0x76                    // $0003 HALT
+    };
+    uint8_t portNumber = 0xFE;  // Test port output to port 0xFE
+
+    /// region <Initialize>
+    Emulator* emulator = new Emulator(LoggerLevel::LogError);
+    bool init = emulator->Init();
+    emulator->DebugOn();
+
+    EmulatorContext* context = emulator->GetContext();
+    BreakpointManager* breakpointManager = emulator->GetBreakpointManager();
+
+    // Transfer test Z80 command sequence to ROM space (From address $0000)
+    Memory* memory = emulator->GetMemory();
+    for (int i = 0; i < sizeof(testCommands) / sizeof(testCommands[0]); i++)
+    {
+        memory->DirectWriteToZ80Memory(i, testCommands[i]);
+    }
+
+    // Register MessageCenter event handler as lambda
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
+          {
+              breakpointTriggered = true;
+              emulator->Resume();
+          }
+    );
+
+    /// endregion </Initialize>
+
+    // Create port output breakpoint
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = BRK_IO_OUT;
+    breakpoint->z80address = portNumber;
+    breakpointManager->AddBreakpoint(breakpoint);
+
+    emulator->RunNCPUCycles(4, false);
+
+    if (!breakpointTriggered)
+    {
+        FAIL() << StringHelper::Format("Port output breakpoint on port: $%02X wasn't triggered", portNumber) << std::endl;
+    }
+
+    /// region <Release>
+    emulator->Stop();
+    emulator->Release();
+    delete emulator;
+    /// endregion </Release>
 }

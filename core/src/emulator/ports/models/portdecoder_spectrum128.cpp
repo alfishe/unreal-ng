@@ -56,6 +56,9 @@ uint8_t PortDecoder_Spectrum128::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
 
+    // Handle common part (like breakpoints)
+    PortDecoder::DecodePortIn(port, pc);
+
     if (IsPort_FE(port))
     {
         // Call default implementation
@@ -81,6 +84,9 @@ void PortDecoder_Spectrum128::DecodePortOut(uint16_t port, uint8_t value, uint16
     /// region <Override submodule>
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
+
+    // Handle common part (like breakpoints)
+    PortDecoder::DecodePortOut(port, value, pc);
 
     //    ZX Spectrum 128 / +2
     //    port: #7FFD

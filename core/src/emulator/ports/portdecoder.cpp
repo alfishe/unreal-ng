@@ -97,6 +97,7 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     Emulator& emulator = *_context->pEmulator;
     Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+
     uint16_t breakpointID = brk.HandlePortIn(addr);
     if (breakpointID != BRK_INVALID)
     {
@@ -127,7 +128,7 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-    uint16_t breakpointID = brk.HandlePortIn(addr);
+    uint16_t breakpointID = brk.HandlePortOut(addr);
     if (breakpointID != BRK_INVALID)
     {
         // Request to pause emulator

@@ -1198,7 +1198,14 @@ Z80OPCODE op_D2(Z80 *cpu) { // jp nc,nnnn
     }
 }
 
-Z80OPCODE op_D3(Z80 *cpu) { // out (nn),a
+// The full 16-bit address bus is used, not just the 8-bit n value.
+// The high byte (A15-A8) of the address bus is set to the contents of the accumulator (A).
+// The low byte (A7-A0) of the address bus is set to the 8-bit port number n (from the instruction).
+// So, the actual 16-bit address placed on the address bus is:
+// A15-A8 = A (accumulator value)
+// A7-A0 = n (port number from instruction)
+// → (A << 8) | n
+Z80OPCODE op_D3(Z80 *cpu) { // out (n),a
     uint16_t port = cpu->rd(cpu->pc++, true);
 
     cputact(4);

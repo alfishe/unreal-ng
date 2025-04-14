@@ -784,13 +784,13 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 
 void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
-	for (unsigned i = 0; i < cycles; i++)
-	{
-		RunSingleCPUCycle(skipBreakpoints);
+    for (unsigned i = 0; i < cycles; i++)
+    {
+        RunSingleCPUCycle(skipBreakpoints);
 
-		if (_stopRequested)
-		    break;
-	}
+        if (_stopRequested)
+            break;
+    }
 }
 
 void Emulator::RunUntilInterrupt()

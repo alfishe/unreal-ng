@@ -395,9 +395,9 @@ uint8_t Z80::in(uint16_t port)
     PortDecoder& portDecoder = *_context->pPortDecoder;
 
     // Let model-specific decoder to process port output
-	uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
+    uint8_t result = portDecoder.DecodePortIn(port, m1_pc);
 
-	return result;
+    return result;
 }
 
 void Z80::out(uint16_t port, uint8_t val)

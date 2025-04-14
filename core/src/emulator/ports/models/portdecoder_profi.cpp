@@ -30,6 +30,9 @@ uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)
     (void)port;
     (void)pc;
 
+    // Handle common part (like breakpoints)
+    PortDecoder::DecodePortIn(port, pc);
+
     uint8_t result = 0xFF;
 
     return result;
@@ -40,6 +43,9 @@ void PortDecoder_Profi::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
     //    Profi 1024
     //    port: #7FFD
     //    port: #DFFD
+
+    // Handle common part (like breakpoints)
+    PortDecoder::DecodePortOut(port, value, pc);
 
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
