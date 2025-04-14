@@ -468,3 +468,137 @@ TEST_F(StringHelper_Test, Format)
         EXPECT_EQ(reference, result) << "Test case 8 failed";
     }
 }
+
+TEST_F(StringHelper_Test, ToHex)
+{
+    // Test case 1: Basic hex conversion (uppercase)
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "1A";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 2: Basic hex conversion (lowercase)
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "1a";
+        std::string result = StringHelper::ToHex(value, false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 3: 16-bit value (uppercase)
+    {
+        uint16_t value = 0x1A2B;
+        std::string expected = "1A2B";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 4: 16-bit value (lowercase)
+    {
+        uint16_t value = 0x1A2B;
+        std::string expected = "1a2b";
+        std::string result = StringHelper::ToHex(value, false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 5: 32-bit value (uppercase)
+    {
+        uint32_t value = 0x1A2B3C4D;
+        std::string expected = "1A2B3C4D";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 6: 32-bit value (lowercase)
+    {
+        uint32_t value = 0x1A2B3C4D;
+        std::string expected = "1a2b3c4d";
+        std::string result = StringHelper::ToHex(value, false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 7: 64-bit value (uppercase)
+    {
+        uint64_t value = 0x1A2B3C4D5E6F7A8B;
+        std::string expected = "1A2B3C4D5E6F7A8B";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 8: 64-bit value (lowercase)
+    {
+        uint64_t value = 0x1A2B3C4D5E6F7A8B;
+        std::string expected = "1a2b3c4d5e6f7a8b";
+        std::string result = StringHelper::ToHex(value, false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 9: char value (uppercase)
+    {
+        char value = 0x1A;
+        std::string expected = "1A";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 10: char value (lowercase)
+    {
+        char value = 0x1A;
+        std::string expected = "1a";
+        std::string result = StringHelper::ToHex(value, false);
+        EXPECT_EQ(result, expected);
+    }
+}
+
+TEST_F(StringHelper_Test, ToHexWithPrefix)
+{
+    // Test case 1: Basic hex with prefix (uppercase)
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "0x1A";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 2: Basic hex with prefix (lowercase)
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "0x1a";
+        std::string result = StringHelper::ToHexWithPrefix(value, "0x", false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 3: Custom prefix (uppercase)
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "hex:1A";
+        std::string result = StringHelper::ToHexWithPrefix(value, "hex:");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 4: Custom prefix (lowercase)
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "hex:1a";
+        std::string result = StringHelper::ToHexWithPrefix(value, "hex:", false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 5: 32-bit value with custom prefix (uppercase)
+    {
+        uint32_t value = 0x1A2B3C4D;
+        std::string expected = "addr:1A2B3C4D";
+        std::string result = StringHelper::ToHexWithPrefix(value, "addr:");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 6: 32-bit value with custom prefix (lowercase)
+    {
+        uint32_t value = 0x1A2B3C4D;
+        std::string expected = "addr:1a2b3c4d";
+        std::string result = StringHelper::ToHexWithPrefix(value, "addr:", false);
+        EXPECT_EQ(result, expected);
+    }
+}

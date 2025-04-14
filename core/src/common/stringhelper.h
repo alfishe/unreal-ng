@@ -35,11 +35,16 @@ public:
     static std::string ToLower(const std::string& str);
 
     template <typename T>
-    static std::string ToHex(T n)
+    static std::string ToHex(T n, bool upperCase = true)
     {
         std::stringstream ss;
 
-        ss << std::setfill ('0') << std::setw(sizeof(T) * 2) << std::hex;
+        ss << std::setfill('0') << std::setw(sizeof(T) * 2) << std::hex;
+
+        if (upperCase)
+        {
+            ss << std::uppercase;
+        }
 
         // char, unsigned char and derived types (like int8_t and uint8_t are not by default treated as numbers by stringstream
         if (typeid(T) == typeid(char) || typeid(T) == typeid(unsigned char) || sizeof(T) == 1)
@@ -57,11 +62,11 @@ public:
     }
 
     template <typename T>
-    static std::string ToHexWithPrefix(T n, const char* prefix = "0x")
+    static std::string ToHexWithPrefix(T n, const char* prefix = "0x", bool upperCase = false)
     {
         std::stringstream ss;
 
-        ss << prefix << ToHex(n);
+        ss << prefix << ToHex(n, upperCase);
 
         std::string result = ss.str();
 
