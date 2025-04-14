@@ -1162,7 +1162,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                      // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                          // 0x0F
 
-    { OF_CONDITION | OF_RELJUMP, 0, 17, 12, "djnz :1" },    // 0x10
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 17, 12, "djnz :1" },    // 0x10
     { OF_NONE, 14, 0, 0, "ld de,:2" },                      // 0x11
     { OF_NONE, 11, 0, 0, "ld (de),:2" },                    // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                        // 0x13
