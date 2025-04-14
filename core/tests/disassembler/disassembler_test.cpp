@@ -302,7 +302,7 @@ TEST_F(Disassembler_Test, commandType)
         { {0x01, 0x34, 0x12}, false, false, false, false, false, true, false, false },
         
         // JR NZ,d - conditional relative jump with variable cycles
-        { {0x20, 0x05}, false, true, false, false, false, false, true, false },
+        { {0x20, 0x05}, false, true, false, false, true, false, true, false },
         
         // LD (IX+d),n - has displacement and byte operand
         { {0xDD, 0x36, 0x05, 0x42}, false, false, true, false, true, false, false, false },
