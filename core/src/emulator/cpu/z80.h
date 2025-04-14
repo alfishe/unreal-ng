@@ -371,10 +371,10 @@ public:
 public:
 	void ProcessDebuggerEvents();
 	void WaitUntilResumed();
-	void (* callbackM1_Prefetch)();
-	void (* callbackM1_Postfetch());
+	void (*callbackM1_Prefetch)(); // Corrected function pointer declaration
+	void (*callbackM1_Postfetch)(); // Corrected function pointer declaration
 
-	void (* callbackCPUCycleFinished());
+	void (*callbackCPUCycleFinished)(); // Corrected function pointer declaration
 
 protected:
 	__forceinline void IncrementCPUCyclesCounter(uint8_t cycles);	// Increment cycle counters
@@ -398,4 +398,3 @@ public:
 
 	/// endregion </Debug methods>
 };
-

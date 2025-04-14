@@ -45,7 +45,12 @@ ModuleLogger::ModuleLogger(EmulatorContext* context)
     _context = context;
 
     // Ensure all modules / submodules are enabled by default
-    memset(&_settings, 0xFF, sizeof(_settings));
+    _settings = LoggerSettings();
+    _settings.modules = 0xFFFFFFFF;
+    for (size_t i = 0; i < sizeof(_settings.submodules) / sizeof(_settings.submodules[0]); ++i)
+    {
+        _settings.submodules[i] = 0xFFFF;
+    }
 
     //_settings.modules &= ~PlatformModulesEnum::MODULE_IO;
     //_settings.modules &= ~PlatformModulesEnum::MODULE_Z80;
@@ -622,12 +627,13 @@ std::string ModuleLogger::DumpSettings()
 
     ss << "Module logger settings dump:" << std::endl;
 
-    for (int i = 1; i < sizeof(moduleNames) / sizeof(moduleNames[0]); i++)
+    size_t moduleCount = sizeof(moduleNames) / sizeof(moduleNames[0]);
+    for (size_t i = 1; i < moduleCount; ++i)
     {
         std::string moduleName = DumpModuleName(i);
         std::string moduleStatus = "off";
 
-        if (_settings.modules & 1 << i)
+        if (_settings.modules & (1 << i))
         {
             moduleStatus = "on";
 
@@ -668,34 +674,35 @@ std::string ModuleLogger::DumpResolveFlags(uint16_t flags, const char* names[], 
     std::string result;
     std::stringstream  ss;
 
-//    if (flags == 0)
-//    {
-//        ss << NONE;
-//    }
-//    else if (flags == 0xFFFF)
-//    {
-//        ss << ALL;
-//    }
-//    else
-//    {
-//    }
-
-    for (int i = 0; i < nameSize; i++)
+    if (flags == 0)
     {
-        std::string submoduleName = names[i];
-        std::string submoduleStatus = "off";
-
-        uint16_t mask = 1 << i;
-        if (flags & mask)
+        ss << NONE;
+    }
+    else if (flags == 0xFFFF)
+    {
+        ss << ALL;
+    }
+    else
+    {
+        for (size_t i = 0; i < nameSize; ++i)
         {
-            submoduleStatus = "on";
-        }
-        else
-        {
-            submoduleStatus = "off";
-        }
+            std::string submoduleName = names[i];
+            std::string submoduleStatus = "off";
 
-        ss << StringHelper::Format("  %s: %s", submoduleName.c_str(), submoduleStatus.c_str()) << std::endl;
+            uint16_t mask = 1 << i;
+            if (flags & mask)
+            {
+                submoduleStatus = "on";
+            }
+            else
+            {
+                submoduleStatus = "off";
+            }
+
+            ss << StringHelper::Format("  %s: %s", submoduleName.c_str(), submoduleStatus.c_str());
+            if (i < nameSize - 1)  // Only add newline if not the last line
+                ss << std::endl;
+        }
     }
 
     result = ss.str();
