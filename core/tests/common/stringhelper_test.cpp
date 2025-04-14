@@ -25,16 +25,16 @@ TEST_F(StringHelper_Test, Compare)
     std::wstring test[2][4] =
     {
         {
-                L"TestString1",
-                L"TestString2",
-                L"test!string3  ",
-                L"__123__Abc"
-        },
+            L"TestString1",
+            L"TestString2",
+            L"test!string3  ",
+            L"__123__Abc"
+    },
         {
-                L"TestString1",
-                L"TestString2_",
-                L"test!string3  ",
-                L"__123__abc"
+            L"TestString1",
+            L"TestString2_",
+            L"test!string3  ",
+            L"__123__abc"
         }
     };
 
@@ -471,84 +471,124 @@ TEST_F(StringHelper_Test, Format)
 
 TEST_F(StringHelper_Test, ToHex)
 {
-    // Test case 1: Basic hex conversion (uppercase)
+    // Test case 1: Default hex conversion (should be lowercase)
     {
         uint8_t value = 0x1A;
-        std::string expected = "1A";
+        std::string expected = "1a";
         std::string result = StringHelper::ToHex(value);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Default ToHex(uint8_t) should be lowercase";
     }
 
-    // Test case 2: Basic hex conversion (lowercase)
+    // Test case 2: Explicit lowercase
     {
         uint8_t value = 0x1A;
         std::string expected = "1a";
         std::string result = StringHelper::ToHex(value, false);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint8_t, false) should be lowercase";
     }
 
-    // Test case 3: 16-bit value (uppercase)
+    // Test case 3: Explicit uppercase
+    {
+        uint8_t value = 0x1A;
+        std::string expected = "1A";
+        std::string result = StringHelper::ToHex(value, true);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint8_t, true) should be uppercase";
+    }
+
+    // Test case 4: 16-bit value, default (should be lowercase)
     {
         uint16_t value = 0x1A2B;
-        std::string expected = "1A2B";
+        std::string expected = "1a2b";
         std::string result = StringHelper::ToHex(value);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Default ToHex(uint16_t) should be lowercase";
     }
 
-    // Test case 4: 16-bit value (lowercase)
+    // Test case 5: 16-bit value, explicit lowercase
     {
         uint16_t value = 0x1A2B;
         std::string expected = "1a2b";
         std::string result = StringHelper::ToHex(value, false);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint16_t, false) should be lowercase";
     }
 
-    // Test case 5: 32-bit value (uppercase)
+    // Test case 6: 16-bit value, explicit uppercase
+    {
+        uint16_t value = 0x1A2B;
+        std::string expected = "1A2B";
+        std::string result = StringHelper::ToHex(value, true);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint16_t, true) should be uppercase";
+    }
+
+    // Test case 7: 32-bit value, explicit uppercase
     {
         uint32_t value = 0x1A2B3C4D;
         std::string expected = "1A2B3C4D";
-        std::string result = StringHelper::ToHex(value);
-        EXPECT_EQ(result, expected);
+        std::string result = StringHelper::ToHex(value, true);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint32_t, true) should be uppercase";
     }
 
-    // Test case 6: 32-bit value (lowercase)
+    // Test case 8: 32-bit value, default (should be lowercase)
+    {
+        uint32_t value = 0x1A2B3C4D;
+        std::string expected = "1a2b3c4d";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected) << "Default ToHex(uint32_t) should be lowercase";
+    }
+
+    // Test case 9: 32-bit value, explicit lowercase
     {
         uint32_t value = 0x1A2B3C4D;
         std::string expected = "1a2b3c4d";
         std::string result = StringHelper::ToHex(value, false);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint32_t, false) should be lowercase";
     }
 
-    // Test case 7: 64-bit value (uppercase)
+    // Test case 10: 64-bit value, explicit uppercase
     {
         uint64_t value = 0x1A2B3C4D5E6F7A8B;
         std::string expected = "1A2B3C4D5E6F7A8B";
-        std::string result = StringHelper::ToHex(value);
-        EXPECT_EQ(result, expected);
+        std::string result = StringHelper::ToHex(value, true);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint64_t, true) should be uppercase";
     }
 
-    // Test case 8: 64-bit value (lowercase)
+    // Test case 11: 64-bit value, default (should be lowercase)
+    {
+        uint64_t value = 0x1A2B3C4D5E6F7A8B;
+        std::string expected = "1a2b3c4d5e6f7a8b";
+        std::string result = StringHelper::ToHex(value);
+        EXPECT_EQ(result, expected) << "Default ToHex(uint64_t) should be lowercase";
+    }
+
+    // Test case 12: 64-bit value, explicit lowercase
     {
         uint64_t value = 0x1A2B3C4D5E6F7A8B;
         std::string expected = "1a2b3c4d5e6f7a8b";
         std::string result = StringHelper::ToHex(value, false);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(uint64_t, false) should be lowercase";
     }
 
-    // Test case 9: char value (uppercase)
+    // Test case 13: char value, default (should be lowercase)
     {
         char value = 0x1A;
-        std::string expected = "1A";
+        std::string expected = "1a";
         std::string result = StringHelper::ToHex(value);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Default ToHex(char) should be lowercase";
     }
 
-    // Test case 10: char value (lowercase)
+    // Test case 14: char value, explicit lowercase
     {
         char value = 0x1A;
         std::string expected = "1a";
         std::string result = StringHelper::ToHex(value, false);
-        EXPECT_EQ(result, expected);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(char, false) should be lowercase";
+    }
+
+    // Test case 15: char value, explicit uppercase
+    {
+        char value = 0x1A;
+        std::string expected = "1A";
+        std::string result = StringHelper::ToHex(value, true);
+        EXPECT_EQ(result, expected) << "Explicit ToHex(char, true) should be uppercase";
     }
 }
 
