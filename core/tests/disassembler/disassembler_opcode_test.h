@@ -3,7 +3,7 @@
 
 #include "debugger/disassembler/z80disasm.h"
 
-class Disassembler_FDCB_Test : public ::testing::Test
+class Disassembler_Opcode_Test : public ::testing::Test
 {
 protected:
     Z80DisassemblerCUT* _disasm = nullptr;

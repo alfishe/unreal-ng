@@ -1454,7 +1454,7 @@ OpCode Z80Disassembler::ddcbOpcodes[256]
     { OF_DISP, 23, 0, 0, "rr (ix+:1),e" },                  // 0x1B
     { OF_DISP, 23, 0, 0, "rr (ix+:1),h" },                  // 0x1C
     { OF_DISP, 23, 0, 0, "rr (ix+:1),l" },                  // 0x1D
-    { OF_DISP, 23, 0, 0, "rr (hl+:1)" },                    // 0x1E
+    { OF_DISP, 23, 0, 0, "rr (ix+:1)" },                    // 0x1E
     { OF_DISP, 23, 0, 0, "rr (ix+:1),a" },                  // 0x1F
 
     { OF_DISP, 23, 0, 0, "sla (ix+:1),b" },                 // 0x20
@@ -1733,7 +1733,7 @@ OpCode Z80Disassembler::fdcbOpcodes[256]
     { OF_DISP, 23, 0, 0, "rr (iy+:1),e" },                  // 0x1B
     { OF_DISP, 23, 0, 0, "rr (iy+:1),h" },                  // 0x1C
     { OF_DISP, 23, 0, 0, "rr (iy+:1),l" },                  // 0x1D
-    { OF_DISP, 23, 0, 0, "rr (hl+:1)" },                    // 0x1E
+    { OF_DISP, 23, 0, 0, "rr (iy+:1)" },                    // 0x1E
     { OF_DISP, 23, 0, 0, "rr (iy+:1),a" },                  // 0x1F
 
     { OF_DISP, 23, 0, 0, "sla (iy+:1),b" },                 // 0x20
