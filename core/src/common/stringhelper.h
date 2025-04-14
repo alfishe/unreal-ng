@@ -15,17 +15,17 @@ protected:
 class StringHelper
 {
 public:
-	static uint8_t Hex(uint8_t val);
-	static bool IsHex(uint8_t val);
-	static int Compare(std::wstring& wstr1, std::wstring& wstr2);
+    static uint8_t Hex(uint8_t val);
+    static bool IsHex(uint8_t val);
+    static int Compare(std::wstring& wstr1, std::wstring& wstr2);
     static int Compare(std::string& str1, std::string& wstr2);
-	static int CompareCaseInsensitive(const char* str1, const char* str2, size_t len);
+    static int CompareCaseInsensitive(const char* str1, const char* str2, size_t len);
 
-	static std::wstring StringToWideString(const std::string& str);
-	static std::string WideStringToString(const std::wstring& wideString);
+    static std::wstring StringToWideString(const std::string& str);
+    static std::string WideStringToString(const std::wstring& wideString);
 
-	string ReplaceAll(std::string& str, std::string from, std::string to);
-	static std::wstring ReplaceAll(std::wstring& wstr, std::wstring wfrom, std::wstring wto);
+    static string ReplaceAll(std::string& str, const std::string& from, const std::string& to);
+    static std::wstring ReplaceAll(std::wstring& wstr, std::wstring wfrom, std::wstring wto);
 
     static std::string_view LTrim(std::string_view str);
     static std::string_view RTrim(std::string_view str);

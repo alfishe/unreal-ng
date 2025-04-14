@@ -125,38 +125,72 @@ std::string StringHelper::WideStringToString(const std::wstring& wstr)
 	return result;
 }
 
-std::string StringHelper::ReplaceAll(std::string& str, std::string from, std::string to)
+std::string StringHelper::ReplaceAll(std::string& str, const std::string& from, const std::string& to)
 {
-    std::string result = str;
+    if (!from.empty())
+    {
+        std::string result;
+        size_t pos = 0;
+        size_t fromLen = from.length();
+        size_t len = str.length();
 
-	if (!from.empty())
-	{
-		size_t start_pos = 0;
-		while ((start_pos = str.find(from, start_pos)) != std::string::npos)
-		{
-			str.replace(start_pos, from.length(), to);
-			start_pos += to.length();
-		}
-	}
+        while (pos < len)
+        {
+            size_t matchPos = str.find(from, pos);
+            if (matchPos == std::string::npos)
+            {
+                // No more matches, add the rest of the string
+                result += str.substr(pos);
+                break;
+            }
 
-	return result;
+            // Add the part before the match
+            result += str.substr(pos, matchPos - pos);
+            // Add the replacement
+            result += to;
+            // Move past this match
+            pos = matchPos + fromLen;
+        }
+
+        // Update original string
+        str = result;
+    }
+
+    return str;
 }
 
 std::wstring StringHelper::ReplaceAll(std::wstring& wstr, std::wstring wfrom, std::wstring wto)
 {
-    std::wstring result = wstr;
+    if (!wfrom.empty())
+    {
+        std::wstring result;
+        size_t pos = 0;
+        size_t fromLen = wfrom.length();
+        size_t len = wstr.length();
 
-	if (!wfrom.empty())
-	{
-		size_t start_pos = 0;
-		while ((start_pos = wstr.find(wfrom, start_pos)) != string::npos)
-		{
-			wstr.replace(start_pos, wfrom.length(), wto);
-			start_pos += wto.length();
-		}
-	}
+        while (pos < len)
+        {
+            size_t matchPos = wstr.find(wfrom, pos);
+            if (matchPos == std::wstring::npos)
+            {
+                // No more matches, add the rest of the string
+                result += wstr.substr(pos);
+                break;
+            }
 
-	return result;
+            // Add the part before the match
+            result += wstr.substr(pos, matchPos - pos);
+            // Add the replacement
+            result += wto;
+            // Move past this match
+            pos = matchPos + fromLen;
+        }
+
+        // Update original string
+        wstr = result;
+    }
+
+    return wstr;
 }
 
 std::string_view StringHelper::LTrim(std::string_view str)
