@@ -8,8 +8,6 @@ on:
 
 env:
   BUILD_TYPE: Release
-  CCACHE_DIR: /tmp/ccache
-  LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
 
 jobs:
   build-linux:
@@ -17,47 +15,58 @@ jobs:
     strategy:
       matrix:
         qt-version: [6.5.0]
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
-          submodules: recursive
+          submodules: true
 
-      - name: Install system dependencies
+      - name: Cache ICU build
+        id: cache-icu
+        uses: actions/cache@v3
+        with:
+          path: /usr/local
+          key: icu-56-linux
+
+      - name: Install dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            git \
-            ninja-build \
-            ccache \
-            libtool \
-            autoconf \
-            automake
+            build-essential cmake git wget tar
 
-      - name: Build and install ICU 56 from source
+      - name: Build and Install ICU if not cached
+        if: steps.cache-icu.outputs.cache-hit != 'true'
         run: |
           wget -q https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz
-          tar -xzf icu4c-56_1-src.tgz
+          tar -xzvf icu4c-56_1-src.tgz
           cd icu/source
           ./configure --prefix=/usr/local
           make -j$(nproc)
           sudo make install
           sudo ldconfig
-          # Verify installation
-          ls -l /usr/local/lib/libicui18n.so*
+          cd ../..
+          rm -rf icu4c-56_1-src.tgz icu
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
+          aqtversion: '==3.1.*'
+          py7zrversion: '>=0.20.2'
           version: ${{ matrix.qt-version }}
           host: 'linux'
           target: 'desktop'
-          arch: 'gcc_64'
+          arch: gcc_64
+          install-deps: 'true'
+          tools-only: 'false'
           modules: 'qtmultimedia qt5compat'
+          archives: 'qttools qtbase'
+          cache: true
 
-      - name: Build project
+      - name: Build and Test
         run: |
-          mkdir build && cd build
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ..
-          ninja
+          cd ${{ github.workspace }}/unreal-qt
+          mkdir build
+          cd build
+          cmake ..
+          make -j$(nproc)
