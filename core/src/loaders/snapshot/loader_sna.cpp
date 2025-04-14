@@ -21,8 +21,8 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
 
     _path = path;
 
-    memset(_memoryPages, 0x00, sizeof(_memoryPagesUsed));
-    memset(_memoryPagesUsed, 0x00, sizeof(_memoryPagesUsed));
+    memset(_memoryPages, 0x00, sizeof(_memoryPages) * sizeof(_memoryPages[0]));
+    memset(_memoryPagesUsed, 0x00, sizeof(_memoryPagesUsed) * sizeof(_memoryPagesUsed[0]));
 }
 
 LoaderSNA::~LoaderSNA()

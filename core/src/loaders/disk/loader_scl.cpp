@@ -122,7 +122,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
         if (volumeInfo->freeSectorCount >= fileLengthSectors)
         {
             /// region <Create new file descriptor>
-            uint8_t dirSectorNo = (catalogOffset / SECTORS_SIZE_BYTES) & 0x0F + 1;
+            uint8_t dirSectorNo = ((catalogOffset / SECTORS_SIZE_BYTES) & 0x0F) + 1;
             DiskImage::RawSectorBytes* dirSector = track->getRawSector(dirSectorNo);
 
             TRDOSDirectoryEntry* dstFileDescriptor = (TRDOSDirectoryEntry*)(dirSector->data + (catalogOffset & 0x00FF));

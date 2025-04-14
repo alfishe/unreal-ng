@@ -283,29 +283,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
 
     /// endregion </Debug trace capture>
-
-    /// region <Extra debug validations
-#ifdef _DEBUG
-    // Sanity check for register corruption
-    if (bc > 0xFFFF || de > 0xFFFF || hl > 0xFFFF || ix > 0xFFFF || iy > 0xFFFF || sp > 0xFFFF)
-    {
-        static char buffer[1024];
-        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-        LOGERROR(buffer);
-        LOGERROR("Main register(s) corrupted");
-        exit(1);
-    }
-
-    if (alt.bc > 0xFFFF || alt.de > 0xFFFF || alt.hl > 0xFFFF)
-    {
-        static char buffer[1024];
-        DumpZ80State(buffer, sizeof (buffer) / sizeof (buffer[0]));
-        LOGERROR(buffer);
-        LOGERROR("Alternative register(s) corrupted");
-        exit(1);
-    }
-#endif // _DEBUG
-    /// endregion </Extra debug validations
 }
 
 /// Execute number of cpu cycles equivalent to full frame screen render

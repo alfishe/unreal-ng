@@ -389,7 +389,7 @@ void Emulator::GetSystemInfo()
 	SystemHelper::GetCPUString(cpuString);
 	LOGINFO("CPU ID: %s", cpuString);
 
-	unsigned cpuver = SystemHelper::GetCPUID(1, 0);	    // Read Highest Function Parameter and ManufacturerID
+	[[maybe_unused]] unsigned cpuver = SystemHelper::GetCPUID(1, 0);	// Read Highest Function Parameter and ManufacturerID
 	unsigned features = SystemHelper::GetCPUID(1, 1);	// Read Processor Info and Feature Bits
 	host.mmx = (features >> 23) & 1;
 	host.sse = (features >> 25) & 1;
@@ -532,7 +532,9 @@ void Emulator::Pause()
 void Emulator::Resume()
 {
     if (!_isPaused)
+    {
         return;
+    }
 
 	_stopRequested = false;
 	_isPaused = false;

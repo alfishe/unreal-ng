@@ -208,7 +208,7 @@ uint16_t ScreenZX::CalculateXYColorAttrAddress(uint8_t x, uint8_t y, uint16_t ba
         uint16_t hiByte = 0x18 | (l >> 3);
         uint8_t loByte = (l << 5) | c;
 
-        result = baseAddress + (hiByte << 8) | loByte;
+        result = (baseAddress + (hiByte << 8)) | loByte;
     }
 
     return result;
