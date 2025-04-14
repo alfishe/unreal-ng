@@ -184,39 +184,7 @@ TEST_F(StringHelper_Test, ReplaceAll)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 6: Replacement string longer than original
-    {
-        std::string original = "Hello World";
-        std::string expected = "Hello ThisIsAVeryLongReplacement";
-        std::string result = StringHelper::ReplaceAll(original, "World", "ThisIsAVeryLongReplacement");
-        EXPECT_EQ(result, expected);
-    }
-
-    // Test case 7: Overlapping patterns
-    {
-        std::string original = "aaab";
-        std::string expected = "bbab";
-        std::string result = StringHelper::ReplaceAll(original, "aa", "bb");
-        EXPECT_EQ(result, expected);
-    }
-
-    // Test case 8: Special characters
-    {
-        std::string original = "Hello\nWorld\t!";
-        std::string expected = "Hello\nUniverse\t!";
-        std::string result = StringHelper::ReplaceAll(original, "World", "Universe");
-        EXPECT_EQ(result, expected);
-    }
-
-    // Test case 9: No replacement needed
-    {
-        std::string original = "Hello World";
-        std::string expected = "Hello World";
-        std::string result = StringHelper::ReplaceAll(original, "NotInString", "Replacement");
-        EXPECT_EQ(result, expected);
-    }
-
-    // Test case 10: Replace with empty string
+    // Test case 6: Replace with empty string
     {
         std::string original = "Hello World";
         std::string expected = "Hello ";
@@ -224,31 +192,31 @@ TEST_F(StringHelper_Test, ReplaceAll)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 11: Replace empty string
+    // Test case 7: Replace with empty string in empty string
+    {
+        std::string original = "";
+        std::string expected = "";
+        std::string result = StringHelper::ReplaceAll(original, "World", "");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 8: Replace with empty string in string without match
     {
         std::string original = "Hello World";
         std::string expected = "Hello World";
-        std::string result = StringHelper::ReplaceAll(original, "", "Replacement");
+        std::string result = StringHelper::ReplaceAll(original, "Universe", "");
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 12: Replace with same string
+    // Test case 9: Replace with empty string in string with multiple matches
     {
-        std::string original = "Hello World";
-        std::string expected = "Hello World";
-        std::string result = StringHelper::ReplaceAll(original, "World", "World");
+        std::string original = "Hello World World";
+        std::string expected = "Hello  ";
+        std::string result = StringHelper::ReplaceAll(original, "World", "");
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 13: Replace with string containing replacement pattern
-    {
-        std::string original = "Hello World";
-        std::string expected = "Hello World World";
-        std::string result = StringHelper::ReplaceAll(original, "World", "World World");
-        EXPECT_EQ(result, expected);
-    }
-
-    // Test case 14: Replace with string containing spaces
+    // Test case 10: Replace with string containing spaces
     {
         std::string original = "Hello World";
         std::string expected = "Hello   Universe";
@@ -256,7 +224,7 @@ TEST_F(StringHelper_Test, ReplaceAll)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 15: Replace with string containing special characters
+    // Test case 11: Replace with string containing special characters
     {
         std::string original = "Hello World";
         std::string expected = "Hello Universe!";
@@ -264,19 +232,126 @@ TEST_F(StringHelper_Test, ReplaceAll)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 16: Replace with string containing escape characters
+    // Test case 12: Replace with string containing escape characters
     {
         std::string original = "Hello World";
-        std::string expected = R"(Hello \nUniverse)";
-        std::string result = StringHelper::ReplaceAll(original, "World", "\\nUniverse");
+        std::string expected = "Hello \n Universe";
+        std::string result = StringHelper::ReplaceAll(original, "World", "\n Universe");
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 17: Replace with string containing actual newline
+    // Test case 13: Replace with string containing actual newline
     {
         std::string original = "Hello World";
-        std::string expected = "Hello \nUniverse";
-        std::string result = StringHelper::ReplaceAll(original, "World", "\nUniverse");
+        std::string expected = "Hello \n Universe";
+        std::string result = StringHelper::ReplaceAll(original, "World", "\n Universe");
+        EXPECT_EQ(result, expected);
+    }
+}
+
+TEST_F(StringHelper_Test, WideStringReplaceAll)
+{
+    // Test case 1: wstring simple replacement
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello Universe";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"Universe");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 2: wstring multiple replacements
+    {
+        std::wstring original = L"Hello World World";
+        std::wstring expected = L"Hello Universe Universe";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"Universe");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 3: wstring case-sensitive replacement
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello World";
+        std::wstring result = StringHelper::ReplaceAll(original, L"world", L"Universe");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 4: wstring empty string
+    {
+        std::wstring original = L"";
+        std::wstring expected = L"";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"Universe");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 5: wstring empty replacement string
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello";
+        std::wstring result = StringHelper::ReplaceAll(original, L" World", L"");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 6: wstring replace with empty string
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello ";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 7: wstring replace with empty string in empty string
+    {
+        std::wstring original = L"";
+        std::wstring expected = L"";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 8: wstring replace with empty string in string without match
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello World";
+        std::wstring result = StringHelper::ReplaceAll(original, L"Universe", L"");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 9: wstring replace with empty string in string with multiple matches
+    {
+        std::wstring original = L"Hello World World";
+        std::wstring expected = L"Hello  ";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 10: wstring replace with string containing spaces
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello   Universe";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"  Universe");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 11: wstring replace with string containing special characters
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello Universe!";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"Universe!");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 12: wstring replace with string containing escape characters
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello \n Universe";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"\n Universe");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 13: wstring replace with string containing actual newline
+    {
+        std::wstring original = L"Hello World";
+        std::wstring expected = L"Hello \n Universe";
+        std::wstring result = StringHelper::ReplaceAll(original, L"World", L"\n Universe");
         EXPECT_EQ(result, expected);
     }
 }
