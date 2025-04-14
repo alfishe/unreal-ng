@@ -114,36 +114,40 @@ target_link_libraries(
 )
 
 
-# Copy font file(s) to /fonts subfolder
+# Define data paths
+set(DATA_PATH "${ROOT_DIR}/data")
+set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+
+# Copy resources using modern CMake syntax
 add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/fonts ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMENT "Copying runtime resource files to output directory"
 )
 
-# Copy default config file to binary folder after successful compilation
-SET (CONFIG_FILE ${DATA_PATH}/configs/pentagon512k/unreal.ini)
-message("CONFIG_FILE: ${CONFIG_FILE}")
-message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
-add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+# Install rules for packaging
+install(DIRECTORY ${DATA_PATH}/fonts
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/fonts
 )
 
-# Copy all ROM files to /rom sub-folder
-add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/rom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
+install(FILES ${CONFIG_FILE}
+    DESTINATION ${CMAKE_INSTALL_PREFIX}
 )
 
-# Copy all test ROM files to /rom sub-folder
-add_custom_command(
-        TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E
-        copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
+install(DIRECTORY ${DATA_PATH}/rom
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/rom
 )
+
+# Debug output
+message(STATUS "CONFIG_FILE: ${CONFIG_FILE}")
+message(STATUS "Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")

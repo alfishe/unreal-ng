@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.16.0)
+cmake_minimum_required(VERSION 3.16.0)
 
 message(">> core/tests CMakeLists.txt")
 
@@ -117,4 +117,20 @@ endif (APPLE)
 target_link_libraries(${PROJECT_NAME}
     ${common_libraries}
     core
+)
+
+# Define data paths
+set(DATA_PATH "${ROOT_DIR}/data")
+set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+
+# Copy resources using modern CMake syntax
+add_custom_command(
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMENT "Copying runtime resource files to output directory"
 )
