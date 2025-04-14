@@ -167,7 +167,85 @@ TEST_F(Disassembler_Opcode_Test, TestAllCBOpCodes)
 
 TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
 {
-    FAIL() << "Not implemented";
+    for (int opcode = 0; opcode < 256; ++opcode)
+    {
+        // Exclude opcode prefix from being processed
+        if (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD)
+            continue;
+
+        uint8_t command[4] = {0xDD, (uint8_t)opcode, 0, 0};
+        size_t commandLen = 2;
+        std::string hexCommand;
+
+        // Get the opcode structure using getOpcode with DD prefix
+        const OpCode& op = _disasm->getOpcode(0xDD, opcode);
+        std::string referenceResult = std::string(op.mnem);
+
+        // Determine operand requirements from flags
+        // Note: displacement can be combined with 1 byte argument
+        if ((op.flags & OF_DISP)) // 1-byte displacement
+        {
+            uint8_t val = (uint8_t)(rand() % 256);
+            command[commandLen] = val;
+            commandLen += 1;
+
+            size_t pos;
+            if ((pos = referenceResult.find(":1")) != std::string::npos)
+            {
+                char hexByte[5];
+                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                referenceResult.replace(pos, 2, hexByte);
+            }
+        }
+
+        if (op.flags & OF_MWORD) // 2-byte operand
+        {
+            uint8_t lo = (uint8_t)(rand() % 256);
+            uint8_t hi = (uint8_t)(rand() % 256);
+            command[commandLen] = lo;
+            command[commandLen + 1] = hi;
+            commandLen += 2;
+            size_t pos;
+
+            if ((pos = referenceResult.find(":2")) != std::string::npos)
+            {
+                char hexWord[8];
+                snprintf(hexWord, sizeof(hexWord), "#%02X%02X", hi, lo); // uppercase, little-endian
+                referenceResult.replace(pos, 2, hexWord);
+            }
+        }
+        else if ((op.flags & OF_MBYTE))// 1-byte operand
+        {
+            uint8_t val = (uint8_t)(rand() % 256);
+            command[commandLen] = val;
+            commandLen += 1;
+
+            size_t pos;
+            if ((pos = referenceResult.find(":1")) != std::string::npos)
+            {
+                char hexByte[5];
+                snprintf(hexByte, sizeof(hexByte), "#%02X", val); // uppercase
+                referenceResult.replace(pos, 2, hexByte);
+            }
+        }
+
+        hexCommand = DumpHelper::HexDumpBuffer(command, commandLen);
+        std::string result = _disasm->disassembleSingleCommand(command, commandLen);
+
+        // Compare mnemonic
+        if (result != referenceResult)
+        {
+            std::string message = StringHelper::Format(
+                "Iteration %d. Data 'DD %02X'. Expected '%s', found '%s'",
+                opcode, opcode, referenceResult.c_str(), result.c_str());
+            EXPECT_EQ(referenceResult, result) << message << std::endl;
+            return;
+        }
+        
+#ifdef _DEBUG
+        //std::cout << std::left << std::setw(16) << hexCommand << std::setw(0) << result << std::endl;
+#endif // _DEBUG
+    }
 }
 
 TEST_F(Disassembler_Opcode_Test, TestAllDDCBOpCodes)
@@ -176,23 +254,23 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDCBOpCodes)
 
     // Operations in order
     const std::string operations[32] =
-        {
-            // Rotate/Shift (00xxx000 to 00xxx111)
-            "rlc", "rrc", "rl",  "rr",   // 0x00-0x03
-            "sla", "sra", "sll", "srl",  // 0x04-0x07
+    {
+        // Rotate/Shift (00xxx000 to 00xxx111)
+        "rlc", "rrc", "rl",  "rr",   // 0x00-0x03
+        "sla", "sra", "sll", "srl",  // 0x04-0x07
 
-            // BIT operations (01xxx000 to 01xxx111)
-            "bit", "bit", "bit", "bit",  // 0x08-0x0B
-            "bit", "bit", "bit", "bit",  // 0x0C-0x0F
+        // BIT operations (01xxx000 to 01xxx111)
+        "bit", "bit", "bit", "bit",  // 0x08-0x0B
+        "bit", "bit", "bit", "bit",  // 0x0C-0x0F
 
-            // RES operations (10xxx000 to 10xxx111)
-            "res", "res", "res", "res",  // 0x10-0x13
-            "res", "res", "res", "res",  // 0x14-0x17
+        // RES operations (10xxx000 to 10xxx111)
+        "res", "res", "res", "res",  // 0x10-0x13
+        "res", "res", "res", "res",  // 0x14-0x17
 
-            // SET operations (11xxx000 to 11xxx111)
-            "set", "set", "set", "set",  // 0x18-0x1B
-            "set", "set", "set", "set"   // 0x1C-0x1F
-        };
+        // SET operations (11xxx000 to 11xxx111)
+        "set", "set", "set", "set",  // 0x18-0x1B
+        "set", "set", "set", "set"   // 0x1C-0x1F
+    };
 
     // Register names in order
     const std::string registers[] = {"b", "c", "d", "e", "h", "l", "", "a"};
