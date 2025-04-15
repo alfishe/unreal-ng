@@ -25,8 +25,6 @@ Emulator::Emulator() : Emulator(LoggerLevel::LogTrace)
 
 Emulator::Emulator(LoggerLevel level)
 {
-    LOGDEBUG("Emulator::Emulator(LoggerLevel level)");
-
     _loggerLevel = level;
 
     // Create and initialize emulator context. ModuleLogger will be initialized as well.
@@ -36,6 +34,7 @@ Emulator::Emulator(LoggerLevel level)
         _logger = _context->pModuleLogger;
         _context->pEmulator = this;
 
+        MLOGDEBUG("Emulator::Emulator(LoggerLevel level)");
         MLOGDEBUG("Emulator::Init - context created");
     }
     else
@@ -47,7 +46,7 @@ Emulator::Emulator(LoggerLevel level)
 
 Emulator::~Emulator()
 {
-	LOGDEBUG("Emulator::~Emulator()");
+    MLOGDEBUG("Emulator::~Emulator()");
 }
 
 /// endregion </Constructors / Destructors>
@@ -96,90 +95,90 @@ bool Emulator::Init()
         result = false;
     }
 
-	// Create and initialize CPU system instance (including most peripheral devices)
-	if (result)
-	{
-	    result = false;
+    // Create and initialize CPU system instance (including most peripheral devices)
+    if (result)
+    {
+        result = false;
 
         _core = new Core(_context);
-		if (_core && _core->Init())
-		{
-			LOGDEBUG("Emulator::Init - CPU system core created");
+        if (_core && _core->Init())
+        {
+            MLOGDEBUG("Emulator::Init - CPU system core created");
 
-			_context->pCore = _core;
+            _context->pCore = _core;
 
-			_z80 = _core->GetZ80();
-			_memory = _core->GetMemory();
+            _z80 = _core->GetZ80();
+            _memory = _core->GetMemory();
 
-			result = true;
-		}
-		else
-		{
-			MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed");
-		}
-	}
+            result = true;
+        }
+        else
+        {
+            MLOGERROR("Emulator::Init - CPU system core (or main peripheral devices) creation failed");
+        }
+    }
 
-	// Load ROMs
-	if (result)
-	{
-		ROM& rom = *_core->GetROM();
-
-		//std::string rompath = rom.GetROMFilename();
-		result = rom.LoadROM();
-
-		if (result)
-		{
-			// Calculate ROM segment signatures
-			rom.CalculateSignatures();
-
-			MLOGDEBUG("Emulator::Init - ROM data successfully loaded");
-			result = true;
-		}
-		else
-		{
-			MLOGERROR("Emulator::Init - ROM load failed");
-			result = false;
-		}
-	}
-
-	// Create and initialize additional peripheral devices
-	;	// Tape
-	;	// HDD/CD
-	;	// ZiFi
-	;	// GS / NGS
-
-	// Create and initialize Debugger and related components
-	;	// Debugger
-
-	// Create and initialize Scripting support
-	;	// Scripting host (Python or Lua?)
-
-
-	// Create and initialize main emulator loop
-	if (result)
-	{
-		result = false;
-
-		_mainloop = new MainLoop(_context);
-		if (_mainloop != nullptr)
-		{
-			MLOGDEBUG("Emulator::Init - mainloop created");
-
-			result = true;
-		}
-		else
-		{
-			MLOGERROR("Emulator::Init - mainloop creation failed");
-		}
-	}
-
-	// Create and initialized debug manager (including breakpoint, label managers and disassembler)
-	if (result)
+    // Load ROMs
+    if (result)
     {
-	    result = false;
+        ROM& rom = *_core->GetROM();
 
-	    DebugManager* manager = new DebugManager(_context);
-	    if (manager != nullptr)
+        //std::string rompath = rom.GetROMFilename();
+        result = rom.LoadROM();
+
+        if (result)
+        {
+            // Calculate ROM segment signatures
+            rom.CalculateSignatures();
+
+            MLOGDEBUG("Emulator::Init - ROM data successfully loaded");
+            result = true;
+        }
+        else
+        {
+            MLOGERROR("Emulator::Init - ROM load failed");
+            result = false;
+        }
+    }
+
+    // Create and initialize additional peripheral devices
+    ;	// Tape
+    ;	// HDD/CD
+    ;	// ZiFi
+    ;	// GS / NGS
+
+    // Create and initialize Debugger and related components
+    ;	// Debugger
+
+    // Create and initialize Scripting support
+    ;	// Scripting host (Python or Lua?)
+
+
+    // Create and initialize main emulator loop
+    if (result)
+    {
+        result = false;
+
+        _mainloop = new MainLoop(_context);
+        if (_mainloop != nullptr)
+        {
+                MLOGDEBUG("Emulator::Init - mainloop created");
+
+                result = true;
+        }
+        else
+        {
+                MLOGERROR("Emulator::Init - mainloop creation failed");
+        }
+    }
+
+    // Create and initialized debug manager (including breakpoint, label managers and disassembler)
+    if (result)
+    {
+        result = false;
+
+        DebugManager* manager = new DebugManager(_context);
+        if (manager != nullptr)
         {
             MLOGDEBUG("Emulator::Init - debug manager created");
 
@@ -192,7 +191,7 @@ bool Emulator::Init()
         }
     }
 
-	/// region <Sanity checks>
+    /// region <Sanity checks>
 
     if (!_context)
     {
@@ -206,7 +205,7 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
-	if (!_core)
+    if (!_core)
     {
 	    std::string error = "CPU was not created";
 	    throw std::logic_error(error);
@@ -266,31 +265,31 @@ bool Emulator::Init()
         throw std::logic_error(error);
     }
 
-	/// endregion </Sanity checks>
+    /// endregion </Sanity checks>
 
-	// Reset CPU and set-up all ports / ROM and RAM pages
-	if (result)
-	{
-		_core->Reset();
-
-		// Init default video render
-		_context->pScreen->InitFrame();
-
-		// Ensure all logger messages displayed
-		_context->pModuleLogger->Flush();
-
-		// Mark as initialized at the very last moment
-		_initialized = true;
-	}
-
-	// Release all created resources if any of initialization steps failed
-	if (!result)
+    // Reset CPU and set-up all ports / ROM and RAM pages
+    if (result)
     {
-	    // Important!: use ReleaseNoGuard() only since we're already locked mutex
+            _core->Reset();
+
+            // Init default video render
+            _context->pScreen->InitFrame();
+
+            // Ensure all logger messages displayed
+            _context->pModuleLogger->Flush();
+
+            // Mark as initialized at the very last moment
+            _initialized = true;
+    }
+
+    // Release all created resources if any of initialization steps failed
+    if (!result)
+    {
+        // Important!: use ReleaseNoGuard() only since we're already locked mutex
         ReleaseNoGuard();
     }
 
-	return result;
+    return result;
 }
 
 void Emulator::Release()

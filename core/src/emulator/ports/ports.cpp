@@ -1,20 +1,21 @@
 #include "stdafx.h"
 
-#include "common/logger.h"
-
+#include "common/modulelogger.h"
+#include "emulator/platform.h"
 #include "ports.h"
 #include <algorithm>
 
 Ports::Ports(EmulatorContext* context)
 {
 	_context = context;
+	_logger = _context->pModuleLogger;
 }
 
 Ports::~Ports()
 {
 	_context = nullptr;
 
-	LOGDEBUG("Ports::~Ports()");
+	MLOGDEBUG("Ports::~Ports()");
 }
 
 // Input: ports 7FFD,1FFD,DFFD,FFF7,FF77,EFF7, flags CF_TRDOS,CF_CACHEON
@@ -42,7 +43,7 @@ void Ports::Out(uint16_t port, uint8_t val)
 	_brk_port_out = port;
 	_brk_port_val = val;
 
-
+        MLOGDEBUG_SUBMODULE(PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT, "Port OUT: 0x%04X = 0x%02X", port, val);
 }
 
 uint8_t Ports::In(uint16_t port)
@@ -67,5 +68,7 @@ uint8_t Ports::In(uint16_t port)
 	}
 
 	_brk_port_val = result;
+	const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
+	MLOGDEBUG("Port IN: 0x%04X = 0x%02X", port, result);
 	return result;
 }

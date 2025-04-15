@@ -20,7 +20,7 @@ CPUTables Core::_cpuTables;
 
 Core::Core(EmulatorContext* context)
 {
-	_context = context;
+    _context = context;
     _state = &_context->emulatorState;
     _config = &_context->config;
     _logger = _context->pModuleLogger;

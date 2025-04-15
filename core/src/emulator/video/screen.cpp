@@ -267,9 +267,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
     AllocateFramebuffer(_mode);
 
 #ifdef _DEBUG
-
-    LOGINFO("%s", DumpRasterState().c_str());
-
+    MLOGINFO("%s", DumpRasterState().c_str());
 #endif // _DEBUG
 }
 

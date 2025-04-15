@@ -3,6 +3,7 @@
 
 #include "common/callbackcollection.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/platform.h"
 
 #define FLAG_DOSPORTS     0x01    // TR-DOS ports are accessible
 #define FLAG_TRDOS        0x02    // DOSEN trigger
@@ -25,9 +26,17 @@ enum PortFlagsEnum : uint8_t
 	ProfROM		= 0x80
 };
 
+class ModuleLogger;
 
 class Ports
 {
+    /// region <ModuleLogger definitions for Module/Submodule>
+protected:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_IO;
+    const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_GENERIC;
+    ModuleLogger* _logger = nullptr;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
 protected:
 	EmulatorContext* _context = nullptr;
 	CallbackCollection _resetHandlers;

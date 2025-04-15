@@ -23,7 +23,8 @@ class WD1793;
 class Core
 {
     /// region <ModuleLogger definitions for Module/Submodule>
-public:
+protected:
+    ModuleLogger* _logger = nullptr;
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
     const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
     /// endregion </ModuleLogger definitions for Module/Submodule>
@@ -39,7 +40,6 @@ protected:
     EmulatorContext* _context = nullptr;
     EmulatorState* _state = nullptr;
     const CONFIG* _config = nullptr;
-    ModuleLogger* _logger = nullptr;
 
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
