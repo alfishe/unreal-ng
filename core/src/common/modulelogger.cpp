@@ -257,7 +257,7 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
         return;
 
     // Don't log message if we configured logger not to
-    if (!IsLoggingEnabled(module, submodule))
+    if (!IsLoggingEnabledForLogLevel(module, submodule, level))
         return;
 
     /// region <Sanity checks>
@@ -417,6 +417,17 @@ bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodu
             result = true;
         }
     }
+
+    return result;
+}
+
+bool ModuleLogger::IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level)
+{
+    // Check of logging for the module / submodule allowed at all
+    bool result = IsLoggingEnabled(module, submodule);
+
+    // Check if logger level is appropriate
+    result &= level >= _level;
 
     return result;
 }

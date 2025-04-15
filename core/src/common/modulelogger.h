@@ -307,7 +307,7 @@ public:
     template<typename Fmt, typename... Args>
     void Trace(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
-        if (!IsLoggingEnabled(module, submodule))
+        if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogTrace))
             return;
 
         LogMessage(LoggerLevel::LogTrace, module, submodule, fmt, args...);
@@ -316,7 +316,7 @@ public:
     template<typename Fmt, typename... Args>
     void Debug(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
-        if (!IsLoggingEnabled(module, submodule))
+        if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogDebug))
             return;
 
         LogMessage(LoggerLevel::LogDebug, module, submodule, fmt, args...);
@@ -325,7 +325,7 @@ public:
     template<typename Fmt, typename... Args>
     void Info(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
-        if (!IsLoggingEnabled(module, submodule))
+        if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogInfo))
             return;
 
         LogMessage(LoggerLevel::LogInfo, module, submodule, fmt, args...);
@@ -334,7 +334,7 @@ public:
     template<typename Fmt, typename... Args>
     void Warning(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
-        if (!IsLoggingEnabled(module, submodule))
+        if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogWarning))
             return;
 
         LogMessage(LoggerLevel::LogWarning, module, submodule, fmt, args...);
@@ -343,7 +343,7 @@ public:
     template<typename Fmt, typename... Args>
     void Error(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
-        if (!IsLoggingEnabled(module, submodule))
+        if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogError))
             return;
 
         LogMessage(LoggerLevel::LogError, module, submodule, fmt, args...);
@@ -363,6 +363,7 @@ public:
     /// region <Helper methods>
 protected:
     bool IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule);
+    bool IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level);
 
     const char* GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule);
     std::string GetModuleSubmoduleBriefString(PlatformModulesEnum module, uint16_t submodule);
