@@ -1481,23 +1481,25 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 10; // Time increments during simulation
 
     // Test parameters
+    /// @brief Logical sector 8 (9th physical) holds disc info
+    /// @see https://k1.spdns.de/Vintage/Sinclair/82/Peripherals/Disc%20Interfaces/Beta%20128%20Disc%20Interface%2C%20TRDOS%20(Technology%20Research)/TRDOS/TR-DOS%20Disk%20Spec.txt
     static constexpr const uint8_t TEST_TRACK = 0;
     static constexpr const uint8_t TEST_SECTOR = 9;
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     // Sector read buffer
     uint8_t sectorData[SECTORS_SIZE_BYTES] = {};
     size_t sectorDataIndex = 0;
 
     /// region <Load disk image>
-    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
-    filepath = FileHelper::AbsolutePath(filepath);
+    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
+    filepath = FileHelper::AbsolutePath(filepath, true);
     LoaderTRDCUT trdLoader(_context, filepath);
     bool imageLoaded = trdLoader.loadImage();
 
-    EXPECT_EQ(imageLoaded, true) << "Test TRD image was not loaded";
+    EXPECT_EQ(imageLoaded, true) << "Test TRD image was not loaded: " << filepath;
 
     DiskImage* diskImage = trdLoader.getImage();
 
@@ -1575,7 +1577,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     DiskImage::Track* track00 = diskImage->getTrackForCylinderAndSide(TEST_TRACK, 0);
     uint8_t* referenceSector = track00->getDataForSector(TEST_SECTOR);
 
-    EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector read data is not expected";
+    EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector read data does not match the reference";
 
     std::cout << "Read sector dump:" << std::endl;
     std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
