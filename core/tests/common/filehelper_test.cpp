@@ -17,40 +17,67 @@ void FileHelper_Test::TearDown() {}
 
 TEST_F(FileHelper_Test, NormalizePath)
 {
-	std::string testPaths[4] =
-	{
-		"C:\\Program Files\\Unreal\\unreal.exe",
-		"/opt/local/unreal/unreal",
-		"/Volumes/Disk/Applications/Unreal.app/Contents/MacOS/unreal",
-		"/opt/mixed\\path/folder\\subfolder"
-	};
+    std::string testPaths[4] =
+    {
+        "C:\\Program Files\\Unreal\\unreal.exe",
+        "/opt/local/unreal/unreal",
+        "/Volumes/Disk/Applications/Unreal.app/Contents/MacOS/unreal",
+        "/opt/mixed\\path/folder\\subfolder"
+    };
 
     std::string referenceWindows[4] =
-	{
-		"C:\\Program Files\\Unreal\\unreal.exe",
-		"\\opt\\local\\unreal\\unreal",
-		"\\Volumes\\Disk\\Applications\\Unreal.app\\Contents\\MacOS\\unreal",
-		"\\opt\\mixed\\path\\folder\\subfolder"
-	};
+    {
+        "C:\\Program Files\\Unreal\\unreal.exe",
+        "\\opt\\local\\unreal\\unreal",
+        "\\Volumes\\Disk\\Applications\\Unreal.app\\Contents\\MacOS\\unreal",
+        "\\opt\\mixed\\path\\folder\\subfolder"
+    };
 
     std::string referenceUnix[4] =
-	{
-		"C:/Program Files/Unreal/unreal.exe",
-		"/opt/local/unreal/unreal",
-		"/Volumes/Disk/Applications/Unreal.app/Contents/MacOS/unreal",
-		"/opt/mixed/path/folder/subfolder"
-	};
+    {
+        "C:/Program Files/Unreal/unreal.exe",
+        "/opt/local/unreal/unreal",
+        "/Volumes/Disk/Applications/Unreal.app/Contents/MacOS/unreal",
+        "/opt/mixed/path/folder/subfolder"
+    };
 
-	for (int i = 0; i < sizeof(testPaths) / sizeof(testPaths[i]); i++)
-	{
-		string result = FileHelper::NormalizePath(testPaths[i], '\\');
-		bool isEqual = equal(result.begin(), result.end(), referenceWindows[i].begin(), referenceWindows[i].end());
-		ASSERT_TRUE(isEqual);
+    for (int i = 0; i < sizeof(testPaths) / sizeof(testPaths[i]); i++)
+    {
+        string result = FileHelper::NormalizePath(testPaths[i], '\\');
+        bool isEqual = equal(result.begin(), result.end(), referenceWindows[i].begin(), referenceWindows[i].end());
+        ASSERT_TRUE(isEqual);
 
-		result = FileHelper::NormalizePath(testPaths[i], L'/');
-		isEqual = equal(result.begin(), result.end(), referenceUnix[i].begin(), referenceUnix[i].end());
-		ASSERT_TRUE(isEqual);
-	}
+        result = FileHelper::NormalizePath(testPaths[i], L'/');
+        isEqual = equal(result.begin(), result.end(), referenceUnix[i].begin(), referenceUnix[i].end());
+        ASSERT_TRUE(isEqual);
+    }
+}
+
+TEST_F(FileHelper_Test, AbsolutePath_NonPlatformSpecific)
+{
+    std::string testPaths[4] =
+    {
+        "/Users/dev/Projects/Test/unreal-ng/core/tests/cmake-build-debug/bin/../../../tests/loaders/trd/EyeAche.trd",
+        "/opt/local/unreal/unreal",
+        "/Volumes/Disk/Applications/Unreal.app/Contents/MacOS/unreal",
+        "\\opt\\mixed\\path\\folder\\subfolder"
+    };
+
+    std::string reference[4] =
+    {
+        "/Users/dev/Projects/Test/unreal-ng/core/tests/loaders/trd/EyeAche.trd",
+        "\\opt\\local\\unreal\\unreal",
+        "\\Volumes\\Disk\\Applications\\Unreal.app\\Contents\\MacOS\\unreal",
+        "/opt/local/unreal/unreal"
+    };
+
+    for (int i = 0; i < sizeof(testPaths) / sizeof(testPaths[i]); i++)
+    {
+        string result = FileHelper::AbsolutePath(testPaths[i]);
+        //bool isEqual = equal(result.begin(), result.end(), reference[i].begin(), reference[i].end());
+
+        ASSERT_EQ(result, reference[i]);
+    }
 }
 
 TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)

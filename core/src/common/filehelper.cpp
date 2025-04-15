@@ -1,8 +1,10 @@
 #include "stdafx.h"
 
 #include "filehelper.h"
-#include "common/stringhelper.h"
 #include <algorithm>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 char FileHelper::GetPathSeparator()
 {
@@ -18,23 +20,23 @@ char FileHelper::GetPathSeparator()
 //
 std::string FileHelper::GetExecutablePath()
 {
-	string result;
+    string result;
 
-	#if defined _WIN32
-		char buffer[MAX_PATH] = { '\0' };
-		GetModuleFileNameA(NULL, buffer, MAX_PATH - 1);
-		result = buffer;
+    #if defined _WIN32
+        char buffer[MAX_PATH] = { '\0' };
+        GetModuleFileNameA(NULL, buffer, MAX_PATH - 1);
+        result = buffer;
     #endif
 
     #ifdef __linux__
-		char buffer[PATH_MAX]  = { '\0' };
-		ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX - 1);
-		buffer[count] = '\0';
-		result = buffer;
+        char buffer[PATH_MAX]  = { '\0' };
+        ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX - 1);
+        buffer[count] = '\0';
+        result = buffer;
     #endif
 
     #ifdef __APPLE__
-        char buffer[PATH_MAX] = { '\0' };;
+        char buffer[PATH_MAX] = { '\0' };
         uint32_t size = PATH_MAX - 1;
         if (_NSGetExecutablePath(buffer, &size) == 0)
         {
@@ -57,29 +59,64 @@ std::string FileHelper::GetExecutablePath()
 
 std::string FileHelper::NormalizePath(const std::string& path, char separator)
 {
-	if (separator == L'\0')
-		separator = GetPathSeparator();
+    if (separator == L'\0')
+            separator = GetPathSeparator();
 
-	std::string result = path;
+    std::string result = path;
 
-	replace(result.begin(), result.end(), '/', separator);
-	replace(result.begin(), result.end(), '\\', separator);
+    replace(result.begin(), result.end(), '/', separator);
+    replace(result.begin(), result.end(), '\\', separator);
 
-	return result;
+    return result;
 }
 
 std::string FileHelper::NormalizePath(const std::string& path)
 {
-	const char systemSeparator = GetPathSeparator();
-
+    const char systemSeparator = GetPathSeparator();
     std::string result = NormalizePath(path, systemSeparator);
 
-	return result;
+    return result;
 }
 
-std::string FileHelper::AbsolutePath(const std::string& path)
+std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlinks)
 {
-    std::string result;
+    std::string result = path;
+
+    try
+    {
+        fs::path absolutePath = fs::path(path);
+
+        if (resolveSymlinks)
+        {
+            // If the input isn't already absolute, prepend current path
+            if (!absolutePath.is_absolute())
+            {
+                absolutePath = fs::current_path() / absolutePath;
+            }
+
+            // Convert to absolute path and normalize - checks filesystem
+            absolutePath = fs::absolute(absolutePath);
+        }
+
+        // Normalize the path (remove . and ..)
+        absolutePath = absolutePath.lexically_normal();
+
+        if (resolveSymlinks)
+        {
+            // For consistent comparison, make sure to resolve any remaining symlinks
+            absolutePath = fs::canonical(absolutePath);
+        }
+
+        result = absolutePath.generic_string();
+        result = NormalizePath(result);
+    }
+    catch (const std::exception& e)
+    {
+        // Handle error (e.g., path doesn't exist)
+        //throw std::runtime_error("Failed to get absolute path and resolve symlinks: " + std::string(e.what()));
+    }
+
+    return result;
 
 #if defined _WIN32
     char buffer[MAX_PATH];
