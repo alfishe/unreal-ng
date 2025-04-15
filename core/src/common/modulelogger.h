@@ -17,6 +17,34 @@
 #define MLOGERROR(format, ...) _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
 #define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
 
+// Macros with custom submodule
+#define MLOGDEBUG_SUBMODULE(submodule, format, ...) _logger->Debug(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGINFO_SUBMODULE(submodule, format, ...) _logger->Info(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGWARNING_SUBMODULE(submodule, format, ...) _logger->Warning(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGERROR_SUBMODULE(submodule, format, ...) _logger->Error(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGEMPTY_SUBMODULE(submodule, ...) _logger->EmptyLine(submodule, ##__VA_ARGS__)
+
+// Backwards compatibility macros
+#define MLOGDEBUG_OVERRIDE_(submodule, ...) MLOGDEBUG_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGINFO_OVERRIDE_(submodule, ...) MLOGINFO_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGWARNING_OVERRIDE_(submodule, ...) MLOGWARNING_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGERROR_OVERRIDE_(submodule, ...) MLOGERROR_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGEMPTY_OVERRIDE_(submodule, ...) MLOGEMPTY_SUBMODULE(submodule, __VA_ARGS__)
+
+// Macros with optional submodule override (uses _SUBMODULE if not specified)
+#define MLOGDEBUG_OPT(submodule, format, ...) _logger->Debug(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGINFO_OPT(submodule, format, ...) _logger->Info(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGWARNING_OPT(submodule, format, ...) _logger->Warning(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGERROR_OPT(submodule, format, ...) _logger->Error(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGEMPTY_OPT(submodule, ...) _logger->EmptyLine(submodule ? submodule : _SUBMODULE, ##__VA_ARGS__)
+
+// Helper macro to make submodule optional
+#define MLOGDEBUG_(...) MLOGDEBUG_OPT(nullptr, __VA_ARGS__)
+#define MLOGINFO_(...) MLOGINFO_OPT(nullptr, __VA_ARGS__)
+#define MLOGWARNING_(...) MLOGWARNING_OPT(nullptr, __VA_ARGS__)
+#define MLOGERROR_(...) MLOGERROR_OPT(nullptr, __VA_ARGS__)
+#define MLOGEMPTY_(...) MLOGEMPTY_OPT(nullptr, __VA_ARGS__)
+
 #else
 
 // No Debug / Info for unit tests and benchmarks
@@ -25,6 +53,34 @@
 #define MLOGWARNING(format, ...) _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
 #define MLOGERROR(format, ...) _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
 #define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
+
+// Macros with custom submodule
+#define MLOGDEBUG_SUBMODULE(submodule, format, ...) _logger->Debug(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGINFO_SUBMODULE(submodule, format, ...) _logger->Info(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGWARNING_SUBMODULE(submodule, format, ...) _logger->Warning(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGERROR_SUBMODULE(submodule, format, ...) _logger->Error(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGEMPTY_SUBMODULE(submodule, ...) _logger->EmptyLine(submodule, ##__VA_ARGS__)
+
+// Backwards compatibility macros
+#define MLOGDEBUG_OVERRIDE_(submodule, ...) MLOGDEBUG_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGINFO_OVERRIDE_(submodule, ...) MLOGINFO_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGWARNING_OVERRIDE_(submodule, ...) MLOGWARNING_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGERROR_OVERRIDE_(submodule, ...) MLOGERROR_SUBMODULE(submodule, __VA_ARGS__)
+#define MLOGEMPTY_OVERRIDE_(submodule, ...) MLOGEMPTY_SUBMODULE(submodule, __VA_ARGS__)
+
+// Macros with optional submodule override (uses _SUBMODULE if not specified)
+#define MLOGDEBUG_OPT(submodule, format, ...) _logger->Debug(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGINFO_OPT(submodule, format, ...) _logger->Info(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGWARNING_OPT(submodule, format, ...) _logger->Warning(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGERROR_OPT(submodule, format, ...) _logger->Error(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGEMPTY_OPT(submodule, ...) _logger->EmptyLine(submodule ? submodule : _SUBMODULE, ##__VA_ARGS__)
+
+// Helper macro to make submodule optional
+#define MLOGDEBUG_(...) MLOGDEBUG_OPT(nullptr, __VA_ARGS__)
+#define MLOGINFO_(...) MLOGINFO_OPT(nullptr, __VA_ARGS__)
+#define MLOGWARNING_(...) MLOGWARNING_OPT(nullptr, __VA_ARGS__)
+#define MLOGERROR_(...) MLOGERROR_OPT(nullptr, __VA_ARGS__)
+#define MLOGEMPTY_(...) MLOGEMPTY_OPT(nullptr, __VA_ARGS__)
 
 #endif
 
