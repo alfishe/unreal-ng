@@ -95,11 +95,11 @@ enum LoggerLevel : uint8_t
 {
     LogUnknown = 0,     // Uninitialized state
     LogTrace = 1,
-    LogDebug,
-    LogInfo,
-    LogWarning,
-    LogError,
-    LogNone
+    LogDebug = 2,
+    LogInfo = 3,
+    LogWarning = 4,
+    LogError = 5,
+    LogNone = 6
 };
 
 struct LoggerSettings

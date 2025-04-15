@@ -1545,7 +1545,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
         if (fdc._state == WD1793::S_READ_BYTE && !fdc._dataRegisterAccessed)
         {
             uint8_t readValue = fdc.readDataRegister();
-            std::cout << StringHelper::Format("Byte '%c' %d (0x%02X) read", readValue, readValue, readValue) << std::endl;
+            //std::cout << StringHelper::Format("Byte '%c' %d (0x%02X) read", readValue, readValue, readValue) << std::endl;
 
             sectorData[sectorDataIndex++] = readValue;
         }
@@ -1575,12 +1575,19 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
 
     DiskImage::Track* track00 = diskImage->getTrackForCylinderAndSide(TEST_TRACK, 0);
-    uint8_t* referenceSector = track00->getDataForSector(TEST_SECTOR);
+    uint8_t* referenceSector = track00->getDataForSector(TEST_SECTOR - 1); // Direct access uses logical addressing
 
-    EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector read data does not match the reference";
+    if (!areUint8ArraysEqual(sectorData, referenceSector, SECTORS_SIZE_BYTES))
+    {
+        std::string diff = DumpHelper::DumpBufferDifferences(sectorData, referenceSector, SECTORS_SIZE_BYTES);
 
-    std::cout << "Read sector dump:" << std::endl;
-    std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
+        FAIL() << "Sector read data does not match the reference" << std::endl << diff;
+    }
+
+    //EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector read data does not match the reference";
+
+    //std::cout << "Read sector dump:" << std::endl;
+    //std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
     /// endregion </Check results>
 }
 /// endregion </READ_SECTOR>

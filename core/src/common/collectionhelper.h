@@ -91,5 +91,4 @@ inline void erase_entry_if_empty(T& container, const Key& key)
 	}
 }
 
-
-#endif /* COMMON_HELPERS_COLLECTIONHELPER_H_ */
+#endif // COMMON_HELPERS_COLLECTIONHELPER_H_

@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <sstream>
+#include <iomanip>
+#include <vector>
 #include "common/stringhelper.h"
 
 class DumpHelper
@@ -71,5 +74,73 @@ public:
         bool result = std::all_of(buffer, buffer + size, [value](uint8_t val) { return val == value; });
 
         return result;
+    }
+
+    /// Compares two uint8_t buffers and generates a diff report
+    ///
+    /// Performs byte-by-byte comparison of two memory buffers and generates a
+    /// human-readable report showing offset locations and differing values in hex format.
+    /// Output is limited to first 20 differences to prevent excessive output for large buffers.
+    ///
+    /// @param buffer1     Pointer to first buffer to compare
+    /// @param buffer2     Pointer to second buffer to compare
+    /// @param size     Size of buffers in bytes
+    /// @return         Formatted string containing:
+    ///                 - Header with buffer size
+    ///                 - List of differing bytes (offset + values)
+    ///                 - Summary with total difference count
+    ///                 - Special message if buffers are identical
+    ///
+    /// @note Example output format:
+    ///   Buffer comparison (256 bytes):
+    ///     Offset 0x0010: 0xAB != 0xCD
+    ///     Offset 0x0020: 0x12 != 0x34
+    ///   Found 2 differing bytes
+    ///
+    /// @warning No bounds checking performed - caller must ensure
+    ///          both buffers have at least 'size' bytes allocated
+    ///
+    /// @see For block-based comparison of large buffers
+    /// @see For hex dump output options
+    /// @see For similarity percentage calculations
+    static std::string DumpBufferDifferences(const uint8_t* buffer1, const uint8_t* buffer2, size_t size)
+    {
+        std::stringstream ss;
+        bool has_diff = false;
+        const size_t max_diffs_to_show = 256; // Limit output for large buffers
+
+        ss << "Buffer comparison (" << size << " bytes):\n";
+
+        size_t diff_count = 0;
+        for (size_t i = 0; i < size; ++i)
+        {
+            if (buffer1[i] != buffer2[i])
+            {
+                if (diff_count < max_diffs_to_show)
+                {
+                    ss << "  Offset 0x" << std::hex << std::setw(4) << std::setfill('0') << i << ": 0x" << std::setw(2)
+                       << static_cast<int>(buffer1[i]) << " != 0x" << std::setw(2) << static_cast<int>(buffer2[i]) << std::dec
+                       << "\n";
+                }
+                diff_count++;
+                has_diff = true;
+            }
+        }
+
+        if (!has_diff)
+        {
+            ss << "  Buffers are identical\n";
+        }
+        else
+        {
+            ss << "  Found " << diff_count << " differing bytes";
+            if (diff_count > max_diffs_to_show)
+            {
+                ss << " (showing first " << max_diffs_to_show << ")";
+            }
+            ss << "\n";
+        }
+
+        return ss.str();
     }
 };
