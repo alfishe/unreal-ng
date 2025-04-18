@@ -21,8 +21,12 @@ LoaderSNA::LoaderSNA(EmulatorContext* context, const std::string& path)
 
     _path = path;
 
-    memset(_memoryPages, 0x00, sizeof(_memoryPages) * sizeof(_memoryPages[0]));
-    memset(_memoryPagesUsed, 0x00, sizeof(_memoryPagesUsed) * sizeof(_memoryPagesUsed[0]));
+    // Initialize memory pages with proper size
+    for (int i = 0; i < 8; i++)
+    {
+        memset(_memoryPages[i], 0x00, PAGE_SIZE);
+        _memoryPagesUsed[i] = false;
+    }
 }
 
 LoaderSNA::~LoaderSNA()
@@ -199,7 +203,7 @@ bool LoaderSNA::load48kToStaging()
 
 bool LoaderSNA::load128kToStaging()
 {
-    bool result = false;
+    bool result = true;
 
     if (_snapshotMode == SNA_128 && _file != nullptr)
     {
