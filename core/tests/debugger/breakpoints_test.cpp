@@ -16,7 +16,7 @@
 void BreakpointManager_test::SetUp()
 {
     _context = new EmulatorContext(LoggerLevel::LogError);
-    _brkManager = new BreakpointManager(_context);
+    _brkManager = new BreakpointManagerCUT(_context);
 }
 
 void BreakpointManager_test::TearDown()
@@ -64,7 +64,43 @@ TEST_F(BreakpointManager_test, addMemoryBreakpoint)
 
 TEST_F(BreakpointManager_test, addPortBreakpoint)
 {
-    FAIL() << "Not implemented yet";
+    const size_t initialCount = _brkManager->GetBreakpointsCount();
+    const size_t expectedCount = initialCount + 1;
+
+    // Create port breakpoint descriptor
+    BreakpointDescriptor breakpoint;
+    breakpoint.type = BreakpointTypeEnum::BRK_IO;
+    breakpoint.ioType = BRK_IO_IN; // Test with port input breakpoint
+    breakpoint.z80address = 0xFE; // Test with port 0xFE
+
+    // Add the breakpoint
+    uint16_t brkID = _brkManager->AddBreakpoint(&breakpoint);
+
+    if (brkID == BRK_INVALID)
+    {
+        FAIL() << "BRK_INVALID issued as breakpoint ID";
+    }
+
+    // Verify breakpoint was added
+    const size_t finalCount = _brkManager->GetBreakpointsCount();
+    if (finalCount != expectedCount)
+    {
+        std::string message = StringHelper::Format("Add breakpoint failed. Expected %d breakpoints after add, detected %d", expectedCount, finalCount);
+        FAIL() << message;
+    }
+
+    // Verify breakpoint can be found
+    BreakpointDescriptor* foundBreakpoint = _brkManager->FindPortBreakpoint(0xFE);
+    if (!foundBreakpoint)
+    {
+        FAIL() << "Added breakpoint could not be found";
+    }
+
+    // Verify breakpoint properties
+    EXPECT_EQ(foundBreakpoint->type, BreakpointTypeEnum::BRK_IO);
+    EXPECT_EQ(foundBreakpoint->ioType, BRK_IO_IN);
+    EXPECT_EQ(foundBreakpoint->z80address, 0xFE);
+    EXPECT_EQ(foundBreakpoint->breakpointID, brkID);
 }
 
 TEST_F(BreakpointManager_test, executionBreakpoint)
