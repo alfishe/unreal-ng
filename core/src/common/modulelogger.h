@@ -365,7 +365,9 @@ protected:
     bool IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule);
     bool IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level);
 
+    bool GetSubmoduleNameCollection(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize);
     const char* GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule);
+
     std::string GetModuleSubmoduleBriefString(PlatformModulesEnum module, uint16_t submodule);
     std::string GetModuleSubmoduleHexString(PlatformModulesEnum module, uint16_t submodule);
     /// endregion </Helper methods>
@@ -384,7 +386,6 @@ public:
 protected:
     std::string DumpModules(uint32_t moduleFlags);
     std::string DumpModuleName(uint16_t module);
-    bool GetSubmoduleNameCollection(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize);
     std::string DumpResolveFlags(uint16_t flags, const char* names[], size_t nameSize);
     /// endregion </Debug methods>
 };
@@ -404,10 +405,10 @@ public:
 
     using ModuleLogger::IsLoggingEnabled;
     using ModuleLogger::GetModuleSubmoduleHexString;
+    using ModuleLogger::GetSubmoduleNameCollection;
 
     using ModuleLogger::DumpModules;
     using ModuleLogger::DumpModuleName;
-    using ModuleLogger::DumpResolveSubmodule;
     using ModuleLogger::DumpResolveFlags;
 };
 #endif // _CODE_UNDER_TEST
