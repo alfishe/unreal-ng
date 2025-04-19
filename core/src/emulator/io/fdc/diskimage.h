@@ -2,8 +2,10 @@
 
 #include "stdafx.h"
 
-#include <algorithm>
+#include "common/dumphelper.h"
 #include "emulator/io/fdc/fdc.h"
+#include "trdos.h"
+#include <algorithm>
 
 // @see http://www.bitsavers.org/components/westernDigital/FD179X-01_Data_Sheet_Oct1979.pdf
 // | Data in DR (Hex) | FD179X Interpretation in FM (DDEN = 1) | FD179X Interpretation in MFM (DDEN = 0) | Notes                                  |
@@ -257,9 +259,18 @@ public:
             return result;
         }
 
-        RawSectorBytes* getSector(uint8_t sectorNo)
+    /**
+     * @brief Get a pointer to the specified sector's data.
+     * 
+     * Sector numbers are 0-based and range from 0 to 15.
+     * This method is used to access individual sectors on a track for reading, writing, or inspection purposes.
+     * The returned pointer is valid as long as the track object exists.
+     * 
+     * @param sectorNo The sector number to access (0-15).
+     * @return RawSectorBytes* Pointer to the sector's data and status.
+     */
+    RawSectorBytes* getSector(uint8_t sectorNo)
         {
-            // Ensure sector number is in range [0..15]
             sectorNo &= 0x0F;
 
             RawSectorBytes* result = sectorsOrderedRef[sectorNo];
@@ -440,6 +451,19 @@ protected:
     bool allocateMemory(uint8_t cylinders, uint8_t sides);
     void releaseMemory();
     /// endregion </Helper methods>
+
+    /// region <Debug methods>
+  public:
+    std::string DumpSectorHex(uint8_t trackNo, uint8_t sectorNo)
+    {
+        Track* track = getTrack(trackNo);
+        RawSectorBytes* sector = track->getRawSector(sectorNo);
+
+        std::string result = DumpHelper::HexDumpBuffer(sector->data, SECTORS_SIZE_BYTES);
+
+        return result;
+    }
+    /// endregion </Debug methods>
 };
 
 

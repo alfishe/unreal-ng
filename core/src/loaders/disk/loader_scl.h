@@ -102,7 +102,9 @@ class LoaderSCLCUT : public LoaderSCL
 {
 public:
     LoaderSCLCUT(EmulatorContext* context, const std::string& filepath) : LoaderSCL(context, filepath) {};
-
+    using LoaderSCL::loadSCL;
+    using LoaderSCL::addFile;
+    using LoaderSCL::checkSCLFileCRC;
 public:
     using LoaderSCL::_diskImage;
 };

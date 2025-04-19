@@ -97,7 +97,8 @@ TEST_F(LoaderTRD_Test, DiskImage_getTrackForCylinderAndSide)
 /// Test that image load basically works
 TEST_F(LoaderTRD_Test, Load)
 {
-    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
+    // Loading test image from /bin/testdata folder copied by CMake
+    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
     filepath = FileHelper::AbsolutePath(filepath);
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
@@ -110,7 +111,9 @@ TEST_F(LoaderTRD_Test, Load)
 TEST_F(LoaderTRD_Test, Sector9)
 {
     /// region <Load test image>
-    std::string filepath = "../../../tests/loaders/trd/EyeAche.trd";
+
+    // Loading test image from /bin/testdata folder copied by CMake
+    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
     filepath = FileHelper::AbsolutePath(filepath);
     LoaderTRDCUT loaderTrd(_context, filepath);
     bool result = loaderTrd.loadImage();
