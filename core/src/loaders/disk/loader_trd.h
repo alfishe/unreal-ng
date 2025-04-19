@@ -7,7 +7,7 @@
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/trdos.h"
 
-/// TR-DOS uses 256 Bytes per sector (BPS) and 16 Sectors per track (SPT) for disks
+// TR-DOS uses 256 Bytes per sector (BPS) and 16 Sectors per track (SPT) for disks
 // 40 track 1 sided image length => 163840 bytes (1×40×16×256)
 // 40 track 2 sided image length => 327680 bytes
 // 80 track 1 sided image length => 327680 bytes

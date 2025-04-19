@@ -685,6 +685,29 @@ void WD1793::cmdStepOut(uint8_t value)
     transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
 }
 
+/// Executes the Read Sector command (Type II command)
+///
+/// Initiates a sector read operation on the currently selected drive. This command:
+/// 1. Searches for the ID Address Mark (IDAM) matching the track/sector registers
+/// 2. Reads sector data into the controller's buffer
+/// 3. Generates DRQ for each byte and INTRQ upon completion
+///
+/// @param value Command byte containing control flags:
+///             - Bit 3 (m): Multiple sectors (0=single, 1=multi)
+///             - Bit 2 (S): Side select (0=side 0, 1=side 1)
+///             - Bit 1 (E): 15ms delay (0=no delay, 1=enable)
+///             - Bit 0 (C): Side compare (0=disable, 1=enable)
+///
+/// @throws std::runtime_error If no disk is inserted or sector not found
+///
+/// @note Command format: 1 0 0 m S E C 0 (binary)
+/// @note Actual sector read occurs in the FSM state machine via _operationFIFO
+/// @see WD1793 datasheet section 5.2.2 for timing diagrams
+///
+/// Typical command values:
+///   0x80 (10000000b) - Single sector read, side 0
+///   0x84 (10000100b) - Single sector read with side compare
+///   0xA0 (10100000b) - Multi-sector read, side 1
 void WD1793::cmdReadSector(uint8_t value)
 {
     std::string message = StringHelper::Format("Command Read Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
@@ -700,7 +723,7 @@ void WD1793::cmdReadSector(uint8_t value)
     _operationFIFO.push(searchIDAM);
     */
 
-    // Step 2: start sector reading
+    // Step 2: start sector reading (queue correspondent command to the FIFO)
     FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]()
         {
             // Position to the sector requested
@@ -916,9 +939,9 @@ void WD1793::startType2Command()
     MLOGINFO("==>> Start Type 2 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
 
     _statusRegister |= WDS_BUSY;                                // Set BUSY flag
-    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |              // Reset Type2 error flags
-                WDS_RECORDTYPE | WDS_WRITEPROTECTED);
-    _dataRegisterAccessed = false;                               // Type2 commands have timeout for data availability in Data Register
+    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |          // Reset Type2 error flags
+        WDS_RECORDTYPE | WDS_WRITEPROTECTED);
+    _dataRegisterAccessed = false;                              // Type2 commands have timeout for data availability in Data Register
 
     if (!isReady())
     {
@@ -940,7 +963,6 @@ void WD1793::startType2Command()
         else
         {
             // No delay, so execute Type2 command immediately
-
         }
     }
 }
@@ -950,7 +972,7 @@ void WD1793::startType3Command()
     MLOGINFO("==>> Start Type 3 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
 
     _statusRegister |= WDS_BUSY;                                // Set BUSY flag
-    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |              // Reset Type3 error flags
+    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |          // Reset Type3 error flags
                  WDS_RECORDTYPE);
 
     if (!isReady())
@@ -973,7 +995,6 @@ void WD1793::startType3Command()
         else
         {
             // No delay, so execute Type2 command immediately
-
         }
     }
 }
@@ -1176,7 +1197,7 @@ void WD1793::processSearchID()
         // 01 - 256 bytes
         // 10 - 512 bytes
         // 11 - 1024 bytes
-        _sectorSize = 128 << (idAddressMark->sector_len & 0x03);
+        _sectorSize = 128 << (idAddressMark->sector_size & 0x03);
 
         // Set pointers to Address Mark record and to sector data
         _idamData = (uint8_t*)track->getIDForSector(_sectorRegister);
@@ -1234,6 +1255,7 @@ void WD1793::processReadSector()
                 }
             }
         );
+
         _operationFIFO.push(readSector);
     }
 

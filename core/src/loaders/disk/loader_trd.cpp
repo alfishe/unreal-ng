@@ -127,7 +127,7 @@ bool LoaderTRD::writeImage()
              /// endregion </Step 1: position to the track (cylinder+side) within disk image data>
 
              /// region <Step 2: Fully re-initialize low-level formatting by applying default object state>
-             track = DiskImage::Track();
+             track.reset();
 
              // Apply the interleave sector pattern used during formatting and re-index sector information
              track.applyInterleaveTable(INTERLEAVE_PATTERNS[interleavePatternIndex]);
@@ -144,7 +144,7 @@ bool LoaderTRD::writeImage()
                  markRecord.cylinder = cylinder;
                  markRecord.head = 0;
                  markRecord.sector = sector + 1;
-                 markRecord.sector_len = 0x01;  // Default TR-DOS: 1 - 256 bytes sector
+                 markRecord.sector_size = 0x01;  // Default TR-DOS: 1 - 256 bytes sector
                  markRecord.recalculateCRC();
              }
              /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>

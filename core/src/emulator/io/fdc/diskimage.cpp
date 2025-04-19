@@ -19,10 +19,9 @@ bool DiskImage::allocateMemory(uint8_t cylinders, uint8_t sides)
         _tracks.resize(trackNumber);
         _tracks.reserve(trackNumber);
 
-        for (size_t i = 0; i < trackNumber; i++)
+        for (Track& track : _tracks)
         {
-            Track track;
-            _tracks[i] = track;
+            track.reset();
         }
         /// endregion </Allocate objects for new disk>
 

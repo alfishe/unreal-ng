@@ -138,6 +138,10 @@ public:
 
 /// endregion </Test types>
 
+/// region <Disk image verification tests>
+
+/// endregion </Disk image verification tests>
+
 /// region <WD1793 commands>
 
 /// Basic WD1793 commands decoding test
@@ -1487,7 +1491,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     static constexpr const uint8_t TEST_SECTOR = 9;
 
     // Internal logging messages are done on Info level
-    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+     _context->pModuleLogger->SetLoggingLevel(LogInfo);
 
     // Sector read buffer
     uint8_t sectorData[SECTORS_SIZE_BYTES] = {};
@@ -1509,10 +1513,105 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     WD1793CUT fdc(_context);
     fdc._selectedDrive->insertDisk(diskImage);
 
-    /// region <Create parameters for READ_SECTOR>
-    const uint8_t readSectorCommand = 0b0100'0000;
+    /// region <For all tracks and sectors>
+
+    const uint8_t readSectorCommand = 0b1000'0000;
     WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(readSectorCommand);
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, readSectorCommand);
+    EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_READ_SECTOR);
+
+    for (uint8_t track = 0; track < MAX_CYLINDERS * 2; ++track)
+    {
+        for (uint8_t sector = 0; sector < MAX_SECTOR; ++sector)
+        {
+            fdc.reset();
+            /// region <Create parameters for READ_SECTOR>
+            fdc._commandRegister = readSectorCommand;
+            fdc._lastDecodedCmd = decodedCommand;
+
+            fdc._trackRegister = TEST_TRACK;
+            fdc._selectedDrive->setTrack(track);
+            fdc._sectorRegister = sector;
+            /// endregion </Create parameters for READ_SECTOR>
+
+            // Trigger FDC command
+            fdc.cmdReadSector(commandValue);
+
+            /// region <Perform simulation loop>
+            size_t clk;
+            for (clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+            {
+                // Update time for FDC
+                fdc._time = clk;
+
+                // Process FSM state updates
+                fdc.process();
+
+                // Check that BUSY flag is set for the whole duration of head positioning
+                if (fdc._state != WD1793::S_IDLE)
+                {
+                    bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                    EXPECT_EQ(busyFlag, true);
+                }
+
+                // Fetch data bytes with marking Data Register accessed so no DATA LOSS error occurs
+                if (fdc._state == WD1793::S_READ_BYTE && !fdc._dataRegisterAccessed)
+                {
+                    uint8_t readValue = fdc.readDataRegister();
+                    //std::cout << StringHelper::Format("Byte '%c' %d (0x%02X) read", readValue, readValue, readValue) << std::endl;
+
+                    sectorData[sectorDataIndex++] = readValue;
+                }
+
+                // Check if test sequence already finished
+                if (fdc._state == WD1793::S_IDLE)
+                {
+                    break;
+                }
+            }
+            /// endregion </Perform simulation loop>
+
+            /// region <Check results>
+            size_t elapsedTimeTStates = clk;
+            size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
+
+            bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&     // Controller is not BUSY anymore
+                                           fdc._trackRegister == 0 &&                       // FDC track set to <next track>
+                                           fdc._selectedDrive->getTrack() == 0 &&           // FDD has the same track
+                                           fdc._state == WD1793::S_IDLE;                    // FSM is in idle state
+
+            EXPECT_EQ(isAccomplishedCorrectly, true) << "READ_SECTOR didn't end up correctly";
+
+            size_t estimatedExecutionTime = 256 * WD1793::TSTATES_PER_FDC_BYTE / TSTATES_IN_MS; // We're performing single positioning step 6ms long
+            EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
+
+            EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
+
+            DiskImage::Track* track00 = diskImage->getTrackForCylinderAndSide(TEST_TRACK, 0);
+            uint8_t* referenceSector = track00->getDataForSector(TEST_SECTOR - 1); // Direct access uses logical addressing
+
+            if (!areUint8ArraysEqual(sectorData, referenceSector, SECTORS_SIZE_BYTES))
+            {
+                std::string diff = DumpHelper::DumpBufferDifferences(sectorData, referenceSector, SECTORS_SIZE_BYTES);
+
+                //FAIL() << "Track: " << (int)track << " Sector: " << (int)sector << " Sector read data does not match the reference" << std::endl << diff;
+                std::cout << "Track: " << (int)track << " Sector: " << (int)sector << " Sector read data does not match the reference" << std::endl << diff << std::endl;
+            }
+
+            //EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector read data does not match the reference";
+
+            std::cout << "Read sector dump (T: " << (int)track << " S: " << (int)sector << ")" << std::endl;
+            std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
+
+            /// endregion </Check results>
+        }
+    }
+
+    /// endregion </For all tracks and sectors>
+
+    return;
+
+    /// region <Create parameters for READ_SECTOR>
     fdc._commandRegister = readSectorCommand;
     fdc._lastDecodedCmd = decodedCommand;
 
