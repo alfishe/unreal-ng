@@ -1,15 +1,15 @@
 #pragma once
 #include "pch.h"
 
-class BreakpointManager;
+#include "debugger/breakpoints/breakpointmanager.h"
+
 class EmulatorContext;
 
 class BreakpointManager_test : public ::testing::Test
 {
 protected:
     EmulatorContext* _context;
-    BreakpointManager* _brkManager;
-
+    BreakpointManagerCUT* _brkManager;
 protected:
     void SetUp() override;
     void TearDown() override;

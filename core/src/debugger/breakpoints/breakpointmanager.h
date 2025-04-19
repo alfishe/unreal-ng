@@ -173,3 +173,31 @@ protected:
 
     /// endregion </Helper methods>
 };
+
+
+#ifdef _CODE_UNDER_TEST
+
+//
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+//
+class BreakpointManagerCUT : public BreakpointManager
+{
+public:
+    BreakpointManagerCUT(EmulatorContext* context) : BreakpointManager(context) {}
+
+    using BreakpointManager::_context;
+    using BreakpointManager::_logger;
+    using BreakpointManager::_breakpointMapByAddress;
+    using BreakpointManager::_breakpointMapByPort;
+    using BreakpointManager::_breakpointMapByID;
+    using BreakpointManager::_breakpointIDSeq;
+
+    using BreakpointManager::GenerateNewBreakpointID;
+    using BreakpointManager::AddMemoryBreakpoint;
+    using BreakpointManager::AddPortBreakpoint;
+    using BreakpointManager::FindAddressBreakpoint;
+    using BreakpointManager::FindPortBreakpoint;
+};
+
+#endif // _CODE_UNDER_TEST
+
