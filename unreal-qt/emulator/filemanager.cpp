@@ -28,7 +28,7 @@ PatternCategoryMap FileManager::_extensions =
 
 /// Detect file type/category based on its extension
 /// List of supported types is in FileManager::_extensions map
-SupportedFileCategoriesEnum FileManager::determineFileCategoryByExtension(QString filepath)
+SupportedFileCategoriesEnum FileManager::determineFileCategoryByExtension(QString& filepath)
 {
     SupportedFileCategoriesEnum result = SupportedFileCategoriesEnum::FileUnknown;
 

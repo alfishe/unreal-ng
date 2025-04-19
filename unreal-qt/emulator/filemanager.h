@@ -36,16 +36,14 @@ enum SupportedPlatformEnum
     P_MoonSound
 };
 
-typedef std::map<std::string,  SupportedFileCategoriesEnum> PatternCategoryMap;
+typedef std::map<std::string, SupportedFileCategoriesEnum> PatternCategoryMap;
 
 class FileManager
 {
 public:
     static PatternCategoryMap _extensions;
 
-    static SupportedFileCategoriesEnum determineFileCategoryByExtension(QString filepath);
-
-    static void analyzeROM(QString filepath);
+    static SupportedFileCategoriesEnum determineFileCategoryByExtension(QString& filepath);
 };
 
 

@@ -60,8 +60,10 @@ protected:
 
 TEST_F(LoaderSCL_Test, load)
 {
-    std::string filepath = "../../../tests/loaders/scl/eyeache2.scl";
-    filepath = FileHelper::AbsolutePath(filepath);
+    std::string filepath = "../../testdata/loaders/scl/eyeache2.scl";
+    filepath = FileHelper::AbsolutePath(filepath, true);
+    EXPECT_EQ(FileHelper::FileExists(filepath), true) << "File " << filepath << " does not exist";
+
     LoaderSCLCUT loaderSCL(_context, filepath);
     bool result = loaderSCL.loadImage();
 

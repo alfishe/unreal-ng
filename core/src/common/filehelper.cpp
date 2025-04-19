@@ -101,7 +101,7 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
         // Normalize the path (remove . and ..)
         absolutePath = absolutePath.lexically_normal();
 
-        if (resolveSymlinks)
+        if (resolveSymlinks && fs::exists(absolutePath))
         {
             // For consistent comparison, make sure to resolve any remaining symlinks
             absolutePath = fs::canonical(absolutePath);

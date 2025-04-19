@@ -384,7 +384,7 @@ public:
 protected:
     std::string DumpModules(uint32_t moduleFlags);
     std::string DumpModuleName(uint16_t module);
-    bool DumpResolveSubmodule(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize);
+    bool GetSubmoduleNameCollection(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize);
     std::string DumpResolveFlags(uint16_t flags, const char* names[], size_t nameSize);
     /// endregion </Debug methods>
 };

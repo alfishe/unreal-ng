@@ -436,11 +436,21 @@ const char* ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t 
 {
     const char* result = "<UNRESOLVED>";
 
+    // Convert bitmask to index if needed
+    uint16_t submoduleIndex = submodule;
+    if (submodule > 0 && submodule < 0xFFFF)
+    {
+        submoduleIndex = BitHelper::GetFirstSetBitPosition(submodule);
+    }
+
     const char** submoduleNames;
     size_t len;
-    if (DumpResolveSubmodule(module,  &submoduleNames, &len))
+    if (GetSubmoduleNameCollection(module, &submoduleNames, &len))
     {
-        result = submoduleNames[submodule];
+        if (submoduleIndex < len)
+        {
+            result = submoduleNames[submoduleIndex];
+        }
     }
 
     return result;
@@ -448,11 +458,8 @@ const char* ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t 
 
 std::string ModuleLogger::GetModuleSubmoduleBriefString(PlatformModulesEnum module, uint16_t submodule)
 {
-    // Resolve submodule bitmask representation to index
-    uint16_t submoduleNum = BitHelper::GetFirstSetBitPosition(submodule);
-
     const char* moduleName = moduleNames[module];
-    const char* submoduleName = GetSubmoduleName(module, submoduleNum);
+    const char* submoduleName = GetSubmoduleName(module, submodule);
 
     std::string result = StringHelper::Format("%s_%s", moduleName, submoduleName);
 
@@ -556,7 +563,7 @@ std::string ModuleLogger::DumpRequestedSettingsChange(uint32_t change)
 
      const char** submoduleNames;
      size_t submoduleNamesSize = 0;
-     if (DumpResolveSubmodule(module, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
+     if (GetSubmoduleNameCollection(module, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
      {
          ss << StringHelper::Format("Submodules: %s", DumpResolveFlags(moduleSettings, submoduleNames, submoduleNamesSize).c_str());
      }
@@ -566,7 +573,7 @@ std::string ModuleLogger::DumpRequestedSettingsChange(uint32_t change)
     return result;
 }
 
-bool ModuleLogger::DumpResolveSubmodule(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize)
+bool ModuleLogger::GetSubmoduleNameCollection(uint16_t module, const char*** submoduleNames, size_t* submoduleNamesSize)
 {
     bool result = true;
 
@@ -652,7 +659,7 @@ std::string ModuleLogger::DumpSettings()
 
             const char** submoduleNames;
             size_t submoduleNamesSize = 0;
-            if (DumpResolveSubmodule(i, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
+            if (GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
             {
                 ss << DumpResolveFlags(_settings.submodules[i], submoduleNames, submoduleNamesSize) << std::endl;
             }

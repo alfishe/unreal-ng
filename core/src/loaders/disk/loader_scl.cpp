@@ -162,7 +162,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
                 uint8_t* dstSectorData = fileSector->data;
 
                 // Transfer sector content
-                memcpy(dstSectorData, srcSectorData,SECTORS_SIZE_BYTES);
+                memcpy(dstSectorData, srcSectorData, SECTORS_SIZE_BYTES);
 
                 // Update sector CRC
                 fileSector->recalculateDataCRC();
