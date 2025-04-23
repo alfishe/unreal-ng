@@ -48,23 +48,51 @@ struct TRDVolumeInfo
     uint8_t firstFreeTrack = 1;
     uint8_t diskType = DS_80;           // Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19).
     uint8_t fileCount = 0;
-    uint16_t freeSectorCount = 79 * SECTORS_PER_TRACK;
+    uint16_t freeSectorCount = FREE_SECTORS_ON_EMPTY_DISK ;
     uint8_t trDOSSignature = TRD_SIGNATURE;   // TR-DOS system signature
-    uint8_t reserved1[2] = { 0x00 };
-    uint8_t reserved2[9] = { 0x20 };    // Password?
+    uint8_t reserved1[2] = { 0x00, 0x00 };
+    uint8_t reserved2[9] = { 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20 };    // Password?
     uint8_t reserved3;
     uint8_t deletedFileCount = 0;       // Number of deleted files
     uint8_t label[8];                   // Disk label
     uint8_t reserved4[3] = { 0, 0, 0 }; // Must always be filled with zeroes
 };
 
+/// Each catalog entry contains:
+/// - 8 bytes: File name (ASCII)
+/// - 1 byte:  File type
+/// - 2 bytes: Start address (track and sector)
+/// - 2 bytes: File length in bytes
+/// - 1 byte:  Size in sectors
+/// @see: https://sinclair.wiki.zxnet.co.uk/wiki/TR-DOS_filesystem
 struct TRDFile
 {
-    uint8_t name;
-    uint8_t type;
-    uint16_t start;
-    uint16_t lengthInBytes;
-    uint8_t sizeInSectors;
+    uint8_t name[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+    uint8_t type = 0x00;
+    uint16_t start = 0;
+    uint16_t lengthInBytes = 0;
+    uint8_t sizeInSectors = 0;
+    uint8_t startSector = 0;
+
+    /// Logical track numbering starting from 0 is used. [0..159] for 80 tracks, double-sided, [0..79] for 40 tracks, double-sided
+    /// 0 - h0t0, 1 - h1t0, 2 - h0t1 ... 79 - h1t39, 80 - h0t40 ... 159 - h1t79
+    uint8_t startTrack = 0;
+};
+
+/// TR-DOS catalog structure
+/// The catalog occupies the first 8 sectors of track 0 (sectors 0-7).
+/// Each catalog entry is 16 bytes in size, allowing for up to 128 entries (2048 bytes total).
+/// 
+/// The catalog layout is as follows:
+/// - Sectors 0-7: Catalog entries (128 entries × 16 bytes = 2048 bytes)
+/// - Sector 8: Volume information (TRDVolumeInfo structure)
+/// - Sector 9: Reserved (usually empty)
+/// Note: The catalog is stored in track 0, sectors 0-7, with each sector containing 16 entries.
+/// The catalog is always stored in sequential sectors, even if files are fragmented on the disk.
+/// @see: https://sinclair.wiki.zxnet.co.uk/wiki/TR-DOS_filesystem
+struct TRDCatalog
+{
+    TRDFile files[TRDOS_MAX_FILES];
 };
 
 #pragma pack(pop)
