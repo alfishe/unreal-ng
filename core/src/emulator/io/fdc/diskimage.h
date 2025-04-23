@@ -224,7 +224,7 @@ public:
         /// endregion </Methods>
     };
 
-    // Holds RawTrack data + meta information about disk imperfections
+    /// Holds RawTrack data + meta information about disk imperfections
     struct FullTrack : public RawTrack
     {
         uint8_t clockMarksBitmap[TRACK_BITMAP_SIZE_BYTES] = {};
@@ -249,6 +249,17 @@ public:
 
         /// region <Properties>
     public:
+        /// Gets a reference to the raw sector data
+        /// 
+        /// @param sector The sector number (0-15) to retrieve
+        /// @return Pointer to RawSectorBytes structure containing the sector data
+        /// 
+        /// @note The sector number is masked with 0x0F to ensure it's in the range [0..15]
+        /// @note The returned pointer points directly to the internal sector data array
+        /// @warning The returned pointer should not be used to modify the sector structure directly
+        /// 
+        /// @see RawSectorBytes
+        /// @see SECTORS_PER_TRACK
         RawSectorBytes* getRawSector(uint8_t sector)
         {
             // Ensure sector number is in range [0..15]
@@ -259,17 +270,18 @@ public:
             return result;
         }
 
-    /**
-     * @brief Get a pointer to the specified sector's data.
-     * 
-     * Sector numbers are 0-based and range from 0 to 15.
-     * This method is used to access individual sectors on a track for reading, writing, or inspection purposes.
-     * The returned pointer is valid as long as the track object exists.
-     * 
-     * @param sectorNo The sector number to access (0-15).
-     * @return RawSectorBytes* Pointer to the sector's data and status.
-     */
-    RawSectorBytes* getSector(uint8_t sectorNo)
+        /// Gets a reference to the sector data
+        /// 
+        /// @param sectorNo The sector number (0-15) to retrieve
+        /// @return Pointer to RawSectorBytes structure containing the sector data
+        /// 
+        /// @note The sector number is masked with 0x0F to ensure it's in the range [0..15]
+        /// @note The returned pointer points directly to the internal sector data array
+        /// @warning The returned pointer should not be used to modify the sector structure directly
+        /// 
+        /// @see RawSectorBytes
+        /// @see SECTORS_PER_TRACK
+        RawSectorBytes* getSector(uint8_t sectorNo)
         {
             sectorNo &= 0x0F;
 
@@ -393,6 +405,26 @@ public:
     bool getLoaded() { return _loaded; }
     void setLoaded(bool loaded) { _loaded = loaded; }
 
+    /// Gets a reference to a specific track using physical cylinder and side coordinates
+    /// 
+    /// @param cylinder The physical cylinder number (0-79 for 80-track disks)
+    /// @param side     The physical side number (0 or 1)
+    /// @return Pointer to the Track object if it exists, nullptr otherwise
+    /// 
+    /// @note This method converts physical cylinder/side coordinates to a logical track number:
+    ///       - Track number = (cylinder * sides) + side
+    /// @note For example, on a double-sided disk:
+    ///       - Cylinder 0, Side 0 = Track 0
+    ///       - Cylinder 0, Side 1 = Track 1
+    ///       - Cylinder 1, Side 0 = Track 2
+    /// @note Maximum cylinder number is MAX_CYLINDERS - 1 (usually 79)
+    /// @warning Returns nullptr if:
+    ///         - Cylinder number is out of bounds (≥ MAX_CYLINDERS)
+    ///         - Side number is invalid (≠ 0 or 1)
+    ///         - Logical track number is out of bounds
+    /// 
+    /// @see getTrack
+    /// @see Track
     Track* getTrackForCylinderAndSide(uint8_t cylinder, uint8_t side)
     {
         Track* result = nullptr;
@@ -406,6 +438,21 @@ public:
         return result;
     }
 
+    /// Gets a reference to a specific track on the disk
+    /// 
+    /// @param track The track number to retrieve (logical track number)
+    /// @return Pointer to the Track object if it exists, nullptr otherwise
+    /// 
+    /// @note Track numbers are logical and range from 0 to (cylinders * sides - 1)
+    /// @note For example, on a double-sided disk with 80 cylinders:
+    ///       - Track 0 = Head 0, Cylinder 0
+    ///       - Track 1 = Head 1, Cylinder 0
+    ///       - Track 2 = Head 0, Cylinder 1
+    ///       - Track 159 = Head 1, Cylinder 79
+    /// @warning Returns nullptr if the track number is out of bounds
+    /// 
+    /// @see getTrackForCylinderAndSide
+    /// @see Track
     Track* getTrack(uint8_t track)
     {
         Track* result = nullptr;
@@ -465,5 +512,3 @@ protected:
     }
     /// endregion </Debug methods>
 };
-
-
