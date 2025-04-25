@@ -64,7 +64,7 @@ bool LoaderTRD::writeImage()
 
     if (_diskImage)
     {
-        FILE* file = FileHelper::OpenFile("test.trd", "wb");
+        FILE* file = FileHelper::OpenFile(_filepath, "wb");
 
         if (file)
         {
@@ -77,11 +77,11 @@ bool LoaderTRD::writeImage()
                 {
                     uint8_t *sectorData = track->getDataForSector(sectors);
                     [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
-                }
-
-                result = true;
             }
 
+            result = true;
+            }
+            
             FileHelper::CloseFile(file);
         }
     }
