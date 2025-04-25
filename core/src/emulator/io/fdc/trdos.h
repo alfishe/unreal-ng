@@ -69,7 +69,7 @@ struct TRDFile
 {
     uint8_t name[8] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
     uint8_t type = 0x00;
-    uint16_t start = 0;
+    uint16_t params = 0;
     uint16_t lengthInBytes = 0;
     uint8_t sizeInSectors = 0;
     uint8_t startSector = 0;
@@ -77,6 +77,55 @@ struct TRDFile
     /// Logical track numbering starting from 0 is used. [0..159] for 80 tracks, double-sided, [0..79] for 40 tracks, double-sided
     /// 0 - h0t0, 1 - h1t0, 2 - h0t1 ... 79 - h1t39, 80 - h0t40 ... 159 - h1t79
     uint8_t startTrack = 0;
+
+    /// region <Methods>
+  public:
+    std::string Dump() const
+    {
+        std::stringstream ss;
+        
+        // Convert name to string
+        std::string nameStr;
+        for (int i = 0; i < 8; i++)
+        {
+            if (name[i] == 0)
+                break;
+            nameStr += name[i];
+        }
+
+        // Convert type to string
+        std::string typeStr;
+        switch (type)
+        {
+            case 0x42: typeStr = "BASIC"; break;
+            case 0x43: typeStr = "CODE"; break;
+            case 0x44: typeStr = "DATA"; break;
+            default: typeStr = "UNKNOWN"; break;
+        }
+
+        // Get bytes from params
+        uint8_t highByte = (params >> 8) & 0xFF;
+        uint8_t lowByte = params & 0xFF;
+
+        // Format the output
+        ss << "TRDFile:\n{\n";
+        ss << "    Name: '" << nameStr << "'\n";
+        ss << "    Type: " << type << " (" << typeStr << " (0x" << std::hex << std::setw(2) << std::setfill('0') << (int)type << std::dec << ")\n";
+        
+        // Format params in multiple ways
+        ss << "    Params: " << std::dec << params << " (0x" << std::hex << std::setw(4) << std::setfill('0') << params << std::dec << ")\n";
+        ss << "           High: " << (int)highByte << " (0x" << std::hex << std::setw(2) << std::setfill('0') << (int)highByte << std::dec << ")\n";
+        ss << "           Low:  " << (int)lowByte << " (0x" << std::hex << std::setw(2) << std::setfill('0') << (int)lowByte << std::dec << ")\n";
+        
+        ss << "    Length: " << lengthInBytes << " bytes\n";
+        ss << "    Sectors: " << (int)sizeInSectors << "\n";
+        ss << "    Start Track: " << (int)startTrack << "\n";
+        ss << "    Start Sector: " << (int)startSector << "\n";
+        ss << "}";
+
+        return ss.str();
+    }
+    /// endregion </Methods>
 };
 
 /// TR-DOS catalog structure

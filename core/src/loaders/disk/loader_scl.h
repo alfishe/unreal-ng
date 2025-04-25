@@ -5,13 +5,13 @@
 #include "loaders/disk/loader_trd.h"
 
 #if defined(_MSC_VER)
-#pragma pack(push, 1)
+    #pragma pack(push, 1)
 #else
-#define PACKED __attribute__((packed))
+    #define PACKED __attribute__((packed))
 #endif
 
 /// SCL files use minimal 14-bytes catalog records (without start sector and track)
-struct TRDOSDirectoryEntryBase
+struct PACKED TRDOSDirectoryEntryBase
 {
     char Name[8];
     uint8_t Type;
@@ -21,7 +21,7 @@ struct TRDOSDirectoryEntryBase
 };
 
 /// Full 16 bytes TR-DOS catalog record with sector/track positioning on disk
-struct TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase
+struct PACKED TRDOSDirectoryEntry : public TRDOSDirectoryEntryBase
 {
     uint8_t StartSector;
     uint8_t StartTrack;
@@ -35,9 +35,9 @@ struct PACKED SCLHeader
 };
 
 #if defined(_MSC_VER)
-#pragma pack(pop)
+    #pragma pack(pop)
 #else
-#undef PACKED
+    #undef PACKED
 #endif
 
 

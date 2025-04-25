@@ -49,6 +49,11 @@ bool LoaderSCL::loadSCL()
 {
     bool result = false;
 
+#ifdef _DEBUG
+    //std::string message = _diskImage->DumpSectorHex(0, 1);
+    //std::cout << "BEFORE - Track: 0 Sector: 1 " << std::endl << message << std::endl;
+#endif
+
     if (FileHelper::FileExists(_filepath))
     {
         size_t fileSize = FileHelper::GetFileSize(_filepath);
@@ -93,6 +98,11 @@ bool LoaderSCL::loadSCL()
 
                         _diskImage->setLoaded(true);
                         result = true;
+
+#ifdef _DEBUG
+                        //std::string messageAfter = _diskImage->DumpSectorHex(0, 1);
+                        //std::cout << "AFTER - Track: 0 Sector: 1 " << std::endl << messageAfter << std::endl;
+#endif
                     }
                 }
             }
@@ -122,7 +132,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
         if (volumeInfo->freeSectorCount >= fileLengthSectors)
         {
             /// region <Create new file descriptor>
-            uint8_t dirSectorNo = ((catalogOffset / SECTORS_SIZE_BYTES) & 0x0F) + 1;
+            uint8_t dirSectorNo = ((catalogOffset / SECTORS_SIZE_BYTES) & 0x0F);
             DiskImage::RawSectorBytes* dirSector = track->getRawSector(dirSectorNo);
 
             TRDOSDirectoryEntry* dstFileDescriptor = (TRDOSDirectoryEntry*)(dirSector->data + (catalogOffset & 0x00FF));

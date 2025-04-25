@@ -1,11 +1,15 @@
-#include <gtest/gtest.h>
+#include "stdafx.h"
 
+#include "gtest/gtest.h"
+
+#include "common/dumphelper.h"
+#include "common/filehelper.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
-#include "loaders/disk/loader_trd.h"
-#include <common/dumphelper.h>
-#include <common/filehelper.h>
-#include <common/stringhelper.h>
-#include <loaders/disk/loader_scl.h>
+#include "emulator/io/fdc/diskimage.h"
+#include "emulator/io/fdc/trdos.h"
+#include "loaders/disk/loader_scl.h"
+#include "3rdparty/digestpp/digestpp.hpp"
 
 /// region <Types>
 
@@ -61,6 +65,29 @@ protected:
 
 TEST_F(LoaderSCL_Test, load)
 {
+    /// region <Reference data>
+    const TRDFile referenceFiles[] =
+    {
+        { { 'E', 'Y', 'E', 'A', 'C', 'H', 'E', '2' }, 0x42, 0x0045,   69, 255,  0,  1 },
+        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x31, 0x0000,    0, 255, 15, 16 },
+        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x32, 0x0000,    0, 255, 14, 32 },
+        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x33, 0x0000,    0, 255, 13, 48 },
+        { { 'e', 'y', 'e', 'a', 'c', 'h', 'e', '2' }, 0x34, 0x0000,    0, 138, 12, 64 },
+        { { 'b', 'o', 'o', 't', ' ', ' ', ' ', ' ' }, 0x42, 0x0a08, 2568,  11,  6, 73 }
+    };
+
+    const std::vector<string> referenceFileChecksums =
+    {
+        "bf0df0228d47e0713a3d30b3b1b6202ef42bfd8d2818d0fe4693cfd5926b17c6",
+        "81da3d3e3387944cde415eb88fc25c6d2aaced39963bae2a0df77e756e983612",
+        "abbc74a320f6a9a9d394e960acbc6a603abc06bfc95d6978f4a0022976121d74",
+        "d0a16eb507c14876725a12e8134136a0bd0b1d06c9c01084b0a3cd6cd4f45e38",
+        "f32f7b2c3e6cab2e4f3bc37fa3610646834d7e2f3964a75c0030986d199a866a",
+        "738a4f7811553a23fd28f012750816280ec36c3f7e92b2d415f92732d4ed5aae"
+    };
+
+    /// endregion </Reference data>
+
     // Loading test image from /bin/testdata folder copied by CMake
     std::string filepath = "testdata/loaders/scl/eyeache2.scl";
     filepath = FileHelper::AbsolutePath(filepath, true);
@@ -70,6 +97,89 @@ TEST_F(LoaderSCL_Test, load)
     bool result = loaderSCL.loadImage();
 
     EXPECT_EQ(result, true) << "Unable to load SCL file";
+
+    // Get the loaded disk image
+    DiskImage* diskImage = loaderSCL.getImage();
+    ASSERT_NE(diskImage, nullptr) << "No disk image loaded";
+
+    // Check disk geometry
+    EXPECT_EQ(diskImage->getCylinders(), 80) << "Unexpected number of cylinders";
+    EXPECT_EQ(diskImage->getSides(), 2) << "Unexpected number of sides";
+
+    // Verify catalog entries
+    TRDCatalog* catalog = (TRDCatalog*)diskImage->getTrack(0)->getRawSector(0)->data;
+    ASSERT_NE(catalog, nullptr) << "Catalog not found in sector 0";
+
+    // Verify volume info
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)diskImage->getTrack(0)->getRawSector(TRDOS_VOLUME_SECTOR)->data;
+    ASSERT_NE(volumeInfo, nullptr) << "Volume info not found in sector " << TRDOS_VOLUME_SECTOR;
+    EXPECT_EQ(volumeInfo->trDOSSignature, TRD_SIGNATURE) << "Invalid TR-DOS signature";
+    EXPECT_EQ(volumeInfo->diskType, DS_80) << "Unexpected disk type";
+
+    // Verify file entries
+    const size_t fileCount = volumeInfo->fileCount;
+    for (size_t i = 0; i < fileCount; i++)
+    {
+        const TRDFile& file = catalog->files[i];
+        const TRDFile& refFile = referenceFiles[i];
+
+        if (std::equal(refFile.name, refFile.name + 8, file.name))
+        {
+            // Verify all properties match reference
+            EXPECT_EQ(file.type, refFile.type) << "File " << std::string(file.name, file.name + 8) << " has incorrect type";
+            EXPECT_EQ(file.params, refFile.params) << "File " << std::string(file.name, file.name + 8) << " has incorrect params";
+            EXPECT_EQ(file.lengthInBytes, refFile.lengthInBytes) << "File " << std::string(file.name, file.name + 8) << " has incorrect length";
+            EXPECT_EQ(file.sizeInSectors, refFile.sizeInSectors) << "File " << std::string(file.name, file.name + 8) << " has incorrect sector count";
+            EXPECT_EQ(file.startTrack, refFile.startTrack) << "File " << std::string(file.name, file.name + 8) << " has incorrect start track";
+            EXPECT_EQ(file.startSector, refFile.startSector) << "File " << std::string(file.name, file.name + 8) << " has incorrect start sector";
+        }
+    }
+
+    // Verify files content
+    for (size_t i = 0; i < fileCount; i++)
+    {
+        const TRDFile& file = catalog->files[i];
+        const TRDFile& refFile = referenceFiles[i];
+        const std::string refChecksum = referenceFileChecksums[i];
+
+        // Verify file data integrity
+        digestpp::sha256 sha256;
+
+        // Get file location on disk image
+        size_t currentTrack = file.startTrack;
+        size_t currentSector = file.startSector;
+        size_t sectorsRemaining = file.sizeInSectors;
+
+        while (sectorsRemaining > 0)
+        {
+            DiskImage::Track* fileTrack = diskImage->getTrack(currentTrack);
+            ASSERT_NE(fileTrack, nullptr) << "File track not found for track " << currentTrack;
+
+            uint8_t* sectorData = fileTrack->getRawSector(currentSector)->data;
+            ASSERT_NE(sectorData, nullptr) << "File sector data not found for track " << currentTrack << ", sector " << currentSector;
+
+            // Add sector data to hash
+            sha256.absorb(sectorData, SECTORS_SIZE_BYTES);
+
+            currentSector++;
+            if (currentSector >= SECTORS_PER_TRACK)
+            {
+                currentTrack++;
+                currentSector = currentSector % SECTORS_PER_TRACK;
+            }
+
+            sectorsRemaining--;
+        }
+
+        // Get the final hash
+        std::string fileHash = sha256.hexdigest();
+
+        EXPECT_EQ(fileHash, refChecksum);
+
+        // Print file info with hash
+        std::cout << file.Dump() << "\n";
+        std::cout << "    SHA-256: " << fileHash << "\n";
+    }
 }
 
 /// endregion </Tests>
@@ -78,7 +188,7 @@ TEST_F(LoaderSCL_Test, addFile)
 {
     // Create a test disk image with 80 tracks and 2 sides
     DiskImage diskImage = DiskImage(80, 2);
-    LoaderTRD loaderTrd(_context, "");
+    LoaderTRD loaderTrd(_context, "addFile.trd");
     bool result = loaderTrd.format(&diskImage);
     EXPECT_EQ(result, true) << "Empty image low level format unsuccessful";
 
@@ -102,7 +212,7 @@ TEST_F(LoaderSCL_Test, addFile)
     uint8_t testData[256];
     memset(testData, 0xAA, sizeof(testData));
 
-    // Create test file descriptor
+    // Create a test file descriptor (SCL stripped header, without start track and sector)
     TRDOSDirectoryEntryBase fileDescriptor
     {
         {'T', 'E', 'S', 'T', 'F', 'I', 'L', 'E'},   // Name
@@ -118,7 +228,6 @@ TEST_F(LoaderSCL_Test, addFile)
     // Check that sector 0 and 8 were modified
     std::string message = DumpHelper::DumpBufferDifferences(sector0Data, sector0Snapshot.data(), SECTORS_SIZE_BYTES);
     EXPECT_NE(sector0Snapshot, std::vector<uint8_t>(sector0Data, sector0Data + SECTORS_SIZE_BYTES)) << message;
-    EXPECT_NE(sector8Snapshot, std::vector<uint8_t>(sector8Data, sector8Data + SECTORS_SIZE_BYTES));
 
     // Verify catalog was updated
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)track->getSector(TRDOS_VOLUME_SECTOR)->data;
@@ -128,7 +237,7 @@ TEST_F(LoaderSCL_Test, addFile)
     EXPECT_EQ(1, volumeInfo->firstFreeSector);
 
     // Verify file descriptor in catalog
-    TRDOSDirectoryEntry* catalogEntry = (TRDOSDirectoryEntry*)track->getRawSector(1)->data;
+    TRDOSDirectoryEntry* catalogEntry = (TRDOSDirectoryEntry*)track->getRawSector(0)->data;
     EXPECT_STREQ("TESTFILE", catalogEntry->Name);
     EXPECT_EQ(0, catalogEntry->Type);
     EXPECT_EQ(1, catalogEntry->StartTrack);
@@ -143,4 +252,7 @@ TEST_F(LoaderSCL_Test, addFile)
     {
         EXPECT_EQ(0xAA, fileDataSector->data[i]) << "Track: " << catalogEntry->StartTrack << " Sector: " << catalogEntry->StartSector << "Offset: " << i;
     }
+
+    loaderTrd.setImage(&diskImage);
+    loaderTrd.writeImage();
 }
