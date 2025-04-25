@@ -5,6 +5,22 @@
 
 #include "emulator/video/screen.h"
 
+/// ZX Spectrum Screen Layout (Per Frame)
+// +--------------------------+-------+-------------------------------------------------------+
+// | Region                   | Lines | Description                                           |
+// +--------------------------+-------+-------------------------------------------------------+
+// | Top Border               |   64  | Blank area above the screen (varies slightly per TV)  |
+// +--------------------------+-------+-------------------------------------------------------+
+// | Screen Area              |  192  | Actual pixel/attribute data (24 rows × 8 pixels each) |
+// +--------------------------+-------+-------------------------------------------------------+
+// | Bottom Border            |   32  | Blank area below the screen.                          |
+// +--------------------------+-------+-------------------------------------------------------+
+// | Total Visible            |  288  | What most TVs display (including borders).            |
+// +--------------------------+-------+-------------------------------------------------------+
+// | Vertical Sync & Blanking | ~24.5 | Hidden by TV overscan (not visible).                  |
+// +--------------------------+-------+-------------------------------------------------------+
+// | Full Frame               | 312.5 | Total PAL lines (non-interlaced, 50Hz).               |
+// +--------------------------+-------+-------------------------------------------------------+
 class ScreenZX : public Screen
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -12,6 +28,19 @@ public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_VIDEO;
     const uint16_t _SUBMODULE = PlatformVideoSubmodulesEnum::SUBMODULE_VIDEO_ULA;
     /// endregion </ModuleLogger definitions for Module/Submodule>
+
+    /// region <Constants>
+  public:
+    const uint16_t _SCREEN5_BASE_ADDRESS = 0x4000;
+    const uint16_t _SCREEN7_BASE_ADDRESS = 0xC000;
+    const uint16_t _SCREEN_ATTRIBUTES_OFFSET = 0x1800;
+
+    const uint16_t _SCREEN_VISIBLE_WIDTH_PX = 256;
+    const uint16_t _SCREEN_VISIBLE_HEIGHT_PX = 192;
+
+    const uint16_t _SCREEN_48K_TSTATES_PER_LINE = 224;
+    const uint16_t _SCREEN_128K_TSTATES_PER_LINE = 228;
+    /// endregion </Constants>
 
     /// region <Fields>
 protected:
@@ -21,7 +50,7 @@ protected:
     uint32_t _rgbaColors[256];                  // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256];             // Colors when Flash is in blinking=ON state
 
-    RenderTypeEnum _screenLineRenderers[288];   // Cached render types for each line in screen area (HBlank, HSync, Left Border, Screen, Right Border)
+    RenderTypeEnum _screenLineRenderers[288];   // Cached render types for each line in the screen area (HBlank, HSync, Left Border, Screen, Right Border)
 
     /// endregion </Fields>
 
@@ -29,7 +58,7 @@ protected:
 public:
     ScreenZX() = delete;		            // Disable default constructor; C++ 11 feature
     ScreenZX(EmulatorContext* context);
-    virtual ~ScreenZX();
+    virtual ~ScreenZX() = default;
     /// endregion </Constructors / Destructors>
 
 protected:

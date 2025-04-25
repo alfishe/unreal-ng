@@ -10,12 +10,13 @@ Screen* VideoController::GetScreenForMode(VideoModeEnum mode, EmulatorContext* c
 {
     Screen* result = nullptr;
 
-    // Create new video mode screen
+    // Create a new video mode screen instance
     switch (mode)
     {
         case M_NUL:
             break;
         case M_ZX48:
+        case M_ZX128:
             result = new ScreenZX(context);
             break;
         default:

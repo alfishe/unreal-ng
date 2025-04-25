@@ -13,11 +13,6 @@ ScreenZX::ScreenZX(EmulatorContext *context) : Screen(context)
     CreateTables();
 }
 
-ScreenZX::~ScreenZX()
-{
-
-}
-
 /// endregion </Constructors / Destructors>
 
 /// region <Genuine ZX-Spectrum ULA specifics>
@@ -71,10 +66,11 @@ void ScreenZX::CreateTimingTable()
     const RasterState& state = _rasterState;
 
     RenderTypeEnum type = RT_BLANK;
+    uint16_t rasterLines = 288;
 
     /// region <Line renderer in screen area>
 
-    for (uint16_t i = 0; i < 288; i++)
+    for (uint16_t i = 0; i < rasterLines; i++)
     {
         if (i >= state.blankLineAreaStart && i <= state.blankLineAreaEnd)
         {
@@ -153,10 +149,10 @@ uint16_t ScreenZX::CalculateXYScreenAddress(uint8_t x, uint8_t y, uint16_t baseA
     // Check for invalid coordinates. (X: [0;31] => 32 * 8 pixel bits in line; Y: [0:191])
     if (symbolX < 32 && y < 192)
     {
-        uint16_t x0x1x2x3x4 = symbolX & 0b00011111;
-        uint8_t y0y1y2 = y & 0b00000111;
-        uint8_t y3y4y5 = y & 0b00111000;
-        uint8_t y6y7 = y & 0b11000000;
+        uint16_t x0x1x2x3x4 = symbolX & 0b0001'1111;
+        uint8_t y0y1y2 = y & 0b0000'0111;
+        uint8_t y3y4y5 = y & 0b0011'1000;
+        uint8_t y6y7 = y & 0b1100'0000;
 
         uint8_t loByte = (y3y4y5 << 2) | x0x1x2x3x4;
         uint16_t hiByte = (y6y7 >> 3) | y0y1y2;
@@ -264,12 +260,12 @@ uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPix
 
     uint32_t result = 0;
 
-    uint8_t paper = (attribute & 0b00111000) >> 3;
-    uint8_t ink = attribute & 0b00000111;
-    bool brightness = (attribute & 0b01000000) > 0;
-    [[maybe_unused]] bool flash = (attribute & 0b10000000) > 0;
+    uint8_t paper = (attribute & 0b0011'1000) >> 3;
+    uint8_t ink = attribute & 0b0000'0111;
+    bool brightness = (attribute & 0b0100'0000) > 0;
+    [[maybe_unused]] bool flash = (attribute & 0b1000'0000) > 0;
 
-    // Set resulting pixel color based on ZX-Spectrum pixel information (not set => paper color, set => ink color)
+    // Set the resulting pixel color based on ZX-Spectrum pixel information (not set => paper color, set => ink color)
     uint8_t paletteIndex = isPixelSet ? ink : paper;
     result = palette[brightness][paletteIndex];
 
@@ -287,7 +283,7 @@ uint32_t ScreenZX::GetZXSpectrumPixel(uint8_t x, uint8_t y, uint16_t baseAddress
 
     uint32_t result = 0x00000000;
 
-    // Pixel bit index is in lowest 3 bits of address [0:2]
+    // Pixel bit index is in the lowest 3 bits of address [0:2]
     uint8_t pixelIndex = baseAddress & 0b0000'0000'0000'0111;
     uint16_t pixelAddress = CalculateXYScreenAddress(x, y, baseAddress);
     uint16_t colorAddress = CalculateXYColorAttrAddress(x, y, baseAddress);
@@ -314,7 +310,7 @@ uint32_t ScreenZX::GetZXSpectrumPixelOptimized(uint8_t x, uint8_t y, uint16_t ba
 
     uint32_t result = 0x00000000;
 
-    // Pixel bit index is in lowest 3 bits of address [0:2]
+    // Pixel bit index is in the lowest 3 bits of address [0:2]
     uint8_t pixelIndex = baseAddress & 0b0000'0000'0000'0111;
     uint16_t pixelAddress = CalculateXYScreenAddressOptimized(x, y, baseAddress);
     uint16_t colorAddress = CalculateXYColorAttrAddressOptimized(x, y, baseAddress);
@@ -386,7 +382,7 @@ bool ScreenZX::TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_
             // Translate raster line to ZX screen line
             const uint16_t y = (tstate - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
 
-            if (x <= 255 && y <= 192)
+            if (x <= 255 && y < 192)
             {
                 *zxX = x;
                 *zxY = y;
@@ -549,13 +545,13 @@ void ScreenZX::Draw(uint32_t tstate)
 
         if (TransformTstateToFramebufferCoords(tstate, &destX, &destY))
         {
-            uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
+            uint32_t* framebufferARGB = (uint32_t*)((void*)(_framebuffer.memoryBuffer));
             size_t framebufferARGBSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
 
             if (TransformTstateToZXCoords(tstate, &zxX, &zxY))
             {
                 // Render two sequential pixels
-                // It is guaranteed that both pixels are within same line and ZX-Spectrum pixel byte / attribute byte
+                // It is guaranteed that both pixels are within the same line and ZX-Spectrum pixel byte / attribute byte
                 for (uint16_t x = zxX; x <= zxX + 1; x++, destX++)
                 {
                     const uint8_t symbolX = x / 8;
@@ -584,7 +580,7 @@ void ScreenZX::Draw(uint32_t tstate)
             else
             {
                 // Render border
-                // It is guaranteed that border pixels are within same line
+                // It is guaranteed that border pixels are within the same line
                 int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
                 uint32_t borderColor = _rgbaColors[_borderColor];
                 *(framebufferARGB + framebufferOffset) = borderColor;
