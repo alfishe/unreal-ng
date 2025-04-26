@@ -13,14 +13,14 @@
 
 /// region <Constants>
 
-static constexpr const uint8_t TRD_SIGNATURE = 0x10;        // Unique signature for TR-DOS volume. Must be placed at offset
-static constexpr const uint8_t DS_80_TRACKS = 80;           // TR-DOS uses 80 tracks for Double-Side (DS) disks
-static constexpr const uint8_t SECTORS_PER_TRACK = 16;      // TR-DOS uses 16 sectors per track
-static constexpr const uint16_t SECTORS_SIZE_BYTES = 256;   // TR-DOS uses 256 bytes sectors
-static constexpr const uint16_t FREE_SECTORS_ON_EMPTY_DISK = (DS_80_TRACKS * MAX_SIDES - 1) * SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
+static constexpr const uint8_t TRD_SIGNATURE = 0x10;          // Unique signature for TR-DOS volume. Must be placed at offset
+static constexpr const uint8_t TRD_DS_80_TRACKS = 80;         // TR-DOS uses 80 tracks for Double-Side (DS) disks
+static constexpr const uint8_t TRD_SECTORS_PER_TRACK = 16;    // TR-DOS uses 16 sectors per track
+static constexpr const uint16_t TRD_SECTORS_SIZE_BYTES = 256; // TR-DOS uses 256 bytes sectors
+static constexpr const uint16_t TRD_FREE_SECTORS_ON_EMPTY_DISK = (TRD_DS_80_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
 
-static constexpr const uint8_t TRDOS_MAX_FILES = 128;       // TR-DOS catalog can handle only up to 128 files
-static constexpr const uint8_t TRDOS_VOLUME_SECTOR = 9 - 1; // Sector 9 on track 0 stores volume information
+static constexpr const uint8_t TRD_MAX_FILES = 128;           // TR-DOS catalog can handle only up to 128 files
+static constexpr const uint8_t TRD_VOLUME_SECTOR = 9 - 1;     // Sector 9 on track 0 stores volume information
 
 /// endregion </Constants>
 
@@ -48,7 +48,7 @@ struct TRDVolumeInfo
     uint8_t firstFreeTrack = 1;
     uint8_t diskType = DS_80;           // Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19).
     uint8_t fileCount = 0;
-    uint16_t freeSectorCount = FREE_SECTORS_ON_EMPTY_DISK ;
+    uint16_t freeSectorCount = TRD_FREE_SECTORS_ON_EMPTY_DISK;
     uint8_t trDOSSignature = TRD_SIGNATURE;   // TR-DOS system signature
     uint8_t reserved1[2] = { 0x00, 0x00 };
     uint8_t reserved2[9] = { 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20 };    // Password?
@@ -78,7 +78,7 @@ struct TRDFile
     /// 0 - h0t0, 1 - h1t0, 2 - h0t1 ... 79 - h1t39, 80 - h0t40 ... 159 - h1t79
     uint8_t startTrack = 0;
 
-    /// region <Methods>
+    /// #region <Methods>
   public:
     std::string Dump() const
     {
@@ -125,7 +125,7 @@ struct TRDFile
 
         return ss.str();
     }
-    /// endregion </Methods>
+    /// #endregion </Methods>
 };
 
 /// TR-DOS catalog structure
@@ -141,7 +141,7 @@ struct TRDFile
 /// @see: https://sinclair.wiki.zxnet.co.uk/wiki/TR-DOS_filesystem
 struct TRDCatalog
 {
-    TRDFile files[TRDOS_MAX_FILES];
+    TRDFile files[TRD_MAX_FILES];
 };
 
 #pragma pack(pop)

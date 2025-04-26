@@ -62,7 +62,7 @@ void WD1793::reset()
     _state2 = S_IDLE;
     _statusRegister = 0;
     _trackRegister = 0;
-    _sectorRegister = 0x01; // As per datasheet. Sector is set to 1 after the RESTORE command
+    _sectorRegister = 1; // As per datasheet. Sector is set to 1 after the RESTORE command
     _dataRegister = 0;
 
     _indexPulseCounter = 0;
@@ -79,7 +79,7 @@ void WD1793::reset()
 
 void WD1793::process()
 {
-    // Timings synchronization
+    // Timing synchronization
     processClockTimings();
 
     // Maintain FDD motor state
@@ -95,7 +95,7 @@ void WD1793::process()
 
     if (handler)    // Handler found
     {
-        // Call correspondent handler through the pointer or reference
+        // Call the correspondent handler through the pointer or reference
         (this->*handler)();
     }
     else            // Handler is not available
@@ -117,16 +117,19 @@ void WD1793::processBeta128(uint8_t value)
     // Set active drive, Bits[0,1] (0..3)
     _drive = value & 0b0000'0011;
 
+    // TODO: Select different drive if requested
+
     // Set side Bit[4] (0..1)
     _sideUp = ~(value >> 4) & 0b0000'0001;
-
-    // TODO: Select different drive if requested
 
     // Reset Bit[3] (active low)
     bool reset = !(value & 0b0000'0100);
 
     if (reset)
     {
+        // Perform full WD1793 chip reset
+        this->reset();
+
         _statusRegister &= ~WDS_NOTRDY;
         _beta128status = INTRQ;
 
@@ -134,16 +137,10 @@ void WD1793::processBeta128(uint8_t value)
         _selectedDrive->setMotor(false);
         _motorTimeoutTStates = 0;
         _indexPulseCounter = 0;
-
-        // Set initial state after reset
-        _lastCmdValue = 0x00;
-        _lastDecodedCmd = WD_CMD_RESTORE;
-        _lastCmdValue = 0x00;
-        cmdRestore(_lastCmdValue);
     }
     else
     {
-        uint8_t beta128ChangedBits = _beta128 ^ value;
+        uint8_t beta128ChangedBits = _beta128Register ^ value;
         if (beta128ChangedBits & SYS_HLT) // When HLT signal positive edge (from 0 to 1) detected
         {
             // FIXME: index strobes should be set by disk rotation timings, not by HLT / BUSY edges
@@ -153,7 +150,7 @@ void WD1793::processBeta128(uint8_t value)
             }
         }
 
-        _beta128 = value;
+        _beta128Register = value;
     }
 }
 
@@ -327,7 +324,7 @@ uint8_t WD1793::getStatusRegister()
         }
 
         // Set head load state based on HLD and HLT signals
-        uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128 & 0b0000'1000)) ? WDS_HEADLOADED : 0;
+        uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128Register & 0b0000'1000)) ? WDS_HEADLOADED : 0;
         _statusRegister |= headStatus;
     }
     else
@@ -607,10 +604,10 @@ void WD1793::cmdRestore(uint8_t value)
 
     startType1Command();
 
-    // We're not sure about current head position at this moment. Will be determined during step positioning
+    // We're not sure about the current head position at this moment. Will be determined during step positioning
     _trackRegister = 0xFF;
 
-    // Direction must be always out (towards Track 0)
+    // Direction must always be out (towards Track 0)
     _stepDirectionIn = false;
 
     // FSM will transition across steps (making required wait cycles as needed):
@@ -662,7 +659,7 @@ void WD1793::cmdStepIn(uint8_t value)
 
     startType1Command();
 
-    // Yes, we move the head towards central ring (increasing track number)
+    // Yes, we move the head towards the central ring (increasing track number)
     _stepDirectionIn = true;
 
     // FSM will transition across steps (making required wait cycles as needed):
@@ -905,12 +902,12 @@ void WD1793::startType1Command()
 {
     MLOGINFO("==>> Start Type 1 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
 
-    _statusRegister |= WDS_BUSY;                            // Set BUSY flag
-    _statusRegister &= ~(WDS_SEEKERR | WDS_CRCERR);         // Clear positioning and CRC errors
+    _statusRegister |= WDS_BUSY;                    // Set BUSY flag
+    _statusRegister &= ~(WDS_SEEKERR | WDS_CRCERR); // Clear positioning and CRC errors
 
     _beta128status &= ~(DRQ | INTRQ);               // Clear Data Request and Interrupt request bits
 
-    // Ensure motor is spinning
+    // Ensure the motor is spinning
     prolongFDDMotorRotation();
 
     // Decode stepping motor rate from bits [0..1] (r0r1)
@@ -945,7 +942,7 @@ void WD1793::startType2Command()
 
     if (!isReady())
     {
-        // If drive is not ready - end immediately
+        // If the drive is not ready - end immediately
         endCommand();
     }
     else
@@ -1228,7 +1225,7 @@ void WD1793::processReadSector()
 {
     _bytesToRead = _sectorSize;
 
-    // If multiple sectors requested - register follow-up operation in FIFO
+    // If multiple sectors requested - register a follow-up operation in FIFO
     if (_commandRegister & CMD_MULTIPLE && _sectorRegister < DiskImage::RawTrack::SECTORS_PER_TRACK - 1)
     {
         // Register one more READ_SECTOR operation. Lambda will be executed just before FSM state switch
@@ -1259,7 +1256,7 @@ void WD1793::processReadSector()
         _operationFIFO.push(readSector);
     }
 
-    // Unblock first byte read
+    // Unblock the first byte read
     _dataRegisterAccessed = true;
 
     transitionFSM(WD1793::S_READ_BYTE);
@@ -1325,7 +1322,7 @@ void WD1793::processReadByte()
             }
             /// endregion </Set WDS_RECORDTYPE bit depending on Data Address Mark>
 
-            // Fetch next command from fifo (or end if no more commands left)
+            // Fetch the next command from fifo (or end if no more commands left)
             transitionFSM(WDSTATE::S_FETCH_FIFO);
         }
     }
@@ -1403,8 +1400,9 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             // Read and mark that Data Register was accessed (for Type 2 and Type 3 operations)
             result = readDataRegister();
             break;
-        case PORT_FF:   // Handle BETA128 system port (#FF)
-            result = _beta128status | (_beta128 & 0x3F);
+        case PORT_FF:   // Handle Beta128 system port (#FF)
+            // Only bits 6 and 7 are used
+            result = _beta128status | (_beta128Register & 0x3F);
             //MLOGINFO("In #FF Beta128: %s pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc, memBankName.c_str());
             break;
         default:
@@ -1560,7 +1558,7 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
         {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
         {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
         {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE TRACK
-        // FORCE INTERRUPT doesn't have its own status bits. Bits from previous / ongoing command to be shown instead
+        // FORCE INTERRUPT doesn't have its own status bits. Bits from the previous / ongoing command to be shown instead
     };
 
     std::stringstream ss;

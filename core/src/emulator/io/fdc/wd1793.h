@@ -60,7 +60,7 @@ public:
     {
         S_IDLE = 0,
         S_WAIT,         // Dedicated state to handle timing delays
-        S_FETCH_FIFO,   // Fetch next state from _operationFIFO queue
+        S_FETCH_FIFO,   // Fetch the next state from _operationFIFO queue
 
         S_STEP,
         S_VERIFY,
@@ -164,7 +164,7 @@ public:
         WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
     };
 
-    enum BETA_COMMAND_BITS : uint8_t
+    enum BETA128_COMMAND_BITS : uint8_t
     {
         BETA_CMD_DRIVE_MASK = 0b0000'0011,  // Bits[0,1] define drive selection. 00 - A, 01 - B, 10 - C, 11 - D
 
@@ -172,10 +172,18 @@ public:
         // HLT - Head Load Timing is an input signal used to determine head engagement time.
         // When HLT = 1, FDC assumes that head is completely engaged. Usually it takes 30-100ms for FDD to react on HLD signal from FDC and engage the head
         BETA_CMD_BLOCK_HLT  = 0b0000'1000,  // Bit3 (active low) blocks HLT signal. Normally it should be inactive (high).
-        BETA_CMD_HEAD       = 0b0001'0000,  // Bit4 - select head / side. 0 - lower side head. 1 - upper side head
-        BETA_CMD_RESERVED5  = 0b0010'0000,  // Bit5 - Unused
-        BETA_CMD_DENSITY    = 0b0100'0000,  // Bit6 - 0 - Double density / MFM, 1 - Single density / FM
-        BETA_CMD_RESERVED7  = 0b1000'0000,  // Bit7 - Unused
+
+        // Bit4 - select head / side. 0 - lower side head. 1 - upper side head
+        BETA_CMD_HEAD       = 0b0001'0000,
+
+        // Bit5 - Unused
+        BETA_CMD_RESERVED5  = 0b0010'0000,
+
+        // Bit6 - 0 - Double density / MFM; 1 - Single density / FM
+        BETA_CMD_DENSITY    = 0b0100'0000,
+
+        // Bit7 - Unused
+        BETA_CMD_RESERVED7  = 0b1000'0000,
     };
 
     /// FDC status (corresponds to port #1F read)
@@ -227,9 +235,9 @@ public:
     {
         DRQ   = 0x40,   // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
 
+        /// Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
         /// INTRQ = 1 - Command complete
         /// INTRQ = 0 - Command in progress
-        /// Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
         INTRQ = 0x80
     };
 
@@ -356,11 +364,14 @@ protected:
     uint8_t _dataRegister = 0x00;       // WD1793 Data Register
     uint8_t _statusRegister = 0x00;     // WD1793 Status Register
 
-    uint8_t _beta128 = 0x00;            // BETA128 system register
-    uint8_t _beta128status = 0x00;      // BETA128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
+    uint8_t _beta128Register = 0x00;    // Beta128 system register
+    uint8_t _beta128status = 0x00;      // Beta128 status output: Data request (DRQ) and interrupt request (INTRQ) flags
     uint8_t _extStatus = 0x00;          // External status. Only HLD flag is supported
 
     // Beta128 state
+
+    // Set when BETA128 register (port 0xFF) is written to
+    // 0 - A, 1 - B, 2 - C, 3 - D
     uint8_t _drive = 0;                 // Currently selected drive index [0..3]
     bool _sideUp = false;               // False - bottom side. True - top side
 
@@ -557,7 +568,7 @@ protected:
 
     void processClockTimings()
     {
-        // Decouple time sync with emulator state. Unit tests override updateTimeFromEmulatorState(); as dummy stub
+        // Decouple time sync with the emulator state. Unit tests override updateTimeFromEmulatorState(); as dummy stub
         updateTimeFromEmulatorState();
 
         _diffTime = std::abs((int64_t)(_time - _lastTime));
@@ -668,7 +679,11 @@ public:
     using WD1793::_sectorRegister;
     using WD1793::_dataRegister;
     using WD1793::_statusRegister;
+    using WD1793::_beta128Register;
     using WD1793::_beta128status;
+
+    using WD1793::_drive;
+    using WD1793::_sideUp;
 
     using WD1793::_state;
     using WD1793::_state2;
@@ -693,7 +708,7 @@ public:
         _state = S_IDLE;
         _statusRegister = 0;
         _trackRegister = 0;
-        _sectorRegister = 0;
+        _sectorRegister = 1;
         _dataRegister = 0;
     }
 

@@ -82,7 +82,7 @@ bool LoaderSCL::loadSCL()
                     }
 
                     // Check if all files in SCL image fit into the empty disk
-                    if (totalSizeSectors <= FREE_SECTORS_ON_EMPTY_DISK)
+                    if (totalSizeSectors <= TRD_FREE_SECTORS_ON_EMPTY_DISK)
                     {
                         // Add files to the image one by one
                         for (size_t i = 0; i < header->FileCount; i++)
@@ -93,7 +93,7 @@ bool LoaderSCL::loadSCL()
                             addFile(&fileDescriptor, currentFileData);
 
                             // Move pointer to next file data
-                            currentFileData += fileDescriptor.SizeInSectors * SECTORS_SIZE_BYTES;
+                            currentFileData += fileDescriptor.SizeInSectors * TRD_SECTORS_SIZE_BYTES;
                         }
 
                         _diskImage->setLoaded(true);
@@ -119,10 +119,10 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
     bool result = false;
 
     DiskImage::Track* track = _diskImage->getTrack(0);
-    DiskImage::RawSectorBytes* systemSector = track->getSector(TRDOS_VOLUME_SECTOR);
+    DiskImage::RawSectorBytes* systemSector = track->getSector(TRD_VOLUME_SECTOR);
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)systemSector->data;
 
-    if (volumeInfo != nullptr && volumeInfo->fileCount < TRDOS_MAX_FILES)
+    if (volumeInfo != nullptr && volumeInfo->fileCount < TRD_MAX_FILES)
     {
         /// region <Locate next empty file record in TR-DOS catalog>
         size_t fileLengthSectors = fileDescriptor->SizeInSectors;
@@ -132,7 +132,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
         if (volumeInfo->freeSectorCount >= fileLengthSectors)
         {
             /// region <Create new file descriptor>
-            uint8_t dirSectorNo = ((catalogOffset / SECTORS_SIZE_BYTES) & 0x0F);
+            uint8_t dirSectorNo = ((catalogOffset / TRD_SECTORS_SIZE_BYTES) & 0x0F);
             DiskImage::RawSectorBytes* dirSector = track->getRawSector(dirSectorNo);
 
             TRDOSDirectoryEntry* dstFileDescriptor = (TRDOSDirectoryEntry*)(dirSector->data + (catalogOffset & 0x00FF));
@@ -145,7 +145,7 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
             /// endregion </Create new file descriptor>
 
             /// region <Recalculate free TR-DOS disk values>
-            uint16_t freeSectorLocator = volumeInfo->firstFreeTrack * SECTORS_PER_TRACK + volumeInfo->firstFreeSector;
+            uint16_t freeSectorLocator = volumeInfo->firstFreeTrack * TRD_SECTORS_PER_TRACK + volumeInfo->firstFreeSector;
             uint16_t newFreeSectorLocator = freeSectorLocator + fileLengthSectors;
 
             volumeInfo->firstFreeSector = newFreeSectorLocator & 0x0F;
@@ -162,17 +162,17 @@ bool LoaderSCL::addFile(TRDOSDirectoryEntryBase* fileDescriptor, uint8_t* fileDa
 
             for (size_t i = 0; i < fileLengthSectors; i++, fileSectorLocator++)
             {
-                uint8_t fileTrackNo = fileSectorLocator / SECTORS_PER_TRACK;
-                uint8_t fileSectorNo = (fileSectorLocator % SECTORS_PER_TRACK);
+                uint8_t fileTrackNo = fileSectorLocator / TRD_SECTORS_PER_TRACK;
+                uint8_t fileSectorNo = (fileSectorLocator % TRD_SECTORS_PER_TRACK);
 
                 DiskImage::Track* fileTrack = _diskImage->getTrack(fileTrackNo);
                 DiskImage::RawSectorBytes* fileSector = fileTrack->getSector(fileSectorNo);
 
-                uint8_t* srcSectorData = fileData + i * SECTORS_SIZE_BYTES;
+                uint8_t* srcSectorData = fileData + i * TRD_SECTORS_SIZE_BYTES;
                 uint8_t* dstSectorData = fileSector->data;
 
                 // Transfer sector content
-                memcpy(dstSectorData, srcSectorData, SECTORS_SIZE_BYTES);
+                memcpy(dstSectorData, srcSectorData, TRD_SECTORS_SIZE_BYTES);
 
                 // Update sector CRC
                 fileSector->recalculateDataCRC();

@@ -111,8 +111,8 @@ TEST_F(LoaderSCL_Test, load)
     ASSERT_NE(catalog, nullptr) << "Catalog not found in sector 0";
 
     // Verify volume info
-    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)diskImage->getTrack(0)->getRawSector(TRDOS_VOLUME_SECTOR)->data;
-    ASSERT_NE(volumeInfo, nullptr) << "Volume info not found in sector " << TRDOS_VOLUME_SECTOR;
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)diskImage->getTrack(0)->getRawSector(TRD_VOLUME_SECTOR)->data;
+    ASSERT_NE(volumeInfo, nullptr) << "Volume info not found in sector " << TRD_VOLUME_SECTOR;
     EXPECT_EQ(volumeInfo->trDOSSignature, TRD_SIGNATURE) << "Invalid TR-DOS signature";
     EXPECT_EQ(volumeInfo->diskType, DS_80) << "Unexpected disk type";
 
@@ -159,13 +159,13 @@ TEST_F(LoaderSCL_Test, load)
             ASSERT_NE(sectorData, nullptr) << "File sector data not found for track " << currentTrack << ", sector " << currentSector;
 
             // Add sector data to hash
-            sha256.absorb(sectorData, SECTORS_SIZE_BYTES);
+            sha256.absorb(sectorData, TRD_SECTORS_SIZE_BYTES);
 
             currentSector++;
-            if (currentSector >= SECTORS_PER_TRACK)
+            if (currentSector >= TRD_SECTORS_PER_TRACK)
             {
                 currentTrack++;
-                currentSector = currentSector % SECTORS_PER_TRACK;
+                currentSector = currentSector % TRD_SECTORS_PER_TRACK;
             }
 
             sectorsRemaining--;
@@ -202,10 +202,10 @@ TEST_F(LoaderSCL_Test, addFile)
     uint8_t* sector8Data = track->getDataForSector(8);
     // Save sector 0 snapshot
     std::vector<uint8_t> sector0Snapshot;
-    sector0Snapshot.assign(sector0Data, sector0Data + SECTORS_SIZE_BYTES);
+    sector0Snapshot.assign(sector0Data, sector0Data + TRD_SECTORS_SIZE_BYTES);
 
     std::vector<uint8_t> sector8Snapshot;
-    sector8Snapshot.assign(sector8Data, sector8Data + SECTORS_SIZE_BYTES);
+    sector8Snapshot.assign(sector8Data, sector8Data + TRD_SECTORS_SIZE_BYTES);
     /// endregion </Make system sector snapshots>
 
     // Create test file data (1 sector)
@@ -226,13 +226,13 @@ TEST_F(LoaderSCL_Test, addFile)
     EXPECT_TRUE(loader.addFile(&fileDescriptor, testData)) << "Unable to add file to disk image";
 
     // Check that sector 0 and 8 were modified
-    std::string message = DumpHelper::DumpBufferDifferences(sector0Data, sector0Snapshot.data(), SECTORS_SIZE_BYTES);
-    EXPECT_NE(sector0Snapshot, std::vector<uint8_t>(sector0Data, sector0Data + SECTORS_SIZE_BYTES)) << message;
+    std::string message = DumpHelper::DumpBufferDifferences(sector0Data, sector0Snapshot.data(), TRD_SECTORS_SIZE_BYTES);
+    EXPECT_NE(sector0Snapshot, std::vector<uint8_t>(sector0Data, sector0Data + TRD_SECTORS_SIZE_BYTES)) << message;
 
     // Verify catalog was updated
-    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)track->getSector(TRDOS_VOLUME_SECTOR)->data;
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)track->getSector(TRD_VOLUME_SECTOR)->data;
     EXPECT_EQ(1, volumeInfo->fileCount);
-    EXPECT_EQ(FREE_SECTORS_ON_EMPTY_DISK - 1, volumeInfo->freeSectorCount);
+    EXPECT_EQ(TRD_FREE_SECTORS_ON_EMPTY_DISK - 1, volumeInfo->freeSectorCount);
     EXPECT_EQ(1, volumeInfo->firstFreeTrack);
     EXPECT_EQ(1, volumeInfo->firstFreeSector);
 

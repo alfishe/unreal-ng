@@ -506,7 +506,7 @@ protected:
         Track* track = getTrack(trackNo);
         RawSectorBytes* sector = track->getRawSector(sectorNo);
 
-        std::string result = DumpHelper::HexDumpBuffer(sector->data, SECTORS_SIZE_BYTES);
+        std::string result = DumpHelper::HexDumpBuffer(sector->data, TRD_SECTORS_SIZE_BYTES);
 
         return result;
     }

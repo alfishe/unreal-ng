@@ -30,24 +30,24 @@ message("GOOGLETEST_DIR:${GOOGLETEST_DIR}")
 
 # Set include files search paths
 include_directories(
-        ${TESTS_DIR}
-        ${CORE_DIR}
-        ${GOOGLETEST_DIR}/googletest                                  # To serve src/gtest-internal-inl.h include
-        ${GOOGLETEST_DIR}/googletest/include
+    ${TESTS_DIR}
+    ${CORE_DIR}
+    ${GOOGLETEST_DIR}/googletest                                  # To serve src/gtest-internal-inl.h include
+    ${GOOGLETEST_DIR}/googletest/include
 )
 
 # MinGW CMake doesn't build gtest - make it explicitly
 if (WIN32 AND NOT MSVC)
     set (GOOGLETEST_FILES
-            ${GOOGLETEST_DIR}/googletest/src/gtest.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-death-test.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-filepath.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-matchers.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-port.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-printers.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-test-part.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-typed-test.cc
-            ${GOOGLETEST_DIR}/googletest/src/gtest-internal-inl.h
+        ${GOOGLETEST_DIR}/googletest/src/gtest.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-death-test.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-filepath.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-matchers.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-port.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-printers.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-test-part.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-typed-test.cc
+        ${GOOGLETEST_DIR}/googletest/src/gtest-internal-inl.h
     )
 else (WIN32 AND NOT MSVC)
     # Compile GoogleTest to <binary>/googletest subfolder

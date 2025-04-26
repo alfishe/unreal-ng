@@ -73,10 +73,10 @@ bool LoaderTRD::writeImage()
             {
                 DiskImage::Track *track = _diskImage->getTrack(tracks);
 
-                for (size_t sectors = 0; sectors < SECTORS_PER_TRACK; sectors++)
+                for (size_t sectors = 0; sectors < TRD_SECTORS_PER_TRACK; sectors++)
                 {
                     uint8_t *sectorData = track->getDataForSector(sectors);
-                    [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, SECTORS_SIZE_BYTES);
+                    [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, TRD_SECTORS_SIZE_BYTES);
             }
 
             result = true;
@@ -214,12 +214,12 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
 void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
 {
     DiskImage::Track* track = diskImage->getTrack(0);
-    DiskImage::RawSectorBytes* sector = track->getSector(TRDOS_VOLUME_SECTOR);
+    DiskImage::RawSectorBytes* sector = track->getSector(TRD_VOLUME_SECTOR);
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
 
     volumeInfo->trDOSSignature = TRD_SIGNATURE;
     volumeInfo->diskType = DS_80;
-    volumeInfo->freeSectorCount = FREE_SECTORS_ON_EMPTY_DISK;
+    volumeInfo->freeSectorCount = TRD_FREE_SECTORS_ON_EMPTY_DISK;
     volumeInfo->firstFreeTrack = 1;
     volumeInfo->firstFreeSector = 0;
     volumeInfo->deletedFileCount = 0;
