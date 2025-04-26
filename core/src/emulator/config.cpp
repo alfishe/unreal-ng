@@ -272,9 +272,11 @@ void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)
 {
 	if (src != nullptr && dst != nullptr && dst_len > 0)
 	{
-		string value = StripComment(src);
+		std::string value = StripComment(src);
 
-		strncpy(dst, value.c_str(), dst_len);
+        size_t len = std::min(value.length(), dst_len - 1);
+        memcpy(dst, value.c_str(), len);
+        dst[len] = '\0';
 	}
 }
 
