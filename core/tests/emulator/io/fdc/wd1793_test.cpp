@@ -1524,6 +1524,8 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     {
         for (uint8_t sector = 0; sector < MAX_SECTOR; ++sector)
         {
+            sectorDataIndex = 0;
+
             fdc.reset();
             /// region <Create parameters for READ_SECTOR>
             fdc._commandRegister = readSectorCommand;
