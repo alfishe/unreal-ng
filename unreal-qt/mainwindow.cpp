@@ -237,8 +237,21 @@ void MainWindow::changeEvent(QEvent* event)
             statusBar()->hide();
             startButton->hide();
 
+#ifdef _WIN32
+            if (_inTransitionToFullScreen)
+            {
+                _inTransitionToFullScreen = false;
+            }
+#else
+            // HIDE before changing flags
+            hide();
             setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
             showFullScreen();
+#endif // _WIN32
+
+
+
+
         }
         else if (newState == Qt::WindowNoState)
         {
@@ -249,6 +262,15 @@ void MainWindow::changeEvent(QEvent* event)
             {
                 return;
             }
+
+#ifdef _WIN32
+            // Do not react on intermediate events.
+            // On Windows the flow is: Maximize -> Restore -> FullScreen
+            if (_inTransitionToFullScreen && oldState == Qt::WindowMaximized)
+            {
+                return;
+            }
+#endif // _WIN32
 
             _isFullScreen = false;
 
@@ -637,21 +659,37 @@ void MainWindow::handleFullScreenShortcut()
 {
     if (isFullScreen())
     {
-#ifdef __APPLE__
         setWindowFlags(Qt::Window); // Prevent horizontal transition from full screen to system desktop
-#endif // __APPLE__
 
         // Exit full-screen mode
         showNormal();
     }
     else
     {
+        if (isMaximized() || isMinimized())
+            showNormal();  // Important to reset state
+
+        // Hide window before transformations
+        hide();
+
         // Enter full-screen mode
-#ifdef _WIN32
-        showMaximized();    // Windows flow: Normal -> Maximize -> FullScreen
-#else
-        showFullScreen();   // macOS and Linux - direct transition to FullScreen
-#endif // _WIN32
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        showFullScreen();    // Windows flow: Normal -> Maximize -> FullScreen
+
+        // Center the content in fullscreen
+        QWidget *centralWidget = this->centralWidget();
+        if (centralWidget)
+        {
+            // Ensure central widget has a layout
+            QVBoxLayout *layout = qobject_cast<QVBoxLayout*>(centralWidget->layout());
+            if (!layout)
+            {
+                layout = new QVBoxLayout(centralWidget); // Create layout if none exists
+            }
+
+            // Align the layout's contents to the center
+            layout->setAlignment(Qt::AlignCenter);
+        }
     }
 }
 

@@ -82,5 +82,6 @@ private:
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;
     bool _isFullScreen = false;
+    bool _inTransitionToFullScreen = false;
 };
 #endif // MAINWINDOW_H
