@@ -21,10 +21,28 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_subdirectory("${ROOT_DIR}/core/src" core)
 add_subdirectory("${ROOT_DIR}/core/tests" tests)
 
+# ========================================
+# Platform-specific Qt path detection
+# ========================================
 
-# Hint to CMake where to find Qt
-#set(CMAKE_PREFIX_PATH /Users/dev/Qt/6.5.0/macos)
-#set(CMAKE_MODULE_PATH /Users/dev/Qt/6.5.0/macos)
+# Default Qt paths (can be overridden via command line)
+if (NOT DEFINED QT_INSTALL_PATH)
+    if (APPLE)  # macOS
+        set(QT_INSTALL_PATH "$ENV{HOME}/Qt/6.5.0/macos")
+    elseif (UNIX AND NOT APPLE)  # Linux
+        set(QT_INSTALL_PATH "$ENV{HOME}/Qt/6.5.0/gcc_64")
+    elseif (WIN32)  # Windows
+        set(QT_INSTALL_PATH "C:/Qt/6.5.0/msvc2019_64")
+    endif ()
+else ()
+    message(STATUS "Using user-specified Qt path: ${QT_INSTALL_PATH}")
+endif ()
+
+# Allow overriding via -DQT_INSTALL_PATH=...
+set(QT_INSTALL_PATH "${QT_INSTALL_PATH}" CACHE PATH "Path to Qt installation")
+
+# Append Qt path to CMAKE_PREFIX_PATH
+list(APPEND CMAKE_PREFIX_PATH "${QT_INSTALL_PATH}")
 
 # Qt specific settings
 find_package(Qt6 REQUIRED)

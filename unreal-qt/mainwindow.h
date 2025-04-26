@@ -78,6 +78,9 @@ private:
     QPalette _originalPalette;
 
     QShortcut* _fullScreenShortcut = nullptr;
-    bool _inTransitionToFullScreen = false;
+
+    // Stores window geometry before going fullscreen / maximized
+    QRect _normalGeometry;
+    bool _isFullScreen = false;
 };
 #endif // MAINWINDOW_H
