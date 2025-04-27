@@ -4,7 +4,6 @@
 
 #include "stdafx.h"
 
-#include "3rdparty/pathie-cpp/path.hpp"
 #include <string>
 
 class FileHelper
