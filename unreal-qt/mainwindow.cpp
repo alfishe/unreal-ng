@@ -222,6 +222,8 @@ void MainWindow::changeEvent(QEvent* event)
         else if (newState & Qt::WindowFullScreen)
         {
             qDebug() << "FullScreen";
+
+            hide();
             _isFullScreen = true;
 
             // Store geometry if coming from normal state
@@ -250,6 +252,7 @@ void MainWindow::changeEvent(QEvent* event)
                 return;
             }
 
+            hide();
             _isFullScreen = false;
 
             // Restore normal styling
@@ -260,15 +263,13 @@ void MainWindow::changeEvent(QEvent* event)
             // Restore window flags and geometry
             setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
 
-            // Important: must hide/show when changing flags
-            hide();
-            show();
-
             // Restore to previous geometry
             if (_normalGeometry.isValid())
             {
                 setGeometry(_normalGeometry);
             }
+
+            showNormal();
         }
 
         update();
