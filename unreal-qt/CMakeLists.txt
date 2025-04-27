@@ -28,7 +28,12 @@ add_subdirectory("${ROOT_DIR}/core/tests" tests)
 # Default Qt paths (can be overridden via command line)
 if (NOT DEFINED QT_INSTALL_PATH)
     if (APPLE)  # macOS
-        set(QT_INSTALL_PATH "$ENV{HOME}/Qt/6.5.0/macos")
+        list(APPEND QT_INSTALL_PATH
+            "$ENV{HOME}/Qt/6.5.0/macos"
+            "$ENV{HOME}/Qt/6.5.3/macos"
+            "$ENV{HOME}/Qt/6.9.0/macos"
+            "$ENV{QTDIR}"
+        )
     elseif (UNIX AND NOT APPLE)  # Linux
         set(QT_INSTALL_PATH "$ENV{HOME}/Qt/6.5.0/gcc_64")
     elseif (WIN32)  # Windows
