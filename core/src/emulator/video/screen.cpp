@@ -38,15 +38,15 @@ Screen::Screen(EmulatorContext* context)
 {
     _context = context;
     _state = &_context->emulatorState;
-	_system = _context->pCore;
-	_cpu = _system->GetZ80();
-	_memory = _context->pMemory;
-	_logger = _context->pModuleLogger;
+    _system = _context->pCore;
+    _cpu = _system->GetZ80();
+    _memory = _context->pMemory;
+    _logger = _context->pModuleLogger;
 
 
-	// Set Normal screen (Bank 5) mode by default
-	_activeScreen = 0;
-	_activeScreenMemoryOffset = _memory->RAMPageAddress(5);
+    // Set Normal screen (Bank 5) mode by default
+    _activeScreen = 0;
+    _activeScreenMemoryOffset = _memory->RAMPageAddress(5);
 }
 
 Screen::~Screen()
@@ -78,19 +78,19 @@ void Screen::Reset()
 
 void Screen::InitFrame()
 {
-	_vid.buf ^= 0x00000001;						// Swap current video buffer
-	_vid.t_next = 0;
-	_vid.vptr = 0;
-	_vid.yctr = 0;
-	_vid.ygctr = _state->ts.g_yoffs - 1;
-	_vid.line = 0;								// Reset current render line
-	_vid.line_pos = 0;							// Reset current render line position
+    _vid.buf ^= 0x00000001;			// Swap current video buffer
+    _vid.t_next = 0;
+    _vid.vptr = 0;
+    _vid.yctr = 0;
+    _vid.ygctr = _state->ts.g_yoffs - 1;
+    _vid.line = 0;				// Reset current render line
+    _vid.line_pos = 0;				// Reset current render line position
 
     _state->ts.g_yoffs_updated = 0;
-	_vid.flash = _state->frame_counter & 0x10;	// Flash attribute changes each 16 frames
+    _vid.flash = _state->frame_counter & 0x10;	// Flash attribute changes each 16 frames
 
-	InitRaster();
-	InitMemoryCounters();
+    InitRaster();
+    InitMemoryCounters();
 }
 
 //
@@ -98,80 +98,80 @@ void Screen::InitFrame()
 //
 void Screen::InitRaster()
 {
-	EmulatorState& state = _context->emulatorState;
+    EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
     VideoControl& video = _vid;
 
-	VideoModeEnum prevMode = video.mode;
+    VideoModeEnum prevMode = video.mode;
 
-	///region Set current video mode
+    ///region Set current video mode
 
-	uint8_t m = EFF7_4BPP | EFF7_HWMC;
+    uint8_t m = EFF7_4BPP | EFF7_HWMC;
 
-	// ATM 1
-	if ((config.mem_model == MM_ATM450) && (((state.aFE >> 5) & 3) != FF77_ZX))
-	{
-		video.raster = raster[R_320_200];
-		if (((state.aFE >> 5) & 3) == aFE_16) { video.mode = M_ATM16; return; }
-		if (((state.aFE >> 5) & 3) == aFE_MC) { video.mode = M_ATMHR; return; }
-		video.mode = M_NUL;
-	}
+    // ATM 1
+    if ((config.mem_model == MM_ATM450) && (((state.aFE >> 5) & 3) != FF77_ZX))
+    {
+        video.raster = raster[R_320_200];
+        if (((state.aFE >> 5) & 3) == aFE_16) { video.mode = M_ATM16; return; }
+        if (((state.aFE >> 5) & 3) == aFE_MC) { video.mode = M_ATMHR; return; }
+        video.mode = M_NUL;
+    }
 
-	// ATM 2 & 3
-	if ((config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3) && ((state.pFF77 & 7) != FF77_ZX))
-	{
-		video.raster = raster[R_320_200];
-		if (config.mem_model == MM_ATM3 && (state.pEFF7 & m)) { video.mode = M_NUL; return; }	// EFF7 AlCo bits must be 00, or invalid mode
-		if ((state.pFF77 & 7) == FF77_16) { video.mode = M_ATM16; return; }
-		if ((state.pFF77 & 7) == FF77_MC) { video.mode = M_ATMHR; return; }
-		if ((state.pFF77 & 7) == FF77_TX) { video.mode = M_ATMTX; return; }
-		if (config.mem_model == MM_ATM3 && (state.pFF77 & 7) == FF77_TL) { video.mode = M_ATMTL; return; }
-		video.mode = M_NUL;
-	}
+    // ATM 2 & 3
+    if ((config.mem_model == MM_ATM710 || config.mem_model == MM_ATM3) && ((state.pFF77 & 7) != FF77_ZX))
+    {
+        video.raster = raster[R_320_200];
+        if (config.mem_model == MM_ATM3 && (state.pEFF7 & m)) { video.mode = M_NUL; return; }	// EFF7 AlCo bits must be 00, or invalid mode
+        if ((state.pFF77 & 7) == FF77_16) { video.mode = M_ATM16; return; }
+        if ((state.pFF77 & 7) == FF77_MC) { video.mode = M_ATMHR; return; }
+        if ((state.pFF77 & 7) == FF77_TX) { video.mode = M_ATMTX; return; }
+        if (config.mem_model == MM_ATM3 && (state.pFF77 & 7) == FF77_TL) { video.mode = M_ATMTL; return; }
+        video.mode = M_NUL;
+    }
 
-	video.raster = raster[R_256_192];
+    video.raster = raster[R_256_192];
 
-	// ATM 3 AlCo modes
-	if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
-	{
-		if ((state.pEFF7 & m) == EFF7_4BPP) { video.mode = M_P16; return; }
-		if ((state.pEFF7 & m) == EFF7_HWMC) { video.mode = M_PMC; return; }
+    // ATM 3 AlCo modes
+    if (config.mem_model == MM_ATM3 && (state.pEFF7 & m))
+    {
+        if ((state.pEFF7 & m) == EFF7_4BPP) { video.mode = M_P16; return; }
+        if ((state.pEFF7 & m) == EFF7_HWMC) { video.mode = M_PMC; return; }
 
-		video.mode = M_NUL;
-	}
+        video.mode = M_NUL;
+    }
 
-	// Pentagon AlCo modes
-	m = EFF7_4BPP | EFF7_512 | EFF7_384 | EFF7_HWMC;
-	if (config.mem_model == MM_PENTAGON && (state.pEFF7 & m))
-	{
-		if ((state.pEFF7 & m) == EFF7_4BPP) { video.mode = M_P16; return; }
-		if ((state.pEFF7 & m) == EFF7_HWMC) { video.mode = M_PMC; return; }
-		if ((state.pEFF7 & m) == EFF7_512) { video.mode = M_PHR; return; }
-		if ((state.pEFF7 & m) == EFF7_384) { video.raster = raster[R_384_304]; video.mode = M_P384; return; }
+    // Pentagon AlCo modes
+    m = EFF7_4BPP | EFF7_512 | EFF7_384 | EFF7_HWMC;
+    if (config.mem_model == MM_PENTAGON && (state.pEFF7 & m))
+    {
+        if ((state.pEFF7 & m) == EFF7_4BPP) { video.mode = M_P16; return; }
+        if ((state.pEFF7 & m) == EFF7_HWMC) { video.mode = M_PMC; return; }
+        if ((state.pEFF7 & m) == EFF7_512) { video.mode = M_PHR; return; }
+        if ((state.pEFF7 & m) == EFF7_384) { video.raster = raster[R_384_304]; video.mode = M_P384; return; }
 
-		video.mode = M_NUL;
-	}
+        video.mode = M_NUL;
+    }
 
-	if (config.mem_model == MM_PROFI && (state.pDFFD & 0x80))
-	{
-		video.raster = raster[R_512_240];
-		video.mode = M_PROFI;
-	}
+    if (config.mem_model == MM_PROFI && (state.pDFFD & 0x80))
+    {
+        video.raster = raster[R_512_240];
+        video.mode = M_PROFI;
+    }
 
-	if (config.mem_model == MM_GMX && (state.p7EFD & 0x08))
-	{
-		video.raster = raster[R_320_200];
-		video.mode = M_GMX;
-	}
+    if (config.mem_model == MM_GMX && (state.p7EFD & 0x08))
+    {
+        video.raster = raster[R_320_200];
+        video.mode = M_GMX;
+    }
 
-	// Sinclair
-	//video.mode = M_ZX48;
+    // Sinclair
+    //video.mode = M_ZX48;
 
-	///endregion
+    ///endregion
 
-	// Select renderer for the mode
-	if (prevMode != video.mode)
-	{
+    // Select renderer for the mode
+    if (prevMode != video.mode)
+    {
         SetVideoMode(video.mode);
 
         /// region <Sanity checks>
@@ -185,18 +185,17 @@ void Screen::InitRaster()
 #endif // _DEBUG
         /// endregion </Sanity checks>
     }
-
 }
 
 void Screen::InitMemoryCounters()
 {
     _state->video_memory_changed = false;
 
-	memset(_vid.memcpucyc, 0, 320 * sizeof(_vid.memcpucyc[0]));
-	memset(_vid.memvidcyc, 0, 320 * sizeof(_vid.memvidcyc[0]));
-	memset(_vid.memtsscyc, 0, 320 * sizeof(_vid.memtsscyc[0]));
-	memset(_vid.memtstcyc, 0, 320 * sizeof(_vid.memtstcyc[0]));
-	memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
+    memset(_vid.memcpucyc, 0, 320 * sizeof(_vid.memcpucyc[0]));
+    memset(_vid.memvidcyc, 0, 320 * sizeof(_vid.memvidcyc[0]));
+    memset(_vid.memtsscyc, 0, 320 * sizeof(_vid.memtsscyc[0]));
+    memset(_vid.memtstcyc, 0, 320 * sizeof(_vid.memtstcyc[0]));
+    memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
 }
 
 /// endregion </Initialization>
@@ -363,32 +362,32 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         return;
     }
 
-	// Deallocate existing framebuffer memory
-	DeallocateFramebuffer();
+    // Deallocate existing framebuffer memory
+    DeallocateFramebuffer();
 
-	bool isUnknownVideoMode = false;
-	switch (mode)
-	{
-		case M_ZX48:
-		case M_ZX128:
+    bool isUnknownVideoMode = false;
+    switch (mode)
+    {
+        case M_ZX48:
+        case M_ZX128:
         case M_PENTAGON128K:
-			break;
-		default:
-			MLOGWARNING("AllocateFramebuffer: Unknown video mode");
+            break;
+        default:
+            MLOGWARNING("AllocateFramebuffer: Unknown video mode");
 
             isUnknownVideoMode = true;
-			break;
-	}
+            break;
+    }
 
-	if (!isUnknownVideoMode)
-	{
-	    const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
+    if (!isUnknownVideoMode)
+    {
+        const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
 
         _framebuffer.videoMode = mode;
-	    _framebuffer.width = rasterDescriptor.fullFrameWidth;
-	    _framebuffer.height = rasterDescriptor.fullFrameHeight;
+        _framebuffer.width = rasterDescriptor.fullFrameWidth;
+        _framebuffer.height = rasterDescriptor.fullFrameHeight;
 
-	    // Calculate required buffer size and allocate memory
+        // Calculate required buffer size and allocate memory
         _framebuffer.memoryBufferSize = _framebuffer.width * _framebuffer.height * RGBA_SIZE;
         _framebuffer.memoryBuffer = new uint8_t[_framebuffer.memoryBufferSize];
 
@@ -404,21 +403,21 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         MLOGINFO(videoModeInfo);
 #endif
     }
-	else
+    else
     {
-	    MLOGERROR("Unable to allocate framebuffer, unknown video mode");
+        MLOGERROR("Unable to allocate framebuffer, unknown video mode");
         throw new std::logic_error("Unable to allocate framebuffer, unknown video mode");
     }
 }
 
 void Screen::DeallocateFramebuffer()
 {
-	if (_framebuffer.memoryBuffer != nullptr)
-	{
-		delete [] _framebuffer.memoryBuffer;
-		_framebuffer.memoryBuffer = nullptr;
-		_framebuffer.memoryBufferSize = 0;
-	}
+    if (_framebuffer.memoryBuffer != nullptr)
+    {
+            delete [] _framebuffer.memoryBuffer;
+            _framebuffer.memoryBuffer = nullptr;
+            _framebuffer.memoryBufferSize = 0;
+    }
 }
 
 FramebufferDescriptor& Screen::GetFramebufferDescriptor()
