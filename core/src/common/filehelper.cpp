@@ -3,6 +3,9 @@
 #include "filehelper.h"
 #include <algorithm>
 #include <filesystem>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -20,41 +23,35 @@ char FileHelper::GetPathSeparator()
 //
 std::string FileHelper::GetExecutablePath()
 {
-    string result;
+    std::filesystem::path exePath;
 
-    #if defined _WIN32
-        char buffer[MAX_PATH] = { '\0' };
-        GetModuleFileNameA(NULL, buffer, MAX_PATH - 1);
-        result = buffer;
-    #endif
+#if defined(_WIN32)
+    std::vector<char> buffer(4096);
+    DWORD length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0 || length == buffer.size())
+        return {}; // error
+    exePath = std::filesystem::path(buffer.data());
 
-    #ifdef __linux__
-        char buffer[PATH_MAX]  = { '\0' };
-        ssize_t count = readlink("/proc/self/exe", buffer, PATH_MAX - 1);
-        buffer[count] = '\0';
-        result = buffer;
-    #endif
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size); // get the size needed
+    std::vector<char> buffer(size);
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0)
+        return {}; // error
+    exePath = std::filesystem::path(buffer.data()).lexically_normal();
 
-    #ifdef __APPLE__
-        char buffer[PATH_MAX] = { '\0' };
-        uint32_t size = PATH_MAX - 1;
-        if (_NSGetExecutablePath(buffer, &size) == 0)
-        {
-            size = strnlen(buffer, size);
-			buffer[size] = '\0';
-            result = buffer;
-        }
-    #endif
+#elif defined(__linux__)
+    std::vector<char> buffer(4096);
+    ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+    if (length == -1)
+        return {}; // error
+    buffer[length] = '\0'; // readlink doesn't null-terminate
+    exePath = std::filesystem::path(buffer.data());
+#else
+    #error "Unsupported platform"
+#endif
 
-    Pathie::Path executablePath(result);
-    result = executablePath.parent().str();
-
-
-
-    Pathie::Path exepath = Pathie::Path::exe();
-    result = exepath.parent().str();
-
-	return result;
+    return exePath.parent_path().string();
 }
 
 std::string FileHelper::NormalizePath(const std::string& path, char separator)
@@ -126,6 +123,7 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
         result = std::string(buffer, length);
         result = NormalizePath(result);
     }
+    return result;
 #else // Unix-like systems (Linux and macOS)
     char buffer[PATH_MAX];
     char* resolved = realpath(path.c_str(), buffer);
@@ -172,21 +170,48 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
 
 std::string FileHelper::PathCombine(const std::string& path1, const std::string& path2)
 {
-#ifdef _WIN32
-    Pathie::Path basePath = Pathie::Path::from_native(StringHelper::StringToWideString(path1));
-#endif // _WIN32
+    std::string result;
 
-#ifndef _WIN32
-    Pathie::Path basePath = Pathie::Path::from_native(path1);
+    // Handle empty paths
+    if (path1.empty()) return path2;
+    if (path2.empty()) return path1;
+
+    // Combine paths
+    char separator = '/'; // Use forward slash as universal separator
+
+    // Check if path1 ends with separator or path2 starts with one
+    bool path1_has_sep = !path1.empty() && (path1.back() == '/' || path1.back() == '\\');
+    bool path2_has_sep = !path2.empty() && (path2.front() == '/' || path2.front() == '\\');
+
+    if (path1_has_sep && path2_has_sep)
+    {
+        result = path1 + path2.substr(1);
+    }
+    else if (path1_has_sep || path2_has_sep)
+    {
+        result = path1 + path2;
+    }
+    else
+    {
+        result = path1 + separator + path2;
+    }
+
+    // Normalize the path (convert to forward slashes, remove duplicates, etc.)
+    result = NormalizePath(result);
+
+#ifdef _WIN32
+    // On Windows, we might want to handle drive letters and UNC paths
+    if (result.size() >= 2 && result[1] == ':')
+    {
+        // Drive letter path - ensure proper formatting
+        if (result.size() > 2 && result[2] != '/')
+        {
+            result.insert(2, 1, '/');
+        }
+    }
 #endif
 
-    basePath.expand();
-    basePath /= path2;
-
-    std::string result = basePath.str();
-	result = NormalizePath(result);
-
-	return result;
+    return result;
 }
 
 std::string FileHelper::PathCombine(const std::string& path1, const char* path2)
@@ -211,28 +236,14 @@ bool FileHelper::IsFolder(const std::string& path)
 
 bool FileHelper::FileExists(const std::string& path)
 {
-	bool result = false;
-	Pathie::Path basePath(path);
-
-	if (basePath.exists() && basePath.is_file())
-	{
-		result = true;
-	}
-
-	return result;
+    std::error_code ec; // To avoid throwing exceptions
+    return fs::is_regular_file(path, ec) && !ec;
 }
 
 bool FileHelper::FolderExists(const std::string& path)
 {
-	bool result = false;
-    Pathie::Path basePath(path);
-
-	if (basePath.exists() && basePath.is_directory())
-	{
-		result = true;
-	}
-
-	return result;
+    std::error_code ec; // To avoid throwing exceptions
+    return fs::is_directory(path, ec) && !ec;
 }
 
 size_t FileHelper::GetFileSize(const std::string& path)
@@ -279,12 +290,13 @@ size_t FileHelper::GetFileSize(FILE* file)
 
 std::string FileHelper::GetFileExtension(const std::string& path)
 {
-    std::string result;
-
-    Pathie::Path filepath(path);
-    result = filepath.extension();
-
-    return result;
+    fs::path filepath(path);
+    std::string ext = filepath.extension().string();
+    if (!ext.empty() && ext[0] == '.')
+        ext = ext.substr(1);
+    // Convert to lowercase if desired (common convention)
+    // std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    return ext;
 }
 
 std::string FileHelper::PrintablePath(const std::string& path)

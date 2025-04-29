@@ -15,6 +15,43 @@ void FileHelper_Test::TearDown() {}
 
 /// endregion </SetUp / TearDown>
 
+TEST_F(FileHelper_Test, GetExecutablePath)
+{
+    std::string exePath = FileHelper::GetExecutablePath();
+    std::cout << "Executable path: " << exePath << std::endl;
+    ASSERT_FALSE(exePath.empty());
+    // The executable path should exist as a directory
+    ASSERT_TRUE(FileHelper::FolderExists(exePath));
+}
+
+TEST_F(FileHelper_Test, GetFileExtension)
+{
+    struct TestCase
+    {
+        std::string filename;
+        std::string expected;
+    };
+
+    std::vector<TestCase> cases =
+            {
+        {"test.txt", "txt"},
+        {"archive.tar.gz", "gz"},
+        {"no_extension", ""},
+        {".hiddenfile", ""},
+        {"folder/file.jpeg", "jpeg"},
+        {"C:/path/to/file.exe", "exe"},
+        {"/unix/path/file", ""},
+        {"C:\\windows\\file.dll", "dll"},
+        {"complex.name.with.many.dots.bin", "bin"}
+    };
+
+    for (const auto& test : cases)
+    {
+        std::string ext = FileHelper::GetFileExtension(test.filename);
+        ASSERT_EQ(ext, test.expected) << "For: " << test.filename;
+    }
+}
+
 TEST_F(FileHelper_Test, NormalizePath)
 {
     std::string testPaths[4] =
