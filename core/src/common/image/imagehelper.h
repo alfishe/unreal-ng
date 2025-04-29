@@ -16,11 +16,11 @@ public:
 
     /// region <Synchronous operations>
 public:
-	static void SavePNG(std::string filename, uint8_t* buffer, size_t size, unsigned width, unsigned height);
-	static void SaveFrameToPNG(uint8_t* buffer, size_t size, unsigned width, unsigned height, int frameNumber = -1);
+    static void SavePNG(std::string filename, uint8_t* buffer, size_t size, unsigned width, unsigned height);
+    static void SaveFrameToPNG(uint8_t* buffer, size_t size, unsigned width, unsigned height, int frameNumber = -1);
     static void SaveFrameToHex(uint8_t* buffer, size_t size, int frameNumber = -1);
 
-	static void SaveZXSpectrumNativeScreen(uint8_t* buffer, int frameNumber = -1);
+    static void SaveZXSpectrumNativeScreen(uint8_t* buffer, int frameNumber = -1);
 
     /// endregion </Synchronous operations>
 };
