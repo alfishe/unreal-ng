@@ -313,6 +313,7 @@ TEST_F(LoaderTRD_Test, Format)
                     EXPECT_EQ(markRecord->head, side) << "Invalid head number";
                     EXPECT_EQ(markRecord->sector, sector + 1) << "Invalid sector number";
                     EXPECT_EQ(markRecord->sector_size, 0x01) << "Invalid sector size";
+                    EXPECT_TRUE(markRecord->isCRCValid()) << "Invalid CRC for sector ID mark";
                 }
             }
         }
