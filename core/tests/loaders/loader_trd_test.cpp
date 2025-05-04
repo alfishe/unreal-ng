@@ -241,4 +241,84 @@ TEST_F(LoaderTRD_Test, validateEmptyTRDOSImage)
     }
 }
 
+/// Test format method for all supported TR-DOS disk types
+TEST_F(LoaderTRD_Test, Format)
+{
+    // Test all supported TR-DOS disk formats
+    struct DiskFormat
+    {
+        uint8_t tracks;
+        uint8_t sides;
+        TRDDiskType diskType;
+        uint16_t expectedFreeSectors;
+    };
+
+    // Define all supported disk formats and their expected free sectors
+    const std::vector<DiskFormat> formats =
+    {
+        { 80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK },  // 80 tracks, double-sided (DS)
+        { 40, 2, DS_40, TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK },  // 40 tracks, double-sided (DS)
+        { 80, 1, SS_80, TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK },  // 80 tracks, single-sided (SS)
+        { 40, 1, SS_40, TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK }   // 40 tracks, single-sided (SS)
+    };
+
+    for (const auto& format : formats)
+    {
+        SCOPED_TRACE(StringHelper::Format("Testing format: %d tracks, %d sides", format.tracks, format.sides));
+
+        // Create disk image with specified format
+        DiskImage* diskImage = new DiskImage(format.tracks, format.sides);
+        ASSERT_NE(diskImage, nullptr) << "Failed to create disk image";
+
+        // Create loader
+        LoaderTRDCUT loaderTrd(_context, "");
+
+        // Format the disk
+        bool formatResult = loaderTrd.format(diskImage);
+        EXPECT_TRUE(formatResult) << "Format failed for disk type " << getTRDDiskTypeName(format.diskType);
+
+        // Verify volume information
+        DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+        ASSERT_NE(track0, nullptr) << "Track 0 not found";
+
+        uint8_t* volumeSector = track0->getDataForSector(8); // Volume sector is sector 9 (index 8)
+        ASSERT_NE(volumeSector, nullptr) << "Volume sector not found";
+
+        TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)volumeSector;
+        ASSERT_NE(volumeInfo, nullptr) << "Volume info not found";
+
+        // Verify volume information fields
+        EXPECT_EQ(volumeInfo->trDOSSignature, TRD_SIGNATURE) << "Invalid TR-DOS signature";
+        EXPECT_EQ(volumeInfo->diskType, format.diskType) << "Invalid disk type";
+        EXPECT_EQ(volumeInfo->freeSectorCount, format.expectedFreeSectors) << "Invalid free sectors count";
+        EXPECT_EQ(volumeInfo->firstFreeTrack, 1) << "Invalid first free track";
+        EXPECT_EQ(volumeInfo->firstFreeSector, 0) << "Invalid first free sector";
+        EXPECT_EQ(volumeInfo->fileCount, 0) << "Invalid file count";
+        EXPECT_EQ(volumeInfo->deletedFileCount, 0) << "Invalid deleted file count";
+
+        // Verify all sectors are formatted
+        for (uint8_t cylinder = 0; cylinder < format.tracks; cylinder++)
+        {
+            for (uint8_t side = 0; side < format.sides; side++)
+            {
+                DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(cylinder, side);
+                ASSERT_NE(track, nullptr) << "Track not found for cylinder " << (int)cylinder << " side " << (int)side;
+
+                for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; sector++)
+                {
+                    DiskImage::AddressMarkRecord* markRecord = track->getIDForSector(sector);
+                    ASSERT_NE(markRecord, nullptr) << "ID record not found for sector " << (int)sector;
+
+                    EXPECT_EQ(markRecord->cylinder, cylinder) << "Invalid cylinder number";
+                    EXPECT_EQ(markRecord->head, side) << "Invalid head number";
+                    EXPECT_EQ(markRecord->sector, sector + 1) << "Invalid sector number";
+                    EXPECT_EQ(markRecord->sector_size, 0x01) << "Invalid sector size";
+                }
+            }
+        }
+
+        delete diskImage;
+    }
+}
+
 /// endregion </Tests>
