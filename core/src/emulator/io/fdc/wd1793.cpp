@@ -1036,11 +1036,22 @@ void  WD1793::type1CommandVerify()
 /// endregion </Command handling>
 
 /// region <State machine handlers>
+
+
+/// @brief Processes idle state in the WD1793 controller FSM
+/// @details Clears the busy flag in the status register when the controller
+///          is in idle state and not executing any commands
 void WD1793::processIdle()
 {
     _statusRegister &= ~WDS_BUSY;   // Remove busy flag
 }
 
+
+/// @brief Processes wait state in the WD1793 controller FSM
+/// @details Handles timing delays in the controller state machine by decreasing the
+///          delay counter and transitioning to the next state when the delay has elapsed.
+///          This emulates the real hardware timing requirements for operations like
+///          head stepping and motor spin-up.
 void WD1793::processWait()
 {
     // Attempt time correction before checks
