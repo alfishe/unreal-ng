@@ -1518,6 +1518,7 @@ bool WD1793::attachToPorts()
 {
     bool result = false;
 
+    
     PortDecoder* decoder = _context->pPortDecoder;
     if (decoder)
     {

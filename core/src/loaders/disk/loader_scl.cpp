@@ -82,7 +82,7 @@ bool LoaderSCL::loadSCL()
                     }
 
                     // Check if all files in SCL image fit into the empty disk
-                    if (totalSizeSectors <= TRD_FREE_SECTORS_ON_EMPTY_DISK)
+                    if (totalSizeSectors <= TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK)
                     {
                         // Add files to the image one by one
                         for (size_t i = 0; i < header->FileCount; i++)

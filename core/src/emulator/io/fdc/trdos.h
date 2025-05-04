@@ -14,10 +14,11 @@
 /// region <Constants>
 
 static constexpr const uint8_t TRD_SIGNATURE = 0x10;          // Unique signature for TR-DOS volume. Must be placed at offset
-static constexpr const uint8_t TRD_DS_80_TRACKS = 80;         // TR-DOS uses 80 tracks for Double-Side (DS) disks
+static constexpr const uint8_t TRD_80_TRACKS = 80;         // TR-DOS uses 80 tracks for Double-Side (DS) disks
+static constexpr const uint8_t TRD_40_TRACKS = 40;         // TR-DOS uses 40 tracks for Double-Side (DS) disks
 static constexpr const uint8_t TRD_SECTORS_PER_TRACK = 16;    // TR-DOS uses 16 sectors per track
 static constexpr const uint16_t TRD_SECTORS_SIZE_BYTES = 256; // TR-DOS uses 256 bytes sectors
-static constexpr const uint16_t TRD_FREE_SECTORS_ON_EMPTY_DISK = (TRD_DS_80_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
+static constexpr const uint16_t TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK = (TRD_80_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
 
 static constexpr const uint8_t TRD_MAX_FILES = 128;           // TR-DOS catalog can handle only up to 128 files
 static constexpr const uint8_t TRD_VOLUME_SECTOR = 9 - 1;     // Sector 9 on track 0 stores volume information
@@ -37,6 +38,22 @@ enum TRDDiskType : uint8_t
     SS_40 = 0x19
 };
 
+static inline std::string getTRDDiskTypeName(uint8_t type)
+{
+    std::string result = "<Unknown>";
+
+    switch (type)
+    {
+        case DS_80: result = "DS_80"; break;
+        case DS_40: result = "DS_40"; break;
+        case SS_80: result = "SS_80"; break;
+        case SS_40: result = "SS_40"; break;
+        default: break;
+    }
+
+    return result;
+}
+
 #pragma pack(push, 1)
 
 /// Sector 9 contains disk descriptor
@@ -48,7 +65,7 @@ struct TRDVolumeInfo
     uint8_t firstFreeTrack = 1;
     uint8_t diskType = DS_80;           // Disk type. Bit3 - Number of sides. 0 -> 1 side, 1 -> 2 sides. Bit0 - Number of tracks. 0 -> 40 tracks, 1 -> 80 tracks (0x16..0x19).
     uint8_t fileCount = 0;
-    uint16_t freeSectorCount = TRD_FREE_SECTORS_ON_EMPTY_DISK;
+    uint16_t freeSectorCount = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
     uint8_t trDOSSignature = TRD_SIGNATURE;   // TR-DOS system signature
     uint8_t reserved1[2] = { 0x00, 0x00 };
     uint8_t reserved2[9] = { 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20 };    // Password?
@@ -145,5 +162,40 @@ struct TRDCatalog
 };
 
 #pragma pack(pop)
+
+enum TRDValidationErrorType : uint8_t
+{
+    DISK_IMAGE_NULL,
+    TRACK_DATA_NULL,
+    SECTOR_DATA_NULL,
+    INVALID_DISK_TYPE,
+    INVALID_FILE_COUNT,
+    INVALID_FREE_SECTORS_COUNT,
+    INVALID_FIRST_FREE_TRACK,
+    INVALID_FIRST_FREE_SECTOR,
+    INVALID_TRDOS_SIGNATURE,
+    INVALID_DELETED_FILE_COUNT,
+    INVALID_FILE_NAME,
+    INVALID_START_TRACK,
+    INVALID_START_SECTOR,
+};
+
+struct TRDValidationRecord
+{
+    std::string message;
+    TRDValidationErrorType type;
+    uint8_t track = 0;
+    uint8_t sector = 0;
+    uint8_t fileIndex = 0;
+};
+
+struct TRDValidationReport
+{
+    bool isValid = false;
+
+    std::list<TRDValidationRecord> errors;
+};
+
+
 
 /// endregion </Types>
