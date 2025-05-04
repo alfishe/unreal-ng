@@ -18,7 +18,19 @@ static constexpr const uint8_t TRD_80_TRACKS = 80;         // TR-DOS uses 80 tra
 static constexpr const uint8_t TRD_40_TRACKS = 40;         // TR-DOS uses 40 tracks for Double-Side (DS) disks
 static constexpr const uint8_t TRD_SECTORS_PER_TRACK = 16;    // TR-DOS uses 16 sectors per track
 static constexpr const uint16_t TRD_SECTORS_SIZE_BYTES = 256; // TR-DOS uses 256 bytes sectors
-static constexpr const uint16_t TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK = (TRD_80_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK; // Whole first track is loaded with TR-DOS system information, so only 2544 sectors available
+
+// The whole first track is loaded with TR-DOS system information, so only 2544 sectors available
+static constexpr const uint16_t TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK = (TRD_80_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK;
+
+// The whole first track is loaded with TR-DOS system information, so only 1264 sectors available
+static constexpr const uint16_t TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK = (TRD_40_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK;
+
+// The whole first track is loaded with TR-DOS system information, so only 1264 sectors available
+static constexpr const uint16_t TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK = (TRD_80_TRACKS - 1) * TRD_SECTORS_PER_TRACK;
+
+// The whole first track is loaded with TR-DOS system information, so only 624 sectors available
+static constexpr const uint16_t TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK = (TRD_40_TRACKS - 1) * TRD_SECTORS_PER_TRACK;
+
 
 static constexpr const uint8_t TRD_MAX_FILES = 128;           // TR-DOS catalog can handle only up to 128 files
 static constexpr const uint8_t TRD_VOLUME_SECTOR = 9 - 1;     // Sector 9 on track 0 stores volume information
@@ -49,6 +61,33 @@ static inline std::string getTRDDiskTypeName(uint8_t type)
         case SS_80: result = "SS_80"; break;
         case SS_40: result = "SS_40"; break;
         default: break;
+    }
+
+    return result;
+}
+
+static inline uint16_t getFreeSectorCountForDiskType(uint8_t diskType)
+{
+    uint16_t result;
+
+    switch (diskType)
+    {
+        case DS_80:
+            result = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
+            break;
+        case DS_40:
+            result = TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK;
+            break;
+        case SS_80:
+            result = TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK;
+            break;
+        case SS_40:
+            result = TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK;
+            break;
+        default:
+            result = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
+            throw std::logic_error("Invalid disk type");;
+            break;
     }
 
     return result;

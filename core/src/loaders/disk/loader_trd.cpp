@@ -101,60 +101,87 @@ bool LoaderTRD::writeImage()
      bool result = false;
 
      /// region <Sanity checks>
-     if (diskImage == nullptr)
-     {
-         return result;
-     }
-     /// endregion </Sanity checks>
+    if (diskImage == nullptr)
+    {
+        return result;
+    }
 
-     /// region <Get preferred interleave pattern from config>
-     uint8_t interleavePatternIndex = _context->config.trdos_interleave;
-     if (interleavePatternIndex >= 3)
-     {
-         interleavePatternIndex = 1;    // Turbo pattern from TR-DOS 5.04T by default
-     }
+    uint8_t cylinders = diskImage->getCylinders();
+    uint8_t sides = diskImage->getSides();
 
-     /// endregion </Get preferred interleave pattern from config>
+    // Validate disk type based on cylinders and sides
+    TRDDiskType diskType;
+    if (cylinders == TRD_80_TRACKS)
+    {
+        if (sides == 2)
+            diskType = DS_80;
+        else if (sides == 1)
+            diskType = SS_80;
+        else
+            return false;  // Invalid number of sides
+    }
+    else if (cylinders == TRD_40_TRACKS)
+    {
+        if (sides == 2)
+            diskType = DS_40;
+        else if (sides == 1)
+            diskType = SS_40;
+        else
+            return false;  // Invalid number of sides
+    }
+    else
+    {
+        return false;  // Invalid number of tracks
+    }
 
-     uint8_t cylinders = diskImage->getCylinders();
-     uint8_t sides = diskImage->getSides();
-     for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
-     {
-         for (uint8_t side = 0; side < sides; side++)
-         {
-             /// region <Step 1: position to the track (cylinder+side) within disk image data>
-             DiskImage::Track& track = *diskImage->getTrackForCylinderAndSide(cylinder, side);
-             /// endregion </Step 1: position to the track (cylinder+side) within disk image data>
+    /// endregion </Sanity checks>
 
-             /// region <Step 2: Fully re-initialize low-level formatting by applying default object state>
-             track.reset();
+    /// region <Get preferred interleave pattern from config>
+    uint8_t interleavePatternIndex = _context->config.trdos_interleave;
+    if (interleavePatternIndex >= 3)
+    {
+        interleavePatternIndex = 1;    // Turbo pattern from TR-DOS 5.04T by default
+    }
+    /// endregion </Get preferred interleave pattern from config>
 
-             // Apply the interleave sector pattern used during formatting and re-index sector information
-             track.applyInterleaveTable(INTERLEAVE_PATTERNS[interleavePatternIndex]);
+    // Initialize all tracks
+    for (uint8_t cylinder = 0; cylinder < cylinders; cylinder++)
+    {
+        for (uint8_t side = 0; side < sides; side++)
+        {
+            /// region <Step 1: position to the track (cylinder+side) within disk image data>
+            DiskImage::Track& track = *diskImage->getTrackForCylinderAndSide(cylinder, side);
+            /// endregion </Step 1: position to the track (cylinder+side) within disk image data>
 
-             /// endregion </Step 2: Fully re-initialize low-level formatting by applying default object state>
+            /// region <Step 2: Fully re-initialize low-level formatting by applying default object state>
+            track.reset();
 
-             /// region <Step 3: format the track on logical level (put valid ID records to each sector)>
-             for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; sector++)
-             {
-                 [[maybe_unused]] uint8_t sectorNumber = INTERLEAVE_PATTERNS[interleavePatternIndex][sector];
+            // Apply the interleaving sector pattern used during formatting and re-index sector information
+            track.applyInterleaveTable(INTERLEAVE_PATTERNS[interleavePatternIndex]);
 
-                 // Populate sector ID information and recalculate ID CRC
-                 DiskImage::AddressMarkRecord& markRecord = *track.getIDForSector(sector);
-                 markRecord.cylinder = cylinder;
-                 markRecord.head = 0;
-                 markRecord.sector = sector + 1;
-                 markRecord.sector_size = 0x01;  // Default TR-DOS: 1 - 256 bytes sector
-                 markRecord.recalculateCRC();
-             }
-             /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>
+            /// endregion </Step 2: Fully re-initialize low-level formatting by applying default object state>
 
-             result = true;
-         }
-     }
+            /// region <Step 3: format the track on logical level (put valid ID records to each sector)>
+            for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; sector++)
+            {
+                [[maybe_unused]] uint8_t sectorNumber = INTERLEAVE_PATTERNS[interleavePatternIndex][sector];
 
-     // Step 4: write volume information
-     populateEmptyVolumeInfo(diskImage);
+                // Populate sector ID information and recalculate ID CRC
+                DiskImage::AddressMarkRecord& markRecord = *track.getIDForSector(sector);
+                markRecord.cylinder = cylinder;
+                markRecord.head = side;         // Fix: head should be the current side
+                markRecord.sector = sector + 1;
+                markRecord.sector_size = 0x01;  // Default TR-DOS: 1 => 256 bytes sector
+                markRecord.recalculateCRC();
+            }
+            /// endregion </Step 3: format the track on logical level (put valid ID records to each sector)>
+
+            result = true;
+        }
+    }
+
+    // Step 4: write volume information with correct disk type
+    populateEmptyVolumeInfo(diskImage, diskType);
 
     return result;
  }
@@ -442,33 +469,22 @@ bool LoaderTRD::writeImage()
     // Check free sectors counter (should be reasonable for a disk)
     uint16_t freeSectors = volumeSector->freeSectorCount;
 
-    uint16_t expectedFreeSectors = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
-    switch (volumeSector->diskType)
+    // Check disk type
+    uint8_t diskType = volumeSector->diskType;
+    if (diskType != DS_80 && diskType != DS_40 && diskType != SS_80 && diskType != SS_40)
     {
-        case DS_80:
-            expectedFreeSectors = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
-            break;
-        case DS_40:
-            expectedFreeSectors = TRD_40_TRACKS * MAX_SIDES - 1;
-            break;
-        case SS_80:
-            expectedFreeSectors = TRD_80_TRACKS - 1;
-            break;
-        case SS_40:
-            expectedFreeSectors = TRD_40_TRACKS - 1;
-            break;
-        default:
+        TRDValidationRecord record =
         {
-            TRDValidationRecord record =
-            {
-                .message = "Invalid disk type",
-                .type = INVALID_DISK_TYPE
-            };
-            report.errors.push_back(record);
-            report.isValid = false;
-            return false;
-        }
+            .message = "Invalid disk type",
+            .type = INVALID_DISK_TYPE,
+            .track = 0,
+            .sector = TRD_VOLUME_SECTOR
+        };
+        report.errors.push_back(record);
+        report.isValid = false;
     }
+
+    uint16_t expectedFreeSectors = getFreeSectorCountForDiskType( volumeSector->diskType );
 
     if (freeSectors != expectedFreeSectors)
     {
@@ -570,15 +586,17 @@ bool LoaderTRD::transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t
     return result;
 }
 
-void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage)
+void LoaderTRD::populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskType)
 {
     DiskImage::Track* track = diskImage->getTrack(0);
     DiskImage::RawSectorBytes* sector = track->getSector(TRD_VOLUME_SECTOR);
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)sector->data;
 
+    uint16_t freeSectorCount = getFreeSectorCountForDiskType(diskType);
+
     volumeInfo->trDOSSignature = TRD_SIGNATURE;
-    volumeInfo->diskType = DS_80;
-    volumeInfo->freeSectorCount = TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK;
+    volumeInfo->diskType = diskType;
+    volumeInfo->freeSectorCount = freeSectorCount;
     volumeInfo->firstFreeTrack = 1;
     volumeInfo->firstFreeSector = 0;
     volumeInfo->deletedFileCount = 0;

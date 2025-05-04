@@ -135,6 +135,8 @@ TEST_F(LoaderTRD_Test, Sector9)
     EXPECT_EQ(volumeInfo->deletedFileCount, 0);
 }
 
+
+
 // Test validateTRDOSImage method
 TEST_F(LoaderTRD_Test, validateTRDOSImage)
 {
@@ -142,10 +144,9 @@ TEST_F(LoaderTRD_Test, validateTRDOSImage)
     std::string filepath = "testdata/loaders/trd/EyeAche.trd";
     filepath = FileHelper::AbsolutePath(filepath);
 
-
     /// region <Prepare test>
 
-    // Create loader but don't load image yet
+    // Create loader
     LoaderTRDCUT loaderTrd(_context, filepath);
     
     // Load the image
@@ -186,10 +187,10 @@ TEST_F(LoaderTRD_Test, validateEmptyTRDOSImage)
     // Define all supported disk formats and their expected free sectors
     const std::vector<DiskFormat> formats =
     {
-        { 80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK},                     // 80 tracks, double-sided (DS)
-        { 40, 2, DS_40, (TRD_40_TRACKS * MAX_SIDES - 1) * TRD_SECTORS_PER_TRACK }, // 40 tracks, double-sided (DS)
-        { 80, 1, SS_80, (TRD_80_TRACKS - 1) * TRD_SECTORS_PER_TRACK },             // 80 tracks, single-sided (SS)
-        { 40, 1, SS_40, (TRD_40_TRACKS - 1) * TRD_SECTORS_PER_TRACK }              // 40 tracks, single-sided (SS)
+        { 80, 2, DS_80, TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK},          // 80 tracks, double-sided (DS)
+        { 40, 2, DS_40, TRD_FREE_SECTORS_ON_DS_40_EMPTY_DISK },         // 40 tracks, double-sided (DS)
+        { 80, 1, SS_80, TRD_FREE_SECTORS_ON_SS_80_EMPTY_DISK },         // 80 tracks, single-sided (SS)
+        { 40, 1, SS_40, TRD_FREE_SECTORS_ON_SS_40_EMPTY_DISK }          // 40 tracks, single-sided (SS)
     };
 
     for (const auto& format : formats)
