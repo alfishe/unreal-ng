@@ -21,7 +21,14 @@
 #if _WIN32
 #include <winsock.h>
 #include <malloc.h>
-#pragma comment(lib, "Ws2_32.lib")
+#ifdef _MSC_VER
+    // Only use pragma comment for MSVC
+    #pragma comment(lib, "Ws2_32.lib")
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+    // For MinGW or other Windows compilers
+    // No pragma, link via compiler flag (-lws2_32)
+#endif
 #else
 #include <alloca.h>
 #include <netinet/in.h>
@@ -35,10 +42,13 @@ int tinywav_open_write(TinyWav *tw,
                        const char *path)
 {
 #if _WIN32
-    errno_t err = fopen_s(&tw->file, path, "w");
-  assert(err == 0);
+    [[maybe_unused]] errno_t err = fopen_s(&tw->file, path, "wb");
+    char buf[1024];
+    strerror_s(buf, sizeof(buf), err);
+    fprintf(stderr, "Failed to open file: %s\n", buf);
+    assert(err == 0);
 #else
-    tw->file = fopen(path, "w");
+    tw->file = fopen(path, "wb");
 #endif
     assert(tw->file != NULL);
     tw->numChannels = numChannels;
@@ -193,8 +203,11 @@ int tinywav_read_f(TinyWav *tw, void *data, int len) {
 }
 
 void tinywav_close_read(TinyWav *tw) {
-  fclose(tw->file);
-  tw->file = NULL;
+    if (tw->file) {
+        fflush(tw->file);
+        fclose(tw->file);
+        tw->file = NULL;
+    }
 }
 
 int tinywav_write_i(TinyWav *tw, void *in, int lenSamples)
