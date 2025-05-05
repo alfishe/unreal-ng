@@ -306,7 +306,7 @@ uint8_t WD1793::getStatusRegister()
         // Clear all bits that will be recalculated
         _statusRegister &= ~(WDS_INDEX | WDS_TRK00 | WDS_HEADLOADED | WDS_WRITEPROTECTED);
 
-        // Update index strobe state according rotation timing
+        // Update index strobe state according to rotation timings
         processFDDIndexStrobe();
         if (_index)
         {
@@ -329,24 +329,71 @@ uint8_t WD1793::getStatusRegister()
     }
     else
     {
-        // Type II or III command so bit 1 should be DRQ
+        // Type II or III command specific status register bits
+        // Main differences:
+        // - Bit 1 means DRQ (Data Request)
+        // - Bit 2 means LOST DATA (CPU was unable to read or write the data from data register during 13us waiting period)
+        // - Bits 3 to 6 are specific for each command
+        // - Bit 7 means NOT READY (FDC is not ready to accept commands)
+
+        // Reset bits according each command requirements from the datasheet
+        switch (_lastDecodedCmd)
+        {
+            case WD_CMD_READ_ADDRESS:
+                _statusRegister &= 0b1001'1111; // Reset bit5 and bit6 as stated in the datasheet
+
+                // DRQ bit means that the FDC has placed one byte of the ID field into the Data Register, and the host CPU can read it
+                break;
+            case WD_CMD_READ_SECTOR:
+                _statusRegister &= 0b1011'1111; // Reset bit 6 as stated in the datasheet
+
+                // DRQ bit means that the FDC has fetched the next byte of the sector data and placed it into the Data Register
+                break;
+            case WD_CMD_WRITE_SECTOR:
+                // No bits reset => All bits are used for the Write Sector command
+
+                // DRQ bit indicates that the FDC is ready to accept data from the CPU
+                break;
+            case WD_CMD_READ_TRACK:
+                _statusRegister &= 0b1000'0111; // Reset bits 3 to 6 as stated in the datasheet
+
+                // DRQ bit means that a raw data byte, including gaps and sync marks, is placed into the Data Register
+                break;
+            case WD_CMD_WRITE_TRACK:
+                _statusRegister &= 0b1110'0111; // Reset bit3 and bit4 as stated in the datasheet
+
+                // DRQ bit indicates that the FDC is ready to accept data from the CPU
+                break;
+            default:
+                throw std::logic_error("Unknown FDC command");
+                break;
+        }
+
+        // NOT READY (bit 7) is driven by FDC state machine
+        if (isReady())
+        {
+            _statusRegister &= ~WDS_NOTRDY;
+        }
+        else
+        {
+            _statusRegister |= WDS_NOTRDY;
+        }
+
+        // DRQ (bit 1) for all Type II and III commands is driven by an FDC state machine
+        // But since beta128 register is used to hold chip DRQ output signal - get it from there
+        _statusRegister |= (_beta128status & DRQ);
     }
 
-    if (isReady())
-    {
-        _statusRegister &= ~WDS_NOTRDY;
-    }
-    else
-    {
-        _statusRegister |= WDS_NOTRDY;
-    }
+    // BUSY (bit 0) is driven by an FDC state machine and set directly during command processing
 
     return _statusRegister;
 }
 
 bool WD1793::isReady()
 {
-    bool result = _selectedDrive->isDiskInserted();
+    // NOT READY status register bit
+    // MR (Master Reset) signal OR inverted drive readiness signal
+    bool result = _selectedDrive->isDiskInserted() | ((_beta128Register & BETA128_COMMAND_BITS::BETA_CMD_RESET) == 0);
 
     return result;
 }
@@ -742,6 +789,27 @@ void WD1793::cmdWriteSector(uint8_t value)
 
     startType2Command();
 
+    // Step 1: search for ID address mark
+    /*
+    FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID,
+                        []() {}
+                        );
+    _operationFIFO.push(searchIDAM);
+    */
+
+    // Step 2: start sector writing (queue correspondent command to the FIFO)
+    FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]()
+        {
+            // Position to the sector requested
+            DiskImage* diskImage = this->_selectedDrive->getDiskImage();
+            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+            this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
+            this->_rawDataBuffer = this->_sectorData;
+        });
+    _operationFIFO.push(writeSector);
+
+    // Start FSM playback using FIFO queue
+    transitionFSM(WDSTATE::S_FETCH_FIFO);
 }
 
 /// Upon receipt of the Read Address command, the head is loaded and the Busy Status bit is set.
@@ -1345,9 +1413,114 @@ void WD1793::processReadByte()
     }
 }
 
+void WD1793::processWriteSector()
+{
+    _bytesToWrite = _sectorSize;
+
+    // If multiple sectors requested - register a follow-up operation in FIFO
+    if (_commandRegister & CMD_MULTIPLE && _sectorRegister < DiskImage::RawTrack::SECTORS_PER_TRACK - 1)
+    {
+        // Register one more WRITE_SECTOR operation. Lambda will be executed just before FSM state switch
+        FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]()
+            {
+                // Increase sector number for writing
+                this->_sectorRegister += 1;
+
+                // Re-position to new sector
+                DiskImage* diskImage = this->_selectedDrive->getDiskImage();
+                if (diskImage)
+                {
+                    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+                    this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
+
+                    this->_rawDataBuffer = this->_sectorData;
+                    this->_bytesToWrite = this->_sectorSize;
+                }
+                else
+                {
+                    // Image missing / dismounted
+                    // TODO: generate an error, terminate the command
+                }
+            }
+        );
+
+        _operationFIFO.push(writeSector);
+    }
+
+    // Unblock the first byte writing
+    _dataRegisterAccessed = true;
+
+    transitionFSM(WD1793::S_WRITE_BYTE);
+}
+
 void WD1793::processWriteByte()
 {
-    throw new std::logic_error("Not implemented yet");
+    if (!_dataRegisterAccessed)
+    {
+        // Data was not fetched by CPU from Data Register
+        // Set LOST_DATA error and terminate
+        _statusRegister |= WDS_LOSTDATA;
+        endCommand();
+    }
+    else if (_rawDataBuffer)
+    {
+        // Reset Data Register access flag
+        _dataRegisterAccessed = false;
+
+        // Put the next byte to write from the Data Register
+        *(_rawDataBuffer++) = _dataRegister;
+        _bytesToWrite--;
+
+        // Signal to CPU that data byte is available - DRQ
+        _beta128status |= DRQ;
+
+        // Set DRQ bit for Status Register as well. But only for Type 2 and Type 3 commands
+        if (!isType1Command(_commandRegister))
+        {
+            _statusRegister |= WDS_DRQ;
+        }
+
+        if (_bytesToRead >= 0)
+        {
+            // Schedule next byte read
+            transitionFSMWithDelay(WD1793::S_READ_BYTE, TSTATES_PER_FDC_BYTE);
+        }
+        else
+        {
+            // No more bytes to read
+
+            // Remove status DRQ
+            _statusRegister &= ~WDS_DRQ;
+            _beta128status &= ~DRQ;
+
+            /// region <Set WDS_RECORDTYPE bit depending on Data Address Mark>
+
+            // TODO: fetch real state from DiskImage::Track
+            bool isDataMarkDeleted = false;
+
+            // Status bit 5
+            // 1 - Deleted Data Mark
+            // 0 - Data Mark
+            if (isDataMarkDeleted)
+            {
+                _statusRegister |= WDS_RECORDTYPE;
+            }
+            else
+            {
+                _statusRegister &= ~WDS_RECORDTYPE;
+            }
+            /// endregion </Set WDS_RECORDTYPE bit depending on Data Address Mark>
+
+            // Fetch the next command from fifo (or end if no more commands left)
+            transitionFSM(WDSTATE::S_FETCH_FIFO);
+        }
+    }
+    else
+    {
+        // For some reason data not available - treat it as NOT READY and abort
+        _statusRegister |= WDS_NOTRDY;
+        endCommand();
+    }
 }
 
 /// endregion </State machine handlers>

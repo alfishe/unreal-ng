@@ -34,7 +34,7 @@ public:
         WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
 
-    inline static const char* getWD_COMMANDName(WD_COMMANDS command)
+    static inline const char* getWD_COMMANDName(WD_COMMANDS command)
     {
         static const char* const names[] =
         {
@@ -53,6 +53,106 @@ public:
 
         return names[command];
     }
+    
+    // WD1793 command bit patterns (top bits only, flag bits are 0)
+    enum WD_COMMAND_BITS : uint8_t
+    {
+        // Type I commands (positioning)
+        WD_CMD_BITS_RESTORE        = 0b0000'0000,  // 0x00 - Restore/Recalibrate
+        WD_CMD_BITS_SEEK           = 0b0001'0000,  // 0x10 - Seek
+        WD_CMD_BITS_STEP           = 0b0010'0000,  // 0x20 - Step
+        WD_CMD_BITS_STEP_IN        = 0b0100'0000,  // 0x40 - Step In
+        WD_CMD_BITS_STEP_OUT       = 0b0110'0000,  // 0x60 - Step Out
+        
+        // Type II commands (read/write sector)
+        WD_CMD_BITS_READ_SECTOR    = 0b1000'0000,  // 0x80 - Read Sector
+        WD_CMD_BITS_WRITE_SECTOR   = 0b1010'0000,  // 0xA0 - Write Sector
+        
+        // Type III commands (read/write track)
+        WD_CMD_BITS_READ_ADDRESS   = 0b1100'0000,  // 0xC0 - Read Address
+        WD_CMD_BITS_READ_TRACK     = 0b1110'0000,  // 0xE0 - Read Track
+        WD_CMD_BITS_WRITE_TRACK    = 0b1111'0000,  // 0xF0 - Write Track
+        
+        // Type IV command (interrupt)
+        WD_CMD_BITS_FORCE_INTERRUPT = 0b1101'0000  // 0xD0 - Force Interrupt
+    };
+        
+    // Resolves a command byte to its corresponding name by masking all flag bits
+    static inline const char* getWD_COMMAND_BITSName(uint8_t commandByte)
+    {
+        static const char* const names[] =
+        {
+            "Restore",          // [0] 0b0000'0000 (0x00)
+            "Seek",             // [1] 0b0001'0000 (0x10)
+            "Step",             // [2] 0b0010'0000 (0x20)
+            "Step In",          // [3] 0b0100'0000 (0x40)
+            "Step Out",         // [4] 0b0110'0000 (0x60)
+            "Read Sector",      // [5] 0b1000'0000 (0x80)
+            "Write Sector",     // [6] 0b1010'0000 (0xA0)
+            "Read Address",     // [7] 0b1100'0000 (0xC0)
+            "Read Track",       // [8] 0b1110'0000 (0xE0)
+            "Write Track",      // [9] 0b1111'0000 (0xF0)
+            "Force Interrupt"   // [10] 0b1101'0000 (0xD0)
+        };
+        
+        // Command pattern lookup structure
+        struct CommandPattern
+        {
+            uint8_t mask;       // Bit mask to apply
+            uint8_t result;     // Expected result after masking
+            uint8_t cmdBits;    // Command bits value
+        };
+        
+        // Define command patterns with appropriate masks
+        static const CommandPattern patterns[] =
+        {
+              { 0b1111'0000, 0b0000'0000, WD_CMD_BITS_RESTORE },           // Restore (mask high nibble)
+              { 0b1111'0000, 0b0001'0000, WD_CMD_BITS_SEEK },              // Seek (mask high nibble)
+              { 0b1110'0000, 0b0010'0000, WD_CMD_BITS_STEP },              // Step (mask bits 5-7)
+              { 0b1110'0000, 0b0100'0000, WD_CMD_BITS_STEP_IN },           // Step In (mask bits 5-7)
+              { 0b1110'0000, 0b0110'0000, WD_CMD_BITS_STEP_OUT },          // Step Out (mask bits 5-7)
+              { 0b1110'0000, 0b1000'0000, WD_CMD_BITS_READ_SECTOR },       // Read Sector (mask bits 5-7)
+              { 0b1110'0000, 0b1010'0000, WD_CMD_BITS_WRITE_SECTOR },      // Write Sector (mask bits 5-7)
+              { 0b1111'0000, 0b1100'0000, WD_CMD_BITS_READ_ADDRESS },      // Read Address (mask high nibble)
+              { 0b1111'0000, 0b1110'0000, WD_CMD_BITS_READ_TRACK },        // Read Track (mask high nibble)
+              { 0b1111'0000, 0b1111'0000, WD_CMD_BITS_WRITE_TRACK },       // Write Track (mask high nibble)
+              { 0b1111'0000, 0b1101'0000, WD_CMD_BITS_FORCE_INTERRUPT },   // Force Interrupt (mask high nibble)
+        };
+        
+        // Find matching command pattern
+        uint8_t maskedCmd = WD_CMD_BITS_RESTORE;  // Default to Restore if no match
+        for (const auto& pattern : patterns)
+        {
+            if ((commandByte & pattern.mask) == pattern.result)
+            {
+                maskedCmd = pattern.cmdBits;
+                break;
+            }
+        }
+        
+        // Convert command bit patterns to indices for the names array
+        int index;
+        switch (maskedCmd)
+        {
+            case WD_CMD_BITS_RESTORE:          index = 0; break;
+            case WD_CMD_BITS_SEEK:             index = 1; break;
+            case WD_CMD_BITS_STEP:             index = 2; break;
+            case WD_CMD_BITS_STEP_IN:          index = 3; break;
+            case WD_CMD_BITS_STEP_OUT:         index = 4; break;
+            case WD_CMD_BITS_READ_SECTOR:      index = 5; break;
+            case WD_CMD_BITS_WRITE_SECTOR:     index = 6; break;
+            case WD_CMD_BITS_READ_ADDRESS:     index = 7; break;
+            case WD_CMD_BITS_READ_TRACK:       index = 8; break;
+            case WD_CMD_BITS_WRITE_TRACK:      index = 9; break;
+            case WD_CMD_BITS_FORCE_INTERRUPT:  index = 10; break;
+            default:                           index = 0; break; // Default to Restore
+        }
+        
+        return names[index];
+    }
+
+    
+
     /// endregion </WD1793 / VG93 commands>
 
     /// region <WD1793 / VG93 state machine states>
@@ -65,11 +165,12 @@ public:
         S_STEP,
         S_VERIFY,
 
-        S_SEARCH_ID,
-        S_READ_SECTOR,
+        S_SEARCH_ID,    // Corresponds to Seek command
+        S_READ_SECTOR,  // Corresponds to Read Sector command
+        S_WRITE_SECTOR, // Corresponds to Write Sector command
 
-        S_READ_BYTE,
-        S_WRITE_BYTE,
+        S_READ_BYTE,    // Internal state when reading a single byte
+        S_WRITE_BYTE,   // Internal state when writing a single byte
 
         S_DELAY_BEFORE_CMD,
         S_CMD_RW,
@@ -169,6 +270,7 @@ public:
         BETA_CMD_DRIVE_MASK = 0b0000'0011,  // Bits[0,1] define drive selection. 00 - A, 01 - B, 10 - C, 11 - D
 
         BETA_CMD_RESET      = 0b0000'0100,  // Bit2 (active low) allows to reset BDI and WD73 controller. Similar to RESTORE command execution for the application
+
         // HLT - Head Load Timing is an input signal used to determine head engagement time.
         // When HLT = 1, FDC assumes that head is completely engaged. Usually it takes 30-100ms for FDD to react on HLD signal from FDC and engage the head
         BETA_CMD_BLOCK_HLT  = 0b0000'1000,  // Bit3 (active low) blocks HLT signal. Normally it should be inactive (high).
@@ -233,7 +335,9 @@ public:
 
     enum BETA_STATUS_BITS : uint8_t
     {
-        DRQ   = 0x40,   // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
+        // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
+        // Gets status directly from FDC output pin DRQ
+        DRQ   = 0x40,
 
         /// Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
         /// INTRQ = 1 - Command complete
@@ -495,6 +599,7 @@ protected:
         { S_SEARCH_ID,      &WD1793::processSearchID },
         { S_READ_SECTOR,    &WD1793::processReadSector },
         { S_READ_BYTE,      &WD1793::processReadByte },
+        { S_WRITE_SECTOR,   &WD1793::processWriteSector },
         { S_WRITE_BYTE,     &WD1793::processWriteByte },
     };
 
@@ -506,6 +611,7 @@ protected:
     void processSearchID();
     void processReadSector();
     void processReadByte();
+    void processWriteSector();
     void processWriteByte();
 
     void transitionFSM(WDSTATE nextState)
