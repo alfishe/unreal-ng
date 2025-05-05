@@ -5,13 +5,37 @@
 // FDC-specific constants and functionality defined
 
 /// region <Constants>
-static constexpr uint8_t FDD_RPS = 5;                   // FDD rotation speed
-static constexpr size_t MAX_TRACK_LEN = 6250;           //
-static constexpr size_t MAX_SECTOR_DATA_LEN = 6144;     //
-static constexpr uint8_t MAX_CYLINDERS = 86;            // Don't load images with track number exceeding this threshold
-static constexpr uint8_t MAX_SIDES = 2;                 // There can be single side disks
-static constexpr uint8_t MAX_PHYSICAL_CYLINDER = 86;    // FDC won't perform seek commands beyond this cylinder
-static constexpr uint8_t MAX_SECTOR = 26;               // Max sectors per track (Assuming smallest 128 byte sector)
+
+// FDD rotation speed
+// 300 revolutions per minute => 5 revolutions per second => 200 ms per revolution
+static constexpr const uint8_t FDD_RPM = 300;
+static constexpr const uint8_t FDD_RPS = 5;
+
+// FDD index pulse duration (in ms)
+static constexpr const uint8_t FDD_INDEX_PULSE_DURATION_MS = 4;
+
+// Maximum theoreticaltrack length in bytes (bound to timings)
+// 250 Kbps max transfer speed (31250 bytes per second) in MFM mode
+// Within 200 ms of one revolution, 6250 bytes can be transferred
+static constexpr size_t MAX_TRACK_LEN = 6250;
+
+// Maximum useful track length in bytes (bound to index pulse duration and related data loss)
+//+-------------+---------------------+-------------+--------------------+-----------------------------+
+//| Index Pulse | Lost Bytes          | Total Track | Usable Track Bytes | Notes                       |
+//| (ms)        | (During idx pulse)  |   Bytes     |                    |                             |
+//+-------------+----------------- ---+-------------+--------------------+-----------------------------+
+//| 2           | 62                  | 6,250       | 6,188              | Minimal loss, tight timing. |
+//| 3           | 94                  | 6,250       | 6,156              | Common in some 3.5" drives. |
+//| 4 (Typical) | 125                 | 6,250       | 6,125              | Most FDDs use this          |
+//| 8           | 250                 | 6,250       | 6,000              | Rare; older 8" drives.      |
+//+-------------+---------------------+-------------+--------------------+-----------------------------+
+static constexpr const size_t MAX_TRACK_DATA_LEN = 6144;      // Aligned to sector size (works for 128 and 256 byte sectors)
+
+static constexpr const uint8_t MAX_CYLINDERS = 86;            // Don't load images with track number exceeding this threshold
+static constexpr const uint8_t MAX_SIDES = 2;                 // 2 sides is max allowed. There can be single side disks as well
+static constexpr const uint8_t MAX_PHYSICAL_CYLINDER = 86;    // FDC won't perform seek commands beyond this cylinder
+static constexpr const uint8_t MIN_SECTORS = 1;               // Track should have at least one sector (unless track is written via WRITE TRACK)
+static constexpr const uint8_t MAX_SECTORS = 26;              // Max sectors per track (Assuming smallest 128 byte sector)
 /// endregion </Constants>
 
 /// region <Types>
