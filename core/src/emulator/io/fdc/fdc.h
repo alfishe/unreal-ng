@@ -8,11 +8,11 @@
 
 // FDD rotation speed
 // 300 revolutions per minute => 5 revolutions per second => 200 ms per revolution
-static constexpr const uint8_t FDD_RPM = 300;
-static constexpr const uint8_t FDD_RPS = 5;
+static constexpr const size_t FDD_RPM = 300;
+static constexpr const size_t FDD_RPS = 5;
 
 // FDD index pulse duration (in ms)
-static constexpr const uint8_t FDD_INDEX_PULSE_DURATION_MS = 4;
+static constexpr const size_t FDD_INDEX_PULSE_DURATION_MS = 4;
 
 // Maximum theoreticaltrack length in bytes (bound to timings)
 // 250 Kbps max transfer speed (31250 bytes per second) in MFM mode
@@ -49,14 +49,14 @@ static constexpr const uint8_t MAX_SECTORS = 26;              // Max sectors per
 ///
 /// This is the absolute maximum time available between DRQ assertion and data transfer.
 /// The actual safe window is smaller (typically 13.5μs) due to controller processing overhead.
-static constexpr const uint32_t MAX_DRQ_SERVICE_TIME_MFM_US = 32;
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_MFM_US = 32;
 
 /// @brief Maximum allowable delay for host CPU to service a Data Request (DRQ) from the Floppy Disk Controller
 /// For 125Kbps (FM) modes
 /// Calculation:
 ///   125,000 bits/sec ÷ 8 bits/byte = 15,625 bytes/sec
 ///   1,000,000 μs/sec ÷ 15,625 bytes/sec = 64 μs/byte
-static constexpr const uint32_t MAX_DRQ_SERVICE_TIME_FM_US = 64;
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_FM_US = 64;
 
 /// @brief Practical safe DRQ service time including FDC processing margin
 /// While theoretically 32μs is available at 250Kbps, the WD1793 datasheet specifies
@@ -66,10 +66,10 @@ static constexpr const uint32_t MAX_DRQ_SERVICE_TIME_FM_US = 64;
 /// - Data bus settling time
 ///
 /// This is the actual deadline the host system must meet to avoid DATA LOST errors.
-static constexpr const uint32_t SAFE_DRQ_SERVICE_TIME_MFM_US = 13;
+static constexpr const size_t SAFE_DRQ_SERVICE_TIME_MFM_US = 13;
 
 /// For 125Kbps (FM) modes
-static constexpr const uint32_t SAFE_DRQ_SERVICE_TIME_FM_US = 27;
+static constexpr const size_t SAFE_DRQ_SERVICE_TIME_FM_US = 27;
 
 /// @brief Controller internal timing constants
 /// These represent the WD1793's internal processing delays between critical events,
@@ -77,10 +77,10 @@ static constexpr const uint32_t SAFE_DRQ_SERVICE_TIME_FM_US = 27;
 namespace FDC_Delays
 {
     /// 96μs (3*32) delay after IDAM
-    static constexpr const uint32_t IDAM_TO_DATA_MARK_MFM = 3;
+    static constexpr const size_t IDAM_TO_DATA_MARK_MFM = 3;
 
     /// 384μs of 0x00 before DAM
-    static constexpr const uint32_t PREAMBLE_ZEROS = 12;
+    static constexpr const size_t PREAMBLE_ZEROS = 12;
 };
 
 
