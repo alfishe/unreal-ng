@@ -9,15 +9,18 @@ Configured for WD1793, 16 sectors, 256 bytes/sector, IBM MFM format.
 Supports a single global DUMP_BYTES_PER_LINE for all annotated outputs.
 Adds full-width separator lines (dynamically sized for console) before new sectors.
 C++ comments start at a fixed column after the hex data block.
+Includes functions to read/write raw MFM track image files.
+Read example now uses annotated dump by regenerating structure annotations separately.
 """
 
 import sys
 import re
+import os
 from typing import List, Dict, Optional, Union, Any, Literal
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # --- Global Configuration for All Annotated Dump Outputs ---
-DUMP_BYTES_PER_LINE = 8
+DUMP_BYTES_PER_LINE = 16
 TARGET_LINE_WIDTH = 130 # Used for C++ separator width guidance
 # ---
 
@@ -137,7 +140,7 @@ def _define_track_segments_descriptors(
             length_type="FIXED", fixed_length=1, args={'value': DAM_MARKER}, is_data_crc_data_source=True
         ))
         descriptors.append(SegmentDescriptor(
-            segment_type="SECTOR_DATA_CONTENT", name_template=f"Sector {s_num} Data ({sector_size_val} bytes, 0x00-0xFF)",
+            segment_type="SECTOR_DATA_CONTENT", name_template=f"Sector {s_num} Data ({sector_size_val} bytes, ...)",
             length_type="SECTOR_SIZE_CONST", args={'size': sector_size_val}, is_data_crc_data_source=True
         ))
         descriptors.append(SegmentDescriptor(
@@ -155,21 +158,14 @@ def _define_track_segments_descriptors(
     ))
     return descriptors
 
-def generate_mfm_track(
-        sectors: int = 16,
-        track_num: int = 0,
-        head_num: int = 0,
-        sector_size_config: int = DEFAULT_SECTOR_SIZE,
-        sector_size_code_config: int = DEFAULT_SECTOR_SIZE_CODE
-) -> List[int]:
+def _populate_annotations_from_structure(
+        descriptors: List[SegmentDescriptor],
+        target_track_size: int,
+        sector_size_config: int) -> None:
     # (Function content unchanged)
-    global g_annotations, g_sectors, g_sector_size, g_sector_size_code
+    global g_annotations
     g_annotations = []
-    track_data: List[int] = []
     current_pos = 0
-    descriptors = _define_track_segments_descriptors(
-        sectors, track_num, head_num, sector_size_config, sector_size_code_config
-    )
     current_total_len_sans_gap4 = 0
     gap4_descriptor_index = -1
     for i, desc in enumerate(descriptors):
@@ -178,37 +174,35 @@ def generate_mfm_track(
         elif desc.length_type == "SECTOR_SIZE_CONST": length = desc.args.get('size', sector_size_config)
         elif desc.length_type == "GAP4_PLACEHOLDER": gap4_descriptor_index = i; continue
         current_total_len_sans_gap4 += length
-    bytes_for_gap4 = TARGET_TRACK_SIZE - current_total_len_sans_gap4
-    final_descriptors = list(descriptors)
+    bytes_for_gap4 = target_track_size - current_total_len_sans_gap4
+    final_descriptors = [replace(desc) for desc in descriptors]
     if gap4_descriptor_index != -1:
         if bytes_for_gap4 >= 0:
             final_descriptors[gap4_descriptor_index].fixed_length = bytes_for_gap4
             fill_byte_for_gap4 = final_descriptors[gap4_descriptor_index].args.get('fill_byte', GAP_BYTE)
             final_descriptors[gap4_descriptor_index].name_template = f"Gap 4 (Pre-Index, {bytes_for_gap4} x 0x{fill_byte_for_gap4:02X})"
-            if bytes_for_gap4 > 0 : print(f"Info: Calculated Gap 4 size: {bytes_for_gap4} bytes.", file=sys.stderr)
         else:
-            print(f"Warning: Track too long before Gap 4 by {abs(bytes_for_gap4)} bytes. Removing Gap 4 placeholder.", file=sys.stderr)
             final_descriptors.pop(gap4_descriptor_index)
             bytes_for_gap4 = 0
-    else: print("Error: GAP4_PLACEHOLDER descriptor not found!", file=sys.stderr); bytes_for_gap4 = 0
+    else:
+        bytes_for_gap4 = 0
     current_total_length_with_gap4 = 0
     for desc in final_descriptors:
         if desc.length_type == "FIXED" or desc.length_type == "GAP4_PLACEHOLDER": current_total_length_with_gap4 += desc.fixed_length or 0
         elif desc.length_type == "SECTOR_SIZE_CONST": current_total_length_with_gap4 += desc.args.get('size', sector_size_config)
-    if current_total_length_with_gap4 > TARGET_TRACK_SIZE:
-        print(f"Warning: Total calculated track length {current_total_length_with_gap4} exceeds target {TARGET_TRACK_SIZE}. Attempting to truncate.", file=sys.stderr)
+    if current_total_length_with_gap4 > target_track_size:
         temp_descriptors = []
         accumulated_len = 0
         for desc_orig in final_descriptors:
-            desc = SegmentDescriptor(**vars(desc_orig))
+            desc = replace(desc_orig)
             desc_len_val = 0
             if desc.length_type == "FIXED" or desc.length_type == "GAP4_PLACEHOLDER": desc_len_val = desc.fixed_length or 0
             elif desc.length_type == "SECTOR_SIZE_CONST": desc_len_val = desc.args.get('size', sector_size_config)
-            if accumulated_len + desc_len_val <= TARGET_TRACK_SIZE:
+            if accumulated_len + desc_len_val <= target_track_size:
                 temp_descriptors.append(desc)
                 accumulated_len += desc_len_val
             else:
-                remaining_space = TARGET_TRACK_SIZE - accumulated_len
+                remaining_space = target_track_size - accumulated_len
                 if remaining_space > 0 :
                     can_truncate_type = desc.segment_type in ["GAP_FILL", "SYNC_BYTES", "SECTOR_DATA_CONTENT"]
                     if can_truncate_type:
@@ -220,64 +214,122 @@ def generate_mfm_track(
                         accumulated_len += remaining_space
                 break
         final_descriptors = temp_descriptors
-        print(f"Info: Descriptors truncated. New actual length: {accumulated_len}", file=sys.stderr)
-    id_crc_accumulator: List[int] = []
-    data_crc_accumulator: List[int] = []
+    current_pos = 0
     for desc in final_descriptors:
-        segment_bytes: List[int] = []
         current_segment_length = 0
-        segment_name = desc.name_template
         if desc.length_type == "FIXED" or desc.length_type == "GAP4_PLACEHOLDER": current_segment_length = desc.fixed_length or 0
         elif desc.length_type == "SECTOR_SIZE_CONST": current_segment_length = desc.args.get('size', sector_size_config)
         is_zero_len_gap4 = desc.length_type == "GAP4_PLACEHOLDER" and current_segment_length == 0
-        if current_segment_length == 0 and not is_zero_len_gap4:
-            if desc.name_template and desc.fixed_length == 0 and desc.length_type == "FIXED":
-                g_annotations.append({'offset': current_pos, 'length': 0,
-                                      'name': segment_name.format(**desc.args, length=0, crc_val=0, fill_byte=desc.args.get('fill_byte',0)),
-                                      'starts_new_sector': desc.starts_new_sector})
-            continue
-        if desc.segment_type == "GAP_FILL":
-            fill_val = desc.args.get('fill_byte', GAP_BYTE)
-            segment_bytes = [fill_val] * current_segment_length
-            if desc.length_type != "GAP4_PLACEHOLDER" and "{length}" in segment_name :
-                segment_name = segment_name.format(length=current_segment_length, fill_byte=fill_val)
-        elif desc.segment_type == "SYNC_BYTES": segment_bytes = [desc.args['sync_byte']] * current_segment_length
-        elif desc.segment_type == "IDAM_DAM_PREAMBLE": segment_bytes = [desc.args['preamble_byte']] * current_segment_length
-        elif desc.segment_type == "ID_ADDRESS_MARK_PAYLOAD" or desc.segment_type == "DATA_ADDRESS_MARK_PAYLOAD": segment_bytes = [desc.args['value']]
-        elif desc.segment_type == "SECTOR_DATA_CONTENT": segment_bytes = [i for i in range(current_segment_length)]
-        elif desc.segment_type == "CRC_FIELD":
-            crc_input_list: List[int] = id_crc_accumulator if desc.args['crc_type'] == "ID" else data_crc_accumulator
-            crc_val = calculate_crc(crc_input_list)
-            segment_bytes = [(crc_val >> 8) & 0xFF, crc_val & 0xFF]
-            segment_name = segment_name.format(crc_val=crc_val)
-            if desc.args['crc_type'] == "ID": id_crc_accumulator = []
-            if desc.args['crc_type'] == "DATA": data_crc_accumulator = []
-        else: print(f"Error: Unknown segment type '{desc.segment_type}'", file=sys.stderr); continue
-        if desc.is_id_crc_data_source: id_crc_accumulator.extend(segment_bytes)
-        if desc.is_data_crc_data_source: data_crc_accumulator.extend(segment_bytes)
+        segment_name = desc.name_template
         try:
-            final_formatted_name = segment_name
-            if desc.segment_type not in ["CRC_FIELD"] and desc.length_type != "GAP4_PLACEHOLDER":
-                if any(ph in segment_name for ph in ["{crc_val", "{length", "{fill_byte"]):
-                    final_formatted_name = segment_name.format(
-                        crc_val=desc.args.get('crc_val_placeholder',0),
-                        length=current_segment_length,
-                        fill_byte=desc.args.get('fill_byte',0)
-                    )
-        except KeyError: final_formatted_name = segment_name
-        if len(segment_bytes) > 0 or is_zero_len_gap4:
-            g_annotations.append({'offset': current_pos, 'length': len(segment_bytes),
-                                  'name': final_formatted_name,
+            format_args = {**desc.args, 'crc_val': "----", 'length': current_segment_length}
+            if desc.segment_type == "CRC_FIELD":
+                template_no_format = segment_name.replace(":04X}", "}")
+                segment_name = template_no_format.format(crc_val="----")
+            elif desc.length_type == "GAP4_PLACEHOLDER":
+                pass
+            elif "{length}" in segment_name or "{fill_byte}" in segment_name:
+                segment_name = segment_name.format(**format_args)
+        except (KeyError, ValueError) as e:
+            print(f"Warning: Error formatting annotation name '{segment_name}': {e}", file=sys.stderr)
+            segment_name = desc.name_template
+        if current_segment_length > 0 or is_zero_len_gap4:
+            g_annotations.append({'offset': current_pos, 'length': current_segment_length,
+                                  'name': segment_name,
                                   'starts_new_sector': desc.starts_new_sector})
+            current_pos += current_segment_length
+    g_annotations.sort(key=lambda x: int(x['offset']))
+
+
+def generate_mfm_track(
+        sectors: int = 16,
+        track_num: int = 0,
+        head_num: int = 0,
+        sector_size_config: int = DEFAULT_SECTOR_SIZE,
+        sector_size_code_config: int = DEFAULT_SECTOR_SIZE_CODE,
+        generate_data_pattern: bool = True
+) -> List[int]:
+    # (Function content unchanged)
+    global g_annotations, g_sectors, g_sector_size, g_sector_size_code
+    descriptors = _define_track_segments_descriptors(
+        sectors, track_num, head_num, sector_size_config, sector_size_code_config
+    )
+    _populate_annotations_from_structure(descriptors, TARGET_TRACK_SIZE, sector_size_config)
+    track_data: List[int] = []
+    if generate_data_pattern:
+        current_pos = 0
+        id_crc_accumulator: List[int] = []
+        data_crc_accumulator: List[int] = []
+        current_total_len_sans_gap4 = 0
+        gap4_descriptor_index = -1
+        for i, desc in enumerate(descriptors):
+            length = 0
+            if desc.length_type == "FIXED": length = desc.fixed_length or 0
+            elif desc.length_type == "SECTOR_SIZE_CONST": length = desc.args.get('size', sector_size_config)
+            elif desc.length_type == "GAP4_PLACEHOLDER": gap4_descriptor_index = i; continue
+            current_total_len_sans_gap4 += length
+        bytes_for_gap4 = TARGET_TRACK_SIZE - current_total_len_sans_gap4
+        final_descriptors_for_data = [replace(desc) for desc in descriptors]
+        if gap4_descriptor_index != -1:
+            if bytes_for_gap4 >= 0:
+                final_descriptors_for_data[gap4_descriptor_index].fixed_length = bytes_for_gap4
+            else: final_descriptors_for_data.pop(gap4_descriptor_index)
+        current_total_length_with_gap4 = 0
+        for desc in final_descriptors_for_data:
+            if desc.length_type == "FIXED" or desc.length_type == "GAP4_PLACEHOLDER": current_total_length_with_gap4 += desc.fixed_length or 0
+            elif desc.length_type == "SECTOR_SIZE_CONST": current_total_length_with_gap4 += desc.args.get('size', sector_size_config)
+        if current_total_length_with_gap4 > TARGET_TRACK_SIZE:
+            temp_descriptors_for_data = []
+            accumulated_len = 0
+            for desc_orig in final_descriptors_for_data:
+                desc = replace(desc_orig)
+                desc_len_val = 0
+                if desc.length_type == "FIXED" or desc.length_type == "GAP4_PLACEHOLDER": desc_len_val = desc.fixed_length or 0
+                elif desc.length_type == "SECTOR_SIZE_CONST": desc_len_val = desc.args.get('size', sector_size_config)
+                if accumulated_len + desc_len_val <= TARGET_TRACK_SIZE:
+                    temp_descriptors_for_data.append(desc)
+                    accumulated_len += desc_len_val
+                else:
+                    remaining_space = TARGET_TRACK_SIZE - accumulated_len
+                    if remaining_space > 0 :
+                        can_truncate_type = desc.segment_type in ["GAP_FILL", "SYNC_BYTES", "SECTOR_DATA_CONTENT"]
+                        if can_truncate_type:
+                            desc.fixed_length = remaining_space
+                            desc.length_type = "FIXED"
+                            if 'size' in desc.args : desc.args['size'] = remaining_space
+                            temp_descriptors_for_data.append(desc)
+                            accumulated_len += remaining_space
+                    break
+            final_descriptors_for_data = temp_descriptors_for_data
+        for desc in final_descriptors_for_data:
+            segment_bytes: List[int] = []
+            current_segment_length = 0
+            if desc.length_type == "FIXED" or desc.length_type == "GAP4_PLACEHOLDER": current_segment_length = desc.fixed_length or 0
+            elif desc.length_type == "SECTOR_SIZE_CONST": current_segment_length = desc.args.get('size', sector_size_config)
+            if current_segment_length == 0: continue
+            if desc.segment_type == "GAP_FILL": segment_bytes = [desc.args.get('fill_byte', GAP_BYTE)] * current_segment_length
+            elif desc.segment_type == "SYNC_BYTES": segment_bytes = [desc.args['sync_byte']] * current_segment_length
+            elif desc.segment_type == "IDAM_DAM_PREAMBLE": segment_bytes = [desc.args['preamble_byte']] * current_segment_length
+            elif desc.segment_type == "ID_ADDRESS_MARK_PAYLOAD" or desc.segment_type == "DATA_ADDRESS_MARK_PAYLOAD": segment_bytes = [desc.args['value']]
+            elif desc.segment_type == "SECTOR_DATA_CONTENT": segment_bytes = [i for i in range(current_segment_length)]
+            elif desc.segment_type == "CRC_FIELD":
+                crc_input_list: List[int] = id_crc_accumulator if desc.args['crc_type'] == "ID" else data_crc_accumulator
+                crc_val = calculate_crc(crc_input_list)
+                segment_bytes = [(crc_val >> 8) & 0xFF, crc_val & 0xFF]
+                if desc.args['crc_type'] == "ID": id_crc_accumulator = []
+                if desc.args['crc_type'] == "DATA": data_crc_accumulator = []
+            else: segment_bytes = [0] * current_segment_length
+            if desc.is_id_crc_data_source: id_crc_accumulator.extend(segment_bytes)
+            if desc.is_data_crc_data_source: data_crc_accumulator.extend(segment_bytes)
             track_data.extend(segment_bytes)
             current_pos += len(segment_bytes)
     g_sectors, g_sector_size, g_sector_size_code = sectors, sector_size_config, sector_size_code_config
-    g_annotations.sort(key=lambda x: int(x['offset']))
-    final_generated_len = len(track_data)
-    if final_generated_len != TARGET_TRACK_SIZE :
-        print(f"Warning: Final generated track data length {final_generated_len} (internal offset {current_pos}) does not match TARGET_TRACK_SIZE {TARGET_TRACK_SIZE}.", file=sys.stderr)
-    elif current_pos != final_generated_len:
-        print(f"Warning: Internal offset {current_pos} does not match final generated length {final_generated_len}.", file=sys.stderr)
+    if generate_data_pattern:
+        final_generated_len = len(track_data)
+        if final_generated_len != TARGET_TRACK_SIZE :
+            print(f"Warning: Final generated track data length {final_generated_len} (internal offset {current_pos}) does not match TARGET_TRACK_SIZE {TARGET_TRACK_SIZE}.", file=sys.stderr)
+        elif current_pos != final_generated_len:
+            print(f"Warning: Internal data generation offset {current_pos} does not match final generated length {final_generated_len}.", file=sys.stderr)
     return [b & 0xFF for b in track_data]
 
 
@@ -395,7 +447,6 @@ def get_annotated_line_segments(data: List[int], bytes_per_line: int) -> List[Di
 
 
 def generate_annotated_dump_lines(data: List[int]) -> List[str]:
-    # (Function content unchanged from previous version - fixed padding logic)
     global DUMP_BYTES_PER_LINE
     output_lines = []
     addr_width = 4
@@ -403,16 +454,33 @@ def generate_annotated_dump_lines(data: List[int]) -> List[str]:
     hex_sep_width = 1
     annotation_separator = " ; "
     sector_separator_char = "="
+
     line_segments = get_annotated_line_segments(data, DUMP_BYTES_PER_LINE)
-    max_line_len = 0
+
+    # Calculate fixed annotation start column
     hex_display_width = DUMP_BYTES_PER_LINE * (hex_byte_width + hex_sep_width) - hex_sep_width
-    base_width = addr_width + 2 + hex_display_width
-    annotation_start_col = base_width + 1
-    for segment in line_segments:
+    annotation_start_col = addr_width + 2 + hex_display_width + 1
+
+    # Pass 1: Calculate max line length
+    max_line_len = 0
+    for segment_idx, segment in enumerate(line_segments):
         current_line_len = 0
         line_start_addr = segment['addr']
+
         if segment.get('type') == 'sector_separator_line':
-            current_line_len = addr_width + 2 + len(annotation_separator) + 10
+            sector_info_str = ""
+            # Look ahead to get sector info for the separator
+            next_data_idx = segment_idx + 1
+            if next_data_idx < len(line_segments) and line_segments[next_data_idx]['annotation_details']:
+                name = str(line_segments[next_data_idx]['annotation_details'].get('name',''))
+                match = re.search(r"Sector (\d+)", name)
+                if match: sector_info_str = f" Sector {match.group(1)} "
+
+            prefix_len = addr_width + 2 + len(annotation_separator)
+            core_len = len(sector_info_str)
+            # Estimate required padding (at least 10 chars total for separator part)
+            sep_len_estimate = max(10, core_len + 4) # Add some padding around core
+            current_line_len = prefix_len + sep_len_estimate
         else:
             hex_dump_part_list = [f"{byte_val:02X}" for byte_val in segment['hex_bytes']]
             hex_dump_part = " ".join(hex_dump_part_list)
@@ -428,29 +496,52 @@ def generate_annotated_dump_lines(data: List[int]) -> List[str]:
             else:
                 current_line_len = max(current_line_len, annotation_start_col)
         max_line_len = max(max_line_len, current_line_len)
-    for segment in line_segments:
+
+    # Pass 2: Format lines using max_line_len and fixed annotation column
+    for segment_idx, segment in enumerate(line_segments):
         line_start_addr = segment['addr']
+
         if segment.get('type') == 'sector_separator_line':
             prefix = f"{line_start_addr:0{addr_width}X}:{annotation_separator}"
-            sep_chars_needed = max_line_len - len(prefix)
-            separator_line = prefix + (sector_separator_char * max(0, sep_chars_needed))
+            # --- Add Sector Info to Separator ---
+            sector_info_str = ""
+            next_data_idx = segment_idx + 1
+            if next_data_idx < len(line_segments) and line_segments[next_data_idx]['annotation_details']:
+                name = str(line_segments[next_data_idx]['annotation_details'].get('name',''))
+                match = re.search(r"Sector (\d+)", name)
+                if match: sector_info_str = f" Sector {match.group(1)} "
+            # --- Calculate Centered Separator ---
+            core_len = len(sector_info_str)
+            total_sep_chars_needed = max_line_len - len(prefix)
+            padding_chars_needed = max(0, total_sep_chars_needed - core_len)
+            left_padding = padding_chars_needed // 2
+            right_padding = padding_chars_needed - left_padding
+            separator_line = prefix + (sector_separator_char * left_padding) + sector_info_str + (sector_separator_char * right_padding)
+            # --- End Separator Calculation ---
             output_lines.append(separator_line)
             continue
+
         indent_chars = segment['indent_cols']
         hex_dump_part_list = [f"{byte_val:02X}" for byte_val in segment['hex_bytes']]
         hex_dump_part = " ".join(hex_dump_part_list)
+
         line_prefix = f"{line_start_addr:0{addr_width}X}: {' ' * indent_chars}{hex_dump_part}"
         current_prefix_len = len(line_prefix)
+
         line_suffix = ""
         if segment['annotation']:
             line_suffix = annotation_separator + str(segment['annotation'])
+
         padding_needed = annotation_start_col - current_prefix_len
         min_padding = 1 if segment['hex_bytes'] and segment['annotation'] else 0
         padding = " " * max(min_padding, padding_needed)
+
         line = line_prefix + padding + line_suffix
         final_padding = " " * (max_line_len - len(line))
         line += final_padding
+
         output_lines.append(line.rstrip())
+
     return output_lines
 
 
@@ -489,10 +580,10 @@ constexpr std::array<uint8_t, {data_len}> {var_name} = {{
     return header
 
 def generate_cpp_header_annotated(track_data: List[int], var_name: str = "floppyTrackData") -> str:
+    # (Function content unchanged from previous version - fixed alignment)
     global DUMP_BYTES_PER_LINE, TARGET_LINE_WIDTH
     data_len = len(track_data)
     global g_sectors, g_sector_size, g_sector_size_code
-
     base_cpp_indent_str = "    "
     base_cpp_indent_len = len(base_cpp_indent_str)
     cpp_byte_width = 4
@@ -500,17 +591,11 @@ def generate_cpp_header_annotated(track_data: List[int], var_name: str = "floppy
     cpp_byte_separator_width = 1
     cpp_separator_char = "="
     cpp_comment_prefix = "// "
-
-    # Calculate the width needed for a full hex data line in C++
     if DUMP_BYTES_PER_LINE > 0:
         max_cpp_hex_data_width = (DUMP_BYTES_PER_LINE - 1) * (cpp_byte_width_comma + cpp_byte_separator_width) + cpp_byte_width if DUMP_BYTES_PER_LINE > 1 else cpp_byte_width
     else:
         max_cpp_hex_data_width = 0
-
-    # Calculate the fixed column where the '//' comment prefix should start
-    # Base Indent + Max Hex Width + Minimum 2 spaces separation
     comment_start_col = base_cpp_indent_len + max_cpp_hex_data_width + 2
-
     line_segments = get_annotated_line_segments(track_data, DUMP_BYTES_PER_LINE)
     cpp_lines = []
     cpp_lines.append(f"#ifndef MFM_FLOPPY_TRACK_H_{var_name.upper()}_ANNO")
@@ -524,47 +609,33 @@ def generate_cpp_header_annotated(track_data: List[int], var_name: str = "floppy
     cpp_lines.append(f"// Target: WD1793 / IBM MFM DD")
     cpp_lines.append(f"// Generated by Python script (data layout: {DUMP_BYTES_PER_LINE} bytes/line)")
     cpp_lines.append(f"constexpr std::array<uint8_t, {data_len}> {var_name} = {{")
-
     processed_data_segment_yet = False
-
     for segment_idx, segment in enumerate(line_segments):
-
-        # --- Insert C++ Separator Line ---
-        # Check if the *current* segment starts a new sector
         is_sector_start = False
         current_details = segment.get('annotation_details')
         if current_details and isinstance(current_details, dict) and \
                 bool(current_details.get('starts_new_sector', False)):
-            # Trigger only if this segment has actual content
             if segment['hex_bytes'] or segment['annotation']:
                 is_sector_start = True
-
         if is_sector_start and processed_data_segment_yet:
             sector_info_str = ""
             name = str(current_details.get('name', ''))
             match = re.search(r"Sector (\d+)", name)
             if match: sector_info_str = f" Sector {match.group(1)} "
-
             total_comment_len_target = TARGET_LINE_WIDTH - base_cpp_indent_len
             core_len = len(sector_info_str)
             padding_len = max(0, total_comment_len_target - len(cpp_comment_prefix) - core_len)
             left_padding = padding_len // 2
             right_padding = padding_len - left_padding
-
             cpp_separator_line = f"{base_cpp_indent_str}{cpp_comment_prefix}" \
                                  f"{cpp_separator_char * left_padding}" \
                                  f"{sector_info_str}" \
                                  f"{cpp_separator_char * right_padding}"
-
             if cpp_lines and cpp_lines[-1].strip() != "" and not cpp_lines[-1].strip().startswith("//"):
                 cpp_lines.append("")
             cpp_lines.append(cpp_separator_line)
-
-        # --- Skip console separator segments ---
         if segment.get('type') == 'sector_separator_line':
             continue
-
-        # --- Process current segment (hex data and annotation) ---
         line_content_prefix = base_cpp_indent_str
         pos_in_line_cpp = segment['start_index'] % DUMP_BYTES_PER_LINE
         cpp_indent_chars = 0
@@ -572,7 +643,6 @@ def generate_cpp_header_annotated(track_data: List[int], var_name: str = "floppy
         if num_skipped_bytes_on_line > 0:
             cpp_indent_chars = num_skipped_bytes_on_line * (cpp_byte_width_comma + cpp_byte_separator_width)
         line_content_prefix += " " * cpp_indent_chars
-
         hex_part = ""
         if segment['hex_bytes']:
             segment_hex_parts = []
@@ -583,10 +653,8 @@ def generate_cpp_header_annotated(track_data: List[int], var_name: str = "floppy
                 comma = "," if byte_index < data_len - 1 else ""
                 segment_hex_parts.append(hex_str_val + comma)
             hex_part = " ".join(segment_hex_parts)
-
-        current_code_part = line_content_prefix + hex_part # Part with indent + hex data
-
-        comment_text_part = "" # Just the comment text part, including prefix
+        current_code_part = line_content_prefix + hex_part
+        comment_text_part = ""
         if segment['annotation']:
             effective_annotation_text = str(segment['annotation'])
             anno_s, anno_l, anno_e = -1,-1,-1
@@ -595,40 +663,74 @@ def generate_cpp_header_annotated(track_data: List[int], var_name: str = "floppy
                 anno_s = int(anno_details_dict['offset'])
                 anno_l = int(anno_details_dict['length'])
                 anno_e = anno_s + anno_l -1 if anno_l > 0 else anno_s
-
             if anno_s != -1:
                 comment_text_part = f"{cpp_comment_prefix}0x{anno_s:04X}-0x{anno_e:04X} ({anno_l}B): {effective_annotation_text}"
             else:
                 comment_text_part = f"{cpp_comment_prefix}{effective_annotation_text}"
-
-        # Calculate padding needed to reach the fixed comment start column
         padding_needed = comment_start_col - len(current_code_part)
-        # Ensure padding is non-negative
-        padding = " " * max(0, padding_needed)
-
-        # Assemble the final line
+        padding = " " * max(0, padding_needed) if comment_text_part else ""
         final_line = current_code_part + padding + comment_text_part
-
-        if final_line.strip(): # Only add if not purely whitespace
+        if final_line.strip():
             cpp_lines.append(final_line.rstrip())
             if segment['hex_bytes'] or segment['annotation']:
-                processed_data_segment_yet = True # Mark that we've added content
-
-    # Clean up potential trailing separator/blank lines
+                processed_data_segment_yet = True
     if cpp_lines and cpp_lines[-1].strip().startswith("// ==="):
         cpp_lines.pop()
         if cpp_lines and cpp_lines[-1].strip() == "":
             cpp_lines.pop()
-
     cpp_lines.append("}};")
     cpp_lines.append("")
     cpp_lines.append(f"#endif // MFM_FLOPPY_TRACK_H_{var_name.upper()}_ANNO")
     return "\n".join(cpp_lines)
 
+# --- Read/Write Functions ---
+
+def write_mfm(filename: str, track_data: List[int]) -> None:
+    # (Function content unchanged)
+    print(f"Attempting to write {len(track_data)} bytes to '{filename}'...")
+    try:
+        with open(filename, 'wb') as f:
+            f.write(bytes(track_data))
+        print(f"Successfully wrote MFM track data to '{filename}'.")
+    except IOError as e:
+        print(f"Error writing file '{filename}': {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"An unexpected error occurred during write: {e}", file=sys.stderr)
+
+def read_mfm(filename: str) -> Optional[List[int]]:
+    # (Function content unchanged)
+    print(f"Attempting to read MFM track data from '{filename}'...")
+    if not os.path.exists(filename):
+        print(f"Error: File not found '{filename}'", file=sys.stderr)
+        return None
+    try:
+        with open(filename, 'rb') as f:
+            byte_data = f.read()
+        track_data = list(byte_data)
+        print(f"Successfully read {len(track_data)} bytes from '{filename}'.")
+        return track_data
+    except IOError as e:
+        print(f"Error reading file '{filename}': {e}", file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during read: {e}", file=sys.stderr)
+        return None
+
+def print_simple_hex_dump(data: List[int], bytes_per_line: int = 16) -> None:
+    # (Function content unchanged)
+    addr_width = 4
+    for i in range(0, len(data), bytes_per_line):
+        chunk = data[i:i+bytes_per_line]
+        hex_part = " ".join(f"{b:02X}" for b in chunk)
+        ascii_part = "".join(chr(b) if 32 <= b <= 126 else '.' for b in chunk)
+        print(f"{i:0{addr_width}X}: {hex_part:<{bytes_per_line*3 - 1}} |{ascii_part}|")
+    print(f"--- End of dump ({len(data)} bytes) ---")
+
 
 def main():
     global DUMP_BYTES_PER_LINE
 
+    # --- Configuration for All Annotated Dump Outputs ---
     # The global DUMP_BYTES_PER_LINE at the top of the file is the primary default.
     # You can override it here for a specific run if needed:
     # DUMP_BYTES_PER_LINE = 16
@@ -643,12 +745,14 @@ def main():
     sector_size_val = DEFAULT_SECTOR_SIZE
     sector_size_code_val = DEFAULT_SECTOR_SIZE_CODE
 
+    # --- Generate Track Data and Annotations ---
     track_data = generate_mfm_track(
         sectors=sectors_per_track_cfg,
         track_num=track_num_to_gen_cfg,
         head_num=head_num_cfg,
         sector_size_config=sector_size_val,
-        sector_size_code_config=sector_size_code_val
+        sector_size_code_config=sector_size_code_val,
+        generate_data_pattern=True
     )
 
     print(f"Generated track data: {len(track_data)} bytes for Track {track_num_to_gen_cfg}")
@@ -657,7 +761,8 @@ def main():
     if len(track_data) != TARGET_TRACK_SIZE:
         print(f"Note: Final track length {len(track_data)} differs from target {TARGET_TRACK_SIZE} bytes (may be due to truncation).", file=sys.stderr)
 
-    print("\nAnnotated Hex Dump (Full Track):")
+    # --- Print Outputs Based on Generated Data ---
+    print("\nAnnotated Hex Dump (Full Track - Generated):")
     print_annotated_hex_dump(track_data)
 
     variable_name = f"floppyTrackData_T{track_num_to_gen_cfg}_S{g_sectors}x{g_sector_size}"
@@ -674,6 +779,48 @@ def main():
     print(f"\n--- C++ Annotated Header Initialization ({variable_name}_Anno) ---")
     print(header_annotated_content)
     print(f"--- End C++ Annotated Header Initialization ---")
+
+    # --- Usage Examples for Read/Write ---
+
+    # == Example 1: Write generated track to file ==
+    # output_filename = f"track_{track_num_to_gen_cfg}_generated.img"
+    # write_mfm(output_filename, track_data)
+
+    # == Example 2: Read track from file and print annotated dump ==
+    # # Assumes the file from Example 1 exists or another compatible file
+    # input_filename = f"track_{track_num_to_gen_cfg}_generated.img"
+    # read_track_data = read_mfm(input_filename)
+    # if read_track_data:
+    #     # Ensure the read data has the expected length before trying to annotate
+    #     if len(read_track_data) != TARGET_TRACK_SIZE:
+    #         print(f"\nWarning: Read data length ({len(read_track_data)}) does not match expected target size ({TARGET_TRACK_SIZE}). Annotation might be incorrect.", file=sys.stderr)
+
+    #     print(f"\n--- Annotated Hex Dump of Read Data from '{input_filename}' ---")
+
+    #     # 1. Define the expected structure descriptors using the config expected for the file
+    #     descriptors = _define_track_segments_descriptors(
+    #         num_sectors=sectors_per_track_cfg,
+    #         track_num_val=track_num_to_gen_cfg, # Use track num expected IN THE FILE for annotation names
+    #         head_num_val=head_num_cfg,         # Use head num expected IN THE FILE
+    #         sector_size_val=sector_size_val,
+    #         sector_size_code_val=sector_size_code_val
+    #     )
+
+    #     # 2. Populate global annotations based on the defined structure (calculates offsets, lengths, placeholder names)
+    #     _populate_annotations_from_structure(
+    #         descriptors,
+    #         TARGET_TRACK_SIZE,
+    #         sector_size_val
+    #     )
+
+    #     # 3. Print the actual read data using the generated structural annotations
+    #     # Note: Annotation names for dynamic fields like CRC will show placeholders ("----").
+    #     #       Annotation names for Track/Head/Sector will show the values passed to _define_... above,
+    #     #       which might not match the actual data in the file's ID fields if it's from a different track.
+    #     print_annotated_hex_dump(read_track_data)
+    # else:
+    #      print(f"Could not read or process data from '{input_filename}'.")
+
 
 if __name__ == "__main__":
     main()
