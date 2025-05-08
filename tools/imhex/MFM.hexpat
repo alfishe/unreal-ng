@@ -1,5 +1,12 @@
 // ImHex Pattern for a raw MFM Disk Image
 
+// --- Autoload Pragmas ---
+// Check for the specific TR-DOS signature byte in the Volume Info sector
+#pragma magic [ 10 ] @ 0x8E7
+// Also check for the start of the MFM Gap 1 (multiple 4E bytes)
+#pragma magic [ 4E 4E 4E 4E 4E 4E 4E 4E ] @ 0x00
+// See: https://github.com/WerWolv/ImHex/discussions/1397
+
 #pragma endian big
 
 import std.core;
