@@ -1595,7 +1595,8 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 
             EXPECT_EQ(isAccomplishedCorrectly, true) << "READ_SECTOR didn't end up correctly";
 
-            size_t estimatedExecutionTime = 256 * WD1793::TSTATES_PER_FDC_BYTE / TSTATES_IN_MS; // We're performing single positioning step 6ms long
+            size_t estimatedExecutionTime = 256 * WD1793::WD93_TSTATES_PER_FDC_BYTE
+                                            / TSTATES_IN_MS; // We're performing single positioning step 6ms long
             EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
 
             EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
@@ -1743,7 +1744,8 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
 
             EXPECT_EQ(isAccomplishedCorrectly, true) << "WRITE_SECTOR didn't end up correctly";
 
-            size_t estimatedExecutionTime = 256 * WD1793::TSTATES_PER_FDC_BYTE / TSTATES_IN_MS; // We're performing single positioning step 6ms long
+            size_t estimatedExecutionTime = 256 * WD1793::WD93_TSTATES_PER_FDC_BYTE
+                                            / TSTATES_IN_MS; // We're performing single positioning step 6ms long
             EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
 
             EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were written";

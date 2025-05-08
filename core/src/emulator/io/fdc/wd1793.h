@@ -397,16 +397,15 @@ public:
     /// region <Constants>
 public:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
-    static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
-    static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
-    static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000;
+    static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000; // 3500 t-states per millisecond
+    static constexpr const double TSTATES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0; // 3.5 t-states per microsecond
 
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
 
     /// Time limit to retrieve single byte from WD1793
     /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
-    static constexpr const size_t TSTATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
+    static constexpr const size_t WD93_TSTATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
 
     static constexpr const size_t WD93_REVOLUTIONS_TILL_MOTOR_STOP = 15;
     static constexpr const size_t WD93_TSTATES_TILL_MOTOR_STOP = Z80_FREQUENCY * WD93_REVOLUTIONS_TILL_MOTOR_STOP / FDD_RPS;

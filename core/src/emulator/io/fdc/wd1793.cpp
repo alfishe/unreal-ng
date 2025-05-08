@@ -191,10 +191,10 @@ void WD1793::processFDDIndexStrobe()
     // - 300 revolutions per minute => 5 revolutions per second => 200ms or 1/5 second for single revolution
     // - base Z80 frequency 3.5MHz
     // We're getting 700'000 Z80 clock cycles period for each disk revolution / rotation
-    static constexpr const size_t DISK_ROTATION_PERIOD_IN_Z80_CLOCK_CYCLES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
+    static constexpr const size_t DISK_ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
 
     // For 4ms index strobe and base Z80 frequency 3.5Mhz we're getting 14'000 Z80 clock cycles for 4ms index strobe duration
-    static constexpr const size_t INDEX_STROBE_DURATION_IN_Z80_CLOCK_CYCLES = Z80_CLK_CYCLES_PER_MS * FDD::DISK_INDEX_STROBE_DURATION_MS;
+    static constexpr const size_t INDEX_STROBE_DURATION_IN_TSTATES = TSTATES_PER_MS * FDD::DISK_INDEX_STROBE_DURATION_MS;
 
     bool diskInserted = _selectedDrive->isDiskInserted();
     bool motorOn = _selectedDrive->getMotor();
@@ -205,8 +205,8 @@ void WD1793::processFDDIndexStrobe()
 
         // Set new state for the INDEX flag based on rotating disk position
         // Note: it is assumed that each disk revolution started with index strobe
-        size_t diskRotationPhaseCounter = (_time % DISK_ROTATION_PERIOD_IN_Z80_CLOCK_CYCLES);
-        if (diskRotationPhaseCounter < INDEX_STROBE_DURATION_IN_Z80_CLOCK_CYCLES)
+        size_t diskRotationPhaseCounter = (_time % DISK_ROTATION_PERIOD_TSTATES);
+        if (diskRotationPhaseCounter < INDEX_STROBE_DURATION_IN_TSTATES)
         {
             _index = true;
         }
@@ -1373,7 +1373,7 @@ void WD1793::processReadByte()
         if (_bytesToRead >= 0)
         {
             // Schedule next byte read
-            transitionFSMWithDelay(WD1793::S_READ_BYTE, TSTATES_PER_FDC_BYTE);
+            transitionFSMWithDelay(WD1793::S_READ_BYTE, WD93_TSTATES_PER_FDC_BYTE);
         }
         else
         {
@@ -1483,7 +1483,7 @@ void WD1793::processWriteByte()
         if (_bytesToRead >= 0)
         {
             // Schedule next byte read
-            transitionFSMWithDelay(WD1793::S_READ_BYTE, TSTATES_PER_FDC_BYTE);
+            transitionFSMWithDelay(WD1793::S_READ_BYTE, WD93_TSTATES_PER_FDC_BYTE);
         }
         else
         {

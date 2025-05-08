@@ -13,6 +13,8 @@ static constexpr const size_t FDD_RPS = 5;
 
 // FDD index pulse duration (in ms)
 static constexpr const size_t FDD_INDEX_PULSE_DURATION_MS = 4;
+// FDD index pulse duration (4ms) in T-states @3.5MHz
+static constexpr const size_t FDD_INDEX_PULSE_DURATION_T_STATES = 14;
 
 // Maximum theoreticaltrack length in bytes (bound to timings)
 // 250 Kbps max transfer speed (31250 bytes per second) in MFM mode
@@ -51,12 +53,16 @@ static constexpr const uint8_t MAX_SECTORS = 26;              // Max sectors per
 /// The actual safe window is smaller (typically 13.5μs) due to controller processing overhead.
 static constexpr const size_t MAX_DRQ_SERVICE_TIME_MFM_US = 32;
 
+// CPU at 3.5MHz has 114 t-states until timeout when DRQ is raised
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_MFM_T_STATES = 114;
+
 /// @brief Maximum allowable delay for host CPU to service a Data Request (DRQ) from the Floppy Disk Controller
 /// For 125Kbps (FM) modes
 /// Calculation:
 ///   125,000 bits/sec ÷ 8 bits/byte = 15,625 bytes/sec
 ///   1,000,000 μs/sec ÷ 15,625 bytes/sec = 64 μs/byte
 static constexpr const size_t MAX_DRQ_SERVICE_TIME_FM_US = 64;
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_FM_T_STATES = 228;
 
 /// @brief Practical safe DRQ service time including FDC processing margin
 /// While theoretically 32μs is available at 250Kbps, the WD1793 datasheet specifies
