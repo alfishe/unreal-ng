@@ -10,6 +10,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/wd1793state.h"
 
 class WD1793 : public PortDecoder, public PortDevice
 {
@@ -106,17 +107,17 @@ public:
         // Define command patterns with appropriate masks
         static const CommandPattern patterns[] =
         {
-              { 0b1111'0000, 0b0000'0000, WD_CMD_BITS_RESTORE },           // Restore (mask high nibble)
-              { 0b1111'0000, 0b0001'0000, WD_CMD_BITS_SEEK },              // Seek (mask high nibble)
-              { 0b1110'0000, 0b0010'0000, WD_CMD_BITS_STEP },              // Step (mask bits 5-7)
-              { 0b1110'0000, 0b0100'0000, WD_CMD_BITS_STEP_IN },           // Step In (mask bits 5-7)
-              { 0b1110'0000, 0b0110'0000, WD_CMD_BITS_STEP_OUT },          // Step Out (mask bits 5-7)
-              { 0b1110'0000, 0b1000'0000, WD_CMD_BITS_READ_SECTOR },       // Read Sector (mask bits 5-7)
-              { 0b1110'0000, 0b1010'0000, WD_CMD_BITS_WRITE_SECTOR },      // Write Sector (mask bits 5-7)
-              { 0b1111'0000, 0b1100'0000, WD_CMD_BITS_READ_ADDRESS },      // Read Address (mask high nibble)
-              { 0b1111'0000, 0b1110'0000, WD_CMD_BITS_READ_TRACK },        // Read Track (mask high nibble)
-              { 0b1111'0000, 0b1111'0000, WD_CMD_BITS_WRITE_TRACK },       // Write Track (mask high nibble)
-              { 0b1111'0000, 0b1101'0000, WD_CMD_BITS_FORCE_INTERRUPT },   // Force Interrupt (mask high nibble)
+            { 0b1111'0000, 0b0000'0000, WD_CMD_BITS_RESTORE },           // Restore (mask high nibble)
+            { 0b1111'0000, 0b0001'0000, WD_CMD_BITS_SEEK },              // Seek (mask high nibble)
+            { 0b1110'0000, 0b0010'0000, WD_CMD_BITS_STEP },              // Step (mask bits 5-7)
+            { 0b1110'0000, 0b0100'0000, WD_CMD_BITS_STEP_IN },           // Step In (mask bits 5-7)
+            { 0b1110'0000, 0b0110'0000, WD_CMD_BITS_STEP_OUT },          // Step Out (mask bits 5-7)
+            { 0b1110'0000, 0b1000'0000, WD_CMD_BITS_READ_SECTOR },       // Read Sector (mask bits 5-7)
+            { 0b1110'0000, 0b1010'0000, WD_CMD_BITS_WRITE_SECTOR },      // Write Sector (mask bits 5-7)
+            { 0b1111'0000, 0b1100'0000, WD_CMD_BITS_READ_ADDRESS },      // Read Address (mask high nibble)
+            { 0b1111'0000, 0b1110'0000, WD_CMD_BITS_READ_TRACK },        // Read Track (mask high nibble)
+            { 0b1111'0000, 0b1111'0000, WD_CMD_BITS_WRITE_TRACK },       // Write Track (mask high nibble)
+            { 0b1111'0000, 0b1101'0000, WD_CMD_BITS_FORCE_INTERRUPT },   // Force Interrupt (mask high nibble)
         };
         
         // Find matching command pattern
@@ -392,9 +393,6 @@ public:
         std::function<void()> _action;
     };
 
-    /// endregion </Types>
-
-    /// region <Constants>
 public:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000; // 3500 t-states per millisecond
