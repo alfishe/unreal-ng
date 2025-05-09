@@ -131,7 +131,7 @@ void WD1793::processBeta128(uint8_t value)
         this->reset();
 
         _statusRegister &= ~WDS_NOTRDY;
-        _beta128status = INTRQ;
+        raiseIntrq();
 
         // Stop FDD motor, reset all related counters
         _selectedDrive->setMotor(false);
@@ -179,7 +179,7 @@ void WD1793::processFDDMotorState()
             stopFDDMotor();
 
             // Notify via Beta128 status INTRQ bit about changes
-            _beta128status = INTRQ;
+            raiseIntrq();
         }
     }
 }
@@ -896,8 +896,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _delayTStates = 0;
 
             _statusRegister &= ~WDS_BUSY;
-            _beta128status |= INTRQ;
-            _beta128status &= ~DRQ;
+            raiseIntrq();
+            clearDrq();
         }
 
         if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)         // Bit2 (J2) - Every index pulse
@@ -908,8 +908,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _delayTStates = 0;
 
             _statusRegister &= ~WDS_BUSY;
-            _beta128status |= INTRQ;
-            _beta128status &= ~DRQ;
+            raiseIntrq();
+            clearDrq();
         }
 
         if (value & WD_FORCE_INTERRUPT_READY)               // Bit1 (J1) - Ready to Not-Ready transition
@@ -920,8 +920,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _delayTStates = 0;
 
             _statusRegister &= ~WDS_BUSY;
-            _beta128status |= INTRQ;
-            _beta128status &= ~DRQ;
+            raiseIntrq();
+            clearDrq();
         }
 
         if (value & WD_FORCE_INTERRUPT_NOT_READY)           // Bit0 (J0) - Not-Ready to Ready transition
@@ -931,8 +931,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _delayTStates = 0;
 
             _statusRegister &= ~WDS_BUSY;
-            _beta128status |= INTRQ;
-            _beta128status &= ~DRQ;
+            raiseIntrq();
+            clearDrq();
         }
     }
     else    // Terminate with no interrupt
@@ -943,7 +943,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         _delayTStates = 0;
 
         _statusRegister &= ~WDS_BUSY;       // Deactivate busy flag
-        _beta128status &= ~(DRQ | INTRQ);   // Deactivate Data Request (DRQ) and Interrupt Request (INTRQ) signals
+        clearDrq();
+        clearIntrq();
     }
 
     // Clear operations FIFO
@@ -973,7 +974,9 @@ void WD1793::startType1Command()
     _statusRegister |= WDS_BUSY;                    // Set BUSY flag
     _statusRegister &= ~(WDS_SEEKERR | WDS_CRCERR); // Clear positioning and CRC errors
 
-    _beta128status &= ~(DRQ | INTRQ);               // Clear Data Request and Interrupt request bits
+    // Clear Data Request and Interrupt request bits before starting command processing
+    clearDrq();
+    clearIntrq();
 
     // Ensure the motor is spinning
     prolongFDDMotorRotation();
@@ -1068,7 +1071,7 @@ void WD1793::startType3Command()
 void WD1793::endCommand()
 {
     _statusRegister &= ~WDS_BUSY;   // Reset BUSY flag
-    _beta128status |= INTRQ;        // INTRQ must be set at a completion of any command
+    raiseIntrq();                    // INTRQ must be set at a completion of any command
 
     // Clear FIFO
     std::queue<FSMEvent> emptyQueue;
@@ -1174,7 +1177,7 @@ void WD1793::processStep()
     {
         // We've reached limit - seek error
         _statusRegister |= WDS_SEEKERR;
-        _beta128status |= INTRQ;
+        raiseIntrq();
 
         endCommand();
     }
@@ -1362,7 +1365,7 @@ void WD1793::processReadByte()
         _bytesToRead--;
 
         // Signal to CPU that data byte is available - DRQ
-        _beta128status |= DRQ;
+        raiseDrq();
 
         // Set DRQ bit for Status Register as well. But only for Type 2 and Type 3 commands
         if (!isType1Command(_commandRegister))
@@ -1381,7 +1384,7 @@ void WD1793::processReadByte()
 
             // Remove status DRQ
             _statusRegister &= ~WDS_DRQ;
-            _beta128status &= ~DRQ;
+            clearDrq();
 
             /// region <Set WDS_RECORDTYPE bit depending on Data Address Mark>
 
@@ -1472,7 +1475,7 @@ void WD1793::processWriteByte()
         _bytesToWrite--;
 
         // Signal to CPU that data byte is available - DRQ
-        _beta128status |= DRQ;
+        raiseDrq();
 
         // Set DRQ bit for Status Register as well. But only for Type 2 and Type 3 commands
         if (!isType1Command(_commandRegister))
@@ -1491,7 +1494,7 @@ void WD1793::processWriteByte()
 
             // Remove status DRQ
             _statusRegister &= ~WDS_DRQ;
-            _beta128status &= ~DRQ;
+            clearDrq();
 
             /// region <Set WDS_RECORDTYPE bit depending on Data Address Mark>
 
@@ -1571,7 +1574,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             // TODO: remove debug
             //MLOGINFO("In #1F - 0x%02X - %s", result, dumpStatusRegister(_lastDecodedCmd).c_str());
 
-            _beta128status &= ~INTRQ;     // Reset INTRQ (Interrupt request) flag - status register is read
+            clearIntrq();     // Reset INTRQ (Interrupt request) flag - status register is read
             break;
         case PORT_3F:   // Return current track number
             result = _trackRegister;
@@ -1580,7 +1583,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = _sectorRegister;
             break;
         case PORT_7F:   // Return data byte and update internal state
-            _beta128status &= ~DRQ;         // Reset DRQ (Data Request) flag
+            clearDrq();         // Reset DRQ (Data Request) flag
             // Read and mark that Data Register was accessed (for Type 2 and Type 3 operations)
             result = readDataRegister();
             break;
@@ -1629,7 +1632,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             /// endregion </Debug logging>
 
             // Reset INTRQ (Interrupt request) flag - command register is written to
-            _beta128status &= ~INTRQ;
+            clearIntrq();
 
             // Process the command
             processWD93Command(value);
@@ -1664,7 +1667,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             writeDataRegister(value);
 
             // Reset Data Request bit (DRQ) in Beta128 register
-            _beta128status &= ~DRQ;
+            clearDrq();
 
             // Reset Data Request bit in status register (only if Type 2 or Type 3 command was executed)
             if (isType2Command(_lastCmdValue) || isType3Command(_lastCmdValue))

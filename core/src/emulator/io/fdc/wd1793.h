@@ -156,6 +156,40 @@ public:
 
     /// endregion </WD1793 / VG93 commands>
 
+    /// @brief Raise INTRQ signal
+    /// @details Sets INTRQ signal and updates corresponding beta128 bit
+    void raiseIntrq()
+    {
+        _beta128status |= INTRQ;
+        _intrq_out = true;
+    }
+
+    /// @brief Clear INTRQ signal
+    /// @details Clears INTRQ signal and updates corresponding beta128 bit
+    void clearIntrq()
+    {
+        _beta128status &= ~INTRQ;
+        _intrq_out = false;
+    }
+
+    /// @brief Raise DRQ signal
+    /// @details Sets DRQ signal and updates corresponding beta128 bit
+    void raiseDrq()
+    {
+        _beta128status |= DRQ;
+        _drq_out = true;
+    }
+
+    /// @brief Clear DRQ signal
+    /// @details Clears DRQ signal and updates corresponding beta128 bit
+    void clearDrq()
+    {
+        _beta128status &= ~DRQ;
+        _drq_out = false;
+    }
+
+    /// endregion </WD1793 / VG93 commands>
+
     /// region <WD1793 / VG93 state machine states>
     enum WDSTATE : uint8_t
     {
@@ -506,6 +540,9 @@ protected:
     bool _index = false;                // Current state of index strobe
     size_t _indexPulseCounter = 0;      // Index pulses counter
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
+
+    bool _intrq_out = false;
+    bool _drq_out = false;
 
     /// endregion </Fields>
 
