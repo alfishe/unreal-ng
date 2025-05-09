@@ -324,28 +324,51 @@ public:
     };
 
     /// FDC status (corresponds to port #1F read)
-    // ╔═════════╤══════════════════════════════════════════════════════════════════╗
-    // ║   Bit   │                            Commands                              ║
-    // ║         │  Command Type 1 │ Write  │  Read   │  Read   │ Write   │   Read  ║
-    // ║         │ (Recover & Seek)│ Sector │ Sector  │ Address │ Track   │  Track  ║
-    // ╟─────────┼─────────────────┼────────┼─────────┼─────────┼─────────┼─────────╢
-    // ║    7    │ NOT READY - Drive readiness ( 1 - not ready; 0 - ready           ║
-    // ╟─────────┼─────────────────┼────────┼─────────┼─────────┼─────────┼─────────╢
-    // ║    6    │ WRITE PROTECT   │    0   │    0    │    0    │  WRITE  │  WRITE  ║
-    // ║         │                 │        │         │         │ PROTECT │ PROTECT ║
-    // ╟─────────┼─────────────────┼────────┼─────────┼─────────┼─────────┼─────────╢
-    // ║    5    │ HEAD LOADED     │    0   │  0  │  1  │  u  │  h  │  V  │  r1 │  r0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    4    │ SEEK ERROR      │  0  │  1  │  0  │  u  │  h  │  V  │  r1 │  r0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    3    │ CRC ERROR       │  0  │  1  │  1  │  u  │  h  │  V  │  r1 │  r0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    2    │ TRACK 0         │  1  │  0  │  0  │  m  │  s  │  E  │  C  │  0  ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    1    │ INDEX           │  1  │  0  │  1  │  m  │  s  │  E  │  C  │  a0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    0    │ BUSY            │  1  │  1  │  0  │  0  │  0  │  E  │  0  │  0  ║
-    // ╚═════════╧═════════════════╧═════╧═════╧═════╧═════╧═════╧═════╧═════╧═════╝
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// | Bit |                 |                            Commands                                        |
+    /// |     | Description     | Command Type 1   | Write    | Read     | Read      | Write     | Read      |
+    /// |     |                 | (Recover & Seek) | Sector   | Sector   | Address   | Track     | Track     |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  7  | NOT READY - Drive readiness (1 = not ready; 0 = ready)                                       |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  6  | WRITE PROTECT   |        0         |    0     |    0     |     0     |   WRITE   |   WRITE   |
+    /// |     |                 |                  |          |          |           |  PROTECT  |  PROTECT  |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  5  | HEAD LOADED     |        0         |    0     |    1     |    'u'    |    'h'    |    'V'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  4  | SEEK ERROR      |        0         |    1     |    0     |    'u'    |    'h'    |    'V'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  3  | CRC ERROR       |        0         |    1     |    1     |    'u'    |    'h'    |    'V'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  2  | TRACK 0         |        1         |    0     |    0     |    'm'    |    's'    |    'E'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  1  | INDEX           |        1         |    0     |    1     |    'm'    |    's'    |    'E'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  0  | BUSY            |        1         |    1     |    0     |    '0'    |    '0'    |    'E'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// Legend for status bit meanings in specific command contexts:
+    ///
+    /// --- For "Read Address" Command (Col 6 values) ---
+    /// 'u': A bit from the Sector Address (SA) read from the first encountered ID field.
+    /// 'm': A bit from the Sector Address (SA) read from the first encountered ID field.
+    /// '0': (In Status Register Bit 0) reflects Sector Address Bit 0.
+    ///
+    /// --- For "Write Track" Command (Col 7 values) ---
+    /// 'h': A bit of the Cylinder Address (CA) being written to ID fields during formatting.
+    /// 's': A bit of the Sector Length (SL) code being written to ID fields.
+    /// '0': (In Status Register Bit 0) may indicate SL Code Bit 0, or a fixed value.
+    ///
+    /// --- For "Read Track" Command (Col 8 values) ---
+    /// 'V': A bit from the Cylinder Address (CA) read from the first encountered ID field.
+    /// 'E': A bit from the Sector Length (SL) code read from the first encountered ID field.
+    ///
+    /// --- For "Cxt 1" / "Cxt 2" Columns (Cols 9 & 10 values) ---
+    /// 'r1', 'r0', 'C', 'a0': These represent specific bit values from fields relevant
+    ///      to an unlabelled command context or a more detailed status.
+    ///      Their exact meaning depends on what "Cxt 1" and "Cxt 2" refer to,
+    ///      which is not specified in the original table's headers.
+    ///      Commonly, they might be other bits from ID fields, data register, or
+    ///      specialized status under certain conditions.
     enum WD_STATUS : uint8_t
     {
         WDS_BUSY           = 0x01,   // For all commands
