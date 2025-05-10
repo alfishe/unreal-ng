@@ -1564,7 +1564,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
                 }
 
                 // Fetch data bytes with marking Data Register accessed so no DATA LOSS error occurs
-                if (fdc._state == WD1793::S_READ_BYTE && !fdc._dataRegisterAccessed)
+                if (fdc._state == WD1793::S_READ_BYTE && !fdc._DrqServed)
                 {
                     uint8_t readValue = fdc.readDataRegister();
 
@@ -1708,7 +1708,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
                 fdc._time = clk;
 
                 // Feed data bytes with marking Data Register accessed so no DATA LOSS error occurs
-                if (fdc._state == WD1793::S_WRITE_BYTE && !fdc._dataRegisterAccessed)
+                if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._DrqServed)
                 {
                     uint8_t writeValue = sectorData[sectorDataIndex++];
 

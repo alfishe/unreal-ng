@@ -509,16 +509,19 @@ protected:
 
     FDD* _selectedDrive = nullptr;
 
+    // New WD93 state to migrate to
+    WD93State _wd93State;
+
     // Counters to measure time intervals
     size_t _time = 0;                   // Current time mark (in Z80 t-states)
     size_t _lastTime = 0;               // Time mark when process() was called last time
     int64_t _diffTime = 0;              // Difference between _time and _lastTime (_time - _lastTime)
-    int64_t _delayTStates = 0;          // Delay between switching to next state
+    int64_t _delayTStates = 0;          // Delay between switching to the next state
 
     // WD93 internal state
-    uint8_t _commandRegister = 0x00;    // Last command executed (full data byte)
-    uint8_t _trackRegister = 0;
-    uint8_t _sectorRegister = 0;
+    uint8_t _commandRegister = 0x00;    // WD1793 Command Register - Holds last command executed (full data byte)
+    uint8_t _trackRegister = 0;         // WD1793 Track Register
+    uint8_t _sectorRegister = 0;        // WD1793 Sector Register
     uint8_t _dataRegister = 0x00;       // WD1793 Data Register
     uint8_t _statusRegister = 0x00;     // WD1793 Status Register
 
@@ -551,7 +554,7 @@ protected:
 
     // Type 2 command params
     uint16_t _sectorSize = 256;         // Sector size in bytes (will be read from ID Address Mark during READ SECTOR command execution)
-    bool _dataRegisterAccessed = false; // Type2 commands have timeout for data availability in Data Register
+    bool _DrqServed = false; // Type2 commands have timeout for data availability in Data Register
     uint8_t* _idamData = nullptr;
     uint8_t* _sectorData = nullptr;
     uint8_t* _rawDataBuffer = nullptr;   // Pointer to read/write data
@@ -560,10 +563,12 @@ protected:
 
 
     // FDD state
+    // TODO: all timeouts must go to WD93State.counters
     bool _index = false;                // Current state of index strobe
     size_t _indexPulseCounter = 0;      // Index pulses counter
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
 
+    // TODO: Remove temporary fields once switched to WD93State.signals
     bool _intrq_out = false;
     bool _drq_out = false;
 
@@ -600,6 +605,7 @@ protected:
     void processFDDMotorState();
     void processFDDIndexStrobe();
     void prolongFDDMotorRotation();
+    void processCountersAndTimeouts();
     void startFDDMotor();
     void stopFDDMotor();
     void loadHead();
@@ -768,7 +774,9 @@ protected:
     uint8_t readDataRegister()
     {
         uint8_t result = _dataRegister;
-        _dataRegisterAccessed = true;
+
+
+        _DrqServed = true;
 
         return result;
     }
@@ -776,7 +784,9 @@ protected:
     void writeDataRegister(uint8_t value)
     {
         _dataRegister = value;
-        _dataRegisterAccessed = true;
+
+        // If we're on Read or Write operation and data was requested by asserting DRQ - we need to mark that request fulfilled
+        _DrqServed = true;
     }
 
     /// endregion </State machine handlers>
@@ -861,7 +871,9 @@ public:
     using WD1793::_steppingMotorRate;
     using WD1793::_motorTimeoutTStates;
 
-    using WD1793::_dataRegisterAccessed;
+    using WD1793::_DrqServed;
+    using WD1793::_intrq_out;
+    using WD1793::_drq_out;
 
     using WD1793::_index;
     using WD1793::_indexPulseCounter;
