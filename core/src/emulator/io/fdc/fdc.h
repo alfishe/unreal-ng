@@ -16,7 +16,17 @@ static constexpr const size_t FDD_INDEX_PULSE_DURATION_MS = 4;
 // FDD index pulse duration (4ms) in T-states @3.5MHz
 static constexpr const size_t FDD_INDEX_PULSE_DURATION_T_STATES = 14;
 
-// Maximum theoreticaltrack length in bytes (bound to timings)
+/// 3.5" DS DD (720KB): 250 Kbps MFM @ 300 RPM
+/// 5.25" DS DD (360KB): 250 Kbps MFM @ 300 RPM
+/// @note Do not mix it with 8" floppy disk drives that have 250 Kbps in Single Density (SD) FM mode and 500 Kbps in Double Density (DD) MFM mode
+static constexpr const size_t FDD_INTERFACE_SPEED_MFM_KBPS = 250;
+
+/// 3.5" DS SD (720KB): 125 Kbps FM @ 300 RPM
+/// 5.25" DS SD (360KB): 125 Kbps FM @ 300 RPM
+static constexpr const size_t FDD_INTERFACE_SPEED_FM_KBPS = 125;
+
+
+// Maximum theoretical track length in bytes (bound to timings)
 // 250 Kbps max transfer speed (31250 bytes per second) in MFM mode
 // Within 200 ms of one revolution, 6250 bytes can be transferred
 static constexpr size_t MAX_TRACK_LEN = 6250;
