@@ -650,23 +650,49 @@ std::string ModuleLogger::DumpSettings()
     {
         std::string moduleName = DumpModuleName(i);
         std::string moduleStatus = "off";
+        bool hasEnabledSubmodules = false;
+        bool allSubmodulesEnabled = true;
 
-        if (_settings.modules & (1 << i))
+        // Check submodule status
+        const char** submoduleNames;
+        size_t submoduleNamesSize = 0;
+        if (GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
         {
-            moduleStatus = "on";
-
-            ss << StringHelper::Format("%s: %s", moduleName.c_str(), moduleStatus.c_str()) << std::endl;
-
-            const char** submoduleNames;
-            size_t submoduleNamesSize = 0;
-            if (GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
+            uint16_t allSubmodulesMask = (1 << submoduleNamesSize) - 1;
+            uint16_t enabledSubmodules = _settings.submodules[i];
+            
+            if (enabledSubmodules != 0)
             {
-                ss << DumpResolveFlags(_settings.submodules[i], submoduleNames, submoduleNamesSize) << std::endl;
+                hasEnabledSubmodules = true;
+                if (enabledSubmodules != allSubmodulesMask)
+                {
+                    allSubmodulesEnabled = false;
+                }
             }
         }
-        else
+
+        // Determine module status
+        if (_settings.modules & (1 << i))
         {
-            ss << StringHelper::Format("%s: %s", moduleName.c_str(), moduleStatus.c_str()) << std::endl;
+            if (allSubmodulesEnabled)
+            {
+                moduleStatus = "on";
+            }
+            else if (hasEnabledSubmodules)
+            {
+                moduleStatus = "partial";
+            }
+        }
+
+        ss << StringHelper::Format("%s: %s", moduleName.c_str(), moduleStatus.c_str()) << std::endl;
+
+        // Only show submodule details if module is partial or off but has enabled submodules
+        if ((moduleStatus == "partial" || (moduleStatus == "off" && hasEnabledSubmodules)) && 
+            GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && 
+            submoduleNames && submoduleNamesSize > 0)
+        {
+            ss << "  Submodules:" << std::endl;
+            ss << "" << DumpResolveFlags(_settings.submodules[i], submoduleNames, submoduleNamesSize) << std::endl;
         }
     }
 
