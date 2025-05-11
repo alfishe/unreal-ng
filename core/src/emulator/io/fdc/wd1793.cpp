@@ -54,10 +54,24 @@ WD1793::~WD1793()
 
 void WD1793::reset()
 {
+    // Reset all fields and states
+    internalReset();
+
+    // Execute RESTORE command
+    uint8_t restoreValue = 0b0000'1111;
+    _lastDecodedCmd = WD_CMD_RESTORE;
+    _commandRegister = restoreValue;
+    _lastCmdValue = restoreValue;
+    cmdRestore(restoreValue);
+}
+
+void WD1793::internalReset()
+{
     // Clear operations FIFO
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
+    // Clear FDC state
     _state = S_IDLE;
     _state2 = S_IDLE;
     _statusRegister = 0;
@@ -68,13 +82,14 @@ void WD1793::reset()
     _indexPulseCounter = 0;
     _delayTStates = 0;
     _headLoaded = false;
+    _check_am_crc = false;
+    _check_data_crc = false;
 
-    // Execute RESTORE command
-    uint8_t restoreValue = 0b0000'1111;
-    _lastDecodedCmd = WD_CMD_RESTORE;
-    _commandRegister = restoreValue;
-    _lastCmdValue = restoreValue;
-    cmdRestore(restoreValue);
+    clearAllErrors();
+
+    // Deassert output signals
+    clearIntrq();
+    clearDrq();
 }
 
 void WD1793::process()
@@ -287,7 +302,11 @@ void WD1793::stopFDDMotor()
 /// Load head
 void WD1793::loadHead()
 {
-    _statusRegister |= WDS_HEADLOADED;
+    if (isType1Command(_commandRegister))
+    {
+        _statusRegister |= WDS_HEADLOADED;
+    }
+
     _extStatus |= SIG_OUT_HLD;
     _headLoaded = true;
 
@@ -321,28 +340,25 @@ uint8_t WD1793::getStatusRegister()
         // Type I or type IV command
 
         // Clear all bits that will be recalculated
-        _statusRegister &= ~(WDS_INDEX | WDS_TRK00 | WDS_HEADLOADED | WDS_WRITEPROTECTED);
+        _statusRegister &= ~(WDS_INDEX | WDS_TRK00 | WDS_SEEKERR | WDS_HEADLOADED | WDS_WRITEPROTECTED);
 
         // Update index strobe state according to rotation timings
         processFDDIndexStrobe();
-        if (_index)
-        {
-            _statusRegister |= WDS_INDEX;
-        }
 
-        if (_selectedDrive->isTrack00())
-        {
-            _statusRegister |= WDS_TRK00;
-        }
-
-        if (_selectedDrive->isWriteProtect())
-        {
-            _statusRegister |= WDS_WRITEPROTECTED;
-        }
-
+        // Set Status Register bits specific for Type I commands
+        if (_selectedDrive->isWriteProtect()) { _statusRegister |= WDS_WRITEPROTECTED; } else { _statusRegister &= ~WDS_WRITEPROTECTED; };
         // Set head load state based on HLD and HLT signals
         uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128Register & 0b0000'1000)) ? WDS_HEADLOADED : 0;
-        _statusRegister |= headStatus;
+        if (headStatus) { _statusRegister |= headStatus; } else { _statusRegister &= ~headStatus; };
+        if (_seek_error) { _statusRegister |= WDS_SEEKERR; } else { _statusRegister &= ~WDS_SEEKERR; };
+        if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
+        if (_selectedDrive->isTrack00()) { _statusRegister |= WDS_TRK00; } else { _statusRegister &= ~WDS_TRK00; };
+        if (_index) { _statusRegister |= WDS_INDEX; } else { _statusRegister &= ~WDS_INDEX; };
+
+        if (_index)
+            _index = _index ? _index : false;
+        else
+            _index = _index ? _index : false;
     }
     else
     {
@@ -359,17 +375,23 @@ uint8_t WD1793::getStatusRegister()
             case WD_CMD_READ_ADDRESS:
                 _statusRegister &= 0b1001'1111; // Reset bit5 and bit6 as stated in the datasheet
 
-                // DRQ bit means that the FDC has placed one byte of the ID field into the Data Register, and the host CPU can read it
+                if (_record_not_found) { _statusRegister |= WDS_NOTFOUND; } else { _statusRegister &= ~WDS_NOTFOUND; };
+                if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
                 break;
             case WD_CMD_READ_SECTOR:
                 _statusRegister &= 0b1011'1111; // Reset bit 6 as stated in the datasheet
 
-                // DRQ bit means that the FDC has fetched the next byte of the sector data and placed it into the Data Register
+                // TODO: set WDS_RECORDTYPE
+                if (_record_not_found) { _statusRegister |= WDS_NOTFOUND; } else { _statusRegister &= ~WDS_NOTFOUND; };
+                if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
                 break;
             case WD_CMD_WRITE_SECTOR:
                 // No bits reset => All bits are used for the Write Sector command
 
-                // DRQ bit indicates that the FDC is ready to accept data from the CPU
+                if (_write_protect) { _statusRegister |= WDS_WRITEPROTECTED; } else { _statusRegister &= ~WDS_WRITEPROTECTED; };
+                if (_write_fault) { _statusRegister |= WDS_WRITEFAULT; } else { _statusRegister &= ~WDS_WRITEFAULT; };
+                if (_record_not_found) { _statusRegister |= WDS_NOTFOUND; } else { _statusRegister &= ~WDS_NOTFOUND; };
+                if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
                 break;
             case WD_CMD_READ_TRACK:
                 _statusRegister &= 0b1000'0111; // Reset bits 3 to 6 as stated in the datasheet
@@ -379,7 +401,8 @@ uint8_t WD1793::getStatusRegister()
             case WD_CMD_WRITE_TRACK:
                 _statusRegister &= 0b1110'0111; // Reset bit3 and bit4 as stated in the datasheet
 
-                // DRQ bit indicates that the FDC is ready to accept data from the CPU
+                if (_write_protect) { _statusRegister |= WDS_WRITEPROTECTED; } else { _statusRegister &= ~WDS_WRITEPROTECTED; };
+                if (_write_fault) { _statusRegister |= WDS_WRITEFAULT; } else { _statusRegister &= ~WDS_WRITEFAULT; };
                 break;
             default:
                 throw std::logic_error("Unknown FDC command");
@@ -396,9 +419,10 @@ uint8_t WD1793::getStatusRegister()
             _statusRegister |= WDS_NOTRDY;
         }
 
+        if (_lost_data) _statusRegister |= WDS_LOSTDATA;
         // DRQ (bit 1) for all Type II and III commands is driven by an FDC state machine
         // But since beta128 register is used to hold chip DRQ output signal - get it from there
-        _statusRegister |= (_beta128status & DRQ);
+        if (_beta128Register & DRQ) { _statusRegister |= WDS_DRQ; } else { _statusRegister &= ~WDS_DRQ; };
     }
 
     // BUSY (bit 0) is driven by an FDC state machine and set directly during command processing
@@ -790,10 +814,15 @@ void WD1793::cmdReadSector(uint8_t value)
             // Position to the sector requested
             DiskImage* diskImage = this->_selectedDrive->getDiskImage();
             DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-            this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
+            uint8_t sectorIndex = this->_sectorRegister - 1;
+            this->_sectorData = track->getDataForSector(sectorIndex);
             this->_rawDataBuffer = this->_sectorData;
+            this->_bytesToRead = this->_sectorSize;
         });
     _operationFIFO.push(readSector);
+
+    // Ensure we'll read 2 bytes CRC and verify them
+    _check_data_crc = true;
 
     // Start FSM playback using FIFO queue
     transitionFSM(WDSTATE::S_FETCH_FIFO);
@@ -865,9 +894,39 @@ void WD1793::cmdReadAddress(uint8_t value)
 
 void WD1793::cmdReadTrack(uint8_t value)
 {
-    std::cout << "Command Read Track: " << static_cast<int>(value) << std::endl;
+    std::string message = StringHelper::Format("Command Read Track: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
     startType3Command();
+
+    // Get raw track data pointer
+    DiskImage* diskImage = _selectedDrive->getDiskImage();
+    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp);
+    uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
+    
+    if (!rawTrackData)
+    {
+        // Handle error - invalid track
+        _statusRegister |= WDS_NOTRDY;
+
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    FSMEvent readTrack(WDSTATE::S_READ_TRACK, [this]()
+        {
+            // Position to the track requested
+            DiskImage* diskImage = _selectedDrive->getDiskImage();
+            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+            uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
+
+            _bytesToRead = DiskImage::RawTrack::RAW_TRACK_SIZE; // 6250 bytes
+            _rawDataBuffer = rawTrackData;
+        });
+    _operationFIFO.push(readTrack);
+
+    // Start FSM playback using FIFO queue
+    transitionFSM(WDSTATE::S_FETCH_FIFO);
 }
 
 void WD1793::cmdWriteTrack(uint8_t value)
@@ -896,6 +955,14 @@ void WD1793::cmdWriteTrack(uint8_t value)
 // Bit2 (J2) = 1 - Index pulse
 // Bit2 (J3) = 1 - Immediate interrupt
 // If all bits [0:3] are not set (= 0) - terminate with no interrupt
+/// @details Upon receipt of any command, except the Force Interrupt command, the Busy Status bit is set and the
+/// rest of the status bits are updated or cleared for the new command.
+///
+/// If the Force Interrupt Command is received when there is a current command under execution,
+/// the Busy status bit is reset, and the rest of the status bits are unchanged.
+///
+/// If the Force Interrupt command is received when there is not a current command under execution, the Busy Status bit is
+/// reset and the rest of the status bits are updated or cleared. In this case, Status reflects the Type I commands.
 void WD1793::cmdForceInterrupt(uint8_t value)
 {
     std::string message = StringHelper::Format("Command Force Interrupt: %d | %s", value, StringHelper::FormatBinary(value).c_str());
@@ -965,8 +1032,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         _delayTStates = 0;
 
         _statusRegister &= ~WDS_BUSY;       // Deactivate a busy flag
-        clearDrq();
-        clearIntrq();
+        raiseIntrq();
     }
 
     // Clear operations FIFO
@@ -977,9 +1043,11 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     if (noCommandExecuted)
     {
         _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED);
-        _statusRegister |= _selectedDrive->getTrack() == 0 ? WDS_TRK00 : 0x00;
         _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
+
+        _statusRegister |= _selectedDrive->getTrack() == 0 ? WDS_TRK00 : 0x00;
+        if (_index) { _statusRegister |= WDS_INDEX; } else { _statusRegister &= ~WDS_INDEX; };
 
         MLOGINFO("<<== FORCE_INTERRUPT, no active command status: %s, beta128: %s", StringHelper::FormatBinary(_statusRegister).c_str(), StringHelper::FormatBinary(_beta128status).c_str());
     }
@@ -999,6 +1067,9 @@ void WD1793::startType1Command()
     // Clear Data Request and Interrupt request bits before starting command processing
     clearDrq();
     clearIntrq();
+    clearAllErrors();
+    _check_am_crc = false;
+    _check_data_crc = false;
 
     // Ensure the motor is spinning
     prolongFDDMotorRotation();
@@ -1028,15 +1099,28 @@ void WD1793::startType2Command()
 {
     MLOGINFO("==>> Start Type 2 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
 
-    _statusRegister |= WDS_BUSY;                                // Set BUSY flag
-    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |          // Reset Type2 error flags
-        WDS_RECORDTYPE | WDS_WRITEPROTECTED);
-    _DrqServed = false;                              // Type2 commands have timeout for data availability in Data Register
+    // Fully clear Status Register;
+    _statusRegister = 0x00;
+
+    // Set required Status Register flags
+    _statusRegister |= WDS_BUSY;
+    if (!_selectedDrive || !_selectedDrive->isDiskInserted())
+        _statusRegister |= WDS_NOTRDY;
+
+    // Type2 commands have timeout for data availability in Data Register
+    _drq_served = false;
+
+    // Clear Data Request and Interrupt request bits before starting command processing
+    clearDrq();
+    clearIntrq();
+    clearAllErrors();
+    _check_am_crc = false;
+    _check_data_crc = false;
 
     if (!isReady())
     {
         // If the drive is not ready - end immediately
-        endCommand();
+        transitionFSM(WD1793::S_END_COMMAND);
     }
     else
     {
@@ -1061,14 +1145,28 @@ void WD1793::startType3Command()
 {
     MLOGINFO("==>> Start Type 3 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
 
-    _statusRegister |= WDS_BUSY;                                // Set BUSY flag
-    _statusRegister &= ~(WDS_LOSTDATA | WDS_NOTFOUND |          // Reset Type3 error flags
-                 WDS_RECORDTYPE);
+    // Fully clear Status Register;
+    _statusRegister = 0x00;
+
+    // Set required Status Register flags
+    _statusRegister |= WDS_BUSY;
+    if (!_selectedDrive || !_selectedDrive->isDiskInserted())
+        _statusRegister |= WDS_NOTRDY;
+
+    // Type2 commands have timeout for data availability in Data Register
+    _drq_served = false;
+
+    // Clear Data Request and Interrupt request bits before starting command processing
+    clearDrq();
+    clearIntrq();
+    clearAllErrors();
+    _check_am_crc = false;
+    _check_data_crc = false;
 
     if (!isReady())
     {
         // If the drive is not ready - end immediately
-        endCommand();
+        transitionFSM(WD1793::S_END_COMMAND);
     }
     else
     {
@@ -1099,9 +1197,6 @@ void WD1793::endCommand()
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
-    // Transition to IDLE state
-    transitionFSM(S_IDLE);
-
     // Debug logging
     MLOGINFO("<<== End command (%s). status: %s beta128: %s", getWD_COMMANDName(_lastDecodedCmd), StringHelper::FormatBinary(_statusRegister).c_str(), StringHelper::FormatBinary(_beta128status).c_str());
 }
@@ -1122,7 +1217,7 @@ void  WD1793::type1CommandVerify()
     else
     {
         // No, verification is not required, command execution finished
-        endCommand();
+        transitionFSM(WD1793::S_END_COMMAND);
     }
 }
 
@@ -1166,7 +1261,7 @@ void WD1793::processFetchFIFO()
 {
     if (!_operationFIFO.empty())
     {
-        // Get next FIFO value (and remove it from the queue immediately)
+        // Get the next FIFO value (and remove it from the queue immediately)
         FSMEvent fsmEvent = _operationFIFO.front();
         _operationFIFO.pop();
 
@@ -1188,7 +1283,7 @@ void WD1793::processFetchFIFO()
     else
     {
         MLOGWARNING("WDSTATE::S_FETCH_FIFO state activated but no operations in queue");
-        endCommand();
+        transitionFSM(WD1793::S_END_COMMAND);
     }
 }
 
@@ -1201,7 +1296,7 @@ void WD1793::processStep()
         _statusRegister |= WDS_SEEKERR;
         raiseIntrq();
 
-        endCommand();
+        transitionFSM(WD1793::S_END_COMMAND);
     }
     else
     {
@@ -1279,7 +1374,7 @@ void WD1793::processVerify()
 
     // TODO: implement VERIFY
     // Currently just end command
-    endCommand();
+    transitionFSM(WD1793::S_END_COMMAND);
 }
 
 /// Attempt to find next ID Address Mark on current track
@@ -1360,9 +1455,7 @@ void WD1793::processReadSector()
         _operationFIFO.push(readSector);
     }
 
-    // Unblock the first byte read
-    _DrqServed = true;
-
+    // Start reading sector bytes
     transitionFSM(WD1793::S_READ_BYTE);
 }
 
@@ -1370,73 +1463,47 @@ void WD1793::processReadSector()
 /// _rawDataBuffer and _bytesToRead values must be set before reading the first byte
 void WD1793::processReadByte()
 {
-    if (!_DrqServed)
+    // TODO: implement DRQ serve time timeout
+    if (false && !_drq_served)
     {
         // Data was not fetched by CPU from Data Register
         // Set LOST_DATA error and terminate
         _statusRegister |= WDS_LOSTDATA;
-        endCommand();
+        transitionFSM(WDSTATE::S_END_COMMAND);
+        return;
     }
-    else if (_rawDataBuffer)
+
+    // Reset Data Register access flag
+    _drq_served = false;
+    clearDrq();
+
+    // Read the next byte from the raw data buffer
+    _dataRegister = *(_rawDataBuffer++);
+    _bytesToRead--;
+
+    // Byte is ready to be consumed by the host
+    raiseDrq();
+
+    if (_bytesToRead > 0)
     {
-        // Reset Data Register access flag
-        _DrqServed = false;
-
-        // Put next byte read from disk into Data Register
-        _dataRegister = *(_rawDataBuffer++);
-        _bytesToRead--;
-
-        // Signal to CPU that data byte is available - DRQ
-        raiseDrq();
-
-        // Set DRQ bit for Status Register as well. But only for Type 2 and Type 3 commands
-        if (!isType1Command(_commandRegister))
-        {
-            _statusRegister |= WDS_DRQ;
-        }
-
-        if (_bytesToRead >= 0)
-        {
-            // Schedule next byte read
-            transitionFSMWithDelay(WD1793::S_READ_BYTE, WD93_TSTATES_PER_FDC_BYTE);
-        }
-        else
-        {
-            // No more bytes to read
-
-            // Remove status DRQ
-            _statusRegister &= ~WDS_DRQ;
-            clearDrq();
-
-            /// region <Set WDS_RECORDTYPE bit depending on Data Address Mark>
-
-            // TODO: fetch real state from DiskImage::Track
-            bool isDataMarkDeleted = false;
-
-            // Status bit 5
-            // 1 - Deleted Data Mark
-            // 0 - Data Mark
-            if (isDataMarkDeleted)
-            {
-                _statusRegister |= WDS_RECORDTYPE;
-            }
-            else
-            {
-                _statusRegister &= ~WDS_RECORDTYPE;
-            }
-            /// endregion </Set WDS_RECORDTYPE bit depending on Data Address Mark>
-
-            // Fetch the next command from fifo (or end if no more commands left)
-            transitionFSM(WDSTATE::S_FETCH_FIFO);
-        }
+        // Transition to the next byte read state
+        transitionFSMWithDelay(WDSTATE::S_READ_BYTE, WD93_TSTATES_PER_FDC_BYTE);
     }
     else
     {
-        // For some reason data not available - treat it as NOT READY and abort
-        _statusRegister |= WDS_NOTRDY;
-        endCommand();
+        if (_check_data_crc)
+        {
+            _bytesToRead = 2;
+            transitionFSMWithDelay(WDSTATE::S_READ_CRC, WD93_TSTATES_PER_FDC_BYTE);
+
+           _check_data_crc = false;
+           return;
+        }
+
+        transitionFSM(WDSTATE::S_END_COMMAND);
     }
 }
+
 void WD1793::processWriteSector()
 {
     _bytesToWrite = _sectorSize;
@@ -1480,17 +1547,18 @@ void WD1793::processWriteSector()
 
 void WD1793::processWriteByte()
 {
-    if (!_DrqServed)
+    if (false && !_drq_served)
     {
         // Data was not fetched by CPU from Data Register
         // Set LOST_DATA error and terminate
         _statusRegister |= WDS_LOSTDATA;
-        endCommand();
+        transitionFSM(WDSTATE::S_END_COMMAND);
     }
-    else if (_rawDataBuffer)
+
+    if (_rawDataBuffer)
     {
         // Reset Data Register access flag
-        _DrqServed = false;
+        _drq_served = false;
 
         // Put the next byte to write from the Data Register
         *(_rawDataBuffer++) = _dataRegister;
@@ -1535,8 +1603,49 @@ void WD1793::processWriteByte()
     {
         // For some reason data not available - treat it as NOT READY and abort
         _statusRegister |= WDS_NOTRDY;
-        endCommand();
+        transitionFSM(WDSTATE::S_END_COMMAND);
     }
+}
+
+void WD1793::processReadTrack()
+{
+    _bytesToRead = DiskImage::RawTrack::RAW_TRACK_SIZE;
+
+    transitionFSM(WD1793::S_READ_BYTE);
+}
+
+void WD1793::processWriteTrack()
+{
+    throw std::runtime_error("Not implemented");
+}
+
+void WD1793::processReadCRC()
+{
+    MLOGDEBUG("processReadCRC");
+
+    _bytesToRead = 2;
+
+    // Use regular data read flog. DRQ will be asserted on CRC bytes as well
+    transitionFSM(WD1793::S_READ_BYTE);
+}
+
+void WD1793::processWriteCRC()
+{
+    MLOGDEBUG("processWriteCRC");
+
+    // We should not assert DRQ data requests, so just write 2 bytes of CRC silently
+    _bytesToWrite = 2;
+
+    // Make delay for 2 bytes transfer and end command execution
+    transitionFSMWithDelay(WD1793::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE * _bytesToWrite);;
+}
+
+void WD1793::processEndCommand()
+{
+    endCommand();
+
+    // Transition to IDLE state
+    transitionFSM(S_IDLE);
 }
 
 /// endregion </State machine handlers>
@@ -1585,9 +1694,10 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = getStatusRegister();
 
             // TODO: remove debug
-            //MLOGINFO("In #1F - 0x%02X - %s", result, dumpStatusRegister(_lastDecodedCmd).c_str());
+            MLOGINFO("In #1F - 0x%02X - %s", result, dumpStatusRegister(_lastDecodedCmd).c_str());
 
-            clearIntrq();     // Reset INTRQ (Interrupt request) flag - status register is read
+            // Reset INTRQ (Interrupt request) flag - status register is read
+            clearIntrq();
             break;
         case PORT_3F:   // Return current track number
             result = _trackRegister;
@@ -1680,7 +1790,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             writeDataRegister(value);
 
             // Mark DRQ as served since CPU has written to the data register
-            _DrqServed = true;
+            _drq_served = true;
 
             // Only clear DRQ if we're not in the middle of a sector write
             if (_state != WDSTATE::S_WRITE_BYTE)
@@ -1700,6 +1810,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             break;
         case PORT_FF:   // Write to Beta128 system register
             processBeta128(value);
+            MLOGINFO(StringHelper::Format("  #FF - Set beta128: 0x%02X", value).c_str());;
             break;
         default:
             break;

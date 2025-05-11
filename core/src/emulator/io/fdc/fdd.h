@@ -47,7 +47,7 @@ protected:
     bool _track00 = false;
     bool _index = false;
     bool _ready = false;
-    bool _writeProtect = true;
+    bool _writeProtect = false;
 
     DiskImage* _diskImage = nullptr;    // Pointer to a disk image inserted to this drive
     bool _diskInserted = false;

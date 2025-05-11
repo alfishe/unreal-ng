@@ -160,6 +160,8 @@ public:
     /// @details Sets INTRQ signal and updates corresponding beta128 bit
     void raiseIntrq()
     {
+        MLOGDEBUG("INTRQ asserted");
+
         _beta128status |= INTRQ;
         _intrq_out = true;
     }
@@ -176,8 +178,11 @@ public:
     /// @details Sets DRQ signal and updates corresponding beta128 bit
     void raiseDrq()
     {
+        MLOGDEBUG("DRQ asserted");
+
         _beta128status |= DRQ;
         _drq_out = true;
+        _drq_served = false;
     }
 
     /// @brief Clear DRQ signal
@@ -186,6 +191,43 @@ public:
     {
         _beta128status &= ~DRQ;
         _drq_out = false;
+        _drq_served = false;
+    }
+
+    void raiseCrcError()
+    {
+        MLOGDEBUG("CRC ERROR asserted");
+
+        _crc_error = true;
+
+        raiseIntrq();
+    }
+
+    void raiseLostData()
+    {
+        MLOGDEBUG("LOST DATA asserted");
+
+        // Status Register Bit 2 represents LOST DATA flags for all type 2 and 3 commands
+        // Only in that case this error will be mapped to Status register Bit 2 (LOST DATA)
+        _lost_data = true;
+    }
+
+    void raiseRecordNotFound()
+    {
+        MLOGDEBUG("Record not found asserted");
+
+        _record_not_found = true;
+    }
+
+    void clearAllErrors()
+    {
+        _drq_served = false;
+        _lost_data = false;
+        _crc_error = false;
+        _record_not_found = false;
+        _write_fault = false;
+        _write_protect = false;
+        _seek_error = false;
     }
 
     /// endregion </WD1793 / VG93 commands>
@@ -204,24 +246,16 @@ public:
         S_READ_SECTOR,  // Corresponds to Read Sector command
         S_WRITE_SECTOR, // Corresponds to Write Sector command
 
+        S_READ_TRACK,   // Corresponds to Read Track command
+        S_WRITE_TRACK,  // Corresponds to Write Track command
+
         S_READ_BYTE,    // Internal state when reading a single byte
         S_WRITE_BYTE,   // Internal state when writing a single byte
 
-        S_DELAY_BEFORE_CMD,
-        S_CMD_RW,
-        S_FOUND_NEXT_ID,
-        S_RDSEC,
-        S_READ,
-        S_WRSEC,
-        S_WRITE,
-        S_WRTRACK,
-        S_WR_TRACK_DATA,
+        S_READ_CRC,     // Reads for CRC (2 bytes) at the end of the sector data block
+        S_WRITE_CRC,    // Generates and write CRC (2 bytes) at the end of the sector data block
 
-        S_WAIT_HLT,
-        S_WAIT_HLT_RW,
-
-        S_EJECT1,
-        S_EJECT2,
+        S_END_COMMAND,  // Command execution ends
 
         WDSTATE_MAX
     };
@@ -241,25 +275,18 @@ public:
 
             "S_SEARCH_ID",
             "S_READ_SECTOR",
+            "S_WRITE_SECTOR",
+
+            "S_READ_TRACK",
+            "S_WRITE_TRACK",
 
             "S_READ_BYTE",
             "S_WRITE_BYTE",
 
-            "S_DELAY_BEFORE_CMD",
-            "S_CMD_RW",
-            "S_FOUND_NEXT_ID",
-            "S_RDSEC",
-            "S_READ",
-            "S_WRSEC",
-            "S_WRITE",
-            "S_WRTRACK",
-            "S_WR_TRACK_DATA",
+            "S_READ_CRC",
+            "S_WRITE_CRC",
 
-            "S_WAIT_HLT",
-            "S_WAIT_HLT_RW",
-
-            "S_EJECT1",
-            "S_EJECT2"
+            "S_END_COMMAND",
         };
 
         if (state <= sizeof(names)/sizeof(names[0]))
@@ -554,7 +581,6 @@ protected:
 
     // Type 2 command params
     uint16_t _sectorSize = 256;         // Sector size in bytes (will be read from ID Address Mark during READ SECTOR command execution)
-    bool _DrqServed = false; // Type2 commands have timeout for data availability in Data Register
     uint8_t* _idamData = nullptr;
     uint8_t* _sectorData = nullptr;
     uint8_t* _rawDataBuffer = nullptr;   // Pointer to read/write data
@@ -567,6 +593,17 @@ protected:
     bool _index = false;                // Current state of index strobe
     size_t _indexPulseCounter = 0;      // Index pulses counter
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
+
+    // TODO Remove temporary fields once switched to WD93State
+    bool _drq_served = false;           // Type II and III commands have timeout for data availability in Data Register
+    bool _lost_data = false;            // Type II and III commands have this error type if DRQ service time condition is not met
+    bool _crc_error = false;            // Type II: Read Sector, Write Sector, Read Address commands can trigger CRC Error
+    bool _record_not_found = false;     // Type II: Read Sector, Write Sector, Read Address commands can trigger the Record not Found error
+    bool _write_fault = false;          // Write sector and Write Track commands can trigger Write Fault error
+    bool _write_protect = false;        // All Type I as well as Write sector and Write Track commands can trigger a Write Protect error
+    bool _seek_error = false;           // All Type I commands can trigger Seek Error
+    bool _check_am_crc = false;         // Type I command requested to verify Address Mark CRC
+    bool _check_data_crc = false;       // Type II Read Sector command has a mandatory Data Block CRC check
 
     // TODO: Remove temporary fields once switched to WD93State.signals
     bool _intrq_out = false;
@@ -589,6 +626,8 @@ public:
     /// region <Methods>
 public:
     virtual void reset();
+    void internalReset();
+
     void process();
     void ejectDisk()
     {
@@ -661,9 +700,14 @@ protected:
         { S_VERIFY,         &WD1793::processVerify },
         { S_SEARCH_ID,      &WD1793::processSearchID },
         { S_READ_SECTOR,    &WD1793::processReadSector },
-        { S_READ_BYTE,      &WD1793::processReadByte },
         { S_WRITE_SECTOR,   &WD1793::processWriteSector },
+        { S_READ_TRACK,     &WD1793::processReadTrack },
+        { S_WRITE_TRACK,    &WD1793::processWriteTrack },
+        { S_READ_BYTE,      &WD1793::processReadByte },
         { S_WRITE_BYTE,     &WD1793::processWriteByte },
+        { S_READ_CRC,       &WD1793::processReadCRC },
+        { S_WRITE_CRC,      &WD1793::processWriteCRC },
+        { S_END_COMMAND,    &WD1793::processEndCommand },
     };
 
     void processIdle();
@@ -673,9 +717,20 @@ protected:
     void processVerify();
     void processSearchID();
     void processReadSector();
+    void processReadTrack();
+    void processWriteTrack();
     void processReadByte();
     void processWriteSector();
     void processWriteByte();
+    void processReadCRC();
+    void processWriteCRC();
+    void processEndCommand();
+
+    /// @brief Check if there are more actions in the FIFO queue
+    bool hasMoreFIFOActions()
+    {
+        return !_operationFIFO.empty();
+    }
 
     void transitionFSM(WDSTATE nextState)
     {
@@ -684,22 +739,6 @@ protected:
         std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
         MLOGINFO(message.c_str());
         /// endregion </Debug logging>
-
-        _state = nextState;
-        _state2 = WDSTATE::S_IDLE;
-    }
-
-    void transitionFSM(FSMEvent nextStateEvent)
-    {
-        WDSTATE nextState = nextStateEvent.getState();
-
-        /// region <Debug logging>
-        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, convertTStatesToMs(_time));
-        std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
-        MLOGINFO(message.c_str());
-        /// endregion </Debug logging>
-
-        nextStateEvent.executeAction();
 
         _state = nextState;
         _state2 = WDSTATE::S_IDLE;
@@ -775,8 +814,7 @@ protected:
     {
         uint8_t result = _dataRegister;
 
-
-        _DrqServed = true;
+        _drq_served = true;
 
         return result;
     }
@@ -786,7 +824,7 @@ protected:
         _dataRegister = value;
 
         // If we're on Read or Write operation and data was requested by asserting DRQ - we need to mark that request fulfilled
-        _DrqServed = true;
+        _drq_served = true;
     }
 
     /// endregion </State machine handlers>
@@ -813,8 +851,10 @@ public:
     /// region <Debug methods>
 public:
     std::string dumpStatusRegister(WD_COMMANDS command);
+    std::string dumpBeta128Register();
     std::string dumpCommand(uint8_t value);
     std::string dumpStep();
+    std::string dumpFullState();
 
     static inline size_t convertTStatesToMs(size_t tStates)
     {
@@ -871,21 +911,18 @@ public:
     using WD1793::_steppingMotorRate;
     using WD1793::_motorTimeoutTStates;
 
-    using WD1793::_DrqServed;
+    using WD1793::_drq_served;
     using WD1793::_intrq_out;
     using WD1793::_drq_out;
+    using WD1793::_lost_data;
+    using WD1793::_crc_error;
+    using WD1793::_record_not_found;
+    using WD1793::_write_fault;
+    using WD1793::_write_protect;
+    using WD1793::_seek_error;
 
     using WD1793::_index;
     using WD1793::_indexPulseCounter;
-
-    virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
-    {
-        _state = S_IDLE;
-        _statusRegister = 0;
-        _trackRegister = 0;
-        _sectorRegister = 1;
-        _dataRegister = 0;
-    }
 
     using WD1793::isType1Command;
     using WD1793::isType2Command;

@@ -150,7 +150,7 @@ public:
         }
 
         /// Check if CRC valid
-        bool isCRCValid()
+        bool isDataCRCValid()
         {
             uint16_t crc = CRCHelper::crcWD1793(&data_address_mark, sizeof(data) + sizeof(data_address_mark));
 
@@ -170,7 +170,7 @@ public:
         /// 200ms per disk revolution, 4us per bit => 32 us per byte. So 200000 / 32 = 6250 bytes per track.
         /// TR-DOS allows track size in a range [6208...6464] bytes
         static constexpr const size_t RAW_TRACK_SIZE = 6250;
-        static constexpr const size_t SECTORS_PER_TRACK = 16;                              // TR-DOS uses 16 sector layout
+        static constexpr const size_t SECTORS_PER_TRACK = 16;                              // TR-DOS uses 16 sectors layout
         static constexpr const size_t RAW_SECTOR_BYTES = sizeof(RawSectorBytes);           // 388 bytes expected
         static constexpr const size_t TRACK_BITMAP_SIZE_BYTES = (RAW_TRACK_SIZE + 7) / 8;  // 782 bytes expected
         static constexpr const size_t TRACK_END_GAP_BYTES = RAW_TRACK_SIZE - (RAW_SECTOR_BYTES * SECTORS_PER_TRACK); // 42 bytes expected
@@ -184,7 +184,7 @@ public:
     public:
         RawTrack()
         {
-            std::fill(&endGap[0], &endGap[0] + sizeof(endGap), 0x4E);
+            reset();
         }
         ~RawTrack() = default;  // Note: do not make it virtual since vtable will add overhead to sizeof()
         /// endregion </Constructors / destructors>
@@ -245,6 +245,15 @@ public:
         uint8_t sectorInterleaveTable[SECTORS_PER_TRACK] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F };
         RawSectorBytes* sectorsOrderedRef[SECTORS_PER_TRACK] = {};
         AddressMarkRecord* sectorIDsOrderedRef[SECTORS_PER_TRACK] = {};
+        DiskImage* _diskImage = nullptr;
+
+        /// region <Properties>
+    public:
+        DiskImage* getDiskImage() const
+        {
+            return _diskImage;
+        }
+        /// endregion </Properties>
         /// endregion </Fields>
 
         /// region <Properties>
@@ -312,10 +321,59 @@ public:
 
             return result;
         }
+
+        uint16_t getCRCForSector(uint8_t sectorNo)
+        {
+            uint16_t result = sectorsOrderedRef[sectorNo]->data_crc;
+
+            return result;
+        }
+
+        void setCRCForSector(uint8_t sectorNo, uint16_t crc)
+        {
+            sectorsOrderedRef[sectorNo]->data_crc = crc;
+        }
+
+        void calculateDataCRCForSector(uint8_t sectorNo)
+        {
+            sectorsOrderedRef[sectorNo]->recalculateDataCRC();
+        }
+
+        uint8_t* getCRCForSectorAddress(uint8_t sectorNo)
+        {
+            uint8_t* result = (uint8_t*)&sectorsOrderedRef[sectorNo]->data_crc;
+
+            return result;
+        }
+
+        /// Returns pointer to raw track data
+        /// @param cylinder Cylinder number
+        /// @param side Side number (0 or 1)
+        /// @return Pointer to raw track data if track exists, nullptr otherwise
+        /// @note The pointer points directly to the track's raw data buffer
+        /// @warning The returned pointer should not be used to modify the track data directly
+        uint8_t* getRawTrackData(uint8_t cylinder, uint8_t side)
+        {
+            if (!Track::isTrackValid(cylinder, side))
+            {
+                return nullptr;
+            }
+
+            size_t trackIndex = Track::calculateTrackIndex(cylinder, side);
+            Track* track = getDiskImage()->getTrack(trackIndex);
+            if (!track)
+            {
+                return nullptr;
+            }
+            return reinterpret_cast<uint8_t*>(track);
+        }
         /// endregion </Properties>
 
         /// region <Constructors / destructors>
-        Track()
+    public:
+        Track() = default;
+        Track(DiskImage* diskImage)
+            : _diskImage(diskImage)
         {
             // Apply default interleaving and do re-index
             reset();
@@ -340,6 +398,24 @@ public:
 
         /// region <Methods>
     public:
+        /// Validates if track number is within valid range
+        /// @param cylinder Cylinder number
+        /// @param side Side number (0 or 1)
+        /// @return True if track is valid, false otherwise
+        static bool isTrackValid(uint8_t cylinder, uint8_t side)
+        {
+            return (cylinder <= MAX_CYLINDERS) && (side <= MAX_SIDES);
+        }
+
+        /// Calculates track index based on cylinder and side
+        /// @param cylinder Cylinder number
+        /// @param side Side number (0 or 1)
+        /// @return Track index
+        static size_t calculateTrackIndex(uint8_t cylinder, uint8_t side)
+        {
+            return cylinder * 2 + side;
+        }
+
         void reset()
         {
             // Reset all sectors content
@@ -475,6 +551,13 @@ public:
 
         // Allocate memory for disk image with selected characteristics
         allocateMemory(_cylinders, _sides);
+        
+        // Initialize tracks with DiskImage pointer
+        for (Track& track : _tracks)
+        {
+            track._diskImage = this;
+        }
+        
         reset();
     }
     DiskImage() = delete;

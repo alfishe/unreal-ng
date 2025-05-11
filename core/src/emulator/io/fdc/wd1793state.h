@@ -162,6 +162,16 @@ struct WD93Counters
     int fddMotorTimeoutCounter;
 };
 
+struct WD93Mode
+{
+    /// @brief True if MFM mode is selected, false if FM mode is selected
+    /// @details WD1793 is capable to operate in two modes:
+    /// - DD (Double Density) mode with MFM data encoding, 250 Kbps transfer speed
+    /// - FM (Single Density) mode with FM data encoding, 125 Kbps transfer speed
+    bool isInMFMMode;
+
+};
+
 
 /// Hardware state for WD1793 FDC
 /// @brief Holds all output, internal state, registers and counters
