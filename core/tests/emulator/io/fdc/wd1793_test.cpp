@@ -335,6 +335,13 @@ TEST_F(WD1793_Test, FDD_Rotation_Index)
 
     WD1793CUT fdc(_context);
 
+    // Since, when counting Index pulses, we have a check: if (diskInserted && motorOn)
+    // Then we should insert a disk image
+    DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+
+    EXPECT_EQ(fdc.getDrive()->isDiskInserted(), true) << "Disk image must be inserted";
+
     // Reset WDC internal time marks
     fdc.resetTime();
 
@@ -355,7 +362,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index)
             EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter shouldn't increment when FDD motor is stopped";
         }
 
-        // Start motor after 1 second delay
+        // Start motor after 1-second delay
         if (clk > Z80_FREQUENCY && !motorStarted)
         {
             // Trigger motor start
