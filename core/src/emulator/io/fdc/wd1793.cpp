@@ -1761,10 +1761,10 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
         {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
         {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
         {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
-        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "ZERO5",       "ZERO6",         "NOT READY"},  // READ ADDRESS
         {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "RECORD TYPE", "ZERO6",         "NOT READY"},  // READ SECTOR
-        {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
         {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
+        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "ZERO5",       "ZERO6",         "NOT READY"},  // READ ADDRESS
+        {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
         {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE TRACK
         // FORCE INTERRUPT doesn't have its own status bits. Bits from the previous / ongoing command to be shown instead
     };
@@ -1773,6 +1773,8 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
     uint8_t status = _statusRegister;
 
     ss << StringHelper::Format("Command: %s. Status: 0x%02X", getWD_COMMANDName(command), status) << std::endl;
+    ss << "  ";
+
     switch (command)
     {
         case WD_CMD_FORCE_INTERRUPT:
@@ -1800,6 +1802,44 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
 
     std::string result = ss.str();
 
+    return result;
+}
+
+std::string WD1793::dumpBeta128Register()
+{
+    std::stringstream ss;
+
+    ss << StringHelper::Format("Beta128 status: 0x%02X", _beta128status) << std::endl;
+
+    // Define bit positions and their meanings
+    static const std::pair<uint8_t, std::string> bitDescriptions[] =
+    {
+        {(uint8_t)BETA_STATUS_BITS::DRQ, "DRQ"},
+        {(uint8_t)BETA_STATUS_BITS::INTRQ, "INTRQ"}
+    };
+
+    // Print bits horizontally
+    ss << "  ";
+    for (uint8_t bit = 0; bit < 8; bit++)
+    {
+        bool isSet = (_beta128status & (1 << bit)) != 0;
+        
+        std::string description = isSet ? "1" : "0";
+        for (const auto& [descBit, desc] : bitDescriptions)
+        {
+            if (descBit == (1 << bit) && isSet)
+            {
+                description = desc;
+                break;
+            }
+        }
+
+        ss << StringHelper::Format("<%s> ", description);
+    }
+
+    ss << std::endl;
+
+    std::string result = ss.str();
     return result;
 }
 
@@ -1836,4 +1876,36 @@ std::string WD1793::dumpStep()
 
     return result;
 }
+
+std::string WD1793::dumpFullState()
+{
+    std::stringstream ss;
+
+    // Convert T-states to microseconds
+    size_t time_us = static_cast<size_t>(_time * 285.714 / 1000.0 + 0.5);  // +0.5 for rounding
+    std::string time_us_str = StringHelper::Format("%d us", time_us);
+
+    ss << "WD1793 state dump @ " << _time << " T (" << time_us_str << ")" << std::endl;
+    ss << "----------------" << std::endl;
+    ss << dumpCommand(_lastDecodedCmd) << std::endl;
+    ss << dumpStep() << std::endl;
+    ss << dumpStatusRegister((WD_COMMANDS)_lastDecodedCmd) << std::endl;
+    ss << dumpBeta128Register() << std::endl;
+
+    
+// Add additional state information
+    ss << StringHelper::Format("State: %s", WDSTATEToString(_state)) << std::endl;
+    ss << StringHelper::Format("State2: %s", WDSTATEToString(_state2)) << std::endl;
+    ss << StringHelper::Format("DRQ served: %s", _drq_served ? "YES" : "NO") << std::endl;
+    ss << StringHelper::Format("DRQ out: %s", _drq_out ? "YES" : "NO") << std::endl;
+    ss << StringHelper::Format("INTRQ out: %s", _intrq_out ? "YES" : "NO") << std::endl;
+    ss << _bytesToRead << " bytes to read" << std::endl;
+    ss << _bytesToWrite << " bytes to write" << std::endl;
+
+    ss << "----------------" << std::endl;
+    std::string result = ss.str();
+
+    return result;
+}
+
 /// endregion </Debug methods>
