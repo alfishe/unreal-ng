@@ -1,5 +1,4 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
+#pragma once
 
 #include <QMainWindow>
 #include <QMutex>
@@ -14,6 +13,14 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
 #include "emulator/emulator.h"
+
+#ifdef ENABLE_AUTOMATION
+    // Avoid name conflicts between Python and Qt "slot"
+    #undef slots
+    #include "automation/automation.h"
+    #define slots Q_SLOTS
+#endif // ENABLE_AUTOMATION
+
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -69,6 +76,10 @@ private:
     QPushButton* startButton = nullptr;
     QMutex lockMutex;
 
+#ifdef ENABLE_AUTOMATION
+    Automation automation;
+#endif // ENABLE_AUTOMATION
+
     EmulatorManager* _emulatorManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
     Emulator* _emulator = nullptr;
@@ -84,4 +95,4 @@ private:
     bool _isFullScreen = false;
     bool _inTransitionToFullScreen = false;
 };
-#endif // MAINWINDOW_H
+

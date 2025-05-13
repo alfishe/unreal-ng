@@ -5,6 +5,8 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'core' on C++
 project(unreal-qt LANGUAGES CXX)
 
+option(ENABLE_AUTOMATION "Enable all automation modules" ON)
+
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,6 +22,13 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # Build all dependency libraries
 add_subdirectory("${ROOT_DIR}/core/src" core)
 add_subdirectory("${ROOT_DIR}/core/tests" tests)
+
+# Add automation if enabled
+if (ENABLE_AUTOMATION)
+    add_subdirectory("${ROOT_DIR}/core/automation" automation)
+
+    set(INCLUDE_AUTOMATION True)
+endif()
 
 # ========================================
 # Platform-specific Qt path detection
@@ -70,12 +79,12 @@ endif ()
 
 # Resolve base paths for Core library and Data
 get_filename_component(CORE_LIBRARY_PATH
-                       "${CMAKE_CURRENT_LIST_DIR}/../core"
-                       ABSOLUTE)
+   "${CMAKE_CURRENT_LIST_DIR}/../core"
+   ABSOLUTE)
 message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
 get_filename_component(DATA_PATH
-        "${CMAKE_CURRENT_LIST_DIR}/../data"
-        ABSOLUTE)
+    "${CMAKE_CURRENT_LIST_DIR}/../data"
+    ABSOLUTE)
 message("DATA_PATH: ${DATA_PATH}")
 
 # Include CMake helper functions file
@@ -83,8 +92,9 @@ include(${ROOT_DIR}/cmake/func.cmake)
 
 # Set include paths for compiler
 include_directories(
-        ${SOURCE_DIR}/
-        ${SOURCE_DIR}/3rdparty
+    ${SOURCE_DIR}/
+    ${SOURCE_DIR}/3rdparty
+    ${ROOT_DIR}/core/  # Add core directory to include path so "automation/automation.h" can be found
 )
 
 
@@ -104,37 +114,61 @@ message("UI_HEADERS:${UI_HEADERS}")
 # Put binary and configuration files to /bin subfolder
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Produce executable
+# Create the executable first
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
 
-# Declare _DEBUG symbol for compiler
+# Set common target properties
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
+    "${ROOT_DIR}/core/src"
+    "${ROOT_DIR}/core"  # Added parent directory for proper automation includes
+    "${ROOT_DIR}/core/automation"  # For automation headers
+    "${ROOT_DIR}/core/automation/lua/3rdparty/lua/lua-5.4.6/include"  # For Lua headers
+    "${ROOT_DIR}/core/automation/lua/3rdparty/sol2/include"  # For sol2 headers
+)
+
+# Debug configuration
 if (CMAKE_BUILD_TYPE MATCHES Debug)
     message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
-endif (CMAKE_BUILD_TYPE MATCHES Debug)
+endif()
 
-# Add core library includes path for testclient
-target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
-
-# Link all dependencies
+# Platform-specific settings
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
     set(common_libraries pthread iconv)
-endif (APPLE)
-
-if (UNIX AND NOT APPLE)
+elseif (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++ pthread)
-endif (UNIX AND NOT APPLE)
+endif()
 
-# Link with Qt, emulator core and C++ common libraries
-target_link_libraries(
-    ${PROJECT_NAME} PRIVATE
+# Configure automation if enabled
+if (INCLUDE_AUTOMATION)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        $<TARGET_PROPERTY:unrealng::automation,INTERFACE_INCLUDE_DIRECTORIES>
+    )
 
-    unrealng::core
-    Qt6::Widgets
-    Qt6::Multimedia
-    ${common_libraries}
-)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
+
+    target_link_libraries(${PROJECT_NAME} PRIVATE 
+        ${common_libraries}
+        Qt6::Widgets
+        Qt6::Multimedia
+        unrealng::core
+        unrealng::automation
+    )
+else()
+    # Link without automation
+    target_link_libraries(${PROJECT_NAME} PRIVATE 
+        ${common_libraries}
+        Qt6::Widgets
+        Qt6::Multimedia
+        unrealng::core
+        ${ROOT_DIR}/core/automation/lua/3rdparty/lua/lua-5.4.6/src/liblua.a
+    )
+endif()
+
+# All linking is now handled in the main target_link_libraries call above
 
 
 # Define data paths
@@ -174,6 +208,9 @@ message(STATUS "Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")
+message(STATUS "Options:")
+message(STATUS "  ENABLE_AUTOMATION: ${ENABLE_AUTOMATION}")
+message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")
 message(STATUS "  LIB_DIR:             ${LIB_DIR}")

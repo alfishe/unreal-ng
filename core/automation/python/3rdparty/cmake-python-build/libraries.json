@@ -1,0 +1,38 @@
+{
+"python": {
+  "url": "https://github.com/python/cpython.git",
+  "tag": "v3.11.4"
+},
+"bzip2": {
+  "url": "https://gitlab.com/bzip2/bzip2.git",
+  "tag": "66c46b8c9436613fd81bc5d03f63a61933a4dcc3"
+},
+"expat": {
+  "url": "https://github.com/libexpat/libexpat.git",
+  "tag": "R_2_5_0"
+},
+"ffi": {
+  "url": "https://github.com/libffi/libffi.git",
+  "tag": "v3.4.4"
+},
+"libtool": {
+  "url": "https://git.savannah.gnu.org/git/libtool.git",
+  "tag": "v2.4.7"
+},
+"readline": {
+  "url": "https://git.savannah.gnu.org/git/readline.git",
+  "tag": "readline-8.1"
+},
+"ssl": {
+  "url": "https://github.com/openssl/openssl.git",
+  "tag": "OpenSSL_1_1_1v"
+},
+"xz": {
+  "url": "https://github.com/xz-mirror/xz.git",
+  "tag": "v5.4.3"
+},
+"zlib": {
+  "url" : "https://github.com/zlib-ng/zlib-ng.git",
+  "tag": "2.1.3"
+}
+}

@@ -83,6 +83,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Store original window geometry before going fullscreen / maximized
     _normalGeometry = normalGeometry();
 
+#ifdef ENABLE_AUTOMATION
+    automation.start();
+#endif
+
     /// region <Debug>
 
     /// endregion </Debug>
@@ -95,6 +99,10 @@ MainWindow::~MainWindow()
     // Deinit audio subsystem
     AppSoundManager& soundManager = _emulatorManager->getSoundManager();
     soundManager.deinit();
+
+#ifdef ENABLE_AUTOMATION
+    automation.stop();
+#endif
 
     if (debuggerWindow != nullptr)
     {
