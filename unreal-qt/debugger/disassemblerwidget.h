@@ -30,7 +30,7 @@ protected:
     EmulatorContext* getEmulatorContext();
     Memory* getMemory();
     Z80Registers* getZ80Registers();
-    Z80Disassembler* getDisassembler();
+    std::unique_ptr<Z80Disassembler>& getDisassembler();
 
     std::string formatRuntimeInformation();
 
