@@ -7,17 +7,14 @@ struct WD93SignalsHost
 {
     /// WRITE ENABLE
     /// @details Active state writes data from Data Access Lines into the selected register
-    [[maybe_unused]]
     bool we_in;
 
     /// CHIP SELECT
     /// @details Active state selects the chip and enables host communication with FDC
-    [[maybe_unused]]
     bool cs_in;
 
     /// READ ENABLE
     /// @details Active state triggers placing data from the selected register to Data Access Lines
-    [[maybe_unused]]
     bool re_in;
 
     /// INTERRUPT REQUEST
@@ -33,7 +30,6 @@ struct WD93SignalsHost
 
     /// WRITE FAULT
     /// @details Set when a write operation fails and reset when the write operation completes
-    [[maybe_unused]]
     bool write_fault_out;
 };
 
@@ -41,7 +37,6 @@ struct WD93SignalsFDD
 {
     /// HEAD LOAD TIMING
     /// @details Head is engaged (true = active/asserted state)
-    [[maybe_unused]]
     bool hlt_in;
 
     /// READY - gives permission to start Read or Write operation
@@ -50,54 +45,44 @@ struct WD93SignalsFDD
     /// If Ready is low the Read or Write operation is not performed a n d an interrupt is generated.
     /// Type I operations are performed regardless of the state of Ready.
     /// The Ready input appears in inverted format as Status Register bit 7
-    [[maybe_unused]]
     bool ready_in;
 
     /// TRACK 00
     /// @details Informs FDC that the Read/Write head positioned over Track 00 (usually triggered by hardware sensor on FDD side)
-    [[maybe_unused]]
     bool tr00_in;
 
     /// INDEX PULSE
     /// @details informs FDC that the index hole is encountered on the diskette
     /// (opto-coupler on FDD detects index hole during diskette rotation)
-    [[maybe_unused]]
     bool ip_in;
 
     /// WRITE PROTECT
     /// @details If signal is active - it terminates any Write command andsets the Write Protection bit in Status Register
-    [[maybe_unused]]
     bool wp_in;
 
     /// DOUBLE_DENSITY
     /// @details If active - Double Density (MFM) is seleted. Inactive - Single Density (FM)
-    [[maybe_unused]]
     bool dden_in;
 
 
     /// WRITE FAULT / VFO ENABLE
-    [[maybe_unused]]
     bool vfoe_inout;
 
 
     /// HEAD LOAD
     /// @details Engage head to read/write media
-    [[maybe_unused]]
     bool hld_out;
 
     /// WRITE GATE
     /// @details Activated before writing to a diskette
-    [[maybe_unused]]
     bool wg_out;
 
     /// READ GATE
     /// @details Activated when field of zeroes or ones detected and is used for synchronization
-    [[maybe_unused]]
     bool rg_out;
 
     /// TRACK GREATER THAN 43
     /// @details Read/Write head positioned between tracks 44-86, Output valid ONLY for Read and Write commands
-    [[maybe_unused]]
     bool tg43_out;
 
     /// SSO - SIDE SELECT OUTPUT
@@ -107,22 +92,18 @@ struct WD93SignalsFDD
     /// SSO is set to a logic 0. The Side Select Output is only
     /// updated at the beginning of a Type Il or Ill command.
     /// It is forced to a logic 0 upon a MASTER RESET.
-    [[maybe_unused]]
     bool sso_out = false;
 
     /// DIRECTION
     /// @details Active when stepping in (to a disk center) and inactive when stepping out (to disk edge)
-    [[maybe_unused]]
     bool direction_out = true;
 
     /// STEP
     /// @details Generates pulse / strobe for each FDD head step (in a direction defined by DIRECTION signal)
-    [[maybe_unused]]
     bool step_out;
 
     /// WRITE DATA
     /// @details 250 ns (MFM) or 500 ns (FM) pulse per flux transition.
-    [[maybe_unused]]
     bool wd_out;
 };
 
