@@ -470,6 +470,11 @@ void Core::CPUFrameCycle()
     MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
+
+#ifdef ENABLE_MEMORY_MAPPING
+    // Sync memory content to disk memory-mapped files
+    _memory->SyncToDisk();
+#endif
 }
 
 /// Perform corrections after each frame rendered

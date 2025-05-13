@@ -5,6 +5,12 @@ message(">> core/src CMakeLists.txt")
 # Project named 'core' on C++
 project(core LANGUAGES CXX)
 
+# Emulated system memory mapping options
+option(ENABLE_MEMORY_MAPPING "Enable memory-mapped file support fpr emulated system RAM" OFF)
+option(USE_SHAREDMEM_MAPPING "Use shared memory (shm_open) for memory mapping" ON)
+option(USE_FILE_MAPPING "Use file-based memory mapping" OFF)
+
+
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -61,6 +67,21 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
+
+# Pass option to the compiler
+if (ENABLE_MEMORY_MAPPING)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_MEMORY_MAPPING)
+
+    if (USE_SHAREDMEM_MAPPING)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_SHAREDMEM_MAPPING)
+    endif ()
+
+    if (USE_FILE_MAPPING)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE USE_FILE_MAPPING)
+    endif ()
+
+endif ()
+
 
 # 'stdafx.h' is our precompiled header
 target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
