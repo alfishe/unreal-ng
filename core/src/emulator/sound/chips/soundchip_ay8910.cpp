@@ -105,6 +105,8 @@ void SoundChip_AY8910::NoiseGenerator::reset()
     _counter = 0x00;
     //_registerLSFR = 0xFFFF'FFFF;
     _registerLSFR = 1;
+
+    _out = false;
 }
 
 void SoundChip_AY8910::NoiseGenerator::setPeriod(uint8_t period)
