@@ -22,7 +22,7 @@ protected:
     EmulatorContext* _context = nullptr;
     BreakpointManager* _breakpoints = nullptr;
     LabelManager* _labels = nullptr;
-    Z80Disassembler* _disassembler = nullptr;
+    std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -37,7 +37,7 @@ public:
 
     BreakpointManager* GetBreakpointsManager();
     LabelManager* GetLabelManager();
-    Z80Disassembler* GetDisassembler();
+    std::unique_ptr<Z80Disassembler>& GetDisassembler();
 
     /// endregion </Properties>
 

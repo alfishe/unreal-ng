@@ -27,5 +27,6 @@ struct AudioFrameDescriptor
     static constexpr const size_t durationInSamples = SAMPLES_PER_FRAME;
     static constexpr const size_t memoryBufferSizeInBytes = AUDIO_BUFFER_SIZE_PER_FRAME;
 
+    alignas(alignof(int16_t))
     uint8_t memoryBuffer[memoryBufferSizeInBytes] = {};
 };

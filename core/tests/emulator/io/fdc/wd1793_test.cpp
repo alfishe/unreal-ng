@@ -335,6 +335,13 @@ TEST_F(WD1793_Test, FDD_Rotation_Index)
 
     WD1793CUT fdc(_context);
 
+    // Since, when counting Index pulses, we have a check: if (diskInserted && motorOn)
+    // Then we should insert a disk image
+    DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+
+    EXPECT_EQ(fdc.getDrive()->isDiskInserted(), true) << "Disk image must be inserted";
+
     // Reset WDC internal time marks
     fdc.resetTime();
 
@@ -355,7 +362,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index)
             EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter shouldn't increment when FDD motor is stopped";
         }
 
-        // Start motor after 1 second delay
+        // Start motor after 1-second delay
         if (clk > Z80_FREQUENCY && !motorStarted)
         {
             // Trigger motor start
@@ -1480,8 +1487,8 @@ TEST_F(WD1793_Test, FSM_CMD_Step_Out)
 /// region <READ_SECTOR>
 TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 {
-    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 1;
-    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const READ_SECTOR_TEST_DURATION_SEC = 1;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * READ_SECTOR_TEST_DURATION_SEC;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 10; // Time increments during simulation
 
     // Internal logging messages are done on the Info level
@@ -1519,7 +1526,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, readSectorCommand);
     EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_READ_SECTOR);
 
-    for (uint8_t track = 0; track < TRD_DS_80_TRACKS * MAX_SIDES; ++track)
+    for (uint8_t track = 0; track < TRD_80_TRACKS * MAX_SIDES; ++track)
     {
         for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; ++sector)
         {
@@ -1564,7 +1571,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
                 }
 
                 // Fetch data bytes with marking Data Register accessed so no DATA LOSS error occurs
-                if (fdc._state == WD1793::S_READ_BYTE && !fdc._dataRegisterAccessed)
+                if (fdc._state == WD1793::S_READ_BYTE && !fdc._drq_served)
                 {
                     uint8_t readValue = fdc.readDataRegister();
 
@@ -1595,7 +1602,8 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 
             EXPECT_EQ(isAccomplishedCorrectly, true) << "READ_SECTOR didn't end up correctly";
 
-            size_t estimatedExecutionTime = 256 * WD1793::TSTATES_PER_FDC_BYTE / TSTATES_IN_MS; // We're performing single positioning step 6ms long
+            size_t estimatedExecutionTime = 256 * WD1793::WD93_TSTATES_PER_FDC_BYTE
+                                            / TSTATES_IN_MS; // We're performing single positioning step 6ms long
             EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
 
             EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were read";
@@ -1627,6 +1635,157 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     /// endregion </For all tracks and sectors>
 }
 /// endregion </READ_SECTOR>
+
+/// region <WRITE_SECTOR>
+TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
+{
+    static constexpr size_t const WRITE_SECTOR_TEST_DURATION_SEC = 1;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * WRITE_SECTOR_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 10; // Time increments during simulation
+
+    // Internal logging messages are done on the Info level
+    //_context->pModuleLogger->SetLoggingLevel(LogInfo);
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    // Sector write buffer
+    uint8_t sectorData[TRD_SECTORS_SIZE_BYTES] = {};
+    size_t sectorDataIndex = 0;
+
+    for (size_t i = 0; i < TRD_SECTORS_SIZE_BYTES; ++i)
+    {
+        sectorData[i] = (uint8_t)i;
+    }
+
+
+    /// region <Create empty disk image>
+    DiskImage diskImage = DiskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    EXPECT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
+    bool formatValid = loaderTrd.validateEmptyTRDOSImage(&diskImage);
+    EXPECT_EQ(formatValid, true) << "Empty test TRD image was not formatted properly";
+    /// endregion </Create empty disk image>
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // De-activate WD1793 reset (active low), Set active drive A, Select MFM / double density mode
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    /// region <For all tracks and sectors>
+
+    const uint8_t writeSectorCommand = WD1793CUT::WD_COMMAND_BITS::WD_CMD_BITS_WRITE_SECTOR;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeSectorCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorCommand);
+    EXPECT_EQ(decodedCommand, WD1793CUT::WD_COMMANDS::WD_CMD_WRITE_SECTOR);
+
+    for (uint8_t track = 0; track < TRD_80_TRACKS * MAX_SIDES; ++track)
+    {
+        for (uint8_t sector = 0; sector < TRD_SECTORS_PER_TRACK; ++sector)
+        {
+            sectorDataIndex = 0;
+
+            fdc.reset();
+            /// region <Create parameters for WRITE_SECTOR>
+            fdc._commandRegister = writeSectorCommand;
+            fdc._lastDecodedCmd = decodedCommand;
+
+            uint16_t physicalTrack = track / 2;
+            fdc._trackRegister = physicalTrack;
+            fdc._selectedDrive->setTrack(physicalTrack);
+            fdc._sectorRegister = sector + 1;   // WD1793 register accepts only values from range 1..26
+            /// endregion </Create parameters for READ_SECTOR>
+
+            // Set the proper FDD side using Beta128 register
+            uint8_t beta128Register = fdc._beta128Register;
+            bool sideUp = track % 2;
+            beta128Register = beta128Register | (sideUp ? WD1793::BETA128_COMMAND_BITS::BETA_CMD_HEAD : 0);
+            fdc._beta128Register = beta128Register;
+            fdc._sideUp = sideUp;
+
+            // Trigger FDC command
+            fdc.cmdWriteSector(commandValue);
+
+            /// region <Perform simulation loop>
+            size_t clk;
+            for (clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+            {
+                // Update time for FDC
+                fdc._time = clk;
+
+                // Feed data bytes with marking Data Register accessed so no DATA LOSS error occurs
+                if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+                {
+                    uint8_t writeValue = sectorData[sectorDataIndex++];
+
+                    fdc.writeDataRegister(writeValue);
+                }
+
+                // Process FSM state updates
+                fdc.process();
+
+                // Check that BUSY flag is set for the whole duration of head positioning
+                if (fdc._state != WD1793::S_IDLE)
+                {
+                    bool busyFlag = fdc._statusRegister & WD1793::WDS_BUSY;
+                    EXPECT_EQ(busyFlag, true);
+                }
+
+                // Check if a test sequence already finished
+                if (fdc._state == WD1793::S_IDLE)
+                {
+                    break;
+                }
+            }
+            /// endregion </Perform simulation loop>
+
+            /// region <Check results>
+            size_t elapsedTimeTStates = clk;
+            size_t elapsedTimeMs = TestTimingHelper::convertTStatesToMs(clk);
+
+            bool isAccomplishedCorrectly = !(fdc._statusRegister & WD1793::WDS_BUSY) &&       // Controller is not BUSY anymore
+                                           fdc._trackRegister == physicalTrack &&             // FDC track still set properly
+                                           fdc._selectedDrive->getTrack() == physicalTrack && // FDD is on the same track
+                                           fdc._state == WD1793::S_IDLE;                      // FSM is in idle state
+
+            EXPECT_EQ(isAccomplishedCorrectly, true) << "WRITE_SECTOR didn't end up correctly";
+
+            size_t estimatedExecutionTime = 256 * WD1793::WD93_TSTATES_PER_FDC_BYTE
+                                            / TSTATES_IN_MS; // We're performing single positioning step 6ms long
+            EXPECT_IN_RANGE(elapsedTimeMs, estimatedExecutionTime, estimatedExecutionTime + 1) << "Abnormal execution time";
+
+            EXPECT_EQ(sectorDataIndex, 256) << "Not all sector bytes were written";
+
+            DiskImage::Track* trackData = diskImage.getTrack(track);
+            uint8_t* referenceSector = trackData->getDataForSector(sector);
+
+            if (!areUint8ArraysEqual(sectorData, referenceSector, TRD_SECTORS_SIZE_BYTES))
+            {
+                std::string diff = DumpHelper::DumpBufferDifferences(sectorData, referenceSector, TRD_SECTORS_SIZE_BYTES);
+
+                //FAIL() << "Track: " << (int)track << " Sector: " << (int)sector << " Sector write data does not match the reference" << std::endl << diff;
+                std::cout << "Track: " << (int)track << " Sector: " << (int)sector << " Sector write data does not match the reference" << std::endl << diff << std::endl;
+
+                return;
+            }
+
+            //EXPECT_ARRAYS_EQ(sectorData, referenceSector, SECTORS_SIZE_BYTES) << "Sector write data does not match the reference";
+
+            //std::cout << "Read sector dump (T: " << (int)track << " S: " << (int)sector << ")" << std::endl;
+            //std::cout << DumpHelper::HexDumpBuffer(sectorData, sizeof(sectorData) / sizeof(sectorData[0])) << std::endl;
+
+            //return;
+
+            /// endregion </Check results>
+        }
+    }
+
+    /// endregion </For all tracks and sectors>
+
+
+}
+/// endregion </WRITE_SECTOR>
 
 /// region <FORCE_INTERRUPT>
 

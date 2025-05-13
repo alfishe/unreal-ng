@@ -50,7 +50,7 @@ Z80Registers* DisassemblerWidget::getZ80Registers()
     return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
 }
 
-Z80Disassembler* DisassemblerWidget::getDisassembler()
+std::unique_ptr<Z80Disassembler>& DisassemblerWidget::getDisassembler()
 {
     return m_debuggerWindow->getEmulator()->GetContext()->pDebugManager->GetDisassembler();
 }

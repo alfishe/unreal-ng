@@ -53,7 +53,12 @@ public:
     bool loadImage();
     bool writeImage();
 
+    // TR-DOS image specific method. Can be moved closer to generic TR-DOS functionality
     bool format(DiskImage* diskImage);
+    bool validateTRDOSImage(DiskImage* diskImage);
+    bool validateTRDOSImage(DiskImage* diskImage, TRDValidationReport& report);
+    bool validateEmptyTRDOSImage(DiskImage* diskImage);
+    bool validateEmptyTRDOSImage(DiskImage* diskImage, TRDValidationReport& report);
 
     /// endregion </Basic methods>
 
@@ -61,7 +66,7 @@ public:
 protected:
     uint8_t getTrackNoFromImageSize(size_t filesize);
     bool transferSectorData(DiskImage* diskImage, uint8_t* buffer, size_t fileSize);
-    void populateEmptyVolumeInfo(DiskImage* diskImage);
+    void populateEmptyVolumeInfo(DiskImage* diskImage, TRDDiskType diskType);
     /// endregion </Helper methods>
 };
 

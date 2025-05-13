@@ -22,9 +22,6 @@ public:
     static constexpr const size_t DISK_INDEX_PERIOD_MS = 200;           // Index strobe appears every 200ms
     static constexpr const size_t DISK_INDEX_STROBE_DURATION_MS = 4;    // Index strobe kept active for 4ms
 
-    // Index strobe (active low) duration (2...5.5ms typically)
-    static constexpr const size_t DISK_INDEX_STROBE_DURATION_US = 3500;
-
     // Head movement signal duration (at least 0.8 usec)
     static constexpr const size_t HEAD_STEP_DURATION_NS = 800;
     /// endregion </Constants>
@@ -50,7 +47,7 @@ protected:
     bool _track00 = false;
     bool _index = false;
     bool _ready = false;
-    bool _writeProtect = true;
+    bool _writeProtect = false;
 
     DiskImage* _diskImage = nullptr;    // Pointer to a disk image inserted to this drive
     bool _diskInserted = false;

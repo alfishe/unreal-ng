@@ -225,7 +225,7 @@ protected:
     public:
         void reset();
         void setPeriod(uint8_t period);
-        bool updateState();
+        void updateState();
         bool out() { return _out; };
 
     protected:

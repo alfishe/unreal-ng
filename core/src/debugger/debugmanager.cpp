@@ -11,16 +11,13 @@ DebugManager::DebugManager(EmulatorContext* context)
 
     _breakpoints = new BreakpointManager(context);
     _labels = new LabelManager(context);
+
+    _disassembler = std::make_unique<Z80Disassembler>();
+    _disassembler->SetLogger(_context->pModuleLogger);
 }
 
 DebugManager::~DebugManager()
 {
-    if (_disassembler)
-    {
-        delete _disassembler;
-        _disassembler = nullptr;
-    }
-
     if (_labels)
     {
         delete _labels;
@@ -50,7 +47,7 @@ LabelManager* DebugManager::GetLabelManager()
     return _labels;
 }
 
-Z80Disassembler* DebugManager::GetDisassembler()
+std::unique_ptr<Z80Disassembler>& DebugManager::GetDisassembler()
 {
     return _disassembler;
 }

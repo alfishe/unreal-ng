@@ -21,6 +21,7 @@ bool DiskImage::allocateMemory(uint8_t cylinders, uint8_t sides)
 
         for (Track& track : _tracks)
         {
+            track._diskImage = this;
             track.reset();
         }
         /// endregion </Allocate objects for new disk>

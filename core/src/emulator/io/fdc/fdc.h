@@ -5,13 +5,101 @@
 // FDC-specific constants and functionality defined
 
 /// region <Constants>
-static constexpr uint8_t FDD_RPS = 5;                   // FDD rotation speed
-static constexpr size_t MAX_TRACK_LEN = 6250;           //
-static constexpr size_t MAX_SECTOR_DATA_LEN = 6144;     //
-static constexpr uint8_t MAX_CYLINDERS = 86;            // Don't load images with track number exceeding this threshold
-static constexpr uint8_t MAX_SIDES = 2;                 // There can be single side disks
-static constexpr uint8_t MAX_PHYSICAL_CYLINDER = 86;    // FDC won't perform seek commands beyond this cylinder
-static constexpr uint8_t MAX_SECTOR = 26;               // Max sectors per track (Assuming smallest 128 byte sector)
+
+// FDD rotation speed
+// 300 revolutions per minute => 5 revolutions per second => 200 ms per revolution
+static constexpr const size_t FDD_RPM = 300;
+static constexpr const size_t FDD_RPS = 5;
+
+// FDD index pulse duration (in ms)
+static constexpr const size_t FDD_INDEX_PULSE_DURATION_MS = 4;
+// FDD index pulse duration (4ms) in T-states @3.5MHz
+static constexpr const size_t FDD_INDEX_PULSE_DURATION_T_STATES = 14;
+
+/// 3.5" DS DD (720KB): 250 Kbps MFM @ 300 RPM
+/// 5.25" DS DD (360KB): 250 Kbps MFM @ 300 RPM
+/// @note Do not mix it with 8" floppy disk drives that have 250 Kbps in Single Density (SD) FM mode and 500 Kbps in Double Density (DD) MFM mode
+static constexpr const size_t FDD_INTERFACE_SPEED_MFM_KBPS = 250;
+
+/// 3.5" DS SD (720KB): 125 Kbps FM @ 300 RPM
+/// 5.25" DS SD (360KB): 125 Kbps FM @ 300 RPM
+static constexpr const size_t FDD_INTERFACE_SPEED_FM_KBPS = 125;
+
+
+// Maximum theoretical track length in bytes (bound to timings)
+// 250 Kbps max transfer speed (31250 bytes per second) in MFM mode
+// Within 200 ms of one revolution, 6250 bytes can be transferred
+static constexpr size_t MAX_TRACK_LEN = 6250;
+
+// Maximum useful track length in bytes (bound to index pulse duration and related data loss)
+//+-------------+---------------------+-------------+--------------------+-----------------------------+
+//| Index Pulse | Lost Bytes          | Total Track | Usable Track Bytes | Notes                       |
+//| (ms)        | (During idx pulse)  |   Bytes     |                    |                             |
+//+-------------+----------------- ---+-------------+--------------------+-----------------------------+
+//| 2           | 62                  | 6,250       | 6,188              | Minimal loss, tight timing. |
+//| 3           | 94                  | 6,250       | 6,156              | Common in some 3.5" drives. |
+//| 4 (Typical) | 125                 | 6,250       | 6,125              | Most FDDs use this          |
+//| 8           | 250                 | 6,250       | 6,000              | Rare; older 8" drives.      |
+//+-------------+---------------------+-------------+--------------------+-----------------------------+
+static constexpr const size_t MAX_TRACK_DATA_LEN = 6144;      // Aligned to sector size (works for 128 and 256 byte sectors)
+
+static constexpr const uint8_t MAX_CYLINDERS = 86;            // Don't load images with track number exceeding this threshold
+static constexpr const uint8_t MAX_SIDES = 2;                 // 2 sides is max allowed. There can be single side disks as well
+static constexpr const uint8_t MAX_PHYSICAL_CYLINDER = 86;    // FDC won't perform seek commands beyond this cylinder
+static constexpr const uint8_t MIN_SECTORS = 1;               // Track should have at least one sector (unless track is written via WRITE TRACK)
+static constexpr const uint8_t MAX_SECTORS = 26;              // Max sectors per track (Assuming smallest 128 byte sector)
+
+/// @brief Maximum allowable delay for host CPU to service a Data Request (DRQ) from the Floppy Disk Controller
+/// For 250Kbps (MFM) modes
+/// This timeout is calculated based on the 250 Kbps (31,250 bytes/sec) transfer rate used by
+/// standard double-density floppy drives. The host system must provide the next data byte to the FDC
+/// before the previous byte has been completely shifted out to the drive.
+///
+/// Calculation:
+///   250,000 bits/sec ÷ 8 bits/byte = 31,250 bytes/sec
+///   1,000,000 μs/sec ÷ 31,250 bytes/sec = 32 μs/byte
+///
+/// This is the absolute maximum time available between DRQ assertion and data transfer.
+/// The actual safe window is smaller (typically 13.5μs) due to controller processing overhead.
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_MFM_US = 32;
+
+// CPU at 3.5MHz has 112 t-states until timeout when DRQ is raised - still 32 μs
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_MFM_T_STATES = 112;
+
+/// @brief Maximum allowable delay for host CPU to service a Data Request (DRQ) from the Floppy Disk Controller
+/// For 125Kbps (FM) modes
+/// Calculation:
+///   125,000 bits/sec ÷ 8 bits/byte = 15,625 bytes/sec
+///   1,000,000 μs/sec ÷ 15,625 bytes/sec = 64 μs/byte
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_FM_US = 64;
+static constexpr const size_t MAX_DRQ_SERVICE_TIME_FM_T_STATES = 224;
+
+/// @brief Practical safe DRQ service time including FDC processing margin
+/// While theoretically 32μs is available at 250Kbps, the WD1793 datasheet specifies
+/// a tighter 13.5μs window (MFM) to account for:
+/// - Signal propagation delays
+/// - Controller state machine overhead
+/// - Data bus settling time
+///
+/// This is the actual deadline the host system must meet to avoid DATA LOST errors.
+static constexpr const size_t SAFE_DRQ_SERVICE_TIME_MFM_US = 13;
+
+/// For 125Kbps (FM) modes
+static constexpr const size_t SAFE_DRQ_SERVICE_TIME_FM_US = 27;
+
+/// @brief Controller internal timing constants
+/// These represent the WD1793's internal processing delays between critical events,
+/// measured in byte times (32μs units at 250Kbps)
+namespace FDC_Delays
+{
+    /// 96μs (3*32) delay after IDAM
+    static constexpr const size_t IDAM_TO_DATA_MARK_MFM = 3;
+
+    /// 384μs of 0x00 before DAM
+    static constexpr const size_t PREAMBLE_ZEROS = 12;
+};
+
+
 /// endregion </Constants>
 
 /// region <Types>

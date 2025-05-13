@@ -232,7 +232,7 @@ TEST_F(LoaderSCL_Test, addFile)
     // Verify catalog was updated
     TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)track->getSector(TRD_VOLUME_SECTOR)->data;
     EXPECT_EQ(1, volumeInfo->fileCount);
-    EXPECT_EQ(TRD_FREE_SECTORS_ON_EMPTY_DISK - 1, volumeInfo->freeSectorCount);
+    EXPECT_EQ(TRD_FREE_SECTORS_ON_DS_80_EMPTY_DISK - 1, volumeInfo->freeSectorCount);
     EXPECT_EQ(1, volumeInfo->firstFreeTrack);
     EXPECT_EQ(1, volumeInfo->firstFreeSector);
 

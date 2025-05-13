@@ -3,15 +3,15 @@
 
 DocumentDisasm::DocumentDisasm()
 {
-    m_disassembler = new Z80Disassembler();
+    _disassembler = std::make_unique<Z80Disassembler>();
 }
 
 DocumentDisasm::~DocumentDisasm()
 {
-    if (m_disassembler)
+    if (_disassembler)
     {
-        delete m_disassembler;
-        m_disassembler = nullptr;
+        // Smart pointer will delete Z80Disassembler instance automatically
+        _disassembler = nullptr;
     }
 }
 
