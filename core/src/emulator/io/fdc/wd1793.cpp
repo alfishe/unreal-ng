@@ -71,6 +71,10 @@ void WD1793::internalReset()
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
+
+    // In-place re-initialization
+    _wd93State =  WD93State();
+
     // Clear FDC state
     _state = S_IDLE;
     _state2 = S_IDLE;
@@ -82,8 +86,10 @@ void WD1793::internalReset()
     _indexPulseCounter = 0;
     _delayTStates = 0;
     _headLoaded = false;
-    _check_am_crc = false;
-    _check_data_crc = false;
+
+    _time = 0;
+    _lastTime = 0;
+    _diffTime = 0;
 
     clearAllErrors();
 
@@ -821,9 +827,6 @@ void WD1793::cmdReadSector(uint8_t value)
         });
     _operationFIFO.push(readSector);
 
-    // Ensure we'll read 2 bytes CRC and verify them
-    _check_data_crc = true;
-
     // Start FSM playback using FIFO queue
     transitionFSM(WDSTATE::S_FETCH_FIFO);
 }
@@ -1068,8 +1071,6 @@ void WD1793::startType1Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     // Ensure the motor is spinning
     prolongFDDMotorRotation();
@@ -1114,8 +1115,6 @@ void WD1793::startType2Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     if (!isReady())
     {
@@ -1160,8 +1159,6 @@ void WD1793::startType3Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     if (!isReady())
     {
@@ -1415,7 +1412,9 @@ void WD1793::processSearchID()
         // TODO: apply the delay
         [[maybe_unused]] size_t delay = WD93_REVOLUTIONS_LIMIT_FOR_TYPE2_INDEX_MARK_SEARCH * Z80_FREQUENCY / FDD_RPS;
 
+        raiseRecordNotFound();
         _statusRegister |= WDS_NOTFOUND;
+        transitionFSM(S_END_COMMAND);
     }
 }
 
@@ -1491,16 +1490,8 @@ void WD1793::processReadByte()
     }
     else
     {
-        if (_check_data_crc)
-        {
-            _bytesToRead = 2;
-            transitionFSMWithDelay(WDSTATE::S_READ_CRC, WD93_TSTATES_PER_FDC_BYTE);
-
-           _check_data_crc = false;
-           return;
-        }
-
-        transitionFSM(WDSTATE::S_END_COMMAND);
+        // We still need to give host time to read the byte
+        transitionFSMWithDelay(WDSTATE::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE);
     }
 }
 
@@ -1699,16 +1690,18 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             // Reset INTRQ (Interrupt request) flag - status register is read
             clearIntrq();
             break;
-        case PORT_3F:   // Return current track number
+        case PORT_3F:   // Return the current track number
             result = _trackRegister;
             break;
         case PORT_5F:   // Return current sector number
             result = _sectorRegister;
             break;
         case PORT_7F:   // Return data byte and update internal state
-            clearDrq();         // Reset DRQ (Data Request) flag
-            // Read and mark that Data Register was accessed (for Type 2 and Type 3 operations)
+            // Read Data Register
             result = readDataRegister();
+
+            // Reset DRQ (Data Request) flag
+            clearDrq();
             break;
         case PORT_FF:   // Handle Beta128 system port (#FF)
             // Only bits 6 and 7 are used
