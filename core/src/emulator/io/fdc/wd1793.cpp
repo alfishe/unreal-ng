@@ -1053,7 +1053,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     }
     else
     {
-        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s state2: %s", getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str());
+        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s state2: %s", getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str(), WDSTATEToString(prevState2).c_str());
     }
 }
 
