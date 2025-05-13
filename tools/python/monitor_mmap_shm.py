@@ -122,44 +122,96 @@ def get_page_info(page_num: int) -> Tuple[str, int]:
     return region.name, rel_page
 
 def find_shared_memory() -> Optional[Tuple[str, int]]:
-    """Find the shared memory region and extract PID."""
+    """Find the shared memory region and verify the owner PID."""
     try:
         import posix_ipc
+        import subprocess
+        import re
         
-        # First, try to find the emulator process
-        emulator_pids = []
+        # First, find all emulator processes
+        emulator_processes = []
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                if 'unreal-ng' in ' '.join(proc.info['cmdline'] or []):
-                    emulator_pids.append(proc.info['pid'])
+                cmdline = ' '.join(proc.info['cmdline'] or [])
+                if 'unreal-ng' in cmdline:
+                    emulator_processes.append({
+                        'pid': proc.info['pid'],
+                        'cmdline': cmdline
+                    })
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
         
-        if not emulator_pids:
+        if not emulator_processes:
             print("No running emulator process found. Please start the emulator first.")
             return None
             
-        print(f"Found emulator PIDs: {emulator_pids}")
+        print(f"Found emulator processes: {[p['pid'] for p in emulator_processes]}")
         
-        # The emulator uses a fixed name for the shared memory
+        # On macOS, we'll try to directly open the shared memory for each emulator process
         shm_name = "/zxspectrum"
+        
+        # First, try to find any shared memory with our name
         try:
-            # Try to open the shared memory (use 0 for read-only on macOS)
+            # Try to open the shared memory
             shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
-            print(f"Successfully connected to shared memory: {shm_name}")
             
-            # Use the first emulator PID we found
-            pid = emulator_pids[0]
-            shm.close_fd()  # We'll reopen it in the monitor function
-            return shm_name, pid
+            # Get the owner PID of the shared memory
+            try:
+                # On macOS, we can use lsof to find the process using this shared memory
+                result = subprocess.run(['lsof', f'/dev/shm{shm_name}'], capture_output=True, text=True)
+                if result.returncode == 0 and len(result.stdout.split('\n')) > 1:
+                    # The second line contains the process info
+                    parts = re.split(r'\s+', result.stdout.split('\n')[1].strip())
+                    if len(parts) >= 2:
+                        owner_pid = int(parts[1])
+                        
+                        # Verify the owner PID matches one of our emulator PIDs
+                        for proc in emulator_processes:
+                            if proc['pid'] == owner_pid:
+                                print(f"Found matching shared memory: {shm_name}, PID={owner_pid}")
+                                print(f"Process command: {proc['cmdline']}")
+                                shm.close_fd()  # We'll reopen it in the monitor function
+                                return shm_name, owner_pid
+            except (subprocess.SubprocessError, ValueError, IndexError) as e:
+                print(f"Warning: Could not verify shared memory owner: {e}")
+                
+            # If we couldn't verify the owner, just use the first emulator process
+            print(f"Using first emulator process (could not verify shared memory owner)")
+            pid = emulator_processes[0]['pid']
+            shm.close_fd()
+
+            if pid != 0:
+                return shm_name, pid
+            else:
+                return None
             
         except posix_ipc.ExistentialError:
             print(f"Shared memory not found: {shm_name}")
             print("Make sure the emulator is running with shared memory enabled.")
             return None
         except Exception as e:
-            print(f"Error accessing shared memory {shm_name}: {e}")
+            print(f"Error accessing shared memory: {e}")
             return None
+            
+        except FileNotFoundError:
+            print("'ipcs' command not found. Cannot verify shared memory ownership.")
+            # Fall back to the old method if ipcs is not available
+            shm_name = "/zxspectrum"
+            try:
+                shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
+                print(f"Successfully connected to shared memory (without PID verification): {shm_name}")
+                pid = emulator_processes[0]['pid']  # Use first found PID
+                shm.close_fd()
+                return shm_name, pid
+            except Exception as e:
+                print(f"Error accessing shared memory: {e}")
+                return None
+        
+    except Exception as e:
+        print(f"Error finding shared memory: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
         
     except ImportError:
         print("Error: The 'posix_ipc' module is required for shared memory access.")
