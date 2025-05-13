@@ -49,8 +49,11 @@ Memory::Memory(EmulatorContext* context)
     _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
     _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
 
+    // Memory filling with random values will give a false positive on memory changes analyzer, so disable it if memory mapping is enabled
+#ifndef ENABLE_MEMORY_MAPPING
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
+#endif // ENABLE_MEMORY_MAPPING
 
     // Reset counters
     ResetCounters();
