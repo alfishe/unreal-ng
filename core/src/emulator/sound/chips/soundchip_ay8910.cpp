@@ -116,7 +116,7 @@ void SoundChip_AY8910::NoiseGenerator::setPeriod(uint8_t period)
     _period = (period == 0) | period;
 }
 
-bool SoundChip_AY8910::NoiseGenerator::updateState()
+void SoundChip_AY8910::NoiseGenerator::updateState()
 {
     _counter++;
 
@@ -126,8 +126,6 @@ bool SoundChip_AY8910::NoiseGenerator::updateState()
 
         _out = shiftLSFR();
     }
-
-    return _out;
 }
 
 /// Returns LSFR-generated random numbers for noise generator
