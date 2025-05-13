@@ -563,7 +563,7 @@ protected:
     uint8_t _drive = 0;                 // Currently selected drive index [0..3]
     bool _sideUp = false;               // False - bottom side. True - top side
 
-    WD_COMMANDS _lastDecodedCmd;        // Last command executed (decoded)
+    WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE; // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
     WDSTATE _state = S_IDLE;
     WDSTATE _state2 = S_IDLE;
@@ -880,6 +880,7 @@ class WD1793CUT : public WD1793
 public:
     WD1793CUT(EmulatorContext* context) : WD1793(context) {};
 
+    using WD1793::_portDecoder;
     using WD1793::_selectedDrive;
 
     using WD1793::_commandRegister;
@@ -956,6 +957,7 @@ public:
     using WD1793::prolongFDDMotorRotation;
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;
+    using WD1793::getDrive;
 };
 
 #endif // _CODE_UNDER_TEST
