@@ -82,8 +82,6 @@ void WD1793::internalReset()
     _indexPulseCounter = 0;
     _delayTStates = 0;
     _headLoaded = false;
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     clearAllErrors();
 
@@ -821,9 +819,6 @@ void WD1793::cmdReadSector(uint8_t value)
         });
     _operationFIFO.push(readSector);
 
-    // Ensure we'll read 2 bytes CRC and verify them
-    _check_data_crc = true;
-
     // Start FSM playback using FIFO queue
     transitionFSM(WDSTATE::S_FETCH_FIFO);
 }
@@ -1068,8 +1063,6 @@ void WD1793::startType1Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     // Ensure the motor is spinning
     prolongFDDMotorRotation();
@@ -1114,8 +1107,6 @@ void WD1793::startType2Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     if (!isReady())
     {
@@ -1160,8 +1151,6 @@ void WD1793::startType3Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
-    _check_am_crc = false;
-    _check_data_crc = false;
 
     if (!isReady())
     {
@@ -1491,16 +1480,7 @@ void WD1793::processReadByte()
     }
     else
     {
-        if (_check_data_crc)
-        {
-            _bytesToRead = 2;
-            transitionFSMWithDelay(WDSTATE::S_READ_CRC, WD93_TSTATES_PER_FDC_BYTE);
-
-           _check_data_crc = false;
-           return;
-        }
-
-        transitionFSM(WDSTATE::S_END_COMMAND);
+        transitionFSMWithDelay(WDSTATE::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE);
     }
 }
 
