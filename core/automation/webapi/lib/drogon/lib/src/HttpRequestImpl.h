@@ -16,8 +16,10 @@
 
 #include "HttpUtils.h"
 #include "CacheFile.h"
+#include "impl_forwards.h"
 #include <drogon/utils/Utilities.h>
 #include <drogon/HttpRequest.h>
+#include <drogon/RequestStream.h>
 #include <drogon/utils/Utilities.h>
 #include <trantor/net/EventLoop.h>
 #include <trantor/net/InetAddress.h>
@@ -25,9 +27,12 @@
 #include <trantor/utils/Logger.h>
 #include <trantor/utils/MsgBuffer.h>
 #include <trantor/utils/NonCopyable.h>
+#include <trantor/net/TcpConnection.h>
 #include <algorithm>
+#include <functional>
+#include <memory>
 #include <string>
-#include <thread>
+#include <future>
 #include <unordered_map>
 #include <assert.h>
 #include <stdio.h>
@@ -42,6 +47,14 @@ enum class StreamDecompressStatus
     Ok
 };
 
+enum class ReqStreamStatus
+{
+    None = 0,
+    Open = 1,
+    Finish = 2,
+    Error = 3
+};
+
 class HttpRequestImpl : public HttpRequest
 {
   public:
@@ -51,13 +64,17 @@ class HttpRequestImpl : public HttpRequest
         : creationDate_(trantor::Date::now()), loop_(loop)
     {
     }
+
     void reset()
     {
         method_ = Invalid;
+        previousMethod_ = Invalid;
         version_ = Version::kUnknown;
         flagForParsingJson_ = false;
         headers_.clear();
         cookies_.clear();
+        contentLengthHeaderValue_.reset();
+        realContentLength_ = 0;
         flagForParsingParameters_ = false;
         path_.clear();
         originalPath_.clear();
@@ -77,7 +94,16 @@ class HttpRequestImpl : public HttpRequest
         keepAlive_ = true;
         jsonParsingErrorPtr_.reset();
         peerCertificate_.reset();
+        routingParams_.clear();
+        // stream
+        streamStatus_ = ReqStreamStatus::None;
+        streamReaderPtr_.reset();
+        streamFinishCb_ = nullptr;
+        streamExceptionPtr_ = nullptr;
+        startProcessing_ = false;
+        connPtr_.reset();
     }
+
     trantor::EventLoop *getLoop()
     {
         return loop_;
@@ -100,6 +126,7 @@ class HttpRequestImpl : public HttpRequest
     const char *versionString() const override;
 
     bool setMethod(const char *start, const char *end);
+
     void setSecure(bool secure)
     {
         isOnSecureConnection_ = secure;
@@ -107,6 +134,7 @@ class HttpRequestImpl : public HttpRequest
 
     void setMethod(const HttpMethod method) override
     {
+        previousMethod_ = method_;
         method_ = method;
         return;
     }
@@ -114,6 +142,13 @@ class HttpRequestImpl : public HttpRequest
     HttpMethod method() const override
     {
         return method_;
+    }
+
+    bool isHead() const override
+    {
+        return (method_ == HttpMethod::Head) ||
+               ((method_ == HttpMethod::Get) &&
+                (previousMethod_ == HttpMethod::Head));
     }
 
     const char *methodString() const override;
@@ -131,9 +166,24 @@ class HttpRequestImpl : public HttpRequest
         }
     }
 
+    const std::vector<std::string> &getRoutingParameters() const override
+    {
+        return routingParams_;
+    }
+
+    void setRoutingParameters(std::vector<std::string> &&params) override
+    {
+        routingParams_ = std::move(params);
+    }
+
     void setPath(const std::string &path) override
     {
         path_ = path;
+    }
+
+    void setPath(std::string &&path) override
+    {
+        path_ = std::move(path);
     }
 
     void setPathEncode(bool pathEncode) override
@@ -141,9 +191,7 @@ class HttpRequestImpl : public HttpRequest
         pathEncode_ = pathEncode;
     }
 
-    const std::
-        unordered_map<std::string, std::string, utils::internal::SafeStringHash>
-            &parameters() const override
+    const SafeStringMap<std::string> &parameters() const override
     {
         parseParametersOnce();
         return parameters_;
@@ -151,7 +199,7 @@ class HttpRequestImpl : public HttpRequest
 
     const std::string &getParameter(const std::string &key) const override
     {
-        const static std::string defaultVal;
+        static const std::string defaultVal;
         parseParametersOnce();
         auto iter = parameters_.find(key);
         if (iter != parameters_.end())
@@ -179,24 +227,38 @@ class HttpRequestImpl : public HttpRequest
         query_ = query;
     }
 
-    string_view bodyView() const
+    std::string_view bodyView() const
     {
+        if (isStreamMode())
+        {
+            return emptySv_;
+        }
         if (cacheFilePtr_)
         {
             return cacheFilePtr_->getStringView();
         }
         return content_;
     }
+
     const char *bodyData() const override
     {
+        if (isStreamMode())
+        {
+            return emptySv_.data();
+        }
         if (cacheFilePtr_)
         {
             return cacheFilePtr_->getStringView().data();
         }
         return content_.data();
     }
+
     size_t bodyLength() const override
     {
+        if (isStreamMode())
+        {
+            return emptySv_.length();
+        }
         if (cacheFilePtr_)
         {
             return cacheFilePtr_->getStringView().length();
@@ -208,13 +270,17 @@ class HttpRequestImpl : public HttpRequest
 
     void reserveBodySize(size_t length);
 
-    string_view queryView() const
+    std::string_view queryView() const
     {
         return query_;
     }
 
-    string_view contentView() const
+    std::string_view contentView() const
     {
+        if (isStreamMode())
+        {
+            return emptySv_;
+        }
         if (cacheFilePtr_)
             return cacheFilePtr_->getStringView();
         return content_;
@@ -265,6 +331,11 @@ class HttpRequestImpl : public HttpRequest
         peerCertificate_ = cert;
     }
 
+    void setConnectionPtr(const std::shared_ptr<trantor::TcpConnection> &ptr)
+    {
+        connPtr_ = ptr;
+    }
+
     void addHeader(const char *start, const char *colon, const char *end);
 
     void removeHeader(std::string key) override
@@ -291,7 +362,7 @@ class HttpRequestImpl : public HttpRequest
 
     const std::string &getHeaderBy(const std::string &lowerField) const
     {
-        const static std::string defaultVal;
+        static const std::string defaultVal;
         auto it = headers_.find(lowerField);
         if (it != headers_.end())
         {
@@ -302,7 +373,7 @@ class HttpRequestImpl : public HttpRequest
 
     const std::string &getCookie(const std::string &field) const override
     {
-        const static std::string defaultVal;
+        static const std::string defaultVal;
         auto it = cookies_.find(field);
         if (it != cookies_.end())
         {
@@ -311,18 +382,24 @@ class HttpRequestImpl : public HttpRequest
         return defaultVal;
     }
 
-    const std::
-        unordered_map<std::string, std::string, utils::internal::SafeStringHash>
-            &headers() const override
+    const SafeStringMap<std::string> &headers() const override
     {
         return headers_;
     }
 
-    const std::
-        unordered_map<std::string, std::string, utils::internal::SafeStringHash>
-            &cookies() const override
+    const SafeStringMap<std::string> &cookies() const override
     {
         return cookies_;
+    }
+
+    std::optional<size_t> getContentLengthHeaderValue() const
+    {
+        return contentLengthHeaderValue_;
+    }
+
+    size_t realContentLength() const override
+    {
+        return realContentLength_;
     }
 
     void setParameter(const std::string &key, const std::string &value) override
@@ -371,9 +448,9 @@ class HttpRequestImpl : public HttpRequest
         headers_[std::move(field)] = std::move(value);
     }
 
-    void addCookie(const std::string &key, const std::string &value) override
+    void addCookie(std::string key, std::string value) override
     {
-        cookies_[key] = value;
+        cookies_[std::move(key)] = std::move(value);
     }
 
     void setPassThrough(bool flag) override
@@ -434,6 +511,7 @@ class HttpRequestImpl : public HttpRequest
         contentTypeString_ = std::string(type.begin() + (haveHeader ? 14 : 0),
                                          type.end() - endOffset);
     }
+
     void setContentTypeCode(const ContentType type) override
     {
         contentType_ = type;
@@ -462,6 +540,7 @@ class HttpRequestImpl : public HttpRequest
     {
         return matchedPathPattern_.data();
     }
+
     size_t matchedPathPatternLength() const override
     {
         return matchedPathPattern_.length();
@@ -471,38 +550,89 @@ class HttpRequestImpl : public HttpRequest
     {
         matchedPathPattern_ = pathPattern;
     }
+
     const std::string &expect() const
     {
-        const static std::string none{""};
+        static const std::string none{""};
         if (expectPtr_)
             return *expectPtr_;
         return none;
     }
+
     bool keepAlive() const
     {
         return keepAlive_;
     }
+
+    bool connected() const noexcept override
+    {
+        if (auto conn = connPtr_.lock())
+        {
+            return conn->connected();
+        }
+        return false;
+    }
+
+    const std::weak_ptr<trantor::TcpConnection> &getConnectionPtr()
+        const noexcept override
+    {
+        return connPtr_;
+    }
+
     bool isOnSecureConnection() const noexcept override
     {
         return isOnSecureConnection_;
     }
+
     const std::string &getJsonError() const override
     {
-        const static std::string none{""};
+        static const std::string none{""};
         if (jsonParsingErrorPtr_)
             return *jsonParsingErrorPtr_;
         return none;
     }
+
     StreamDecompressStatus decompressBody();
 
-    ~HttpRequestImpl();
+    // Stream mode api
+    ReqStreamStatus streamStatus() const
+    {
+        return streamStatus_;
+    }
+
+    bool isStreamMode() const
+    {
+        return streamStatus_ > ReqStreamStatus::None;
+    }
+
+    void streamStart();
+    void streamFinish();
+    void streamError(std::exception_ptr ex);
+
+    void setStreamReader(RequestStreamReaderPtr reader);
+    void waitForStreamFinish(std::function<void()> &&cb);
+    void quitStreamMode();
+
+    void startProcessing()
+    {
+        startProcessing_ = true;
+    }
+
+    bool isProcessingStarted() const
+    {
+        return startProcessing_;
+    }
+
+    ~HttpRequestImpl() override;
 
   protected:
     friend class HttpRequest;
+
     void setContentType(const std::string &contentType)
     {
         contentTypeString_ = contentType;
     }
+
     void setContentType(std::string &&contentType)
     {
         contentTypeString_ = std::move(contentType);
@@ -524,12 +654,12 @@ class HttpRequestImpl : public HttpRequest
                 if (pos != std::string::npos)
                 {
                     contentType_ = parseContentType(
-                        string_view(contentTypeString.data(), pos));
+                        std::string_view(contentTypeString.data(), pos));
                 }
                 else
                 {
                     contentType_ =
-                        parseContentType(string_view(contentTypeString));
+                        parseContentType(std::string_view(contentTypeString));
                 }
 
                 if (contentType_ == CT_NONE)
@@ -541,6 +671,7 @@ class HttpRequestImpl : public HttpRequest
 
   private:
     void parseParameters() const;
+
     void parseParametersOnce() const
     {
         // Not multi-thread safe but good, because we basically call this
@@ -551,30 +682,34 @@ class HttpRequestImpl : public HttpRequest
             parseParameters();
         }
     }
+
     void createTmpFile();
     void parseJson() const;
 #ifdef USE_BROTLI
     StreamDecompressStatus decompressBodyBrotli() noexcept;
 #endif
     StreamDecompressStatus decompressBodyGzip() noexcept;
+
+    static constexpr const std::string_view emptySv_{""};
+
     mutable bool flagForParsingParameters_{false};
     mutable bool flagForParsingJson_{false};
     HttpMethod method_{Invalid};
+    HttpMethod previousMethod_{Invalid};
     Version version_{Version::kUnknown};
     std::string path_;
+    /// Contains the encoded `path_` if and only if `path_` is set in encoded
+    /// form. If path is in a normal form and needed no decoding, then this will
+    /// be empty, as we do not need to store a duplicate.
     std::string originalPath_;
     bool pathEncode_{true};
-    string_view matchedPathPattern_{""};
+    std::string_view matchedPathPattern_{""};
     std::string query_;
-    std::
-        unordered_map<std::string, std::string, utils::internal::SafeStringHash>
-            headers_;
-    std::
-        unordered_map<std::string, std::string, utils::internal::SafeStringHash>
-            cookies_;
-    mutable std::
-        unordered_map<std::string, std::string, utils::internal::SafeStringHash>
-            parameters_;
+    SafeStringMap<std::string> headers_;
+    SafeStringMap<std::string> cookies_;
+    std::optional<size_t> contentLengthHeaderValue_;
+    size_t realContentLength_{0};
+    mutable SafeStringMap<std::string> parameters_;
     mutable std::shared_ptr<Json::Value> jsonPtr_;
     SessionPtr sessionPtr_;
     mutable AttributesPtr attributesPtr_;
@@ -588,6 +723,14 @@ class HttpRequestImpl : public HttpRequest
     bool keepAlive_{true};
     bool isOnSecureConnection_{false};
     bool passThrough_{false};
+    std::vector<std::string> routingParams_;
+
+    ReqStreamStatus streamStatus_{ReqStreamStatus::None};
+    std::function<void()> streamFinishCb_;
+    RequestStreamReaderPtr streamReaderPtr_;
+    std::exception_ptr streamExceptionPtr_;
+    bool startProcessing_{false};
+    std::weak_ptr<trantor::TcpConnection> connPtr_;
 
   protected:
     std::string content_;

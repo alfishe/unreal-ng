@@ -7,23 +7,41 @@
 bool Automation::start()
 {
     bool result = true;
+
+#if ENABLE_LUA_AUTOMATION
     result &= startLua();
+#endif
+    
+#if ENABLE_PYTHON_AUTOMATION
     result &= startPython();
+#endif
+    
+#if ENABLE_WEBAPI_AUTOMATION
     result &= startWebAPI();
+#endif
 
     return result;
 }
 
 void Automation::stop()
 {
+#if ENABLE_LUA_AUTOMATION
     stopLua();
+#endif
+    
+#if ENABLE_PYTHON_AUTOMATION
     stopPython();
+#endif
+    
+#if ENABLE_WEBAPI_AUTOMATION
     stopWebAPI();
+#endif
 }
 
 /// endregion </Methods>
 
 /// region <Helper methods>
+#if ENABLE_LUA_AUTOMATION
 bool Automation::startLua()
 {
     bool result = true;
@@ -33,7 +51,9 @@ bool Automation::startLua()
 
     return result;
 }
+#endif
 
+#if ENABLE_PYTHON_AUTOMATION
 bool Automation::startPython()
 {
     bool result = true;
@@ -43,7 +63,9 @@ bool Automation::startPython()
 
     return result;
 }
+#endif
 
+#if ENABLE_WEBAPI_AUTOMATION
 bool Automation::startWebAPI()
 {
     bool result = true;
@@ -53,7 +75,9 @@ bool Automation::startWebAPI()
 
     return result;
 }
+#endif
 
+#if ENABLE_LUA_AUTOMATION
 void Automation::stopLua()
 {
     if (_lua)
@@ -64,7 +88,9 @@ void Automation::stopLua()
         _lua = nullptr;
     }
 }
+#endif
 
+#if ENABLE_PYTHON_AUTOMATION
 void Automation::stopPython()
 {
     if (_python)
@@ -75,7 +101,9 @@ void Automation::stopPython()
         _python = nullptr;
     }
 }
+#endif
 
+#if ENABLE_WEBAPI_AUTOMATION
 void Automation::stopWebAPI()
 {
     if (_webAPI)
@@ -86,4 +114,5 @@ void Automation::stopWebAPI()
         _webAPI = nullptr;
     }
 }
+#endif
 /// endregion </Helper methods>

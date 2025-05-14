@@ -22,6 +22,7 @@
 #endif
 
 using namespace drogon::nosql;
+
 RedisConnection::RedisConnection(const trantor::InetAddress &serverAddress,
                                  const std::string &username,
                                  const std::string &password,
@@ -54,10 +55,10 @@ void RedisConnection::startConnectionInLoop()
             disconnectCallback_(shared_from_this());
         }
 
-        // Strange things have happend. In some kinds of connection errors, such
-        // as setsockopt errors, hiredis already set redisContext_->c.fd to -1,
-        // but the tcp connection stays in ESTABLISHED status. And there is no
-        // way for us to obtain the fd of that socket nor close it. This
+        // Strange things have happened. In some kinds of connection errors,
+        // such as setsockopt errors, hiredis already set redisContext_->c.fd to
+        // -1, but the tcp connection stays in ESTABLISHED status. And there is
+        // no way for us to obtain the fd of that socket nor close it. This
         // probably is a bug of hiredis.
         return;
     }
@@ -262,30 +263,35 @@ void RedisConnection::handleDisconnect()
     redisContext_->ev.cleanup = nullptr;
     redisContext_->ev.data = nullptr;
 }
+
 void RedisConnection::addWrite(void *userData)
 {
     auto thisPtr = static_cast<RedisConnection *>(userData);
     assert(thisPtr->channel_);
     thisPtr->channel_->enableWriting();
 }
+
 void RedisConnection::delWrite(void *userData)
 {
     auto thisPtr = static_cast<RedisConnection *>(userData);
     assert(thisPtr->channel_);
     thisPtr->channel_->disableWriting();
 }
+
 void RedisConnection::addRead(void *userData)
 {
     auto thisPtr = static_cast<RedisConnection *>(userData);
     assert(thisPtr->channel_);
     thisPtr->channel_->enableReading();
 }
+
 void RedisConnection::delRead(void *userData)
 {
     auto thisPtr = static_cast<RedisConnection *>(userData);
     assert(thisPtr->channel_);
     thisPtr->channel_->disableReading();
 }
+
 void RedisConnection::cleanup(void * /*userData*/)
 {
     LOG_TRACE << "cleanup";

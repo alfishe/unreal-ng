@@ -74,7 +74,7 @@ void AutomationPython::processPython()
                                             "print(f\"Current thread: {current_thread.name}, Thread ID: {current_thread.ident}\")\n"
                                             "try:\n"
                                             "    while True:\n"
-                                            "        # print(\"Python is looping...\")\n"
+                                            "        print(\"Python is looping...\")\n"
                                             "        time.sleep(1)  # Pause for 1 second to avoid excessive CPU usage\n"
                                             "except KeyboardInterrupt:\n"
                                             "    print(\"\\nLoop interrupted by user.\")";

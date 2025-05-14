@@ -1,11 +1,29 @@
 #include <drogon/utils/OStringStream.h>
 #include <drogon/drogon_test.h>
 #include <string>
+#include <string_view>
 #include <iostream>
 
 DROGON_TEST(OStringStreamTest)
 {
-    SUBSECTION(interger)
+    SUBSECTION(CanConvertToString)
+    {
+        using drogon::internal::CanConvertToString;
+
+        static_assert(CanConvertToString<int>::value);
+        static_assert(CanConvertToString<long>::value);
+        static_assert(CanConvertToString<long long>::value);
+        static_assert(CanConvertToString<unsigned>::value);
+        static_assert(CanConvertToString<unsigned long>::value);
+        static_assert(CanConvertToString<unsigned long long>::value);
+        static_assert(CanConvertToString<float>::value);
+        static_assert(CanConvertToString<double>::value);
+        static_assert(CanConvertToString<long double>::value);
+        static_assert(!CanConvertToString<std::string>::value);
+        static_assert(!CanConvertToString<std::string_view>::value);
+    }
+
+    SUBSECTION(integer)
     {
         drogon::OStringStream ss;
         ss << 12;
@@ -29,11 +47,11 @@ DROGON_TEST(OStringStreamTest)
         CHECK(ss.str() == "hello world");
     }
 
-    SUBSECTION(string_view)
+    SUBSECTION(std::string_view)
     {
         drogon::OStringStream ss;
-        ss << drogon::string_view("hello");
-        ss << drogon::string_view(" world");
+        ss << std::string_view("hello");
+        ss << std::string_view(" world");
         CHECK(ss.str() == "hello world");
     }
 
@@ -49,7 +67,7 @@ DROGON_TEST(OStringStreamTest)
     {
         drogon::OStringStream ss;
         ss << std::string("hello");
-        ss << drogon::string_view(" world");
+        ss << std::string_view(" world");
         ss << "!";
         ss << 123;
         ss << 3.14f;

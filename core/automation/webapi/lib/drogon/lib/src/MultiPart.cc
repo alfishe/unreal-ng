@@ -34,6 +34,7 @@ const std::vector<HttpFile> &MultiPartParser::getFiles() const
 {
     return files_;
 }
+
 std::unordered_map<std::string, HttpFile> MultiPartParser::getFilesMap() const
 {
     std::unordered_map<std::string, HttpFile> result;
@@ -43,15 +44,24 @@ std::unordered_map<std::string, HttpFile> MultiPartParser::getFilesMap() const
     }
     return result;
 }
-const std::map<std::string, std::string> &MultiPartParser::getParameters() const
+
+const SafeStringMap<std::string> &MultiPartParser::getParameters() const
 {
     return parameters_;
 }
 
 int MultiPartParser::parse(const HttpRequestPtr &req)
 {
-    if (req->method() != Post && req->method() != Put)
-        return -1;
+    switch (req->method())
+    {
+        case Post:
+        case Put:
+        case Patch:
+            break;
+        default:
+            return -1;
+    }
+
     const std::string &contentType =
         static_cast<HttpRequestImpl *>(req.get())->getHeaderBy("content-type");
     if (contentType.empty())
@@ -76,8 +86,10 @@ int MultiPartParser::parse(const HttpRequestPtr &req)
         pos2 = contentType.size();
     return parse(req, contentType.data() + (pos + 9), pos2 - (pos + 9));
 }
-static std::pair<string_view, string_view> parseLine(const char *begin,
-                                                     const char *end)
+
+static std::pair<std::string_view, std::string_view> parseLine(
+    const char *begin,
+    const char *end)
 {
     auto p = begin;
     while (p != end)
@@ -86,20 +98,23 @@ static std::pair<string_view, string_view> parseLine(const char *begin,
         {
             if (p + 1 != end && *(p + 1) == ' ')
             {
-                return std::make_pair(string_view(begin, p - begin),
-                                      string_view(p + 2, end - p - 2));
+                return std::make_pair(std::string_view(begin, p - begin),
+                                      std::string_view(p + 2, end - p - 2));
             }
             else
             {
-                return std::make_pair(string_view(begin, p - begin),
-                                      string_view(p + 1, end - p - 1));
+                return std::make_pair(std::string_view(begin, p - begin),
+                                      std::string_view(p + 1, end - p - 1));
             }
         }
         ++p;
     }
-    return std::make_pair(string_view(), string_view());
+    return std::make_pair(std::string_view(), std::string_view());
 }
-int MultiPartParser::parseEntity(const char *begin, const char *end)
+
+int MultiPartParser::parseEntity(const HttpRequestPtr &req,
+                                 const char *begin,
+                                 const char *end)
 {
     static const char entityName[] = "name=";
     static const char fileName[] = "filename=";
@@ -169,7 +184,7 @@ int MultiPartParser::parseEntity(const char *begin, const char *end)
                     fileNameEnd = std::find(fileNamePos, valueEnd, ';');
                 }
                 std::string fName{fileNamePos, fileNameEnd};
-                filePtr->setRequest(requestPtr_);
+                filePtr->setRequest(req);
                 filePtr->setItemName(std::move(name));
                 filePtr->setFileName(std::move(fName));
                 filePtr->setFile(headEnd + 2,
@@ -181,7 +196,8 @@ int MultiPartParser::parseEntity(const char *begin, const char *end)
             auto value = keyAndValue.second;
             auto semiColonPos =
                 std::find(value.data(), value.data() + value.length(), ';');
-            string_view contentType(value.data(), semiColonPos - value.data());
+            std::string_view contentType(value.data(),
+                                         semiColonPos - value.data());
             filePtr->setContentType(parseContentType(contentType));
         }
         else if (key == "content-transfer-encoding")
@@ -209,24 +225,23 @@ int MultiPartParser::parse(const HttpRequestPtr &req,
                            const char *boundaryData,
                            size_t boundaryLen)
 {
-    string_view boundary{boundaryData, boundaryLen};
+    std::string_view boundary{boundaryData, boundaryLen};
     if (boundary.size() > 2 && boundary[0] == '\"')
         boundary = boundary.substr(1, boundary.size() - 2);
-    requestPtr_ = req;
-    string_view::size_type pos1, pos2;
+    std::string_view::size_type pos1, pos2;
     pos1 = 0;
     auto content = static_cast<HttpRequestImpl *>(req.get())->bodyView();
     pos2 = content.find(boundary);
     while (true)
     {
         pos1 = pos2;
-        if (pos1 == string_view::npos)
+        if (pos1 == std::string_view::npos)
             break;
         pos1 += boundary.length();
         if (content[pos1] == '\r' && content[pos1 + 1] == '\n')
             pos1 += 2;
         pos2 = content.find(boundary, pos1);
-        if (pos2 == string_view::npos)
+        if (pos2 == std::string_view::npos)
             break;
         bool flag = false;
         if (content[pos2 - 4] == '\r' && content[pos2 - 3] == '\n' &&
@@ -235,7 +250,7 @@ int MultiPartParser::parse(const HttpRequestPtr &req,
             pos2 -= 4;
             flag = true;
         }
-        if (parseEntity(content.data() + pos1, content.data() + pos2) != 0)
+        if (parseEntity(req, content.data() + pos1, content.data() + pos2) != 0)
             return -1;
         if (flag)
             pos2 += 4;

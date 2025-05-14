@@ -28,7 +28,7 @@ using namespace std::placeholders;
 
 namespace trantor
 {
-const static size_t kDefaultDNSTimeout{600};
+static const size_t kDefaultDNSTimeout{600};
 }
 
 void HttpClientImpl::createTcpClient()
@@ -561,10 +561,6 @@ void HttpClientImpl::handleResponse(
         resp->brDecompress();
     }
 #endif
-    if (type.find("application/json") != std::string::npos)
-    {
-        resp->parseJson();
-    }
     auto cb = std::move(reqAndCb);
     pipeliningCallbacks_.pop();
     handleCookies(resp);
@@ -601,6 +597,7 @@ void HttpClientImpl::handleResponse(
         }
     }
 }
+
 void HttpClientImpl::onRecvMessage(const trantor::TcpConnectionPtr &connPtr,
                                    trantor::MsgBuffer *msg)
 {
@@ -638,6 +635,7 @@ void HttpClientImpl::onRecvMessage(const trantor::TcpConnectionPtr &connPtr,
         }
         else
         {
+            bytesReceived_ += (msgSize - msg->readableBytes());
             break;
         }
     }

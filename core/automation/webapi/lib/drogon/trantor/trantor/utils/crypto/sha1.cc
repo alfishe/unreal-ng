@@ -21,7 +21,6 @@ A million repetitions of "a"
 
 #include <stdio.h>
 #include <string.h>
-#include <sys/types.h> /* for u_int*_t */
 #if defined(__sun)
 #include "solarisfixes.h"
 #endif
@@ -41,7 +40,9 @@ A million repetitions of "a"
 #if defined(vax) || defined(ns32000) || defined(sun386) ||                  \
     defined(__i386__) || defined(MIPSEL) || defined(_MIPSEL) ||             \
     defined(BIT_ZERO_ON_RIGHT) || defined(__alpha__) || defined(__alpha) || \
-    defined(__CYGWIN32__) || defined(_WIN64) || defined(_WIN32)
+    defined(__CYGWIN32__) || defined(_WIN64) || defined(_WIN32) ||          \
+    defined(__arm64e__) || defined(__arm64__) || defined(__aarch64__) ||    \
+    defined(__riscv) || defined(_M_ARM64)
 #define BYTE_ORDER LITTLE_ENDIAN
 #endif
 
@@ -51,7 +52,7 @@ A million repetitions of "a"
     defined(apollo) || defined(__convex__) || defined(_CRAY) ||                \
     defined(__hppa) || defined(__hp9000) || defined(__hp9000s300) ||           \
     defined(__hp9000s700) || defined(BIT_ZERO_ON_LEFT) || defined(m68k) ||     \
-    defined(__sparc)
+    defined(__sparc) || defined(__s390__) || defined(__ppc__)
 #define BYTE_ORDER BIG_ENDIAN
 #endif
 #endif /* linux */
@@ -114,17 +115,13 @@ A million repetitions of "a"
 
 /* Hash a single 512-bit block. This is the core of the algorithm. */
 
-#ifdef _WIN32
-using u_int32_t = uint32_t;
-#endif
-
-void TrantorSHA1Transform(u_int32_t state[5], const unsigned char buffer[64])
+void trantor_sha1_transform(uint32_t state[5], const unsigned char buffer[64])
 {
-    u_int32_t a, b, c, d, e;
+    uint32_t a, b, c, d, e;
     typedef union
     {
         unsigned char c[64];
-        u_int32_t l[16];
+        uint32_t l[16];
     } CHAR64LONG16;
 #ifdef SHA1HANDSOFF
     CHAR64LONG16 block[1]; /* use array to appear as a pointer */
@@ -237,9 +234,9 @@ void TrantorSHA1Transform(u_int32_t state[5], const unsigned char buffer[64])
 #endif
 }
 
-/* TrantorSHA1Init - Initialize new context */
+/* trantor_sha1_init - Initialize new context */
 
-void TrantorSHA1Init(SHA1_CTX* context)
+void trantor_sha1_init(SHA1_CTX* context)
 {
     /* SHA1 initialization constants */
     context->state[0] = 0x67452301;
@@ -252,7 +249,9 @@ void TrantorSHA1Init(SHA1_CTX* context)
 
 /* Run your data through this. */
 
-void TrantorSHA1Update(SHA1_CTX* context, const unsigned char* data, size_t len)
+void trantor_sha1_update(SHA1_CTX* context,
+                         const unsigned char* data,
+                         size_t len)
 {
     size_t i;
     size_t j;
@@ -265,10 +264,10 @@ void TrantorSHA1Update(SHA1_CTX* context, const unsigned char* data, size_t len)
     if ((j + len) > 63)
     {
         memcpy(&context->buffer[j], data, (i = 64 - j));
-        TrantorSHA1Transform(context->state, context->buffer);
+        trantor_sha1_transform(context->state, context->buffer);
         for (; i + 63 < len; i += 64)
         {
-            TrantorSHA1Transform(context->state, &data[i]);
+            trantor_sha1_transform(context->state, &data[i]);
         }
         j = 0;
     }
@@ -279,7 +278,7 @@ void TrantorSHA1Update(SHA1_CTX* context, const unsigned char* data, size_t len)
 
 /* Add padding and return the message digest. */
 
-void TrantorSHA1Final(unsigned char digest[20], SHA1_CTX* context)
+void trantor_sha1_final(unsigned char digest[20], SHA1_CTX* context)
 {
     unsigned i;
     unsigned char finalcount[8];
@@ -295,7 +294,7 @@ void TrantorSHA1Final(unsigned char digest[20], SHA1_CTX* context)
 
     for (i = 0; i < 2; i++)
     {
-	u_int32_t t = context->count[i];
+	uint32_t t = context->count[i];
 	int j;
 
 	for (j = 0; j < 4; t >>= 8, j++)
@@ -310,15 +309,15 @@ void TrantorSHA1Final(unsigned char digest[20], SHA1_CTX* context)
     }
 #endif
     c = 0200;
-    TrantorSHA1Update(context, &c, 1);
+    trantor_sha1_update(context, &c, 1);
     while ((context->count[0] & 504) != 448)
     {
         c = 0000;
-        TrantorSHA1Update(context, &c, 1);
+        trantor_sha1_update(context, &c, 1);
     }
-    TrantorSHA1Update(context,
-                      finalcount,
-                      8); /* Should cause a TrantorSHA1Transform() */
+    trantor_sha1_update(context,
+                        finalcount,
+                        8); /* Should cause a TrantorSHA1Transform() */
     for (i = 0; i < 20; i++)
     {
         digest[i] =

@@ -25,7 +25,7 @@ class SpinLock
   public:
     inline SpinLock(std::atomic<bool> &flag) : flag_(flag)
     {
-        const static int cpu = std::thread::hardware_concurrency();
+        static const int cpu = std::thread::hardware_concurrency();
         int n, i;
         while (1)
         {
@@ -53,6 +53,7 @@ class SpinLock
             std::this_thread::yield();
         }
     }
+
     inline ~SpinLock()
     {
         flag_.store(false, std::memory_order_release);
@@ -73,6 +74,7 @@ class SimpleSpinLock
             _mm_pause();
         }
     }
+
     inline ~SimpleSpinLock()
     {
         flag_.clear(std::memory_order_release);

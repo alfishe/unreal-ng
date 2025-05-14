@@ -29,12 +29,13 @@ namespace drogon
 namespace orm
 {
 static const unsigned int maxBatchCount = 256;
+
 Result makeResult(std::shared_ptr<PGresult> &&r = nullptr)
 {
     return Result(std::make_shared<PostgreSQLResultImpl>(std::move(r)));
 }
 
-bool checkSql(const string_view &sql_)
+bool checkSql(const std::string_view &sql_)
 {
     if (sql_.length() > 1024)
         return true;
@@ -75,6 +76,7 @@ int PgConnection::flush()
     }
     return ret;
 }
+
 PgConnection::PgConnection(trantor::EventLoop *loop,
                            const std::string &connInfo,
                            bool autoBatch)
@@ -85,14 +87,27 @@ PgConnection::PgConnection(trantor::EventLoop *loop,
                                   [](PGconn *conn) { PQfinish(conn); })),
       channel_(loop, PQsocket(connectionPtr_.get()))
 {
-    PQsetnonblocking(connectionPtr_.get(), 1);
     if (channel_.fd() < 0)
     {
-        LOG_FATAL << "Socket fd < 0, Usually this is because the number of "
-                     "files opened by the program exceeds the system "
-                     "limit. Please use the ulimit command to check.";
-        exit(1);
+        LOG_ERROR << "Failed to create Postgres connection";
     }
+}
+
+void PgConnection::init()
+{
+    if (channel_.fd() < 0)
+    {
+        LOG_ERROR << "Connection with Postgres could not be established";
+
+        if (closeCallback_)
+        {
+            auto thisPtr = shared_from_this();
+            closeCallback_(thisPtr);
+        }
+        return;
+    }
+
+    PQsetnonblocking(connectionPtr_.get(), 1);
     channel_.setReadCallback([this]() {
         if (status_ == ConnectStatus::Bad)
         {
@@ -155,8 +170,11 @@ void PgConnection::disconnect()
     auto thisPtr = shared_from_this();
     loop_->runInLoop([thisPtr, &pro]() {
         thisPtr->status_ = ConnectStatus::Bad;
-        thisPtr->channel_.disableAll();
-        thisPtr->channel_.remove();
+        if (thisPtr->channel_.fd() >= 0)
+        {
+            thisPtr->channel_.disableAll();
+            thisPtr->channel_.remove();
+        }
         thisPtr->connectionPtr_.reset();
         pro.set_value(1);
     });
@@ -214,7 +232,7 @@ void PgConnection::pgPoll()
 }
 
 void PgConnection::execSqlInLoop(
-    string_view &&sql,
+    std::string_view &&sql,
     size_t paraNum,
     std::vector<const char *> &&parameters,
     std::vector<int> &&length,
@@ -238,6 +256,7 @@ void PgConnection::execSqlInLoop(
             [thisPtr = shared_from_this()]() { thisPtr->sendBatchedSql(); });
     }
 }
+
 int PgConnection::sendBatchEnd()
 {
     if (!PQpipelineSync(connectionPtr_.get()))
@@ -249,6 +268,7 @@ int PgConnection::sendBatchEnd()
     }
     return 1;
 }
+
 void PgConnection::sendBatchedSql()
 {
     if (isWorking_)
@@ -467,8 +487,8 @@ void PgConnection::handleRead()
             {
                 auto r = preparedStatements_.insert(
                     std::string{cmd->sql_.data(), cmd->sql_.length()});
-                preparedStatementsMap_[string_view{r.first->c_str(),
-                                                   r.first->length()}] = {
+                preparedStatementsMap_[std::string_view{r.first->c_str(),
+                                                        r.first->length()}] = {
                     std::move(cmd->preparingStatement_), cmd->isChanging_};
                 cmd->preparingStatement_.clear();
                 continue;
@@ -485,8 +505,8 @@ void PgConnection::handleRead()
         {
             auto r = preparedStatements_.insert(
                 std::string{cmd->sql_.data(), cmd->sql_.length()});
-            preparedStatementsMap_[string_view{r.first->c_str(),
-                                               r.first->length()}] = {
+            preparedStatementsMap_[std::string_view{r.first->c_str(),
+                                                    r.first->length()}] = {
                 std::move(cmd->preparingStatement_), cmd->isChanging_};
             cmd->preparingStatement_.clear();
             continue;
@@ -510,11 +530,17 @@ void PgConnection::handleFatalError(bool clearAll, bool isAbortPipeline)
     {
         for (auto &cmd : batchCommandsForWaitingResults_)
         {
-            cmd->exceptionCallback_(exceptPtr);
+            if (cmd->exceptionCallback_)
+            {
+                cmd->exceptionCallback_(exceptPtr);
+            }
         }
         for (auto &cmd : batchSqlCommands_)
         {
-            cmd->exceptionCallback_(exceptPtr);
+            if (cmd->exceptionCallback_)
+            {
+                cmd->exceptionCallback_(exceptPtr);
+            }
         }
         batchCommandsForWaitingResults_.clear();
         batchSqlCommands_.clear();
@@ -524,13 +550,19 @@ void PgConnection::handleFatalError(bool clearAll, bool isAbortPipeline)
         if (!batchSqlCommands_.empty() &&
             !batchSqlCommands_.front()->preparingStatement_.empty())
         {
-            batchSqlCommands_.front()->exceptionCallback_(exceptPtr);
+            if (batchSqlCommands_.front()->exceptionCallback_)
+            {
+                batchSqlCommands_.front()->exceptionCallback_(exceptPtr);
+            }
             batchSqlCommands_.pop_front();
         }
         else if (!batchCommandsForWaitingResults_.empty())
         {
             auto &cmd = batchCommandsForWaitingResults_.front();
-            cmd->exceptionCallback_(exceptPtr);
+            if (cmd->exceptionCallback_)
+            {
+                cmd->exceptionCallback_(exceptPtr);
+            }
             batchCommandsForWaitingResults_.pop_front();
         }
         else

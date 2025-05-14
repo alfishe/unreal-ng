@@ -42,6 +42,7 @@ class CallbackEntry
     CallbackEntry(std::function<void()> cb) : cb_(std::move(cb))
     {
     }
+
     ~CallbackEntry()
     {
         cb_();
@@ -80,7 +81,11 @@ class CacheMap
      * number of wheels
      * @param bucketsNumPerWheel
      * buckets number per wheel
-     * The max delay of the CacheMap is about
+     * @param fnOnInsert
+     * function to execute on insertion
+     * @param fnOnErase
+     * function to execute on erase
+     * @details The max delay of the CacheMap is about
      * tickInterval*(bucketsNumPerWheel^wheelsNum) seconds.
      */
     CacheMap(trantor::EventLoop *loop,
@@ -139,6 +144,7 @@ class CacheMap
             noWheels_ = true;
         }
     };
+
     ~CacheMap()
     {
         std::lock_guard<std::mutex> lock(ctrlBlockPtr_->mtx);
@@ -154,6 +160,7 @@ class CacheMap
         }
         LOG_TRACE << "CacheMap destruct!";
     }
+
     struct MapValue
     {
         MapValue(const T2 &value,
@@ -164,26 +171,32 @@ class CacheMap
               timeoutCallback_(std::move(callback))
         {
         }
+
         MapValue(T2 &&value, size_t timeout, std::function<void()> &&callback)
             : value_(std::move(value)),
               timeout_(timeout),
               timeoutCallback_(std::move(callback))
         {
         }
+
         MapValue(T2 &&value, size_t timeout)
             : value_(std::move(value)), timeout_(timeout)
         {
         }
+
         MapValue(const T2 &value, size_t timeout)
             : value_(value), timeout_(timeout)
         {
         }
+
         MapValue(T2 &&value) : value_(std::move(value))
         {
         }
+
         MapValue(const T2 &value) : value_(value)
         {
         }
+
         MapValue() = default;
         T2 value_;
         size_t timeout_{0};
@@ -222,6 +235,7 @@ class CacheMap
         if (fnOnInsert_)
             fnOnInsert_(key);
     }
+
     /**
      * @brief Insert a key-value pair into the cache.
      *
@@ -380,6 +394,7 @@ class CacheMap
         if (fnOnErase_)
             fnOnErase_(key);
     }
+
     /**
      * @brief Get the event loop object
      *
@@ -404,6 +419,7 @@ class CacheMap
         std::lock_guard<std::mutex> lock(bucketMutex_);
         insertEntry(delay, std::make_shared<CallbackEntry>(std::move(task)));
     }
+
     void runAfter(size_t delay, const std::function<void()> &task)
     {
         std::lock_guard<std::mutex> lock(bucketMutex_);
@@ -425,10 +441,12 @@ class CacheMap
         ControlBlock() : destructed(false), loopEnded(false)
         {
         }
+
         bool destructed;
         bool loopEnded;
         std::mutex mtx;
     };
+
     std::unordered_map<T1, MapValue> map_;
 
     std::vector<CallbackBucketQueue> wheels_;
@@ -486,6 +504,7 @@ class CacheMap
             t = t / bucketsNumPerWheel_;
         }
     }
+
     void eraseAfter(size_t delay, const T1 &key)
     {
         if (noWheels_)

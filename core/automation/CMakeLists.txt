@@ -69,10 +69,10 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         set(common_libraries -static-libstdc++ pthread)
     endif (UNIX AND NOT APPLE)
 
-    target_link_libraries(${PROJECT_NAME}
-        automation_lua
-        automation_python
-        automation_webapi
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>
 
         unrealng::core
         ${common_libraries}
@@ -83,23 +83,23 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     message("CONFIG_FILE: ${CONFIG_FILE}")
     message("Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
     add_custom_command(
-            TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E
-            copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy ${CONFIG_FILE} "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
     )
 
     # Copy all ROM files to /rom sub-folder
     add_custom_command(
-            TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E
-            copy_directory ${DATA_PATH}/rom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/rom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
     )
 
     # Copy all test ROM files to /rom sub-folder
     add_custom_command(
-            TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E
-            copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E
+        copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
     )
 else()
     # Produce static library;  Create unrealng::automation_lua alias for the target
@@ -111,7 +111,8 @@ else()
     )
 
     # Link libraries conditionally (depending on correspondent options)
-    target_link_libraries(${PROJECT_NAME} PUBLIC
+    # Use PRIVATE linkage to avoid propagating transitive dependencies
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>
         $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>
@@ -121,10 +122,16 @@ endif()
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/
     ${ROOT_DIR}/core/automation
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_lua,INCLUDE_DIRECTORIES>>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_python,INCLUDE_DIRECTORIES>>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_webapi,INCLUDE_DIRECTORIES>>
+)
 
-    $<TARGET_PROPERTY:unrealng::automation_lua,INCLUDE_DIRECTORIES>
-    $<TARGET_PROPERTY:unrealng::automation_python,INCLUDE_DIRECTORIES>
-    $<TARGET_PROPERTY:unrealng::automation_webapi,INCLUDE_DIRECTORIES>
+# Add conditional compiler definitions for automation modules
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
 )
 
 message("<< <${PROJECT_NAME}>")

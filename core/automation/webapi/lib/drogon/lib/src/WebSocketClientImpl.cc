@@ -30,10 +30,12 @@ using namespace trantor;
 WebSocketClientImpl::~WebSocketClientImpl()
 {
 }
+
 WebSocketConnectionPtr WebSocketClientImpl::getConnection()
 {
     return websockConnPtr_;
 }
+
 void WebSocketClientImpl::stop()
 {
     stop_ = true;
@@ -44,6 +46,7 @@ void WebSocketClientImpl::stop()
     }
     tcpClientPtr_.reset();
 }
+
 void WebSocketClientImpl::createTcpClient()
 {
     LOG_TRACE << "New TcpClient," << serverAddr_.toIpPort();
@@ -54,7 +57,10 @@ void WebSocketClientImpl::createTcpClient()
         auto policy = trantor::TLSPolicy::defaultClientPolicy();
         policy->setUseOldTLS(useOldTLS_)
             .setValidate(validateCert_)
-            .setHostname(domain_);
+            .setHostname(domain_)
+            .setConfCmds(sslConfCmds_)
+            .setCertPath(clientCertPath_)
+            .setKeyPath(clientKeyPath_);
         tcpClientPtr_->enableSSL(std::move(policy));
     }
     auto thisPtr = shared_from_this();
@@ -110,6 +116,7 @@ void WebSocketClientImpl::createTcpClient()
         });
     tcpClientPtr_->connect();
 }
+
 void WebSocketClientImpl::connectToServerInLoop()
 {
     loop_->assertInLoopThread();
@@ -445,6 +452,22 @@ void WebSocketClientImpl::connectToServer(
             thisPtr->requestCallback_ = callback;
             thisPtr->connectToServerInLoop();
         });
+    }
+}
+
+void WebSocketClientImpl::setCertPath(const std::string &cert,
+                                      const std::string &key)
+{
+    clientCertPath_ = cert;
+    clientKeyPath_ = key;
+}
+
+void WebSocketClientImpl::addSSLConfigs(
+    const std::vector<std::pair<std::string, std::string>> &sslConfCmds)
+{
+    for (const auto &cmd : sslConfCmds)
+    {
+        sslConfCmds_.push_back(cmd);
     }
 }
 

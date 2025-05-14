@@ -18,6 +18,7 @@
 #include <iostream>
 #include <memory>
 using namespace drogon_ctl;
+
 std::string create::detail()
 {
     return "Use create command to create some source files of drogon webapp\n\n"
@@ -41,7 +42,8 @@ std::string create::detail()
            "create a plugin named class_name\n\n"
            "drogon_ctl create project <project_name> //"
            "create a project named project_name\n\n"
-           "drogon_ctl create model <model_path> [--table=<table_name>] [-f]//"
+           "drogon_ctl create model <model_path> [-o <output path>] "
+           "[--table=<table_name>] [-f]//"
            "create model classes in model_path\n";
 }
 

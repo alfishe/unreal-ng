@@ -14,12 +14,14 @@
 #pragma once
 
 #include <drogon/exports.h>
-#include <drogon/utils/optional.h>
-#include <drogon/utils/string_view.h>
 #include <trantor/utils/Date.h>
 #include <trantor/utils/Logger.h>
+#include <drogon/utils/Utilities.h>
+#include <cctype>
 #include <string>
 #include <limits>
+#include <optional>
+#include <string_view>
 
 namespace drogon
 {
@@ -34,14 +36,11 @@ class DROGON_EXPORT Cookie
      * @param key key of the cookie
      * @param value value of the cookie
      */
-    Cookie(const std::string &key, const std::string &value)
-        : key_(key), value_(value)
-    {
-    }
-    Cookie(std::string &&key, std::string &&value)
+    Cookie(std::string key, std::string value)
         : key_(std::move(key)), value_(std::move(value))
     {
     }
+
     Cookie() = default;
     enum class SameSite
     {
@@ -50,6 +49,7 @@ class DROGON_EXPORT Cookie
         kStrict,
         kNone
     };
+
     /**
      * @brief Set the Expires Date
      *
@@ -83,6 +83,10 @@ class DROGON_EXPORT Cookie
     {
         domain_ = domain;
     }
+
+    /**
+     * @brief Set the domain of the cookie.
+     */
     void setDomain(std::string &&domain)
     {
         domain_ = std::move(domain);
@@ -95,6 +99,10 @@ class DROGON_EXPORT Cookie
     {
         path_ = path;
     }
+
+    /**
+     * @brief Set the path of the cookie.
+     */
     void setPath(std::string &&path)
     {
         path_ = std::move(path);
@@ -107,10 +115,15 @@ class DROGON_EXPORT Cookie
     {
         key_ = key;
     }
+
+    /**
+     * @brief Set the key of the cookie.
+     */
     void setKey(std::string &&key)
     {
         key_ = std::move(key);
     }
+
     /**
      * @brief Set the value of the cookie.
      */
@@ -118,10 +131,15 @@ class DROGON_EXPORT Cookie
     {
         value_ = value;
     }
+
+    /**
+     * @brief Set the value of the cookie.
+     */
     void setValue(std::string &&value)
     {
         value_ = std::move(value);
     }
+
     /**
      * @brief Set the max-age of the cookie.
      */
@@ -129,12 +147,25 @@ class DROGON_EXPORT Cookie
     {
         maxAge_ = value;
     }
+
     /**
      * @brief Set the same site of the cookie.
      */
     void setSameSite(SameSite sameSite)
     {
         sameSite_ = sameSite;
+    }
+
+    /**
+     *  @brief Set the partitioned status of the cookie
+     */
+    void setPartitioned(bool partitioned)
+    {
+        partitioned_ = partitioned;
+        if (partitioned)
+        {
+            setSecure(true);
+        }
     }
 
     /**
@@ -264,9 +295,20 @@ class DROGON_EXPORT Cookie
     }
 
     /**
+     * @brief Check if the cookie is partitioned.
+     *
+     * @return true means the cookie is partitioned.
+     * @return false means the cookie is not partitioned.
+     */
+    bool isPartitioned() const
+    {
+        return partitioned_;
+    }
+
+    /**
      * @brief Get the max-age of the cookie
      */
-    optional<int> maxAge() const
+    std::optional<int> maxAge() const
     {
         return maxAge_;
     }
@@ -274,7 +316,7 @@ class DROGON_EXPORT Cookie
     /**
      * @brief Get the max-age of the cookie
      */
-    optional<int> getMaxAge() const
+    std::optional<int> getMaxAge() const
     {
         return maxAge_;
     }
@@ -296,24 +338,50 @@ class DROGON_EXPORT Cookie
     }
 
     /**
+     * @brief Compare two strings ignoring the their cases
+     *
+     * @param str1 string to check its value
+     * @param str2 string to check against, written in lower case
+     *
+     * @note the function is optimized to check for cookie's samesite value
+     * where we check if the value equals to a specific value we already know in
+     * str2. so the function doesn't apply tolower to the second argument
+     * str2 as it's always in lower case.
+     *
+     * @return true if both strings are equal ignoring case
+     */
+    static bool stricmp(const std::string_view str1,
+                        const std::string_view str2)
+    {
+        auto str1Len{str1.length()};
+        auto str2Len{str2.length()};
+        if (str1Len != str2Len)
+            return false;
+        for (size_t idx{0}; idx < str1Len; ++idx)
+        {
+            auto lowerChar{tolower(str1[idx])};
+
+            if (lowerChar != str2[idx])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * @brief Converts a string value to its associated enum class SameSite
      * value
      */
-    static SameSite convertString2SameSite(const string_view &sameSite)
+    static SameSite convertString2SameSite(std::string_view sameSite)
     {
-        if (sameSite == "Lax")
-        {
+        if (stricmp(sameSite, "lax"))
             return Cookie::SameSite::kLax;
-        }
-        else if (sameSite == "Strict")
-        {
+        if (stricmp(sameSite, "strict"))
             return Cookie::SameSite::kStrict;
-        }
-        else if (sameSite == "None")
-        {
+        if (stricmp(sameSite, "none"))
             return Cookie::SameSite::kNone;
-        }
-        else if (sameSite != "Null")
+        if (!stricmp(sameSite, "null"))
         {
             LOG_WARN
                 << "'" << sameSite
@@ -321,7 +389,6 @@ class DROGON_EXPORT Cookie
                    "or "
                    "'None' are proper values. Return value is SameSite::kNull.";
         }
-
         return Cookie::SameSite::kNull;
     }
 
@@ -329,34 +396,20 @@ class DROGON_EXPORT Cookie
      * @brief Converts an enum class SameSite value to its associated string
      * value
      */
-    static const string_view &convertSameSite2String(SameSite sameSite)
+    static std::string_view convertSameSite2String(SameSite sameSite)
     {
         switch (sameSite)
         {
             case SameSite::kLax:
-            {
-                static string_view sv{"Lax"};
-                return sv;
-            }
+                return "Lax";
             case SameSite::kStrict:
-            {
-                static string_view sv{"Strict"};
-                return sv;
-            }
+                return "Strict";
             case SameSite::kNone:
-            {
-                static string_view sv{"None"};
-                return sv;
-            }
+                return "None";
             case SameSite::kNull:
-            {
-                static string_view sv{"Null"};
-                return sv;
-            }
-        }
-        {
-            static string_view sv{"UNDEFINED"};
-            return sv;
+                return "Null";
+            default:
+                return "UNDEFINED";
         }
     }
 
@@ -364,11 +417,12 @@ class DROGON_EXPORT Cookie
     trantor::Date expiresDate_{(std::numeric_limits<int64_t>::max)()};
     bool httpOnly_{true};
     bool secure_{false};
+    bool partitioned_{false};
     std::string domain_;
     std::string path_;
     std::string key_;
     std::string value_;
-    optional<int> maxAge_;
+    std::optional<int> maxAge_;
     SameSite sameSite_{SameSite::kNull};
 };
 

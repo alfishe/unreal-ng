@@ -25,7 +25,10 @@ set(UNITTEST_SOURCES
     unittests/StringOpsTest.cc
     unittests/ControllerCreationTest.cc
     unittests/MultiPartParserTest.cc
-    unittests/SlashRemoverTest.cc)
+    unittests/SlashRemoverTest.cc
+    unittests/UtilitiesTest.cc
+    unittests/UuidUnittest.cc
+)
 
 if(DROGON_CXX_STANDARD GREATER_EQUAL 20 AND HAS_COROUTINE)
   set(UNITTEST_SOURCES ${UNITTEST_SOURCES} unittests/CoroutineTest.cc)
@@ -39,7 +42,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC" AND BUILD_SHARED_LIBS)
   set(UNITTEST_SOURCES ${UNITTEST_SOURCES} ../src/HttpUtils.cc)
 else()
   set(UNITTEST_SOURCES ${UNITTEST_SOURCES} ../src/HttpFileImpl.cc
-                       unittests/HttpFileTest.cc)
+                       unittests/HttpFileTest.cc
+                       unittests/WebsocketResponseTest.cc)
 endif()
 
 add_executable(unittest ${UNITTEST_SOURCES})
@@ -49,7 +53,8 @@ if (BUILD_CTL)
       integration_test/client/main.cc
       integration_test/client/WebSocketTest.cc
       integration_test/client/MultipleWsTest.cc
-      integration_test/client/HttpPipeliningTest.cc)
+      integration_test/client/HttpPipeliningTest.cc
+      integration_test/client/RequestStreamTest.cc)
   add_executable(integration_test_client ${INTEGRATION_TEST_CLIENT_SOURCES})
 
   set(INTEGRATION_TEST_SERVER_SOURCES
@@ -71,6 +76,8 @@ if (BUILD_CTL)
       integration_test/server/MethodTest.cc
       integration_test/server/RangeTestController.cc
       integration_test/server/BeginAdviceTest.cc
+      integration_test/server/MiddlewareTest.cc
+      integration_test/server/RequestStreamTestCtrl.cc
       integration_test/server/main.cc)
 
   if(DROGON_CXX_STANDARD GREATER_EQUAL 20 AND HAS_COROUTINE)
@@ -111,7 +118,7 @@ if (BUILD_CTL)
             $<TARGET_FILE_DIR:integration_test_server>/a-directory)
 endif(BUILD_CTL)
 
-set(COOKIE_SAME_SITE 
+set(COOKIE_SAME_SITE
   main_CookieSameSite.cc
   CookieSameSite.cc
 )

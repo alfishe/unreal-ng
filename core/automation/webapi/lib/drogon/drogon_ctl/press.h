@@ -20,6 +20,7 @@
 #include <drogon/HttpClient.h>
 #include <trantor/utils/Date.h>
 #include <trantor/net/EventLoopThreadPool.h>
+#include <functional>
 #include <string>
 #include <atomic>
 #include <memory>
@@ -39,26 +40,32 @@ struct Statistics
     trantor::Date startDate_;
     trantor::Date endDate_;
 };
+
 class press : public DrObject<press>, public CommandHandler
 {
   public:
     void handleCommand(std::vector<std::string> &parameters) override;
+
     std::string script() override
     {
         return "Do stress testing(Use 'drogon_ctl help press' for more "
                "information)";
     }
+
     bool isTopCommand() override
     {
         return true;
     }
+
     std::string detail() override;
 
   private:
     size_t numOfThreads_{1};
     size_t numOfRequests_{1};
     size_t numOfConnections_{1};
-    // bool keepAlive_ = false;
+    std::string httpRequestJsonFile_;
+    std::function<HttpRequestPtr()> createHttpRequestFunc_;
+    bool certValidation_{true};
     bool processIndication_{true};
     std::string url_;
     std::string host_;

@@ -28,7 +28,9 @@
 #include <windows.h>
 #include <io.h>
 #include <synchapi.h>
+#ifndef _SSIZE_T_DEFINED
 using ssize_t = long long;
+#endif
 #else
 #include <poll.h>
 #endif
@@ -136,7 +138,6 @@ EventLoop::~EventLoop()
 #endif
     }
 
-    t_loopInThisThread = nullptr;
 #ifdef __linux__
     close(wakeupFd_);
 #elif defined _WIN32
@@ -254,7 +255,7 @@ void EventLoop::loop()
     {
         f();
     }
-
+    t_loopInThisThread = nullptr;
     // Throw the exception from the end
     if (loopException)
     {

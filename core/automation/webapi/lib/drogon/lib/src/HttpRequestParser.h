@@ -43,7 +43,6 @@ class HttpRequestParser : public trantor::NonCopyable,
 
     explicit HttpRequestParser(const trantor::TcpConnectionPtr &connPtr);
 
-    // return false if any error
     int parseRequest(trantor::MsgBuffer *buf);
 
     bool gotAll() const
@@ -67,42 +66,52 @@ class HttpRequestParser : public trantor::NonCopyable,
         }
         return false;
     }
+
     const WebSocketConnectionImplPtr &webSocketConn() const
     {
         return websockConnPtr_;
     }
+
     void setWebsockConnection(const WebSocketConnectionImplPtr &conn)
     {
         websockConnPtr_ = conn;
     }
+
     // to support request pipelining(rfc2616-8.1.2.2)
     void pushRequestToPipelining(const HttpRequestPtr &, bool isHeadMethod);
     bool pushResponseToPipelining(const HttpRequestPtr &, HttpResponsePtr);
     void popReadyResponses(std::vector<std::pair<HttpResponsePtr, bool>> &);
+
     size_t numberOfRequestsInPipelining() const
     {
         return requestPipelining_.size();
     }
+
     bool emptyPipelining()
     {
         return requestPipelining_.empty();
     }
+
     bool isStop() const
     {
         return stopWorking_;
     }
+
     void stop()
     {
         stopWorking_ = true;
     }
+
     size_t numberOfRequestsParsed() const
     {
         return requestsCounter_;
     }
+
     trantor::MsgBuffer &getBuffer()
     {
         return sendBuffer_;
     }
+
     std::vector<std::pair<HttpResponsePtr, bool>> &getResponseBuffer()
     {
         assert(loop_->isInLoopThread());
@@ -114,6 +123,7 @@ class HttpRequestParser : public trantor::NonCopyable,
         }
         return *responseBuffer_;
     }
+
     std::vector<HttpRequestImplPtr> &getRequestBuffer()
     {
         assert(loop_->isInLoopThread());
@@ -127,7 +137,6 @@ class HttpRequestParser : public trantor::NonCopyable,
 
   private:
     HttpRequestImplPtr makeRequestForPool(HttpRequestImpl *p);
-    void shutdownConnection(HttpStatusCode code);
     bool processRequestLine(const char *begin, const char *end);
     HttpRequestParseStatus status_;
     trantor::EventLoop *loop_;
@@ -145,7 +154,7 @@ class HttpRequestParser : public trantor::NonCopyable,
     std::unique_ptr<std::vector<HttpRequestImplPtr>> requestBuffer_;
     std::vector<HttpRequestImplPtr> requestsPool_;
     size_t currentChunkLength_{0};
-    size_t currentContentLength_{0};
+    size_t remainContentLength_{0};
 };
 
 }  // namespace drogon

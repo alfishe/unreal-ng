@@ -240,6 +240,7 @@ class TRANTOR_EXPORT TcpServer : NonCopyable
      * server.
      * @param sslConfCmds The commands used to call the SSL_CONF_cmd function in
      * OpenSSL.
+     * @param caPath The path of the certificate authority file.
      * @note It's well known that TLS 1.0 and 1.1 are not considered secure in
      * 2020. And it's a good practice to only use TLS 1.2 and above.
      */
@@ -258,6 +259,14 @@ class TRANTOR_EXPORT TcpServer : NonCopyable
         policyPtr_ = std::move(policy);
         sslContextPtr_ = newSSLContext(*policyPtr_, true);
     }
+
+    /**
+     * @brief Reload the SSL context.
+     * @note Call this function when the certificate or private key is updated.
+     * The server will reload the SSL context and use the new certificate and
+     * private key. new connections will use the new SSL context.
+     */
+    void reloadSSL();
 
   private:
     void handleCloseInLoop(const TcpConnectionPtr &connectionPtr);

@@ -5,7 +5,10 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'core' on C++
 project(unreal-qt LANGUAGES CXX)
 
-option(ENABLE_AUTOMATION "Enable all automation modules" ON)
+option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
+option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
+option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
+option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -114,8 +117,11 @@ message("UI_HEADERS:${UI_HEADERS}")
 # Put binary and configuration files to /bin subfolder
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-# Create the executable first
+# Create the executable
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
+
+# Note: We don't need to add direct dependency on zlibstatic when using webapi automation
+# as it's already included via unrealng::automation_webapi
 
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -128,19 +134,30 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/automation/lua/3rdparty/sol2/include"  # For sol2 headers
 )
 
+# Add automation include directories if enabled
+if (ENABLE_AUTOMATION)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        $<TARGET_PROPERTY:unrealng::automation,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
+endif ()
+
 # Debug configuration
 if (CMAKE_BUILD_TYPE MATCHES Debug)
     message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
-endif()
+endif ()
 
 # Platform-specific settings
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries pthread iconv)
+    set(common_libraries iconv)
+    find_package(Threads REQUIRED)
 elseif (UNIX AND NOT APPLE)
-    set(common_libraries -static-libstdc++ pthread)
-endif()
+    set(common_libraries -static-libstdc++)
+    find_package(Threads REQUIRED)
+endif ()
 
 # Configure automation if enabled
 if (INCLUDE_AUTOMATION)
@@ -150,23 +167,50 @@ if (INCLUDE_AUTOMATION)
 
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
 
-    target_link_libraries(${PROJECT_NAME} PRIVATE 
-        ${common_libraries}
-        Qt6::Widgets
-        Qt6::Multimedia
-        unrealng::core
-        unrealng::automation
-    )
-else()
+    # Link with appropriate libraries based on automation type
+    if (ENABLE_LUA_AUTOMATION)
+        target_link_libraries(${PROJECT_NAME} PRIVATE 
+            ${common_libraries}
+            Qt6::Widgets
+            Qt6::Multimedia
+            unrealng::core
+            unrealng::automation
+            lua_static
+            luacpp_static
+            ${CMAKE_DL_LIBS}
+            Threads::Threads
+        )
+    elseif (ENABLE_WEBAPI_AUTOMATION)
+        # Link with webapi target which already has jsoncpp linked
+        target_link_libraries(${PROJECT_NAME} PRIVATE 
+            ${common_libraries}
+            Qt6::Widgets
+            Qt6::Multimedia
+            unrealng::core
+            unrealng::automation
+            unrealng::automation_webapi  # This already includes jsoncpp_static and zlibstatic
+            Threads::Threads
+        )
+    else()
+        target_link_libraries(${PROJECT_NAME} PRIVATE 
+            ${common_libraries}
+            Qt6::Widgets
+            Qt6::Multimedia
+            unrealng::core
+            unrealng::automation
+            Threads::Threads
+        )
+    endif()
+else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 
         ${common_libraries}
         Qt6::Widgets
         Qt6::Multimedia
         unrealng::core
-        ${ROOT_DIR}/core/automation/lua/3rdparty/lua/lua-5.4.6/src/liblua.a
+        Threads::Threads
     )
-endif()
+endif ()
 
 # All linking is now handled in the main target_link_libraries call above
 

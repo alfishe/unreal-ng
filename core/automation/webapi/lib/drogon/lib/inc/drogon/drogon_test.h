@@ -1,14 +1,15 @@
 #pragma once
 #include <trantor/utils/NonCopyable.h>
 #include <drogon/DrObject.h>
-#include <drogon/utils/string_view.h>
 #include <drogon/exports.h>
 
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <atomic>
+#include <string_view>
 #include <cstddef>
+
 /**
  * @brief Drogon Test is a minimal effort test framework developed because the
  * major C++ test frameworks doesn't handle async programs well. Drogon Test's
@@ -59,8 +60,8 @@ DROGON_EXPORT extern std::atomic<size_t> numCorrectAssertions;
 DROGON_EXPORT extern std::atomic<size_t> numFailedTestCases;
 DROGON_EXPORT extern bool printSuccessfulTests;
 
-DROGON_EXPORT void registerCase(Case* test);
-DROGON_EXPORT void unregisterCase(Case* test);
+DROGON_EXPORT void registerCase(Case *test);
+DROGON_EXPORT void unregisterCase(Case *test);
 
 template <typename _Tp, typename dummy = void>
 struct is_printable : std::false_type
@@ -68,15 +69,14 @@ struct is_printable : std::false_type
 };
 
 template <typename _Tp>
-struct is_printable<_Tp,
-                    typename std::enable_if<
-                        std::is_same<decltype(std::cout << std::declval<_Tp>()),
-                                     std::ostream&>::value>::type>
-    : std::true_type
+struct is_printable<
+    _Tp,
+    std::enable_if_t<std::is_same_v<decltype(std::cout << std::declval<_Tp>()),
+                                    std::ostream &>>> : std::true_type
 {
 };
 
-inline std::string escapeString(const string_view sv)
+inline std::string escapeString(const std::string_view sv)
 {
     std::string result;
     result.reserve(sv.size());
@@ -104,99 +104,48 @@ inline std::string escapeString(const string_view sv)
     return result;
 }
 
-DROGON_EXPORT std::string prettifyString(const string_view sv,
+DROGON_EXPORT std::string prettifyString(const std::string_view sv,
                                          size_t maxLength = 120);
 
-#ifdef __cpp_fold_expressions
 template <typename... Args>
-inline void outputReason(Args&&... args)
+inline void outputReason(Args &&...args)
 {
     (std::cout << ... << std::forward<Args>(args));
 }
-#else
-template <typename Head>
-inline void outputReason(Head&& head)
-{
-    std::cout << std::forward<Head>(head);
-}
-template <typename Head, typename... Tail>
-inline void outputReason(Head&& head, Tail&&... tail)
-{
-    std::cout << std::forward<Head>(head);
-    outputReason(std::forward<Tail>(tail)...);
-}
-#endif
 
-template <bool P>
-struct AttemptPrintViaStream
+template <typename T>
+inline std::string attemptPrint(T &&v)
 {
-    template <typename T>
-    std::string operator()(const T& v)
-    {
-        return "{un-printable}";
-    }
-};
-
-template <>
-struct AttemptPrintViaStream<true>
-{
-    template <typename T>
-    std::string operator()(const T& v)
+    using Type = std::remove_cv_t<std::remove_reference_t<T>>;
+    if constexpr (std::is_same_v<Type, std::nullptr_t>)
+        return "nullptr";
+    else if constexpr (std::is_same_v<Type, char>)
+        return "'" + std::string(1, v) + "'";
+    else if constexpr (std::is_convertible_v<Type, std::string_view>)
+        return prettifyString(v);
+    else if constexpr (internal::is_printable<Type>::value)
     {
         std::stringstream ss;
         ss << v;
         return ss.str();
     }
-};
-
-struct StringPrinter
-{
-    std::string operator()(const string_view& v)
-    {
-        return prettifyString(v);
-    }
-};
-
-template <typename T>
-inline std::string attemptPrint(T&& v)
-{
-    using DefaultPrinter =
-        internal::AttemptPrintViaStream<is_printable<T>::value>;
-
-    // Poor man's if constexpr because SFINAE don't disambiguate between
-    // possible resolutions
-    return typename std::conditional<std::is_convertible<T, string_view>::value,
-                                     internal::StringPrinter,
-                                     DefaultPrinter>::type()(v);
+    return "{un-printable}";
 }
 
-// Specializations to reduce template construction
-template <>
-inline std::string attemptPrint(const std::nullptr_t& v)
-{
-    return "nullptr";
-}
-
-template <>
-inline std::string attemptPrint(const char& v)
-{
-    return "'" + std::string(1, v) + "'";
-}
-
-inline std::string stringifyFuncCall(const std::string& funcName)
+inline std::string stringifyFuncCall(const std::string &funcName)
 {
     return funcName + "()";
 }
 
-inline std::string stringifyFuncCall(const std::string& funcName,
-                                     const std::string& param1)
+inline std::string stringifyFuncCall(const std::string &funcName,
+                                     const std::string &param1)
 {
     return funcName + "(" + param1 + ")";
 }
 
-inline std::string stringifyFuncCall(const std::string& funcName,
-                                     const std::string& param1,
-                                     const std::string& param2)
+inline std::string stringifyFuncCall(const std::string &funcName,
+                                     const std::string &param1,
+                                     const std::string &param2)
 {
     return funcName + "(" + param1 + ", " + param2 + ")";
 }
@@ -222,13 +171,14 @@ struct Lhs
         return {(bool)ref_, attemptPrint(ref_)};
     }
 
-    Lhs(const T& lhs) : ref_(lhs)
+    Lhs(const T &lhs) : ref_(lhs)
     {
     }
-    const T& ref_;
+
+    const T &ref_;
 
     template <typename RhsType>
-    ComparsionResult operator<(const RhsType& rhs)
+    ComparsionResult operator<(const RhsType &rhs)
     {
         return ComparsionResult{ref_ < rhs,
                                 attemptPrint(ref_) + " < " +
@@ -236,14 +186,14 @@ struct Lhs
     }
 
     template <typename RhsType>
-    ComparsionResult operator>(const RhsType& rhs)
+    ComparsionResult operator>(const RhsType &rhs)
     {
         return ComparsionResult{ref_ > rhs,
                                 attemptPrint(ref_) + " > " + attemptPrint(rhs)};
     }
 
     template <typename RhsType>
-    ComparsionResult operator<=(const RhsType& rhs)
+    ComparsionResult operator<=(const RhsType &rhs)
     {
         return ComparsionResult{ref_ <= rhs,
                                 attemptPrint(ref_) +
@@ -251,7 +201,7 @@ struct Lhs
     }
 
     template <typename RhsType>
-    ComparsionResult operator>=(const RhsType& rhs)
+    ComparsionResult operator>=(const RhsType &rhs)
     {
         return ComparsionResult{ref_ >= rhs,
                                 attemptPrint(ref_) +
@@ -259,7 +209,7 @@ struct Lhs
     }
 
     template <typename RhsType>
-    ComparsionResult operator==(const RhsType& rhs)
+    ComparsionResult operator==(const RhsType &rhs)
     {
         return ComparsionResult{ref_ == rhs,
                                 attemptPrint(ref_) +
@@ -267,7 +217,7 @@ struct Lhs
     }
 
     template <typename RhsType>
-    ComparsionResult operator!=(const RhsType& rhs)
+    ComparsionResult operator!=(const RhsType &rhs)
     {
         return ComparsionResult{ref_ != rhs,
                                 attemptPrint(ref_) +
@@ -275,33 +225,33 @@ struct Lhs
     }
 
     template <typename RhsType>
-    ComparsionResult operator&&(const RhsType& rhs)
+    ComparsionResult operator&&(const RhsType &rhs)
     {
-        static_assert(!std::is_same<RhsType, void>::value,
+        static_assert(!std::is_same_v<RhsType, void>,
                       " && is not supported in expression decomposition");
         return {};
     }
 
     template <typename RhsType>
-    ComparsionResult operator||(const RhsType& rhs)
+    ComparsionResult operator||(const RhsType &rhs)
     {
-        static_assert(!std::is_same<RhsType, void>::value,
+        static_assert(!std::is_same_v<RhsType, void>,
                       " || is not supported in expression decomposition");
         return {};
     }
 
     template <typename RhsType>
-    ComparsionResult operator|(const RhsType& rhs)
+    ComparsionResult operator|(const RhsType &rhs)
     {
-        static_assert(!std::is_same<RhsType, void>::value,
+        static_assert(!std::is_same_v<RhsType, void>,
                       " | is not supported in expression decomposition");
         return {};
     }
 
     template <typename RhsType>
-    ComparsionResult operator&(const RhsType& rhs)
+    ComparsionResult operator&(const RhsType &rhs)
     {
-        static_assert(!std::is_same<RhsType, void>::value,
+        static_assert(!std::is_same_v<RhsType, void>,
                       " & is not supported in expression decomposition");
         return {};
     }
@@ -310,7 +260,7 @@ struct Lhs
 struct Decomposer
 {
     template <typename T>
-    Lhs<T> operator<=(const T& other)
+    Lhs<T> operator<=(const T &other)
     {
         return Lhs<T>(other);
     }
@@ -321,7 +271,7 @@ struct Decomposer
 class DROGON_EXPORT ThreadSafeStream final
 {
   public:
-    ThreadSafeStream(std::ostream& os) : os_(os)
+    ThreadSafeStream(std::ostream &os) : os_(os)
     {
         mtx_.lock();
     }
@@ -332,13 +282,13 @@ class DROGON_EXPORT ThreadSafeStream final
     }
 
     template <typename T>
-    std::ostream& operator<<(const T& rhs)
+    std::ostream &operator<<(const T &rhs)
     {
         return os_ << rhs;
     }
 
     static std::mutex mtx_;
-    std::ostream& os_;
+    std::ostream &os_;
 };
 
 DROGON_EXPORT ThreadSafeStream print();
@@ -348,13 +298,16 @@ class CaseBase : public trantor::NonCopyable
 {
   public:
     CaseBase() = default;
-    CaseBase(const std::string& name) : name_(name)
+
+    CaseBase(const std::string &name) : name_(name)
     {
     }
-    CaseBase(std::shared_ptr<CaseBase> parent, const std::string& name)
+
+    CaseBase(std::shared_ptr<CaseBase> parent, const std::string &name)
         : parent_(parent), name_(name)
     {
     }
+
     virtual ~CaseBase() = default;
 
     std::string fullname() const
@@ -371,7 +324,7 @@ class CaseBase : public trantor::NonCopyable
         return result;
     }
 
-    const std::string& name() const
+    const std::string &name() const
     {
         return name_;
     }
@@ -399,12 +352,12 @@ class CaseBase : public trantor::NonCopyable
 class Case : public CaseBase
 {
   public:
-    Case(const std::string& name) : CaseBase(name)
+    Case(const std::string &name) : CaseBase(name)
     {
         internal::registerCase(this);
     }
 
-    Case(std::shared_ptr<Case> parent, const std::string& name)
+    Case(std::shared_ptr<Case> parent, const std::string &name)
         : CaseBase(parent, name)
     {
         internal::registerCase(this);
@@ -418,15 +371,16 @@ class Case : public CaseBase
 
 struct TestCase : public CaseBase
 {
-    TestCase(const std::string& name) : CaseBase(name)
+    TestCase(const std::string &name) : CaseBase(name)
     {
     }
+
     virtual ~TestCase() = default;
     virtual void doTest_(std::shared_ptr<Case>) = 0;
 };
 
 DROGON_EXPORT void printTestStats();
-DROGON_EXPORT int run(int argc, char** argv);
+DROGON_EXPORT int run(int argc, char **argv);
 }  // namespace test
 }  // namespace drogon
 
@@ -470,7 +424,7 @@ DROGON_EXPORT int run(int argc, char** argv);
         {                                                   \
             eval;                                           \
         }                                                   \
-        catch (const std::exception& e)                     \
+        catch (const std::exception &e)                     \
         {                                                   \
             (void)e;                                        \
             on_exception;                                   \
@@ -641,7 +595,7 @@ DROGON_EXPORT int run(int argc, char** argv);
             EVAL__(expr),                                                     \
             {                                                                 \
                 exceptionThrown = true;                                       \
-                if (dynamic_cast<const except_type*>(&e) != nullptr)          \
+                if (dynamic_cast<const except_type *>(&e) != nullptr)         \
                     SET_TEST_SUCCESS__;                                       \
             },                                                                \
             { exceptionThrown = true; },                                      \

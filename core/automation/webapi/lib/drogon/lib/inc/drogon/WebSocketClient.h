@@ -65,7 +65,7 @@ class DROGON_EXPORT WebSocketClient
     virtual WebSocketConnectionPtr getConnection() = 0;
 
     /**
-     * @brief Set messages handler. When a message is recieved from the server,
+     * @brief Set messages handler. When a message is received from the server,
      * the callback is called.
      *
      * @param callback The function to call when a message is received.
@@ -76,8 +76,7 @@ class DROGON_EXPORT WebSocketClient
                                  const WebSocketMessageType &)> &callback) = 0;
 
     /// Set the connection closing handler. When the connection is established
-    /// or closed, the @param callback is called with a bool parameter.
-
+    /// or closed, the @p callback is called with a bool parameter.
     /**
      * @brief Set the connection closing handler. When the websocket connection
      * is closed, the  callback is called
@@ -91,9 +90,34 @@ class DROGON_EXPORT WebSocketClient
     virtual void connectToServer(const HttpRequestPtr &request,
                                  const WebSocketRequestCallback &callback) = 0;
 
+    /**
+     * @brief Set the client certificate used by the HTTP connection
+     *
+     * @param cert Path to the certificate
+     * @param key Path to the certificate's private key
+     * @note this method has no effect if the HTTP client is communicating via
+     * unencrypted HTTP
+     */
+    virtual void setCertPath(const std::string &cert,
+                             const std::string &key) = 0;
+
+    /**
+     * @brief Supplies command style options for `SSL_CONF_cmd`
+     *
+     * @param sslConfCmds options for SSL_CONF_cmd
+     * @note this method has no effect if the HTTP client is communicating via
+     * unencrypted HTTP
+     * @code
+       addSSLConfigs({{"-dhparam", "/path/to/dhparam"}, {"-strict", ""}});
+     * @endcode
+     */
+    virtual void addSSLConfigs(
+        const std::vector<std::pair<std::string, std::string>>
+            &sslConfCmds) = 0;
+
 #ifdef __cpp_impl_coroutine
     /**
-     * @brief Set messages handler. When a message is recieved from the server,
+     * @brief Set messages handler. When a message is received from the server,
      * the callback is called.
      *
      * @param callback The function to call when a message is received.

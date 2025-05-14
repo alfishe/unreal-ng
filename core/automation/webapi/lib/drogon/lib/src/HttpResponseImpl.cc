@@ -13,11 +13,12 @@
  */
 
 #include "HttpResponseImpl.h"
+#include "AOPAdvice.h"
 #include "HttpAppFrameworkImpl.h"
 #include "HttpUtils.h"
 #include <drogon/HttpViewData.h>
 #include <drogon/IOThreadStorage.h>
-#include "filesystem.h"
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <cstdio>
@@ -37,21 +38,10 @@ namespace drogon
 {
 // "Fri, 23 Aug 2019 12:58:03 GMT" length = 29
 static const size_t httpFullDateStringLength = 29;
-static inline void doResponseCreateAdvices(
-    const HttpResponseImplPtr &responsePtr)
-{
-    auto &advices =
-        HttpAppFrameworkImpl::instance().getResponseCreationAdvices();
-    if (!advices.empty())
-    {
-        for (auto &advice : advices)
-        {
-            advice(responsePtr);
-        }
-    }
-}
+
 static inline HttpResponsePtr genHttpResponse(const std::string &viewName,
-                                              const HttpViewData &data)
+                                              const HttpViewData &data,
+                                              const HttpRequestPtr &req)
 {
     auto templ = DrTemplateBase::newTemplate(viewName);
     if (templ)
@@ -60,14 +50,14 @@ static inline HttpResponsePtr genHttpResponse(const std::string &viewName,
         res->setBody(templ->genText(data));
         return res;
     }
-    return drogon::HttpResponse::newNotFoundResponse();
+    return drogon::HttpResponse::newNotFoundResponse(req);
 }
 }  // namespace drogon
 
 HttpResponsePtr HttpResponse::newHttpResponse()
 {
     auto res = std::make_shared<HttpResponseImpl>(k200OK, CT_TEXT_HTML);
-    doResponseCreateAdvices(res);
+    AopAdvice::instance().passResponseCreationAdvices(res);
     return res;
 }
 
@@ -75,7 +65,7 @@ HttpResponsePtr HttpResponse::newHttpResponse(HttpStatusCode code,
                                               ContentType type)
 {
     auto res = std::make_shared<HttpResponseImpl>(code, type);
-    doResponseCreateAdvices(res);
+    AopAdvice::instance().passResponseCreationAdvices(res);
     return res;
 }
 
@@ -83,7 +73,7 @@ HttpResponsePtr HttpResponse::newHttpJsonResponse(const Json::Value &data)
 {
     auto res = std::make_shared<HttpResponseImpl>(k200OK, CT_APPLICATION_JSON);
     res->setJsonObject(data);
-    doResponseCreateAdvices(res);
+    AopAdvice::instance().passResponseCreationAdvices(res);
     return res;
 }
 
@@ -91,7 +81,7 @@ HttpResponsePtr HttpResponse::newHttpJsonResponse(Json::Value &&data)
 {
     auto res = std::make_shared<HttpResponseImpl>(k200OK, CT_APPLICATION_JSON);
     res->setJsonObject(std::move(data));
-    doResponseCreateAdvices(res);
+    AopAdvice::instance().passResponseCreationAdvices(res);
     return res;
 }
 
@@ -141,7 +131,7 @@ void HttpResponseImpl::generateBodyFromJson() const
         writeString(builder, *jsonPtr_));
 }
 
-HttpResponsePtr HttpResponse::newNotFoundResponse()
+HttpResponsePtr HttpResponse::newNotFoundResponse(const HttpRequestPtr &req)
 {
     auto loop = trantor::EventLoop::getEventLoopOfCurrentThread();
     auto &resp = HttpAppFrameworkImpl::instance().getCustom404Page();
@@ -159,40 +149,31 @@ HttpResponsePtr HttpResponse::newNotFoundResponse()
     }
     else
     {
-        if (loop && loop->index() < app().getThreadNum())
+        if (HttpAppFrameworkImpl::instance().isUsingCustomErrorHandler())
+        {
+            return app().getCustomErrorHandler()(k404NotFound, req);
+        }
+        else if (loop && loop->index() < app().getThreadNum())
         {
             // If the current thread is an IO thread
             static std::once_flag threadOnce;
             static IOThreadStorage<HttpResponsePtr> thread404Pages;
-            std::call_once(threadOnce, [] {
-                thread404Pages.init(
-                    [](drogon::HttpResponsePtr &resp, size_t /*index*/) {
-                        if (HttpAppFrameworkImpl::instance()
-                                .isUsingCustomErrorHandler())
-                        {
-                            resp = app().getCustomErrorHandler()(k404NotFound);
-                            resp->setExpiredTime(0);
-                        }
-                        else
-                        {
-                            HttpViewData data;
-                            data.insert("version", drogon::getVersion());
-                            resp = HttpResponse::newHttpViewResponse(
-                                "drogon::NotFound", data);
-                            resp->setStatusCode(k404NotFound);
-                            resp->setExpiredTime(0);
-                        }
-                    });
+            std::call_once(threadOnce, [req = req] {
+                thread404Pages.init([req = req](drogon::HttpResponsePtr &resp,
+                                                size_t /*index*/) {
+                    HttpViewData data;
+                    data.insert("version", drogon::getVersion());
+                    resp = HttpResponse::newHttpViewResponse("drogon::NotFound",
+                                                             data);
+                    resp->setStatusCode(k404NotFound);
+                    resp->setExpiredTime(0);
+                });
             });
             LOG_TRACE << "Use cached 404 response";
             return thread404Pages.getThreadData();
         }
         else
         {
-            if (HttpAppFrameworkImpl::instance().isUsingCustomErrorHandler())
-            {
-                return app().getCustomErrorHandler()(k404NotFound);
-            }
             HttpViewData data;
             data.insert("version", drogon::getVersion());
             auto notFoundResp =
@@ -202,6 +183,7 @@ HttpResponsePtr HttpResponse::newNotFoundResponse()
         }
     }
 }
+
 HttpResponsePtr HttpResponse::newRedirectionResponse(
     const std::string &location,
     HttpStatusCode status)
@@ -209,14 +191,15 @@ HttpResponsePtr HttpResponse::newRedirectionResponse(
     auto res = std::make_shared<HttpResponseImpl>();
     res->setStatusCode(status);
     res->redirect(location);
-    doResponseCreateAdvices(res);
+    AopAdvice::instance().passResponseCreationAdvices(res);
     return res;
 }
 
 HttpResponsePtr HttpResponse::newHttpViewResponse(const std::string &viewName,
-                                                  const HttpViewData &data)
+                                                  const HttpViewData &data,
+                                                  const HttpRequestPtr &req)
 {
-    return genHttpResponse(viewName, data);
+    return genHttpResponse(viewName, data, req);
 }
 
 HttpResponsePtr HttpResponse::newFileResponse(
@@ -271,7 +254,7 @@ HttpResponsePtr HttpResponse::newFileResponse(
     }
 
     // Finalize and return response
-    doResponseCreateAdvices(resp);
+    AopAdvice::instance().passResponseCreationAdvices(resp);
     return resp;
 }
 
@@ -279,10 +262,11 @@ HttpResponsePtr HttpResponse::newFileResponse(
     const std::string &fullPath,
     const std::string &attachmentFileName,
     ContentType type,
-    const std::string &typeString)
+    const std::string &typeString,
+    const HttpRequestPtr &req)
 {
     return newFileResponse(
-        fullPath, 0, 0, false, attachmentFileName, type, typeString);
+        fullPath, 0, 0, false, attachmentFileName, type, typeString, req);
 }
 
 HttpResponsePtr HttpResponse::newFileResponse(
@@ -292,14 +276,15 @@ HttpResponsePtr HttpResponse::newFileResponse(
     bool setContentRange,
     const std::string &attachmentFileName,
     ContentType type,
-    const std::string &typeString)
+    const std::string &typeString,
+    const HttpRequestPtr &req)
 {
     std::ifstream infile(utils::toNativePath(fullPath), std::ifstream::binary);
     LOG_TRACE << "send http file:" << fullPath << " offset " << offset
               << " length " << length;
     if (!infile)
     {
-        auto resp = HttpResponse::newNotFoundResponse();
+        auto resp = HttpResponse::newNotFoundResponse(req);
         return resp;
     }
     auto resp = std::make_shared<HttpResponseImpl>();
@@ -330,7 +315,7 @@ HttpResponsePtr HttpResponse::newFileResponse(
         // The advantages of sendfile() can only be reflected in sending large
         // files.
         resp->setSendfile(fullPath);
-        // Must set length with the right value! Content-Length header relys on
+        // Must set length with the right value! Content-Length header relies on
         // this value.
         resp->setSendfileRange(offset, length);
     }
@@ -409,7 +394,7 @@ HttpResponsePtr HttpResponse::newFileResponse(
                  filesize);
         resp->addHeader("Content-Range", std::string(buf));
     }
-    doResponseCreateAdvices(resp);
+    AopAdvice::instance().passResponseCreationAdvices(resp);
     return resp;
 }
 
@@ -417,7 +402,8 @@ HttpResponsePtr HttpResponse::newStreamResponse(
     const std::function<std::size_t(char *, std::size_t)> &callback,
     const std::string &attachmentFileName,
     ContentType type,
-    const std::string &typeString)
+    const std::string &typeString,
+    const HttpRequestPtr &req)
 {
     LOG_TRACE << "send stream as "s
               << (attachmentFileName.empty() ? "raw data"s
@@ -472,7 +458,23 @@ HttpResponsePtr HttpResponse::newStreamResponse(
         resp->addHeader("Content-Disposition",
                         "attachment; filename=" + attachmentFileName);
     }
-    doResponseCreateAdvices(resp);
+    AopAdvice::instance().passResponseCreationAdvices(resp);
+    return resp;
+}
+
+HttpResponsePtr HttpResponse::newAsyncStreamResponse(
+    const std::function<void(ResponseStreamPtr)> &callback,
+    bool disableKickoffTimeout)
+{
+    if (!callback)
+    {
+        auto resp = HttpResponse::newNotFoundResponse();
+        return resp;
+    }
+    auto resp = std::make_shared<HttpResponseImpl>();
+    resp->setAsyncStreamCallback(callback, disableKickoffTimeout);
+    resp->setStatusCode(k200OK);
+    AopAdvice::instance().passResponseCreationAdvices(resp);
     return resp;
 }
 
@@ -514,6 +516,7 @@ void HttpResponseImpl::makeHeaderString(trantor::MsgBuffer &buffer)
                            statusCode_);
         }
     }
+
     buffer.hasWritten(len);
 
     if (!statusMessage_.empty())
@@ -523,7 +526,18 @@ void HttpResponseImpl::makeHeaderString(trantor::MsgBuffer &buffer)
     if (!passThrough_)
     {
         buffer.ensureWritableBytes(64);
-        if (streamCallback_)
+        if (!contentLengthIsAllowed())
+        {
+            len = 0;
+            if ((bodyPtr_ && bodyPtr_->length() > 0) ||
+                !sendfileName_.empty() || streamCallback_ ||
+                asyncStreamCallback_)
+            {
+                LOG_ERROR << "The body should be empty when the content-length "
+                             "is not allowed!";
+            }
+        }
+        else if (streamCallback_ || asyncStreamCallback_)
         {
             // When the headers are created, it is time to set the transfer
             // encoding to chunked if the contents size is not specified
@@ -585,6 +599,7 @@ void HttpResponseImpl::makeHeaderString(trantor::MsgBuffer &buffer)
         buffer.append("\r\n");
     }
 }
+
 void HttpResponseImpl::renderToBuffer(trantor::MsgBuffer &buffer)
 {
     if (expriedTime_ >= 0)
@@ -617,17 +632,17 @@ void HttpResponseImpl::renderToBuffer(trantor::MsgBuffer &buffer)
         drogon::HttpAppFrameworkImpl::instance().sendDateHeader())
     {
         buffer.append("date: ");
-        buffer.append(utils::getHttpFullDate(trantor::Date::date()),
-                      httpFullDateStringLength);
+        buffer.append(utils::getHttpFullDateStr(trantor::Date::date()));
         buffer.append("\r\n\r\n");
     }
     else
     {
         buffer.append("\r\n");
     }
-    if (bodyPtr_)
+    if (bodyPtr_ && contentLengthIsAllowed())
         buffer.append(bodyPtr_->data(), bodyPtr_->length());
 }
+
 std::shared_ptr<trantor::MsgBuffer> HttpResponseImpl::renderToBuffer()
 {
     if (expriedTime_ >= 0)
@@ -690,8 +705,7 @@ std::shared_ptr<trantor::MsgBuffer> HttpResponseImpl::renderToBuffer()
     {
         httpString->append("date: ");
         auto datePos = httpString->readableBytes();
-        httpString->append(utils::getHttpFullDate(trantor::Date::date()),
-                           httpFullDateStringLength);
+        httpString->append(utils::getHttpFullDateStr(trantor::Date::date()));
         httpString->append("\r\n\r\n");
         datePos_ = datePos;
     }
@@ -700,8 +714,9 @@ std::shared_ptr<trantor::MsgBuffer> HttpResponseImpl::renderToBuffer()
         httpString->append("\r\n");
     }
 
-    LOG_TRACE << "reponse(no body):"
-              << string_view{httpString->peek(), httpString->readableBytes()};
+    LOG_TRACE << "response(no body):"
+              << std::string_view{httpString->peek(),
+                                  httpString->readableBytes()};
     if (bodyPtr_)
         httpString->append(bodyPtr_->data(), bodyPtr_->length());
     if (expriedTime_ >= 0)
@@ -849,7 +864,7 @@ void HttpResponseImpl::addHeader(const char *start,
         }
         if (!cookie.key().empty())
         {
-            cookies_[cookie.key()] = cookie;
+            cookies_[cookie.key()] = std::move(cookie);
         }
     }
     else
@@ -873,6 +888,7 @@ void HttpResponseImpl::swap(HttpResponseImpl &that) noexcept
     swap(flagForParsingJson_, that.flagForParsingJson_);
     swap(sendfileName_, that.sendfileName_);
     swap(streamCallback_, that.streamCallback_);
+    swap(asyncStreamCallback_, that.asyncStreamCallback_);
     jsonPtr_.swap(that.jsonPtr_);
     fullHeaderString_.swap(that.fullHeaderString_);
     httpString_.swap(that.httpString_);
@@ -884,7 +900,7 @@ void HttpResponseImpl::clear()
 {
     statusCode_ = kUnknown;
     version_ = Version::kHttp11;
-    statusMessage_ = string_view{};
+    statusMessage_ = std::string_view{};
     fullHeaderString_.reset();
     jsonParsingErrorPtr_.reset();
     sendfileName_.clear();
@@ -893,6 +909,11 @@ void HttpResponseImpl::clear()
         LOG_TRACE << "Cleanup HttpResponse stream callback";
         streamCallback_(nullptr, 0);  // callback internal cleanup
         streamCallback_ = {};
+    }
+    if (asyncStreamCallback_)
+    {
+        // asyncStreamCallback_(nullptr);
+        asyncStreamCallback_ = {};
     }
     headers_.clear();
     cookies_.clear();
@@ -944,9 +965,10 @@ void HttpResponseImpl::parseJson() const
 
 bool HttpResponseImpl::shouldBeCompressed() const
 {
-    if (streamCallback_ || !sendfileName_.empty() ||
+    if (streamCallback_ || asyncStreamCallback_ || !sendfileName_.empty() ||
         contentType() >= CT_APPLICATION_OCTET_STREAM ||
-        getBody().length() < 1024 || !(getHeaderBy("content-encoding").empty()))
+        getBody().length() < 1024 ||
+        !(getHeaderBy("content-encoding").empty()) || !contentLengthIsAllowed())
     {
         return false;
     }

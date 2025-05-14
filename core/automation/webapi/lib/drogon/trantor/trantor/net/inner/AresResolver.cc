@@ -52,10 +52,17 @@ bool Resolver::isCAresUsed()
 AresResolver::LibraryInitializer::LibraryInitializer()
 {
     ares_library_init(ARES_LIB_INIT_ALL);
+
+    hints_ = new ares_addrinfo_hints;
+    hints_->ai_flags = 0;
+    hints_->ai_family = AF_INET;
+    hints_->ai_socktype = 0;
+    hints_->ai_protocol = 0;
 }
 AresResolver::LibraryInitializer::~LibraryInitializer()
 {
     ares_library_cleanup();
+    delete hints_;
 }
 
 AresResolver::LibraryInitializer AresResolver::libraryInitializer_;
@@ -122,26 +129,14 @@ void AresResolver::resolveInLoop(const std::string& hostname,
         return;
     }
 #endif
-
-// Cross-platform pragma to disable deprecation warnings
-#if defined(_MSC_VER)  // MSVC
-    #pragma warning(push)
-    #pragma warning(disable: 4996)  // Disable deprecated warning (C4996 for MSVC)
-#elif defined(__clang__)  // Clang and Apple Clang
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#elif defined(__GNUC__)  // GCC
-    #pragma GCC diagnostic push
-    #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-
     init();
     QueryData* queryData = new QueryData(this, cb, hostname);
-    ares_gethostbyname(ctx_,
-                       hostname.c_str(),
-                       AF_INET,
-                       &AresResolver::ares_hostcallback_,
-                       queryData);
+    ares_getaddrinfo(ctx_,
+                     hostname.c_str(),
+                     NULL,
+                     libraryInitializer_.hints_,
+                     &AresResolver::ares_hostcallback_,
+                     queryData);
     struct timeval tv;
     struct timeval* tvp = ares_timeout(ctx_, NULL, &tv);
     double timeout = getSeconds(tvp);
@@ -152,14 +147,6 @@ void AresResolver::resolveInLoop(const std::string& hostname,
         timerActive_ = true;
     }
     return;
-
-#if defined(_MSC_VER)  // MSVC
-    #pragma warning(pop)
-#elif defined(__clang__)  // Clang and Apple Clang
-    #pragma clang diagnostic pop
-#elif defined(__GNUC__)  // GCC
-    #pragma GCC diagnostic pop
-#endif
 }
 
 void AresResolver::onRead(int sockfd)
@@ -187,7 +174,7 @@ void AresResolver::onTimer()
 }
 
 void AresResolver::onQueryResult(int status,
-                                 struct hostent* result,
+                                 struct ares_addrinfo* result,
                                  const std::string& hostname,
                                  const ResolverResultsCallback& callback)
 {
@@ -195,16 +182,27 @@ void AresResolver::onQueryResult(int status,
     auto inets_ptr = std::make_shared<std::vector<trantor::InetAddress>>();
     if (result)
     {
-        auto pptr = (struct in_addr**)result->h_addr_list;
-        for (; *pptr != nullptr; pptr++)
+        auto pptr = (struct ares_addrinfo_node*)result->nodes;
+        for (; pptr != NULL; pptr = pptr->ai_next)
         {
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof addr);
-            addr.sin_family = AF_INET;
-            addr.sin_port = 0;
-            addr.sin_addr = *reinterpret_cast<in_addr*>(*pptr);
-            inets_ptr->emplace_back(trantor::InetAddress{addr});
+            trantor::InetAddress inet;
+            if (pptr->ai_family == AF_INET)
+            {
+                struct sockaddr_in* addr4 = (struct sockaddr_in*)pptr->ai_addr;
+                inets_ptr->emplace_back(trantor::InetAddress{*addr4});
+            }
+            else if (pptr->ai_family == AF_INET6)
+            {
+                struct sockaddr_in6* addr6 =
+                    (struct sockaddr_in6*)pptr->ai_addr;
+                inets_ptr->emplace_back(trantor::InetAddress{*addr6});
+            }
+            else
+            {
+                // TODO: Handle unknown family?
+            }
         }
+        ares_freeaddrinfo(result);
     }
     if (inets_ptr->empty())
     {
@@ -258,7 +256,7 @@ void AresResolver::onSockStateChange(int sockfd, bool read, bool write)
 void AresResolver::ares_hostcallback_(void* data,
                                       int status,
                                       int timeouts,
-                                      struct hostent* hostent)
+                                      struct ares_addrinfo* hostent)
 {
     (void)timeouts;
     QueryData* query = static_cast<QueryData*>(data);

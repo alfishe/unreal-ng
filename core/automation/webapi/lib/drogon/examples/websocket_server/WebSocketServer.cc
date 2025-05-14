@@ -6,15 +6,15 @@ using namespace drogon;
 class WebSocketChat : public drogon::WebSocketController<WebSocketChat>
 {
   public:
-    virtual void handleNewMessage(const WebSocketConnectionPtr &,
-                                  std::string &&,
-                                  const WebSocketMessageType &) override;
-    virtual void handleConnectionClosed(
-        const WebSocketConnectionPtr &) override;
-    virtual void handleNewConnection(const HttpRequestPtr &,
-                                     const WebSocketConnectionPtr &) override;
+    void handleNewMessage(const WebSocketConnectionPtr &,
+                          std::string &&,
+                          const WebSocketMessageType &) override;
+    void handleConnectionClosed(const WebSocketConnectionPtr &) override;
+    void handleNewConnection(const HttpRequestPtr &,
+                             const WebSocketConnectionPtr &) override;
     WS_PATH_LIST_BEGIN
     WS_PATH_ADD("/chat", Get);
+    WS_ADD_PATH_VIA_REGEX("/[^/]*", Get);
     WS_PATH_LIST_END
   private:
     PubSubService<std::string> chatRooms_;
@@ -25,6 +25,7 @@ struct Subscriber
     std::string chatRoomName_;
     drogon::SubscriberID id_;
 };
+
 void WebSocketChat::handleNewMessage(const WebSocketConnectionPtr &wsConnPtr,
                                      std::string &&message,
                                      const WebSocketMessageType &type)
@@ -59,7 +60,7 @@ void WebSocketChat::handleNewConnection(const HttpRequestPtr &req,
     s.id_ = chatRooms_.subscribe(s.chatRoomName_,
                                  [conn](const std::string &topic,
                                         const std::string &message) {
-                                     // Supress unused variable warning
+                                     // Suppress unused variable warning
                                      (void)topic;
                                      conn->send(message);
                                  });

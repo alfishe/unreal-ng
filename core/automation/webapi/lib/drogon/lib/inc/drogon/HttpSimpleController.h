@@ -26,6 +26,7 @@
     {
 #define PATH_ADD(path, ...) registerSelf__(path, {__VA_ARGS__})
 #define PATH_LIST_END }
+
 namespace drogon
 {
 /**
@@ -45,6 +46,7 @@ class HttpSimpleControllerBase : public virtual DrObjectBase
     virtual void asyncHandleHttpRequest(
         const HttpRequestPtr &req,
         std::function<void(const HttpResponsePtr &)> &&callback) = 0;
+
     virtual ~HttpSimpleControllerBase()
     {
     }
@@ -62,6 +64,7 @@ class HttpSimpleController : public DrObject<T>, public HttpSimpleControllerBase
 {
   public:
     static const bool isAutoCreation = AutoCreation;
+
     virtual ~HttpSimpleController()
     {
     }
@@ -70,9 +73,10 @@ class HttpSimpleController : public DrObject<T>, public HttpSimpleControllerBase
     HttpSimpleController()
     {
     }
+
     static void registerSelf__(
         const std::string &path,
-        const std::vector<internal::HttpConstraint> &filtersAndMethods)
+        const std::vector<internal::HttpConstraint> &constraints)
     {
         LOG_TRACE << "register simple controller("
                   << HttpSimpleController<T, AutoCreation>::classTypeName()
@@ -80,7 +84,7 @@ class HttpSimpleController : public DrObject<T>, public HttpSimpleControllerBase
         app().registerHttpSimpleController(
             path,
             HttpSimpleController<T, AutoCreation>::classTypeName(),
-            filtersAndMethods);
+            constraints);
     }
 
   private:
@@ -95,13 +99,16 @@ class HttpSimpleController : public DrObject<T>, public HttpSimpleControllerBase
             }
         }
     };
+
     friend pathRegistrator;
     static pathRegistrator registrator_;
+
     virtual void *touch()
     {
         return &registrator_;
     }
 };
+
 template <typename T, bool AutoCreation>
 typename HttpSimpleController<T, AutoCreation>::pathRegistrator
     HttpSimpleController<T, AutoCreation>::registrator_;

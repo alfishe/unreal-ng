@@ -77,10 +77,15 @@ inline std::string nameTransform(const std::string &origName, bool isType)
         ret[0] += ('A' - 'a');
     return ret;
 }
+
+std::string escapeIdentifier(const std::string &identifier,
+                             const std::string &rdbms);
+
 class PivotTable
 {
   public:
     PivotTable() = default;
+
     PivotTable(const Json::Value &json)
         : tableName_(json.get("table_name", "").asString())
     {
@@ -99,6 +104,7 @@ class PivotTable
             throw std::runtime_error("target_key can't be empty");
         }
     }
+
     PivotTable reverse() const
     {
         PivotTable pivot;
@@ -107,14 +113,17 @@ class PivotTable
         pivot.targetKey_ = originalKey_;
         return pivot;
     }
+
     const std::string &tableName() const
     {
         return tableName_;
     }
+
     const std::string &originalKey() const
     {
         return originalKey_;
     }
+
     const std::string &targetKey() const
     {
         return targetKey_;
@@ -160,6 +169,7 @@ class ConvertMethod
             includeFiles_.push_back(i.asString());
         }  // for
     }
+
     ConvertMethod() = default;
 
     bool shouldConvert(const std::string &tableName,
@@ -169,18 +179,22 @@ class ConvertMethod
     {
         return tableName_;
     }
+
     const std::string &colName() const
     {
         return colName_;
     }
+
     const std::string &methodBeforeDbWrite() const
     {
         return methodBeforeDbWrite_;
     }
+
     const std::string &methodAfterDbRead() const
     {
         return methodAfterDbRead_;
     }
+
     const std::vector<std::string> &includeFiles() const
     {
         return includeFiles_;
@@ -203,6 +217,7 @@ class Relationship
         HasMany,
         ManyToMany
     };
+
     Relationship(const Json::Value &relationship)
     {
         auto type = relationship.get("type", "has one").asString();
@@ -264,7 +279,9 @@ class Relationship
             pivotTable_ = PivotTable(pivot);
         }
     }
+
     Relationship() = default;
+
     Relationship reverse() const
     {
         Relationship r;
@@ -286,38 +303,47 @@ class Relationship
         r.pivotTable_ = pivotTable_.reverse();
         return r;
     }
+
     Type type() const
     {
         return type_;
     }
+
     bool enableReverse() const
     {
         return enableReverse_;
     }
+
     const std::string &originalTableName() const
     {
         return originalTableName_;
     }
+
     const std::string &originalTableAlias() const
     {
         return originalTableAlias_;
     }
+
     const std::string &originalKey() const
     {
         return originalKey_;
     }
+
     const std::string &targetTableName() const
     {
         return targetTableName_;
     }
+
     const std::string &targetTableAlias() const
     {
         return targetTableAlias_;
     }
+
     const std::string &targetKey() const
     {
         return targetKey_;
     }
+
     const PivotTable &pivotTable() const
     {
         return pivotTable_;
@@ -334,10 +360,12 @@ class Relationship
     bool enableReverse_{false};
     PivotTable pivotTable_;
 };
+
 class create_model : public DrObject<create_model>, public CommandHandler
 {
   public:
     void handleCommand(std::vector<std::string> &parameters) override;
+
     std::string script() override
     {
         return "create Model classes files";
@@ -401,5 +429,6 @@ class create_model : public DrObject<create_model>, public CommandHandler
                                     const Json::Value &restfulApiConfig);
     std::string dbname_;
     bool forceOverwrite_{false};
+    std::string outputPath_;
 };
 }  // namespace drogon_ctl

@@ -18,12 +18,17 @@
 #include <iostream>
 #include <memory>
 #include <iomanip>
-#include <stdlib.h>
+#include <cstdlib>
+#include <json/json.h>
+#include <fstream>
+#include <string>
+#include <unordered_map>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
 
 using namespace drogon_ctl;
+
 std::string press::detail()
 {
     return "Use press command to do stress testing\n"
@@ -31,17 +36,19 @@ std::string press::detail()
            "  -n num    number of requests(default : 1)\n"
            "  -t num    number of threads(default : 1)\n"
            "  -c num    concurrent connections(default : 1)\n"
-           //  "  -k        keep alive(default: no)\n"
-           "  -q        no progress indication(default: no)\n\n"
+           "  -k        disable SSL certificate validation(default: enable)\n"
+           "  -f        customize http request json file(default: disenable)\n"
+           "  -q        no progress indication(default: show)\n\n"
            "example: drogon_ctl press -n 10000 -c 100 -t 4 -q "
-           "http://localhost:8080/index.html\n";
+           "http://localhost:8080/index.html -f ./http_request.json\n";
 }
 
-void outputErrorAndExit(const string_view &err)
+void outputErrorAndExit(const std::string_view &err)
 {
     std::cout << err << std::endl;
     exit(1);
 }
+
 void press::handleCommand(std::vector<std::string> &parameters)
 {
     for (auto iter = parameters.begin(); iter != parameters.end(); iter++)
@@ -149,11 +156,29 @@ void press::handleCommand(std::vector<std::string> &parameters)
                 continue;
             }
         }
-        // else if (param == "-k")
-        // {
-        //     keepAlive_ = true;
-        //     continue;
-        // }
+        else if (param.find("-f") == 0)
+        {
+            if (param == "-f")
+            {
+                ++iter;
+                if (iter == parameters.end())
+                {
+                    outputErrorAndExit("No http request json file!");
+                }
+                httpRequestJsonFile_ = *iter;
+                continue;
+            }
+            else
+            {
+                httpRequestJsonFile_ = param.substr(2);
+                continue;
+            }
+        }
+        else if (param == "-k")
+        {
+            certValidation_ = false;
+            continue;
+        }
         else if (param == "-q")
         {
             processIndication_ = false;
@@ -176,7 +201,7 @@ void press::handleCommand(std::vector<std::string> &parameters)
     else
     {
         auto pos = url_.find("://");
-        auto posOfPath = url_.find("/", pos + 3);
+        auto posOfPath = url_.find('/', pos + 3);
         if (posOfPath == std::string::npos)
         {
             host_ = url_;
@@ -188,6 +213,118 @@ void press::handleCommand(std::vector<std::string> &parameters)
             path_ = url_.substr(posOfPath);
         }
     }
+
+    /*
+    http_request.json
+    {
+        "method": "POST",
+        "header": {
+            "token": "e2e9d0fe-dd14-4eaf-8ac1-0997730a805d"
+        },
+        "body": {
+            "passwd": "123456",
+            "account": "10001"
+        }
+    }
+    */
+    if (!httpRequestJsonFile_.empty())
+    {
+        Json::Value httpRequestJson;
+        std::ifstream httpRequestFile(httpRequestJsonFile_,
+                                      std::ifstream::binary);
+        if (!httpRequestFile.is_open())
+        {
+            outputErrorAndExit(std::string{"No "} + httpRequestJsonFile_);
+        }
+        httpRequestFile >> httpRequestJson;
+
+        if (!httpRequestJson.isMember("method"))
+        {
+            outputErrorAndExit("No contain method");
+        }
+
+        auto methodStr = httpRequestJson["method"].asString();
+        std::transform(methodStr.begin(),
+                       methodStr.end(),
+                       methodStr.begin(),
+                       ::toupper);
+
+        auto toHttpMethod = [&]() -> drogon::HttpMethod {
+            if (methodStr == "GET")
+            {
+                return drogon::HttpMethod::Get;
+            }
+            else if (methodStr == "POST")
+            {
+                return drogon::HttpMethod::Post;
+            }
+            else if (methodStr == "HEAD")
+            {
+                return drogon::HttpMethod::Head;
+            }
+            else if (methodStr == "PUT")
+            {
+                return drogon::HttpMethod::Put;
+            }
+            else if (methodStr == "DELETE")
+            {
+                return drogon::HttpMethod::Delete;
+            }
+            else if (methodStr == "OPTIONS")
+            {
+                return drogon::HttpMethod::Options;
+            }
+            else if (methodStr == "PATCH")
+            {
+                return drogon::HttpMethod::Patch;
+            }
+            else
+            {
+                outputErrorAndExit("invalid method");
+            }
+            return drogon::HttpMethod::Get;
+        };
+
+        std::unordered_map<std::string, std::string> header;
+        if (httpRequestJson.isMember("header"))
+        {
+            auto &jsonValue = httpRequestJson["header"];
+            for (const auto &key : jsonValue.getMemberNames())
+            {
+                if (jsonValue[key].isString())
+                {
+                    header[key] = jsonValue[key].asString();
+                }
+                else
+                {
+                    header[key] = jsonValue[key].toStyledString();
+                }
+            }
+        }
+
+        std::string body;
+        if (httpRequestJson.isMember("body"))
+        {
+            Json::FastWriter fastWriter;
+            body = fastWriter.write(httpRequestJson["body"]);
+        }
+
+        createHttpRequestFunc_ = [this,
+                                  method = toHttpMethod(),
+                                  body = std::move(body),
+                                  header =
+                                      std::move(header)]() -> HttpRequestPtr {
+            auto request = HttpRequest::newHttpRequest();
+            request->setPath(path_);
+            request->setMethod(method);
+            for (const auto &[field, val] : header)
+                request->addHeader(field, val);
+            if (!body.empty())
+                request->setBody(body);
+            return request;
+        };
+    }
+
     // std::cout << "host=" << host_ << std::endl;
     // std::cout << "path=" << path_ << std::endl;
     doTesting();
@@ -214,8 +351,10 @@ void press::createRequestAndClients()
     loopPool_->start();
     for (size_t i = 0; i < numOfConnections_; ++i)
     {
-        auto client =
-            HttpClient::newHttpClient(host_, loopPool_->getNextLoop());
+        auto client = HttpClient::newHttpClient(host_,
+                                                loopPool_->getNextLoop(),
+                                                false,
+                                                certValidation_);
         client->enableCookies();
         clients_.push_back(client);
     }
@@ -228,9 +367,19 @@ void press::sendRequest(const HttpClientPtr &client)
     {
         return;
     }
-    auto request = HttpRequest::newHttpRequest();
-    request->setPath(path_);
-    request->setMethod(Get);
+
+    HttpRequestPtr request;
+    if (createHttpRequestFunc_)
+    {
+        request = createHttpRequestFunc_();
+    }
+    else
+    {
+        request = HttpRequest::newHttpRequest();
+        request->setPath(path_);
+        request->setMethod(Get);
+    }
+
     // std::cout << "send!" << std::endl;
     client->sendRequest(
         request,
@@ -282,7 +431,6 @@ void press::sendRequest(const HttpClientPtr &client)
 
 void press::outputResults()
 {
-    static std::mutex mtx;
     size_t totalSent = 0;
     size_t totalRecv = 0;
     for (auto &client : clients_)
@@ -294,7 +442,7 @@ void press::outputResults()
     auto microSecs = now.microSecondsSinceEpoch() -
                      statistics_.startDate_.microSecondsSinceEpoch();
     double seconds = (double)microSecs / 1000000.0;
-    size_t rps = static_cast<size_t>(statistics_.numOfGoodResponse_ / seconds);
+    auto rps = static_cast<size_t>(statistics_.numOfGoodResponse_ / seconds);
     std::cout << std::endl;
     std::cout << "TOTALS:   " << numOfConnections_ << " connect, "
               << numOfRequests_ << " requests, "

@@ -2,6 +2,10 @@
 #include <drogon/utils/coroutine.h>
 #include <drogon/HttpAppFramework.h>
 #include <trantor/net/EventLoopThread.h>
+#include <trantor/net/EventLoopThreadPool.h>
+#include <chrono>
+#include <cstdint>
+#include <future>
 #include <type_traits>
 
 using namespace drogon;
@@ -14,6 +18,7 @@ struct SomeStruct
     {
         beenDestructed = true;
     }
+
     static bool beenDestructed;
 };
 
@@ -30,7 +35,7 @@ struct StructAwaiter : public CallbackAwaiter<std::shared_ptr<SomeStruct>>
 
 }  // namespace drogon::internal
 
-// Workarround limitation of macros
+// Workaround limitation of macros
 template <typename T>
 using is_int = std::is_same<T, int>;
 template <typename T>
@@ -68,7 +73,7 @@ DROGON_TEST(CroutineBasics)
     }());
     CHECK(n == 1);
 
-    // Testing that exceptions can propergate through coroutines
+    // Testing that exceptions can propagate through coroutines
     auto throw_in_task = [TEST_CTX]() -> Task<> {
         auto f = []() -> Task<> { throw std::runtime_error("test error"); };
 
@@ -76,7 +81,7 @@ DROGON_TEST(CroutineBasics)
     };
     sync_wait(throw_in_task());
 
-    // Test sync_wait propergrates exception
+    // Test sync_wait propagates exception
     auto throws = []() -> Task<> {
         throw std::runtime_error("bla");
         co_return;
@@ -99,7 +104,7 @@ DROGON_TEST(CroutineBasics)
     };
     sync_wait(await_non_copyable());
 
-    // This only works because async_run tries to run the corouine as soon as
+    // This only works because async_run tries to run the coroutine as soon as
     // possible and the coroutine does not wait
     int testVar = 0;
     async_run([&testVar]() -> Task<void> {
@@ -197,17 +202,46 @@ DROGON_TEST(AsyncWaitLifetime)
 
 DROGON_TEST(SwitchThread)
 {
-    thread_local int num{0};
     trantor::EventLoopThread thread;
+    thread.getLoop()->setIndex(12345);
     thread.run();
-    thread.getLoop()->queueInLoop([]() { num = 100; });
 
     auto switch_thread = [TEST_CTX, &thread]() -> Task<> {
-        CHECK(num == 0);
         co_await switchThreadCoro(thread.getLoop());
-        CHECK(num == 100);
-        thread.getLoop()->quit();
+        auto currentLoop = trantor::EventLoop::getEventLoopOfCurrentThread();
+        MANDATE(currentLoop != nullptr);
+        CHECK(currentLoop->index() == 12345);
+        currentLoop->quit();
     };
     sync_wait(switch_thread());
     thread.wait();
+}
+
+DROGON_TEST(Mutex)
+{
+    trantor::EventLoopThreadPool pool{3};
+    pool.start();
+    Mutex mutex;
+    async_run([&]() -> Task<> {
+        co_await switchThreadCoro(pool.getLoop(0));
+        auto guard = co_await mutex.scoped_lock();
+        co_await sleepCoro(pool.getLoop(1), std::chrono::seconds(2));
+        co_return;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::promise<void> done;
+    async_run([&]() -> Task<> {
+        co_await switchThreadCoro(pool.getLoop(2));
+        auto id = std::this_thread::get_id();
+        co_await mutex.lock();
+        CHECK(id == std::this_thread::get_id());
+        mutex.unlock();
+        CHECK(id == std::this_thread::get_id());
+        done.set_value();
+        co_return;
+    });
+    done.get_future().wait();
+    for (int16_t i = 0; i < 3; i++)
+        pool.getLoop(i)->quit();
+    pool.wait();
 }

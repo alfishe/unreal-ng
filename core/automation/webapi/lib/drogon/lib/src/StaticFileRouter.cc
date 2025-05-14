@@ -26,12 +26,11 @@
 #include <sys/file.h>
 #elif !defined(__MINGW32__)
 #define stat _wstati64
-#define S_ISREG(m) (((m)&0170000) == (0100000))
-#define S_ISDIR(m) (((m)&0170000) == (0040000))
+#define S_ISREG(m) (((m) & 0170000) == (0100000))
+#define S_ISDIR(m) (((m) & 0170000) == (0040000))
 #endif
 #include <sys/stat.h>
-// Switch between native c++17 or boost for c++14
-#include "filesystem.h"
+#include <filesystem>
 
 using namespace drogon;
 
@@ -62,6 +61,14 @@ void StaticFileRouter::init(const std::vector<trantor::EventLoop *> &ioLoops)
     }
 }
 
+void StaticFileRouter::reset()
+{
+    staticFilesCacheMap_.reset();
+    staticFilesCache_.reset();
+    ioLocationsPtr_.reset();
+    locations_.clear();
+}
+
 void StaticFileRouter::route(
     const HttpRequestImplPtr &req,
     std::function<void(const HttpResponsePtr &)> &&callback)
@@ -85,7 +92,7 @@ void StaticFileRouter::route(
             if (traversalDepth < 0)
             {
                 // Downloading files from the parent folder is forbidden.
-                callback(app().getCustomErrorHandler()(k403Forbidden));
+                callback(app().getCustomErrorHandler()(k403Forbidden, req));
                 return;
             }
         }
@@ -140,25 +147,26 @@ void StaticFileRouter::route(
                        tmpPath.begin() + URI.length(),
                        URI.begin()))
         {
-            string_view restOfThePath{path.data() + URI.length(),
-                                      path.length() - URI.length()};
+            std::string_view restOfThePath{path.data() + URI.length(),
+                                           path.length() - URI.length()};
             auto pos = restOfThePath.rfind('/');
-            if (pos != 0 && pos != string_view::npos && !location.isRecursive_)
+            if (pos != 0 && pos != std::string_view::npos &&
+                !location.isRecursive_)
             {
-                callback(app().getCustomErrorHandler()(k403Forbidden));
+                callback(app().getCustomErrorHandler()(k403Forbidden, req));
                 return;
             }
             std::string filePath =
                 location.realLocation_ +
                 std::string{restOfThePath.data(), restOfThePath.length()};
-            filesystem::path fsFilePath(utils::toNativePath(filePath));
-            drogon::error_code err;
-            if (!filesystem::exists(fsFilePath, err))
+            std::filesystem::path fsFilePath(utils::toNativePath(filePath));
+            std::error_code err;
+            if (!std::filesystem::exists(fsFilePath, err))
             {
                 defaultHandler_(req, std::move(callback));
                 return;
             }
-            if (filesystem::is_directory(fsFilePath, err))
+            if (std::filesystem::is_directory(fsFilePath, err))
             {
                 // Check if path is eligible for an implicit index.html
                 if (implicitPageEnable_)
@@ -167,7 +175,7 @@ void StaticFileRouter::route(
                 }
                 else
                 {
-                    callback(app().getCustomErrorHandler()(k403Forbidden));
+                    callback(app().getCustomErrorHandler()(k403Forbidden, req));
                     return;
                 }
             }
@@ -176,9 +184,10 @@ void StaticFileRouter::route(
                 if (!location.allowAll_)
                 {
                     pos = restOfThePath.rfind('.');
-                    if (pos == string_view::npos)
+                    if (pos == std::string_view::npos)
                     {
-                        callback(app().getCustomErrorHandler()(k403Forbidden));
+                        callback(
+                            app().getCustomErrorHandler()(k403Forbidden, req));
                         return;
                     }
                     std::string extension{restOfThePath.data() + pos + 1,
@@ -189,52 +198,50 @@ void StaticFileRouter::route(
                                    [](unsigned char c) { return tolower(c); });
                     if (fileTypeSet_.find(extension) == fileTypeSet_.end())
                     {
-                        callback(app().getCustomErrorHandler()(k403Forbidden));
+                        callback(
+                            app().getCustomErrorHandler()(k403Forbidden, req));
                         return;
                     }
                 }
             }
 
-            if (location.filters_.empty())
+            if (location.middlewares_.empty())
             {
                 sendStaticFileResponse(filePath,
                                        req,
                                        std::move(callback),
-                                       string_view{
+                                       std::string_view{
                                            location.defaultContentType_});
             }
             else
             {
-                auto callbackPtr = std::make_shared<
-                    std::function<void(const drogon::HttpResponsePtr &)>>(
-                    std::move(callback));
-                filters_function::doFilters(
-                    location.filters_,
+                middlewares_function::passMiddlewares(
+                    location.middlewares_,
                     req,
-                    callbackPtr,
-                    [callbackPtr,
-                     this,
+                    std::move(callback),
+                    [this,
                      req,
                      filePath = std::move(filePath),
-                     &contentType = location.defaultContentType_]() {
+                     contentType =
+                         std::string_view{location.defaultContentType_}](
+                        std::function<void(const HttpResponsePtr &)>
+                            &&middlewarePostCb) mutable {
                         sendStaticFileResponse(filePath,
                                                req,
-                                               std::move(*callbackPtr),
-                                               string_view{contentType});
+                                               std::move(middlewarePostCb),
+                                               contentType);
                     });
             }
-
             return;
         }
     }
-
     std::string directoryPath =
         HttpAppFrameworkImpl::instance().getDocumentRoot() + path;
-    filesystem::path fsDirectoryPath(utils::toNativePath(directoryPath));
-    drogon::error_code err;
-    if (filesystem::exists(fsDirectoryPath, err))
+    std::filesystem::path fsDirectoryPath(utils::toNativePath(directoryPath));
+    std::error_code err;
+    if (std::filesystem::exists(fsDirectoryPath, err))
     {
-        if (filesystem::is_directory(fsDirectoryPath, err))
+        if (std::filesystem::is_directory(fsDirectoryPath, err))
         {
             // Check if path is eligible for an implicit index.html
             if (implicitPageEnable_)
@@ -245,7 +252,7 @@ void StaticFileRouter::route(
             }
             else
             {
-                callback(app().getCustomErrorHandler()(k403Forbidden));
+                callback(app().getCustomErrorHandler()(k403Forbidden, req));
                 return;
             }
         }
@@ -255,7 +262,7 @@ void StaticFileRouter::route(
             auto pos = path.rfind('.');
             if (pos == std::string::npos)
             {
-                callback(app().getCustomErrorHandler()(k403Forbidden));
+                callback(app().getCustomErrorHandler()(k403Forbidden, req));
                 return;
             }
             std::string filetype = lPath.substr(pos + 1);
@@ -317,11 +324,11 @@ void StaticFileRouter::sendStaticFileResponse(
     const std::string &filePath,
     const HttpRequestImplPtr &req,
     std::function<void(const HttpResponsePtr &)> &&callback,
-    const string_view &defaultContentType)
+    const std::string_view &defaultContentType)
 {
     if (req->method() != Get)
     {
-        callback(app().getCustomErrorHandler()(k405MethodNotAllowed));
+        callback(app().getCustomErrorHandler()(k405MethodNotAllowed, req));
         return;
     }
 
@@ -347,7 +354,7 @@ void StaticFileRouter::sendStaticFileResponse(
                 std::make_shared<HttpResponseImpl>();
             resp->setStatusCode(k304NotModified);
             resp->setContentTypeCode(CT_NONE);
-            HttpAppFrameworkImpl::instance().callCallback(req, resp, callback);
+            callback(resp);
             return;
         }
         // Check If-Range precondition
@@ -372,7 +379,8 @@ void StaticFileRouter::sendStaticFileResponse(
                                                       true,
                                                       "",
                                                       ct.first,
-                                                      std::string(ct.second));
+                                                      std::string(ct.second),
+                                                      req);
                     if (!fileStat.modifiedTimeStr_.empty())
                     {
                         resp->addHeader("Last-Modified",
@@ -380,9 +388,7 @@ void StaticFileRouter::sendStaticFileResponse(
                         resp->addHeader("Expires",
                                         "Thu, 01 Jan 1970 00:00:00 GMT");
                     }
-                    HttpAppFrameworkImpl::instance().callCallback(req,
-                                                                  resp,
-                                                                  callback);
+                    callback(resp);
                     return;
                 }
                 case FileRangeParseResult::NotSatisfiable:
@@ -395,9 +401,7 @@ void StaticFileRouter::sendStaticFileResponse(
                              "bytes */%zu",
                              fileStat.fileSize_);
                     resp->addHeader("Content-Range", std::string(buf));
-                    HttpAppFrameworkImpl::instance().callCallback(req,
-                                                                  resp,
-                                                                  callback);
+                    callback(resp);
                     return;
                 }
                 /** rfc7233 4.4.
@@ -438,9 +442,7 @@ void StaticFileRouter::sendStaticFileResponse(
                     std::make_shared<HttpResponseImpl>();
                 resp->setStatusCode(k304NotModified);
                 resp->setContentTypeCode(CT_NONE);
-                HttpAppFrameworkImpl::instance().callCallback(req,
-                                                              resp,
-                                                              callback);
+                callback(resp);
                 return;
             }
         }
@@ -461,9 +463,7 @@ void StaticFileRouter::sendStaticFileResponse(
                     std::make_shared<HttpResponseImpl>();
                 resp->setStatusCode(k304NotModified);
                 resp->setContentTypeCode(CT_NONE);
-                HttpAppFrameworkImpl::instance().callCallback(req,
-                                                              resp,
-                                                              callback);
+                callback(resp);
                 return;
             }
         }
@@ -471,18 +471,16 @@ void StaticFileRouter::sendStaticFileResponse(
     if (cachedResp)
     {
         LOG_TRACE << "Using file cache";
-        HttpAppFrameworkImpl::instance().callCallback(req,
-                                                      cachedResp,
-                                                      callback);
+        callback(cachedResp);
         return;
     }
     // Check existence
     if (!fileExists)
     {
-        filesystem::path fsFilePath(utils::toNativePath(filePath));
-        drogon::error_code err;
-        if (!filesystem::exists(fsFilePath, err) ||
-            !filesystem::is_regular_file(fsFilePath, err))
+        std::filesystem::path fsFilePath(utils::toNativePath(filePath));
+        std::error_code err;
+        if (!std::filesystem::exists(fsFilePath, err) ||
+            !std::filesystem::is_regular_file(fsFilePath, err))
         {
             defaultHandler_(req, std::move(callback));
             return;
@@ -496,16 +494,14 @@ void StaticFileRouter::sendStaticFileResponse(
     {
         // Find compressed file first.
         auto brFileName = filePath + ".br";
-        filesystem::path fsBrFile(utils::toNativePath(brFileName));
-        drogon::error_code err;
-        if (filesystem::exists(fsBrFile, err) &&
-            filesystem::is_regular_file(fsBrFile, err))
+        std::filesystem::path fsBrFile(utils::toNativePath(brFileName));
+        std::error_code err;
+        if (std::filesystem::exists(fsBrFile, err) &&
+            std::filesystem::is_regular_file(fsBrFile, err))
         {
             auto ct = fileNameToContentTypeAndMime(filePath);
-            resp = HttpResponse::newFileResponse(brFileName,
-                                                 "",
-                                                 ct.first,
-                                                 std::string(ct.second));
+            resp = HttpResponse::newFileResponse(
+                brFileName, "", ct.first, std::string(ct.second), req);
             resp->addHeader("Content-Encoding", "br");
         }
     }
@@ -514,26 +510,22 @@ void StaticFileRouter::sendStaticFileResponse(
     {
         // Find compressed file first.
         auto gzipFileName = filePath + ".gz";
-        filesystem::path fsGzipFile(utils::toNativePath(gzipFileName));
-        drogon::error_code err;
-        if (filesystem::exists(fsGzipFile, err) &&
-            filesystem::is_regular_file(fsGzipFile, err))
+        std::filesystem::path fsGzipFile(utils::toNativePath(gzipFileName));
+        std::error_code err;
+        if (std::filesystem::exists(fsGzipFile, err) &&
+            std::filesystem::is_regular_file(fsGzipFile, err))
         {
             auto ct = fileNameToContentTypeAndMime(filePath);
-            resp = HttpResponse::newFileResponse(gzipFileName,
-                                                 "",
-                                                 ct.first,
-                                                 std::string(ct.second));
+            resp = HttpResponse::newFileResponse(
+                gzipFileName, "", ct.first, std::string(ct.second), req);
             resp->addHeader("Content-Encoding", "gzip");
         }
     }
     if (!resp)
     {
         auto ct = fileNameToContentTypeAndMime(filePath);
-        resp = HttpResponse::newFileResponse(filePath,
-                                             "",
-                                             ct.first,
-                                             std::string(ct.second));
+        resp = HttpResponse::newFileResponse(
+            filePath, "", ct.first, std::string(ct.second), req);
     }
     if (resp->statusCode() != k404NotFound)
     {
@@ -574,11 +566,10 @@ void StaticFileRouter::sendStaticFileResponse(
                     staticFilesCache_->getThreadData().erase(filePath);
                 });
         }
-        HttpAppFrameworkImpl::instance().callCallback(req, resp, callback);
+        callback(resp);
         return;
     }
     callback(resp);
-    return;
 }
 
 void StaticFileRouter::setFileTypes(const std::vector<std::string> &types)
@@ -591,8 +582,8 @@ void StaticFileRouter::setFileTypes(const std::vector<std::string> &types)
 }
 
 void StaticFileRouter::defaultHandler(
-    const HttpRequestPtr & /*req*/,
+    const HttpRequestPtr &req,
     std::function<void(const HttpResponsePtr &)> &&callback)
 {
-    callback(HttpResponse::newNotFoundResponse());
+    callback(HttpResponse::newNotFoundResponse(req));
 }

@@ -9,6 +9,7 @@
 #include <openssl/x509v3.h>
 
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <list>
 #include <unordered_map>
@@ -25,6 +26,9 @@ static bool sslInitFlag = []() {
     SSL_load_error_strings();
     ERR_load_BIO_strings();
     ERR_load_crypto_strings();
+#elif defined(LIBRESSL_VERSION_NUMBER)
+    // LibreSSL needs explicit de-init
+    atexit(OPENSSL_cleanup);
 #endif
     return true;
 }();
@@ -129,7 +133,7 @@ static bool validatePeerCertificate(SSL *ssl,
 {
     assert(ssl != nullptr);
     assert(cert != nullptr);
-    LOG_TRACE << "Validating peer cerificate";
+    LOG_TRACE << "Validating peer certificate";
 
     if (isServer)
     {
@@ -270,7 +274,7 @@ struct SSLContext
         return ctx_;
     }
 
-    bool isServer = false;
+    bool isServer{false};
 };
 
 struct OpenSSLCertificate : public Certificate
@@ -572,24 +576,29 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
         if (getBufferedData().readableBytes() != 0)
         {
             errno = EAGAIN;
-            return -1;
+            return 0;
         }
         // Limit the size of the data we send in one go to avoid holding massive
         // buffers in memory.
         constexpr size_t maxSend = 64 * 1024;
-        if (len > maxSend)
-            len = maxSend;
-
-        int n = SSL_write(ssl_, data, (int)len);
-        if (n <= 0 && len != 0)
+        size_t hasSent = 0;
+        while (hasSent < len && getBufferedData().readableBytes() == 0)
         {
-            handleSSLError(SSLError::kSSLProtocolError);
-            return -1;
+            auto trunkLen = len - hasSent;
+            if (trunkLen > maxSend)
+                trunkLen = maxSend;
+            int n = SSL_write(ssl_, data + hasSent, (int)trunkLen);
+            if (n <= 0 && len != 0)
+            {
+                handleSSLError(SSLError::kSSLProtocolError);
+                return -1;
+            }
+            auto num = sendTLSData();
+            if (num == -1)
+                return -1;
+            hasSent += trunkLen;
         }
-        auto num = sendTLSData();
-        if (num == -1)
-            return -1;
-        return len;
+        return static_cast<ssize_t>(hasSent);
     }
 
     bool processHandshake()
@@ -619,12 +628,12 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
                     const unsigned char *alpn = nullptr;
                     unsigned int alpnlen = 0;
                     SSL_get0_alpn_selected(ssl_, &alpn, &alpnlen);
-                    if (!alpn)
+                    if (alpn)
                     {
-                        handleSSLError(SSLError::kSSLHandshakeError);
-                        return false;
+                        assert(alpnlen > 0);
+                        setApplicationProtocol(
+                            std::string((char *)alpn, alpnlen));
                     }
-                    setApplicationProtocol(std::string((char *)alpn, alpnlen));
                 }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
@@ -697,9 +706,8 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
             }
             else
             {
-                static bool processed = false;
-                if (!processed)
-                    processed = true;
+                if (!processedHandshakeError_)
+                    processedHandshakeError_ = true;
                 else
                     return false;
                 LOG_TRACE << "SSL handshake error: "
@@ -715,13 +723,11 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
     {
         constexpr size_t maxSingleRead = 128 * 1024;
         constexpr size_t maxWritibleBytes = (std::numeric_limits<int>::max)();
-        auto inBio = SSL_get_rbio(ssl_);
         while (true)
         {
-            auto pending = BIO_pending(inBio);
-            if (pending <= 0)
-                break;
+            auto pending = BIO_pending(rbio_);
             // horrible syntax, because MSVC
+            pending = (std::max)(1024, pending);
             recvBuffer_.ensureWritableBytes(
                 (std::min)(maxSingleRead, (size_t)pending));
             // clamp to int, because that's what SSL_read accepts
@@ -735,7 +741,7 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
                 conn_->shutdown();
                 return;
             }
-            if (n > 0)
+            else if (n > 0)
             {
                 recvBuffer_.hasWritten(n);
                 LOG_TRACE << "Received " << n << " bytes from SSL";
@@ -764,11 +770,13 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
             return 0;
         int n = writeCallback_(conn_, data, len);
 
-        int offset = n;
-        if (n == -1)
-            offset = 0;
-        appendToWriteBuffer((char *)data + offset, len - offset);
+        if (n >= 0)
+        {
+            appendToWriteBuffer((char *)data + n, len - n);
+        }
         BIO_reset(wbio_);
+        if (n < 0)
+            return -1;
         return len;
     }
 
@@ -776,9 +784,8 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
     {
         sendTLSData();
 
-        static bool first = true;
-        if (first)
-            first = false;
+        if (!processedSslError_)
+            processedSslError_ = true;
         else
             return;
         if (errorCallback_)
@@ -788,13 +795,15 @@ struct OpenSSLProvider : public TLSProvider, public NonCopyable
     SSL *ssl_;
     BIO *rbio_;
     BIO *wbio_;
+    bool processedHandshakeError_{false};
+    bool processedSslError_{false};
 };
 
-std::unique_ptr<TLSProvider> trantor::newTLSProvider(TcpConnection *conn,
+std::shared_ptr<TLSProvider> trantor::newTLSProvider(TcpConnection *conn,
                                                      TLSPolicyPtr policy,
                                                      SSLContextPtr ctx)
 {
-    return std::make_unique<OpenSSLProvider>(conn,
+    return std::make_shared<OpenSSLProvider>(conn,
                                              std::move(policy),
                                              std::move(ctx));
 }
@@ -806,9 +815,9 @@ SSLContextPtr trantor::newSSLContext(const TLSPolicy &policy, bool isServer)
                                             isServer);
     if (!policy.getCertPath().empty() && !policy.getKeyPath().empty())
     {
-        if (SSL_CTX_use_certificate_file(ctx->ctx(),
-                                         policy.getCertPath().data(),
-                                         SSL_FILETYPE_PEM) <= 0)
+        if (SSL_CTX_use_certificate_chain_file(ctx->ctx(),
+                                               policy.getCertPath().data()) <=
+            0)
         {
             throw std::runtime_error("Failed to load certificate " +
                                      policy.getCertPath());

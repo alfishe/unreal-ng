@@ -14,8 +14,11 @@
 
 #include "Sqlite3Connection.h"
 #include "Sqlite3ResultImpl.h"
+#include <drogon/orm/Exception.h>
 #include <drogon/utils/Utilities.h>
-#include <drogon/utils/string_view.h>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <cctype>
 #include <exception>
 #include <mutex>
@@ -24,14 +27,54 @@
 using namespace drogon;
 using namespace drogon::orm;
 
+namespace
+{
+
+}
+
 std::once_flag Sqlite3Connection::once_;
 
 void Sqlite3Connection::onError(
-    const string_view &sql,
-    const std::function<void(const std::exception_ptr &)> &exceptCallback)
+    const std::string_view &sql,
+    const std::function<void(const std::exception_ptr &)> &exceptCallback,
+    const int &extendedErrcode)
 {
-    auto exceptPtr = std::make_exception_ptr(
-        SqlError(sqlite3_errmsg(connectionPtr_.get()), std::string{sql}));
+    int errcode = extendedErrcode & 0xFF;  // low 8 bit
+#define ORM_ERR_CASE(code, type)                                    \
+    case code:                                                      \
+    {                                                               \
+        auto exceptPtr = std::make_exception_ptr(                   \
+            drogon::orm::type(sqlite3_errmsg(connectionPtr_.get()), \
+                              std::string{sql},                     \
+                              errcode,                              \
+                              extendedErrcode));                    \
+        exceptCallback(exceptPtr);                                  \
+        return;                                                     \
+    };
+    switch (extendedErrcode)
+    {
+        ORM_ERR_CASE(SQLITE_CONSTRAINT_NOTNULL, NotNullViolation)
+        ORM_ERR_CASE(SQLITE_CONSTRAINT_FOREIGNKEY, ForeignKeyViolation)
+        ORM_ERR_CASE(SQLITE_CONSTRAINT_PRIMARYKEY, UniqueViolation)
+        ORM_ERR_CASE(SQLITE_CONSTRAINT_UNIQUE, UniqueViolation)
+        ORM_ERR_CASE(SQLITE_CONSTRAINT_CHECK, CheckViolation)
+    }
+    switch (errcode)
+    {
+        ORM_ERR_CASE(SQLITE_MISMATCH, DataException)
+        ORM_ERR_CASE(SQLITE_CONSTRAINT, IntegrityConstraintViolation)
+        ORM_ERR_CASE(SQLITE_PERM, InsufficientPrivilege)
+        ORM_ERR_CASE(SQLITE_AUTH, InsufficientPrivilege)
+        ORM_ERR_CASE(SQLITE_NOMEM, OutOfMemory)
+        ORM_ERR_CASE(SQLITE_FULL, DiskFull)
+    }
+#undef ORM_ERR_CASE
+
+    auto exceptPtr =
+        std::make_exception_ptr(SqlError(sqlite3_errmsg(connectionPtr_.get()),
+                                         std::string{sql},
+                                         errcode,
+                                         extendedErrcode));
     exceptCallback(exceptPtr);
 }
 
@@ -91,7 +134,7 @@ void Sqlite3Connection::init()
 }
 
 void Sqlite3Connection::execSql(
-    string_view &&sql,
+    std::string_view &&sql,
     size_t paraNum,
     std::vector<const char *> &&parameters,
     std::vector<int> &&length,
@@ -115,7 +158,7 @@ void Sqlite3Connection::execSql(
 }
 
 void Sqlite3Connection::execSqlInQueue(
-    const string_view &sql,
+    const std::string_view &sql,
     size_t paraNum,
     const std::vector<const char *> &parameters,
     const std::vector<int> &length,
@@ -148,7 +191,8 @@ void Sqlite3Connection::execSqlInQueue(
                        : nullptr;
         if (ret != SQLITE_OK || !stmtPtr)
         {
-            onError(sql, exceptCallback);
+            int ext_ret = sqlite3_extended_errcode(connectionPtr_.get());
+            onError(sql, exceptCallback, ext_ret);
             idleCb_();
             return;
         }
@@ -207,13 +251,14 @@ void Sqlite3Connection::execSqlInQueue(
         }
         if (bindRet != SQLITE_OK)
         {
-            onError(sql, exceptCallback);
+            int eret = sqlite3_extended_errcode(connectionPtr_.get());
+            onError(sql, exceptCallback, eret);
             sqlite3_reset(stmt);
             idleCb_();
             return;
         }
     }
-    int r;
+    int r, er;
     int columnNum = sqlite3_column_count(stmt);
     auto resultPtr = std::make_shared<Sqlite3ResultImpl>();
     for (int i = 0; i < columnNum; ++i)
@@ -233,6 +278,10 @@ void Sqlite3Connection::execSqlInQueue(
         // Readonly, hold read lock;
         std::shared_lock<SharedMutex> lock(*sharedMutexPtr_);
         r = stmtStep(stmt, resultPtr, columnNum);
+        if (r != SQLITE_DONE)
+        {
+            er = sqlite3_extended_errcode(connectionPtr_.get());
+        }
         sqlite3_reset(stmt);
     }
     else
@@ -246,12 +295,16 @@ void Sqlite3Connection::execSqlInQueue(
             resultPtr->insertId_ =
                 sqlite3_last_insert_rowid(connectionPtr_.get());
         }
+        else
+        {
+            er = sqlite3_extended_errcode(connectionPtr_.get());
+        }
         sqlite3_reset(stmt);
     }
 
     if (r != SQLITE_DONE)
     {
-        onError(sql, exceptCallback);
+        onError(sql, exceptCallback, er);
         sqlite3_reset(stmt);
         idleCb_();
         return;
@@ -259,7 +312,8 @@ void Sqlite3Connection::execSqlInQueue(
     if (paraNum > 0 && newStmt)
     {
         auto r = stmts_.insert(std::string{sql});
-        stmtsMap_[string_view{r.first->data(), r.first->length()}] = stmtPtr;
+        stmtsMap_[std::string_view{r.first->data(), r.first->length()}] =
+            stmtPtr;
     }
     rcb(Result(std::move(resultPtr)));
     idleCb_();
@@ -309,6 +363,7 @@ int Sqlite3Connection::stmtStep(
     }
     return r;
 }
+
 void Sqlite3Connection::disconnect()
 {
     std::promise<int> pro;

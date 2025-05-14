@@ -1,8 +1,9 @@
 #include <drogon/plugins/GlobalFilters.h>
 #include <drogon/DrClassMap.h>
 #include <drogon/HttpAppFramework.h>
-#include "FiltersFunction.h"
+#include "MiddlewaresFunction.h"
 #include "HttpRequestImpl.h"
+#include "HttpAppFrameworkImpl.h"
 
 using namespace drogon::plugin;
 
@@ -40,7 +41,7 @@ void GlobalFilters::initAndStart(const Json::Value &config)
             {
                 if (ex.isString())
                 {
-                    regexStr.append("(").append(exempt.asString()).append(")|");
+                    regexStr.append("(").append(ex.asString()).append(")|");
                 }
                 else
                 {
@@ -83,16 +84,24 @@ void GlobalFilters::initAndStart(const Json::Value &config)
                     return;
                 }
             }
-            auto callbackPtr =
-                std::make_shared<std::function<void(const HttpResponsePtr &)>>(
-                    std::move(acb));
-            drogon::filters_function::doFilters(
+
+            drogon::middlewares_function::doFilters(
                 thisPtr->filters_,
                 std::static_pointer_cast<HttpRequestImpl>(req),
-                callbackPtr,
-                std::move(accb));
+                [acb = std::move(acb),
+                 accb = std::move(accb)](const HttpResponsePtr &resp) {
+                    if (resp)
+                    {
+                        acb(resp);
+                    }
+                    else
+                    {
+                        accb();
+                    }
+                });
         });
 }
+
 void GlobalFilters::shutdown()
 {
     filters_.clear();

@@ -45,11 +45,15 @@ if(Jsoncpp_FOUND)
   endif()
   if(NOT WIN32)
     execute_process(
-      COMMAND bash -c "cat ${JSONCPP_INCLUDE_DIRS}/json/version.h | grep JSONCPP_VERSION_STRING | sed 's/.*define/define/' | awk '{printf $3}' | sed 's/\"//g'"
-      OUTPUT_VARIABLE jsoncpp_ver
-      OUTPUT_STRIP_TRAILING_WHITESPACE)
-    message(STATUS "jsoncpp version: ${jsoncpp_ver}")
-
+      COMMAND cat ${JSONCPP_INCLUDE_DIRS}/json/version.h
+      COMMAND grep JSONCPP_VERSION_STRING
+      COMMAND sed -e "s/.*define/define/"
+      COMMAND awk "{ printf \$3 }"
+      COMMAND sed -e "s/\"//g"
+      OUTPUT_VARIABLE jsoncpp_ver)
+    if(NOT Jsoncpp_FIND_QUIETLY)
+      message(STATUS "jsoncpp version:" ${jsoncpp_ver})
+    endif()
     if(jsoncpp_ver LESS 1.7)
       message(
         FATAL_ERROR

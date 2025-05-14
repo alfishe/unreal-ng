@@ -28,8 +28,7 @@ class UploadFile
     /**
      * @param filePath The file location on local host, including file name.
      * @param fileName The file name provided to the server. If it is empty by
-     * default, the file name in the @param filePath
-     * is provided to the server.
+     * default, the file name in the @p filePath is provided to the server.
      * @param itemName The item name on the browser form.
      * @param contentType The Mime content type for the part
      */
@@ -56,18 +55,22 @@ class UploadFile
             }
         }
     }
+
     const std::string &path() const
     {
         return path_;
     }
+
     const std::string &fileName() const
     {
         return fileName_;
     }
+
     const std::string &itemName() const
     {
         return itemName_;
     }
+
     ContentType contentType() const
     {
         return contentType_;

@@ -19,6 +19,9 @@
 #include <trantor/net/EventLoop.h>
 #include <trantor/net/Resolver.h>
 #include <trantor/net/TcpClient.h>
+#include <cstddef>
+#include <functional>
+#include <future>
 #include <list>
 #include <mutex>
 #include <queue>
@@ -46,14 +49,17 @@ class HttpClientImpl final : public HttpClient,
     void sendRequest(const HttpRequestPtr &req,
                      HttpReqCallback &&callback,
                      double timeout = 0) override;
+
     trantor::EventLoop *getLoop() override
     {
         return loop_;
     }
+
     void setPipeliningDepth(size_t depth) override
     {
         pipeliningDepth_ = depth;
     }
+
     ~HttpClientImpl();
 
     void enableCookies(bool flag = true) override
@@ -75,10 +81,12 @@ class HttpClientImpl final : public HttpClient,
     {
         return bytesSent_;
     }
+
     size_t bytesReceived() const override
     {
         return bytesReceived_;
     }
+
     void setUserAgent(const std::string &userAgent) override
     {
         userAgent_ = userAgent;
@@ -108,6 +116,21 @@ class HttpClientImpl final : public HttpClient,
     void setSockOptCallback(std::function<void(int)> cb) override
     {
         sockOptCallback_ = std::move(cb);
+    }
+
+    std::size_t requestsBufferSize() override
+    {
+        if (loop_->isInLoopThread())
+        {
+            return requestsBuffer_.size();
+        }
+        else
+        {
+            std::promise<std::size_t> bufferSize;
+            loop_->queueInLoop(
+                [&] { bufferSize.set_value(requestsBuffer_.size()); });
+            return bufferSize.get_future().get();
+        }
     }
 
   private:
@@ -148,5 +171,6 @@ class HttpClientImpl final : public HttpClient,
     std::string clientKeyPath_;
     std::function<void(int)> sockOptCallback_;
 };
+
 using HttpClientImplPtr = std::shared_ptr<HttpClientImpl>;
 }  // namespace drogon

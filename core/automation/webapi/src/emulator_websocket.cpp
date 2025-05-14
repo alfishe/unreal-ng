@@ -101,18 +101,12 @@ void EmulatorWebSocket::publishToSubscribers(const std::string &data)
 // Static method for external code (like the emulator) to call
 void EmulatorWebSocket::broadcastEmulatorData(const std::string &data)
 {
-    // Retrieve the singleton instance of this controller registered with the framework.
-    // The template argument is the class name of the controller.
-    EmulatorWebSocket* controllerInstance = drogon::app.getController<EmulatorWebSocket>();
-
-    if (controllerInstance)
-    {
-        // Call the non-static publish method on the retrieved instance
-        controllerInstance->publishToSubscribers(data);
-    }
-    else
-    {
-        LOG_ERROR << "EmulatorWebSocket controller instance not found. Cannot broadcast emulator data.";
-        // This might happen if the controller wasn't registered or the app is shutting down.
-    }
+    // Drogon doesn't provide a direct way to get a controller instance from outside the framework
+    // Use a static PubSubService instead
+    static drogon::PubSubService<std::string> globalEmulatorPubSub;
+    
+    // Publish the data to the global topic
+    globalEmulatorPubSub.publish(kEmulatorDataTopic, data);
+    
+    LOG_TRACE << "Broadcasted emulator data via global PubSub: " << data.substr(0, 50) << "...";
 }

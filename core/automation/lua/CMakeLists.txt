@@ -47,7 +47,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
     add_executable(${PROJECT_NAME} ${SOURCES})
 
-    target_link_libraries(${PROJECT_NAME}
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         lua_static
         luacpp_static
         unrealng::core
@@ -81,7 +81,7 @@ else()
     add_library(${PROJECT_NAME} STATIC ${SOURCES})
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-    target_link_libraries(${PROJECT_NAME}
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         lua_static
         luacpp_static
     )

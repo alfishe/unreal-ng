@@ -4,6 +4,182 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.23] - 2025-02-20
+
+### Changed
+
+- Replace ipv4 inet_ntop with a handrolled function.
+
+### Fixed
+
+- Fix some typos.
+
+## [1.5.22] - 2024-10-27
+
+### Fixed
+
+- Fix a bug in the dtor of EventLoop.
+
+- Free leaked memory in ares resolver.
+
+## [1.5.21] - 2024-09-10
+
+### API changes list
+
+- Add a method to reload the SSL certificate and private key on the fly.
+
+### Changed
+
+- Keep log level consistency.
+
+## [1.5.20] - 2024-07-20
+
+### Changed
+
+- Add byte order detection for internal SHA1 implementation for OSX, POWER, RISC-V and s390.
+
+### Fixed
+
+- Fix Windows CI build fail by using the latest MSVC.
+
+- Fix the Botan TLS provider build on Linux.
+
+- Fix "pthread not found" build error when using Android NDK.
+
+## [1.5.19] - 2024-06-08
+
+### changed
+
+- show forked repository build status.
+
+- Add cmake-format.
+
+- Some spelling corrections.
+
+## [1.5.18] - 2024-05-04
+
+### Fixed
+
+- Fix data type conflict.
+
+- Fix build on latest c-ares.
+
+## [1.5.17] - 2024-02-09
+
+### Changed
+
+- Make FileBufferNodeWin aware of UWP Win32 API.
+
+- Use ssize_t declared by toolchain when available.
+
+## [1.5.16] - 2024-01-18
+
+### Changed
+
+- Add build badge for individual OS.
+
+- deinit libressl.
+
+- Remove mutex.
+
+### Fixed
+
+- Pile of fix for h2.
+
+- Fix a bug when sending data.
+
+- Fix c-ares CARES_EXTERN for static builds.
+
+- Fix header file name issue when cross-compiling on Windows.
+
+- Fix name issue when cross-compiling.
+
+## [1.5.15] - 2023-11-27
+
+### Changed
+
+- Feature: Integrate spdlog as logging backend for Trantor Logger.
+
+### Fixed
+
+- Fix the botan backend always validating certificate and OpenSSL allowing empty ALPN.
+
+- Fix build error on OpenBSD.
+
+- Fix Botan leaking memory if connection force closed.
+
+- Fix a cmake warning.
+
+- Workaround botan backend init failure on MacOS.
+
+- Fix failing wstr conversion if locale is set to C.
+
+## [1.5.14] - 2023-09-19
+
+### [Fixed]
+
+- Fix OpenSSL: read can be incomplete.
+
+- Fix botan provider.
+
+- Fix botan3 not triggering handshake finish event.
+
+- Fix an compilation error when no STL lib is found.
+
+## [1.5.13] - 2023-08-23
+
+### Fixed
+
+- Fix an error when sending files.
+
+- Include &lt;memory&gt; header in TcpConnectionImpl.cc.
+
+## [1.5.12] - 2023-08-20
+
+### API changes list
+
+- Add NetEndian versions of toIp and toIpPort.
+
+- Add setsockopt to TcpClient and TcpServer.
+
+- Support setting max files in AsyncFileLogger.
+
+- Support returning multiple results for dns parsing.
+
+### Changed
+
+- Refactor SSL handling.
+
+- Add ability to use one log file until the size-limit.
+
+- Make the std::string_view work on windows.
+
+- Drop Botan 2 support and support Botan 3.
+
+- Make the getNextLoop method multi-thread safe.
+
+- Add fallback when OpenSSL not providing BLAKE2b.
+
+### Fixed
+
+- Fix override mark.
+
+- Add missing &lt;cstdint&gt; header with GCC 13.
+
+- Fix AresResolver.
+
+- Fix building built-in hashes on Windows.
+
+- Fix MSYS2/Cygwin compatibility issues.
+
+- Fix more build errors on win32/mingw.
+
+- Fix off_t(on windows off_t defined with long, not longlong).
+
+- Fix bug with Trantor::Date timeZoneOffset calculation.
+
+- Fix wrong usage of shared pointer in TcpClient ctor.
+
 ## [1.5.11] - 2023-03-17
 
 ### API Changes list
@@ -520,7 +696,31 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0-rc1] - 2019-06-11
 
-[Unreleased]: https://github.com/an-tao/trantor/compare/v1.5.11...HEAD
+[Unreleased]: https://github.com/an-tao/trantor/compare/v1.5.23...HEAD
+
+[1.5.23]: https://github.com/an-tao/trantor/compare/v1.5.22...v1.5.23
+
+[1.5.22]: https://github.com/an-tao/trantor/compare/v1.5.21...v1.5.22
+
+[1.5.21]: https://github.com/an-tao/trantor/compare/v1.5.20...v1.5.21
+
+[1.5.20]: https://github.com/an-tao/trantor/compare/v1.5.19...v1.5.20
+
+[1.5.19]: https://github.com/an-tao/trantor/compare/v1.5.18...v1.5.19
+
+[1.5.18]: https://github.com/an-tao/trantor/compare/v1.5.17...v1.5.18
+
+[1.5.17]: https://github.com/an-tao/trantor/compare/v1.5.16...v1.5.17
+
+[1.5.16]: https://github.com/an-tao/trantor/compare/v1.5.15...v1.5.16
+
+[1.5.15]: https://github.com/an-tao/trantor/compare/v1.5.14...v1.5.15
+
+[1.5.14]: https://github.com/an-tao/trantor/compare/v1.5.13...v1.5.14
+
+[1.5.13]: https://github.com/an-tao/trantor/compare/v1.5.12...v1.5.13
+
+[1.5.12]: https://github.com/an-tao/trantor/compare/v1.5.11...v1.5.12
 
 [1.5.11]: https://github.com/an-tao/trantor/compare/v1.5.10...v1.5.11
 

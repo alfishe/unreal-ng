@@ -13,7 +13,6 @@
  */
 
 #include <drogon/utils/Utilities.h>
-#include "filesystem.h"
 #include <trantor/utils/Logger.h>
 #include <trantor/utils/Utilities.h>
 #include <drogon/config.h>
@@ -22,7 +21,7 @@
 #include <brotli/encode.h>
 #endif
 #ifdef _WIN32
-#include <Rpc.h>
+#include <rpc.h>
 #include <direct.h>
 #include <io.h>
 #include <iomanip>
@@ -34,12 +33,14 @@
 #include <sstream>
 #include <string>
 #include <mutex>
+#include <random>
 #include <algorithm>
 #include <array>
 #include <locale>
 #include <clocale>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -60,6 +61,7 @@ char *strptime(const char *s, const char *f, struct tm *tm)
     }
     return (char *)(s + input.tellg());
 }
+
 time_t timegm(struct tm *tm)
 {
     struct tm my_tm;
@@ -82,15 +84,16 @@ namespace drogon
 {
 namespace utils
 {
-static const std::string base64Chars =
+static constexpr std::string_view base64Chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
     "0123456789+/";
 
-static const std::string urlBase64Chars =
+static constexpr std::string_view urlBase64Chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
     "0123456789-_";
+
 class Base64CharMap
 {
   public:
@@ -115,6 +118,7 @@ class Base64CharMap
             index;
         charMap_[0] = char(0xff);
     }
+
     char getIndex(const char c) const noexcept
     {
         return charMap_[static_cast<int>(c)];
@@ -123,7 +127,8 @@ class Base64CharMap
   private:
     char charMap_[256]{0};
 };
-const static Base64CharMap base64CharMap;
+
+static const Base64CharMap base64CharMap;
 
 static inline bool isBase64(unsigned char c)
 {
@@ -140,7 +145,7 @@ static inline bool isBase64(unsigned char c)
     return false;
 }
 
-bool isInteger(string_view str)
+bool isInteger(std::string_view str)
 {
     for (auto c : str)
         if (c < '0' || c > '9')
@@ -148,7 +153,7 @@ bool isInteger(string_view str)
     return true;
 }
 
-bool isBase64(string_view str)
+bool isBase64(std::string_view str)
 {
     for (auto c : str)
         if (!isBase64(c))
@@ -158,28 +163,16 @@ bool isBase64(string_view str)
 
 std::string genRandomString(int length)
 {
-    static const char char_space[] =
+    static const std::string_view char_space =
         "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    static std::once_flag once;
-    static const size_t len = strlen(char_space);
-    static const int randMax = RAND_MAX - (RAND_MAX % len);
-    std::call_once(once, []() {
-        std::srand(static_cast<unsigned int>(time(nullptr)));
-    });
+    std::uniform_int_distribution<size_t> dist(0, char_space.size() - 1);
+    thread_local std::mt19937 rng(std::random_device{}());
 
-    int i;
     std::string str;
     str.resize(length);
-
-    for (i = 0; i < length; ++i)
+    for (char &ch : str)
     {
-        int x = std::rand();
-        while (x >= randMax)
-        {
-            x = std::rand();
-        }
-        x = (x % len);
-        str[i] = char_space[x];
+        ch = char_space[dist(rng)];
     }
 
     return str;
@@ -234,6 +227,7 @@ std::vector<char> hexToBinaryVector(const char *ptr, size_t length)
     }
     return ret;
 }
+
 std::string hexToBinaryString(const char *ptr, size_t length)
 {
     assert(length % 2 == 0);
@@ -284,31 +278,55 @@ std::string hexToBinaryString(const char *ptr, size_t length)
     return ret;
 }
 
-std::string binaryStringToHex(const unsigned char *ptr, size_t length)
+DROGON_EXPORT void binaryStringToHex(const char *ptr,
+                                     size_t length,
+                                     char *out,
+                                     bool lowerCase)
 {
-    std::string idString;
     for (size_t i = 0; i < length; ++i)
     {
         int value = (ptr[i] & 0xf0) >> 4;
         if (value < 10)
         {
-            idString.append(1, char(value + 48));
+            out[i * 2] = char(value + 48);
         }
         else
         {
-            idString.append(1, char(value + 55));
+            if (!lowerCase)
+            {
+                out[i * 2] = char(value + 55);
+            }
+            else
+            {
+                out[i * 2] = char(value + 87);
+            }
         }
 
         value = (ptr[i] & 0x0f);
         if (value < 10)
         {
-            idString.append(1, char(value + 48));
+            out[i * 2 + 1] = char(value + 48);
         }
         else
         {
-            idString.append(1, char(value + 55));
+            if (!lowerCase)
+            {
+                out[i * 2 + 1] = char(value + 55);
+            }
+            else
+            {
+                out[i * 2 + 1] = char(value + 87);
+            }
         }
     }
+}
+
+std::string binaryStringToHex(const unsigned char *ptr,
+                              size_t length,
+                              bool lowercase)
+{
+    std::string idString(length * 2, '\0');
+    binaryStringToHex((const char *)ptr, length, &idString[0], lowercase);
     return idString;
 }
 
@@ -337,7 +355,23 @@ std::set<std::string> splitStringToSet(const std::string &str,
     return ret;
 }
 
-std::string getUuid()
+inline std::string createUuidString(const char *str, size_t len, bool lowercase)
+{
+    assert(len == 16);
+    std::string uuid(36, '\0');
+    binaryStringToHex(str, 4, &uuid[0], lowercase);
+    uuid[8] = '-';
+    binaryStringToHex(str + 4, 2, &uuid[9], lowercase);
+    uuid[13] = '-';
+    binaryStringToHex(str + 6, 2, &uuid[14], lowercase);
+    uuid[18] = '-';
+    binaryStringToHex(str + 8, 2, &uuid[19], lowercase);
+    uuid[23] = '-';
+    binaryStringToHex(str + 10, 6, &uuid[24], lowercase);
+    return uuid;
+}
+
+std::string getUuid(bool lowercase)
 {
 #if USE_OSSP_UUID
     uuid_t *uuid;
@@ -347,7 +381,7 @@ std::string getUuid()
     size_t len{0};
     uuid_export(uuid, UUID_FMT_BIN, &str, &len);
     uuid_destroy(uuid);
-    std::string ret{binaryStringToHex((const unsigned char *)str, len)};
+    auto ret = createUuidString(str, len, lowercase);
     free(str);
     return ret;
 #elif defined __FreeBSD__ || defined __OpenBSD__
@@ -365,7 +399,7 @@ std::string getUuid()
     uuid_enc_be(binstr, uuid);
 #endif /* _BYTE_ORDER == _LITTLE_ENDIAN */
     delete uuid;
-    std::string ret{binaryStringToHex((const unsigned char *)binstr, 16)};
+    auto ret = createUuidString(binstr, 16, lowercase);
     free(binstr);
     return ret;
 #elif defined _WIN32
@@ -374,7 +408,7 @@ std::string getUuid()
     char tempStr[100];
     auto len = snprintf(tempStr,
                         sizeof(tempStr),
-                        "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                        "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
                         uu.Data1,
                         uu.Data2,
                         uu.Data3,
@@ -390,37 +424,38 @@ std::string getUuid()
 #else
     uuid_t uu;
     uuid_generate(uu);
-    return binaryStringToHex(uu, 16);
+    auto uuid = createUuidString((const char *)uu, 16, lowercase);
+    return uuid;
 #endif
 }
 
-std::string base64Encode(const unsigned char *bytes_to_encode,
-                         unsigned int in_len,
-                         bool url_safe,
-                         bool padded)
+void base64Encode(const unsigned char *bytesToEncode,
+                  size_t inLen,
+                  unsigned char *outputBuffer,
+                  bool urlSafe,
+                  bool padded)
 {
-    std::string ret;
-    ret.reserve(base64EncodedLength(in_len, padded));
     int i = 0;
-    unsigned char char_array_3[3];
-    unsigned char char_array_4[4];
+    unsigned char charArray3[3];
+    unsigned char charArray4[4];
 
-    const std::string &charSet = url_safe ? urlBase64Chars : base64Chars;
+    const std::string_view charSet = urlSafe ? urlBase64Chars : base64Chars;
 
-    while (in_len--)
+    size_t a = 0;
+    while (inLen--)
     {
-        char_array_3[i++] = *(bytes_to_encode++);
+        charArray3[i++] = *(bytesToEncode++);
         if (i == 3)
         {
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) +
-                              ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) +
-                              ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
+            charArray4[0] = (charArray3[0] & 0xfc) >> 2;
+            charArray4[1] =
+                ((charArray3[0] & 0x03) << 4) + ((charArray3[1] & 0xf0) >> 4);
+            charArray4[2] =
+                ((charArray3[1] & 0x0f) << 2) + ((charArray3[2] & 0xc0) >> 6);
+            charArray4[3] = charArray3[2] & 0x3f;
 
-            for (i = 0; (i < 4); ++i)
-                ret += charSet[char_array_4[i]];
+            for (i = 0; (i < 4); ++i, ++a)
+                outputBuffer[a] = charSet[charArray4[i]];
             i = 0;
         }
     }
@@ -428,59 +463,61 @@ std::string base64Encode(const unsigned char *bytes_to_encode,
     if (i)
     {
         for (int j = i; j < 3; ++j)
-            char_array_3[j] = '\0';
+            charArray3[j] = '\0';
 
-        char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-        char_array_4[1] =
-            ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-        char_array_4[2] =
-            ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-        char_array_4[3] = char_array_3[2] & 0x3f;
+        charArray4[0] = (charArray3[0] & 0xfc) >> 2;
+        charArray4[1] =
+            ((charArray3[0] & 0x03) << 4) + ((charArray3[1] & 0xf0) >> 4);
+        charArray4[2] =
+            ((charArray3[1] & 0x0f) << 2) + ((charArray3[2] & 0xc0) >> 6);
+        charArray4[3] = charArray3[2] & 0x3f;
 
-        for (int j = 0; (j <= i); ++j)
-            ret += charSet[char_array_4[j]];
+        for (int j = 0; (j <= i); ++j, ++a)
+            outputBuffer[a] = charSet[charArray4[j]];
 
         if (padded)
             while ((++i < 4))
-                ret += '=';
+            {
+                outputBuffer[a] = '=';
+                ++a;
+            }
     }
-    return ret;
 }
 
-std::vector<char> base64DecodeToVector(string_view encoded_string)
+std::vector<char> base64DecodeToVector(std::string_view encodedString)
 {
-    auto in_len = encoded_string.size();
+    auto inLen = encodedString.size();
     int i = 0;
     int in_{0};
-    char char_array_4[4], char_array_3[3];
+    char charArray4[4], charArray3[3];
     std::vector<char> ret;
-    ret.reserve(base64DecodedLength(in_len));
+    ret.reserve(base64DecodedLength(inLen));
 
-    while (in_len-- && (encoded_string[in_] != '='))
+    while (inLen-- && (encodedString[in_] != '='))
     {
-        if (!isBase64(encoded_string[in_]))
+        if (!isBase64(encodedString[in_]))
         {
             ++in_;
             continue;
         }
 
-        char_array_4[i++] = encoded_string[in_];
+        charArray4[i++] = encodedString[in_];
         ++in_;
         if (i == 4)
         {
             for (i = 0; i < 4; ++i)
             {
-                char_array_4[i] = base64CharMap.getIndex(char_array_4[i]);
+                charArray4[i] = base64CharMap.getIndex(charArray4[i]);
             }
 
-            char_array_3[0] =
-                (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) +
-                              ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+            charArray3[0] =
+                (charArray4[0] << 2) + ((charArray4[1] & 0x30) >> 4);
+            charArray3[1] =
+                ((charArray4[1] & 0xf) << 4) + ((charArray4[2] & 0x3c) >> 2);
+            charArray3[2] = ((charArray4[2] & 0x3) << 6) + charArray4[3];
 
             for (i = 0; (i < 3); ++i)
-                ret.push_back(char_array_3[i]);
+                ret.push_back(charArray3[i]);
             i = 0;
         }
     }
@@ -488,60 +525,59 @@ std::vector<char> base64DecodeToVector(string_view encoded_string)
     if (i)
     {
         for (int j = i; j < 4; ++j)
-            char_array_4[j] = 0;
+            charArray4[j] = 0;
 
         for (int j = 0; j < 4; ++j)
         {
-            char_array_4[j] = base64CharMap.getIndex(char_array_4[j]);
+            charArray4[j] = base64CharMap.getIndex(charArray4[j]);
         }
 
-        char_array_3[0] =
-            (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] =
-            ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+        charArray3[0] = (charArray4[0] << 2) + ((charArray4[1] & 0x30) >> 4);
+        charArray3[1] =
+            ((charArray4[1] & 0xf) << 4) + ((charArray4[2] & 0x3c) >> 2);
+        charArray3[2] = ((charArray4[2] & 0x3) << 6) + charArray4[3];
 
         --i;
         for (int j = 0; (j < i); ++j)
-            ret.push_back(char_array_3[j]);
+            ret.push_back(charArray3[j]);
     }
 
     return ret;
 }
 
-std::string base64Decode(string_view encoded_string)
+size_t base64Decode(const char *encodedString,
+                    size_t inLen,
+                    unsigned char *outputBuffer)
 {
-    auto in_len = encoded_string.size();
     int i = 0;
     int in_{0};
-    unsigned char char_array_4[4], char_array_3[3];
-    std::string ret;
-    ret.reserve(base64DecodedLength(in_len));
+    unsigned char charArray4[4], charArray3[3];
 
-    while (in_len-- && (encoded_string[in_] != '='))
+    size_t a = 0;
+    while (inLen-- && (encodedString[in_] != '='))
     {
-        if (!isBase64(encoded_string[in_]))
+        if (!isBase64(encodedString[in_]))
         {
             ++in_;
             continue;
         }
 
-        char_array_4[i++] = encoded_string[in_];
+        charArray4[i++] = encodedString[in_];
         ++in_;
         if (i == 4)
         {
             for (i = 0; i < 4; ++i)
             {
-                char_array_4[i] = base64CharMap.getIndex(char_array_4[i]);
+                charArray4[i] = base64CharMap.getIndex(charArray4[i]);
             }
-            char_array_3[0] =
-                (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) +
-                              ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+            charArray3[0] =
+                (charArray4[0] << 2) + ((charArray4[1] & 0x30) >> 4);
+            charArray3[1] =
+                ((charArray4[1] & 0xf) << 4) + ((charArray4[2] & 0x3c) >> 2);
+            charArray3[2] = ((charArray4[2] & 0x3) << 6) + charArray4[3];
 
-            for (i = 0; (i < 3); ++i)
-                ret += char_array_3[i];
+            for (i = 0; (i < 3); ++i, ++a)
+                outputBuffer[a] = charArray3[i];
             i = 0;
         }
     }
@@ -549,26 +585,26 @@ std::string base64Decode(string_view encoded_string)
     if (i)
     {
         for (int j = i; j < 4; ++j)
-            char_array_4[j] = 0;
+            charArray4[j] = 0;
 
         for (int j = 0; j < 4; ++j)
         {
-            char_array_4[j] = base64CharMap.getIndex(char_array_4[j]);
+            charArray4[j] = base64CharMap.getIndex(charArray4[j]);
         }
 
-        char_array_3[0] =
-            (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] =
-            ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+        charArray3[0] = (charArray4[0] << 2) + ((charArray4[1] & 0x30) >> 4);
+        charArray3[1] =
+            ((charArray4[1] & 0xf) << 4) + ((charArray4[2] & 0x3c) >> 2);
+        charArray3[2] = ((charArray4[2] & 0x3) << 6) + charArray4[3];
 
         --i;
-        for (int j = 0; (j < i); ++j)
-            ret += char_array_3[j];
+        for (int j = 0; (j < i); ++j, ++a)
+            outputBuffer[a] = charArray3[j];
     }
 
-    return ret;
+    return a;
 }
+
 static std::string charToHex(char c)
 {
     std::string result;
@@ -584,6 +620,7 @@ static std::string charToHex(char c)
 
     return result;
 }
+
 std::string urlEncodeComponent(const std::string &src)
 {
     std::string result;
@@ -680,6 +717,7 @@ std::string urlEncodeComponent(const std::string &src)
 
     return result;
 }
+
 std::string urlEncode(const std::string &src)
 {
     std::string result;
@@ -782,12 +820,14 @@ std::string urlEncode(const std::string &src)
 
     return result;
 }
+
 bool needUrlDecoding(const char *begin, const char *end)
 {
     return std::find_if(begin, end, [](const char c) {
                return c == '+' || c == '%';
            }) != end;
 }
+
 std::string urlDecode(const char *begin, const char *end)
 {
     std::string result;
@@ -988,11 +1028,41 @@ char *getHttpFullDate(const trantor::Date &date)
         return lastTimeString;
     }
     lastSecond = nowSecond;
-    date.toCustomedFormattedString("%a, %d %b %Y %H:%M:%S GMT",
-                                   lastTimeString,
-                                   sizeof(lastTimeString));
+    date.toCustomFormattedString("%a, %d %b %Y %H:%M:%S GMT",
+                                 lastTimeString,
+                                 sizeof(lastTimeString));
     return lastTimeString;
 }
+
+void dateToCustomFormattedString(const std::string &fmtStr,
+                                 std::string &str,
+                                 const trantor::Date &date)
+{
+    auto nowSecond = date.microSecondsSinceEpoch() / MICRO_SECONDS_PRE_SEC;
+    time_t seconds = static_cast<time_t>(nowSecond);
+    struct tm tm_LValue = date.tmStruct();
+    std::stringstream Out;
+    Out.imbue(std::locale{"C"});
+    Out << std::put_time(&tm_LValue, fmtStr.c_str());
+    str = Out.str();
+}
+
+const std::string &getHttpFullDateStr(const trantor::Date &date)
+{
+    static thread_local int64_t lastSecond = 0;
+    static thread_local std::string lastTimeString(128, 0);
+    auto nowSecond = date.microSecondsSinceEpoch() / MICRO_SECONDS_PRE_SEC;
+    if (nowSecond == lastSecond)
+    {
+        return lastTimeString;
+    }
+    lastSecond = nowSecond;
+    dateToCustomFormattedString("%a, %d %b %Y %H:%M:%S GMT",
+                                lastTimeString,
+                                date);
+    return lastTimeString;
+}
+
 trantor::Date getHttpDate(const std::string &httpFullDateString)
 {
     static const std::array<const char *, 4> formats = {
@@ -1017,6 +1087,7 @@ trantor::Date getHttpDate(const std::string &httpFullDateString)
     LOG_WARN << "invalid datetime format: '" << httpFullDateString << "'";
     return trantor::Date((std::numeric_limits<int64_t>::max)());
 }
+
 std::string formattedString(const char *format, ...)
 {
     std::string strBuffer(128, 0);
@@ -1070,11 +1141,11 @@ int createPath(const std::string &path)
     if (path.empty())
         return 0;
     auto osPath{toNativePath(path)};
-    if (osPath.back() != filesystem::path::preferred_separator)
-        osPath.push_back(filesystem::path::preferred_separator);
-    filesystem::path fsPath(osPath);
-    drogon::error_code err;
-    filesystem::create_directories(fsPath, err);
+    if (osPath.back() != std::filesystem::path::preferred_separator)
+        osPath.push_back(std::filesystem::path::preferred_separator);
+    std::filesystem::path fsPath(osPath);
+    std::error_code err;
+    std::filesystem::create_directories(fsPath, err);
     if (err)
     {
         LOG_ERROR << "Error " << err.value() << " creating path " << osPath
@@ -1104,6 +1175,7 @@ std::string brotliCompress(const char *data, const size_t ndata)
         ret.resize(encodedSize);
     return ret;
 }
+
 std::string brotliDecompress(const char *data, const size_t ndata)
 {
     if (ndata == 0)
@@ -1149,6 +1221,7 @@ std::string brotliCompress(const char * /*data*/, const size_t /*ndata*/)
                  "use brotliCompress()";
     abort();
 }
+
 std::string brotliDecompress(const char * /*data*/, const size_t /*ndata*/)
 {
     LOG_ERROR << "If you do not have the brotli package installed, you cannot "
@@ -1208,18 +1281,18 @@ std::string secureRandomString(size_t size)
         return std::string();
 
     std::string ret(size, 0);
-    const string_view chars =
+    const std::string_view chars =
         "0123456789"
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
         "+-";
     assert(chars.size() == 64);
 
-    trantor::utils::Hash256 hash;
     // batch up to 32 bytes of random data for efficiency. Calling
     // secureRandomBytes can be expensive.
-    auto randByte = [&hash]() {
-        static size_t i = 0;
+    auto randByte = []() {
+        thread_local trantor::utils::Hash256 hash;
+        thread_local size_t i = 0;
         if (i == 0)
         {
             bool ok = trantor::utils::secureRandomBytes(&hash, sizeof(hash));

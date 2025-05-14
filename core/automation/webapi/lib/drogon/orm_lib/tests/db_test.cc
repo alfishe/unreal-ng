@@ -19,7 +19,7 @@
 #include <drogon/orm/CoroMapper.h>
 #include <drogon/orm/DbClient.h>
 #include <drogon/orm/DbTypes.h>
-#include <drogon/utils/string_view.h>
+#include <string_view>
 #include <drogon/orm/QueryBuilder.h>
 #include <trantor/utils/Logger.h>
 
@@ -31,8 +31,25 @@
 #include <vector>
 
 #include "mysql/Users.h"
+#include "mysql/Wallets.h"
+#include "mysql/Blog.h"
+#include "mysql/Category.h"
+#include "mysql/BlogTag.h"
+#include "mysql/Tag.h"
+
 #include "postgresql/Users.h"
+#include "postgresql/Wallets.h"
+#include "postgresql/Blog.h"
+#include "postgresql/Category.h"
+#include "postgresql/BlogTag.h"
+#include "postgresql/Tag.h"
+
 #include "sqlite3/Users.h"
+#include "sqlite3/Wallets.h"
+#include "sqlite3/Blog.h"
+#include "sqlite3/Category.h"
+#include "sqlite3/BlogTag.h"
+#include "sqlite3/Tag.h"
 
 using namespace std::chrono_literals;
 using namespace drogon::orm;
@@ -42,6 +59,7 @@ void expFunction(const DrogonDbException &e)
 }
 #if USE_POSTGRESQL
 DbClientPtr postgreClient;
+
 DROGON_TEST(PostgreTest)
 {
     auto &clientPtr = postgreClient;
@@ -85,6 +103,89 @@ DROGON_TEST(PostgreTest)
         [TEST_CTX](const Result &r) { SUCCESS(); } >>
         [TEST_CTX](const DrogonDbException &e) {
             FAULT("postgresql - Prepare the test environment(1) what():",
+                  e.base().what());
+        };
+    // wallets table one-to-one with users table
+    *clientPtr << "DROP TABLE IF EXISTS wallets" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(2) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE wallets ("
+                  "    id serial PRIMARY KEY,"
+                  "    user_id character varying(32) DEFAULT NULL,"
+                  "    amount numeric(16,2) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(3) what():",
+                  e.base().what());
+        };
+    // blog
+    *clientPtr << "DROP TABLE IF EXISTS blog" >> [TEST_CTX](const Result &r) {
+        SUCCESS();
+    } >> [TEST_CTX](const DrogonDbException &e) {
+        FAULT("postgresql - Prepare the test environment(4) what():",
+              e.base().what());
+    };
+    *clientPtr << "CREATE TABLE blog ("
+                  "    id serial PRIMARY KEY,"
+                  "    title character varying(30) DEFAULT NULL,"
+                  "    category_id int4 DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(5) what():",
+                  e.base().what());
+        };
+    // category table one-to-many with blog table
+    *clientPtr << "DROP TABLE IF EXISTS category" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(6) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE category ("
+                  "    id serial PRIMARY KEY,"
+                  "    name character varying(30) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(7) what():",
+                  e.base().what());
+        };
+    // tag table many-to-many with blog table
+    *clientPtr << "DROP TABLE IF EXISTS tag" >> [TEST_CTX](const Result &r) {
+        SUCCESS();
+    } >> [TEST_CTX](const DrogonDbException &e) {
+        FAULT("postgresql - Prepare the test environment(8) what():",
+              e.base().what());
+    };
+    *clientPtr << "CREATE TABLE tag ("
+                  "    id serial PRIMARY KEY,"
+                  "    name character varying(30) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(9) what():",
+                  e.base().what());
+        };
+    // blog_tag table is an intermediate table
+    *clientPtr << "DROP TABLE IF EXISTS blog_tag" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(10) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE blog_tag ("
+                  "    blog_id int4 NOT NULL,"
+                  "    tag_id int4 NOT NULL,"
+                  "    CONSTRAINT blog_tag_pkey PRIMARY KEY (blog_id, tag_id)"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("postgresql - Prepare the test environment(11) what():",
                   e.base().what());
         };
     /// Test1:DbClient streaming-type interface
@@ -245,7 +346,7 @@ DROGON_TEST(PostgreTest)
                   e.base().what());
         },
         1);
-    /// 2.3 query, parameter binding (string_view)
+    /// 2.3 query, parameter binding (std::string_view)
     clientPtr->execSqlAsync(
         "select * from users where user_id = $1 and user_name = $2",
         [TEST_CTX](const Result &r) { MANDATE(r.size() == 1); },
@@ -253,7 +354,7 @@ DROGON_TEST(PostgreTest)
             FAULT("postgresql - DbClient asynchronous interface(4) what():",
                   e.base().what());
         },
-        drogon::string_view("pg1"),
+        std::string_view("pg1"),
         "postgresql1");
     /// 2.4 delete
     clientPtr->execSqlAsync(
@@ -832,8 +933,8 @@ DROGON_TEST(PostgreTest)
 #ifdef __cpp_impl_coroutine
     auto coro_test = [clientPtr, TEST_CTX]() -> drogon::Task<> {
         /// 7 Test coroutines.
-        /// This is by no means comprehensive. But coroutine API is esentially a
-        /// wrapper arround callbacks. The purpose is to test the interface
+        /// This is by no means comprehensive. But coroutine API is essentially
+        /// a wrapper around callbacks. The purpose is to test the interface
         /// works 7.1 Basic queries
         try
         {
@@ -980,11 +1081,370 @@ DROGON_TEST(PostgreTest)
     drogon::sync_wait(coro_test());
 
 #endif
+
+    /// 8 Test ORM related query
+    /// 8.1 async
+    /// 8.1.1 one-to-one
+    Mapper<Wallets> walletsMapper(clientPtr);
+
+    /// prepare
+    {
+        Wallets wallet;
+        wallet.setUserId("pg");
+        wallet.setAmount("2000.00");
+        try
+        {
+            walletsMapper.insert(wallet);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(0) what():",
+                  e.base().what());
+        }
+    }
+
+    /// users to wallets
+    {
+        Users user;
+        user.setUserId("pg");
+        user.getWallet(
+            clientPtr,
+            [TEST_CTX](Wallets r) {
+                MANDATE(r.getValueOfAmount() == "2000.00");
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "postgresql - ORM mapper related async one-to-one(0) "
+                    "what():",
+                    e.base().what());
+            });
+    }
+    /// users to wallets without data
+    {
+        Users user;
+        user.setUserId("pg1");
+        user.getWallet(
+            clientPtr,
+            [TEST_CTX](Wallets w) {
+                FAULT("postgresql - ORM mapper related async one-to-one(1)");
+            },
+            [TEST_CTX](const DrogonDbException &e) { SUCCESS(); });
+    }
+
+    /// 8.1.2 one-to-many
+    Mapper<Category> categoryMapper(clientPtr);
+    Mapper<Blog> blogMapper(clientPtr);
+
+    /// prepare
+    {
+        Category category;
+        category.setName("category1");
+        try
+        {
+            categoryMapper.insert(category);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(1) what():",
+                  e.base().what());
+        }
+        category.setName("category2");
+        try
+        {
+            categoryMapper.insert(category);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(2) what():",
+                  e.base().what());
+        }
+        Blog blog;
+        blog.setTitle("title1");
+        blog.setCategoryId(1);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(3) what():",
+                  e.base().what());
+        }
+        blog.setTitle("title2");
+        blog.setCategoryId(1);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(4) what():",
+                  e.base().what());
+        }
+        blog.setTitle("title3");
+        blog.setCategoryId(3);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(5) what():",
+                  e.base().what());
+        }
+    }
+
+    /// categories to blogs
+    {
+        Category category;
+        category.setId(1);
+        category.getBlogs(
+            clientPtr,
+            [TEST_CTX](std::vector<Blog> r) { MANDATE(r.size() == 2); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "postgresql - ORM mapper related async one-to-many(0) "
+                    "what():",
+                    e.base().what());
+            });
+    }
+    /// categories to blogs without data
+    {
+        Category category;
+        category.setId(2);
+        category.getBlogs(
+            clientPtr,
+            [TEST_CTX](std::vector<Blog> r) { MANDATE(r.size() == 0); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "postgresql - ORM mapper related async one-to-many(1) "
+                    "what():",
+                    e.base().what());
+            });
+    }
+    /// blogs to categories
+    {
+        Blog blog;
+        blog.setCategoryId(1);
+        blog.getCategory(
+            clientPtr,
+            [TEST_CTX](Category r) {
+                MANDATE(r.getValueOfName() == "category1");
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "postgresql - ORM mapper related async one-to-many(2) "
+                    "what():",
+                    e.base().what());
+            });
+    }
+    /// blogs to categories without data
+    {
+        Blog blog;
+        blog.setCategoryId(3);
+        blog.getCategory(
+            clientPtr,
+            [TEST_CTX](Category r) {
+                FAULT("postgresql - ORM mapper related async one-to-many(3)");
+            },
+            [TEST_CTX](const DrogonDbException &e) { SUCCESS(); });
+    }
+
+    /// 8.1.3 many-to-many
+    Mapper<BlogTag> blogTagMapper(clientPtr);
+    Mapper<Tag> tagMapper(clientPtr);
+
+    /// prepare
+    {
+        BlogTag blogTag;
+        blogTag.setBlogId(1);
+        blogTag.setTagId(1);
+        try
+        {
+            blogTagMapper.insert(blogTag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(6) what():",
+                  e.base().what());
+        }
+        blogTag.setBlogId(1);
+        blogTag.setTagId(2);
+        try
+        {
+            blogTagMapper.insert(blogTag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(7) what():",
+                  e.base().what());
+        }
+        Tag tag;
+        tag.setName("tag1");
+        try
+        {
+            tagMapper.insert(tag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(8) what():",
+                  e.base().what());
+        }
+        tag.setName("tag2");
+        try
+        {
+            tagMapper.insert(tag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related prepare(9) what():",
+                  e.base().what());
+        }
+    }
+
+    /// blogs to tags
+    {
+        Blog blog;
+        blog.setId(1);
+        blog.getTags(
+            clientPtr,
+            [TEST_CTX](std::vector<std::pair<Tag, BlogTag>> r) {
+                MANDATE(r.size() == 2);
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "postgresql - ORM mapper related async many-to-many(0) "
+                    "what():",
+                    e.base().what());
+            });
+    }
+
+    /// 8.2 async
+    /// 8.2.1 one-to-one
+    /// users to wallets
+    {
+        Users user;
+        user.setUserId("pg");
+        try
+        {
+            auto r = user.getWallet(clientPtr);
+            MANDATE(r.getValueOfAmount() == "2000.00");
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related sync one-to-one(0) what():",
+                  e.base().what());
+        }
+    }
+    /// users to wallets without data
+    {
+        Users user;
+        user.setUserId("pg1");
+        try
+        {
+            auto r = user.getWallet(clientPtr);
+            FAULT("postgresql - ORM mapper related sync one-to-one(1)");
+        }
+        catch (const DrogonDbException &e)
+        {
+            SUCCESS();
+        }
+    }
+
+    /// 8.2.2 one-to-many
+    /// categories to blogs
+    {
+        Category category;
+        category.setId(1);
+        try
+        {
+            auto r = category.getBlogs(clientPtr);
+            MANDATE(r.size() == 2);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related sync one-to-many(0) what():",
+                  e.base().what());
+        }
+    }
+    /// categories to blogs without data
+    {
+        Category category;
+        category.setId(2);
+        try
+        {
+            auto r = category.getBlogs(clientPtr);
+            MANDATE(r.size() == 0);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related sync one-to-many(1) what():",
+                  e.base().what());
+        }
+    }
+    /// blogs to categories
+    {
+        Blog blog;
+        blog.setCategoryId(1);
+        try
+        {
+            auto r = blog.getCategory(clientPtr);
+            MANDATE(r.getValueOfName() == "category1");
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("postgresql - ORM mapper related sync one-to-many(2) what():",
+                  e.base().what());
+        }
+    }
+    /// blogs to categories without data
+    {
+        Blog blog;
+        blog.setCategoryId(3);
+        try
+        {
+            auto r = blog.getCategory(clientPtr);
+            FAULT("postgresql - ORM mapper related sync one-to-many(3)");
+        }
+        catch (const DrogonDbException &e)
+        {
+            SUCCESS();
+        }
+    }
+
+    /// 8.2.3 many-to-many
+    /// blogs to tags
+    {
+        Blog blog;
+        blog.setId(1);
+        try
+        {
+            auto r = blog.getTags(clientPtr);
+            MANDATE(r.size() == 2);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT(
+                "postgresql - ORM mapper related sync many-to-many(0) what():",
+                e.base().what());
+        }
+    }
 }
 #endif
 
 #if USE_MYSQL
 DbClientPtr mysqlClient;
+
 DROGON_TEST(MySQLTest)
 {
     auto &clientPtr = mysqlClient;
@@ -1031,6 +1491,89 @@ DROGON_TEST(MySQLTest)
         [TEST_CTX](const Result &r) { SUCCESS(); } >>
         [TEST_CTX](const DrogonDbException &e) {
             FAULT("mysql - Prepare the test environment(2) what():",
+                  e.base().what());
+        };
+    // wallets table one-to-one with users table
+    *clientPtr << "DROP TABLE IF EXISTS wallets" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(3) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE `wallets` ("
+                  "    `id` int(11) AUTO_INCREMENT PRIMARY KEY,"
+                  "    `user_id` varchar(32) DEFAULT NULL,"
+                  "    `amount` decimal(16,2) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(4) what():",
+                  e.base().what());
+        };
+    // blog
+    *clientPtr << "DROP TABLE IF EXISTS blog" >> [TEST_CTX](const Result &r) {
+        SUCCESS();
+    } >> [TEST_CTX](const DrogonDbException &e) {
+        FAULT("mysql - Prepare the test environment(5) what():",
+              e.base().what());
+    };
+    *clientPtr << "CREATE TABLE `blog` ("
+                  "    `id` int(11) AUTO_INCREMENT PRIMARY KEY,"
+                  "    `title` varchar(30) DEFAULT NULL,"
+                  "    `category_id` int(11) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(6) what():",
+                  e.base().what());
+        };
+    // category table one-to-many with blog table
+    *clientPtr << "DROP TABLE IF EXISTS category" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(7) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE `category` ("
+                  "    `id` int(11) AUTO_INCREMENT PRIMARY KEY,"
+                  "    `name` varchar(30) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(8) what():",
+                  e.base().what());
+        };
+    // tag table many-to-many with blog table
+    *clientPtr << "DROP TABLE IF EXISTS tag" >> [TEST_CTX](const Result &r) {
+        SUCCESS();
+    } >> [TEST_CTX](const DrogonDbException &e) {
+        FAULT("mysql - Prepare the test environment(9) what():",
+              e.base().what());
+    };
+    *clientPtr << "CREATE TABLE `tag` ("
+                  "    `id` int(11) AUTO_INCREMENT PRIMARY KEY,"
+                  "    `name` varchar(30) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(10) what():",
+                  e.base().what());
+        };
+    // blog_tag table is an intermediate table
+    *clientPtr << "DROP TABLE IF EXISTS blog_tag" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(11) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE `blog_tag` ("
+                  "    `blog_id` int(11) NOT NULL,"
+                  "    `tag_id` int(11) NOT NULL,"
+                  "    PRIMARY KEY (`blog_id`,`tag_id`)"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("mysql - Prepare the test environment(12) what():",
                   e.base().what());
         };
     /// Test1:DbClient streaming-type interface
@@ -1719,8 +2262,8 @@ DROGON_TEST(MySQLTest)
 #ifdef __cpp_impl_coroutine
     auto coro_test = [clientPtr, TEST_CTX]() -> drogon::Task<> {
         /// 7 Test coroutines.
-        /// This is by no means comprehensive. But coroutine API is esentially a
-        /// wrapper arround callbacks. The purpose is to test the interface
+        /// This is by no means comprehensive. But coroutine API is essentially
+        /// a wrapper around callbacks. The purpose is to test the interface
         /// works 7.1 Basic queries
         try
         {
@@ -1749,11 +2292,360 @@ DROGON_TEST(MySQLTest)
     drogon::sync_wait(coro_test());
 
 #endif
+
+    /// 8 Test ORM related query
+    /// 8.1 async
+    /// 8.1.1 one-to-one
+    Mapper<Wallets> walletsMapper(clientPtr);
+
+    /// prepare
+    {
+        Wallets wallet;
+        wallet.setUserId("pg");
+        wallet.setAmount("2000.00");
+        try
+        {
+            walletsMapper.insert(wallet);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(0) what():",
+                  e.base().what());
+        }
+    }
+
+    /// users to wallets
+    {
+        Users user;
+        user.setUserId("pg");
+        user.getWallet(
+            clientPtr,
+            [TEST_CTX](Wallets r) {
+                MANDATE(r.getValueOfAmount() == "2000.00");
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT("mysql - ORM mapper related async one-to-one(0) what():",
+                      e.base().what());
+            });
+    }
+    /// users to wallets without data
+    {
+        Users user;
+        user.setUserId("pg1");
+        user.getWallet(
+            clientPtr,
+            [TEST_CTX](Wallets w) {
+                FAULT("mysql - ORM mapper related async one-to-one(1)");
+            },
+            [TEST_CTX](const DrogonDbException &e) { SUCCESS(); });
+    }
+
+    /// 8.1.2 one-to-many
+    Mapper<Category> categoryMapper(clientPtr);
+    Mapper<Blog> blogMapper(clientPtr);
+
+    /// prepare
+    {
+        Category category;
+        category.setName("category1");
+        try
+        {
+            categoryMapper.insert(category);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(1) what():",
+                  e.base().what());
+        }
+        category.setName("category2");
+        try
+        {
+            categoryMapper.insert(category);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(2) what():",
+                  e.base().what());
+        }
+        Blog blog;
+        blog.setTitle("title1");
+        blog.setCategoryId(1);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(3) what():",
+                  e.base().what());
+        }
+        blog.setTitle("title2");
+        blog.setCategoryId(1);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(4) what():",
+                  e.base().what());
+        }
+        blog.setTitle("title3");
+        blog.setCategoryId(3);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(5) what():",
+                  e.base().what());
+        }
+    }
+
+    /// categories to blogs
+    {
+        Category category;
+        category.setId(1);
+        category.getBlogs(
+            clientPtr,
+            [TEST_CTX](std::vector<Blog> r) { MANDATE(r.size() == 2); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT("mysql - ORM mapper related async one-to-many(0) what():",
+                      e.base().what());
+            });
+    }
+    /// categories to blogs without data
+    {
+        Category category;
+        category.setId(2);
+        category.getBlogs(
+            clientPtr,
+            [TEST_CTX](std::vector<Blog> r) { MANDATE(r.size() == 0); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT("mysql - ORM mapper related async one-to-many(1) what():",
+                      e.base().what());
+            });
+    }
+    /// blogs to categories
+    {
+        Blog blog;
+        blog.setCategoryId(1);
+        blog.getCategory(
+            clientPtr,
+            [TEST_CTX](Category r) {
+                MANDATE(r.getValueOfName() == "category1");
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT("mysql - ORM mapper related async one-to-many(2) what():",
+                      e.base().what());
+            });
+    }
+    /// blogs to categories without data
+    {
+        Blog blog;
+        blog.setCategoryId(3);
+        blog.getCategory(
+            clientPtr,
+            [TEST_CTX](Category r) {
+                FAULT("mysql - ORM mapper related async one-to-many(3)");
+            },
+            [TEST_CTX](const DrogonDbException &e) { SUCCESS(); });
+    }
+
+    /// 8.1.3 many-to-many
+    Mapper<BlogTag> blogTagMapper(clientPtr);
+    Mapper<Tag> tagMapper(clientPtr);
+
+    /// prepare
+    {
+        BlogTag blogTag;
+        blogTag.setBlogId(1);
+        blogTag.setTagId(1);
+        try
+        {
+            blogTagMapper.insert(blogTag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(6) what():",
+                  e.base().what());
+        }
+        blogTag.setBlogId(1);
+        blogTag.setTagId(2);
+        try
+        {
+            blogTagMapper.insert(blogTag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(7) what():",
+                  e.base().what());
+        }
+        Tag tag;
+        tag.setName("tag1");
+        try
+        {
+            tagMapper.insert(tag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(8) what():",
+                  e.base().what());
+        }
+        tag.setName("tag2");
+        try
+        {
+            tagMapper.insert(tag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related prepare(9) what():",
+                  e.base().what());
+        }
+    }
+
+    /// blogs to tags
+    {
+        Blog blog;
+        blog.setId(1);
+        blog.getTags(
+            clientPtr,
+            [TEST_CTX](std::vector<std::pair<Tag, BlogTag>> r) {
+                MANDATE(r.size() == 2);
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "mysql - ORM mapper related async many-to-many(0) what():",
+                    e.base().what());
+            });
+    }
+
+    /// 8.2 async
+    /// 8.2.1 one-to-one
+    /// users to wallets
+    {
+        Users user;
+        user.setUserId("pg");
+        try
+        {
+            auto r = user.getWallet(clientPtr);
+            MANDATE(r.getValueOfAmount() == "2000.00");
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related sync one-to-one(0) what():",
+                  e.base().what());
+        }
+    }
+    /// users to wallets without data
+    {
+        Users user;
+        user.setUserId("pg1");
+        try
+        {
+            auto r = user.getWallet(clientPtr);
+            FAULT("mysql - ORM mapper related sync one-to-one(1)");
+        }
+        catch (const DrogonDbException &e)
+        {
+            SUCCESS();
+        }
+    }
+
+    /// 8.2.2 one-to-many
+    /// categories to blogs
+    {
+        Category category;
+        category.setId(1);
+        try
+        {
+            auto r = category.getBlogs(clientPtr);
+            MANDATE(r.size() == 2);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related sync one-to-many(0) what():",
+                  e.base().what());
+        }
+    }
+    /// categories to blogs without data
+    {
+        Category category;
+        category.setId(2);
+        try
+        {
+            auto r = category.getBlogs(clientPtr);
+            MANDATE(r.size() == 0);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related sync one-to-many(1) what():",
+                  e.base().what());
+        }
+    }
+    /// blogs to categories
+    {
+        Blog blog;
+        blog.setCategoryId(1);
+        try
+        {
+            auto r = blog.getCategory(clientPtr);
+            MANDATE(r.getValueOfName() == "category1");
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related sync one-to-many(2) what():",
+                  e.base().what());
+        }
+    }
+    /// blogs to categories without data
+    {
+        Blog blog;
+        blog.setCategoryId(3);
+        try
+        {
+            auto r = blog.getCategory(clientPtr);
+            FAULT("mysql - ORM mapper related sync one-to-many(3)");
+        }
+        catch (const DrogonDbException &e)
+        {
+            SUCCESS();
+        }
+    }
+
+    /// 8.2.3 many-to-many
+    /// blogs to tags
+    {
+        Blog blog;
+        blog.setId(1);
+        try
+        {
+            auto r = blog.getTags(clientPtr);
+            MANDATE(r.size() == 2);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("mysql - ORM mapper related sync many-to-many(0) what():",
+                  e.base().what());
+        }
+    }
 }
 #endif
 
 #if USE_SQLITE3
 DbClientPtr sqlite3Client;
+
 DROGON_TEST(SQLite3Test)
 {
     auto &clientPtr = sqlite3Client;
@@ -1789,6 +2681,89 @@ DROGON_TEST(SQLite3Test)
         [TEST_CTX](const Result &r) { SUCCESS(); } >>
         [TEST_CTX](const DrogonDbException &e) {
             FAULT("sqlite3 - Prepare the test environment(1) what():",
+                  e.base().what());
+        };
+    // wallets table one-to-one with users table
+    *clientPtr << "DROP TABLE IF EXISTS wallets" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(2) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE `wallets` ("
+                  "    `id` INTEGER PRIMARY KEY autoincrement,"
+                  "    `user_id` varchar(32) DEFAULT NULL,"
+                  "    `amount` decimal(16,2) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(3) what():",
+                  e.base().what());
+        };
+    // blog
+    *clientPtr << "DROP TABLE IF EXISTS blog" >> [TEST_CTX](const Result &r) {
+        SUCCESS();
+    } >> [TEST_CTX](const DrogonDbException &e) {
+        FAULT("sqlite3 - Prepare the test environment(4) what():",
+              e.base().what());
+    };
+    *clientPtr << "CREATE TABLE `blog` ("
+                  "    `id` INTEGER PRIMARY KEY autoincrement,"
+                  "    `title` varchar(30) DEFAULT NULL,"
+                  "    `category_id` INTEGER DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(5) what():",
+                  e.base().what());
+        };
+    // category table one-to-many with blog table
+    *clientPtr << "DROP TABLE IF EXISTS category" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(6) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE `category` ("
+                  "    `id` INTEGER PRIMARY KEY autoincrement,"
+                  "    `name` varchar(30) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(7) what():",
+                  e.base().what());
+        };
+    // tag table many-to-many with blog table
+    *clientPtr << "DROP TABLE IF EXISTS tag" >> [TEST_CTX](const Result &r) {
+        SUCCESS();
+    } >> [TEST_CTX](const DrogonDbException &e) {
+        FAULT("sqlite3 - Prepare the test environment(8) what():",
+              e.base().what());
+    };
+    *clientPtr << "CREATE TABLE `tag` ("
+                  "    `id` INTEGER PRIMARY KEY autoincrement,"
+                  "    `name` varchar(30) DEFAULT NULL"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(9) what():",
+                  e.base().what());
+        };
+    // blog_tag table is an intermediate table
+    *clientPtr << "DROP TABLE IF EXISTS blog_tag" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(10) what():",
+                  e.base().what());
+        };
+    *clientPtr << "CREATE TABLE `blog_tag` ("
+                  "    `blog_id` INTEGER NOT NULL,"
+                  "    `tag_id` INTEGER NOT NULL,"
+                  "    PRIMARY KEY (`blog_id`,`tag_id`)"
+                  ")" >>
+        [TEST_CTX](const Result &r) { SUCCESS(); } >>
+        [TEST_CTX](const DrogonDbException &e) {
+            FAULT("sqlite3 - Prepare the test environment(11) what():",
                   e.base().what());
         };
     /// Test1:DbClient streaming-type interface
@@ -2036,20 +3011,20 @@ DROGON_TEST(SQLite3Test)
         FAULT("sqlite3 - DbClient asynchronous interface(0) what():",
               e.base().what());
     }
-    /// 3.2 insert,(string_view)
+    /// 3.2 insert,(std::string_view)
     try
     {
-        drogon::string_view sv("pg1");
-        drogon::string_view sv1("postgresql1");
-        drogon::string_view sv2("123");
+        std::string_view sv("pg1");
+        std::string_view sv1("postgresql1");
+        std::string_view sv2("123");
         auto r = clientPtr->execSqlSync(
             "insert into users  "
             "(user_id,user_name,password,org_name,create_time) "
             "values(?,?,?,?,?)",
             sv,
-            (const drogon::string_view &)sv1,
+            (const std::string_view &)sv1,
             std::move(sv2),
-            drogon::string_view("default"),
+            std::string_view("default"),
             trantor::Date::now());
         MANDATE(r.affectedRows() == 1UL);
     }
@@ -2520,8 +3495,8 @@ DROGON_TEST(SQLite3Test)
 #ifdef __cpp_impl_coroutine
     auto coro_test = [clientPtr, TEST_CTX]() -> drogon::Task<> {
         /// 7 Test coroutines.
-        /// This is by no means comprehensive. But coroutine API is esentially a
-        /// wrapper arround callbacks. The purpose is to test the interface
+        /// This is by no means comprehensive. But coroutine API is essentially
+        /// a wrapper around callbacks. The purpose is to test the interface
         /// works 7.1 Basic queries
         try
         {
@@ -2588,17 +3563,372 @@ DROGON_TEST(SQLite3Test)
     drogon::sync_wait(coro_test());
 
 #endif
+
+    /// 8 Test ORM related query
+    /// 8.1 async
+    /// 8.1.1 one-to-one
+    Mapper<Wallets> walletsMapper(clientPtr);
+
+    /// prepare
+    {
+        Wallets wallet;
+        wallet.setUserId("pg");
+        wallet.setAmount("2000.00");
+        try
+        {
+            walletsMapper.insert(wallet);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(0) what():",
+                  e.base().what());
+        }
+    }
+
+    /// users to wallets
+    {
+        Users user;
+        user.setUserId("pg");
+        user.getWallet(
+            clientPtr,
+            [TEST_CTX](Wallets r) { MANDATE(r.getValueOfAmount() == "2000"); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "sqlite3 - ORM mapper related async one-to-one(0) what(): ",
+                    e.base().what());
+            });
+    }
+    /// users to wallets without data
+    {
+        Users user;
+        user.setUserId("pg1");
+        user.getWallet(
+            clientPtr,
+            [TEST_CTX](Wallets w) {
+                FAULT("sqlite3 - ORM mapper related async one-to-one(1)");
+            },
+            [TEST_CTX](const DrogonDbException &e) { SUCCESS(); });
+    }
+
+    /// 8.1.2 one-to-many
+    Mapper<Category> categoryMapper(clientPtr);
+    Mapper<Blog> blogMapper(clientPtr);
+
+    /// prepare
+    {
+        Category category;
+        category.setName("category1");
+        try
+        {
+            categoryMapper.insert(category);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(1) what():",
+                  e.base().what());
+        }
+        category.setName("category2");
+        try
+        {
+            categoryMapper.insert(category);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(2) what():",
+                  e.base().what());
+        }
+        Blog blog;
+        blog.setTitle("title1");
+        blog.setCategoryId(1);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(3) what():",
+                  e.base().what());
+        }
+        blog.setTitle("title2");
+        blog.setCategoryId(1);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(4) what():",
+                  e.base().what());
+        }
+        blog.setTitle("title3");
+        blog.setCategoryId(3);
+        try
+        {
+            blogMapper.insert(blog);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(5) what():",
+                  e.base().what());
+        }
+    }
+
+    /// categories to blogs
+    {
+        Category category;
+        category.setId(1);
+        category.getBlogs(
+            clientPtr,
+            [TEST_CTX](std::vector<Blog> r) { MANDATE(r.size() == 2); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "sqlite3 - ORM mapper related async one-to-many(0) "
+                    "what(): ",
+                    e.base().what());
+            });
+    }
+    /// categories to blogs without data
+    {
+        Category category;
+        category.setId(2);
+        category.getBlogs(
+            clientPtr,
+            [TEST_CTX](std::vector<Blog> r) { MANDATE(r.size() == 0); },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "sqlite3 - ORM mapper related async one-to-many(1) "
+                    "what(): ",
+                    e.base().what());
+            });
+    }
+    /// blogs to categories
+    {
+        Blog blog;
+        blog.setCategoryId(1);
+        blog.getCategory(
+            clientPtr,
+            [TEST_CTX](Category r) {
+                MANDATE(r.getValueOfName() == "category1");
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "sqlite3 - ORM mapper related async one-to-many(2) "
+                    "what(): ",
+                    e.base().what());
+            });
+    }
+    /// blogs to categories without data
+    {
+        Blog blog;
+        blog.setCategoryId(3);
+        blog.getCategory(
+            clientPtr,
+            [TEST_CTX](Category r) {
+                FAULT("sqlite3 - ORM mapper related async one-to-many(3)");
+            },
+            [TEST_CTX](const DrogonDbException &e) { SUCCESS(); });
+    }
+
+    /// 8.1.3 many-to-many
+    Mapper<BlogTag> blogTagMapper(clientPtr);
+    Mapper<Tag> tagMapper(clientPtr);
+
+    /// prepare
+    {
+        BlogTag blogTag;
+        blogTag.setBlogId(1);
+        blogTag.setTagId(1);
+        try
+        {
+            blogTagMapper.insert(blogTag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(6) what():",
+                  e.base().what());
+        }
+        blogTag.setBlogId(1);
+        blogTag.setTagId(2);
+        try
+        {
+            blogTagMapper.insert(blogTag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(7) what():",
+                  e.base().what());
+        }
+        Tag tag;
+        tag.setName("tag1");
+        try
+        {
+            tagMapper.insert(tag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(8) what():",
+                  e.base().what());
+        }
+        tag.setName("tag2");
+        try
+        {
+            tagMapper.insert(tag);
+            SUCCESS();
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related prepare(9) what():",
+                  e.base().what());
+        }
+    }
+
+    /// blogs to tags
+    {
+        Blog blog;
+        blog.setId(1);
+        blog.getTags(
+            clientPtr,
+            [TEST_CTX](std::vector<std::pair<Tag, BlogTag>> r) {
+                MANDATE(r.size() == 2);
+            },
+            [TEST_CTX](const DrogonDbException &e) {
+                FAULT(
+                    "sqlite3 - ORM mapper related async many-to-many(0) "
+                    "what():",
+                    e.base().what());
+            });
+    }
+
+    /// 8.2 async
+    /// 8.2.1 one-to-one
+    /// users to wallets
+    {
+        Users user;
+        user.setUserId("pg");
+        try
+        {
+            auto r = user.getWallet(clientPtr);
+            MANDATE(r.getValueOfAmount() == "2000");
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related sync one-to-one(0) what():",
+                  e.base().what());
+        }
+    }
+    /// users to wallets without data
+    {
+        Users user;
+        user.setUserId("pg1");
+        try
+        {
+            auto r = user.getWallet(clientPtr);
+            FAULT("sqlite3 - ORM mapper related sync one-to-one(1)");
+        }
+        catch (const DrogonDbException &e)
+        {
+            SUCCESS();
+        }
+    }
+
+    /// 8.2.2 one-to-many
+    /// categories to blogs
+    {
+        Category category;
+        category.setId(1);
+        try
+        {
+            auto r = category.getBlogs(clientPtr);
+            MANDATE(r.size() == 2);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related sync one-to-many(0) what():",
+                  e.base().what());
+        }
+    }
+    /// categories to blogs without data
+    {
+        Category category;
+        category.setId(2);
+        try
+        {
+            auto r = category.getBlogs(clientPtr);
+            MANDATE(r.size() == 0);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related sync one-to-many(1) what():",
+                  e.base().what());
+        }
+    }
+    /// blogs to categories
+    {
+        Blog blog;
+        blog.setCategoryId(1);
+        try
+        {
+            auto r = blog.getCategory(clientPtr);
+            MANDATE(r.getValueOfName() == "category1");
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related sync one-to-many(2) what():",
+                  e.base().what());
+        }
+    }
+    /// blogs to categories without data
+    {
+        Blog blog;
+        blog.setCategoryId(3);
+        try
+        {
+            auto r = blog.getCategory(clientPtr);
+            FAULT("sqlite3 - ORM mapper related sync one-to-many(3)");
+        }
+        catch (const DrogonDbException &e)
+        {
+            SUCCESS();
+        }
+    }
+
+    /// 8.2.3 many-to-many
+    /// blogs to tags
+    {
+        Blog blog;
+        blog.setId(1);
+        try
+        {
+            auto r = blog.getTags(clientPtr);
+            MANDATE(r.size() == 2);
+        }
+        catch (const DrogonDbException &e)
+        {
+            FAULT("sqlite3 - ORM mapper related sync many-to-many(0) what():",
+                  e.base().what());
+        }
+    }
 }
 #endif
 
 using namespace drogon;
+
 int main(int argc, char **argv)
 {
     trantor::Logger::setLogLevel(trantor::Logger::LogLevel::kDebug);
 
 #if USE_MYSQL
     mysqlClient = DbClient::newMysqlClient(
-        "host=localhost port=3306 user=root client_encoding=utf8mb4", 1);
+        "host=127.0.0.1 port=3306 user=root client_encoding=utf8mb4", 1);
 #endif
 #if USE_POSTGRESQL
     postgreClient = DbClient::newPgClient(

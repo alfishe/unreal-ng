@@ -26,6 +26,7 @@ namespace plugin
       "name": "drogon::plugin::AccessLogger",
       "dependencies": [],
       "config": {
+            "use_spdlog": false,
             "log_path": "./",
             "log_format": "",
             "log_file": "access.log",
@@ -35,6 +36,7 @@ namespace plugin
             // "show_microseconds": true,
             // "custom_time_format": "",
             // "use_real_ip": false
+            // "path_exempt": ""
       }
    }
    @endcode
@@ -68,6 +70,8 @@ namespace plugin
  * "$request_date $method $url [$body_bytes_received] ($remote_addr -
  * $local_addr) $status $body_bytes_sent $processing_time" is applied.
  *
+ * use_spdlog: log using spdlog, disabled by default.
+ *
  * log_path: Log file path, empty by default,in which case,logs are output to
  * the regular log file (or stdout based on the log configuration).
  *
@@ -85,7 +89,7 @@ namespace plugin
  * show_microseconds: Whether print microsecond in time. True by default.
  *
  * custom_time_format: Provide a custom format for time. If not provided or
- * empty, the default format is "%Y%m%d %H:%M:%S", with microseonds followed if
+ * empty, the default format is "%Y%m%d %H:%M:%S", with microseconds followed if
  * show_microseconds is true. For detailed information about formats, please
  * refer to cpp reference about strftime().
  *
@@ -95,6 +99,10 @@ namespace plugin
  * Enable the plugin by adding the configuration to the list of plugins in the
  * configuration file.
  *
+ * path_exempt: must be a string or a string array, present a regular expression
+ * (for matching the path of a request) or a regular expression list for URLs
+ * that don't have to be logged.
+ *
  */
 class DROGON_EXPORT AccessLogger : public drogon::Plugin<AccessLogger>
 {
@@ -102,6 +110,7 @@ class DROGON_EXPORT AccessLogger : public drogon::Plugin<AccessLogger>
     AccessLogger()
     {
     }
+
     void initAndStart(const Json::Value &config) override;
     void shutdown() override;
 
@@ -113,6 +122,8 @@ class DROGON_EXPORT AccessLogger : public drogon::Plugin<AccessLogger>
     bool useCustomTimeFormat_{false};
     std::string timeFormat_;
     static bool useRealIp_;
+    std::regex exemptRegex_;
+    bool regexFlag_{false};
 
     using LogFunction = std::function<void(trantor::LogStream &,
                                            const drogon::HttpRequestPtr &,

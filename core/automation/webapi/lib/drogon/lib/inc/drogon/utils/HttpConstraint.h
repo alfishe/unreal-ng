@@ -16,6 +16,7 @@
 
 #include <drogon/HttpTypes.h>
 #include <string>
+
 namespace drogon
 {
 namespace internal
@@ -24,7 +25,7 @@ enum class ConstraintType
 {
     None,
     HttpMethod,
-    HttpFilter
+    HttpMiddleware
 };
 
 class HttpConstraint
@@ -34,31 +35,37 @@ class HttpConstraint
         : type_(ConstraintType::HttpMethod), method_(method)
     {
     }
-    HttpConstraint(const std::string &filterName)
-        : type_(ConstraintType::HttpFilter), filterName_(filterName)
+
+    HttpConstraint(std::string middlewareName)
+        : type_(ConstraintType::HttpMiddleware),
+          middlewareName_(std::move(middlewareName))
     {
     }
-    HttpConstraint(const char *filterName)
-        : type_(ConstraintType::HttpFilter), filterName_(filterName)
+
+    HttpConstraint(const char *middlewareName)
+        : type_(ConstraintType::HttpMiddleware), middlewareName_(middlewareName)
     {
     }
+
     ConstraintType type() const
     {
         return type_;
     }
+
     HttpMethod getHttpMethod() const
     {
         return method_;
     }
-    const std::string &getFilterName() const
+
+    const std::string &getMiddlewareName() const
     {
-        return filterName_;
+        return middlewareName_;
     }
 
   private:
     ConstraintType type_{ConstraintType::None};
     HttpMethod method_{HttpMethod::Invalid};
-    std::string filterName_;
+    std::string middlewareName_;
 };
 }  // namespace internal
 }  // namespace drogon

@@ -16,7 +16,7 @@
 #include "PostgreSQLResultImpl.h"
 #include <drogon/orm/Exception.h>
 #include <drogon/utils/Utilities.h>
-#include <drogon/utils/string_view.h>
+#include <string_view>
 #include <trantor/utils/Logger.h>
 #include <memory>
 #include <stdio.h>
@@ -35,6 +35,7 @@ Result makeResult(std::shared_ptr<PGresult> &&r = nullptr)
 
 }  // namespace orm
 }  // namespace drogon
+
 int PgConnection::flush()
 {
     auto ret = PQflush(connectionPtr_.get());
@@ -54,6 +55,7 @@ int PgConnection::flush()
     }
     return ret;
 }
+
 PgConnection::PgConnection(trantor::EventLoop *loop,
                            const std::string &connInfo,
                            bool)
@@ -63,14 +65,26 @@ PgConnection::PgConnection(trantor::EventLoop *loop,
                                   [](PGconn *conn) { PQfinish(conn); })),
       channel_(loop, PQsocket(connectionPtr_.get()))
 {
-    PQsetnonblocking(connectionPtr_.get(), 1);
     if (channel_.fd() < 0)
     {
-        LOG_FATAL << "Socket fd < 0, Usually this is because the number of "
-                     "files opened by the program exceeds the system "
-                     "limit. Please use the ulimit command to check.";
-        exit(1);
+        LOG_ERROR << "Failed to create Postgres connection";
     }
+}
+
+void PgConnection::init()
+{
+    if (channel_.fd() < 0)
+    {
+        LOG_ERROR << "Connection with Postgres could not be established";
+        if (closeCallback_)
+        {
+            auto thisPtr = shared_from_this();
+            closeCallback_(thisPtr);
+        }
+        return;
+    }
+
+    PQsetnonblocking(connectionPtr_.get(), 1);
     channel_.setReadCallback([this]() {
         if (status_ == ConnectStatus::Bad)
         {
@@ -119,6 +133,15 @@ void PgConnection::handleClosed()
     if (status_ == ConnectStatus::Bad)
         return;
     status_ = ConnectStatus::Bad;
+
+    if (isWorking_)
+    {
+        // Connection was closed unexpectedly while isWorking_ was true.
+        isWorking_ = false;
+        handleFatalError();
+        callback_ = nullptr;
+    }
+
     channel_.disableAll();
     channel_.remove();
     assert(closeCallback_);
@@ -133,8 +156,11 @@ void PgConnection::disconnect()
     auto thisPtr = shared_from_this();
     loop_->runInLoop([thisPtr, &pro]() {
         thisPtr->status_ = ConnectStatus::Bad;
-        thisPtr->channel_.disableAll();
-        thisPtr->channel_.remove();
+        if (thisPtr->channel_.fd() >= 0)
+        {
+            thisPtr->channel_.disableAll();
+            thisPtr->channel_.remove();
+        }
         thisPtr->connectionPtr_.reset();
         pro.set_value(1);
     });
@@ -188,7 +214,7 @@ void PgConnection::pgPoll()
 }
 
 void PgConnection::execSqlInLoop(
-    string_view &&sql,
+    std::string_view &&sql,
     size_t paraNum,
     std::vector<const char *> &&parameters,
     std::vector<int> &&length,
@@ -362,7 +388,8 @@ void PgConnection::doAfterPreparing()
 {
     isPreparingStatement_ = false;
     auto r = preparedStatements_.insert(std::string{sql_});
-    preparedStatementsMap_[string_view{r.first->data(), r.first->length()}] =
+    preparedStatementsMap_[std::string_view{r.first->data(),
+                                            r.first->length()}] =
         statementName_;
     if (PQsendQueryPrepared(connectionPtr_.get(),
                             statementName_.c_str(),
@@ -388,9 +415,13 @@ void PgConnection::doAfterPreparing()
 
 void PgConnection::handleFatalError()
 {
-    auto exceptPtr =
-        std::make_exception_ptr(Failure(PQerrorMessage(connectionPtr_.get())));
-    exceptionCallback_(exceptPtr);
+    if (exceptionCallback_)
+    {
+        auto exceptPtr = std::make_exception_ptr(
+            Failure(PQerrorMessage(connectionPtr_.get())));
+        exceptionCallback_(exceptPtr);
+    }
+
     exceptionCallback_ = nullptr;
 }
 

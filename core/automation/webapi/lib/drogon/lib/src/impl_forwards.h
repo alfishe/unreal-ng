@@ -17,6 +17,8 @@ class WebSocketControllerBase;
 using WebSocketControllerBasePtr = std::shared_ptr<WebSocketControllerBase>;
 class HttpFilterBase;
 using HttpFilterBasePtr = std::shared_ptr<HttpFilterBase>;
+class HttpMiddlewareBase;
+using HttpMiddlewareBasePtr = std::shared_ptr<HttpMiddlewareBase>;
 class HttpSimpleControllerBase;
 using HttpSimpleControllerBasePtr = std::shared_ptr<HttpSimpleControllerBase>;
 class HttpRequestImpl;
@@ -26,10 +28,6 @@ using HttpResponseImplPtr = std::shared_ptr<HttpResponseImpl>;
 class WebSocketConnectionImpl;
 using WebSocketConnectionImplPtr = std::shared_ptr<WebSocketConnectionImpl>;
 class HttpRequestParser;
-class StaticFileRouter;
-class HttpControllersRouter;
-class WebsocketControllersRouter;
-class HttpSimpleControllersRouter;
 class PluginsManager;
 class ListenerManager;
 class SharedLibManager;
@@ -42,6 +40,7 @@ class DbClient;
 using DbClientPtr = std::shared_ptr<DbClient>;
 class DbClientManager;
 }  // namespace orm
+
 namespace nosql
 {
 class RedisClient;

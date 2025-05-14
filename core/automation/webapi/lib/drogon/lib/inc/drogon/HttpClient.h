@@ -21,6 +21,7 @@
 #include <drogon/HttpRequest.h>
 #include <trantor/utils/NonCopyable.h>
 #include <trantor/net/EventLoop.h>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <future>
@@ -63,7 +64,7 @@ struct HttpRespAwaiter : public CallbackAwaiter<HttpResponsePtr>
  * If the connection is broken, the client attempts to reconnect
  * when calling the sendRequest method.
  *
- * Using the static mathod newHttpClient(...) to get shared_ptr of the object
+ * Using the static method newHttpClient(...) to get shared_ptr of the object
  * implementing the class, the shared_ptr is retained in the framework until all
  * response callbacks are invoked without fear of accidental deconstruction.
  *
@@ -178,6 +179,12 @@ class DROGON_EXPORT HttpClient : public trantor::NonCopyable
      */
     virtual void setSockOptCallback(std::function<void(int)> cb) = 0;
 
+    /**
+     * @brief Return the number of unsent http requests in the current http
+     * client cache buffer
+     */
+    virtual std::size_t requestsBufferSize() = 0;
+
     /// Set the pipelining depth, which is the number of requests that are not
     /// responding.
     /**
@@ -224,7 +231,7 @@ class DROGON_EXPORT HttpClient : public trantor::NonCopyable
     virtual void setUserAgent(const std::string &userAgent) = 0;
 
     /**
-     * @brief Creaet a new HTTP client which use ip and port to connect to
+     * @brief Create a new HTTP client which use ip and port to connect to
      * server
      *
      * @param ip The ip address of the HTTP server
@@ -235,7 +242,7 @@ class DROGON_EXPORT HttpClient : public trantor::NonCopyable
      * HttpAppFramework's event loop, otherwise it runs in the loop identified
      * by the parameter.
      * @param useOldTLS If the parameter is set to true, the TLS1.0/1.1 are
-     * eanbled for HTTPS.
+     * enabled for HTTPS.
      * @param validateCert If the parameter is set to true, the client validates
      * the server certificate when SSL handshaking.
      * @return HttpClientPtr The smart pointer to the new client object.
@@ -256,12 +263,14 @@ class DROGON_EXPORT HttpClient : public trantor::NonCopyable
     virtual size_t bytesReceived() const = 0;
 
     virtual std::string host() const = 0;
+
     std::string getHost() const
     {
         return host();
     }
 
     virtual uint16_t port() const = 0;
+
     uint16_t getPort() const
     {
         return port();
@@ -351,14 +360,17 @@ class HttpException : public std::exception
 {
   public:
     HttpException() = delete;
+
     explicit HttpException(ReqResult res)
         : resultCode_(res), message_(to_string_view(res))
     {
     }
+
     const char *what() const noexcept override
     {
         return message_.data();
     }
+
     ReqResult code() const
     {
         return resultCode_;

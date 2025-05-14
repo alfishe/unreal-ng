@@ -18,6 +18,7 @@
 #include <botan/certstor_flatfile.h>
 #include <botan/x509path.h>
 #include <botan/tls_session_manager_memory.h>
+#include <memory>
 
 using namespace trantor;
 using namespace std::placeholders;
@@ -26,9 +27,23 @@ static std::once_flag sessionManagerInitFlag;
 static std::shared_ptr<Botan::AutoSeeded_RNG> sessionManagerRng;
 static std::shared_ptr<Botan::TLS::Session_Manager_In_Memory> sessionManager;
 static thread_local std::shared_ptr<Botan::AutoSeeded_RNG> rng;
-static Botan::System_Certificate_Store certStore;
+static std::unique_ptr<Botan::System_Certificate_Store> systemCertStore;
+static std::once_flag systemCertStoreInitFlag;
 
 using namespace trantor;
+
+static std::string join(const std::vector<std::string> &vec,
+                        const std::string &delim)
+{
+    std::string ret;
+    for (auto const &str : vec)
+    {
+        if (ret.empty() == false)
+            ret += delim;
+        ret += str;
+    }
+    return ret;
+}
 
 class Credentials : public Botan::Credentials_Manager
 {
@@ -204,38 +219,55 @@ struct BotanTLSProvider : public TLSProvider,
         if (getBufferedData().readableBytes() != 0)
         {
             errno = EAGAIN;
-            return -1;
+            return 0;
         }
 
         // Limit the size of the data we send in one go to avoid holding massive
         // buffers in memory.
         constexpr size_t maxSend = 64 * 1024;
-        if (size > maxSend)
-            size = maxSend;
-        channel_->send((const uint8_t *)ptr, size);
-
-        // HACK: Botan doesn't provide a way to know how much raw data has been
-        // written to the underlying transport. So we have to assume that all
-        // data has been written. And cache the unwritten data in writeBuffer_.
-        // Then "fake" the consumed size in sendData() to make the caller think
-        // that all data has been written. Then return -1 if the underlying
-        // socket is not writable at all (i.e. write is all or nothing)
-        if (lastWriteSize_ == -1)
-            return -1;
-        return size;
+        size_t hasSent = 0;
+        while (hasSent < size && getBufferedData().readableBytes() == 0)
+        {
+            auto trunkLen = size - hasSent;
+            if (trunkLen > maxSend)
+                trunkLen = maxSend;
+            channel_->send((const uint8_t *)ptr, size);
+            // HACK: Botan doesn't provide a way to know how much raw data has
+            // been written to the underlying transport. So we have to assume
+            // that all data has been written. And cache the unwritten data in
+            // writeBuffer_. Then "fake" the consumed size in sendData() to make
+            // the caller think that all data has been written. Then return -1
+            // if the underlying socket is not writable at all (i.e. write is
+            // all or nothing)
+            if (lastWriteSize_ == -1)
+                return -1;
+            hasSent += trunkLen;
+        }
+        return static_cast<ssize_t>(hasSent);
     }
 
     virtual void close() override
     {
         if (channel_ && channel_->is_active())
+        {
             channel_->close();
+        }
     }
 
     virtual void startEncryption() override
     {
+        auto certStorePtr = contextPtr_->certStore.get();
+        if (certStorePtr == nullptr)
+        {
+            std::call_once(systemCertStoreInitFlag, []() {
+                systemCertStore =
+                    std::make_unique<Botan::System_Certificate_Store>();
+            });
+            certStorePtr = systemCertStore.get();
+        }
         credsPtr_ = std::make_shared<Credentials>(contextPtr_->key,
                                                   contextPtr_->cert.get(),
-                                                  contextPtr_->certStore.get());
+                                                  certStorePtr);
         if (policyPtr_->getConfCmds().empty() == false)
             LOG_WARN << "BotanTLSConnectionImpl does not support sslConfCmds.";
 
@@ -248,12 +280,14 @@ struct BotanTLSProvider : public TLSProvider,
         });
         if (rng == nullptr)
             rng = std::make_shared<Botan::AutoSeeded_RNG>();
+
+        auto fakeThis = std::shared_ptr<BotanTLSProvider>(this, [](auto) {});
         if (contextPtr_->isServer)
         {
             // TODO: Need a more scalable way to manage session validation rules
             validationPolicy_->requireClientCert_ =
                 contextPtr_->requireClientCert;
-            channel_ = std::make_unique<Botan::TLS::Server>(shared_from_this(),
+            channel_ = std::make_unique<Botan::TLS::Server>(std::move(fakeThis),
                                                             sessionManager,
                                                             credsPtr_,
                                                             validationPolicy_,
@@ -268,7 +302,7 @@ struct BotanTLSProvider : public TLSProvider,
             if (policyPtr_->getUseOldTLS())
                 LOG_WARN << "Old TLS not supported by Botan (only >= TLS 1.2)";
             channel_ = std::make_unique<Botan::TLS::Client>(
-                shared_from_this(),
+                std::move(fakeThis),
                 sessionManager,
                 credsPtr_,
                 validationPolicy_,
@@ -313,6 +347,28 @@ struct BotanTLSProvider : public TLSProvider,
             messageCallback_(conn_, &recvBuffer_);
     }
 
+    std::string tls_server_choose_app_protocol(
+        const std::vector<std::string> &client_protos) override
+    {
+        assert(contextPtr_->isServer);
+        if (policyPtr_->getAlpnProtocols().empty() || client_protos.empty())
+            return "";
+
+        for (auto const &proto : client_protos)
+        {
+            if (std::find(policyPtr_->getAlpnProtocols().begin(),
+                          policyPtr_->getAlpnProtocols().end(),
+                          proto) != policyPtr_->getAlpnProtocols().end())
+                return proto;
+        }
+
+        throw Botan::TLS::TLS_Exception(
+            Botan::TLS::Alert::NoApplicationProtocol,
+            "No supported application protocol found. Client offered: " +
+                join(client_protos, ", ") + " but we support: " +
+                join(policyPtr_->getAlpnProtocols(), ", "));
+    }
+
     void tls_alert(Botan::TLS::Alert alert) override
     {
         if (alert.type() == Botan::TLS::Alert::CloseNotify)
@@ -328,18 +384,13 @@ struct BotanTLSProvider : public TLSProvider,
         }
     }
 
-    bool tls_session_established(const Botan::TLS::Session &session)
+    void tls_session_activated() override
     {
-        (void)session;
-        LOG_TRACE << "tls_session_established";
+        LOG_TRACE << "tls_session_activated";
         tlsConnected_ = true;
-        loop_->queueInLoop([this]() {
-            setApplicationProtocol(channel_->application_protocol());
-            if (handshakeCallback_)
-                handshakeCallback_(conn_);
-        });
-        // Do we want to cache all sessions?
-        return true;
+        setApplicationProtocol(channel_->application_protocol());
+        if (handshakeCallback_)
+            handshakeCallback_(conn_);
     }
 
     void tls_verify_cert_chain(
@@ -347,10 +398,10 @@ struct BotanTLSProvider : public TLSProvider,
         const std::vector<std::optional<Botan::OCSP::Response>> &ocsp,
         const std::vector<Botan::Certificate_Store *> &trusted_roots,
         Botan::Usage_Type usage,
-        const std::string &hostname,
-        const Botan::TLS::Policy &policy)
+        std::string_view hostname,
+        const Botan::TLS::Policy &policy) override
     {
-        setSniName(hostname);
+        setSniName(std::string(hostname));
         if (policyPtr_->getValidate() && !policyPtr_->getAllowBrokenChain())
             Botan::TLS::Callbacks::tls_verify_cert_chain(
                 certs, ocsp, trusted_roots, usage, hostname, policy);
@@ -379,6 +430,9 @@ struct BotanTLSProvider : public TLSProvider,
                     std::string("Certificate validation failed: ") +
                         Botan::to_string(result));
         }
+
+        if (certs.size() > 0)
+            setPeerCertificate(std::make_shared<BotanCertificate>(certs[0]));
     }
 
     std::shared_ptr<TrantorPolicy> validationPolicy_;
@@ -388,11 +442,11 @@ struct BotanTLSProvider : public TLSProvider,
     ssize_t lastWriteSize_ = 0;
 };
 
-std::unique_ptr<TLSProvider> trantor::newTLSProvider(TcpConnection *conn,
+std::shared_ptr<TLSProvider> trantor::newTLSProvider(TcpConnection *conn,
                                                      TLSPolicyPtr policy,
                                                      SSLContextPtr ctx)
 {
-    return std::make_unique<BotanTLSProvider>(conn,
+    return std::make_shared<BotanTLSProvider>(conn,
                                               std::move(policy),
                                               std::move(ctx));
 }
@@ -433,6 +487,6 @@ SSLContextPtr trantor::newSSLContext(const TLSPolicy &policy, bool server)
 
     if (policy.getUseOldTLS())
         LOG_WARN << "SSLPloicy have set useOldTLS to true. BUt Botan does not "
-                    "support TLS/SSL below TLS 1.2. Ignoreing this option.";
+                    "support TLS/SSL below TLS 1.2. Ignoring this option.";
     return ctx;
 }

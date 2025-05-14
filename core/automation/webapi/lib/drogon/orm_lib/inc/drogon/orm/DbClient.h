@@ -130,8 +130,10 @@ class DROGON_EXPORT DbClient : public trantor::NonCopyable
     /// Async and nonblocking method
     /**
      * @param sql is the SQL statement to be executed;
-     * @param FUNCTION1 is usually the ResultCallback type;
-     * @param FUNCTION2 is usually the ExceptionCallback type;
+     * @tparam FUNCTION1 is usually the ResultCallback type;
+     * @tparam FUNCTION2 is usually the ExceptionCallback type;
+     * @param rCallback callback function;
+     * @param exceptCallback callback function on exception;
      * @param args are parameters that are bound to placeholders in the sql
      * parameter;
      *
@@ -218,12 +220,14 @@ class DROGON_EXPORT DbClient : public trantor::NonCopyable
     /// wiki page.
     internal::SqlBinder operator<<(const std::string &sql);
     internal::SqlBinder operator<<(std::string &&sql);
+
     template <int N>
     internal::SqlBinder operator<<(const char (&sql)[N])
     {
         return internal::SqlBinder(sql, N - 1, *this, type_);
     }
-    internal::SqlBinder operator<<(const string_view &sql)
+
+    internal::SqlBinder operator<<(const std::string_view &sql)
     {
         return internal::SqlBinder(sql.data(), sql.length(), *this, type_);
     }
@@ -273,6 +277,7 @@ class DROGON_EXPORT DbClient : public trantor::NonCopyable
     {
         return type_;
     }
+
     const std::string &connectionInfo() const
     {
         return connectionInfo_;
@@ -352,6 +357,7 @@ class DROGON_EXPORT DbClient : public trantor::NonCopyable
     ClientType type_;
     std::string connectionInfo_;
 };
+
 using DbClientPtr = std::shared_ptr<DbClient>;
 
 class Transaction : public DbClient
@@ -361,6 +367,7 @@ class Transaction : public DbClient
     // virtual void commit() = 0;
     virtual void setCommitCallback(
         const std::function<void(bool)> &commitCallback) = 0;
+
     void closeAll() override
     {
     }

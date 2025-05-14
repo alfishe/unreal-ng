@@ -27,7 +27,7 @@ namespace drogon::plugin
  * @code
   {
      "name": "drogon::plugin::SlashRemover",
-     "dependencies": [],
+     "dependencies": ["drogon::plugin::Redirector"],
      "config": {
         // If true, it removes all trailing slashes, e.g.
 ///home// -> ///home
@@ -51,6 +51,7 @@ class DROGON_EXPORT SlashRemover : public drogon::Plugin<SlashRemover>
     SlashRemover()
     {
     }
+
     void initAndStart(const Json::Value &config) override;
     void shutdown() override;
 

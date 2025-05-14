@@ -15,9 +15,9 @@
 #include <drogon/plugins/Plugin.h>
 #include <drogon/plugins/RealIpResolver.h>
 #include <drogon/HttpAppFramework.h>
-#include <drogon/utils/optional.h>
 #include <drogon/CacheMap.h>
 #include <regex>
+#include <optional>
 
 namespace drogon
 {
@@ -71,7 +71,9 @@ IPs or users. the default value is 600.
                 "ip_capacity": 0,
                 "user_capacity": 0
             },...
-         ]
+        ],
+        // Trusted proxy ip or cidr
+        "trust_ips": ["127.0.0.1", "172.16.0.0/12"],
      }
   }
   @endcode
@@ -85,18 +87,21 @@ class DROGON_EXPORT Hodor : public drogon::Plugin<Hodor>
     Hodor()
     {
     }
+
     void initAndStart(const Json::Value &config) override;
     void shutdown() override;
+
     /**
      * @brief the method is used to set a function to get the user id from the
      * request. users should call this method after calling the app().run()
      * method. etc. use the beginning advice of AOP.
      * */
     void setUserIdGetter(
-        std::function<optional<std::string>(const HttpRequestPtr &)> func)
+        std::function<std::optional<std::string>(const HttpRequestPtr &)> func)
     {
         userIdGetter_ = std::move(func);
     }
+
     /**
      * @brief the method is used to set a function to create the response when
      * the rate limit is exceeded. users should call this method after calling
@@ -121,6 +126,7 @@ class DROGON_EXPORT Hodor : public drogon::Plugin<Hodor>
         std::unique_ptr<CacheMap<std::string, RateLimiterPtr>>
             userLimiterMapPtr;
     };
+
     LimitStrategy makeLimitStrategy(const Json::Value &config);
     std::vector<LimitStrategy> limitStrategies_;
     RateLimiterType algorithm_{RateLimiterType::kTokenBucket};
@@ -128,18 +134,20 @@ class DROGON_EXPORT Hodor : public drogon::Plugin<Hodor>
     bool multiThreads_{true};
     bool useRealIpResolver_{false};
     size_t limiterExpireTime_{600};
-    std::function<optional<std::string>(const drogon::HttpRequestPtr &)>
+    std::function<std::optional<std::string>(const drogon::HttpRequestPtr &)>
         userIdGetter_;
     std::function<HttpResponsePtr(const drogon::HttpRequestPtr &)>
         rejectResponseFactory_;
+
+    RealIpResolver::CIDRs trustCIDRs_;
 
     void onHttpRequest(const drogon::HttpRequestPtr &,
                        AdviceCallback &&,
                        AdviceChainCallback &&);
     bool checkLimit(const drogon::HttpRequestPtr &req,
                     const LimitStrategy &strategy,
-                    const std::string &ip,
-                    const drogon::optional<std::string> &userId);
+                    const trantor::InetAddress &ip,
+                    const std::optional<std::string> &userId);
     HttpResponsePtr rejectResponse_;
 };
 }  // namespace plugin
