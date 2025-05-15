@@ -163,6 +163,8 @@ option(ENABLE_REDIS "Build Redis support" OFF)
 option(ENABLE_SQLITE "Build SQLite support" OFF)
 option(ENABLE_MYSQL "Build MySQL support" OFF)
 option(ENABLE_POSTGRESQL "Build PostgreSQL support" OFF)
+# Drogon/trentor setting
+option(BUILD_TESTING OFF FORCE)
 
 # Add Drogon
 add_subdirectory(lib/drogon)

@@ -1,0 +1,42 @@
+#[=======================================================================[.rst:
+
+automation_lua-config.cmake.in
+------------------------------
+
+This is a template file used by CMake to generate the final automation_lua-config.cmake file.
+It's a critical component of the CMake package system that enables other projects
+to find and use this library via find_package(automation_lua).
+
+When a user calls find_package(automation_lua) in their project, CMake looks for this
+generated config file to load the package settings and targets.
+
+Package Generation Process:
+1. CMake processes this template during the build phase using the
+   configure_package_config_file() function in CMakeLists.txt.
+2. The processed file is written to the build directory as automation_lua-config.cmake
+3. During installation, the generated file is copied to the installation location
+
+How it works:
+1. @PACKAGE_INIT@ - This macro is replaced by CMake with code that handles
+   path calculations, making the package relocatable regardless of where
+   it's installed.
+2. find_dependency(lua) - Ensures that the Lua dependency is found
+3. include("${CMAKE_CURRENT_LIST_DIR}/automation_lua-targets.cmake") - Imports the
+   exported targets so they can be used in the consuming project.
+4. check_required_components() - Verifies that all components requested
+   by the user in find_package() are available.
+
+#]=======================================================================]
+
+@PACKAGE_INIT@
+
+# Find dependencies
+include(CMakeFindDependencyMacro)
+find_dependency(lua REQUIRED)
+find_dependency(unrealng COMPONENTS core REQUIRED)
+
+# Include the targets file
+include("${CMAKE_CURRENT_LIST_DIR}/automation_lua-targets.cmake")
+
+# Check if requested components are available
+check_required_components(automation_lua)

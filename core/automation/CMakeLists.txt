@@ -11,9 +11,10 @@ message(">> <${PROJECT_NAME}>")
 get_filename_component(ROOT_DIR ../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set (DATA_PATH ${ROOT_DIR}/data)
 
+option(ENABLE_AUTOMATION "Allow automation" ON)
 # Define options for each automation module
 option(ENABLE_LUA_AUTOMATION "Enable automation for Lua" ON)
-option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" ON)
+option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 
 # Respect parent's ENABLE_AUTOMATION option
@@ -62,12 +63,18 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Link all dependencies
     if (APPLE)
         target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-        set(common_libraries pthread iconv)
+        set(common_libraries iconv)
     endif (APPLE)
 
     if (UNIX AND NOT APPLE)
-        set(common_libraries -static-libstdc++ pthread)
+        set(common_libraries -static-libstdc++)
     endif (UNIX AND NOT APPLE)
+
+    # Conditional pthread linking - only link if webapi is disabled. drogon/trentor adds Threads::Threads linkage
+    if (NOT ENABLE_WEBAPI_AUTOMATION)
+        list(APPEND common_libraries Threads::Threads)
+    endif()
+
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>

@@ -2,7 +2,7 @@
 
 #include <thread>
 #include <sol/sol.hpp>
-#include "emulator/emulator.h"
+#include "emulator/lua_emulator.h"
 
 class AutomationLua
 {

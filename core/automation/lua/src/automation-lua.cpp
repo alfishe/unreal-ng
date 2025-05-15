@@ -1,8 +1,9 @@
 #include "automation-lua.h"
-#include "emulator/emulator.h"
+#include "emulator/lua_emulator.h"
 
 #include <chrono>
 #include <thread>
+#include <iostream>
 
 /// region <Methods>
 void AutomationLua::start()

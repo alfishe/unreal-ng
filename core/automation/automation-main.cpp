@@ -1,5 +1,4 @@
 #include <common/modulelogger.h>
-#include <emulator/emulatorcontext.h>
 #include <emulator/emulator.h>
 #include "automation.h"
 

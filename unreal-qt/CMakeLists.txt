@@ -6,7 +6,7 @@ message(">> unreal-qt CMakeLists.txt")
 project(unreal-qt LANGUAGES CXX)
 
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
-option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
+option(ENABLE_LUA_AUTOMATION "Enable Lua automation" OFF)
 option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 
@@ -31,7 +31,7 @@ if (ENABLE_AUTOMATION)
     add_subdirectory("${ROOT_DIR}/core/automation" automation)
 
     set(INCLUDE_AUTOMATION True)
-endif()
+endif ()
 
 # ========================================
 # Platform-specific Qt path detection
@@ -120,6 +120,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Create the executable
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
 
+
 # Note: We don't need to add direct dependency on zlibstatic when using webapi automation
 # as it's already included via unrealng::automation_webapi
 
@@ -168,39 +169,15 @@ if (INCLUDE_AUTOMATION)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
 
     # Link with appropriate libraries based on automation type
-    if (ENABLE_LUA_AUTOMATION)
-        target_link_libraries(${PROJECT_NAME} PRIVATE 
-            ${common_libraries}
-            Qt6::Widgets
-            Qt6::Multimedia
-            unrealng::core
-            unrealng::automation
-            lua_static
-            luacpp_static
-            ${CMAKE_DL_LIBS}
-            Threads::Threads
-        )
-    elseif (ENABLE_WEBAPI_AUTOMATION)
-        # Link with webapi target which already has jsoncpp linked
-        target_link_libraries(${PROJECT_NAME} PRIVATE 
-            ${common_libraries}
-            Qt6::Widgets
-            Qt6::Multimedia
-            unrealng::core
-            unrealng::automation
-            unrealng::automation_webapi  # This already includes jsoncpp_static and zlibstatic
-            Threads::Threads
-        )
-    else()
-        target_link_libraries(${PROJECT_NAME} PRIVATE 
-            ${common_libraries}
-            Qt6::Widgets
-            Qt6::Multimedia
-            unrealng::core
-            unrealng::automation
-            Threads::Threads
-        )
-    endif()
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${common_libraries}
+        Qt6::Widgets
+        Qt6::Multimedia
+        unrealng::core
+        unrealng::automation
+        ${CMAKE_DL_LIBS}
+        Threads::Threads
+    )
 else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 

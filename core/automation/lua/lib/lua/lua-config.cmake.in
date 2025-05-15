@@ -1,0 +1,65 @@
+#[=======================================================================[.rst:
+
+lua-config.cmake.in
+------------------
+
+This is a template file used by CMake to generate the final lua-config.cmake file.
+It's a critical component of the CMake package system that enables other projects
+to find and use this library via find_package(lua).
+
+When a user calls find_package(lua) in their project, CMake looks for this
+generated config file to load the package settings and targets.
+
+Package Generation Process:
+
+1. CMake processes this template during the build phase using the
+   configure_package_config_file() function in CMakeLists.txt.
+
+2. The processing involves several steps:
+   - Variables like @PACKAGE_VAR@ are replaced with their values
+   - @PACKAGE_INIT@ is replaced with specialized code that sets up
+     path variables relative to the config file's location
+   - The processed file is written to the build directory as lua-config.cmake
+
+3. During installation (via 'make install' or equivalent):
+   - The generated lua-config.cmake is copied to the installation location
+     (typically ${CMAKE_INSTALL_PREFIX}/lib/cmake/lua/)
+   - The lua-targets.cmake file is also generated and installed, containing
+     the exported targets with all their properties
+   - The lua-config-version.cmake file is installed to handle version
+     compatibility checks
+
+4. When a project uses find_package(lua):
+   - CMake searches for lua-config.cmake in standard locations
+   - When found, it includes the file which then:
+     a. Sets up paths via the code that replaced @PACKAGE_INIT@
+     b. Includes lua-targets.cmake to import all the targets
+     c. Checks that requested components are available
+
+How it works:
+
+1. @PACKAGE_INIT@ - This macro is replaced by CMake with code that handles
+   path calculations, making the package relocatable regardless of where
+   it's installed. The generated code defines variables like:
+   - PACKAGE_PREFIX_DIR: The prefix where the package was installed
+   - PACKAGE_*_DIR: Path variables adjusted to be relative to the config file
+
+2. include("${CMAKE_CURRENT_LIST_DIR}/lua-targets.cmake") - Imports the
+   exported targets (lua::static, lua::shared) so they can be used in the
+   consuming project. The targets contain all the necessary information about:
+   - Include directories
+   - Library locations
+   - Compile definitions
+   - Link dependencies
+
+3. check_required_components(lua) - Verifies that all components requested
+   by the user in find_package(lua COMPONENTS ...) are available. This ensures
+   that users get a clear error message if they request a component that
+   doesn't exist in this package.
+
+#]=======================================================================]
+
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/lua-targets.cmake")
+check_required_components(lua)
