@@ -10,6 +10,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/wd1793state.h"
 
 class WD1793 : public PortDecoder, public PortDevice
 {
@@ -34,7 +35,7 @@ public:
         WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
     };
 
-    inline static const char* getWD_COMMANDName(WD_COMMANDS command)
+    static inline const char* getWD_COMMANDName(WD_COMMANDS command)
     {
         static const char* const names[] =
         {
@@ -53,6 +54,182 @@ public:
 
         return names[command];
     }
+    
+    // WD1793 command bit patterns (top bits only, flag bits are 0)
+    enum WD_COMMAND_BITS : uint8_t
+    {
+        // Type I commands (positioning)
+        WD_CMD_BITS_RESTORE        = 0b0000'0000,  // 0x00 - Restore/Recalibrate
+        WD_CMD_BITS_SEEK           = 0b0001'0000,  // 0x10 - Seek
+        WD_CMD_BITS_STEP           = 0b0010'0000,  // 0x20 - Step
+        WD_CMD_BITS_STEP_IN        = 0b0100'0000,  // 0x40 - Step In
+        WD_CMD_BITS_STEP_OUT       = 0b0110'0000,  // 0x60 - Step Out
+        
+        // Type II commands (read/write sector)
+        WD_CMD_BITS_READ_SECTOR    = 0b1000'0000,  // 0x80 - Read Sector
+        WD_CMD_BITS_WRITE_SECTOR   = 0b1010'0000,  // 0xA0 - Write Sector
+        
+        // Type III commands (read/write track)
+        WD_CMD_BITS_READ_ADDRESS   = 0b1100'0000,  // 0xC0 - Read Address
+        WD_CMD_BITS_READ_TRACK     = 0b1110'0000,  // 0xE0 - Read Track
+        WD_CMD_BITS_WRITE_TRACK    = 0b1111'0000,  // 0xF0 - Write Track
+        
+        // Type IV command (interrupt)
+        WD_CMD_BITS_FORCE_INTERRUPT = 0b1101'0000  // 0xD0 - Force Interrupt
+    };
+        
+    // Resolves a command byte to its corresponding name by masking all flag bits
+    static inline const char* getWD_COMMAND_BITSName(uint8_t commandByte)
+    {
+        static const char* const names[] =
+        {
+            "Restore",          // [0] 0b0000'0000 (0x00)
+            "Seek",             // [1] 0b0001'0000 (0x10)
+            "Step",             // [2] 0b0010'0000 (0x20)
+            "Step In",          // [3] 0b0100'0000 (0x40)
+            "Step Out",         // [4] 0b0110'0000 (0x60)
+            "Read Sector",      // [5] 0b1000'0000 (0x80)
+            "Write Sector",     // [6] 0b1010'0000 (0xA0)
+            "Read Address",     // [7] 0b1100'0000 (0xC0)
+            "Read Track",       // [8] 0b1110'0000 (0xE0)
+            "Write Track",      // [9] 0b1111'0000 (0xF0)
+            "Force Interrupt"   // [10] 0b1101'0000 (0xD0)
+        };
+        
+        // Command pattern lookup structure
+        struct CommandPattern
+        {
+            uint8_t mask;       // Bit mask to apply
+            uint8_t result;     // Expected result after masking
+            uint8_t cmdBits;    // Command bits value
+        };
+        
+        // Define command patterns with appropriate masks
+        static const CommandPattern patterns[] =
+        {
+            { 0b1111'0000, 0b0000'0000, WD_CMD_BITS_RESTORE },           // Restore (mask high nibble)
+            { 0b1111'0000, 0b0001'0000, WD_CMD_BITS_SEEK },              // Seek (mask high nibble)
+            { 0b1110'0000, 0b0010'0000, WD_CMD_BITS_STEP },              // Step (mask bits 5-7)
+            { 0b1110'0000, 0b0100'0000, WD_CMD_BITS_STEP_IN },           // Step In (mask bits 5-7)
+            { 0b1110'0000, 0b0110'0000, WD_CMD_BITS_STEP_OUT },          // Step Out (mask bits 5-7)
+            { 0b1110'0000, 0b1000'0000, WD_CMD_BITS_READ_SECTOR },       // Read Sector (mask bits 5-7)
+            { 0b1110'0000, 0b1010'0000, WD_CMD_BITS_WRITE_SECTOR },      // Write Sector (mask bits 5-7)
+            { 0b1111'0000, 0b1100'0000, WD_CMD_BITS_READ_ADDRESS },      // Read Address (mask high nibble)
+            { 0b1111'0000, 0b1110'0000, WD_CMD_BITS_READ_TRACK },        // Read Track (mask high nibble)
+            { 0b1111'0000, 0b1111'0000, WD_CMD_BITS_WRITE_TRACK },       // Write Track (mask high nibble)
+            { 0b1111'0000, 0b1101'0000, WD_CMD_BITS_FORCE_INTERRUPT },   // Force Interrupt (mask high nibble)
+        };
+        
+        // Find matching command pattern
+        uint8_t maskedCmd = WD_CMD_BITS_RESTORE;  // Default to Restore if no match
+        for (const auto& pattern : patterns)
+        {
+            if ((commandByte & pattern.mask) == pattern.result)
+            {
+                maskedCmd = pattern.cmdBits;
+                break;
+            }
+        }
+        
+        // Convert command bit patterns to indices for the names array
+        int index;
+        switch (maskedCmd)
+        {
+            case WD_CMD_BITS_RESTORE:          index = 0; break;
+            case WD_CMD_BITS_SEEK:             index = 1; break;
+            case WD_CMD_BITS_STEP:             index = 2; break;
+            case WD_CMD_BITS_STEP_IN:          index = 3; break;
+            case WD_CMD_BITS_STEP_OUT:         index = 4; break;
+            case WD_CMD_BITS_READ_SECTOR:      index = 5; break;
+            case WD_CMD_BITS_WRITE_SECTOR:     index = 6; break;
+            case WD_CMD_BITS_READ_ADDRESS:     index = 7; break;
+            case WD_CMD_BITS_READ_TRACK:       index = 8; break;
+            case WD_CMD_BITS_WRITE_TRACK:      index = 9; break;
+            case WD_CMD_BITS_FORCE_INTERRUPT:  index = 10; break;
+            default:                           index = 0; break; // Default to Restore
+        }
+        
+        return names[index];
+    }
+
+    
+
+    /// endregion </WD1793 / VG93 commands>
+
+    /// @brief Raise INTRQ signal
+    /// @details Sets INTRQ signal and updates corresponding beta128 bit
+    void raiseIntrq()
+    {
+        MLOGDEBUG("INTRQ asserted");
+
+        _beta128status |= INTRQ;
+        _intrq_out = true;
+    }
+
+    /// @brief Clear INTRQ signal
+    /// @details Clears INTRQ signal and updates corresponding beta128 bit
+    void clearIntrq()
+    {
+        _beta128status &= ~INTRQ;
+        _intrq_out = false;
+    }
+
+    /// @brief Raise DRQ signal
+    /// @details Sets DRQ signal and updates corresponding beta128 bit
+    void raiseDrq()
+    {
+        MLOGDEBUG("DRQ asserted");
+
+        _beta128status |= DRQ;
+        _drq_out = true;
+        _drq_served = false;
+    }
+
+    /// @brief Clear DRQ signal
+    /// @details Clears DRQ signal and updates corresponding beta128 bit
+    void clearDrq()
+    {
+        _beta128status &= ~DRQ;
+        _drq_out = false;
+        _drq_served = false;
+    }
+
+    void raiseCrcError()
+    {
+        MLOGDEBUG("CRC ERROR asserted");
+
+        _crc_error = true;
+
+        raiseIntrq();
+    }
+
+    void raiseLostData()
+    {
+        MLOGDEBUG("LOST DATA asserted");
+
+        // Status Register Bit 2 represents LOST DATA flags for all type 2 and 3 commands
+        // Only in that case this error will be mapped to Status register Bit 2 (LOST DATA)
+        _lost_data = true;
+    }
+
+    void raiseRecordNotFound()
+    {
+        MLOGDEBUG("Record not found asserted");
+
+        _record_not_found = true;
+    }
+
+    void clearAllErrors()
+    {
+        _drq_served = false;
+        _lost_data = false;
+        _crc_error = false;
+        _record_not_found = false;
+        _write_fault = false;
+        _write_protect = false;
+        _seek_error = false;
+    }
+
     /// endregion </WD1793 / VG93 commands>
 
     /// region <WD1793 / VG93 state machine states>
@@ -65,27 +242,20 @@ public:
         S_STEP,
         S_VERIFY,
 
-        S_SEARCH_ID,
-        S_READ_SECTOR,
+        S_SEARCH_ID,    // Corresponds to Seek command
+        S_READ_SECTOR,  // Corresponds to Read Sector command
+        S_WRITE_SECTOR, // Corresponds to Write Sector command
 
-        S_READ_BYTE,
-        S_WRITE_BYTE,
+        S_READ_TRACK,   // Corresponds to Read Track command
+        S_WRITE_TRACK,  // Corresponds to Write Track command
 
-        S_DELAY_BEFORE_CMD,
-        S_CMD_RW,
-        S_FOUND_NEXT_ID,
-        S_RDSEC,
-        S_READ,
-        S_WRSEC,
-        S_WRITE,
-        S_WRTRACK,
-        S_WR_TRACK_DATA,
+        S_READ_BYTE,    // Internal state when reading a single byte
+        S_WRITE_BYTE,   // Internal state when writing a single byte
 
-        S_WAIT_HLT,
-        S_WAIT_HLT_RW,
+        S_READ_CRC,     // Reads for CRC (2 bytes) at the end of the sector data block
+        S_WRITE_CRC,    // Generates and write CRC (2 bytes) at the end of the sector data block
 
-        S_EJECT1,
-        S_EJECT2,
+        S_END_COMMAND,  // Command execution ends
 
         WDSTATE_MAX
     };
@@ -105,25 +275,18 @@ public:
 
             "S_SEARCH_ID",
             "S_READ_SECTOR",
+            "S_WRITE_SECTOR",
+
+            "S_READ_TRACK",
+            "S_WRITE_TRACK",
 
             "S_READ_BYTE",
             "S_WRITE_BYTE",
 
-            "S_DELAY_BEFORE_CMD",
-            "S_CMD_RW",
-            "S_FOUND_NEXT_ID",
-            "S_RDSEC",
-            "S_READ",
-            "S_WRSEC",
-            "S_WRITE",
-            "S_WRTRACK",
-            "S_WR_TRACK_DATA",
+            "S_READ_CRC",
+            "S_WRITE_CRC",
 
-            "S_WAIT_HLT",
-            "S_WAIT_HLT_RW",
-
-            "S_EJECT1",
-            "S_EJECT2"
+            "S_END_COMMAND",
         };
 
         if (state <= sizeof(names)/sizeof(names[0]))
@@ -169,6 +332,7 @@ public:
         BETA_CMD_DRIVE_MASK = 0b0000'0011,  // Bits[0,1] define drive selection. 00 - A, 01 - B, 10 - C, 11 - D
 
         BETA_CMD_RESET      = 0b0000'0100,  // Bit2 (active low) allows to reset BDI and WD73 controller. Similar to RESTORE command execution for the application
+
         // HLT - Head Load Timing is an input signal used to determine head engagement time.
         // When HLT = 1, FDC assumes that head is completely engaged. Usually it takes 30-100ms for FDD to react on HLD signal from FDC and engage the head
         BETA_CMD_BLOCK_HLT  = 0b0000'1000,  // Bit3 (active low) blocks HLT signal. Normally it should be inactive (high).
@@ -187,28 +351,51 @@ public:
     };
 
     /// FDC status (corresponds to port #1F read)
-    // ╔═════════╤══════════════════════════════════════════════════════════════════╗
-    // ║   Bit   │                            Commands                              ║
-    // ║         │  Command Type 1 │ Write  │  Read   │  Read   │ Write   │   Read  ║
-    // ║         │ (Recover & Seek)│ Sector │ Sector  │ Address │ Track   │  Track  ║
-    // ╟─────────┼─────────────────┼────────┼─────────┼─────────┼─────────┼─────────╢
-    // ║    7    │ NOT READY - Drive readiness ( 1 - not ready; 0 - ready           ║
-    // ╟─────────┼─────────────────┼────────┼─────────┼─────────┼─────────┼─────────╢
-    // ║    6    │ WRITE PROTECT   │    0   │    0    │    0    │  WRITE  │  WRITE  ║
-    // ║         │                 │        │         │         │ PROTECT │ PROTECT ║
-    // ╟─────────┼─────────────────┼────────┼─────────┼─────────┼─────────┼─────────╢
-    // ║    5    │ HEAD LOADED     │    0   │  0  │  1  │  u  │  h  │  V  │  r1 │  r0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    4    │ SEEK ERROR      │  0  │  1  │  0  │  u  │  h  │  V  │  r1 │  r0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    3    │ CRC ERROR       │  0  │  1  │  1  │  u  │  h  │  V  │  r1 │  r0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    2    │ TRACK 0         │  1  │  0  │  0  │  m  │  s  │  E  │  C  │  0  ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    1    │ INDEX           │  1  │  0  │  1  │  m  │  s  │  E  │  C  │  a0 ║
-    // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
-    // ║    0    │ BUSY            │  1  │  1  │  0  │  0  │  0  │  E  │  0  │  0  ║
-    // ╚═════════╧═════════════════╧═════╧═════╧═════╧═════╧═════╧═════╧═════╧═════╝
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// | Bit |                 |                            Commands                                        |
+    /// |     | Description     | Command Type 1   | Write    | Read     | Read      | Write     | Read      |
+    /// |     |                 | (Recover & Seek) | Sector   | Sector   | Address   | Track     | Track     |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  7  | NOT READY - Drive readiness (1 = not ready; 0 = ready)                                       |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  6  | WRITE PROTECT   |        0         |    0     |    0     |     0     |   WRITE   |   WRITE   |
+    /// |     |                 |                  |          |          |           |  PROTECT  |  PROTECT  |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  5  | HEAD LOADED     |        0         |    0     |    1     |    'u'    |    'h'    |    'V'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  4  | SEEK ERROR      |        0         |    1     |    0     |    'u'    |    'h'    |    'V'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  3  | CRC ERROR       |        0         |    1     |    1     |    'u'    |    'h'    |    'V'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  2  | TRACK 0         |        1         |    0     |    0     |    'm'    |    's'    |    'E'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  1  | INDEX           |        1         |    0     |    1     |    'm'    |    's'    |    'E'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// |  0  | BUSY            |        1         |    1     |    0     |    '0'    |    '0'    |    'E'    |
+    /// +-----+-----------------+------------------+----------+----------+-----------+-----------+-----------+
+    /// Legend for status bit meanings in specific command contexts:
+    ///
+    /// --- For "Read Address" Command (Col 6 values) ---
+    /// 'u': A bit from the Sector Address (SA) read from the first encountered ID field.
+    /// 'm': A bit from the Sector Address (SA) read from the first encountered ID field.
+    /// '0': (In Status Register Bit 0) reflects Sector Address Bit 0.
+    ///
+    /// --- For "Write Track" Command (Col 7 values) ---
+    /// 'h': A bit of the Cylinder Address (CA) being written to ID fields during formatting.
+    /// 's': A bit of the Sector Length (SL) code being written to ID fields.
+    /// '0': (In Status Register Bit 0) may indicate SL Code Bit 0, or a fixed value.
+    ///
+    /// --- For "Read Track" Command (Col 8 values) ---
+    /// 'V': A bit from the Cylinder Address (CA) read from the first encountered ID field.
+    /// 'E': A bit from the Sector Length (SL) code read from the first encountered ID field.
+    ///
+    /// --- For "Cxt 1" / "Cxt 2" Columns (Cols 9 & 10 values) ---
+    /// 'r1', 'r0', 'C', 'a0': These represent specific bit values from fields relevant
+    ///      to an unlabelled command context or a more detailed status.
+    ///      Their exact meaning depends on what "Cxt 1" and "Cxt 2" refer to,
+    ///      which is not specified in the original table's headers.
+    ///      Commonly, they might be other bits from ID fields, data register, or
+    ///      specialized status under certain conditions.
     enum WD_STATUS : uint8_t
     {
         WDS_BUSY           = 0x01,   // For all commands
@@ -233,7 +420,9 @@ public:
 
     enum BETA_STATUS_BITS : uint8_t
     {
-        DRQ   = 0x40,   // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
+        // Bit6 - Indicates (active low) that Data Register(DR) contains assembled data in Read operations or empty in Write operations
+        // Gets status directly from FDC output pin DRQ
+        DRQ   = 0x40,
 
         /// Bit7 - Set (active low) at the completion of any command and is reset when the STATUS register is read or the command register os written to
         /// INTRQ = 1 - Command complete
@@ -288,21 +477,17 @@ public:
         std::function<void()> _action;
     };
 
-    /// endregion </Types>
-
-    /// region <Constants>
 public:
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
-    static constexpr const size_t Z80_CLK_CYCLES_PER_MS = Z80_FREQUENCY / 1000;
-    static constexpr const double Z80_CLK_CYCLES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0;
-    static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000;
+    static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000; // 3500 t-states per millisecond
+    static constexpr const double TSTATES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0; // 3.5 t-states per microsecond
 
     static constexpr const size_t WD93_FREQUENCY = 1'000'000;
     static constexpr const double WD93_CLK_CYCLES_PER_Z80_CLK = Z80_FREQUENCY / WD93_FREQUENCY;
 
     /// Time limit to retrieve single byte from WD1793
     /// We must read the whole track during single disk spin (200ms), so we have just 114 t-states per byte
-    static constexpr const size_t TSTATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
+    static constexpr const size_t WD93_TSTATES_PER_FDC_BYTE = Z80_FREQUENCY / (MAX_TRACK_LEN * FDD_RPS);
 
     static constexpr const size_t WD93_REVOLUTIONS_TILL_MOTOR_STOP = 15;
     static constexpr const size_t WD93_TSTATES_TILL_MOTOR_STOP = Z80_FREQUENCY * WD93_REVOLUTIONS_TILL_MOTOR_STOP / FDD_RPS;
@@ -351,16 +536,19 @@ protected:
 
     FDD* _selectedDrive = nullptr;
 
+    // New WD93 state to migrate to
+    WD93State _wd93State;
+
     // Counters to measure time intervals
     size_t _time = 0;                   // Current time mark (in Z80 t-states)
     size_t _lastTime = 0;               // Time mark when process() was called last time
     int64_t _diffTime = 0;              // Difference between _time and _lastTime (_time - _lastTime)
-    int64_t _delayTStates = 0;          // Delay between switching to next state
+    int64_t _delayTStates = 0;          // Delay between switching to the next state
 
     // WD93 internal state
-    uint8_t _commandRegister = 0x00;    // Last command executed (full data byte)
-    uint8_t _trackRegister = 0;
-    uint8_t _sectorRegister = 0;
+    uint8_t _commandRegister = 0x00;    // WD1793 Command Register - Holds last command executed (full data byte)
+    uint8_t _trackRegister = 0;         // WD1793 Track Register
+    uint8_t _sectorRegister = 0;        // WD1793 Sector Register
     uint8_t _dataRegister = 0x00;       // WD1793 Data Register
     uint8_t _statusRegister = 0x00;     // WD1793 Status Register
 
@@ -375,7 +563,7 @@ protected:
     uint8_t _drive = 0;                 // Currently selected drive index [0..3]
     bool _sideUp = false;               // False - bottom side. True - top side
 
-    WD_COMMANDS _lastDecodedCmd;        // Last command executed (decoded)
+    WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE; // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
     WDSTATE _state = S_IDLE;
     WDSTATE _state2 = S_IDLE;
@@ -393,7 +581,6 @@ protected:
 
     // Type 2 command params
     uint16_t _sectorSize = 256;         // Sector size in bytes (will be read from ID Address Mark during READ SECTOR command execution)
-    bool _dataRegisterAccessed = false; // Type2 commands have timeout for data availability in Data Register
     uint8_t* _idamData = nullptr;
     uint8_t* _sectorData = nullptr;
     uint8_t* _rawDataBuffer = nullptr;   // Pointer to read/write data
@@ -402,9 +589,25 @@ protected:
 
 
     // FDD state
+    // TODO: all timeouts must go to WD93State.counters
     bool _index = false;                // Current state of index strobe
     size_t _indexPulseCounter = 0;      // Index pulses counter
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
+
+    // TODO Remove temporary fields once switched to WD93State
+    bool _drq_served = false;           // Type II and III commands have timeout for data availability in Data Register
+    bool _lost_data = false;            // Type II and III commands have this error type if DRQ service time condition is not met
+    bool _crc_error = false;            // Type II: Read Sector, Write Sector, Read Address commands can trigger CRC Error
+    bool _record_not_found = false;     // Type II: Read Sector, Write Sector, Read Address commands can trigger the Record not Found error
+    bool _write_fault = false;          // Write sector and Write Track commands can trigger Write Fault error
+    bool _write_protect = false;        // All Type I as well as Write sector and Write Track commands can trigger a Write Protect error
+    bool _seek_error = false;           // All Type I commands can trigger Seek Error
+    bool _check_am_crc = false;         // Type I command requested to verify Address Mark CRC
+    bool _check_data_crc = false;       // Type II Read Sector command has a mandatory Data Block CRC check
+
+    // TODO: Remove temporary fields once switched to WD93State.signals
+    bool _intrq_out = false;
+    bool _drq_out = false;
 
     /// endregion </Fields>
 
@@ -423,6 +626,8 @@ public:
     /// region <Methods>
 public:
     virtual void reset();
+    void internalReset();
+
     void process();
     void ejectDisk()
     {
@@ -439,6 +644,7 @@ protected:
     void processFDDMotorState();
     void processFDDIndexStrobe();
     void prolongFDDMotorRotation();
+    void processCountersAndTimeouts();
     void startFDDMotor();
     void stopFDDMotor();
     void loadHead();
@@ -494,8 +700,14 @@ protected:
         { S_VERIFY,         &WD1793::processVerify },
         { S_SEARCH_ID,      &WD1793::processSearchID },
         { S_READ_SECTOR,    &WD1793::processReadSector },
+        { S_WRITE_SECTOR,   &WD1793::processWriteSector },
+        { S_READ_TRACK,     &WD1793::processReadTrack },
+        { S_WRITE_TRACK,    &WD1793::processWriteTrack },
         { S_READ_BYTE,      &WD1793::processReadByte },
         { S_WRITE_BYTE,     &WD1793::processWriteByte },
+        { S_READ_CRC,       &WD1793::processReadCRC },
+        { S_WRITE_CRC,      &WD1793::processWriteCRC },
+        { S_END_COMMAND,    &WD1793::processEndCommand },
     };
 
     void processIdle();
@@ -505,8 +717,20 @@ protected:
     void processVerify();
     void processSearchID();
     void processReadSector();
+    void processReadTrack();
+    void processWriteTrack();
     void processReadByte();
+    void processWriteSector();
     void processWriteByte();
+    void processReadCRC();
+    void processWriteCRC();
+    void processEndCommand();
+
+    /// @brief Check if there are more actions in the FIFO queue
+    bool hasMoreFIFOActions()
+    {
+        return !_operationFIFO.empty();
+    }
 
     void transitionFSM(WDSTATE nextState)
     {
@@ -515,22 +739,6 @@ protected:
         std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
         MLOGINFO(message.c_str());
         /// endregion </Debug logging>
-
-        _state = nextState;
-        _state2 = WDSTATE::S_IDLE;
-    }
-
-    void transitionFSM(FSMEvent nextStateEvent)
-    {
-        WDSTATE nextState = nextStateEvent.getState();
-
-        /// region <Debug logging>
-        std::string timeMark = StringHelper::Format("  [%d | %d ms]", _time, convertTStatesToMs(_time));
-        std::string message = StringHelper::Format("  %s -> %s <nodelay> %s", WDSTATEToString(_state).c_str(), WDSTATEToString(nextState).c_str(), timeMark.c_str());
-        MLOGINFO(message.c_str());
-        /// endregion </Debug logging>
-
-        nextStateEvent.executeAction();
 
         _state = nextState;
         _state2 = WDSTATE::S_IDLE;
@@ -605,7 +813,8 @@ protected:
     uint8_t readDataRegister()
     {
         uint8_t result = _dataRegister;
-        _dataRegisterAccessed = true;
+
+        _drq_served = true;
 
         return result;
     }
@@ -613,7 +822,9 @@ protected:
     void writeDataRegister(uint8_t value)
     {
         _dataRegister = value;
-        _dataRegisterAccessed = true;
+
+        // If we're on Read or Write operation and data was requested by asserting DRQ - we need to mark that request fulfilled
+        _drq_served = true;
     }
 
     /// endregion </State machine handlers>
@@ -640,8 +851,10 @@ public:
     /// region <Debug methods>
 public:
     std::string dumpStatusRegister(WD_COMMANDS command);
+    std::string dumpBeta128Register();
     std::string dumpCommand(uint8_t value);
     std::string dumpStep();
+    std::string dumpFullState();
 
     static inline size_t convertTStatesToMs(size_t tStates)
     {
@@ -669,6 +882,7 @@ class WD1793CUT : public WD1793
 public:
     WD1793CUT(EmulatorContext* context) : WD1793(context) {};
 
+    using WD1793::_portDecoder;
     using WD1793::_selectedDrive;
 
     using WD1793::_commandRegister;
@@ -698,19 +912,18 @@ public:
     using WD1793::_steppingMotorRate;
     using WD1793::_motorTimeoutTStates;
 
-    using WD1793::_dataRegisterAccessed;
+    using WD1793::_drq_served;
+    using WD1793::_intrq_out;
+    using WD1793::_drq_out;
+    using WD1793::_lost_data;
+    using WD1793::_crc_error;
+    using WD1793::_record_not_found;
+    using WD1793::_write_fault;
+    using WD1793::_write_protect;
+    using WD1793::_seek_error;
 
     using WD1793::_index;
     using WD1793::_indexPulseCounter;
-
-    virtual void reset() override // Override default implementation for testing purposes, do not run RESTORE command at the end
-    {
-        _state = S_IDLE;
-        _statusRegister = 0;
-        _trackRegister = 0;
-        _sectorRegister = 1;
-        _dataRegister = 0;
-    }
 
     using WD1793::isType1Command;
     using WD1793::isType2Command;
@@ -746,6 +959,7 @@ public:
     using WD1793::prolongFDDMotorRotation;
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;
+    using WD1793::getDrive;
 };
 
 #endif // _CODE_UNDER_TEST

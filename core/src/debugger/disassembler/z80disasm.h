@@ -278,6 +278,8 @@ protected:
     /// endregion </Fields>
 
 public:
+    void SetLogger(ModuleLogger* logger) { _logger = logger; }
+    
     std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
 

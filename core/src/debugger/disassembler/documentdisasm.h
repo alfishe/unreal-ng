@@ -30,5 +30,5 @@ public:
     DisplayInstruction getInstructionForZ80Address(uint16_t address);
 
 protected:
-    Z80Disassembler* m_disassembler;
+    std::unique_ptr<Z80Disassembler> _disassembler;
 };

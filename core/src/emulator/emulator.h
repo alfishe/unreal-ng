@@ -62,49 +62,49 @@ protected:
     std::thread* _asyncThread = nullptr;
 
     LoggerLevel _loggerLevel = LoggerLevel::LogTrace;
-	EmulatorContext* _context = nullptr;
+    EmulatorContext* _context = nullptr;
 
-	Config* _config = nullptr;
-	Core* _core = nullptr;
-	Z80* _z80 = nullptr;
-	Memory* _memory = nullptr;
-	MainLoop* _mainloop = nullptr;
-	DebugManager* _debugManager = nullptr;
+    Config* _config = nullptr;
+    Core* _core = nullptr;
+    Z80* _z80 = nullptr;
+    Memory* _memory = nullptr;
+    MainLoop* _mainloop = nullptr;
+    DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
 
-	// Control flow
-	volatile bool _stopRequested = false;
+    // Control flow
+    volatile bool _stopRequested = false;
 
-	// Emulator state
-	volatile bool _isPaused = false;
-	volatile bool _isRunning = false;
-	volatile bool _isDebug = false;
+    // Emulator state
+    volatile bool _isPaused = false;
+    volatile bool _isRunning = false;
+    volatile bool _isDebug = false;
     /// endregion </Fields>
 
-	/// region <Constructors / destructors>
+    /// region <Constructors / destructors>
 public:
-	Emulator();
-	Emulator(LoggerLevel level);
-	virtual ~Emulator();
+    Emulator();
+    Emulator(LoggerLevel level);
+    virtual ~Emulator();
     /// endregion </Constructors / destructors>
 
 private:
     void ReleaseNoGuard();
 
 public:
-	// Initialization operations
+    // Initialization operations
     [[nodiscard]] bool Init();
-	void Release();
+    void Release();
 
-	// Info methods
-	void GetSystemInfo();
+    // Info methods
+    void GetSystemInfo();
 
     // Performance management
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
 
-	// Integration interfaces
-	EmulatorContext* GetContext();
+    // Integration interfaces
+    EmulatorContext* GetContext();
     ModuleLogger* GetLogger();
     MainLoop* GetMainLoop();
     Memory* GetMemory();
@@ -113,45 +113,45 @@ public:
     FramebufferDescriptor GetFramebuffer();
     void SetAudioCallback(void* obj, AudioCallback callback);
 
-	// Emulator control cycle
-	void Reset();
-	void Start();
-	void StartAsync();
-	void Pause();
-	void Resume();
-	void Stop();
+    // Emulator control cycle
+    void Reset();
+    void Start();
+    void StartAsync();
+    void Pause();
+    void Resume();
+    void Stop();
 
-	// File format operations
-	bool LoadSnapshot(const std::string& path);
+    // File format operations
+    bool LoadSnapshot(const std::string& path);
     bool LoadTape(const std::string& path);
     bool LoadDisk(const std::string& path);
 
-	// Controlled emulator behavior
-	void RunSingleCPUCycle(bool skipBreakpoints = true);
-	void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
-	void RunUntilInterrupt();
-	void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
+    // Controlled emulator behavior
+    void RunSingleCPUCycle(bool skipBreakpoints = true);
+    void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
+    void RunUntilInterrupt();
+    void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
 
-	// Actions
-	bool LoadROM(std::string path);
+    // Actions
+    bool LoadROM(std::string path);
 
 
     // Debug methods
-	void DebugOn();
-	void DebugOff();
+    void DebugOn();
+    void DebugOff();
 
     Z80State* GetZ80State();
 
 
-	// Status methods
-	bool IsRunning();
-	bool IsPaused();
-	bool IsDebug();
+    // Status methods
+    bool IsRunning();
+    bool IsPaused();
+    bool IsDebug();
     std::string GetStatistics();
 
-	// Counters method
-	void ResetCountersAll();
-	void ResetCounter();
+    // Counters method
+    void ResetCountersAll();
+    void ResetCounter();
 };
 
 #endif
