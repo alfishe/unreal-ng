@@ -2,8 +2,10 @@
 
 #include <thread>
 #include <drogon/HttpController.h>
+#include <drogon/WebSocketController.h>
 #include "hello_world_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_api.h"           // Triggers auto-registration for API handlers
+#include "emulator_websocket.h"     // Triggers auto-registration for WebSocket handlers
 
 /// region <Methods>
 void AutomationWebAPI::start()
@@ -79,13 +81,14 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     LOG_INFO << "Starting server on port 8090.";
     LOG_INFO << "HTTP API example: http://localhost:8090/api/v1/HelloWorld";
+    LOG_INFO << "HTTP Emulator API: http://localhost:8090/api/v1/EmulatorAPI";
     LOG_INFO << "WebSocket endpoint: ws://localhost:8090/api/v1/websocket";
 
     drogon::HttpAppFramework& app = drogon::app();
 
     app.setLogPath("./")
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
-        .disableSigtermHandling()
+        .disableSigtermHandling() // SIGTERM is handled by the main application (unreal-qt or testclient)
         .addListener("0.0.0.0", 8090)
         .setThreadNum(2)
         .run();
