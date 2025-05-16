@@ -54,15 +54,15 @@ MainLoop::~MainLoop()
 //
 void MainLoop::Run(volatile bool& stopRequested)
 {
-	if (_cpu == nullptr || _context == nullptr)
-	{
-		MLOGERROR("MainLoop::Run - _cpu and _context shouldn't be nullptr");
-		return;
-	}
+    if (_cpu == nullptr || _context == nullptr)
+    {
+        MLOGERROR("MainLoop::Run - _cpu and _context shouldn't be nullptr");
+        return;
+    }
 
-	_stopRequested = false;
-	_pauseRequested = false;
-	_isRunning = true;
+    _stopRequested = false;
+    _pauseRequested = false;
+    _isRunning = true;
 
     // Subscribe to audio buffer state event(s)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -72,38 +72,38 @@ void MainLoop::Run(volatile bool& stopRequested)
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
     messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
-	/// region <Debug>
+    /// region <Debug>
 
-	// Initialize animation
+    // Initialize animation
     [[maybe_unused]] FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
     gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
 
-	/// endregion </Debug>
+    /// endregion </Debug>
 
     static std::chrono::milliseconds timeout(20); // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
 
-	while (!stopRequested)
-	{
+    while (!stopRequested)
+    {
         uint64_t startTime = TimeHelper::GetTimestampUs();
         betweenIterations = startTime - lastRun;
 
         [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
 
-		/// region <Handle Pause>
-		if (_pauseRequested)
+        /// region <Handle Pause>
+        if (_pauseRequested)
         {
-		    MLOGINFO("Pause requested");
+            MLOGINFO("Pause requested");
 
-		    while (_pauseRequested)
+            while (_pauseRequested)
             {
-		        sleep_ms(20);
+              sleep_ms(20);
             }
 
-		    continue;
+            continue;
         }
-		/// endregion </Handle Pause>
+        /// endregion </Handle Pause>
 
         //MLOGINFO("Frame recalculation time: %d us", duration1);
         //std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
@@ -118,9 +118,9 @@ void MainLoop::Run(volatile bool& stopRequested)
         lock.unlock();
 
         lastRun = startTime;
-	}
+    }
 
-	MLOGINFO("Stop requested, exiting main loop");
+    MLOGINFO("Stop requested, exiting main loop");
 
     // Stop animation recording and finalize the file
     gifAnimationHelper.StopAnimation();
@@ -161,14 +161,14 @@ void MainLoop::RunFrame()
 
     /// region <Frame start handlers>
 
-	OnFrameStart();
+    OnFrameStart();
 
     /// endregion </Frame start handlers>
 
 
-	// Execute CPU cycles for single video frame
+    // Execute CPU cycles for single video frame
 
-	ExecuteCPUFrameCycle();
+    ExecuteCPUFrameCycle();
 
     /// region <Frame end handlers>
 
@@ -177,21 +177,21 @@ void MainLoop::RunFrame()
     /// endregion </Frame end handlers
 
 
-	// Process external periphery devices
+    // Process external periphery devices
 
-	// Flush all generated data and buffers
+    // Flush all generated data and buffers
 
-	// Render Video and Audio using host platform capabilities
-	// RenderVideo();
-	// RenderAudio();
+    // Render Video and Audio using host platform capabilities
+    // RenderVideo();
+    // RenderAudio();
 
-	// Queue new frame data to Video/Audio encoding
+    // Queue new frame data to Video/Audio encoding
 
-	/// region <DEBUG: save frame to disk as image>
+    /// region <DEBUG: save frame to disk as image>
 
     static int i = 0;
-	//if (i % 100 == 0)
-	{
+    //if (i % 100 == 0)
+    {
         //screen.RenderOnlyMainScreen();
 
         // Save frame if video memory was changed
@@ -205,7 +205,7 @@ void MainLoop::RunFrame()
         screen.GetFramebufferData(&buffer, &size);
         gifAnimationHelper.WriteFrame(buffer, size);
     }
-	i++;
+    i++;
 
     if (i >= 2000)
     {
@@ -262,5 +262,5 @@ void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused
 //
 void MainLoop::ExecuteCPUFrameCycle()
 {
-	_cpu->CPUFrameCycle();
+    _cpu->CPUFrameCycle();
 }
