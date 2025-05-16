@@ -71,7 +71,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     // Set up hex viewer
     QHexOptions options = ui->hexView->options();
     options.linelength = 8;     // Display 8 hex bytes per line
-    options.addresswidth = 2;   // Address is 4 hex digits [0000-FFFF]
+    options.addresswidth = 4;   // Address is 4 hex digits [0000-FFFF]
     ui->hexView->setOptions(options);
 
 
@@ -127,7 +127,7 @@ void DebuggerWindow::reset()
 
     QHexOptions options = ui->hexView->options();
     options.linelength = 8;
-    options.addresswidth = 2;
+    options.addresswidth = 4;
     options.flags = QHexFlags::HSeparator | QHexFlags::VSeparator;
     ui->hexView->setOptions(options);
 
