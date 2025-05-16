@@ -87,20 +87,19 @@ protected:
     EmulatorContext* _context = nullptr;
     EmulatorState* _state = nullptr;
 
+    int _mappedMemoryFd = -1;
+    std::string _mappedMemoryFilepath;
+
 protected:
-#if defined CACHE_ALIGNED
-    // Continuous memory buffer to fit everything (RAM, all ROMs and General Sound ROM/RAM). Approximately 10MiB in size
-    uint8_t _memory[PAGE_SIZE * MAX_PAGES] ATTR_ALIGN(4096);
-#else // __declspec(align) not available, force u64 align with old method
-    uint64_t memory__[PAGE * MAX_PAGES / sizeof(uint64_t)];
-    uint8_t* const memory = (uint8_t*)memory__;
-#endif
+    // Whole system memory
+    uint8_t* _memory = nullptr;
+    const size_t _memorySize = PAGE_SIZE * MAX_PAGES;
 
     // Derived addresses
-    uint8_t* _ramBase = _memory;
-    uint8_t* _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
-    uint8_t* _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
-    uint8_t* _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
+    uint8_t* _ramBase = nullptr;
+    uint8_t* _cacheBase = nullptr;
+    uint8_t* _miscBase = nullptr;
+    uint8_t* _romBase = nullptr;
 
     MemoryBankModeEnum _bank_mode[4];	// Mode for each of four banks
     uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
@@ -134,10 +133,10 @@ protected:
 
 public:
     // Base addresses for memory classes
-    inline uint8_t* RAMBase() { return _ramBase; };			// Get starting address for RAM
+    inline uint8_t* RAMBase() { return _ramBase; };		// Get starting address for RAM
     inline uint8_t* CacheBase() { return _cacheBase; };		// Get starting address for Cache
     inline uint8_t* MiscBase() { return _miscBase; };
-    inline uint8_t* ROMBase() { return _romBase; };			// Get starting address for ROM
+    inline uint8_t* ROMBase() { return _romBase; };		// Get starting address for ROM
 
     // Shortcuts to ROM pages
     uint8_t* base_sos_rom;
@@ -159,6 +158,12 @@ public:
     void Reset();
     void RandomizeMemoryContent();
     void RandomizeMemoryBlock(uint8_t* buffer, size_t size);
+
+    /// Map ZX-Spectrum memory to a filesystem path for external access
+    void AllocateAndExportMemoryToMmap();
+    /// Unmap the memory from the filesystem
+    void UnmapMemory();
+    void SyncToDisk();
     /// endregion </Initialization>
 
     /// region <Emulation memory interface methods>

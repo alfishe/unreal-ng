@@ -7,12 +7,30 @@
 #include "common/bithelper.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
-#include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include <cassert>
+
+// Platform-specific includes for memory mapping
+#ifdef _WIN32
+    #include <windows.h>
+    #include <tchar.h>
+    #include <fileapi.h>
+    #include <memoryapi.h>
+    #include <handleapi.h>
+#else
+    #include <sys/mman.h>
+    #include <fcntl.h>
+    #include <unistd.h>
+    #include <sys/stat.h>
+    #include <sys/shm.h>
+    #ifdef __APPLE__
+        #include <mach/vm_map.h>
+    #endif
+#endif
 
 /// region <Constructors / Destructors>
 
@@ -22,8 +40,20 @@ Memory::Memory(EmulatorContext* context)
     _state = &context->emulatorState;
     _logger = context->pModuleLogger;
 
+    // Allocate ZX-Spectrum memory and make it memory mapped to file for debugging
+    AllocateAndExportMemoryToMmap();
+
+    // Initialize all derived addresses
+    _ramBase = _memory;
+    _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
+    _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
+    _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
+
+    // Memory filling with random values will give a false positive on memory changes analyzer, so disable it if memory mapping is enabled
+#ifndef ENABLE_MEMORY_MAPPING
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
+#endif // ENABLE_MEMORY_MAPPING
 
     // Reset counters
     ResetCounters();
@@ -53,12 +83,13 @@ Memory::Memory(EmulatorContext* context)
 
 Memory::~Memory()
 {
+    UnmapMemory();
+
     _context = nullptr;
 
     MLOGDEBUG("Memory::~Memory()");
 }
 
-/// endregion </Constructors / Destructors>
 
 /// region <Memory access implementation methods>
 
@@ -86,7 +117,7 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
-    // Read byte from correspondent memory bank mapped to global memory buffer
+    // Read byte from the correspondent memory bank mapped to global memory buffer
     uint8_t result = *(_bank_read[bank] + addressInBank);
 
     return result;
@@ -104,7 +135,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
-    // Read byte from correspondent memory bank mapped to global memory buffer
+    // Read byte from  the correspondent memory bank mapped to global memory buffer
     uint8_t result = *(_bank_read[bank] + addressInBank);
 
     /// endregion </MemoryReadFast functionality>
@@ -127,7 +158,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
         // Increment execute access counter for Z80 address
         _memZ80ExecuteCounters[addr] += 1;
 
-        // Increment execute access counter for physical page
+        // Increment execution access counter for physical page
         _memPageExecuteCounters[physicalPage] += 1;
 
         // Increment execute access counter for physical address
@@ -198,7 +229,7 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
-    // Write byte to correspondent memory bank cell
+    // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
 }
 
@@ -317,6 +348,360 @@ void Memory::RandomizeMemoryBlock(uint8_t* buffer, size_t size)
     {
         *(buffer32bit + i) = rand();
     }
+}
+
+void Memory::AllocateAndExportMemoryToMmap()
+{
+#ifdef ENABLE_MEMORY_MAPPING
+    // If we already have a mapped memory, clean it up first
+    if (_memory != nullptr)
+    {
+        UnmapMemory();
+    }
+
+#ifdef USE_SHAREDMEM_MAPPING
+#ifdef _WIN32
+    // Windows implementation using named shared memory
+    std::string shmName = "Local\\ZXSpectrumMemory";
+    
+    // Clean up any existing mapping with the same name
+    if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(_mappedMemoryHandle);
+        _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+    }
+    
+    // Create a file mapping object with a unique name
+    _mappedMemoryHandle = CreateFileMappingA(
+        INVALID_HANDLE_VALUE,   // Use the paging file
+        NULL,                   // Default security
+        PAGE_READWRITE | SEC_COMMIT,  // Read/write access and commit all pages
+        (DWORD)(_memorySize >> 32),    // High-order DWORD of size
+        (DWORD)(_memorySize & 0xFFFFFFFF),  // Low-order DWORD of size
+        shmName.c_str()         // Name of mapping object
+    );
+    
+    if (_mappedMemoryHandle == NULL)
+    {
+        DWORD error = GetLastError();
+        LOGERROR("Failed to create file mapping object (Error %lu)", error);
+        _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+        return;
+    }
+    
+    // Map the view of the file mapping into the address space
+    _memory = (uint8_t*)MapViewOfFile(
+        _mappedMemoryHandle,  // Handle to map object
+        FILE_MAP_ALL_ACCESS,  // Read/write permission
+        0,                   // High-order DWORD of offset
+        0,                   // Low-order DWORD of offset
+        _memorySize          // Number of bytes to map
+    );
+    
+    if (_memory == NULL)
+    {
+        DWORD error = GetLastError();
+        LOGERROR("Failed to map view of file (Error %lu)", error);
+        CloseHandle(_mappedMemoryHandle);
+        _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+        return;
+    }
+    
+    // Store the name for reference
+    _mappedMemoryFilepath = shmName;
+    LOGINFO("Memory mapped successfully using shared memory: %s (%zu bytes)", shmName.c_str(), _memorySize);
+#else
+    // Unix/Linux/macOS implementation
+    // Create a shared memory name
+    std::string shmName = "/zxspectrum";
+
+    // Try to clean up any existing shared memory with this name
+    shm_unlink(shmName.c_str());
+
+    // Create a new shared memory object
+    _mappedMemoryFd = shm_open(shmName.c_str(), O_CREAT | O_RDWR, 0666);
+    if (_mappedMemoryFd == -1)
+    {
+        LOGERROR("Failed to create shared memory object: %s (errno=%d)", strerror(errno), errno);
+    }
+    else
+    {
+        // Set the size of the shared memory object
+        if (ftruncate(_mappedMemoryFd, _memorySize) == -1)
+        {
+            LOGERROR("Failed to set size of shared memory object: %s", strerror(errno));
+            close(_mappedMemoryFd);
+            shm_unlink(shmName.c_str());
+            _mappedMemoryFd = -1;
+        }
+        else
+        {
+            // Map the shared memory object into memory
+            _memory = (uint8_t*)mmap(NULL, // Let the kernel choose the address
+                                   _memorySize, 
+                                   PROT_READ | PROT_WRITE, 
+                                   MAP_SHARED, 
+                                   _mappedMemoryFd, 
+                                   0);
+
+            if (_memory == MAP_FAILED)
+            {
+                LOGERROR("Failed to map shared memory: %s (errno=%d)", strerror(errno), errno);
+                close(_mappedMemoryFd);
+                shm_unlink(shmName.c_str());
+                _mappedMemoryFd = -1;
+                _memory = nullptr;
+            }
+            else
+            {
+                // Store the name for later cleanup
+                _mappedMemoryFilepath = shmName;
+                LOGINFO("Memory mapped successfully using shared memory: %s", shmName.c_str());
+            }
+        }
+    }
+#endif // _WIN32
+#endif // USE_SHAREDMEM_MAPPING
+
+#ifdef USE_FILE_MAPPING
+    // Create the memory-mapped file
+#ifdef _WIN32
+    // Windows implementation
+    // Create a file mapping object with unique name in user's temp directory
+    char tempPath[MAX_PATH];
+    if (GetTempPathA(MAX_PATH, tempPath) == 0)
+    {
+        LOGERROR("Failed to get temporary path");
+        return;
+    }
+
+    std::string mappingPath = std::string(tempPath) + "zxspectrum_memory_" + std::to_string(GetCurrentProcessId());
+    _mappedMemoryFd = CreateFileMapping(
+        INVALID_HANDLE_VALUE,
+        NULL,
+        PAGE_READWRITE,
+        0,
+        PAGE_SIZE * MAX_PAGES,
+        mappingPath.c_str());
+    
+    if (_mappedMemoryFd == NULL)
+    {
+        LOGERROR("Failed to create memory mapping");
+        return;
+    }
+    
+    // Map our memory buffer into the shared memory region
+    _mappedMemoryAddress = MapViewOfFile(
+        _mappedMemoryFd,
+        FILE_MAP_ALL_ACCESS,
+        0,
+        0,
+        PAGE_SIZE * MAX_PAGES);
+    
+    if (_mappedMemoryAddress == NULL)
+    {
+        LOGERROR("Failed to map view of file");
+        CloseHandle(_mappedMemoryFd);
+        _mappedMemoryFd = INVALID_HANDLE_VALUE;
+        return;
+    }
+#else
+    // Unix/Linux/macOS implementation
+    std::string shareMemoryRegionName = "/zxspectrum_memory" + std::to_string(getpid());
+    _mappedMemoryFilepath = "/tmp" + shareMemoryRegionName;
+
+    // macOS doesn't expose shm handlers to the filesystem
+    //_mappedMemoryFd = shm_open(mappingPath.c_str(), O_CREAT | O_RDWR, 0666);
+    //if (_mappedMemoryFd == -1)
+    //{
+    //    LOGERROR("Failed to create shared memory object, falling back to normal memory");
+    //    return;
+    //}
+    _mappedMemoryFd = open(_mappedMemoryFilepath.c_str(),         // File path
+        O_CREAT | O_RDWR | O_TRUNC,  // Create if not exists, Read/Write, Truncate if exists
+        0666                         // Permissions for the new file (if created)
+                                    // (e.g., S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH)
+    );
+
+    // Set the size of the shared memory object
+    if (ftruncate(_mappedMemoryFd, PAGE_SIZE * MAX_PAGES) == -1)
+    {
+        LOGERROR("Failed to set size of shared memory object '" + _mappedMemoryFilepath + "': " + strerror(errno));
+        close(_mappedMemoryFd);         // Close the fd
+        unlink(_mappedMemoryFilepath.c_str()); // Attempt to remove the object name
+        _mappedMemoryFd = -1;
+        return;
+    }
+
+    // Map our memory buffer directly to the file
+    _memory = (uint8_t*)mmap(
+        NULL,
+        PAGE_SIZE * MAX_PAGES,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        _mappedMemoryFd,
+        0);
+
+    if (_memory == MAP_FAILED)
+    {
+        LOGERROR("Failed to create shared memory object: %s", strerror(errno));
+        close(_mappedMemoryFd);
+        unlink(_mappedMemoryFilepath.c_str());
+        _mappedMemoryFd = -1;
+        return;
+    }
+#endif
+#endif // USE_FILE_MAPPING
+
+    LOGINFO("Memory mapped successfully. External tools can now access ZX-Spectrum memory in real-time.");
+#else
+    _memory = new uint8_t[PAGE_SIZE * MAX_PAGES];
+#endif // ENABLE_MEMORY_MAPPING
+}
+
+void Memory::UnmapMemory()
+{
+#ifdef ENABLE_MEMORY_MAPPING
+
+#ifdef USE_SHAREDMEM_MAPPING
+#ifdef _WIN32
+    // Windows shared memory cleanup
+    if (_memory != nullptr)
+    {
+        if (!UnmapViewOfFile(_memory))
+        {
+            DWORD error = GetLastError();
+            LOGWARNING("Failed to unmap view of file (Error %lu)", error);
+        }
+        _memory = nullptr;
+    }
+    
+    if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
+    {
+        if (!CloseHandle(_mappedMemoryHandle))
+        {
+            DWORD error = GetLastError();
+            LOGWARNING("Failed to close shared memory handle (Error %lu)", error);
+        }
+        _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+    }
+#else
+    // Unix/Linux/macOS shared memory cleanup
+    if (_memory != nullptr)
+    {
+        if (munmap(_memory, _memorySize) == -1)
+        {
+            LOGWARNING("Failed to unmap shared memory: %s", strerror(errno));
+        }
+        _memory = nullptr;
+    }
+    
+    if (_mappedMemoryFd != -1)
+    {
+        close(_mappedMemoryFd);
+        _mappedMemoryFd = -1;
+    }
+    
+    if (!_mappedMemoryFilepath.empty())
+    {
+        shm_unlink(_mappedMemoryFilepath.c_str());
+        _mappedMemoryFilepath.clear();
+    }
+#endif // _WIN32
+#endif // USE_SHAREDMEM_MAPPING
+
+#ifdef USE_FILE_MAPPING
+    // File mapping cleanup (if implemented)
+    if (_memory != nullptr)
+    {
+#ifdef _WIN32
+        if (!UnmapViewOfFile(_memory))
+        {
+            DWORD error = GetLastError();
+            LOGWARNING("Failed to unmap file view (Error %lu)", error);
+        }
+        
+        if (_mappedMemoryFd != INVALID_HANDLE_VALUE)
+        {
+            if (!CloseHandle(_mappedMemoryFd))
+            {
+                DWORD error = GetLastError();
+                LOGWARNING("Failed to close file mapping handle (Error %lu)", error);
+            }
+            _mappedMemoryFd = INVALID_HANDLE_VALUE;
+        }
+#else
+        if (munmap(_memory, _memorySize) == -1)
+        {
+            LOGWARNING("Failed to unmap file: %s", strerror(errno));
+        }
+        
+        if (_mappedMemoryFd != -1)
+        {
+            if (close(_mappedMemoryFd) == -1)
+            {
+                LOGWARNING("Failed to close file descriptor: %s", strerror(errno));
+            }
+            _mappedMemoryFd = -1;
+        }
+        
+        if (!_mappedMemoryFilepath.empty())
+        {
+            unlink(_mappedMemoryFilepath.c_str());
+            _mappedMemoryFilepath.clear();
+        }
+#endif // _WIN32
+        _memory = nullptr;
+    }
+#endif // USE_FILE_MAPPING
+
+    // Fallback to regular memory allocation if mapping is disabled
+    if (_memory == nullptr && !_mappedMemoryFilepath.empty())
+    {
+        _mappedMemoryFilepath.clear();
+    }
+
+#endif // ENABLE_MEMORY_MAPPING
+}
+
+// Add a method to sync the entire buffer if you want to do it in batches
+void Memory::SyncToDisk()
+{
+#if defined(ENABLE_MEMORY_MAPPING) && !defined(_WIN32)
+    if (_memory)
+    {
+        if (msync(_memory, _memorySize, MS_SYNC) == -1)
+        {
+            LOGWARNING("POSIX: msync failed for the entire buffer: " + std::string(strerror(errno)));
+        }
+    }
+#elif defined(ENABLE_MEMORY_MAPPING) && defined(_WIN32)
+    if (_memory && _hMapFile != INVALID_HANDLE_VALUE)
+    {
+        // On Windows, FlushViewOfFile forces writes to disk for a mapped view
+        // of a file backed by the system paging file. If it's a file mapping of
+        // an actual disk file, FlushFileBuffers on the original file handle
+        // might be needed *after* FlushViewOfFile or UnmapViewOfFile.
+        // For page-file backed, MapViewOfFile changes are generally coherent.
+        // For an actual file on disk, you'd need the original file handle.
+        // Since we use INVALID_HANDLE_VALUE for page-file backing, direct flush
+        // is less common. Changes are seen by other processes mapping the same object.
+        // If you were mapping a *specific disk file* handle (not INVALID_HANDLE_VALUE)
+        // with CreateFileMapping, then you'd use FlushViewOfFile and possibly FlushFileBuffers.
+
+        // For page-file backed shared memory (INVALID_HANDLE_VALUE with CreateFileMapping),
+        // changes made by one process to the view are generally immediately visible
+        // to other processes that have mapped the same file-mapping object.
+        // Explicit flushing to disk isn't the same concept as with POSIX file-backed mmap.
+        // However, if you need to ensure data is written to the *page file* on disk (less common need):
+        if (FlushViewOfFile(_memory, _memorySize) == 0)
+        {
+            LOGWARNING("Windows: FlushViewOfFile failed: " + std::to_string(GetLastError()));
+        }
+        LOGINFO("Windows: FlushViewOfFile called.");
+    }
+#else
+#endif
 }
 
 /// endregion </Initialization>
