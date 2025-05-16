@@ -131,26 +131,35 @@ void MessageCenter::ThreadWorker()
 	pthread_setname_np(pthread_self(), threadName);
 #endif
 #if defined _WIN32 && defined MSVC
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
+    typedef HRESULT (WINAPI *SetThreadDescriptionFunc)(HANDLE, PCWSTR);
+    static auto setThreadDescription = (SetThreadDescriptionFunc)
+        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription");
     if (setThreadDescription != nullptr)
     {
-	    wchar_t wname[24];
-	    size_t retval;
-        mbstowcs_s(&retval, wname, threadName, sizeof (threadName) / sizeof (threadName[0]));
+        wchar_t wname[24];
+        size_t retval;
+        mbstowcs_s(&retval, wname, 24, threadName, strlen(threadName));
         setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
 
 #if defined _WIN32 && defined __GNUC__
-    static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-            GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
-    if (setThreadDescription != nullptr)
+    typedef HRESULT (WINAPI *SetThreadDescriptionFunc)(HANDLE, PCWSTR);
+    HMODULE hModule = GetModuleHandle(TEXT("kernelbase.dll"));
+    if (hModule)
     {
-        wchar_t wname[24];
-        size_t retval;
-        mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof (wname) / sizeof (wname[0])), &threadName, (size_t)(sizeof (threadName) / sizeof (threadName[0])), &conversion);
+        // Use reinterpret_cast for FARPROC to avoid direct casting between incompatible function types
+        SetThreadDescriptionFunc setThreadDescription = reinterpret_cast<SetThreadDescriptionFunc>(
+            reinterpret_cast<void*>(GetProcAddress(hModule, "SetThreadDescription")));
+        if (setThreadDescription != nullptr)
+        {
+            wchar_t wname[24];
+            size_t retval;
+            mbstate_t conversion = {};
+            const char* temp = threadName;
+            mbsrtowcs_s(&retval, wname, 24, &temp, strlen(threadName), &conversion);
+            setThreadDescription(GetCurrentThread(), wname);
+        }
     }
 #endif
 

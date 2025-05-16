@@ -49,19 +49,19 @@ public:
 
     inline static uint64_t GetTimestampMs()
     {
-        struct timespec ts;
         uint64_t result = 0;
-
-#if defined(WIN32)
+    
+    #if defined(WIN32)
         LARGE_INTEGER frequency;
         LARGE_INTEGER ticks;
         QueryPerformanceFrequency(&frequency);
         QueryPerformanceCounter(&ticks);
-
+    
         uint64_t divider = frequency.QuadPart / 1'000'000;   // Convert from milliseconds to nanoseconds
-
+    
         result = ticks.QuadPart / divider;
-#else
+    #else
+        struct timespec ts;
         if (timespec_get(&ts, TIME_UTC))
         {
             result = (uint64_t)ts.tv_sec * 1'000'000'000 + (uint64_t)ts.tv_nsec;
@@ -197,7 +197,7 @@ std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration>
     std::tie(year, month, day) = civil_from_days(d.count());
 
     // Initialize tm struct with all fields
-    std::tm tm;
+    std::tm tm = {};  // Zero-initialize all members
     tm.tm_sec = 0;
     tm.tm_min = 0;
     tm.tm_hour = 0;
@@ -207,8 +207,10 @@ std::tm make_utc_tm(std::chrono::time_point<std::chrono::system_clock, Duration>
     tm.tm_wday = static_cast<int>(weekday_from_days(static_cast<int>(d.count())));
     tm.tm_yday = static_cast<int>(d.count() - days_from_civil(year, 1, 1));
     tm.tm_isdst = 0;
+    #if !defined(_WIN32)
     tm.tm_gmtoff = 0;
     tm.tm_zone = nullptr;
+    #endif
 
     // Fill in the time
     auto hours_count = std::chrono::duration_cast<hours>(t).count();
