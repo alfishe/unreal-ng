@@ -15,9 +15,13 @@ endif ()
 
 # Set paths
 get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# Include CMake helper functions file
+include(${ROOT_DIR}/cmake/func.cmake)
 
 # Build all dependency libraries
+add_subdirectory("3rdparty/QHexView-5.0")
 add_subdirectory("${ROOT_DIR}/core/src" core)
 add_subdirectory("${ROOT_DIR}/core/tests" tests)
 
@@ -66,25 +70,22 @@ if (NOT CMAKE_BUILD_TYPE)
     set (CMAKE_BUILD_TYPE Release)
 endif ()
 
-
-
 # Resolve base paths for Core library and Data
 get_filename_component(CORE_LIBRARY_PATH
-                       "${CMAKE_CURRENT_LIST_DIR}/../core"
-                       ABSOLUTE)
+    "${CMAKE_CURRENT_LIST_DIR}/../core"
+    ABSOLUTE
+)
 message("CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
 get_filename_component(DATA_PATH
-        "${CMAKE_CURRENT_LIST_DIR}/../data"
-        ABSOLUTE)
+    "${CMAKE_CURRENT_LIST_DIR}/../data"
+    ABSOLUTE
+)
 message("DATA_PATH: ${DATA_PATH}")
-
-# Include CMake helper functions file
-include(${ROOT_DIR}/cmake/func.cmake)
 
 # Set include paths for compiler
 include_directories(
-        ${SOURCE_DIR}/
-        ${SOURCE_DIR}/3rdparty
+    ${SOURCE_DIR}/
+    ${SOURCE_DIR}/3rdparty/QHexView-5.0
 )
 
 
@@ -113,8 +114,11 @@ if (CMAKE_BUILD_TYPE MATCHES Debug)
     target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
 endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
-# Add core library includes path for testclient
-target_include_directories(${PROJECT_NAME} PRIVATE ${CORE_LIBRARY_PATH}/src)
+# Add include paths
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CORE_LIBRARY_PATH}/src
+    3rdparty/QHexView-5.0/include
+)
 
 # Link all dependencies
 if (APPLE)
@@ -133,6 +137,7 @@ target_link_libraries(
     unrealng::core
     Qt6::Widgets
     Qt6::Multimedia
+    QHexView
     ${common_libraries}
 )
 
