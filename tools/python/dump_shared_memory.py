@@ -14,8 +14,16 @@ import psutil
 import posix_ipc
 import mmap
 import hashlib
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, BinaryIO
+
+# Import PIL for image processing
+try:
+    from PIL import Image
+except ImportError:
+    print("Warning: PIL/Pillow not installed. Screen extraction will be disabled.")
+    print("Install with: pip install pillow")
 
 # Memory layout constants (must match emulator)
 PAGE_SIZE = 0x4000  # 16KB per page
@@ -146,6 +154,107 @@ def is_page_empty(data: bytes) -> bool:
         bool: True if the page contains only zeros
     """
     return all(b == 0 for b in data)
+
+def extract_zx_spectrum_screen(data: bytes, output_path: str, verbose: bool = False) -> bool:
+    """
+    Extract a ZX-Spectrum screen from memory data and save as PNG.
+    
+    The ZX-Spectrum screen is 256x192 pixels with a complex memory layout:
+    - First 6144 bytes: Pixel data (bitmap)
+    - Next 768 bytes: Attribute data (colors)
+    
+    Args:
+        data: Memory page data (16KB)
+        output_path: Path to save the PNG file
+        verbose: Print verbose output
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Check if PIL is available
+        if 'Image' not in globals():
+            print("PIL/Pillow not available. Cannot extract screen.")
+            return False
+            
+        # Ensure we have enough data (at least 6912 bytes for the screen)
+        if len(data) < 6912:
+            print(f"Not enough data for screen extraction: {len(data)} bytes")
+            return False
+            
+        # Create a new RGB image (256x192 pixels)
+        img = Image.new('RGB', (256, 192))
+        pixels = img.load()
+        
+        # ZX-Spectrum colors (RGB values)
+        zx_colors = [
+            (0, 0, 0),       # Black
+            (0, 0, 215),     # Blue
+            (215, 0, 0),     # Red
+            (215, 0, 215),   # Magenta
+            (0, 215, 0),     # Green
+            (0, 215, 215),   # Cyan
+            (215, 215, 0),   # Yellow
+            (215, 215, 215), # White
+            (0, 0, 0),       # Bright Black
+            (0, 0, 255),     # Bright Blue
+            (255, 0, 0),     # Bright Red
+            (255, 0, 255),   # Bright Magenta
+            (0, 255, 0),     # Bright Green
+            (0, 255, 255),   # Bright Cyan
+            (255, 255, 0),   # Bright Yellow
+            (255, 255, 255)  # Bright White
+        ]
+        
+        # Process the screen data
+        for y in range(192):
+            # Calculate the pixel data address for this line
+            # ZX-Spectrum screen has a non-linear memory layout
+            y_addr = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2)
+            
+            # Process each character cell in the line (32 cells per line)
+            for x_cell in range(32):
+                # Get the 8 pixels for this cell
+                pixel_addr = y_addr + x_cell
+                pixel_byte = data[pixel_addr]
+                
+                # Get the attribute byte for this cell
+                attr_addr = 6144 + ((y >> 3) << 5) + x_cell
+                attr_byte = data[attr_addr]
+                
+                # Extract colors from attribute byte
+                ink = attr_byte & 0x07
+                paper = (attr_byte >> 3) & 0x07
+                bright = (attr_byte >> 6) & 0x01
+                
+                # Apply brightness
+                if bright:
+                    ink += 8
+                    paper += 8
+                
+                # Get the actual RGB colors
+                ink_color = zx_colors[ink]
+                paper_color = zx_colors[paper]
+                
+                # Draw the 8 pixels in this cell
+                for bit in range(8):
+                    x = (x_cell << 3) | bit
+                    pixel_value = (pixel_byte >> (7 - bit)) & 0x01
+                    pixels[x, y] = ink_color if pixel_value else paper_color
+        
+        # Save the image
+        img.save(output_path, 'PNG')
+        
+        if verbose:
+            print(f"Saved ZX-Spectrum screen to {output_path}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error extracting ZX-Spectrum screen: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 def save_page(output_dir: str, region: MemoryRegion, page_num: int, data: bytes, 
              skip_empty: bool = True, verbose: bool = False) -> Tuple[bool, Optional[str]]:
@@ -286,7 +395,7 @@ class RegionStats:
             stats += f" ROMs:{self.identified_roms:3d}"
         print(f"  {stats}")
 
-def dump_shared_memory(output_dir: str, skip_empty: bool = True, verbose: bool = False) -> bool:
+def dump_shared_memory(output_dir: str, skip_empty: bool = True, verbose: bool = False, extract_screens: bool = True) -> bool:
     """Dump all memory pages from shared memory to files.
     
     Args:
@@ -365,6 +474,14 @@ def dump_shared_memory(output_dir: str, skip_empty: bool = True, verbose: bool =
                         else:
                             stats[region.name].skipped_pages += 1
                             total_skipped += 1
+                            
+                        # Extract ZX-Spectrum screen from RAM pages 5 and 7 if they're not empty
+                        if extract_screens and region.name == "RAM" and not is_page_empty(page_data):
+                            rel_page = page_num - region.start_page
+                            if rel_page == 5 or rel_page == 7:
+                                screen_path = os.path.join(output_dir, f"screen_{rel_page:03d}.png")
+                                if extract_zx_spectrum_screen(page_data, screen_path, verbose):
+                                    print(f"Extracted ZX-Spectrum screen from RAM page {rel_page} to {screen_path}")
                     except Exception as e:
                         print(f"  Error processing page {page_num} (offset 0x{offset:X}): {e}")
                         continue
@@ -425,18 +542,23 @@ def main() -> int:
                       dest='skip_empty_pages',
                       action='store_false',
                       help="Don't skip empty pages")
-    
-    parser.add_argument('-v', '--verbose', 
+                      
+    parser.add_argument('--no-screens',
                       action='store_true',
-                      help='Enable verbose output')
+                      help="Disable screen extraction")
+                      
+    parser.add_argument('-v', '--verbose',
+                      action='store_true',
+                      help="Enable verbose output")
     
     args = parser.parse_args()
     
     # Dump the shared memory
     success = dump_shared_memory(
-        output_dir=args.output_dir,
-        skip_empty=args.skip_empty_pages,
-        verbose=args.verbose
+        output_dir=args.output_dir, 
+        skip_empty=args.skip_empty_pages, 
+        verbose=args.verbose,
+        extract_screens=not args.no_screens
     )
     
     return 0 if success else 1
