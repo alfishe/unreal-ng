@@ -6,16 +6,16 @@ This script monitors the memory map file (/tmp/zxspectrum_memory<pid>) for chang
 and displays which memory pages are being modified in real-time.
 """
 
-import os
 import sys
 import time
-import signal
-import glob
 import psutil
 import mmap
 import posix_ipc
 from pathlib import Path
 from typing import Optional, Dict, Set, Tuple, Callable, Any
+
+# Debug mode flag - set to True to enable detailed debug output
+DEBUG_MODE = False
 
 # Console helper functions
 def clear_screen() -> None:
@@ -61,22 +61,12 @@ def with_cursor_pos(line: int, column: int = 0) -> Callable[[Callable], Callable
         return wrapper
     return decorator
 
-# Memory layout constants (must match slice_memory.py)
+# Memory layout constants (must match emulator)
 PAGE_SIZE = 0x4000  # 16KB per page
 MAX_RAM_PAGES = 256
 MAX_CACHE_PAGES = 2
 MAX_MISC_PAGES = 1
 MAX_ROM_PAGES = 64
-
-# Memory region page ranges (calculated from sizes)
-RAM_START_PAGE = 0
-RAM_END_PAGE = MAX_RAM_PAGES - 1
-CACHE_START_PAGE = RAM_END_PAGE + 1
-CACHE_END_PAGE = CACHE_START_PAGE + MAX_CACHE_PAGES - 1
-MISC_START_PAGE = CACHE_END_PAGE + 1
-MISC_END_PAGE = MISC_START_PAGE + MAX_MISC_PAGES - 1
-ROM_START_PAGE = MISC_END_PAGE + 1
-ROM_END_PAGE = ROM_START_PAGE + MAX_ROM_PAGES - 1
 
 # Memory regions
 class MemoryRegion:
@@ -88,11 +78,16 @@ class MemoryRegion:
 
 # Define memory regions (page numbers are inclusive)
 MEMORY_REGIONS = [
-    MemoryRegion("ROM",   ROM_START_PAGE,   ROM_END_PAGE),    # 64 pages (0x000000-0x3FFFFF)
-    MemoryRegion("RAM",   RAM_START_PAGE,   RAM_END_PAGE),    # 256 pages (0x400000-0x7FFFFF)
-    MemoryRegion("CACHE", CACHE_START_PAGE, CACHE_END_PAGE),  # 2 pages (0x800000-0x80FFFF)
-    MemoryRegion("MISC",  MISC_START_PAGE,  MISC_END_PAGE)    # 1 page (0x810000-0x81FFFF)
+    MemoryRegion("RAM",   0, MAX_RAM_PAGES - 1),  # 256 pages (starts at 0x000000)
+    MemoryRegion("CACHE", MAX_RAM_PAGES, 
+                 MAX_RAM_PAGES + MAX_CACHE_PAGES - 1),  # 2 pages
+    MemoryRegion("MISC",  MAX_RAM_PAGES + MAX_CACHE_PAGES, 
+                 MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES - 1),  # 1 page
+    MemoryRegion("ROM",   MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES, 
+                 MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES - 1)  # 64 pages
 ]
+
+
 
 def get_region_for_page(page_num: int) -> Optional[MemoryRegion]:
     """Get the memory region for a given page number."""
@@ -108,23 +103,12 @@ def get_page_info(page_num: int) -> Tuple[str, int]:
         return "UNK", page_num
     
     # Calculate relative page number within the region
-    if region.name == "ROM":
-        rel_page = page_num - ROM_START_PAGE
-    elif region.name == "RAM":
-        rel_page = page_num - RAM_START_PAGE
-    elif region.name == "CACHE":
-        rel_page = page_num - CACHE_START_PAGE
-    elif region.name == "MISC":
-        rel_page = page_num - MISC_START_PAGE
-    else:
-        rel_page = page_num
-    
+    rel_page = page_num - region.start_page
     return region.name, rel_page
 
 def find_shared_memory() -> Optional[Tuple[str, int]]:
     """Find the shared memory region and verify the owner PID."""
     try:
-        import posix_ipc
         import subprocess
         import re
         
@@ -147,43 +131,21 @@ def find_shared_memory() -> Optional[Tuple[str, int]]:
             
         print(f"Found emulator processes: {[p['pid'] for p in emulator_processes]}")
         
-        # On macOS, we'll try to directly open the shared memory for each emulator process
+        # Try to connect to shared memory
         shm_name = "/zxspectrum"
         
-        # First, try to find any shared memory with our name
         try:
             # Try to open the shared memory
             shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
             
-            # Get the owner PID of the shared memory
-            try:
-                # On macOS, we can use lsof to find the process using this shared memory
-                result = subprocess.run(['lsof', f'/dev/shm{shm_name}'], capture_output=True, text=True)
-                if result.returncode == 0 and len(result.stdout.split('\n')) > 1:
-                    # The second line contains the process info
-                    parts = re.split(r'\s+', result.stdout.split('\n')[1].strip())
-                    if len(parts) >= 2:
-                        owner_pid = int(parts[1])
-                        
-                        # Verify the owner PID matches one of our emulator PIDs
-                        for proc in emulator_processes:
-                            if proc['pid'] == owner_pid:
-                                print(f"Found matching shared memory: {shm_name}, PID={owner_pid}")
-                                print(f"Process command: {proc['cmdline']}")
-                                shm.close_fd()  # We'll reopen it in the monitor function
-                                return shm_name, owner_pid
-            except (subprocess.SubprocessError, ValueError, IndexError) as e:
-                print(f"Warning: Could not verify shared memory owner: {e}")
-                
-            # If we couldn't verify the owner, just use the first emulator process
-            print(f"Using first emulator process (could not verify shared memory owner)")
+            # If we successfully opened the shared memory, use the first process ID
             pid = emulator_processes[0]['pid']
+            print(f"Successfully connected to shared memory: {shm_name}, using PID={pid}")
+            
+            # Close the file descriptor - we'll reopen it in the monitor function
             shm.close_fd()
-
-            if pid != 0:
-                return shm_name, pid
-            else:
-                return None
+            
+            return shm_name, pid
             
         except posix_ipc.ExistentialError:
             print(f"Shared memory not found: {shm_name}")
@@ -193,32 +155,14 @@ def find_shared_memory() -> Optional[Tuple[str, int]]:
             print(f"Error accessing shared memory: {e}")
             return None
             
-        except FileNotFoundError:
-            print("'ipcs' command not found. Cannot verify shared memory ownership.")
-            # Fall back to the old method if ipcs is not available
-            shm_name = "/zxspectrum"
-            try:
-                shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
-                print(f"Successfully connected to shared memory (without PID verification): {shm_name}")
-                pid = emulator_processes[0]['pid']  # Use first found PID
-                shm.close_fd()
-                return shm_name, pid
-            except Exception as e:
-                print(f"Error accessing shared memory: {e}")
-                return None
-        
-    except Exception as e:
-        print(f"Error finding shared memory: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-        
     except ImportError:
         print("Error: The 'posix_ipc' module is required for shared memory access.")
         print("Install it with: pip install posix_ipc")
         return None
     except Exception as e:
         print(f"Error finding shared memory: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def is_process_running(pid: int) -> bool:
@@ -257,36 +201,23 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
     MAX_PAGES = 256  # Maximum number of pages to track
     
     # Initialize data structures for tracking page changes
-    prev_pages = [None] * MAX_PAGES  # Previous page data for comparison
     page_checksums = [0] * MAX_PAGES  # Checksums for quick comparison
     page_active = [False] * MAX_PAGES  # Whether a page is active (has data)
     page_changed = [False] * MAX_PAGES  # Whether page has changed in current check
     page_change_count = [0] * MAX_PAGES  # Count of changes for each page
     page_display_line = [-1] * MAX_PAGES  # Display line for each page (-1 = not displayed)
-    last_update_time = {}  # Last time a page was updated
-    next_display_line = 0  # Next available display line
-    
-    # Track page states
-    page_checksums = [0] * MAX_PAGES  # Current checksum for each page
-    page_changed = [False] * MAX_PAGES  # Whether page has changed in current check
-    page_active = [False] * MAX_PAGES  # Whether page is active (has been modified at least once)
-    page_change_count = [0] * MAX_PAGES  # Number of times page has changed
-    page_display_line = [-1] * MAX_PAGES  # Display line for each active page (-1 = not displayed)
+    page_last_update = [0.0] * MAX_PAGES  # Last time a page was updated
     next_display_line = 0  # Next available display line
     
     # Initialize prev_pages with None - will be filled on first read
     prev_pages = {i: None for i in range(MAX_PAGES)}
     
-    # Track last update time for each page
-    page_last_update = [0.0] * MAX_PAGES
-    
-
     # Get terminal size
     import shutil
     term_height = shutil.get_terminal_size().lines
     
-    # Calculate available lines for memory pages (reserve 3 lines for header/footer)
-    max_display_lines = term_height - 3
+    # Calculate available lines for memory pages (reserve 6 lines for header/footer)
+    max_display_lines = term_height - 6
     
     # Hide cursor and clear screen
     print("\033[?25l\033[2J\033[H", end="")
@@ -323,66 +254,115 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
         # Print exit message on the line above the bottom delimiter
         print_at_line(term_height - 2, "Press Ctrl+C to exit")
     
+    def clear_content_area():
+        """Clear the monitoring content area and redraw UI elements."""
+        # Clear monitoring area (lines 4 to term_height-3)
+        clear_lines(4, term_height - 3)
+        print_time()  # Update the time display
+        print_delimiter(3)  # Redraw the delimiter
+        print_footer()  # Redraw the footer
+        move_cursor(4, 0)  # Move cursor back to start of monitoring area
+    
     # Initial screen setup
     clear_screen()
-    
-    # Print header on line 1
     print_header()
-    
-    # Print time on line 2
     print_time()
-    
-    # Print delimiter on line 3
     print_delimiter(3)
-    
-    # Clear remaining lines for memory pages (starting from line 4)
     clear_lines(4, term_height - 3)
-    
-    # Print footer and exit message
     print_footer()
-    
-    # Move cursor to line 4 (first line after delimiters)
     move_cursor(4, 0)
     
-    # Track last time update and file check
-    last_time_update = last_file_check = 0  # Force immediate updates
-    last_file_mod_time = 0
+    # Track last time update and memory check
+    last_time_update = 0
+    last_memory_check = 0
     initial_scan = True  # Flag to track initial scan
     
+    shm = None
     try:
+        # Try to open the shared memory
+        try:
+            print(f"Attempting to connect to shared memory: '{shm_name}'")
+            shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
+            print(f"Connected to shared memory '{shm_name}' (size: {shm.size} bytes)")
+            
+            # Print memory region information (only in debug mode)
+            if DEBUG_MODE:
+                print("\nMemory Regions:")
+                for region in MEMORY_REGIONS:
+                    region_size = (region.end_page - region.start_page + 1) * PAGE_SIZE
+                    print(f"  {region.name}: pages {region.start_page}-{region.end_page} (0x{region.start_page*PAGE_SIZE:06x}-0x{(region.end_page+1)*PAGE_SIZE-1:06x}, {region_size} bytes)")
+                print(f"\nTotal expected memory: {(MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE} bytes")
+            
+        except posix_ipc.ExistentialError:
+            print(f"\n\033[91mError: Shared memory '{shm_name}' not found\033[0m")
+            print("Make sure the emulator is running with shared memory enabled.")
+            print("Check if the emulator was started with the correct shared memory settings.")
+            return
+        except Exception as e:
+            print(f"\n\033[91mError opening shared memory: {e}\033[0m")
+            import traceback
+            traceback.print_exc()
+            return
+        
         while True:
             current_time = time.time()
-            needs_refresh = False
             
-            # Update time every second on line 2
+            # Update time display every second
             if current_time - last_time_update >= 1.0:
                 print_time()
                 last_time_update = current_time
             
-            # Check for memory changes more frequently (every 20ms = 50Hz)
-            if current_time - last_file_check >= 0.02:  # 50Hz update rate
-                last_file_check = current_time
+            # Check for memory changes at the specified rate
+            if current_time - last_memory_check >= update_interval:
+                last_memory_check = current_time
                 
-                # For shared memory, we'll always check for changes
-                needs_refresh = True
+                # Check if process is still running
+                if not is_process_running(pid):
+                    print("\n\033[91mProcess is no longer running!\033[0m")
+                    break
                 
-                if needs_refresh:
-                    # Check if process is still running
-                    if not is_process_running(pid):
-                        print("\n\033[91mProcess is no longer running!\033[0m")
-                        break
-                    
-                    # Read current memory state from shared memory
+                # Read current memory state from shared memory
+                try:
+                    # Map the shared memory and read its content
                     try:
-                        import mmap
-                        shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
+                        # Map and read shared memory
                         mm = mmap.mmap(shm.fd, shm.size, mmap.MAP_SHARED, mmap.PROT_READ)
                         current_data = mm.read()
+                        mm.close()
                         
-                        # Process each page in the memory
-                        actual_pages = len(current_data) // PAGE_SIZE
-                        for page_num in range(0, min(actual_pages, MAX_PAGES)):
-                            page_start = page_num * PAGE_SIZE
+                        # Clean monitoring area and reset on first successful scan
+                        if initial_scan:
+                            clear_content_area()  # Clear and redraw the monitoring area
+                            initial_scan = False
+                        
+                    except Exception as e:
+                        print(f"\n\033[91mError mapping/reading shared memory: {e}\033[0m")
+                        import traceback
+                        traceback.print_exc()
+                        break
+                    
+                    # Verify we got some data
+                    if not current_data:
+                        print("\n\033[91mError: No data read from shared memory\033[0m")
+                        break
+                        
+                    # Make sure we have enough data
+                    if len(current_data) < (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE:
+                        print(f"\n\033[91mError: Not enough data in shared memory (got {len(current_data)} bytes, expected at least {(MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE} bytes)\033[0m")
+                        break
+                    
+                    # Process each memory region
+                    for region in MEMORY_REGIONS:
+                        # Ensure we don't exceed MAX_PAGES or shared memory size
+                        end_page = min(region.end_page, MAX_PAGES - 1)
+                        max_possible_page = (len(current_data) // PAGE_SIZE) - 1
+                        end_page = min(end_page, max_possible_page)
+                        
+                        if region.start_page > end_page:
+                            continue
+                            
+                        for page_in_region in range(region.start_page, end_page + 1):
+                            page_start = page_in_region * PAGE_SIZE
                             if page_start >= len(current_data):
                                 continue
                                 
@@ -395,109 +375,64 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
                             # Calculate checksum for this page
                             current_checksum = get_page_checksum(page_data)
                             
-                            # Check if this page has changed
-                            if prev_pages[page_num] is None:
-                                # First time seeing this page
-                                page_active[page_num] = True
-                                page_checksums[page_num] = current_checksum
-                                prev_pages[page_num] = page_data
+                            # For the first time we see a page, just store the data
+                            if prev_pages[page_in_region] is None:
+                                page_active[page_in_region] = True
+                                page_checksums[page_in_region] = current_checksum
+                                prev_pages[page_in_region] = page_data
+                                page_last_update[page_in_region] = current_time
                                 continue
                             
                             # Check for changes using checksum first (faster)
-                            if current_checksum != page_checksums[page_num]:
+                            if current_checksum != page_checksums[page_in_region]:
                                 # Count actual byte differences
-                                changed_bytes = sum(1 for a, b in zip(prev_pages[page_num], page_data) if a != b)
+                                changed_bytes = sum(1 for a, b in zip(prev_pages[page_in_region], page_data) if a != b)
                                 
-                                # Always update the display if there are changes
+                                # Update the display if there are changes
                                 if changed_bytes > 0:
-                                    page_changed[page_num] = True
-                                    page_change_count[page_num] += 1
+                                    page_changed[page_in_region] = True
+                                    page_change_count[page_in_region] += 1
+                                    page_last_update[page_in_region] = current_time
                                     
-                                    # Assign display line if this is a new change
-                                    if page_display_line[page_num] == -1:
-                                        page_display_line[page_num] = next_display_line
-                                        next_display_line = (next_display_line + 1) % (term_height - 6)
+                                    # Update display for changed pages
+                                    if page_display_line[page_in_region] == -1:
+                                        page_display_line[page_in_region] = next_display_line
+                                        next_display_line = (next_display_line + 1) % max_display_lines
                                     
-                                    # Update the display for changed pages
-                                    display_line = page_display_line[page_num] + 4  # Account for header
-                                    if display_line < term_height - 2:  # Don't write over footer
-                                        page_name = get_page_display_name(page_num)
-                                        print_at_line(
-                                            display_line,
-                                            f"{page_name}: {time.strftime('%H:%M:%S')} - {changed_bytes:4d} bytes changed (x{page_change_count[page_num]})"
-                                        )
+                                    # Only show changes in the terminal if not in debug mode
+                                    if not DEBUG_MODE:
+                                        display_line = page_display_line[page_in_region] + 4  # Account for header
+                                        if display_line < term_height - 2:  # Don't write over footer
+                                            region_name, rel_page = get_page_info(page_in_region)
+                                            page_name = f"{region_name}[{rel_page:02X}]"
+                                            print_at_line(
+                                                display_line,
+                                                f"{page_name}: {time.strftime('%H:%M:%S')} - {changed_bytes:4d} bytes changed (x{page_change_count[page_in_region]})"
+                                            )
+                                    elif DEBUG_MODE:
+                                        region_name, rel_page = get_page_info(page_in_region)
+                                        print(f"{region_name}[{rel_page:02X}]: {changed_bytes} bytes changed (x{page_change_count[page_in_region]})")
                                 
                                 # Update checksum and previous data for next comparison
-                                page_checksums[page_num] = current_checksum
-                                prev_pages[page_num] = page_data
-                        
-                        mm.close()
-                        shm.close_fd()
-                    except Exception as e:
-                        print(f"\n\033[91mError reading shared memory: {e}\033[0m")
-                        break
+                                page_checksums[page_in_region] = current_checksum
+                                prev_pages[page_in_region] = page_data
+                            #else:
+                            #    print(f"  Page {page_in_region}: No change (checksum: {current_checksum:08x})")
                     
-                    # Process each page
-                    for page_num in range(0, min(MAX_PAGES, len(current_data) // PAGE_SIZE + 1)):
-                        page_start = page_num * PAGE_SIZE
-                        if page_start >= len(current_data):
-                            continue
-                            
-                        # Get page data (with padding if needed)
-                        page_data = current_data[page_start:page_start + PAGE_SIZE]
-                        if len(page_data) < PAGE_SIZE:
-                            page_data += b'\x00' * (PAGE_SIZE - len(page_data))
-                        
-                        # Calculate checksum for the page
-                        current_checksum = get_page_checksum(page_data)
-                        
-                        # For the first time we see a page, just store the data
-                        if prev_pages[page_num] is None:
-                            page_active[page_num] = True
-                            page_checksums[page_num] = current_checksum
-                            prev_pages[page_num] = page_data
-                            continue
-                        
-                        # Check for changes using checksum first (faster)
-                        if current_checksum != page_checksums[page_num]:
-                            # Count actual byte differences
-                            changed_bytes = 0
-                            if prev_pages[page_num] is not None:
-                                changed_bytes = sum(1 for a, b in zip(prev_pages[page_num], page_data) if a != b)
-                            
-                            # Always update the display if there are changes or if this is the first time
-                            if changed_bytes > 0 or page_change_count[page_num] == 0:
-                                page_changed[page_num] = True
-                                page_change_count[page_num] += 1
-                                
-                                # Assign display line if this is a new change
-                                if page_display_line[page_num] == -1:
-                                    page_display_line[page_num] = next_display_line
-                                    next_display_line = (next_display_line + 1) % max_display_lines
-                                
-                                # Always update the display for changed pages
-                                display_line = page_display_line[page_num] + 4  # Account for header
-                                if display_line < term_height - 2:  # Don't write over footer
-                                    page_name = get_page_display_name(page_num)
-                                    print_at_line(
-                                        display_line,
-                                        f"{page_name}: {time.strftime('%H:%M:%S')} - {changed_bytes:4d} bytes changed (x{page_change_count[page_num]})"
-                                    )
-                            
-                            # Update checksum and previous data for next comparison
-                            page_checksums[page_num] = current_checksum
-                            prev_pages[page_num] = page_data
-            
+                except Exception as e:
+                    print(f"\n\033[91mError reading shared memory: {e}\033[0m")
+                    break
+                
                 # After first full scan, update the time to show we're running
                 if initial_scan:
                     initial_scan = False
-            
-                # Track last update time for each page
-                current_time = time.time()
+                    print_time()
+                
+                # Check for pages that haven't been updated in a while (5 seconds)
                 for page_num in range(MAX_PAGES):
                     if page_active[page_num] and page_change_count[page_num] > 0:
                         # Only clear if no changes for 5 seconds
-                        if current_time - page_change_count[page_num] * 0.02 > 5.0:
+                        if current_time - page_last_update[page_num] > 5.0:
                             # Clear the display line
                             if page_display_line[page_num] != -1:
                                 display_line = page_display_line[page_num] + 4
@@ -507,25 +442,24 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
                             page_active[page_num] = False
                             page_changed[page_num] = False
                             page_change_count[page_num] = 0
-                            # Don't reset page_display_line to keep the same line for this page
-            
-                # Reset display lines if no active pages
-                if not any(page_active):
-                    clear_screen()
-                    print_header()
-                    print_time()
-                    print_delimiter(3)
-                    print_footer()
-                    next_display_line = 0
             
             # Small delay to prevent CPU hogging
-            time.sleep(update_interval)
+            time.sleep(0.01)  # Small sleep even between checks
             
     except KeyboardInterrupt:
         print("\n\033[?25h\033[0mMonitoring stopped by user")
     except Exception as e:
         print(f"\n\033[91mError: {e}\033[0m")
+        import traceback
+        traceback.print_exc()
     finally:
+        # Close the shared memory if it's open
+        if shm is not None:
+            try:
+                shm.close_fd()
+            except:
+                pass
+        
         # Show cursor and reset terminal
         print("\033[?25h\033[0m")
 
