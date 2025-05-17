@@ -400,33 +400,45 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState)
 {
     // Handle maximize state
-    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
+    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen)) // Check if it's maximize and NOT fullscreen
     {
-        qDebug() << "Maximized (Windows)";
-        
-        // Ensure we're not in fullscreen mode
-        _isFullScreen = false;
-        
-        // Store geometry if coming from normal state
-        if (!(oldState & Qt::WindowFullScreen))
+        // This is a standard maximize (e.g., user clicked maximize button), not our managed fullscreen.
+        if (!_isFullScreen) // Only if we are not in a managed fullscreen state
         {
-            _normalGeometry = normalGeometry(); // Store geometry before maximization
+            qDebug() << "Maximized (Windows) - standard maximize";
+            if (oldState == Qt::WindowNoState) { // If maximizing from a normal (non-maximized, non-fullscreen) state
+                _normalGeometry = normalGeometry(); // Store pre-maximize geometry. normalGeometry() gives the geometry *before* this maximization.
+                qDebug() << "Stored geometry from Normal state for Maximize:" << _normalGeometry;
+            }
         }
-
-        showMaximized();
+        // If _isFullScreen is true here, it means the OS might have forced a maximized state
+        // while we thought we were fullscreen. We let _isFullScreen remain true,
+        // so if the user then un-maximizes, it might trigger a Qt::WindowNoState,
+        // and our _isFullScreen logic in that branch will attempt to restore to the *intended* normal state.
+        // `showMaximized()` is not needed here as Qt handles the state change itself.
     }
-    // Handle fullscreen state
-    else if (newState & Qt::WindowFullScreen)
+    else if (newState & Qt::WindowFullScreen) // Handle fullscreen state
     {
         qDebug() << "FullScreen (Windows)";
-
+ 
         hide();
         _isFullScreen = true;
-
-        // Store geometry if coming from normal state
-        if (oldState == Qt::WindowNoState)
-        {
-            _normalGeometry = normalGeometry();
+ 
+        // Store geometry to restore to when exiting fullscreen.
+        // _normalGeometry should hold the "true normal" state to return to.
+        if (!(oldState & Qt::WindowFullScreen))
+        { // Only if we weren't already in a fullscreen state
+            if (oldState == Qt::WindowNoState)
+          {
+                // Transitioning from Normal (not maximized): current geometry before fullscreen is what we want to save.
+                _normalGeometry = this->geometry(); // `geometry()` gives current size before showFullScreen() hides it.
+                qDebug() << "Stored geometry from Normal state for FullScreen:" << _normalGeometry;
+            } else if (oldState & Qt::WindowMaximized)
+            {
+                // Transitioning from Maximized: _normalGeometry should ideally already hold the
+                // "restored from maximized" size (set when it was maximized from normal). We don't update it here.
+                qDebug() << "Transitioning to FullScreen from Maximized, _normalGeometry is:" << _normalGeometry;
+            }
         }
 
         // Apply fullscreen styling
@@ -435,7 +447,7 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
         setPalette(palette);
         statusBar()->hide();
         startButton->hide();
-
+ 
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         showFullScreen();
     }
@@ -444,30 +456,59 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
     {
         qDebug() << "Restored (Windows)";
 
-        // Skip intermediate restore events
-        if (oldState & Qt::WindowMaximized && !_isFullScreen)
+        if (_isFullScreen)
         {
-            return;
+            // We are exiting our managed fullscreen state
+            qDebug() << "Exiting managed fullscreen to normal state";
+            _isFullScreen = false;
+
+            // Restore normal styling
+            setPalette(_originalPalette);
+            statusBar()->show();
+            startButton->show();
+
+            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint); // Restore frame
+
+            if (_normalGeometry.isValid())
+            {
+                qDebug() << "Restoring geometry to:" << _normalGeometry;
+                setGeometry(_normalGeometry); // Restore geometry
+            }
+            else
+            {
+                qDebug() << "No valid _normalGeometry to restore for exiting fullscreen.";
+            }
+
+            showNormal(); // Show as normal
+
         }
-
-        hide();
-        _isFullScreen = false;
-
-        // Restore normal styling
-        setPalette(_originalPalette);
-        statusBar()->show();
-        startButton->show();
-
-        // Restore window flags and geometry
-        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-
-        // Restore to previous geometry
-        if (_normalGeometry.isValid())
+        else
         {
-            setGeometry(_normalGeometry);
-        }
+            // Transition to WindowNoState, but not from our managed fullscreen.
+            // E.g., user un-maximizes a window that was never in our managed fullscreen.
+            qDebug() << "Restored (Windows) - standard unmaximize or other normal transition";
 
-        showNormal();
+            // Ensure frameless hint is off if it was somehow set
+            if (windowFlags() & Qt::FramelessWindowHint)
+            {
+                setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+            }
+
+            // If it was a standard maximize (oldState was Maximized and we are not in _isFullScreen), _normalGeometry should have been set when it was maximized from a normal state.
+            if (oldState & Qt::WindowMaximized)
+            {
+                if (_normalGeometry.isValid())
+                {
+                    qDebug() << "Restoring geometry from standard Maximize:"
+                            << _normalGeometry;
+                    setGeometry(_normalGeometry);
+                }
+                else
+                {
+                    qDebug() << "No valid _normalGeometry to restore for standard unmaximize.";
+                }
+            }
+        }
     }
 }
 
@@ -938,27 +979,22 @@ void MainWindow::handleStartButton()
 
 void MainWindow::handleFullScreenShortcut()
 {
-    if (isFullScreen())
+    // Check the actual window state, not our internal _isFullScreen flag,
+    // as the user might have changed state via OS mechanisms.
+    if (windowState() & Qt::WindowFullScreen)
     {
-      _isFullScreen = false;
-
+        // We are currently fullscreen, want to go to normal/restored state.
+        // _isFullScreen flag will be updated by the respective handleWindowStateChange* method.
 #ifdef __APPLE__
         setWindowFlags(Qt::Window); // Prevent horizontal transition from full screen to system desktop
 #endif // __APPLE__
-
-        // Exit full-screen mode
         showNormal();
     }
     else
     {
-        _isFullScreen = true;
-
-        // Enter full-screen mode
-#ifdef _WIN32
-        showMaximized();    // Windows flow: Normal -> Maximize -> FullScreen
-#else
+        // We are not fullscreen, want to enter fullscreen.
+        // _isFullScreen flag will be updated by the respective handleWindowStateChange* method.
         showFullScreen();   // macOS and Linux - direct transition to FullScreen
-#endif // _WIN32
     }
 }
 
