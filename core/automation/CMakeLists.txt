@@ -77,9 +77,9 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>
-        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>
-        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>          # Conditional linking
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
 
         unrealng::core
         ${common_libraries}

@@ -121,9 +121,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
 
 
-# Note: We don't need to add direct dependency on zlibstatic when using webapi automation
-# as it's already included via unrealng::automation_webapi
-
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
