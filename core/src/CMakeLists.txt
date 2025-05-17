@@ -6,7 +6,7 @@ message(">> core/src CMakeLists.txt")
 project(core LANGUAGES CXX)
 
 # Emulated system memory mapping options
-option(ENABLE_MEMORY_MAPPING "Enable memory-mapped file support fpr emulated system RAM" OFF)
+option(ENABLE_MEMORY_MAPPING "Enable memory-mapped file support fpr emulated system RAM" ON)
 option(USE_SHAREDMEM_MAPPING "Use shared memory (shm_open) for memory mapping" ON)
 option(USE_FILE_MAPPING "Use file-based memory mapping" OFF)
 
