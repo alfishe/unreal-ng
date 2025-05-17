@@ -12,8 +12,7 @@ package body ZLib.Thin is
 
    ZLIB_VERSION  : constant Chars_Ptr := zlibVersion;
 
-   Dummy : Z_Stream;
-   Z_Stream_Size : constant Int := Dummy'Size / System.Storage_Unit;
+   Z_Stream_Size : constant Int := Z_Stream'Size / System.Storage_Unit;
 
    --------------
    -- Avail_In --

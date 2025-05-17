@@ -5,14 +5,14 @@
 
 #include "gzguts.h"
 
-#if defined(__DJGPP__)
-#  define LSEEK llseek
-#elif defined(_WIN32) && !defined(__BORLANDC__) && !defined(UNDER_CE)
+#if defined(_WIN32) && !defined(__BORLANDC__)
 #  define LSEEK _lseeki64
-#elif defined(_LARGEFILE64_SOURCE) && _LFS64_LARGEFILE-0
+#else
+#if defined(_LARGEFILE64_SOURCE) && _LFS64_LARGEFILE-0
 #  define LSEEK lseek64
 #else
 #  define LSEEK lseek
+#endif
 #endif
 
 #if defined UNDER_CE
@@ -52,7 +52,7 @@ char ZLIB_INTERNAL *gz_strwinerror(DWORD error) {
             msgbuf[chars] = 0;
         }
 
-        wcstombs(buf, msgbuf, chars + 1);       // assumes buf is big enough
+        wcstombs(buf, msgbuf, chars + 1);
         LocalFree(msgbuf);
     }
     else {
@@ -179,8 +179,11 @@ local gzFile gz_open(const void *path, int fd, const char *mode) {
 
     /* save the path name for error messages */
 #ifdef WIDECHAR
-    if (fd == -2)
+    if (fd == -2) {
         len = wcstombs(NULL, path, 0);
+        if (len == (z_size_t)-1)
+            len = 0;
+    }
     else
 #endif
         len = strlen((const char *)path);
@@ -190,21 +193,18 @@ local gzFile gz_open(const void *path, int fd, const char *mode) {
         return NULL;
     }
 #ifdef WIDECHAR
-    if (fd == -2) {
+    if (fd == -2)
         if (len)
             wcstombs(state->path, path, len + 1);
         else
             *(state->path) = 0;
-    }
     else
 #endif
-    {
 #if !defined(NO_snprintf) && !defined(NO_vsnprintf)
         (void)snprintf(state->path, len + 1, "%s", (const char *)path);
 #else
         strcpy(state->path, path);
 #endif
-    }
 
     /* compute the flags for open() */
     oflag =
@@ -228,14 +228,11 @@ local gzFile gz_open(const void *path, int fd, const char *mode) {
            O_APPEND)));
 
     /* open the file with the appropriate flags (or just use fd) */
-    if (fd == -1)
-        state->fd = open((const char *)path, oflag, 0666);
+    state->fd = fd > -1 ? fd : (
 #ifdef WIDECHAR
-    else if (fd == -2)
-        state->fd = _wopen(path, oflag, _S_IREAD | _S_IWRITE);
+        fd == -2 ? _wopen(path, oflag, 0666) :
 #endif
-    else
-        state->fd = fd;
+        open((const char *)path, oflag, 0666));
     if (state->fd == -1) {
         free(state->path);
         free(state);

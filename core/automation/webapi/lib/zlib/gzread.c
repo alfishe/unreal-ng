@@ -374,8 +374,7 @@ int ZEXPORT gzread(gzFile file, voidp buf, unsigned len) {
 }
 
 /* -- see zlib.h -- */
-z_size_t ZEXPORT gzfread(voidp buf, z_size_t size, z_size_t nitems,
-                         gzFile file) {
+z_size_t ZEXPORT gzfread(voidp buf, z_size_t size, z_size_t nitems, gzFile file) {
     z_size_t len;
     gz_statep state;
 

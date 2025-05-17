@@ -30,27 +30,38 @@ if (BUILD_ZLIB)
     set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
     set(ZLIB_BUILD_MINIZIP OFF CACHE BOOL "" FORCE)
     set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
-    set(ZLIB_PREFIX "" CACHE STRING "" FORCE)
+    set(Z_PREFIX "" CACHE STRING "" FORCE)
     
-    # Set the source directory
-    set(ZLIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib")
-    set(zlib_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib)
-    set(zlib_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib)
-    
+    # Set source and binary directories
+    set(zlib_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib" CACHE PATH "zlib source directory" FORCE)
+    set(zlib_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib CACHE PATH "zlib binary directory" FORCE)
+
     # Add zlib as a subproject
     add_subdirectory(
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
+        EXCLUDE_FROM_ALL
     )
-    
+
     # Set the actual library target name
     set(ZLIB_TARGET_NAME zlibstatic)
     
-    # Set variables for Drogon's FindZLIB.cmake
+    # Add include directories
+    target_include_directories(${ZLIB_TARGET_NAME} PUBLIC
+        $<BUILD_INTERFACE:${zlib_BINARY_DIR}>
+        $<BUILD_INTERFACE:${zlib_SOURCE_DIR}>
+        $<INSTALL_INTERFACE:include>
+    )
+    
+    # Set variables for find_package compatibility
     set(ZLIB_FOUND TRUE CACHE BOOL "ZLIB found (bundled)" FORCE)
-    # Use the actual library path instead of the target name to avoid linking issues
+    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${ZLIB_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
+    set(ZLIB_LIBRARIES ${ZLIB_TARGET_NAME} CACHE STRING "ZLIB libraries" FORCE)
     set(ZLIB_LIBRARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/zlib/libz.a" CACHE INTERNAL "Path to zlib library" FORCE)
-    set(ZLIB_LIBRARIES ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB libraries (bundled)" FORCE)
+    set(ZLIB_VERSION_STRING "1.3.1" CACHE STRING "ZLIB version" FORCE)
+
+    # Make sure the library is built before anything that depends on it
+    add_dependencies(${ZLIB_TARGET_NAME} ${ZLIB_TARGET_NAME})
     set(ZLIB_INCLUDE_DIRS 
         ${ZLIB_SOURCE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/zlib
@@ -62,7 +73,7 @@ if (BUILD_ZLIB)
         CACHE INTERNAL "ZLIB include directory (bundled)" FORCE
     )
     set(ZLIB_LIBRARY ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
-    
+
     # Set output name to just 'z' for compatibility
     set_target_properties(${ZLIB_TARGET_NAME} PROPERTIES
         OUTPUT_NAME z

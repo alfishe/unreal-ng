@@ -15,7 +15,6 @@ EXPORTS
     deflateTune
     deflateBound
     deflatePending
-    deflateUsed
     deflatePrime
     deflateSetHeader
     inflateSetDictionary
