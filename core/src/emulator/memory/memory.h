@@ -87,7 +87,12 @@ protected:
     EmulatorContext* _context = nullptr;
     EmulatorState* _state = nullptr;
 
+#ifdef _WIN32
+    HANDLE _mappedMemoryHandle = INVALID_HANDLE_VALUE;
+#else
     int _mappedMemoryFd = -1;
+#endif // _WIN32
+
     std::string _mappedMemoryFilepath;
 
 protected:

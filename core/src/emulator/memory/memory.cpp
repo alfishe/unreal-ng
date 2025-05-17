@@ -676,7 +676,7 @@ void Memory::SyncToDisk()
         }
     }
 #elif defined(ENABLE_MEMORY_MAPPING) && defined(_WIN32)
-    if (_memory && _hMapFile != INVALID_HANDLE_VALUE)
+    if (_memory && _mappedMemoryHandle != INVALID_HANDLE_VALUE)
     {
         // On Windows, FlushViewOfFile forces writes to disk for a mapped view
         // of a file backed by the system paging file. If it's a file mapping of
