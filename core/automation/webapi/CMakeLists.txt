@@ -34,6 +34,8 @@ if (BUILD_ZLIB)
     
     # Set the source directory
     set(ZLIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib")
+    set(zlib_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib)
+    set(zlib_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib)
     
     # Add zlib as a subproject
     add_subdirectory(
@@ -189,8 +191,6 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         ${COMMON_SOURCES}
     )
 
-    add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
-
     # For standalone build
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${JSONCPP_INCLUDE_DIRS}
@@ -229,6 +229,8 @@ else () # Called from upper level CMake => build static library
     add_library(${PROJECT_NAME} STATIC
         ${COMMON_SOURCES}
     )
+
+    add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
