@@ -8,7 +8,7 @@ project(unreal-qt LANGUAGES CXX)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
 option(ENABLE_LUA_AUTOMATION "Enable Lua automation" OFF)
 option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
-option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
+option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" OFF)
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -24,11 +24,6 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
-
-# Build all dependency libraries
-add_subdirectory("3rdparty/QHexView-5.0")
-add_subdirectory("${ROOT_DIR}/core/src" core)
-add_subdirectory("${ROOT_DIR}/core/tests" tests)
 
 # Add automation if enabled
 if (ENABLE_AUTOMATION)
@@ -100,6 +95,10 @@ include_directories(
     ${SOURCE_DIR}/3rdparty/QHexView-5.0
 )
 
+# Build all dependency libraries
+add_subdirectory("3rdparty/QHexView-5.0")
+add_subdirectory("${ROOT_DIR}/core/src" core)
+add_subdirectory("${ROOT_DIR}/core/tests" tests)
 
 # All sources in /src and subfolders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
