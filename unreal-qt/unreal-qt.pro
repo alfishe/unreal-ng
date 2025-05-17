@@ -34,7 +34,7 @@ SOURCES += \
     3rdparty/QHexView-5.0/src/model/qhexoptions.cpp \
     3rdparty/QHexView-5.0/src/model/qhexutils.cpp \
     3rdparty/QHexView-5.0/src/model/qhexdelegate.cpp \
-    3rdparty/QHexView-5.0/src/qhexview.cpp
+    3rdparty/QHexView-5.0/src/qhexview.cpp \
     src/common/widgets/qclickablelabel.cpp \
     src/debugger/debuggerwindow.cpp \
     src/debugger/disassemblercolumnview.cpp \
@@ -73,7 +73,7 @@ HEADERS += \
     3rdparty/QHexView-5.0/include/QHexView/model/qhexoptions.h \
     3rdparty/QHexView-5.0/include/QHexView/model/qhexutils.h \
     3rdparty/QHexView-5.0/include/QHexView/model/qhexdelegate.h \
-    3rdparty/QHexView-5.0/include/QHexView/qhexview.h
+    3rdparty/QHexView-5.0/include/QHexView/qhexview.h \
     src/common/widgets/qclickablelabel.h \
     src/debugger/debuggerwindow.h \
     src/debugger/disassemblercolumnview.h \
