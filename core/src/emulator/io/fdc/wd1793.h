@@ -602,8 +602,6 @@ protected:
     bool _write_fault = false;          // Write sector and Write Track commands can trigger Write Fault error
     bool _write_protect = false;        // All Type I as well as Write sector and Write Track commands can trigger a Write Protect error
     bool _seek_error = false;           // All Type I commands can trigger Seek Error
-    bool _check_am_crc = false;         // Type I command requested to verify Address Mark CRC
-    bool _check_data_crc = false;       // Type II Read Sector command has a mandatory Data Block CRC check
 
     // TODO: Remove temporary fields once switched to WD93State.signals
     bool _intrq_out = false;
