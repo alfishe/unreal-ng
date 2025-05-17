@@ -50,17 +50,18 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
     # Put binary and configuration files to /bin subfolder
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-
+    
     add_executable(${PROJECT_NAME}
         ${SOURCES}
         automation-main.cpp
     )
-
+    
     target_include_directories(${PROJECT_NAME} PRIVATE
         $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES>
     )
+    
 
-    # Link all dependencies
+
     if (APPLE)
         target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
         set(common_libraries iconv)

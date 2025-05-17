@@ -21,47 +21,55 @@ option(BUILD_ZLIB "Build zlib from source" ON)
 # ZLIB_TARGET_NAME will hold the actual CMake target for zlib
 set(ZLIB_TARGET_NAME "")
 
-if(BUILD_ZLIB)
+if (BUILD_ZLIB)
     message(STATUS "[automation_webapi] Building bundled zlib")
-    # Assuming zlib's CMakeLists.txt creates a target named 'zlibstatic'
-    # Check zlib's CMakeLists.txt for the actual target name created by add_library()
-    # Common names: zlibstatic, zlib_static, z
-    set(ZLIB_ACTUAL_TARGET_FROM_SUBDIR zlibstatic) # <--- VERIFY THIS in lib/zlib/CMakeLists.txt
-
-    # Options for zlib's build
-    set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE) # These might be zlib specific options
-    # The following are more standard CMake options for zlib if it uses them
-    option(ZLIB_BUILD_EXAMPLES "Build zlib examples" OFF) # Example, check zlib's CMake
-    set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE) # Often useful for subprojects
-    # Force static build if zlib respects BUILD_SHARED_LIBS
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libs for subprojects" FORCE) # This can affect zlib
-
-    add_subdirectory("lib/zlib" zlib_build_dir) # Use a distinct binary dir
-
-    if(NOT TARGET ${ZLIB_ACTUAL_TARGET_FROM_SUBDIR})
-        message(FATAL_ERROR "Zlib target '${ZLIB_ACTUAL_TARGET_FROM_SUBDIR}' not found after add_subdirectory. Check lib/zlib/CMakeLists.txt.")
-    endif()
-    set(ZLIB_TARGET_NAME ${ZLIB_ACTUAL_TARGET_FROM_SUBDIR})
-
-    # Set variables for Drogon's FindZLIB.cmake to use the CMake TARGET
-    # This is the most robust way if FindZLIB.cmake is modern.
+    
+    # Set zlib build options
+    set(ZLIB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_MINIZIP OFF CACHE BOOL "" FORCE)
+    set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
+    set(ZLIB_PREFIX "" CACHE STRING "" FORCE)
+    
+    # Set the source directory
+    set(ZLIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib")
+    
+    # Add zlib as a subproject
+    add_subdirectory(
+        ${ZLIB_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+    )
+    
+    # Set the actual library target name
+    set(ZLIB_TARGET_NAME zlibstatic)
+    
+    # Set variables for Drogon's FindZLIB.cmake
     set(ZLIB_FOUND TRUE CACHE BOOL "ZLIB found (bundled)" FORCE)
-    set(ZLIB_LIBRARIES ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB library target (bundled)" FORCE) # Use INTERNAL
-    set(ZLIB_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib" CACHE INTERNAL "ZLIB include directory (bundled)" FORCE)
-    # Some FindZLIB might use ZLIB_LIBRARY (singular) for the target or file
-    set(ZLIB_LIBRARY ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB library target (bundled)" FORCE)
-
-    # No need for: HAS_ZLIB_H, HAVE_ZLIB_H - FindZLIB.cmake handles these
-
-    # No need to manually set target_include_directories on zlibstatic here if its own CMakeLists.txt is correct.
-
-    # The alias 'zlib' is good for your own project's direct linking if you prefer it.
-    add_library(zlib ALIAS ${ZLIB_TARGET_NAME})
-
-    # The install rules for zlib here are fine if you intend to install this webapi project
-    # and want zlib to be installed alongside it. If webapi is just an internal static lib,
-    # you might not need to install zlib separately from here.
-else()
+    # Use the actual library path instead of the target name to avoid linking issues
+    set(ZLIB_LIBRARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/zlib/libz.a" CACHE INTERNAL "Path to zlib library" FORCE)
+    set(ZLIB_LIBRARIES ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB libraries (bundled)" FORCE)
+    set(ZLIB_INCLUDE_DIRS 
+        ${ZLIB_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        CACHE INTERNAL "ZLIB include directories (bundled)" FORCE
+    )
+    set(ZLIB_INCLUDE_DIR 
+        ${ZLIB_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        CACHE INTERNAL "ZLIB include directory (bundled)" FORCE
+    )
+    set(ZLIB_LIBRARY ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
+    
+    # Set output name to just 'z' for compatibility
+    set_target_properties(${ZLIB_TARGET_NAME} PROPERTIES
+        OUTPUT_NAME z
+        POSITION_INDEPENDENT_CODE ON
+    )
+    
+    # Export the target for other subdirectories
+    set(ZLIB_TARGET ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB target" FORCE)
+else ()
     message(STATUS "[automation_webapi] Finding system zlib")
     find_package(ZLIB REQUIRED)
     if(NOT ZLIB_FOUND) # Should be redundant due to REQUIRED
@@ -77,7 +85,7 @@ else()
         set(ZLIB_TARGET_NAME ${ZLIB_LIBRARIES})
     endif()
     message(STATUS "[automation_webapi] Using system zlib. Target/Library: ${ZLIB_TARGET_NAME}, Includes: ${ZLIB_INCLUDE_DIRS}")
-endif()
+endif ()
 
 # Build JsonCpp as a static library
 set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
@@ -143,28 +151,20 @@ set(JSONCPP_LIBRARIES jsoncpp_static CACHE STRING "" FORCE)
 set(JSONCPP_FOUND TRUE CACHE BOOL "" FORCE)
 
 # Set specific build options for Drogon framework (located in lib/drogon)
-option(BUILD_CTL "Build drogon_ctl" OFF)
-option(BUILD_EXAMPLES "Build examples" OFF)
-option(BUILD_ORM "Build orm" OFF)
-option(COZ_PROFILING "Use coz for profiling" OFF)
-option(BUILD_SHARED_LIBS "Build drogon as a shared lib" OFF)
-option(BUILD_DOC "Build Doxygen documentation" OFF)
-option(BUILD_BROTLI "Build Brotli" OFF)
+set(BUILD_CTL OFF CACHE BOOL "Build drogon_ctl" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "Build examples" FORCE)
+set(BUILD_ORM OFF CACHE BOOL "Build orm" FORCE)
+set(COZ_PROFILING OFF CACHE BOOL "Use coz for profiling" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build drogon as a shared lib" FORCE)
+set(BUILD_DOC OFF CACHE BOOL "Build Doxygen documentation" FORCE)
+set(BUILD_BROTLI OFF CACHE BOOL "Build Brotli" FORCE)
+set(BUILD_YAML_CONFIG OFF CACHE BOOL "Build yaml config" FORCE)
+# Drogon/trentor setting
+set(BUILD_TESTING OFF CACHE BOOL "Disable testing" FORCE)
 
 # Tell Drogon to use our zlib
-set(ENABLE_BROTLI OFF CACHE BOOL "" FORCE)
-set(ENABLE_ZLIB ON CACHE BOOL "" FORCE)
 set(ZLIB_LIBRARIES ${ZLIB_LIBRARIES} CACHE STRING "" FORCE)
 set(ZLIB_INCLUDE_DIRS ${ZLIB_INCLUDE_DIR} CACHE PATH "" FORCE)
-
-# Add Drogon with modified configuration
-option(BUILD_DROGON_SHARED "Build Drogon as shared library" OFF)
-option(ENABLE_REDIS "Build Redis support" OFF)
-option(ENABLE_SQLITE "Build SQLite support" OFF)
-option(ENABLE_MYSQL "Build MySQL support" OFF)
-option(ENABLE_POSTGRESQL "Build PostgreSQL support" OFF)
-# Drogon/trentor setting
-option(BUILD_TESTING OFF FORCE)
 
 # Add Drogon
 add_subdirectory(lib/drogon)
@@ -193,49 +193,76 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
     # For standalone build
     target_include_directories(${PROJECT_NAME} PRIVATE
-            ${JSONCPP_INCLUDE_DIRS}
-            ${ZLIB_INCLUDE_DIR}
-            ${ROOT_DIR}/core/src
-    )
-
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-            drogon
-            jsoncpp_static
-            zlibstatic
-    )
-
-    # Make sure dependencies are built first
-    add_dependencies(${PROJECT_NAME}
-            zlibstatic
-            jsoncpp_static
-    )
-else () # Called from upper level CMake => build static library
-    # Create the webapi library
-    add_library(automation_webapi STATIC
-        ${COMMON_SOURCES}
-    )
-
-    target_include_directories(automation_webapi PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${JSONCPP_INCLUDE_DIRS}
         ${ZLIB_INCLUDE_DIR}
         ${ROOT_DIR}/core/src
     )
 
-    target_link_libraries(automation_webapi PRIVATE
+    target_link_libraries(${PROJECT_NAME} PRIVATE
         drogon
         jsoncpp_static
-        zlibstatic
+    )
+
+    # Make sure dependencies are built first
+    add_dependencies(${PROJECT_NAME}
+        jsoncpp_static
+    )
+    
+    # Link with zlib if it's being built
+    if (BUILD_ZLIB)
+        message(STATUS "[${PROJECT_NAME}] Linking with zlib: ${ZLIB_TARGET_NAME}")
+        
+        # Add dependency on zlib
+        add_dependencies(${PROJECT_NAME} ${ZLIB_TARGET_NAME})
+        
+        # Link with zlib
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${ZLIB_TARGET_NAME})
+        
+        # Add zlib include directories
+        target_include_directories(${PROJECT_NAME} PRIVATE ${ZLIB_INCLUDE_DIRS})
+    endif()
+
+
+
+else () # Called from upper level CMake => build static library
+    # Create the webapi library
+    add_library(${PROJECT_NAME} STATIC
+        ${COMMON_SOURCES}
+    )
+
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${JSONCPP_INCLUDE_DIRS}
+        ${ROOT_DIR}/core/src
+    )
+
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        drogon
+        jsoncpp_static
     )
 
     # Ensure dependencies are built first
-    add_dependencies(automation_webapi
-        zlibstatic
+    add_dependencies(${PROJECT_NAME}
         jsoncpp_static
     )
 
+    if (BUILD_ZLIB)
+        message(STATUS "[${PROJECT_NAME}] Linking with zlib: ${ZLIB_TARGET_NAME}")
+        add_dependencies(${PROJECT_NAME}
+            ${ZLIB_TARGET_NAME}
+        )
+
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${ZLIB_TARGET_NAME}
+        )
+
+        target_include_directories(${PROJECT_NAME} PRIVATE
+            ${ZLIB_INCLUDE_DIRS}
+        )
+    endif ()
+
     # Create alias for the library
-    add_library(unrealng::automation_webapi ALIAS automation_webapi)
+    add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 endif ()
 
 
