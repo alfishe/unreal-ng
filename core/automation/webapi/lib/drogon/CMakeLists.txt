@@ -537,22 +537,30 @@ if (COZ_PROFILING)
     target_include_directories(${PROJECT_NAME} PUBLIC ${COZ_INCLUDE_DIRS})
 endif (COZ_PROFILING)
 
-set(DROGON_SOURCES
-    ${DROGON_SOURCES}
-    orm_lib/src/ArrayParser.cc
-    orm_lib/src/Criteria.cc
-    orm_lib/src/DbClient.cc
-    orm_lib/src/DbClientImpl.cc
-    orm_lib/src/DbClientLockFree.cc
-    orm_lib/src/DbConnection.cc
-    orm_lib/src/DbListener.cc
-    orm_lib/src/Exception.cc
-    orm_lib/src/Field.cc
-    orm_lib/src/Result.cc
-    orm_lib/src/Row.cc
-    orm_lib/src/SqlBinder.cc
-    orm_lib/src/TransactionImpl.cc
-    orm_lib/src/RestfulController.cc)
+if(BUILD_ORM)
+    set(DROGON_SOURCES
+        ${DROGON_SOURCES}
+        orm_lib/src/ArrayParser.cc
+        orm_lib/src/Criteria.cc
+        orm_lib/src/DbClient.cc
+        orm_lib/src/DbClientImpl.cc
+        orm_lib/src/DbClientLockFree.cc
+        orm_lib/src/DbConnection.cc
+        orm_lib/src/DbListener.cc
+        orm_lib/src/Exception.cc
+        orm_lib/src/Field.cc
+        orm_lib/src/Result.cc
+        orm_lib/src/Row.cc
+        orm_lib/src/SqlBinder.cc
+        orm_lib/src/TransactionImpl.cc
+        orm_lib/src/RestfulController.cc)
+else()
+    # Add stubs or minimal implementations when ORM is disabled
+    set(DROGON_SOURCES
+        ${DROGON_SOURCES}
+        lib/src/DbClientManagerSkipped.cc)
+    add_definitions(-DDISABLE_ORM)
+endif()
 set(DROGON_HEADERS
     lib/inc/drogon/Attribute.h
     lib/inc/drogon/CacheMap.h
@@ -590,22 +598,28 @@ set(DROGON_HEADERS
     lib/inc/drogon/drogon_test.h
     lib/inc/drogon/RateLimiter.h
     ${CMAKE_CURRENT_BINARY_DIR}/exports/drogon/exports.h)
-set(private_headers
-    ${private_headers}
-    lib/src/DbClientManager.h
-    orm_lib/src/DbClientImpl.h
-    orm_lib/src/DbConnection.h
-    orm_lib/src/ResultImpl.h
-    orm_lib/src/TransactionImpl.h)
-if (pg_FOUND OR DROGON_FOUND_MYSQL OR DROGON_FOUND_SQLite3)
+if(BUILD_ORM)
+    set(private_headers
+        ${private_headers}
+        lib/src/DbClientManager.h
+        orm_lib/src/DbClientImpl.h
+        orm_lib/src/DbConnection.h
+        orm_lib/src/ResultImpl.h
+        orm_lib/src/TransactionImpl.h)
+else()
+    set(private_headers
+        ${private_headers}
+        lib/src/DbClientManager.h)
+endif()
+if (BUILD_ORM AND (pg_FOUND OR DROGON_FOUND_MYSQL OR DROGON_FOUND_SQLite3))
     set(DROGON_SOURCES
         ${DROGON_SOURCES}
         orm_lib/src/DbClientManager.cc)
-else (pg_FOUND OR DROGON_FOUND_MYSQL OR DROGON_FOUND_SQLite3)
+else()
     set(DROGON_SOURCES
         ${DROGON_SOURCES}
         lib/src/DbClientManagerSkipped.cc)
-endif (pg_FOUND OR DROGON_FOUND_MYSQL OR DROGON_FOUND_SQLite3)
+endif()
 
 set_target_properties(${PROJECT_NAME}
     PROPERTIES CXX_STANDARD ${DROGON_CXX_STANDARD})
