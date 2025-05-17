@@ -79,6 +79,10 @@ private:
     void handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState);
     void handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState);
 
+    void handleFullScreenShortcutMacOS();
+    void handleFullScreenShortcutWindows();
+    void handleFullScreenShortcutLinux();
+
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
@@ -103,6 +107,8 @@ private:
 
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;
+    QRect _maximizedGeometry;
+    Qt::WindowStates _preFullScreenState = Qt::WindowNoState;
     bool _isFullScreen = false;
     bool _inTransitionToFullScreen = false;
 };
