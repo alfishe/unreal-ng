@@ -62,6 +62,16 @@ protected:
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
+    // Platform-specific initialization methods
+    void initializePlatformMacOS();
+    void initializePlatformWindows();
+    void initializePlatformLinux();
+    
+    // Platform-specific window state handling methods
+    void handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState);
+    void handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState);
+    void handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState);
+
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
@@ -78,6 +88,7 @@ private:
     QPalette _originalPalette;
 
     QShortcut* _fullScreenShortcut = nullptr;
+    bool _inHandler = false;
 
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;

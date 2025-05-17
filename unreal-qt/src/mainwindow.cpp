@@ -1,18 +1,19 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-#include <stdio.h>
-#include <QVBoxLayout>
 #include <QCloseEvent>
 #include <QDebug>
-#include <QMimeData>
-#include <QTimer>
 #include <QFileInfo>
+#include <QMimeData>
+#include <QScopedValueRollback>
 #include <QShortcut>
+#include <QTimer>
+#include <QVBoxLayout>
+#include <stdio.h>
 
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/filemanager.h"
 #include "emulator/soundmanager.h"
-#include "debugger/breakpoints/breakpointmanager.h"
 
 #include "common/modulelogger.h"
 #include "emulator/sound/soundmanager.h"
@@ -82,6 +83,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Store original window geometry before going fullscreen / maximized
     _normalGeometry = normalGeometry();
+    
+    // Initialize platform-specific settings
+#ifdef Q_OS_MAC
+    initializePlatformMacOS();
+#elif defined(Q_OS_WIN)
+    initializePlatformWindows();
+#else
+    initializePlatformLinux();
+#endif
 
     /// region <Debug>
 
@@ -188,6 +198,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     // Keep widget center-aligned. Alignment policy is not working good
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
+    // Update normal geometry
+    _normalGeometry = normalGeometry();
+
     QWidget::resizeEvent(event);
 }
 
@@ -197,7 +210,11 @@ void MainWindow::moveEvent(QMoveEvent *event)
 
     //arrangeWindows();
     adjust(nullptr);
+
+    // Update normal geometry
+    _normalGeometry = normalGeometry();
 }
+
 void MainWindow::changeEvent(QEvent* event)
 {
     if (event->type() == QEvent::WindowStateChange)
@@ -206,77 +223,312 @@ void MainWindow::changeEvent(QEvent* event)
         Qt::WindowStates oldState = stateEvent->oldState();
         Qt::WindowStates newState = windowState();
 
-        if (newState & Qt::WindowMaximized && !_isFullScreen)
-        {
-            qDebug() << "Maximized";
-            if (!(oldState & Qt::WindowFullScreen))
-            {
-                _normalGeometry = normalGeometry(); // Store geometry before maximization
-            }
+        // Debug output for state transitions
+        auto stateToString = [](Qt::WindowStates state) -> QString {
+            QStringList states;
+            if (state == Qt::WindowNoState) states << "NoState";
+            if (state & Qt::WindowMinimized) states << "Minimized";
+            if (state & Qt::WindowMaximized) states << "Maximized";
+            if (state & Qt::WindowFullScreen) states << "FullScreen";
+            if (state & Qt::WindowActive) states << "Active";
+            return states.join(" | ");
+        };
 
-            // Don't make window frameless to keep window title with icons
-            //setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        qDebug().noquote() << "Window state changed from:" << stateToString(oldState) 
+                         << "to:" << stateToString(newState);
 
-            showMaximized();
-        }
-        else if (newState & Qt::WindowFullScreen)
-        {
-            qDebug() << "FullScreen";
-
-            hide();
-            _isFullScreen = true;
-
-            // Store geometry if coming from normal state
-            if (oldState == Qt::WindowNoState)
-            {
-                _normalGeometry = normalGeometry();
-            }
-
-            // Apply fullscreen styling
-            QPalette palette;
-            palette.setColor(QPalette::Window, Qt::black);
-            setPalette(palette);
-            statusBar()->hide();
-            startButton->hide();
-
-            setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
-            showFullScreen();
-        }
-        else if (newState == Qt::WindowNoState)
-        {
-            qDebug() << "Restored";
-
-            // Skip intermediate restore events
-            if (oldState & Qt::WindowMaximized && !_isFullScreen)
-            {
-                return;
-            }
-
-            hide();
-            _isFullScreen = false;
-
-            // Restore normal styling
-            setPalette(_originalPalette);
-            statusBar()->show();
-            startButton->show();
-
-            // Restore window flags and geometry
-            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-
-            // Restore to previous geometry
-            if (_normalGeometry.isValid())
-            {
-                setGeometry(_normalGeometry);
-            }
-
-            showNormal();
-        }
+#ifdef Q_OS_MAC
+        handleWindowStateChangeMacOS(oldState, newState);
+#elif defined(Q_OS_WIN)
+        handleWindowStateChangeWindows(oldState, newState);
+#else
+        handleWindowStateChangeLinux(oldState, newState);
+#endif
 
         update();
         event->accept();
     }
 
     QWidget::changeEvent(event);
+}
+
+void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState)
+{
+    // Prevent recursive calls
+    QScopedValueRollback<bool> guard(_inHandler, true);
+
+#ifdef _DEBUG
+    auto stateToString = [](Qt::WindowStates state) -> QString {
+        QStringList states;
+        if (state == Qt::WindowNoState) states << "NoState";
+        if (state & Qt::WindowMinimized) states << "Minimized";
+        if (state & Qt::WindowMaximized) states << "Maximized";
+        if (state & Qt::WindowFullScreen) states << "FullScreen";
+        if (state & Qt::WindowActive) states << "Active";
+        return states.isEmpty() ? "Unknown" : states.join("|");
+    };
+    
+    //qDebug() << "Window state change - Old:" << stateToString(oldState) << "New:" << stateToString(newState);
+#endif
+
+    // Handle maximize state (triggered by green button or double-click)
+    if (newState & Qt::WindowMaximized && !_isFullScreen)
+    {
+        qDebug() << "Maximizing window (macOS)";
+        
+        _isFullScreen = false;
+
+        // Ensure we're not in fullscreen mode
+        if (windowFlags() & Qt::FramelessWindowHint)
+        {
+            qDebug() << "Clearing frameless window hint";
+            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        }
+
+        // Restore normal palette if needed
+        if (palette() != _originalPalette)
+        {
+            setPalette(_originalPalette);
+        }
+
+        // Show maximized
+        showMaximized();
+    }
+    // Handle fullscreen state (only from menu/shortcut, not green button)
+    else if (newState & Qt::WindowFullScreen)
+    {
+        qDebug() << "Entering fullscreen (macOS)";
+
+        hide();
+        _isFullScreen = true;
+
+        // Store previous geometry if we're not already in fullscreen
+        if (!(oldState & Qt::WindowFullScreen))
+        {
+            _normalGeometry = (oldState & Qt::WindowMaximized) ? _normalGeometry : geometry();
+            qDebug() << "Stored normal geometry for fullscreen:" << _normalGeometry;
+        }
+
+        // Apply fullscreen palette: black background around emulated system screen
+        QPalette palette;
+        palette.setColor(QPalette::Window, Qt::black);
+        setPalette(palette);
+
+        // Hide all control elements
+        statusBar()->hide();
+        startButton->hide();
+
+        // Set frameless window hint for fullscreen
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        showFullScreen();
+    }
+    // Handle restore to normal state
+    else if (newState == Qt::WindowNoState)
+    {
+        qDebug() << "Restoring to normal state (macOS)";
+
+        _isFullScreen = false;
+
+        // Hide window before applying changes to its style
+        //hide();
+
+        // Restore normal styling
+        setPalette(_originalPalette);
+
+        // Show controls
+        statusBar()->show();
+        startButton->show();
+
+        // Clear frameless window hint if set
+        if (windowFlags() & Qt::FramelessWindowHint)
+        {
+            qDebug() << "Clearing frameless window hint during restore";
+            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        }
+
+        // Restore all window flags
+        initializePlatformMacOS();
+
+        showNormal();
+
+        // Restore to previous geometry if available
+        if (_normalGeometry.isValid())
+        {
+            qDebug() << "Restoring to normal geometry:" << _normalGeometry;
+
+//            QTimer::singleShot(0, this, [this, geom = _normalGeometry]() {
+//                // Ensure we are not in a recursive handler call (should be false)
+//                // and that the window is still in a normal state.
+//                if (this->windowState() == Qt::WindowNoState) // Check state again
+//                {
+//                    qDebug().noquote() << QString("Deferred: Applying stored normal geometry");
+//                    this->setGeometry(geom);
+//                }
+//                else
+//                {
+//                    qDebug().noquote() << QString("Deferred: Window state is not Qt::WindowNoState or recursive call suspected. Skipping setGeometry.");
+//                }
+//            });
+
+            setGeometry(_normalGeometry);
+        }
+        else
+        {
+            qDebug() << "No stored normal geometry available, using default";
+        }
+
+        if (!isVisible())
+        {
+            qDebug() << "Window is not visible after showNormal/flag changes, explicitly calling show().";
+            show();
+        }
+    }
+    
+    // Ensure the window is properly updated
+    activateWindow();
+    raise();
+}
+
+void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState)
+{
+    // Handle maximize state
+    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
+    {
+        qDebug() << "Maximized (Windows)";
+        
+        // Ensure we're not in fullscreen mode
+        _isFullScreen = false;
+        
+        // Store geometry if coming from normal state
+        if (!(oldState & Qt::WindowFullScreen))
+        {
+            _normalGeometry = normalGeometry(); // Store geometry before maximization
+        }
+
+        showMaximized();
+    }
+    // Handle fullscreen state
+    else if (newState & Qt::WindowFullScreen)
+    {
+        qDebug() << "FullScreen (Windows)";
+
+        hide();
+        _isFullScreen = true;
+
+        // Store geometry if coming from normal state
+        if (oldState == Qt::WindowNoState)
+        {
+            _normalGeometry = normalGeometry();
+        }
+
+        // Apply fullscreen styling
+        QPalette palette;
+        palette.setColor(QPalette::Window, Qt::black);
+        setPalette(palette);
+        statusBar()->hide();
+        startButton->hide();
+
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        showFullScreen();
+    }
+    // Handle restore state
+    else if (newState == Qt::WindowNoState)
+    {
+        qDebug() << "Restored (Windows)";
+
+        // Skip intermediate restore events
+        if (oldState & Qt::WindowMaximized && !_isFullScreen)
+        {
+            return;
+        }
+
+        hide();
+        _isFullScreen = false;
+
+        // Restore normal styling
+        setPalette(_originalPalette);
+        statusBar()->show();
+        startButton->show();
+
+        // Restore window flags and geometry
+        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+
+        // Restore to previous geometry
+        if (_normalGeometry.isValid())
+        {
+            setGeometry(_normalGeometry);
+        }
+
+        showNormal();
+    }
+}
+
+void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState)
+{
+    // Handle maximize state
+    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
+    {
+        qDebug() << "Maximized (Linux)";
+        
+        // Ensure we're not in fullscreen mode
+        _isFullScreen = false;
+        
+        showMaximized();
+    }
+    // Handle fullscreen state
+    else if (newState & Qt::WindowFullScreen)
+    {
+        qDebug() << "FullScreen (Linux)";
+
+        hide();
+        _isFullScreen = true;
+
+        // Store geometry if coming from normal state
+        if (oldState == Qt::WindowNoState)
+        {
+            _normalGeometry = normalGeometry();
+        }
+
+        // Apply fullscreen styling
+        QPalette palette;
+        palette.setColor(QPalette::Window, Qt::black);
+        setPalette(palette);
+        statusBar()->hide();
+        startButton->hide();
+
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        showFullScreen();
+    }
+    // Handle restore state
+    else if (newState == Qt::WindowNoState)
+    {
+        qDebug() << "Restored (Linux)";
+
+        // Skip intermediate restore events
+        if (oldState & Qt::WindowMaximized && !_isFullScreen)
+        {
+            return;
+        }
+
+        hide();
+        _isFullScreen = false;
+
+        // Restore normal styling
+        setPalette(_originalPalette);
+        statusBar()->show();
+        startButton->show();
+
+        // Restore window flags and geometry
+        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+
+        // Restore to previous geometry
+        if (_normalGeometry.isValid())
+        {
+            setGeometry(_normalGeometry);
+        }
+
+        showNormal();
+    }
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
@@ -357,8 +609,47 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
 
     qDebug() << "MainWindow : mousePressEvent";
 }
-
 /// endregion </QWidget events override>
+
+void MainWindow::initializePlatformMacOS()
+{
+    // Set window flags for macOS
+    Qt::WindowFlags flags = windowFlags();
+    flags |= Qt::WindowMinimizeButtonHint;
+    flags |= Qt::WindowMaximizeButtonHint;
+    flags |= Qt::WindowCloseButtonHint;
+    flags |= Qt::WindowSystemMenuHint;
+    flags |= Qt::WindowTitleHint;
+    flags |= Qt::WindowCloseButtonHint;
+    flags |= Qt::CustomizeWindowHint;
+    
+    // Explicitly disable the fullscreen button
+    flags &= ~Qt::WindowFullscreenButtonHint;
+    
+    setWindowFlags(flags);
+    
+    // Store the original palette for later restoration
+    _originalPalette = palette();
+
+    // Store normal geometry
+    _normalGeometry = normalGeometry();
+    
+    qDebug() << "macOS window initialized with flags:" << flags;
+}
+
+void MainWindow::initializePlatformWindows()
+{
+  // Windows-specific initialization
+  // Set window flags for Windows behavior
+  this->setWindowFlag(Qt::WindowMaximizeButtonHint);
+}
+
+void MainWindow::initializePlatformLinux()
+{
+  // Linux-specific initialization
+  // Set window flags for Linux behavior
+  this->setWindowFlag(Qt::WindowMaximizeButtonHint);
+}
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
@@ -409,7 +700,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         case QEvent::Show:
             adjust(event);
             break;
-#ifdef Q_OS_OSX
+
         case QEvent::NonClientAreaMouseButtonPress:
             _lastCursorPos = QCursor::pos();
             break;
@@ -425,7 +716,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
                 }
             }
             break;
-#endif
         default:
             break;
     }
@@ -642,6 +932,8 @@ void MainWindow::handleFullScreenShortcut()
 {
     if (isFullScreen())
     {
+      _isFullScreen = false;
+
 #ifdef __APPLE__
         setWindowFlags(Qt::Window); // Prevent horizontal transition from full screen to system desktop
 #endif // __APPLE__
@@ -651,6 +943,8 @@ void MainWindow::handleFullScreenShortcut()
     }
     else
     {
+        _isFullScreen = true;
+
         // Enter full-screen mode
 #ifdef _WIN32
         showMaximized();    // Windows flow: Normal -> Maximize -> FullScreen
