@@ -13,16 +13,20 @@ set (DATA_PATH ${ROOT_DIR}/data)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
+
+set(PYTHON_BUILD_DIR "${CMAKE_BINARY_DIR}/python_build")
+add_subdirectory(3rdparty/cmake-python-build ${PYTHON_BUILD_DIR})
+#include(build-python.cmake)
+
 # Turn on PYBIND option to find system Python
 set(PYBIND11_FINDPYTHON ON)
 
 # Add PyBind11 wrapper
 add_subdirectory(3rdparty/pybind11)
 
-set(PYTHON_BUILD_DIR "${CMAKE_BINARY_DIR}/python_build")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mmacosx-version-min=10.13")
-add_subdirectory(3rdparty/cmake-python-build ${PYTHON_BUILD_DIR})
-#include(build-python.cmake)
+if (APPLE)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -mmacosx-version-min=10.13")
+endif ()
 
 # All C++ sources in /src and sub-folders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -105,10 +109,14 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
         INSTALL_RPATH_USE_LINK_PATH TRUE
         )
 
-# Set dynamic linking path
-set(CMAKE_INSTALL_RPATH "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib")
+if (APPLE)
+  # Set dynamic linking path
+  set(CMAKE_INSTALL_RPATH "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib")
+endif ()
 
-
+add_dependencies(${PROJECT_NAME}
+    pybind11::pybind11
+)
 
 # <Diagnostics>
 get_target_property(APP_SOURCES ${PROJECT_NAME} SOURCES)
