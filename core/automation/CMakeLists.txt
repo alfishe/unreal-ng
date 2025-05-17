@@ -142,4 +142,25 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
 )
 
+# <Diagnostics>
+message(STATUS "<${PROJECT_NAME} diagnostics>")
+message(STATUS "Options:")
+message(STATUS "  ENABLE_AUTOMATION: ${ENABLE_AUTOMATION}")
+message(STATUS "    ENABLE_LUA_AUTOMATION: ${ENABLE_LUA_AUTOMATION}")
+message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
+message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
+message(STATUS "Settings:")
+message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
+message(STATUS "  SRC_DIR:             ${SRC_DIR}")
+message(STATUS "  LIB_DIR:             ${LIB_DIR}")
+
+message(STATUS "  INCLUDE_DIRECTORIES:")
+get_property(include_dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
+foreach (dir ${include_dirs})
+    message(STATUS "                       ${dir}")
+endforeach ()
+
+message(STATUS "</<${PROJECT_NAME} diagnostics>")
+# </Diagnostics>
+
 message("<< <${PROJECT_NAME}>")
