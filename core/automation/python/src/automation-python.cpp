@@ -69,7 +69,10 @@ void AutomationPython::processPython()
         std::string simplePythonCode = "print('Python tread running')";
         std::string longRunningPythonCode = "import time\n"
                                             "import threading\n"
+                                            "import sys"
                                             "\n"
+                                            "print(f\"Python version: \")\n"
+                                            "print(sys.version)\n"
                                             "current_thread = threading.current_thread()\n"
                                             "print(f\"Current thread: {current_thread.name}, Thread ID: {current_thread.ident}\")\n"
                                             "try:\n"
