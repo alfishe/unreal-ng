@@ -1,6 +1,9 @@
 #include <loaders/snapshot/loader_z80.h>
 #include <loaders/disk/loader_trd.h>
 #include <loaders/disk/loader_scl.h>
+#include <random>
+#include <sstream>
+#include <iomanip>
 #include "stdafx.h"
 
 #include "emulator.h"
@@ -19,13 +22,55 @@
 
 /// region <Constructors / Destructors>
 
+std::string Emulator::GenerateUUID()
+{
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+    static std::uniform_int_distribution<> dis2(8, 11);
+
+    std::stringstream ss;
+    int i;
+    ss << std::hex;
+    for (i = 0; i < 8; i++) {
+        ss << dis(gen);
+    }
+    ss << "-";
+    for (i = 0; i < 4; i++) {
+        ss << dis(gen);
+    }
+    ss << "-4";
+    for (i = 0; i < 3; i++) {
+        ss << dis(gen);
+    }
+    ss << "-";
+    ss << dis2(gen);
+    for (i = 0; i < 3; i++) {
+        ss << dis(gen);
+    }
+    ss << "-";
+    for (i = 0; i < 12; i++) {
+        ss << dis(gen);
+    };
+    return ss.str();
+}
+
 Emulator::Emulator() : Emulator(LoggerLevel::LogTrace)
 {
 }
 
-Emulator::Emulator(LoggerLevel level)
+Emulator::Emulator(LoggerLevel level) : Emulator("", level)
 {
+}
+
+Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
+{
+    _emulatorId = GenerateUUID();
+    _symbolicId = symbolicId;
+    _createdAt = std::chrono::system_clock::now();
+    _lastActivity = _createdAt;
     _loggerLevel = level;
+    _state = StateInitialized;
 
     // Create and initialize emulator context. ModuleLogger will be initialized as well.
     _context = new EmulatorContext(_loggerLevel);
@@ -34,13 +79,14 @@ Emulator::Emulator(LoggerLevel level)
         _logger = _context->pModuleLogger;
         _context->pEmulator = this;
 
-        MLOGDEBUG("Emulator::Emulator(LoggerLevel level)");
+        MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", 
+                 symbolicId.c_str(), level, _emulatorId.c_str());
         MLOGDEBUG("Emulator::Init - context created");
     }
     else
     {
-        LOGERROR("Emulator::Emulator() - context creation failed");
-        throw std::logic_error("Emulator::Emulator() - context creation failed");
+        LOGERROR("Emulator::Emulator(id=%s) - context creation failed", symbolicId.c_str());
+        throw std::runtime_error("Emulator::Emulator() - context creation failed");
     }
 }
 
@@ -473,33 +519,40 @@ void Emulator::Reset()
 
 void Emulator::Start()
 {
-	_core->Reset();
+    // Skip if already running
+    if (_isRunning)
+    {
+        MLOGWARNING("Emulator::Start() - already running");
+        return;
+    }
 
-	_stopRequested = false;
-	_isPaused = false;
-	_isRunning = true;
+    // Skip if not initialized
+    if (!_initialized)
+    {
+        MLOGERROR("Emulator::Start() - not initialized");
+        return;
+    }
 
-//	ModuleLogger& logger = *_context->pModuleLogger;
-//	logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80, PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
-//  logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
-//  logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
-
-	//std::string snapshotPath = "/Volumes/SSDData/LocalGit/unreal/tests/loaders/sna/multifix.sna";
-	//LoadSnapshot(snapshotPath);
+    _isPaused = false;
+    _isRunning = true;
+    _stopRequested = false;
 
     // Broadcast notification - Emulator started
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateRun);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 
-    // Pass execution to main loop
+    // Update state
+    SetState(StateRun);
+
+    // Pass execution to the main loop
     // It will return only after stop request
-	_mainloop->Run(_stopRequested);
+    _mainloop->Run(_stopRequested);
 }
 
 void Emulator::StartAsync()
 {
-    // Stop existing thread
+    // Stop the existing thread
     if (_asyncThread)
         Stop();
 
@@ -521,11 +574,9 @@ void Emulator::Pause()
     _isRunning = false;
 
     _mainloop->Pause();
-
-    // Broadcast notification - Emulator paused
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
-    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+    
+    // Update state
+    SetState(StatePaused);
 }
 
 void Emulator::Resume()
@@ -841,6 +892,96 @@ Z80State* Emulator::GetZ80State()
 //endregion
 
 //region Status
+
+// Identity and state methods
+const std::string& Emulator::GetId() const
+{
+    return _emulatorId;
+}
+
+// Timestamp helpers
+void Emulator::UpdateLastActivity()
+{
+    _lastActivity = std::chrono::system_clock::now();
+}
+
+std::chrono::system_clock::time_point Emulator::GetCreationTime() const
+{
+    return _createdAt;
+}
+
+std::chrono::system_clock::time_point Emulator::GetLastActivityTime() const
+{
+    return _lastActivity;
+}
+
+std::string Emulator::GetUptimeString() const
+{
+    auto now = std::chrono::system_clock::now();
+    auto duration = now - _createdAt;
+    auto hours = std::chrono::duration_cast<std::chrono::hours>(duration).count() % 24;
+    auto minutes = std::chrono::duration_cast<std::chrono::minutes>(duration).count() % 60;
+    auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count() % 60;
+
+    std::ostringstream ss;
+    ss << std::setw(2) << std::setfill('0') << hours << ":"
+       << std::setw(2) << std::setfill('0') << minutes << ":"
+       << std::setw(2) << std::setfill('0') << seconds;
+    return ss.str();
+}
+
+// ID management
+std::string Emulator::GetUUID() const
+{
+    return _emulatorId;
+}
+
+std::string Emulator::GetSymbolicId() const
+{
+    return _symbolicId;
+}
+
+void Emulator::SetSymbolicId(const std::string& symbolicId)
+{
+    _symbolicId = symbolicId;
+    UpdateLastActivity();
+}
+
+EmulatorStateEnum Emulator::GetState()
+{
+    std::lock_guard<std::mutex> lock(_stateMutex);
+    return _state;
+}
+
+void Emulator::SetState(EmulatorStateEnum state)
+{
+    std::lock_guard<std::mutex> lock(_stateMutex);
+    _state = state;
+    UpdateLastActivity();
+    MLOGINFO("Emulator %s state changed to: %s", _emulatorId.c_str(), getEmulatorStateName(state));
+}
+
+std::string Emulator::GetInstanceInfo()
+{
+    std::time_t createdTime = std::chrono::system_clock::to_time_t(_createdAt);
+    std::time_t lastActivityTime = std::chrono::system_clock::to_time_t(_lastActivity);
+    
+    std::ostringstream ss;
+    ss << "UUID: " << _emulatorId << "\n"
+       << "Symbolic ID: " << (_symbolicId.empty() ? "[not set]" : _symbolicId) << "\n"
+       << "Created at: " << std::ctime(&createdTime)
+       << "Last activity: " << std::ctime(&lastActivityTime)
+       << "Uptime: " << GetUptimeString() << "\n"
+       << "State: " << getEmulatorStateName(_state);
+    
+    // ctime adds a newline, so we need to remove the last one
+    std::string result = ss.str();
+    if (!result.empty() && result[result.length()-1] == '\n') {
+        result.erase(result.length()-1);
+    }
+    
+    return result;
+}
 
 bool Emulator::IsRunning()
 {

@@ -14,6 +14,16 @@
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
 
+#include <string>
+#include <mutex>
+#include <memory>
+#include <atomic>
+#include <chrono>
+#include <random>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
+
 class BreakpointManager;
 
 /// region <Types>
@@ -51,11 +61,20 @@ class Emulator
 protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
     const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
+
     ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Fields>
 protected:
+    // Emulator identity
+    std::string _emulatorId;              // Auto-generated UUID
+    std::string _symbolicId;              // Optional user-provided symbolic ID
+    std::chrono::system_clock::time_point _createdAt; // When instance was created
+    std::chrono::system_clock::time_point _lastActivity; // When last operation was performed
+    EmulatorStateEnum _state = StateUnknown;
+    std::mutex _stateMutex;
+    
     bool _initialized = false;
     std::mutex _mutexInitialization;
 
@@ -84,7 +103,22 @@ protected:
     /// region <Constructors / destructors>
 public:
     Emulator();
-    Emulator(LoggerLevel level);
+    explicit Emulator(LoggerLevel level);
+    explicit Emulator(const std::string& symbolicId, LoggerLevel level = LoggerLevel::LogTrace);
+    
+    // Helper to generate UUID
+    static std::string GenerateUUID();
+    
+    // Timestamp helpers
+    void UpdateLastActivity();
+    std::chrono::system_clock::time_point GetCreationTime() const;
+    std::chrono::system_clock::time_point GetLastActivityTime() const;
+    std::string GetUptimeString() const;
+    
+    // ID management
+    std::string GetUUID() const;
+    std::string GetSymbolicId() const;
+    void SetSymbolicId(const std::string& symbolicId);
     virtual ~Emulator();
     /// endregion </Constructors / destructors>
 
@@ -143,11 +177,17 @@ public:
     Z80State* GetZ80State();
 
 
+    // Identity and state methods
+    const std::string& GetId() const;
+    EmulatorStateEnum GetState();
+    void SetState(EmulatorStateEnum state);
+    
     // Status methods
     bool IsRunning();
     bool IsPaused();
     bool IsDebug();
     std::string GetStatistics();
+    std::string GetInstanceInfo();
 
     // Counters method
     void ResetCountersAll();
