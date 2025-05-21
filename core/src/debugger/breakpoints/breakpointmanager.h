@@ -187,6 +187,7 @@ public:
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
     void ActivateBreakpointGroup(const std::string& groupName);
     void DeactivateBreakpointGroup(const std::string& groupName);
+    bool RemoveBreakpointFromGroup(uint16_t breakpointID);
     void RemoveBreakpointGroup(const std::string& groupName);
 
     /// endregion </Management assistance methods>

@@ -433,6 +433,173 @@ void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
     }
 }
 
+// Breakpoint group management
+
+uint16_t BreakpointManager::AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName)
+{
+    if (descriptor == nullptr || groupName.empty())
+    {
+        return BRK_INVALID;
+    }
+
+    // If the breakpoint is already in the specified group, return its ID
+    if (descriptor->group == groupName)
+    {
+        return descriptor->breakpointID;
+    }
+
+    // Update the group name
+    descriptor->group = groupName;
+    
+    return descriptor->breakpointID;
+}
+
+bool BreakpointManager::SetBreakpointGroup(uint16_t breakpointID, const std::string& groupName)
+{
+    if (groupName.empty() || !key_exists(_breakpointMapByID, breakpointID))
+    {
+        return false;
+    }
+
+    BreakpointDescriptor* breakpoint = _breakpointMapByID[breakpointID];
+    breakpoint->group = groupName;
+
+    return true;
+}
+
+std::vector<std::string> BreakpointManager::GetBreakpointGroups() const
+{
+    std::set<std::string> groups;
+    
+    for (const auto& [id, breakpoint] : _breakpointMapByID)
+    {
+        if (!breakpoint->group.empty())
+        {
+            groups.insert(breakpoint->group);
+        }
+    }
+    
+    return std::vector<std::string>(groups.begin(), groups.end());
+}
+
+std::vector<uint16_t> BreakpointManager::GetBreakpointsByGroup(const std::string& groupName) const
+{
+    std::vector<uint16_t> breakpointIDs;
+    
+    if (groupName.empty())
+    {
+        return breakpointIDs;
+    }
+    
+    for (const auto& [id, breakpoint] : _breakpointMapByID)
+    {
+        if (breakpoint->group == groupName)
+        {
+            breakpointIDs.push_back(id);
+        }
+    }
+    
+    return breakpointIDs;
+}
+
+std::string BreakpointManager::GetBreakpointListAsStringByGroup(const std::string& groupName) const
+{
+    if (groupName.empty())
+    {
+        return "No group name specified\n";
+    }
+    
+    std::string result = StringHelper::Format("Breakpoints in group '%s':\n", groupName.c_str());
+    bool found = false;
+    
+    for (const auto& [id, breakpoint] : _breakpointMapByID)
+    {
+        if (breakpoint->group == groupName)
+        {
+            result += FormatBreakpointInfo(id) + "\n";
+            found = true;
+        }
+    }
+    
+    if (!found)
+    {
+        result += "  No breakpoints found in this group\n";
+    }
+    
+    return result;
+}
+
+void BreakpointManager::ActivateBreakpointGroup(const std::string& groupName)
+{
+    if (groupName.empty())
+    {
+        return;
+    }
+    
+    for (auto& [id, breakpoint] : _breakpointMapByID)
+    {
+        if (breakpoint->group == groupName)
+        {
+            breakpoint->active = true;
+        }
+    }
+}
+
+void BreakpointManager::DeactivateBreakpointGroup(const std::string& groupName)
+{
+    if (groupName.empty())
+    {
+        return;
+    }
+    
+    for (auto& [id, breakpoint] : _breakpointMapByID)
+    {
+        if (breakpoint->group == groupName)
+        {
+            breakpoint->active = false;
+        }
+    }
+}
+
+bool BreakpointManager::RemoveBreakpointFromGroup(uint16_t breakpointID)
+{
+    if (!key_exists(_breakpointMapByID, breakpointID))
+    {
+        return false;
+    }
+
+    BreakpointDescriptor* breakpoint = _breakpointMapByID[breakpointID];
+    
+    // Remove from group by setting to default group
+    breakpoint->group = "default";
+    
+    return true;
+}
+
+void BreakpointManager::RemoveBreakpointGroup(const std::string& groupName)
+{
+    if (groupName.empty())
+    {
+        return;
+    }
+    
+    // First collect all breakpoint IDs to remove
+    std::vector<uint16_t> breakpointsToRemove;
+    for (const auto& [id, breakpoint] : _breakpointMapByID)
+    {
+        if (breakpoint->group == groupName)
+        {
+            breakpointsToRemove.push_back(id);
+        }
+    }
+    
+    // Then remove them (can't remove while iterating)
+    for (uint16_t id : breakpointsToRemove)
+    {
+        RemoveBreakpointByID(id);
+    }
+}
+
 // Breakpoint removal by address/port/type
 
 bool BreakpointManager::RemoveBreakpointByAddress(uint16_t address)
