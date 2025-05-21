@@ -59,6 +59,10 @@ private:
     mutable std::mutex _mutex;
     uint16_t _port;
     int _serverSocket{-1};
+    
+    // Track active client connections for clean shutdown
+    std::vector<int> _activeClientSockets;
+    std::mutex _clientSocketsMutex;
 };
 
 // Factory function for creating the CLI module

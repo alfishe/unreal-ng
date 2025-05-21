@@ -73,7 +73,25 @@ bool AutomationCLI::start(uint16_t port)
 
 void AutomationCLI::stop()
 {
+    std::cout << "Stopping CLI server..." << std::endl;
     std::unique_ptr<std::thread> threadToJoin;
+
+    // First, set the stop flag to prevent new connections
+    _stopThread = true;
+
+    // Close all active client connections to unblock any threads waiting on recv()
+    {
+        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
+        for (int clientSocket : _activeClientSockets)
+        {
+            std::cout << "Closing client socket: " << clientSocket << std::endl;
+            // Send a message to the client before closing
+            std::string shutdownMsg = "\nServer is shutting down. Goodbye!\n";
+            send(clientSocket, shutdownMsg.c_str(), shutdownMsg.length(), 0);
+            close(clientSocket);
+        }
+        _activeClientSockets.clear();
+    }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -83,11 +101,10 @@ void AutomationCLI::stop()
             return;  // Already stopped
         }
 
-        _stopThread = true;
-
         // Close the server socket to unblock accept()
         if (_serverSocket != -1)
         {
+            std::cout << "Closing server socket: " << _serverSocket << std::endl;
             close(_serverSocket);
             _serverSocket = -1;
         }
@@ -101,13 +118,17 @@ void AutomationCLI::stop()
     {
         try
         {
+            std::cout << "Joining CLI thread..." << std::endl;
             threadToJoin->join();
+            std::cout << "CLI thread joined successfully" << std::endl;
         }
         catch (const std::exception& e)
         {
             std::cerr << "Error joining CLI thread: " << e.what() << std::endl;
         }
     }
+
+    std::cout << "CLI server stopped" << std::endl;
 }
 
 bool AutomationCLI::isRunning() const
@@ -174,14 +195,32 @@ void AutomationCLI::run()
 
         int activity = select(_serverSocket + 1, &readfds, nullptr, nullptr, &tv);
 
-        if (activity < 0 && errno != EINTR)
+        // Check if we should stop
+        if (_stopThread)
         {
+            break;
+        }
+
+        if (activity < 0)
+        {
+            if (errno == EINTR)
+            {
+                // Interrupted system call, just retry
+                continue;
+            }
             std::cerr << "select error: " << strerror(errno) << std::endl;
             break;
         }
 
-        if (activity > 0 && FD_ISSET(_serverSocket, &readfds))
+        if (activity == 0)
         {
+            // Timeout, check stop flag and continue
+            continue;
+        }
+
+        if (FD_ISSET(_serverSocket, &readfds))
+        {
+            // Accept a new client connection
             sockaddr_in clientAddr{};
             socklen_t clientLen = sizeof(clientAddr);
             int clientSocket = accept(_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
@@ -198,8 +237,6 @@ void AutomationCLI::run()
             // Handle the client connection in a separate method
             // This method will handle all command processing until the client disconnects
             handleClientConnection(clientSocket);
-
-            // No need to close the socket here as it's closed in handleClientConnection
         }
     }
 
@@ -223,9 +260,17 @@ void AutomationCLI::handleClientConnection(int clientSocket)
 {
     std::cout << "New client connection established on socket: " << clientSocket << std::endl;
 
+    // Add this client socket to the active connections list
+    {
+        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
+        _activeClientSockets.push_back(clientSocket);
+    }
+
+    // Create a new session for this client
+    ClientSession session(clientSocket);
+
     // Create a CLI processor for this client
     auto processor = createProcessor();
-    ClientSession session(clientSocket);
 
     // Force initialization of the EmulatorManager BEFORE sending welcome message
     auto* emulatorManager = EmulatorManager::GetInstance();
@@ -371,6 +416,13 @@ void AutomationCLI::handleClientConnection(int clientSocket)
         sendPrompt(clientSocket, "next command");
     }
 
+    // Remove this client socket from the active connections list
+    {
+        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
+        _activeClientSockets.erase(std::remove(_activeClientSockets.begin(), _activeClientSockets.end(), clientSocket),
+                                   _activeClientSockets.end());
+    }
+
     // Close the client socket
     close(clientSocket);
     std::cout << "Client connection closed" << std::endl;
@@ -384,11 +436,11 @@ void AutomationCLI::sendPrompt(int clientSocket, const std::string& reason)
 
     if (!reason.empty())
     {
-        //std::cout << "Sent prompt: " << promptBytes << " bytes (" << reason << ")" << std::endl;
+        // std::cout << "Sent prompt: " << promptBytes << " bytes (" << reason << ")" << std::endl;
     }
     else
     {
-        //std::cout << "Sent prompt: " << promptBytes << " bytes" << std::endl;
+        // std::cout << "Sent prompt: " << promptBytes << " bytes" << std::endl;
     }
 }
 

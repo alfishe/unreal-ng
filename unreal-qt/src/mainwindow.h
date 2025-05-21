@@ -1,7 +1,17 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QTimer>
 #include <QMutex>
+#include <QEvent>
+#include <QResizeEvent>
+#include <QMoveEvent>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDropEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QSettings>
 #include <QPushButton>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -76,6 +86,9 @@ protected:
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
+    // Save the last directory path to settings
+    void saveLastDirectory(const QString& path);
+    
     // Platform-specific initialization methods
     void initializePlatformMacOS();
     void initializePlatformWindows();
@@ -119,5 +132,8 @@ private:
     Qt::WindowStates _preFullScreenState = Qt::WindowNoState;
     bool _isFullScreen = false;
     bool _inTransitionToFullScreen = false;
+    
+    // Last directory used for file operations
+    QString _lastDirectory;
 };
 
