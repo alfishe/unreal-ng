@@ -1,28 +1,28 @@
-#include "emulatormanager.h"
+#include "qtemulatormanager.h"
 
-EmulatorManager* EmulatorManager::_instance = nullptr;
+QtEmulatorManager* QtEmulatorManager::_instance = nullptr;
 
-EmulatorManager::EmulatorManager()
+QtEmulatorManager::QtEmulatorManager()
 {
 
 }
 
-EmulatorManager::~EmulatorManager()
+QtEmulatorManager::~QtEmulatorManager()
 {
 
 }
 
-EmulatorManager* EmulatorManager::defaultInstance()
+QtEmulatorManager* QtEmulatorManager::defaultInstance()
 {
     if (!_instance)
     {
-        _instance = new EmulatorManager();
+        _instance = new QtEmulatorManager();
     }
 
     return _instance;
 }
 
-Emulator* EmulatorManager::createEmulatorInstance()
+Emulator* QtEmulatorManager::createEmulatorInstance()
 {
     Emulator* result = new Emulator();
 
@@ -30,7 +30,7 @@ Emulator* EmulatorManager::createEmulatorInstance()
     return result;
 }
 
-void EmulatorManager::destroyEmulatorInstance(Emulator* emulator)
+void QtEmulatorManager::destroyEmulatorInstance(Emulator* emulator)
 {
     if (emulator)
     {
@@ -39,7 +39,7 @@ void EmulatorManager::destroyEmulatorInstance(Emulator* emulator)
     }
 }
 
-void EmulatorManager::sendKeyEvent(uint8_t key, KeyEventEnum type)
+void QtEmulatorManager::sendKeyEvent(uint8_t key, KeyEventEnum type)
 {
     static MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
 

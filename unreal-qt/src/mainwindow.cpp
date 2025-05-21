@@ -56,7 +56,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(startButton, SIGNAL(released()), this, SLOT(handleStartButton()));
 
     // Create bridge between GUI and emulator
-    _emulatorManager = EmulatorManager::defaultInstance();
+    _emulatorManager = QtEmulatorManager::defaultInstance();
 
     // Init audio subsystem
     AppSoundManager& soundManager = _emulatorManager->getSoundManager();

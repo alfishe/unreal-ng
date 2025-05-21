@@ -4,15 +4,14 @@
 #include <QMutex>
 #include <QPushButton>
 
-#include "debugger/debuggerwindow.h"
-#include "logviewer/logwindow.h"
-#include "widgets/devicescreen.h"
-#include "emulator/guiemulatorcontext.h"
-#include "emulator/emulatormanager.h"
-
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
+#include "debugger/debuggerwindow.h"
 #include "emulator/emulator.h"
+#include "emulator/guiemulatorcontext.h"
+#include "emulator/qtemulatormanager.h"
+#include "logviewer/logwindow.h"
+#include "widgets/devicescreen.h"
 
 #ifdef ENABLE_AUTOMATION
     // Avoid name conflicts between Python and Qt "slot"
@@ -94,7 +93,7 @@ private:
     Automation automation;
 #endif // ENABLE_AUTOMATION
 
-    EmulatorManager* _emulatorManager = nullptr;
+    QtEmulatorManager* _emulatorManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
     Emulator* _emulator = nullptr;
     uint32_t _lastFrameCount = 0;
