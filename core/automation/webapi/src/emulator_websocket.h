@@ -41,12 +41,13 @@ namespace api
             // This uses Drogon's application-wide PubSubService
             static void broadcastEmulatorData(const std::string &data);
 
+            static void registerEmulatorPubSubService();
+
             // Registration will be done automatically by Drogon
             // but only when this header is included in the .cpp file
             // Example:
             // main.cpp
             // #include "emulator_websocket.h" // Triggers auto-registration for WebSocket handlers
-            static void registerEmulatorPubSubService();
             WS_PATH_LIST_BEGIN
                 // Define the WebSocket path. GET is standard for WebSocket upgrade requests.
                 WS_PATH_ADD("/api/v1/websocket", drogon::Get);

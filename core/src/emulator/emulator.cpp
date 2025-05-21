@@ -22,43 +22,6 @@
 
 /// region <Constructors / Destructors>
 
-std::string Emulator::GenerateUUID()
-{
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(0, 15);
-    static std::uniform_int_distribution<> dis2(8, 11);
-
-    std::stringstream ss;
-    int i;
-    ss << std::hex;
-    for (i = 0; i < 8; i++) {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (i = 0; i < 4; i++) {
-        ss << dis(gen);
-    }
-    ss << "-4";
-    for (i = 0; i < 3; i++) {
-        ss << dis(gen);
-    }
-    ss << "-";
-    ss << dis2(gen);
-    for (i = 0; i < 3; i++) {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (i = 0; i < 12; i++) {
-        ss << dis(gen);
-    };
-    return ss.str();
-}
-
-Emulator::Emulator() : Emulator(LoggerLevel::LogTrace)
-{
-}
-
 Emulator::Emulator(LoggerLevel level) : Emulator("", level)
 {
 }
@@ -101,17 +64,23 @@ Emulator::~Emulator()
 
 bool Emulator::Init()
 {
-    bool result = false;
-
-    // Lock mutex until exiting current scope
-    std::lock_guard<std::mutex> lock(_mutexInitialization);
-
-    if (_initialized)
+    // Early exit if already initialized
+    if (_initialized.load(std::memory_order_acquire))
     {
         LOGERROR("Emulator::Init() - already initialized");
         throw std::logic_error("Emulator::Init() - already initialized");
+    }
 
-        return result;
+    bool result = false;
+    
+    // Lock mutex until exiting current scope
+    std::lock_guard<std::mutex> lock(_mutexInitialization);
+    
+    // Double-check after acquiring the lock
+    if (_initialized.load(std::memory_order_relaxed))
+    {
+        LOGERROR("Emulator::Init() - already initialized (race condition detected)");
+        throw std::logic_error("Emulator::Init() - already initialized (race condition detected)");
     }
 
 	// Ensure that MessageCenter instance is up and running
@@ -702,7 +671,7 @@ bool Emulator::LoadSnapshot(const std::string &path)
     if (wasRunning)
     {
         // TODO: uncomment for the release
-        //Resume();
+        Resume();
     }
 
     return result;
@@ -1013,6 +982,44 @@ std::string Emulator::GetStatistics()
     result += StringHelper::Format("  CPU: %s", cpuState.c_str());
 
     return result;
+}
+
+std::string Emulator::GenerateUUID()
+{
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+    static std::uniform_int_distribution<> dis2(8, 11);
+
+    std::stringstream ss;
+    int i;
+    ss << std::hex;
+    for (i = 0; i < 8; i++)
+    {
+        ss << dis(gen);
+    }
+    ss << "-";
+    for (i = 0; i < 4; i++)
+    {
+        ss << dis(gen);
+    }
+    ss << "-4";
+    for (i = 0; i < 3; i++)
+    {
+        ss << dis(gen);
+    }
+    ss << "-";
+    ss << dis2(gen);
+    for (i = 0; i < 3; i++)
+    {
+        ss << dis(gen);
+    }
+    ss << "-";
+    for (i = 0; i < 12; i++)
+    {
+        ss << dis(gen);
+    };
+    return ss.str();
 }
 
 //endregion

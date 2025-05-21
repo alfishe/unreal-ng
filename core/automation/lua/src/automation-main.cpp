@@ -28,7 +28,7 @@ int main()
         assert(x == 1);
     }
 
-    Emulator emulator;
+    Emulator emulator(LoggerLevel::LogWarning);
     bool result = emulator.Init();
     if (result)
     {

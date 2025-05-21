@@ -1,5 +1,7 @@
 #include "mainwindow.h"
-#include "ui_mainwindow.h"
+
+#include <stdio.h>
+#include <webapi/src/automation-webapi.h>
 
 #include <QCloseEvent>
 #include <QDebug>
@@ -9,18 +11,21 @@
 #include <QShortcut>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <stdio.h>
-
-#include "debugger/breakpoints/breakpointmanager.h"
-#include "emulator/filemanager.h"
-#include "emulator/soundmanager.h"
 
 #include "common/modulelogger.h"
-#include "emulator/sound/soundmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "emulator/filemanager.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/soundmanager.h"
+#include "emulator/soundmanager.h"
+#include "ui_mainwindow.h"
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
+#ifdef ENABLE_AUTOMATION
+    _automation = std::make_unique<Automation>();
+#endif // ENABLE_AUTOMATION
+
     // Intercept all keyboard and mouse events
     //qApp->installEventFilter(this);
 
@@ -56,11 +61,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(startButton, SIGNAL(released()), this, SLOT(handleStartButton()));
 
     // Create bridge between GUI and emulator
-    _emulatorManager = QtEmulatorManager::defaultInstance();
+    _emulatorManager = EmulatorManager::GetInstance();
 
     // Init audio subsystem
-    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-    soundManager.init();
+    _soundManager = new AppSoundManager();
+    _soundManager->init();
 
     // Instantiate Logger window
     logWindow = new LogWindow();
@@ -94,7 +99,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 #endif
 
 #ifdef ENABLE_AUTOMATION
-    automation.start();
+    if (_automation)
+        _automation->start();
 #endif
 
     /// region <Debug>
@@ -107,11 +113,15 @@ MainWindow::~MainWindow()
     setAcceptDrops(false);
 
     // Deinit audio subsystem
-    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-    soundManager.deinit();
+    if (_soundManager)
+    {
+        _soundManager->deinit();
+        delete _soundManager;
+    }
 
 #ifdef ENABLE_AUTOMATION
-    automation.stop();
+    if (_automation)
+        _automation->stop();
 #endif
 
     if (debuggerWindow != nullptr)
@@ -128,9 +138,6 @@ MainWindow::~MainWindow()
 
     if (deviceScreen != nullptr)
         delete deviceScreen;
-
-    if (_emulatorManager)
-        delete _emulatorManager;
 
     if (_guiContext)
         delete _guiContext;
@@ -192,7 +199,6 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
      if (_emulator)
      {
-         delete _emulator;
          _emulator = nullptr;
      }
 
@@ -821,10 +827,15 @@ void MainWindow::handleStartButton()
         // Clear log
         logWindow->reset();
 
-        _emulator = _emulatorManager->createEmulatorInstance();
+        size_t size = sizeof(AutomationWebAPI);
+        size_t sizeAutomation = sizeof(Automation);
+        EmulatorManager* test = EmulatorManager::GetInstance();
+
+        // Create a new emulator instance
+        _emulator = _emulatorManager->CreateEmulator("test", LoggerLevel::LogInfo);
 
         // Initialize emulator instance
-        if (_emulator->Init())
+        if (_emulator)
         {
             _lastFrameCount = 0;
 
@@ -884,8 +895,10 @@ void MainWindow::handleStartButton()
             /// endregion </Setup breakpoints>
 
             // Attach emulator audio buffer
-            AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-            _emulator->SetAudioCallback(&soundManager, &AppSoundManager::audioCallback);
+            if (_soundManager)
+            {
+                _emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+            }
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
@@ -910,10 +923,13 @@ void MainWindow::handleStartButton()
 
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)
-            debuggerWindow->setEmulator(_emulator);
+            debuggerWindow->setEmulator(_emulator.get());
 
             // Enable audio output
-            _emulatorManager->getSoundManager().start();
+            if (_soundManager)
+            {
+                _soundManager->start();
+            }
 
             // Start in async own thread
             _emulator->StartAsync();
@@ -930,7 +946,6 @@ void MainWindow::handleStartButton()
         }
         else
         {
-            delete _emulator;
             _emulator = nullptr;
         }
     }
@@ -939,24 +954,27 @@ void MainWindow::handleStartButton()
         startButton->setEnabled(false);
 
         // Disable audio output
-        _emulatorManager->getSoundManager().stop();
+        _soundManager->stop();
 
-        // Stop emulator instance
-        _emulator->Stop();
+        if (_emulator)
+        {
+            // Stop emulator instance
+            _emulator->Stop();
 
-        // Unsubscribe from message bus events
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        Observer* observerInstance = static_cast<Observer*>(this);
+            // Unsubscribe from message bus events
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            Observer* observerInstance = static_cast<Observer*>(this);
 
-        ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+            messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
-        // Detach framebuffer
-        deviceScreen->detach();
+            // Detach framebuffer
+            deviceScreen->detach();
 
-        // Destroy emulator
-        _emulatorManager->destroyEmulatorInstance(_emulator);
-        _emulator = nullptr;
+            // Remove emulator from manager
+            _emulatorManager->RemoveEmulator(_emulator->GetId());
+            _emulator = nullptr;
+        }
 
         _lastFrameCount = 0;
 

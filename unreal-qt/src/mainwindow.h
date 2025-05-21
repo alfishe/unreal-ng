@@ -9,9 +9,10 @@
 #include "debugger/debuggerwindow.h"
 #include "emulator/emulator.h"
 #include "emulator/guiemulatorcontext.h"
-#include "emulator/qtemulatormanager.h"
+#include "emulator/emulatormanager.h"
 #include "logviewer/logwindow.h"
 #include "widgets/devicescreen.h"
+#include "emulator/soundmanager.h"
 
 #ifdef ENABLE_AUTOMATION
     // Avoid name conflicts between Python and Qt "slot"
@@ -31,7 +32,11 @@ class MainWindow : public QMainWindow, public Observer
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override;
+    virtual ~MainWindow() override;
+
+    // Disable object copy
+    MainWindow(const MainWindow&) = delete;
+    MainWindow& operator=(const MainWindow&) = delete;
 
 private slots:
     void handleStartButton();
@@ -90,12 +95,13 @@ private:
     QMutex lockMutex;
 
 #ifdef ENABLE_AUTOMATION
-    Automation automation;
+    std::unique_ptr<Automation> _automation{nullptr};
 #endif // ENABLE_AUTOMATION
 
-    QtEmulatorManager* _emulatorManager = nullptr;
+    EmulatorManager* _emulatorManager = nullptr;
+    AppSoundManager* _soundManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator = nullptr;
     uint32_t _lastFrameCount = 0;
 
     QPoint _lastCursorPos;

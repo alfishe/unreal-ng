@@ -19,10 +19,15 @@
  */
 class EmulatorManager
 {
-private:
-    static EmulatorManager* _instance;
-    static std::mutex _instanceMutex;
+    /// region <ModuleLogger definitions for Module/Submodule>
+protected:
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
+    const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
 
+    ModuleLogger* _logger = nullptr;
+    /// endregion </ModuleLogger definitions for Module/Submodule>
+
+private:
     std::map<std::string, std::shared_ptr<Emulator>> _emulators;
     std::mutex _emulatorsMutex;
 
@@ -33,12 +38,21 @@ private:
     EmulatorManager(const EmulatorManager&) = delete;
     EmulatorManager& operator=(const EmulatorManager&) = delete;
 
+    // Prevent move operations (optional, but recommended for thread-safe classes)
+    EmulatorManager(EmulatorManager&&) = delete;
+    EmulatorManager& operator=(EmulatorManager&&) = delete;
+
 public:
     /**
      * @brief Get the singleton instance of EmulatorManager
      * @return Pointer to the EmulatorManager instance
      */
-    static EmulatorManager* GetInstance();
+    static EmulatorManager* GetInstance()
+    {
+        static EmulatorManager instance;
+
+        return &instance;
+    }
 
     /**
      * @brief Create a new emulator instance with a unique ID

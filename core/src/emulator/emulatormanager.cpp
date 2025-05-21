@@ -1,26 +1,12 @@
 #include "emulatormanager.h"
 
 #include "common/modulelogger.h"
-#include "common/stringhelper.h"
 #include "stdafx.h"
 
 #include <algorithm>
-#include <sstream>
 #include <iomanip>
 
-// Initialize static members
-EmulatorManager* EmulatorManager::_instance = nullptr;
-std::mutex EmulatorManager::_instanceMutex;
-
-EmulatorManager* EmulatorManager::GetInstance()
-{
-    std::lock_guard<std::mutex> lock(_instanceMutex);
-    if (_instance == nullptr)
-    {
-        _instance = new EmulatorManager();
-    }
-    return _instance;
-}
+// Implementation of EmulatorManager methods
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& symbolicId, LoggerLevel level)
 {
@@ -234,5 +220,10 @@ void EmulatorManager::ShutdownAllEmulators()
 
 EmulatorManager::~EmulatorManager()
 {
+    // Ensure all emulators are properly shut down before destruction
     ShutdownAllEmulators();
+    
+    // Clear the emulators map
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+    _emulators.clear();
 }

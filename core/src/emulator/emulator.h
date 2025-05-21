@@ -73,10 +73,10 @@ protected:
     std::chrono::system_clock::time_point _createdAt; // When instance was created
     std::chrono::system_clock::time_point _lastActivity; // When last operation was performed
     EmulatorStateEnum _state = StateUnknown;
-    std::mutex _stateMutex;
+    mutable std::mutex _stateMutex;
     
-    bool _initialized = false;
-    std::mutex _mutexInitialization;
+    std::atomic<bool> _initialized{false};
+    mutable std::mutex _mutexInitialization;
 
     std::thread* _asyncThread = nullptr;
 
@@ -102,23 +102,8 @@ protected:
 
     /// region <Constructors / destructors>
 public:
-    Emulator();
     explicit Emulator(LoggerLevel level);
     explicit Emulator(const std::string& symbolicId, LoggerLevel level = LoggerLevel::LogTrace);
-    
-    // Helper to generate UUID
-    static std::string GenerateUUID();
-    
-    // Timestamp helpers
-    void UpdateLastActivity();
-    std::chrono::system_clock::time_point GetCreationTime() const;
-    std::chrono::system_clock::time_point GetLastActivityTime() const;
-    std::string GetUptimeString() const;
-    
-    // ID management
-    std::string GetUUID() const;
-    std::string GetSymbolicId() const;
-    void SetSymbolicId(const std::string& symbolicId);
     virtual ~Emulator();
     /// endregion </Constructors / destructors>
 
@@ -129,6 +114,20 @@ public:
     // Initialization operations
     [[nodiscard]] bool Init();
     void Release();
+
+    // Helper to generate UUID
+    static std::string GenerateUUID();
+
+    // Timestamp helpers
+    void UpdateLastActivity();
+    std::chrono::system_clock::time_point GetCreationTime() const;
+    std::chrono::system_clock::time_point GetLastActivityTime() const;
+    std::string GetUptimeString() const;
+
+    // ID management
+    std::string GetUUID() const;
+    std::string GetSymbolicId() const;
+    void SetSymbolicId(const std::string& symbolicId);
 
     // Info methods
     void GetSystemInfo();
