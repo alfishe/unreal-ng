@@ -5,6 +5,13 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
+#include <3rdparty/message-center/messagecenter.h>
+#include <3rdparty/message-center/eventqueue.h>
+#include <emulator/platform.h>
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
+#include <thread>
 
 class EmulatorManager_Test : public ::testing::Test
 {
@@ -70,6 +77,153 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithId)
     
     // Verify the symbolic ID was set correctly
     ASSERT_EQ(emulator->GetSymbolicId(), symbolicId);
+}
+
+TEST_F(EmulatorManager_Test, EmulatorInstanceLifecycle)
+{
+    // Test creating an emulator with default parameters
+    auto emulator = _manager->CreateEmulator("test-emulator");
+    ASSERT_NE(emulator, nullptr);
+    
+    // Get the generated ID
+    std::string emulatorId = emulator->GetUUID();
+    ASSERT_FALSE(emulatorId.empty());
+    
+    // Verify the emulator is in the correct initial state
+    ASSERT_EQ(emulator->GetState(), StateInitialized);
+    
+    // Get the message center instance
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    
+    // Flag to track if we received the start message
+    std::atomic<bool> startMessageReceived(false);
+    std::mutex mtx;
+    std::condition_variable cv;
+    
+    // Track the state we saw in the message and whether we've seen RUN state
+    std::atomic<int> lastSeenState{StateInitialized};
+    std::atomic<bool> isInRunState{false};
+    
+    // Create a callback function for the message
+    auto messageCallback = [&](int id, Message* message) {
+        if (message && message->obj)
+        {
+            SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
+            std::cout << "Received state change message. New state: " << payload->_payloadNumber << std::endl;
+            
+            // Update the last seen state
+            int newState = payload->_payloadNumber;
+            lastSeenState = newState;
+            
+            // If we see the RUN state, verify the emulator is in RUN state and notify
+            if (newState == StateRun)
+            {
+                std::cout << "Detected RUN state transition" << std::endl;
+                // Verify the emulator is in RUN state right after the transition
+                int currentState = emulator->GetState();
+                std::cout << "Verifying emulator state is RUN. Current state: " << currentState << std::endl;
+                isInRunState = (currentState == StateRun);
+                
+                std::unique_lock<std::mutex> lock(mtx);
+                startMessageReceived = true;
+                cv.notify_one();
+            }
+        }
+    };
+    
+    // Subscribe to state change messages
+    std::cout << "Subscribing to state change messages" << std::endl;
+    messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, messageCallback);
+    
+    // Start the emulator asynchronously
+    std::cout << "Starting emulator asynchronously" << std::endl;
+    std::thread emulatorThread([&emulator]() {
+        try {
+            std::cout << "Emulator thread starting..." << std::endl;
+            emulator->StartAsync();
+            std::cout << "Emulator StartAsync() completed" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Exception in emulator thread: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown exception in emulator thread" << std::endl;
+        }
+    });
+    emulatorThread.detach();
+    
+    // Wait for the start message with a timeout
+    std::cout << "Waiting for state change to RUN (timeout: 500ms)" << std::endl;
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        bool status = cv.wait_for(lock, std::chrono::milliseconds(500), [&] { 
+            std::cout << "Waiting... Current state: " << emulator->GetState() << std::endl;
+            return startMessageReceived.load(); 
+        });
+        
+        // Clean up the observer
+        std::cout << "Cleaning up observer" << std::endl;
+        messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, messageCallback);
+        
+        // Check if we successfully detected the RUN state transition
+        std::cout << "Wait completed. Status: " << (status ? "success" : "timeout") << std::endl;
+        std::cout << "Last seen state: " << lastSeenState 
+                  << ", Current state: " << emulator->GetState() 
+                  << ", Is in run state: " << (isInRunState ? "true" : "false") << std::endl;
+        
+        // Verify we saw the RUN state at the right time
+        ASSERT_TRUE(isInRunState) << "Emulator did not enter RUN state when expected. "
+                                << "Last seen state: " << lastSeenState 
+                                << ", Current state: " << emulator->GetState();
+    }
+    
+    // Additional verification that the emulator is in a valid state
+    // (It might have transitioned past RUN state by now, which is fine)
+    ASSERT_NE(emulator->GetState(), StateInitialized) << "Emulator did not start properly";
+    
+    // Verify we can get the emulator context
+    auto context = emulator->GetContext();
+    ASSERT_NE(context, nullptr);
+    
+    // Check if the emulator is in a valid running state
+    // It might be in StateRun (2) or another valid running state
+    int currentState = emulator->GetState();
+    std::cout << "Emulator current state after start: " << currentState << std::endl;
+    ASSERT_NE(currentState, StateInitialized) << "Emulator did not start properly";
+    
+    // Only try to pause if the emulator is in a running state
+    if (currentState == StateRun) {
+        // Pause the emulator
+        emulator->Pause();
+        ASSERT_EQ(emulator->GetState(), StatePaused) << "Failed to pause emulator";
+        ASSERT_TRUE(emulator->IsPaused());
+        
+        // Resume the emulator
+        emulator->Resume();
+        
+        // After resume, the emulator could be in StateRun (2) or StateResumed (3)
+        int resumedState = emulator->GetState();
+        std::cout << "Emulator state after resume: " << resumedState << std::endl;
+        bool isInValidRunningState = (resumedState == StateRun || resumedState == 3); // 3 is StateResumed
+        ASSERT_TRUE(isInValidRunningState) << "Failed to resume emulator. State: " << resumedState;
+        ASSERT_FALSE(emulator->IsPaused()) << "Emulator should not be paused after resume";
+    } else {
+        std::cout << "Skipping pause/resume test - emulator not in running state" << std::endl;
+    }
+    
+    // Stop the emulator
+    emulator->Stop();
+    
+    // Verify the emulator is now stopped or stopping
+    int stopState = emulator->GetState();
+    std::cout << "Emulator state after stop: " << stopState << std::endl;
+    ASSERT_NE(stopState, StateRun) << "Emulator did not stop";
+    
+    // Clean up by removing the emulator
+    bool removed = _manager->RemoveEmulator(emulatorId);
+    ASSERT_TRUE(removed);
+    
+    // Verify the emulator is no longer accessible
+    ASSERT_FALSE(_manager->HasEmulator(emulatorId));
+    ASSERT_EQ(_manager->GetEmulator(emulatorId), nullptr);
 }
 
 TEST_F(EmulatorManager_Test, RemoveEmulator)
