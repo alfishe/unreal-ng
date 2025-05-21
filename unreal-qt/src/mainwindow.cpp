@@ -4,7 +4,9 @@
 #include <webapi/src/automation-webapi.h>
 
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QDebug>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QMimeData>
 #include <QScopedValueRollback>
@@ -920,6 +922,10 @@ void MainWindow::handleStartButton()
             // Subscribe to video frame refresh events
             ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
             messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+            
+            // Subscribe to file open request events
+            ObserverCallbackMethod fileOpenCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleFileOpenRequest);
+            messageCenter.AddObserver(NC_FILE_OPEN_REQUEST, observerInstance, fileOpenCallback);
 
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)
@@ -1127,6 +1133,115 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
 
             _lastFrameCount = frameCount;
         }
+    }
+}
+
+void MainWindow::handleFileOpenRequest(int id, Message* message)
+{
+    if (!_emulator)
+    {
+        qDebug() << "File open request received but no emulator is running";
+        return;
+    }
+
+    // Check if a filepath was provided in the message payload
+    if (message && message->obj)
+    {
+        // The message payload should be a StringPayload containing the filepath
+        class StringPayload : public MessagePayload
+        {
+        public:
+            StringPayload(const std::string& str) : _str(str) {}
+            virtual ~StringPayload() {}
+            
+            const std::string& GetString() const { return _str; }
+            
+        private:
+            std::string _str;
+        };
+
+        StringPayload* payload = static_cast<StringPayload*>(message->obj);
+        QString filepath = QString::fromStdString(payload->GetString());
+        
+        // Use Qt's signal/slot mechanism to handle the file opening on the main thread
+        QMetaObject::invokeMethod(this, "openSpecificFile", Qt::QueuedConnection, Q_ARG(QString, filepath));
+    }
+    else
+    {
+        // No filepath provided, show a file open dialog on the main thread
+        QMetaObject::invokeMethod(this, "openFileDialog", Qt::QueuedConnection);
+    }
+}
+
+void MainWindow::openSpecificFile(const QString& filepath)
+{
+    // Check if the file exists
+    QFileInfo fileInfo(filepath);
+    if (fileInfo.exists() && fileInfo.isFile())
+    {
+        // Process the file based on its extension
+        QString filepathCopy = filepath; // Create a non-const copy for the method call
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepathCopy);
+        std::string file = filepath.toStdString();
+        
+        switch (category)
+        {
+            case FileROM:
+                break;
+            case FileSnapshot:
+                _emulator->LoadSnapshot(file);
+                break;
+            case FileTape:
+                _emulator->LoadTape(file);
+                break;
+            case FileDisk:
+                _emulator->LoadDisk(file);
+                break;
+            default:
+                qDebug() << "Unsupported file type:" << filepath;
+                break;
+        };
+    }
+    else
+    {
+        qDebug() << "File does not exist or is not a regular file:" << filepath;
+        // If the specified file doesn't exist, fall back to the file dialog
+        openFileDialog();
+    }
+}
+
+void MainWindow::openFileDialog()
+{
+    // Show a file open dialog
+    QString execPath = QCoreApplication::applicationDirPath();
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"),
+                                                 execPath,
+                                                 tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna *.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
+    
+    if (!filePath.isEmpty())
+    {
+        // Process the selected file
+        QString filePathCopy = filePath; // Create a non-const copy for the method call
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
+        std::string file = filePath.toStdString();
+        
+        switch (category)
+        {
+            case FileROM:
+                break;
+            case FileSnapshot:
+                _emulator->LoadSnapshot(file);
+                break;
+            case FileTape:
+                _emulator->LoadTape(file);
+                break;
+            case FileDisk:
+                _emulator->LoadDisk(file);
+                break;
+            default:
+                qDebug() << "Unsupported file type:" << filePath;
+                break;
+        };
     }
 }
 

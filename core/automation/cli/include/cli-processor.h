@@ -75,6 +75,7 @@ private:
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDummy(const ClientSession& session, const std::vector<std::string>& args);
 

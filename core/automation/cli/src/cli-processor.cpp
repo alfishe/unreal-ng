@@ -41,6 +41,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
         {"registers", &CLIProcessor::HandleRegisters},
         {"break", &CLIProcessor::HandleBreakpoint},
         {"breakpoint", &CLIProcessor::HandleBreakpoint},
+        {"open", &CLIProcessor::HandleOpen},
         {"exit", &CLIProcessor::HandleExit},
         {"quit", &CLIProcessor::HandleExit},
         {"dummy", &CLIProcessor::HandleDummy}
@@ -200,6 +201,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
         "  memory <addr>  - Examine memory\n"
         "  registers      - Show CPU registers\n"
         "  break <addr>   - Manage breakpoints\n"
+        "  open [path]    - Open file dialog or specified file\n"
         "  exit           - Exit the CLI\n"
         "  quit           - Exit the CLI\n";
     session.SendResponse(response);
@@ -862,5 +864,40 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     catch (const std::exception& e)
     {
         session.SendResponse("Invalid address: " + std::string(e.what()) + "\n");
+    }
+}
+
+void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<std::string>& args)
+{
+    // Get the MessageCenter instance
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    
+    if (args.empty())
+    {
+        // No filepath provided, send a message to open the file dialog
+        session.SendResponse("Requesting file open dialog...\n");
+        messageCenter.Post(NC_FILE_OPEN_REQUEST, nullptr, true);
+    }
+    else
+    {
+        // Filepath provided, check if it exists
+        std::string filepath = args[0];
+        
+        // Create a StringPayload with the filepath
+        class StringPayload : public MessagePayload
+        {
+        public:
+            StringPayload(const std::string& str) : _str(str) {}
+            virtual ~StringPayload() {}
+            
+            const std::string& GetString() const { return _str; }
+            
+        private:
+            std::string _str;
+        };
+        
+        // Send the filepath in the message payload
+        session.SendResponse("Requesting to open file: " + filepath + "\n");
+        messageCenter.Post(NC_FILE_OPEN_REQUEST, new StringPayload(filepath), true);
     }
 }

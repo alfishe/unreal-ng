@@ -26,6 +26,8 @@ constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";
 
+constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";     // Request to open a file or file dialog
+
 /// endregion </Notification center events>
 
 /// region <Logging / Tracing data>
