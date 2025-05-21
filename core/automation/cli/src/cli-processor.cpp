@@ -486,8 +486,19 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
         return;
     }
 
+    // Check if the emulator is already paused
+    if (emulator->IsPaused())
+    {
+        session.SendResponse("Emulator is already paused.\n");
+        return;
+    }
+
+    // Pause the emulator - this will trigger MessageCenter notifications
+    // that the GUI will respond to (enabling/disabling buttons)
     emulator->Pause();
-    session.SendResponse("Emulation paused\n");
+    
+    // Confirm to the user
+    session.SendResponse("Emulation paused. Use 'resume' to continue execution.\n");
 }
 
 void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<std::string>& args)
@@ -500,8 +511,19 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
         return;
     }
 
+    // Check if the emulator is already running
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator is already running.\n");
+        return;
+    }
+
+    // Resume the emulator - this will trigger MessageCenter notifications
+    // that the GUI will respond to (enabling/disabling buttons)
     emulator->Resume();
-    session.SendResponse("Emulation resumed\n");
+    
+    // Confirm to the user
+    session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.\n");
 }
 
 void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<std::string>& args)

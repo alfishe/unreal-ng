@@ -546,6 +546,11 @@ void Emulator::Pause()
     
     // Update state
     SetState(StatePaused);
+    
+    // Broadcast notification - Emulator execution paused
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
 void Emulator::Resume()
