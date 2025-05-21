@@ -7,14 +7,24 @@
 #include <mutex>
 #include <functional>
 #include <unordered_map>
+#include <vector>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #include <emulator/emulator.h>
+#include "cli-processor.h"
 #include "../lib/cli11/CLI11.hpp"
 
 
+
+
+/**
+ * @brief Automation CLI class that handles the TCP server for CLI connections
+ */
 class AutomationCLI
 {
 public:
-    using CommandHandler = std::function<void(const std::vector<std::string>&)>;
 
     explicit AutomationCLI();
     virtual ~AutomationCLI();
@@ -31,19 +41,13 @@ public:
 
 private:
     void run();
-    void processCommand(const std::string& command);
-    void registerCommands();
+    void handleClientConnection(int clientSocket);
     
-    // Command handlers
-    void handleHelp(const std::vector<std::string>& args);
-    void handleStatus(const std::vector<std::string>& args);
-    void handleReset(const std::vector<std::string>& args);
-    void handlePause(const std::vector<std::string>& args);
-    void handleResume(const std::vector<std::string>& args);
-    void handleStep(const std::vector<std::string>& args);
-    void handleBreakpoint(const std::vector<std::string>& args);
-    void handleMemory(const std::vector<std::string>& args);
-    void handleRegisters(const std::vector<std::string>& args);
+    // CLI processor for handling commands
+    std::unique_ptr<CLIProcessor> createProcessor();
+    
+    // Send a command prompt to the client
+    void sendPrompt(int clientSocket, const std::string& reason = "");
 
     // CLI11 app instance
     CLI::App _cliApp;
@@ -55,8 +59,6 @@ private:
     mutable std::mutex _mutex;
     uint16_t _port;
     int _serverSocket{-1};
-    
-    std::unordered_map<std::string, std::pair<CommandHandler, std::string>> _commands;
 };
 
 // Factory function for creating the CLI module

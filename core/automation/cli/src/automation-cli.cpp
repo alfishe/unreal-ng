@@ -1,34 +1,42 @@
 #include "automation-cli.h"
 
 #include <arpa/inet.h>
-#include <debugger/breakpoints/breakpointmanager.h>
-#include <emulator/emulator.h>
+#include <emulator/emulatormanager.h>
+#include <fcntl.h>
 #include <netinet/in.h>
+#include <stdio.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
-#include <iomanip>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
 using namespace std::string_literals;
 
 AutomationCLI::AutomationCLI()
-    : _emulator(nullptr)
-    , _thread(nullptr)
-    , _stopThread(false)
-    , _port(8765)
-    , _serverSocket(-1)
+    : _emulator(nullptr), _thread(nullptr), _stopThread(false), _port(8765), _serverSocket(-1)
 {
     _cliApp.footer("\nType 'help' for a list of commands or 'exit' to quit.");
     _cliApp.set_help_flag("-h,--help", "Show help and exit");
 
-    registerCommands();
+    // Initialize the EmulatorManager during construction
+    auto* emulatorManager = EmulatorManager::GetInstance();
+    if (emulatorManager)
+    {
+        // Force a refresh of emulator instances
+        auto mostRecent = emulatorManager->GetMostRecentEmulator();
+
+        // Get all emulator IDs
+        auto emulatorIds = emulatorManager->GetEmulatorIds();
+    }
+    else
+    {
+        std::cerr << "Failed to initialize EmulatorManager!" << std::endl;
+    }
 }
 
 AutomationCLI::~AutomationCLI()
@@ -184,51 +192,14 @@ void AutomationCLI::run()
                 continue;
             }
 
-            char clientIp[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &clientAddr.sin_addr, clientIp, INET_ADDRSTRLEN);
-            std::cout << "Client connected from " << clientIp << ":" << ntohs(clientAddr.sin_port) << std::endl;
+            std::cout << "Client connected from " << inet_ntoa(clientAddr.sin_addr) << ":" << ntohs(clientAddr.sin_port)
+                      << std::endl;
 
-            // Handle client in a separate thread or in a non-blocking way
-            // For simplicity, we'll handle it in the same thread here
-            char buffer[1024];
-            ssize_t bytesRead;
+            // Handle the client connection in a separate method
+            // This method will handle all command processing until the client disconnects
+            handleClientConnection(clientSocket);
 
-            // Send welcome message
-            const char* welcomeMsg = "Unreal Emulator CLI - Type 'help' for available commands\n";
-            send(clientSocket, welcomeMsg, strlen(welcomeMsg), 0);
-
-            while (!_stopThread)
-            {
-                // Send prompt
-                send(clientSocket, "> ", 2, 0);
-
-                // Read command
-                bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                if (bytesRead <= 0)
-                {
-                    std::cout << "Client disconnected" << std::endl;
-                    break;
-                }
-
-                buffer[bytesRead] = '\0';
-
-                // Remove trailing newline if present
-                if (buffer[bytesRead - 1] == '\n')
-                    buffer[bytesRead - 1] = '\0';
-                if (bytesRead > 1 && buffer[bytesRead - 2] == '\r')
-                    buffer[bytesRead - 2] = '\0';
-
-                std::string command(buffer);
-                if (command == "exit" || command == "quit")
-                {
-                    send(clientSocket, "Goodbye!\n", 9, 0);
-                    break;
-                }
-
-                processCommand(command);
-            }
-
-            close(clientSocket);
+            // No need to close the socket here as it's closed in handleClientConnection
         }
     }
 
@@ -241,220 +212,183 @@ void AutomationCLI::run()
     std::cout << "CLI server stopped" << std::endl;
 }
 
-void AutomationCLI::processCommand(const std::string& command)
+std::unique_ptr<CLIProcessor> AutomationCLI::createProcessor()
 {
-    if (command.empty())
+    auto processor = std::make_unique<CLIProcessor>();
+    processor->SetEmulator(_emulator);
+    return processor;
+}
+
+void AutomationCLI::handleClientConnection(int clientSocket)
+{
+    std::cout << "New client connection established on socket: " << clientSocket << std::endl;
+
+    // Create a CLI processor for this client
+    auto processor = createProcessor();
+    ClientSession session(clientSocket);
+
+    // Force initialization of the EmulatorManager BEFORE sending welcome message
+    auto* emulatorManager = EmulatorManager::GetInstance();
+    if (emulatorManager)
     {
+        // Force a refresh of emulator instances
+        auto mostRecent = emulatorManager->GetMostRecentEmulator();
+
+        // Get all emulator IDs
+        auto emulatorIds = emulatorManager->GetEmulatorIds();
+
+        // Initialize the processor with a dummy command but don't send it to the client
+        processor->InitializeProcessor();
+
+        // Send welcome message AFTER EmulatorManager is fully initialized
+        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI. Type 'help' for commands.\n";
+        ssize_t bytesSent = send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+
+        // Send initial prompt
+        sendPrompt(clientSocket, "initial welcome");
+    }
+    else
+    {
+        std::cout << "Failed to initialize EmulatorManager!" << std::endl;
+
+        // Send error message
+        std::string errorMsg = "Error: Failed to initialize emulator. Please try again later.\n";
+        send(clientSocket, errorMsg.c_str(), errorMsg.length(), 0);
         return;
     }
 
-    try
-    {
-        // Create a new CLI app instance for this command
-        CLI::App app("Unreal Emulator CLI");
+    // Set socket to non-blocking mode to avoid hanging
+    int flags = fcntl(clientSocket, F_GETFL, 0);
+    fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
 
-        // Copy all commands from our main CLI app
-        for (auto* subcmd : _cliApp.get_subcommands())
+    char buffer[1024];
+    ssize_t bytesRead;
+
+    while (true)
+    {
+        // Clear buffer before reading
+        memset(buffer, 0, sizeof(buffer));
+
+        // Read command with timeout
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(clientSocket, &readSet);
+
+        struct timeval timeout;
+        timeout.tv_sec = 1;  // 1 second timeout
+        timeout.tv_usec = 0;
+
+        int selectResult = select(clientSocket + 1, &readSet, NULL, NULL, &timeout);
+
+        if (selectResult == -1)
         {
-            app.add_subcommand(subcmd->get_name(), subcmd->get_description());
+            std::cerr << "Select error: " << strerror(errno) << std::endl;
+            break;
         }
 
-        // Copy all flags from our main CLI app
-        for (auto* opt : _cliApp.get_options())
+        if (selectResult == 0)
         {
-            if (opt->get_name() != "-h" && opt->get_name() != "--help")
+            // Timeout, no data available
+            continue;
+        }
+
+        // Data is available, read it
+        bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+
+        if (bytesRead <= 0)
+        {
+            if (bytesRead == 0)
             {
-                app.add_option(opt->get_name(), "");
+                std::cout << "Client closed connection" << std::endl;
+            }
+            else
+            {
+                std::cerr << "Recv error: " << strerror(errno) << std::endl;
+            }
+            break;
+        }
+
+        // Check for telnet protocol commands (IAC = 0xFF)
+        bool containsTelnetCommands = false;
+        for (int i = 0; i < bytesRead; i++)
+        {
+            if ((unsigned char)buffer[i] == 0xFF)
+            {
+                containsTelnetCommands = true;
+                break;
             }
         }
 
-        // Parse the command
-        std::istringstream input(command);
+        if (containsTelnetCommands)
+        {
+            continue;
+        }
+
+        buffer[bytesRead] = '\0';
+
+        // Remove trailing newline if present
+        if (buffer[bytesRead - 1] == '\n')
+            buffer[bytesRead - 1] = '\0';
+        if (bytesRead > 1 && buffer[bytesRead - 2] == '\r')
+            buffer[bytesRead - 2] = '\0';
+
+        std::string command(buffer);
+
+        if (command.empty())
+        {
+            send(clientSocket, "> ", 2, 0);
+            continue;
+        }
+
+        // Process the command and capture any output
         try
         {
-            app.parse(command);
+            processor->ProcessCommand(session, command);
         }
-        catch (const CLI::ParseError& e)
+        catch (const std::exception& e)
         {
-            std::cerr << "Error: " << e.what() << std::endl;
+            std::string errorMsg = "Error processing command: " + std::string(e.what()) + "\n";
+            send(clientSocket, errorMsg.c_str(), errorMsg.length(), 0);
+
+            // Send a prompt after the error message
+            if (command != "exit" && command != "quit")
+            {
+                sendPrompt(clientSocket, "after error");
+            }
         }
+
+        // Check if socket was closed by the command handler (e.g., exit/quit)
+        int error = 0;
+        socklen_t len = sizeof(error);
+        int retval = getsockopt(clientSocket, SOL_SOCKET, SO_ERROR, &error, &len);
+        if (retval != 0 || error != 0)
+        {
+            std::cout << "Socket error detected, closing connection" << std::endl;
+            break;
+        }
+
+        // Send prompt for next command
+        sendPrompt(clientSocket, "next command");
     }
-    catch (const CLI::ParseError& e)
-    {
-        // Handle parsing errors
-        std::cerr << "Error: " << e.what() << std::endl;
-        std::cerr << "Type 'help' for usage information." << std::endl;
-    }
+
+    // Close the client socket
+    close(clientSocket);
+    std::cout << "Client connection closed" << std::endl;
 }
 
-void AutomationCLI::registerCommands()
+// Send a command prompt to the client
+void AutomationCLI::sendPrompt(int clientSocket, const std::string& reason)
 {
-    // Help command is handled by CLI11 automatically with -h or --help
-    // No need to add it explicitly
+    std::string prompt = "> ";
+    ssize_t promptBytes = send(clientSocket, prompt.c_str(), prompt.length(), 0);
 
-    // Status command
-    auto status = _cliApp.add_subcommand("status", "Show emulator status");
-    status->callback([this]() {
-        std::cout << "Emulator status: "
-                  << (_emulator ? (_emulator->IsRunning() ? "Running" : "Stopped") : "No emulator loaded") << std::endl;
-    });
-
-    // Reset command
-    auto reset = _cliApp.add_subcommand("reset", "Reset the emulator");
-    reset->callback([this]() {
-        if (_emulator)
-        {
-            _emulator->Reset();
-            std::cout << "Emulator reset" << std::endl;
-        }
-        else
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-        }
-    });
-
-    // Pause command
-    auto pause = _cliApp.add_subcommand("pause", "Pause emulation");
-    pause->callback([this]() {
-        if (_emulator)
-        {
-            _emulator->Pause();
-            std::cout << "Emulation paused" << std::endl;
-        }
-        else
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-        }
-    });
-
-    // Resume command
-    auto resume = _cliApp.add_subcommand("resume", "Resume emulation");
-    resume->callback([this]() {
-        if (_emulator)
-        {
-            _emulator->Resume();
-            std::cout << "Emulation resumed" << std::endl;
-        }
-        else
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-        }
-    });
-
-    // Step command
-    auto step = _cliApp.add_subcommand("step", "Single step execution");
-    int stepCount = 1;
-    step->add_option("count", stepCount, "Number of instructions to execute")->check(CLI::PositiveNumber);
-    step->callback([this, &stepCount]() {
-        if (!_emulator)
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-            return;
-        }
-        for (int i = 0; i < stepCount; ++i)
-        {
-            _emulator->RunSingleCPUCycle();
-        }
-        std::cout << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << std::endl;
-    });
-
-    // Memory command
-    auto memory = _cliApp.add_subcommand("memory", "Examine memory");
-    uint32_t memAddress = 0;
-    size_t memCount = 16;
-    memory->add_option("address", memAddress, "Memory address")->required();
-    memory->add_option("count", memCount, "Number of bytes to display")->check(CLI::PositiveNumber);
-    memory->callback([this, &memAddress, &memCount]() {
-        if (!_emulator)
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-            return;
-        }
-        std::cout << "Memory dump at 0x" << std::hex << memAddress << " (" << std::dec << memCount
-                  << " bytes):" << std::endl;
-        // TODO: Implement actual memory dump
-        std::cout << "Memory dump not yet implemented" << std::endl;
-    });
-
-    // Registers command
-    auto registers = _cliApp.add_subcommand("registers", "Show CPU registers");
-    registers->callback([this]() {
-        if (!_emulator)
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-            return;
-        }
-        // TODO: Implement register dump
-        std::cout << "Register dump:" << std::endl;
-        std::cout << "Register dump not yet implemented" << std::endl;
-    });
-
-    // Breakpoint command
-    auto breakpoint = _cliApp.add_subcommand("break", "Manage breakpoints");
-    uint32_t bpAddress = 0;
-    breakpoint->add_option("address", bpAddress, "Address to set/clear breakpoint")->required();
-    breakpoint->callback([this, &bpAddress]() {
-        if (!_emulator)
-        {
-            std::cerr << "No emulator loaded" << std::endl;
-            return;
-        }
-        // Get the breakpoint manager
-        BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-        if (!bpManager)
-        {
-            std::cerr << "Breakpoint manager not available" << std::endl;
-            return;
-        }
-
-        // For now, just use the helper method to add/remove breakpoints
-        // A more complete implementation would track breakpoints and their IDs
-        uint16_t bpId = bpManager->AddExecutionBreakpoint(static_cast<uint16_t>(bpAddress));
-        if (bpId != 0xFFFF)
-        {  // 0xFFFF is BRK_INVALID
-            std::cout << "Breakpoint set at 0x" << std::hex << bpAddress << std::endl;
-        }
-        else
-        {
-            std::cerr << "Failed to set breakpoint at 0x" << std::hex << bpAddress << std::endl;
-        }
-    });
-
-    // Exit command
-    auto exitCmd = _cliApp.add_subcommand("exit", "Exit the CLI");
-    exitCmd->callback([]() {
-        std::cout << "Goodbye!" << std::endl;
-        std::exit(0);
-    });
-
-    // Quit command (alias for exit)
-    auto quitCmd = _cliApp.add_subcommand("quit", "Exit the CLI (alias for exit)");
-    quitCmd->callback([]() {
-        std::cout << "Goodbye!" << std::endl;
-        std::exit(0);
-    });
-
-    // Help command handler
-    _cliApp.callback([this]() {
-        if (_cliApp.get_subcommands().empty() && _cliApp.get_options().size() <= 1)
-        {
-            std::cout << _cliApp.help() << std::endl;
-        }
-    });
-}
-
-void AutomationCLI::handleHelp(const std::vector<std::string>& args)
-{
-    if (!args.empty())
+    if (!reason.empty())
     {
-        auto it = _commands.find(args[0]);
-        if (it != _commands.end())
-        {
-            std::cout << it->second.second << std::endl;
-            return;
-        }
-        std::cout << "Unknown command: " << args[0] << std::endl;
-        return;
+        //std::cout << "Sent prompt: " << promptBytes << " bytes (" << reason << ")" << std::endl;
+    }
+    else
+    {
+        //std::cout << "Sent prompt: " << promptBytes << " bytes" << std::endl;
     }
 }
 

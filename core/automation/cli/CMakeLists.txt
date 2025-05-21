@@ -10,6 +10,7 @@ get_filename_component(CORE_LIBRARY_PATH
 # Add source files
 set(SOURCES
     src/automation-cli.cpp
+    src/cli-processor.cpp
 )
 
 # Create the library
