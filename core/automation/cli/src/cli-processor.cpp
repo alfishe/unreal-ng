@@ -587,8 +587,80 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
         return;
     }
 
-    std::string msg = "Register dump:\nRegister dump not yet implemented\n";
-    session.SendResponse(msg);
+    // Get the Z80 state from the emulator
+    Z80State* z80State = emulator->GetZ80State();
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state.\n");
+        return;
+    }
+
+    // Format the register values
+    std::stringstream ss;
+    ss << "Z80 Registers:\n";
+    ss << "=============\n\n";
+    
+    // Main register pairs and alternate registers side by side
+    ss << "Main registers:                     Alternate registers:\n";
+    ss << std::hex << std::uppercase << std::setfill('0');
+    
+    // Access alternate registers from the shadow registers in Z80State
+    ss << "  AF: " << std::setw(4) << z80State->af << "  (A: " << std::setw(2) << static_cast<int>(z80State->a) 
+       << ", F: " << std::setw(2) << static_cast<int>(z80State->f) << ")";
+    ss << "           AF': " << std::setw(4) << z80State->alt.af << "  (A': " << std::setw(2) << static_cast<int>(z80State->alt.a) 
+       << ", F': " << std::setw(2) << static_cast<int>(z80State->alt.f) << ")\n";
+       
+    ss << "  BC: " << std::setw(4) << z80State->bc << "  (B: " << std::setw(2) << static_cast<int>(z80State->b) 
+       << ", C: " << std::setw(2) << static_cast<int>(z80State->c) << ")";
+    ss << "           BC': " << std::setw(4) << z80State->alt.bc << "  (B': " << std::setw(2) << static_cast<int>(z80State->alt.b) 
+       << ", C': " << std::setw(2) << static_cast<int>(z80State->alt.c) << ")\n";
+       
+    ss << "  DE: " << std::setw(4) << z80State->de << "  (D: " << std::setw(2) << static_cast<int>(z80State->d) 
+       << ", E: " << std::setw(2) << static_cast<int>(z80State->e) << ")";
+    ss << "           DE': " << std::setw(4) << z80State->alt.de << "  (D': " << std::setw(2) << static_cast<int>(z80State->alt.d) 
+       << ", E': " << std::setw(2) << static_cast<int>(z80State->alt.e) << ")\n";
+       
+    ss << "  HL: " << std::setw(4) << z80State->hl << "  (H: " << std::setw(2) << static_cast<int>(z80State->h) 
+       << ", L: " << std::setw(2) << static_cast<int>(z80State->l) << ")";
+    ss << "           HL': " << std::setw(4) << z80State->alt.hl << "  (H': " << std::setw(2) << static_cast<int>(z80State->alt.h) 
+       << ", L': " << std::setw(2) << static_cast<int>(z80State->alt.l) << ")\n";
+       
+    ss << "\n";
+    
+    // Index and special registers in two columns
+    ss << "Index registers:                    Special registers:\n";
+    ss << "  IX: " << std::setw(4) << z80State->ix << "  (IXH: " << std::setw(2) << static_cast<int>(z80State->xh) 
+       << ", IXL: " << std::setw(2) << static_cast<int>(z80State->xl) << ")";
+    ss << "       PC: " << std::setw(4) << z80State->pc << "\n";
+       
+    ss << "  IY: " << std::setw(4) << z80State->iy << "  (IYH: " << std::setw(2) << static_cast<int>(z80State->yh) 
+       << ", IYL: " << std::setw(2) << static_cast<int>(z80State->yl) << ")";
+    ss << "       SP: " << std::setw(4) << z80State->sp << "\n";
+    
+    // Empty line for IR and first line of flags
+    ss << "                                     IR: " << std::setw(4) << z80State->ir_ << "  (I: " << std::setw(2) << static_cast<int>(z80State->i) 
+       << ", R: " << std::setw(2) << static_cast<int>(z80State->r_low) << ")\n\n";
+    
+    // Flags and interrupt state in two columns
+    ss << "Flags (" << std::setw(2) << static_cast<int>(z80State->f) << "):                         Interrupt state:\n";
+    ss << "  S: " << ((z80State->f & 0x80) ? "1" : "0") << " (Sign)";
+    ss << "                        IFF1: " << (z80State->iff1 ? "Enabled" : "Disabled") << "\n";
+    
+    ss << "  Z: " << ((z80State->f & 0x40) ? "1" : "0") << " (Zero)";
+    ss << "                        IFF2: " << (z80State->iff2 ? "Enabled" : "Disabled") << "\n";
+    
+    ss << "  5: " << ((z80State->f & 0x20) ? "1" : "0") << " (Unused bit 5)";
+    ss << "                HALT: " << (z80State->halted ? "Yes" : "No") << "\n";
+    
+    ss << "  H: " << ((z80State->f & 0x10) ? "1" : "0") << " (Half-carry)\n";
+    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)\n";
+    ss << "  P/V: " << ((z80State->f & 0x04) ? "1" : "0") << " (Parity/Overflow)\n";
+    ss << "  N: " << ((z80State->f & 0x02) ? "1" : "0") << " (Add/Subtract)\n";
+    ss << "  C: " << ((z80State->f & 0x01) ? "1" : "0") << " (Carry)";
+    ss << std::endl;
+    
+    // Send the formatted register dump
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args)
