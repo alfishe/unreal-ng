@@ -1,5 +1,9 @@
 #include "automation.h"
 
+#include <emulator/emulator.h>
+#include <emulator/emulatormanager.h>
+
+#include <memory>
 #include <thread>
 
 /// region <Methods>
@@ -11,13 +15,17 @@ bool Automation::start()
 #if ENABLE_LUA_AUTOMATION
     result &= startLua();
 #endif
-    
+
 #if ENABLE_PYTHON_AUTOMATION
     result &= startPython();
 #endif
-    
+
 #if ENABLE_WEBAPI_AUTOMATION
     result &= startWebAPI();
+#endif
+
+#if ENABLE_CLI_AUTOMATION
+    result &= startCLI();
 #endif
 
     return result;
@@ -28,13 +36,17 @@ void Automation::stop()
 #if ENABLE_LUA_AUTOMATION
     stopLua();
 #endif
-    
+
 #if ENABLE_PYTHON_AUTOMATION
     stopPython();
 #endif
-    
+
 #if ENABLE_WEBAPI_AUTOMATION
     stopWebAPI();
+#endif
+
+#if ENABLE_CLI_AUTOMATION
+    stopCLI();
 #endif
 }
 
@@ -46,7 +58,7 @@ bool Automation::startLua()
 {
     bool result = true;
 
-    _lua = new AutomationLua();
+    _lua = std::make_unique<AutomationLua>();
     _lua->start();
 
     return result;
@@ -58,7 +70,7 @@ bool Automation::startPython()
 {
     bool result = true;
 
-    _python = new AutomationPython();
+    _python = std::make_unique<AutomationPython>();
     _python->start();
 
     return result;
@@ -70,7 +82,7 @@ bool Automation::startWebAPI()
 {
     bool result = true;
 
-    _webAPI = new AutomationWebAPI();
+    _webAPI = std::make_unique<AutomationWebAPI>();
     _webAPI->start();
 
     return result;
@@ -83,9 +95,7 @@ void Automation::stopLua()
     if (_lua)
     {
         _lua->stop();
-
-        delete _lua;
-        _lua = nullptr;
+        _lua.reset();
     }
 }
 #endif
@@ -96,9 +106,7 @@ void Automation::stopPython()
     if (_python)
     {
         _python->stop();
-
-        delete _python;
-        _python = nullptr;
+        _python.reset();
     }
 }
 #endif
@@ -109,10 +117,37 @@ void Automation::stopWebAPI()
     if (_webAPI)
     {
         _webAPI->stop();
-
-        delete _webAPI;
-        _webAPI = nullptr;
+        _webAPI.reset();
     }
 }
 #endif
+
+#if ENABLE_CLI_AUTOMATION
+bool Automation::startCLI()
+{
+    bool result = true;
+
+    _cli = createAutomationCLI();
+    if (_cli)
+    {
+        result = _cli->start();
+    }
+    else
+    {
+        result = false;
+    }
+
+    return result;
+}
+
+void Automation::stopCLI()
+{
+    if (_cli)
+    {
+        _cli->stop();
+        _cli.reset();
+    }
+}
+#endif
+
 /// endregion </Helper methods>
