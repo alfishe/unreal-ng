@@ -1,6 +1,11 @@
 #include "cli-processor.h"
 
+#include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/disassembler/z80disasm.h>
+#include <emulator/memory/memory.h>
+#include <emulator/platform.h>
+#include <3rdparty/message-center/messagecenter.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -536,6 +541,14 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
         return;
     }
 
+    // Check if emulator is paused
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.\n");
+        return;
+    }
+
+    // Parse step count argument
     int stepCount = 1;
     if (!args.empty())
     {
@@ -551,13 +564,132 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
         }
     }
 
+    // Get memory and disassembler for instruction info
+    Memory* memory = emulator->GetMemory();
+    std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
+    
+    if (!memory || !disassembler)
+    {
+        session.SendResponse("Error: Unable to access memory or disassembler.\n");
+        return;
+    }
+    
+    // Get the current PC and disassemble the instruction that's about to be executed
+    Z80State* z80State = emulator->GetZ80State();
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state.\n");
+        return;
+    }
+    
+    // Store the current PC to show what's about to be executed
+    uint16_t initialPC = z80State->pc;
+    
+    // Get physical address for the PC
+    uint8_t* pcPhysicalAddress = memory->MapZ80AddressToPhysicalAddress(initialPC);
+    if (!pcPhysicalAddress)
+    {
+        session.SendResponse("Error: Unable to get physical address for PC.\n");
+        return;
+    }
+    
+    // Disassemble the instruction that's about to be executed
+    uint8_t commandLen = 0;
+    DecodedInstruction decodedBefore;
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
+        pcPhysicalAddress, 6, &commandLen, z80State, memory, &decodedBefore);
+    
+    // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
     {
-        emulator->RunSingleCPUCycle();
+        emulator->RunSingleCPUCycle(false); // false = don't skip breakpoints
     }
 
-    std::string msg = "Executed " + std::to_string(stepCount) + " instruction" + (stepCount != 1 ? "s" : "") + "\n";
-    session.SendResponse(msg);
+    // Get the Z80 state after execution
+    z80State = emulator->GetZ80State(); // Refresh state after execution
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state after execution.\n");
+        return;
+    }
+    
+    // Get the new PC and disassemble the next instruction to be executed
+    uint16_t newPC = z80State->pc;
+    pcPhysicalAddress = memory->MapZ80AddressToPhysicalAddress(newPC);
+    if (!pcPhysicalAddress)
+    {
+        session.SendResponse("Error: Unable to get physical address for new PC.\n");
+        return;
+    }
+    
+    // Disassemble the next instruction to be executed
+    commandLen = 0;
+    DecodedInstruction decodedAfter;
+    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(
+        pcPhysicalAddress, 6, &commandLen, z80State, memory, &decodedAfter);
+
+    // Format response with CPU state information
+    std::stringstream ss;
+    ss << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << "\n";
+    
+    // Show executed instruction
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << "Executed: [$" << std::setw(4) << initialPC << "] ";
+    
+    // Add hex dump of the executed instruction
+    if (decodedBefore.instructionBytes.size() > 0) {
+        for (uint8_t byte : decodedBefore.instructionBytes) {
+            ss << std::setw(2) << static_cast<int>(byte) << " ";
+        }
+        // Add padding for alignment if needed
+        for (size_t i = decodedBefore.instructionBytes.size(); i < 4; i++) {
+            ss << "   ";
+        }
+    }
+    
+    ss << instructionBefore << "\n";
+    
+    // Show next instruction
+    ss << "Next:     [$" << std::setw(4) << newPC << "] ";
+    
+    // Add hex dump of the next instruction
+    if (decodedAfter.instructionBytes.size() > 0) {
+        for (uint8_t byte : decodedAfter.instructionBytes) {
+            ss << std::setw(2) << static_cast<int>(byte) << " ";
+        }
+        // Add padding for alignment if needed
+        for (size_t i = decodedAfter.instructionBytes.size(); i < 4; i++) {
+            ss << "   ";
+        }
+    }
+    
+    ss << instructionAfter << "\n\n";
+    
+    // Format current PC and registers
+    ss << "PC: $" << std::setw(4) << z80State->pc << "  ";
+    
+    // Show main registers (compact format)
+    ss << "AF: $" << std::setw(4) << z80State->af << "  ";
+    ss << "BC: $" << std::setw(4) << z80State->bc << "  ";
+    ss << "DE: $" << std::setw(4) << z80State->de << "  ";
+    ss << "HL: $" << std::setw(4) << z80State->hl << "\n";
+    
+    // Show flags
+    ss << "Flags: ";
+    ss << (z80State->f & 0x80 ? "S" : "-");
+    ss << (z80State->f & 0x40 ? "Z" : "-");
+    ss << (z80State->f & 0x20 ? "5" : "-");
+    ss << (z80State->f & 0x10 ? "H" : "-");
+    ss << (z80State->f & 0x08 ? "3" : "-");
+    ss << (z80State->f & 0x04 ? "P" : "-");
+    ss << (z80State->f & 0x02 ? "N" : "-");
+    ss << (z80State->f & 0x01 ? "C" : "-");
+    ss << "\n";
+    
+    // Add note about viewing full register state
+    ss << "\nUse 'registers' command to view full CPU state\n";
+    
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<std::string>& args)

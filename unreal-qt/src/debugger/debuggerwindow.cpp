@@ -87,6 +87,10 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
 
+    // Subscribe to CPU step messages
+    ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
+    messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
+
     /// endregion </Subscribe to events>
 }
 
@@ -94,11 +98,23 @@ DebuggerWindow::~DebuggerWindow()
 {
     qDebug() << "DebuggerWindow::~DebuggerWindow()";
 
-    // Unsubscribe from breakpoint trigger messages
+    // Unsubscribe from all message topics
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, callback);
+    
+    // Unsubscribe from emulator state changes
+    ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
+    messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+    
+    // Unsubscribe from breakpoint trigger messages
+    ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
+    
+    // Unsubscribe from CPU step messages
+    ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
+    messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
+    
+    delete ui;
 }
 
 /// endregion </Constructor / destructors>
@@ -363,6 +379,20 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
         updateState();
     });
+}
+
+void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
+{
+    qDebug() << "DebuggerWindow::handleCPUStepMessage()";
+
+    if (_emulator && _emulator->IsPaused())
+    {
+        // Update debugger state in the main thread
+        dispatchToMainThread([this]()
+        {
+            updateState();
+        });
+    }
 }
 
 void DebuggerWindow::continueExecution()

@@ -45,6 +45,7 @@ protected:
 private slots:
     void handleEmulatorStateChanged(int id, Message* message);
     void handleMessageBreakpointTriggered(int id, Message* message);
+    void handleCPUStepMessage(int id, Message* message);
 
     // Debug toolbar actions
     void continueExecution();

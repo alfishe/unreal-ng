@@ -779,6 +779,10 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 
     z80.Z80Step(skipBreakpoints);
     z80.OnCPUStep();
+    
+    // Notify the debugger that a step has been performed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
 
     // New frame to be started
     if (z80.t >= config.frame)
