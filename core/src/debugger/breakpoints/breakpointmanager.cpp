@@ -187,6 +187,334 @@ uint16_t BreakpointManager::AddPortOutBreakpoint(uint16_t port)
     return result;
 }
 
+// Combined breakpoint types
+
+uint16_t BreakpointManager::AddCombinedMemoryBreakpoint(uint16_t z80address, uint8_t memoryType)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->memoryType = memoryType;
+    breakpoint->z80address = z80address;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+uint16_t BreakpointManager::AddCombinedPortBreakpoint(uint16_t port, uint8_t ioType)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_IO;
+    breakpoint->ioType = ioType;
+    breakpoint->z80address = port;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+// Breakpoint listing
+
+const BreakpointMapByID& BreakpointManager::GetAllBreakpoints() const
+{
+    return _breakpointMapByID;
+}
+
+std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
+{
+    std::ostringstream oss;
+    
+    if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
+    {
+        const BreakpointDescriptor* bp = _breakpointMapByID.at(breakpointID);
+        
+        // Format ID
+        oss << std::setw(4) << std::right << breakpointID << " ";
+        
+        // Format type
+        switch (bp->type)
+        {
+            case BRK_MEMORY:
+                oss << "Memory    ";
+                break;
+            case BRK_IO:
+                oss << "Port      ";
+                break;
+            case BRK_KEYBOARD:
+                oss << "Keyboard  ";
+                break;
+            default:
+                oss << "Unknown   ";
+                break;
+        }
+        
+        // Format address
+        if (bp->type == BRK_MEMORY)
+        {
+            oss << "0x" << std::hex << std::setw(4) << std::setfill('0') << bp->z80address << " ";
+        }
+        else if (bp->type == BRK_IO)
+        {
+            oss << "0x" << std::hex << std::setw(4) << std::setfill('0') << bp->z80address << " ";
+        }
+        else
+        {
+            oss << "N/A      ";
+        }
+        
+        // Format access type
+        if (bp->type == BRK_MEMORY)
+        {
+            std::string access;
+            if (bp->memoryType & BRK_MEM_READ) access += "R";
+            if (bp->memoryType & BRK_MEM_WRITE) access += "W";
+            if (bp->memoryType & BRK_MEM_EXECUTE) access += "X";
+            oss << std::setw(3) << std::left << access << " ";
+        }
+        else if (bp->type == BRK_IO)
+        {
+            std::string access;
+            if (bp->ioType & BRK_IO_IN) access += "I";
+            if (bp->ioType & BRK_IO_OUT) access += "O";
+            oss << std::setw(3) << std::left << access << " ";
+        }
+        else
+        {
+            oss << "--- ";
+        }
+        
+        // Format status
+        oss << (bp->active ? "Active  " : "Inactive");
+        
+        // Format note if available
+        if (!bp->note.empty())
+        {
+            oss << " - " << bp->note;
+        }
+    }
+    else
+    {
+        oss << "Breakpoint #" << breakpointID << " not found";
+    }
+    
+    return oss.str();
+}
+
+std::string BreakpointManager::GetBreakpointListAsString() const
+{
+    std::ostringstream oss;
+    
+    if (_breakpointMapByID.empty())
+    {
+        oss << "No breakpoints set";
+        return oss.str();
+    }
+    
+    // Header
+    oss << "ID   Type       Address  Access Status   Note\n";
+    oss << "---- ---------- -------- ----- -------- ---------------\n";
+    
+    // List all breakpoints
+    for (const auto& pair : _breakpointMapByID)
+    {
+        oss << FormatBreakpointInfo(pair.first) << "\n";
+    }
+    
+    return oss.str();
+}
+
+// Breakpoint activation/deactivation
+
+bool BreakpointManager::ActivateBreakpoint(uint16_t breakpointID)
+{
+    if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
+    {
+        BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
+        bp->active = true;
+        return true;
+    }
+    return false;
+}
+
+bool BreakpointManager::DeactivateBreakpoint(uint16_t breakpointID)
+{
+    if (_breakpointMapByID.find(breakpointID) != _breakpointMapByID.end())
+    {
+        BreakpointDescriptor* bp = _breakpointMapByID[breakpointID];
+        bp->active = false;
+        return true;
+    }
+    return false;
+}
+
+void BreakpointManager::ActivateAllBreakpoints()
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        pair.second->active = true;
+    }
+}
+
+void BreakpointManager::DeactivateAllBreakpoints()
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        pair.second->active = false;
+    }
+}
+
+void BreakpointManager::ActivateBreakpointsByType(BreakpointTypeEnum type)
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == type)
+        {
+            pair.second->active = true;
+        }
+    }
+}
+
+void BreakpointManager::DeactivateBreakpointsByType(BreakpointTypeEnum type)
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == type)
+        {
+            pair.second->active = false;
+        }
+    }
+}
+
+void BreakpointManager::ActivateMemoryBreakpointsByType(uint8_t memoryType)
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
+        {
+            pair.second->active = true;
+        }
+    }
+}
+
+void BreakpointManager::DeactivateMemoryBreakpointsByType(uint8_t memoryType)
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
+        {
+            pair.second->active = false;
+        }
+    }
+}
+
+void BreakpointManager::ActivatePortBreakpointsByType(uint8_t ioType)
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
+        {
+            pair.second->active = true;
+        }
+    }
+}
+
+void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
+{
+    for (auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
+        {
+            pair.second->active = false;
+        }
+    }
+}
+
+// Breakpoint removal by address/port/type
+
+bool BreakpointManager::RemoveBreakpointByAddress(uint16_t address)
+{
+    BreakpointDescriptor* bp = FindAddressBreakpoint(address);
+    if (bp != nullptr)
+    {
+        return RemoveBreakpointByID(bp->breakpointID);
+    }
+    return false;
+}
+
+bool BreakpointManager::RemoveBreakpointByPort(uint16_t port)
+{
+    BreakpointDescriptor* bp = FindPortBreakpoint(port);
+    if (bp != nullptr)
+    {
+        return RemoveBreakpointByID(bp->breakpointID);
+    }
+    return false;
+}
+
+void BreakpointManager::RemoveBreakpointsByType(BreakpointTypeEnum type)
+{
+    // Create a list of IDs to remove to avoid modifying the map during iteration
+    std::vector<uint16_t> idsToRemove;
+    
+    for (const auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == type)
+        {
+            idsToRemove.push_back(pair.first);
+        }
+    }
+    
+    // Remove all breakpoints of the specified type
+    for (uint16_t id : idsToRemove)
+    {
+        RemoveBreakpointByID(id);
+    }
+}
+
+void BreakpointManager::RemoveMemoryBreakpointsByType(uint8_t memoryType)
+{
+    // Create a list of IDs to remove to avoid modifying the map during iteration
+    std::vector<uint16_t> idsToRemove;
+    
+    for (const auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == BRK_MEMORY && (pair.second->memoryType & memoryType))
+        {
+            idsToRemove.push_back(pair.first);
+        }
+    }
+    
+    // Remove all memory breakpoints of the specified type
+    for (uint16_t id : idsToRemove)
+    {
+        RemoveBreakpointByID(id);
+    }
+}
+
+void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
+{
+    // Create a list of IDs to remove to avoid modifying the map during iteration
+    std::vector<uint16_t> idsToRemove;
+    
+    for (const auto& pair : _breakpointMapByID)
+    {
+        if (pair.second->type == BRK_IO && (pair.second->ioType & ioType))
+        {
+            idsToRemove.push_back(pair.first);
+        }
+    }
+    
+    // Remove all port breakpoints of the specified type
+    for (uint16_t id : idsToRemove)
+    {
+        RemoveBreakpointByID(id);
+    }
+}
+
 /// endregion </Management assistance methods>
 
 /// region <Runtime methods>
@@ -195,7 +523,7 @@ uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
     uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindAddressBreakpoint(pc);
-    if (breakpoint)
+    if (breakpoint && breakpoint->active)
     {
         if (breakpoint->memoryType & BRK_MEM_EXECUTE)
         {
@@ -238,7 +566,7 @@ uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
     uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindAddressBreakpoint(readAddress);
-    if (breakpoint)
+    if (breakpoint && breakpoint->active)
     {
         if (breakpoint->memoryType & BRK_MEM_READ)
         {
@@ -254,7 +582,7 @@ uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
     uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindAddressBreakpoint(writeAddress);
-    if (breakpoint)
+    if (breakpoint && breakpoint->active)
     {
         if (breakpoint->memoryType & BRK_MEM_WRITE)
         {
@@ -270,7 +598,7 @@ uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
     uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindPortBreakpoint(portAddress);
-    if (breakpoint)
+    if (breakpoint && breakpoint->active)
     {
         if (breakpoint->ioType & BRK_IO_IN)
         {
@@ -286,7 +614,7 @@ uint16_t BreakpointManager::HandlePortOut(uint16_t portAddress)
     uint16_t result = BRK_INVALID;
 
     BreakpointDescriptor* breakpoint = FindPortBreakpoint(portAddress);
-    if (breakpoint)
+    if (breakpoint && breakpoint->active)
     {
         if (breakpoint->ioType & BRK_IO_OUT)
         {

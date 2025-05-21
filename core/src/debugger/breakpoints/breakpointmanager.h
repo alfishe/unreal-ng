@@ -66,6 +66,7 @@ struct BreakpointDescriptor
     bool active = true;
 
     std::string note;                           // Annotation for the breakpoint
+    std::string group = "default";              // Group name for organizing breakpoints
 };
 
 ///
@@ -149,6 +150,44 @@ public:
     uint16_t AddMemWriteBreakpoint(uint16_t z80address);
     uint16_t AddPortInBreakpoint(uint16_t port);
     uint16_t AddPortOutBreakpoint(uint16_t port);
+    
+    // Combined breakpoint types
+    uint16_t AddCombinedMemoryBreakpoint(uint16_t z80address, uint8_t memoryType);
+    uint16_t AddCombinedPortBreakpoint(uint16_t port, uint8_t ioType);
+    
+    // Breakpoint listing
+    const BreakpointMapByID& GetAllBreakpoints() const;
+    std::string FormatBreakpointInfo(uint16_t breakpointID) const;
+    std::string GetBreakpointListAsString() const;
+    
+    // Breakpoint activation/deactivation
+    bool ActivateBreakpoint(uint16_t breakpointID);
+    bool DeactivateBreakpoint(uint16_t breakpointID);
+    void ActivateAllBreakpoints();
+    void DeactivateAllBreakpoints();
+    void ActivateBreakpointsByType(BreakpointTypeEnum type);
+    void DeactivateBreakpointsByType(BreakpointTypeEnum type);
+    void ActivateMemoryBreakpointsByType(uint8_t memoryType);
+    void DeactivateMemoryBreakpointsByType(uint8_t memoryType);
+    void ActivatePortBreakpointsByType(uint8_t ioType);
+    void DeactivatePortBreakpointsByType(uint8_t ioType);
+    
+    // Breakpoint removal by address/port/type
+    bool RemoveBreakpointByAddress(uint16_t address);
+    bool RemoveBreakpointByPort(uint16_t port);
+    void RemoveBreakpointsByType(BreakpointTypeEnum type);
+    void RemoveMemoryBreakpointsByType(uint8_t memoryType);
+    void RemovePortBreakpointsByType(uint8_t ioType);
+    
+    // Breakpoint group management
+    uint16_t AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName);
+    bool SetBreakpointGroup(uint16_t breakpointID, const std::string& groupName);
+    std::vector<std::string> GetBreakpointGroups() const;
+    std::vector<uint16_t> GetBreakpointsByGroup(const std::string& groupName) const;
+    std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
+    void ActivateBreakpointGroup(const std::string& groupName);
+    void DeactivateBreakpointGroup(const std::string& groupName);
+    void RemoveBreakpointGroup(const std::string& groupName);
 
     /// endregion </Management assistance methods>
 
