@@ -232,63 +232,58 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
     {
         const BreakpointDescriptor* bp = _breakpointMapByID.at(breakpointID);
         
-        // Format ID
+        // Format ID - align right with width 4
         oss << std::setw(4) << std::right << breakpointID << " ";
         
-        // Format type
+        // Format type - fixed width 10 characters
+        std::string typeStr;
         switch (bp->type)
         {
             case BRK_MEMORY:
-                oss << "Memory    ";
+                typeStr = "Memory";
                 break;
             case BRK_IO:
-                oss << "Port      ";
+                typeStr = "Port";
                 break;
             case BRK_KEYBOARD:
-                oss << "Keyboard  ";
+                typeStr = "Keyboard";
                 break;
             default:
-                oss << "Unknown   ";
+                typeStr = "Unknown";
                 break;
         }
+        oss << std::setw(10) << std::left << typeStr << " ";
         
-        // Format address
-        if (bp->type == BRK_MEMORY)
+        // Format address - fixed width 8 characters
+        if (bp->type == BRK_MEMORY || bp->type == BRK_IO)
         {
-            oss << "0x" << std::hex << std::setw(4) << std::setfill('0') << bp->z80address << " ";
-        }
-        else if (bp->type == BRK_IO)
-        {
-            oss << "0x" << std::hex << std::setw(4) << std::setfill('0') << bp->z80address << " ";
+            oss << "0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << bp->z80address << std::setfill(' ');
+            // Ensure exact 8 characters width
+            oss << std::string(8 - 6, ' '); // 6 = "0x" + 4 hex digits
         }
         else
         {
-            oss << "N/A      ";
+            oss << std::setw(8) << std::left << "N/A";
         }
         
-        // Format access type
+        // Format access type - exactly matching header width
+        std::string access;
         if (bp->type == BRK_MEMORY)
         {
-            std::string access;
             if (bp->memoryType & BRK_MEM_READ) access += "R";
             if (bp->memoryType & BRK_MEM_WRITE) access += "W";
             if (bp->memoryType & BRK_MEM_EXECUTE) access += "X";
-            oss << std::setw(3) << std::left << access << " ";
         }
         else if (bp->type == BRK_IO)
         {
-            std::string access;
             if (bp->ioType & BRK_IO_IN) access += "I";
             if (bp->ioType & BRK_IO_OUT) access += "O";
-            oss << std::setw(3) << std::left << access << " ";
         }
-        else
-        {
-            oss << "--- ";
-        }
+        // Exactly 5 characters for "Access" column
+        oss << " " << std::setw(5) << std::left << access;
         
-        // Format status
-        oss << (bp->active ? "Active  " : "Inactive");
+        // Format status - exactly matching header width
+        oss << " " << std::setw(8) << std::left << (bp->active ? "Active" : "Inactive");
         
         // Format note if available
         if (!bp->note.empty())
@@ -310,7 +305,7 @@ std::string BreakpointManager::GetBreakpointListAsString() const
     
     if (_breakpointMapByID.empty())
     {
-        oss << "No breakpoints set";
+        oss << "No breakpoints set\n";
         return oss.str();
     }
     

@@ -74,13 +74,29 @@ private:
     void HandleStep(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
+    
+    // Breakpoint command handlers
     void HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPList(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWatchpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandlePortBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPClear(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
+    
     void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDummy(const ClientSession& session, const std::vector<std::string>& args);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
+    
+    // Universal address parsing method for memory addresses and port numbers
+    // Returns true if parsing was successful, false otherwise
+    // The parsed address is stored in the 'result' parameter
+    // maxValue specifies the maximum allowed value (default: 0xFFFF for 16-bit addresses)
+    bool ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue = 0xFFFF) const;
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;
