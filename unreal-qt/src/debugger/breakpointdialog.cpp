@@ -398,14 +398,46 @@ void BreakpointDialog::updateStatusBar()
 
 void BreakpointDialog::addBreakpoint()
 {
-    // We'll implement this when we create the BreakpointEditor class
-    QMessageBox::information(this, "Add Breakpoint", "This feature will be implemented soon.");
+    BreakpointEditor editor(_emulator, BreakpointEditor::Add, this);
+    
+    if (editor.exec() == QDialog::Accepted)
+    {
+        // Refresh the breakpoint list to show the new breakpoint
+        refreshBreakpointList();
+        
+        // Broadcast notification that breakpoints have changed
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_BREAKPOINT_CHANGED, nullptr, true);
+    }
 }
 
 void BreakpointDialog::editBreakpoint()
 {
-    // We'll implement this when we create the BreakpointEditor class
-    QMessageBox::information(this, "Edit Breakpoint", "This feature will be implemented soon.");
+    // Get the selected breakpoint
+    QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
+    if (selectedItems.isEmpty())
+    {
+        QMessageBox::information(this, "Edit Breakpoint", "Please select a breakpoint to edit.");
+        return;
+    }
+    
+    // Get the breakpoint ID from the selected row
+    int row = selectedItems.first()->row();
+    QTableWidgetItem* idItem = _breakpointTable->item(row, 0);
+    uint16_t id = idItem->data(Qt::UserRole).toUInt();
+    
+    // Open the breakpoint editor with the selected breakpoint
+    BreakpointEditor editor(_emulator, BreakpointEditor::Edit, id, this);
+    
+    if (editor.exec() == QDialog::Accepted)
+    {
+        // Refresh the breakpoint list to show the updated breakpoint
+        refreshBreakpointList();
+        
+        // Broadcast notification that breakpoints have changed
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_BREAKPOINT_CHANGED, nullptr, true);
+    }
 }
 
 void BreakpointDialog::deleteBreakpoint()
@@ -430,6 +462,10 @@ void BreakpointDialog::deleteBreakpoint()
         {
             bpManager->RemoveBreakpointByID(id);
             refreshBreakpointList();
+            
+            // Broadcast notification that breakpoints have changed
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_BREAKPOINT_CHANGED, nullptr, true);
         }
     }
 }
@@ -461,6 +497,10 @@ void BreakpointDialog::toggleBreakpoint()
         statusItem->setText("Active");
         statusItem->setForeground(QColor(0, 128, 0));
     }
+    
+    // Broadcast notification that breakpoints have changed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_BREAKPOINT_CHANGED, nullptr, true);
 }
 
 void BreakpointDialog::createGroup()
@@ -548,13 +588,34 @@ void BreakpointDialog::applyFilters()
             // We're using OR logic - match in any column is sufficient
             matchesSearch = false;
             
+            // Check if search text might be an address (starts with $ or 0x)
+            bool isAddressSearch = searchText.startsWith("$") || searchText.startsWith("0x");
+            QString addressSearchText = searchText;
+            if (isAddressSearch && searchText.startsWith("0x"))
+            {
+                // Convert 0xXXXX format to $XXXX format for matching
+                addressSearchText = "$" + searchText.mid(2);
+            }
+            
             // Define columns to search in
             const int columnsToSearch[] = {0, 2, 3, 5, 6}; // ID, Address, Access, Group, Notes
             
             for (int colIndex : columnsToSearch)
             {
                 QTableWidgetItem* item = _breakpointTable->item(row, colIndex);
-                if (item && item->text().contains(searchText, Qt::CaseInsensitive))
+                if (!item) continue;
+                
+                // Special handling for address column
+                if (isAddressSearch && colIndex == 2) // Address column
+                {
+                    // For address searches, we want to match the address format exactly
+                    if (item->text().contains(addressSearchText, Qt::CaseInsensitive))
+                    {
+                        matchesSearch = true;
+                        break;
+                    }
+                }
+                else if (item->text().contains(searchText, Qt::CaseInsensitive))
                 {
                     matchesSearch = true;
                     break;
