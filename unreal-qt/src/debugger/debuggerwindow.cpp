@@ -9,9 +9,13 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QTimer>
+#include <QMessageBox>
 
 #include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/breakpointdialog.h"
+#include "debugger/breakpointeditor.h"
+#include "debugger/breakpointgroupdialog.h"
 #include "emulator/emulator.h"
 
 /// region <Constructor / destructors>
@@ -221,6 +225,8 @@ void DebuggerWindow::reset()
         cpuStepAction->setEnabled(false);
         frameStepAction->setEnabled(false);
         waitInterruptAction->setEnabled(false);
+        resetAction->setEnabled(false);
+        breakpointsAction->setEnabled(false);
     }
  }
 
@@ -319,6 +325,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(false);
+                breakpointsAction->setEnabled(false);
 
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
@@ -333,6 +340,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(false);
+                breakpointsAction->setEnabled(true); // Enable breakpoints button when emulator is available
                 break;
             case StateRun:
             case StateResumed:
@@ -342,6 +350,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(true);
+                breakpointsAction->setEnabled(true); // Enable breakpoints button when emulator is running
                 break;
             case StatePaused:
                 continueAction->setEnabled(true);
@@ -350,6 +359,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 frameStepAction->setEnabled(true);
                 waitInterruptAction->setEnabled(true);
                 resetAction->setEnabled(true);
+                breakpointsAction->setEnabled(true); // Enable breakpoints button when emulator is paused
                 break;
         }
 
@@ -482,43 +492,18 @@ void DebuggerWindow::resetEmulator()
 void DebuggerWindow::showBreakpointManager()
 {
     qDebug() << "DebuggerWindow::showBreakpointManager()";
-
-    QDialog dialog;
-    dialog.setWindowTitle("Table Dialog");
-    dialog.resize(400, 500);
-
-
-    // Create the table widget
-    QTableWidget tableWidget(3, 2, &dialog);  // 3 rows, 2 columns
-    QHeaderView* header = tableWidget.horizontalHeader();
-    header->setSectionResizeMode(0, QHeaderView::Stretch);
-    header->setSectionResizeMode(1, QHeaderView::Stretch);
-
-    // Set the headers for the columns
-    QStringList headers;
-    headers << "Column 1" << "Column 2";
-    tableWidget.setHorizontalHeaderLabels(headers);
-
-    // Set the data for each cell
-    QTableWidgetItem *item;
-    item = new QTableWidgetItem("Row 1, Column 1");
-    tableWidget.setItem(0, 0, item);
-    item = new QTableWidgetItem("Row 1, Column 2");
-    tableWidget.setItem(0, 1, item);
-    item = new QTableWidgetItem("Row 2, Column 1");
-    tableWidget.setItem(1, 0, item);
-    item = new QTableWidgetItem("Row 2, Column 2");
-    tableWidget.setItem(1, 1, item);
-    item = new QTableWidgetItem("Row 3, Column 1");
-    tableWidget.setItem(2, 0, item);
-    item = new QTableWidgetItem("Row 3, Column 2");
-    tableWidget.setItem(2, 1, item);
-
-    QHBoxLayout *layout = new QHBoxLayout(&dialog);
-    layout->addWidget(&tableWidget);
-    dialog.setLayout(layout);
-
+    
+    if (!_emulator)
+    {
+        QMessageBox::warning(this, "Warning", "No emulator selected");
+        return;
+    }
+    
+    BreakpointDialog dialog(_emulator, this);
     dialog.exec();
+    
+    // Update debugger state after dialog closes
+    updateState();
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)

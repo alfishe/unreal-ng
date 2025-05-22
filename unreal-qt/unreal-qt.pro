@@ -36,6 +36,9 @@ SOURCES += \
     3rdparty/QHexView-5.0/src/model/qhexdelegate.cpp \
     3rdparty/QHexView-5.0/src/qhexview.cpp \
     src/common/widgets/qclickablelabel.cpp \
+    src/debugger/breakpointdialog.cpp \
+    src/debugger/breakpointeditor.cpp \
+    src/debugger/breakpointgroupdialog.cpp \
     src/debugger/debuggerwindow.cpp \
     src/debugger/disassemblercolumnview.cpp \
     src/debugger/disassemblerlistingview.cpp \
@@ -75,6 +78,9 @@ HEADERS += \
     3rdparty/QHexView-5.0/include/QHexView/model/qhexdelegate.h \
     3rdparty/QHexView-5.0/include/QHexView/qhexview.h \
     src/common/widgets/qclickablelabel.h \
+    src/debugger/breakpointdialog.h \
+    src/debugger/breakpointeditor.h \
+    src/debugger/breakpointgroupdialog.h \
     src/debugger/debuggerwindow.h \
     src/debugger/disassemblercolumnview.h \
     src/debugger/disassemblerlistingview.h \
