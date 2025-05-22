@@ -19,6 +19,7 @@
 #include "emulator/filemanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
+#include "3rdparty/message-center/eventqueue.h"
 #include "emulator/soundmanager.h"
 #include "ui_mainwindow.h"
 
@@ -1197,24 +1198,9 @@ void MainWindow::handleFileOpenRequest(int id, Message* message)
     // Check if a filepath was provided in the message payload
     if (message && message->obj)
     {
-        // The message payload should be a StringPayload containing the filepath
-        class StringPayload : public MessagePayload
-        {
-        public:
-            StringPayload(const std::string& str) : _str(str) {}
-            virtual ~StringPayload() {}
-
-            const std::string& GetString() const
-            {
-                return _str;
-            }
-
-        private:
-            std::string _str;
-        };
-
-        StringPayload* payload = static_cast<StringPayload*>(message->obj);
-        QString filepath = QString::fromStdString(payload->GetString());
+        // The message payload should be a SimpleTextPayload containing the filepath
+        SimpleTextPayload* payload = static_cast<SimpleTextPayload*>(message->obj);
+        QString filepath = QString::fromStdString(payload->_payloadText);
 
         // Use Qt's signal/slot mechanism to handle the file opening on the main thread
         QMetaObject::invokeMethod(this, "openSpecificFile", Qt::QueuedConnection, Q_ARG(QString, filepath));
