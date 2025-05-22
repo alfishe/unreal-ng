@@ -6,6 +6,7 @@
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
 #include <3rdparty/message-center/messagecenter.h>
+#include <3rdparty/message-center/eventqueue.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -883,21 +884,8 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         // Filepath provided, check if it exists
         std::string filepath = args[0];
         
-        // Create a StringPayload with the filepath
-        class StringPayload : public MessagePayload
-        {
-        public:
-            StringPayload(const std::string& str) : _str(str) {}
-            virtual ~StringPayload() {}
-            
-            const std::string& GetString() const { return _str; }
-            
-        private:
-            std::string _str;
-        };
-        
-        // Send the filepath in the message payload
+        // Send the filepath in the message payload using the existing SimpleTextPayload
         session.SendResponse("Requesting to open file: " + filepath + "\n");
-        messageCenter.Post(NC_FILE_OPEN_REQUEST, new StringPayload(filepath), true);
+        messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
 }
