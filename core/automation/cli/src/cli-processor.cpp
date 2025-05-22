@@ -7,12 +7,14 @@
 #include <emulator/platform.h>
 #include <3rdparty/message-center/messagecenter.h>
 #include <3rdparty/message-center/eventqueue.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <string>
+#include <vector>
+#include <sys/socket.h>
+#include <unistd.h>
 
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const
@@ -254,6 +256,13 @@ bool CLIProcessor::ParseAddress(const std::string& addressStr, uint16_t& result,
         // Any parsing error (invalid format, etc.)
         return false;
     }
+}
+
+void CLIProcessor::onBreakpointsChanged()
+{
+    // Notify UI components that breakpoints have changed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_BREAKPOINT_CHANGED, nullptr, true);
 }
 
 // Command handler implementations
@@ -993,6 +1002,9 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (bpId != BRK_INVALID)
     {
         oss << "Breakpoint #" << bpId << " set at 0x" << std::hex << std::setw(4) << std::setfill('0') << address << "\n";
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else
     {
@@ -1263,6 +1275,9 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
     {
         bpManager->ClearBreakpoints();
         session.SendResponse("All breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "addr" && args.size() > 1)
     {
@@ -1275,7 +1290,12 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         
         bool result = bpManager->RemoveBreakpointByAddress(address);
         if (result)
+        {
             session.SendResponse("Breakpoint at address 0x" + std::to_string(address) + " cleared\n");
+            
+            // Notify UI components that breakpoints have changed
+            onBreakpointsChanged();
+        }
         else
             session.SendResponse("No breakpoint found at address 0x" + std::to_string(address) + "\n");
     }
@@ -1283,6 +1303,9 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
     {
         bpManager->RemoveBreakpointsByType(BRK_IO);
         session.SendResponse("All port breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "port" && args.size() > 1)
     {
@@ -1295,7 +1318,12 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         
         bool result = bpManager->RemoveBreakpointByPort(port);
         if (result)
+        {
             session.SendResponse("Breakpoint at port 0x" + std::to_string(port) + " cleared\n");
+            
+            // Notify UI components that breakpoints have changed
+            onBreakpointsChanged();
+        }
         else
             session.SendResponse("No breakpoint found at port 0x" + std::to_string(port) + "\n");
     }
@@ -1303,37 +1331,58 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
     {
         bpManager->RemoveBreakpointsByType(BRK_MEMORY);
         session.SendResponse("All memory breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "read")
     {
         bpManager->RemoveMemoryBreakpointsByType(BRK_MEM_READ);
         session.SendResponse("All memory read breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "write")
     {
         bpManager->RemoveMemoryBreakpointsByType(BRK_MEM_WRITE);
         session.SendResponse("All memory write breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "exec")
     {
         bpManager->RemoveMemoryBreakpointsByType(BRK_MEM_EXECUTE);
         session.SendResponse("All execution breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "in")
     {
         bpManager->RemovePortBreakpointsByType(BRK_IO_IN);
         session.SendResponse("All port IN breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "out")
     {
         bpManager->RemovePortBreakpointsByType(BRK_IO_OUT);
         session.SendResponse("All port OUT breakpoints cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "group" && args.size() > 1)
     {
         std::string groupName = args[1];
         bpManager->RemoveBreakpointGroup(groupName);
         session.SendResponse("All breakpoints in group '" + groupName + "' cleared\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else
     {
@@ -1343,7 +1392,12 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         {
             bool result = bpManager->RemoveBreakpointByID(id);
             if (result)
+            {
                 session.SendResponse("Breakpoint #" + std::to_string(id) + " cleared\n");
+                
+                // Notify UI components that breakpoints have changed
+                onBreakpointsChanged();
+            }
             else
                 session.SendResponse("No breakpoint found with ID " + std::to_string(id) + "\n");
         }
@@ -1422,7 +1476,12 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
         std::string groupName = args[2];
         bool result = bpManager->SetBreakpointGroup(id, groupName);
         if (result)
+        {
             session.SendResponse("Breakpoint #" + std::to_string(id) + " assigned to group '" + groupName + "'\n");
+            
+            // Notify UI components that breakpoints have changed
+            onBreakpointsChanged();
+        }
         else
             session.SendResponse("Failed to assign breakpoint to group. Check if the breakpoint ID is valid.\n");
     }
@@ -1437,7 +1496,12 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
         
         bool result = bpManager->RemoveBreakpointFromGroup(id);
         if (result)
+        {
             session.SendResponse("Breakpoint #" + std::to_string(id) + " removed from its group (set to 'default')\n");
+            
+            // Notify UI components that breakpoints have changed
+            onBreakpointsChanged();
+        }
         else
             session.SendResponse("Failed to remove breakpoint from group. Check if the breakpoint ID is valid.\n");
     }
@@ -1487,47 +1551,74 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
     {
         bpManager->ActivateAllBreakpoints();
         session.SendResponse("All breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "mem")
     {
         bpManager->ActivateBreakpointsByType(BRK_MEMORY);
         session.SendResponse("All memory breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "port")
     {
         bpManager->ActivateBreakpointsByType(BRK_IO);
         session.SendResponse("All port breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "read")
     {
         bpManager->ActivateMemoryBreakpointsByType(BRK_MEM_READ);
         session.SendResponse("All memory read breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "write")
     {
         bpManager->ActivateMemoryBreakpointsByType(BRK_MEM_WRITE);
         session.SendResponse("All memory write breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "exec")
     {
         bpManager->ActivateMemoryBreakpointsByType(BRK_MEM_EXECUTE);
         session.SendResponse("All execution breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "in")
     {
         bpManager->ActivatePortBreakpointsByType(BRK_IO_IN);
         session.SendResponse("All port IN breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "out")
     {
         bpManager->ActivatePortBreakpointsByType(BRK_IO_OUT);
         session.SendResponse("All port OUT breakpoints activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "group" && args.size() > 1)
     {
         std::string groupName = args[1];
         bpManager->ActivateBreakpointGroup(groupName);
         session.SendResponse("All breakpoints in group '" + groupName + "' activated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else
     {
@@ -1537,7 +1628,12 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
         {
             bool result = bpManager->ActivateBreakpoint(id);
             if (result)
+            {
                 session.SendResponse("Breakpoint #" + std::to_string(id) + " activated\n");
+                
+                // Notify UI components that breakpoints have changed
+                onBreakpointsChanged();
+            }
             else
                 session.SendResponse("No breakpoint found with ID " + std::to_string(id) + "\n");
         }
@@ -1588,47 +1684,74 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
     {
         bpManager->DeactivateAllBreakpoints();
         session.SendResponse("All breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "mem")
     {
         bpManager->DeactivateBreakpointsByType(BRK_MEMORY);
         session.SendResponse("All memory breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "port")
     {
         bpManager->DeactivateBreakpointsByType(BRK_IO);
         session.SendResponse("All port breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "read")
     {
         bpManager->DeactivateMemoryBreakpointsByType(BRK_MEM_READ);
         session.SendResponse("All memory read breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "write")
     {
         bpManager->DeactivateMemoryBreakpointsByType(BRK_MEM_WRITE);
         session.SendResponse("All memory write breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "exec")
     {
         bpManager->DeactivateMemoryBreakpointsByType(BRK_MEM_EXECUTE);
         session.SendResponse("All execution breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "in")
     {
         bpManager->DeactivatePortBreakpointsByType(BRK_IO_IN);
         session.SendResponse("All port IN breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "out")
     {
         bpManager->DeactivatePortBreakpointsByType(BRK_IO_OUT);
         session.SendResponse("All port OUT breakpoints deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else if (option == "group" && args.size() > 1)
     {
         std::string groupName = args[1];
         bpManager->DeactivateBreakpointGroup(groupName);
         session.SendResponse("All breakpoints in group '" + groupName + "' deactivated\n");
+        
+        // Notify UI components that breakpoints have changed
+        onBreakpointsChanged();
     }
     else
     {
@@ -1638,7 +1761,12 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
         {
             bool result = bpManager->DeactivateBreakpoint(id);
             if (result)
+            {
                 session.SendResponse("Breakpoint #" + std::to_string(id) + " deactivated\n");
+                
+                // Notify UI components that breakpoints have changed
+                onBreakpointsChanged();
+            }
             else
                 session.SendResponse("No breakpoint found with ID " + std::to_string(id) + "\n");
         }

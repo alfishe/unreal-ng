@@ -14,12 +14,21 @@
 #include <QHeaderView>
 #include <QBoxLayout>
 #include <QMessageBox>
+#include <QMutex>
+#include <QMetaObject>
+#include <QMetaMethod>
+#include <QApplication>
+#include <QThread>
 #include "emulator/emulator.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+
+class Emulator;
+class Message;
 
 class BreakpointDialog : public QDialog
 {
     Q_OBJECT
+
 public:
     explicit BreakpointDialog(Emulator* emulator, QWidget* parent = nullptr);
     ~BreakpointDialog();
@@ -59,26 +68,28 @@ private:
     void updateStatusBar();
     
     Emulator* _emulator;
-    QVBoxLayout* _mainLayout;
-    QTableWidget* _breakpointTable;
+    std::function<void(int, Message*)> m_breakpointCallback;  // Store the observer callback for cleanup
+    QMutex m_mutex;  // For thread-safe access to the dialog
+    QVBoxLayout* _mainLayout = nullptr;
+    QTableWidget* _breakpointTable = nullptr;
     
     // Filter UI elements
-    QComboBox* _groupFilter;
-    QLineEdit* _searchField;
-    QPushButton* _clearSearchButton;
+    QComboBox* _groupFilter = nullptr;
+    QLineEdit* _searchField = nullptr;
+    QPushButton* _clearSearchButton = nullptr;
     
     // Action buttons
-    QPushButton* _addButton;
-    QPushButton* _editButton;
-    QPushButton* _deleteButton;
-    QPushButton* _enableButton;
-    QPushButton* _disableButton;
-    QPushButton* _groupButton;
+    QPushButton* _addButton = nullptr;
+    QPushButton* _editButton = nullptr;
+    QPushButton* _deleteButton = nullptr;
+    QPushButton* _enableButton = nullptr;
+    QPushButton* _disableButton = nullptr;
+    QPushButton* _groupButton = nullptr;
     
     // Bottom dialog elements
-    QLabel* _statusLabel;
-    QPushButton* _closeButton;
-    QPushButton* _applyButton;
+    QLabel* _statusLabel = nullptr;
+    QPushButton* _closeButton = nullptr;
+    QPushButton* _applyButton = nullptr;
 };
 
 #endif // BREAKPOINTDIALOG_H

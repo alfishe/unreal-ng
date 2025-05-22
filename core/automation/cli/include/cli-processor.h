@@ -97,6 +97,9 @@ private:
     // The parsed address is stored in the 'result' parameter
     // maxValue specifies the maximum allowed value (default: 0xFFFF for 16-bit addresses)
     bool ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue = 0xFFFF) const;
+    
+    // Helper method to notify UI components that breakpoints have changed
+    void onBreakpointsChanged();
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

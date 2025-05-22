@@ -30,6 +30,9 @@ BreakpointEditor::BreakpointEditor(Emulator* emulator, Mode mode, QWidget* paren
     _outCheck->setChecked(true);
     _activeCheck->setChecked(true);
     
+    // Make sure address field is enabled for new breakpoints
+    _addressEdit->setEnabled(true);
+    
     // Set initial state based on type
     onTypeChanged(0);
 }
