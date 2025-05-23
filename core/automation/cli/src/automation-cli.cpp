@@ -352,7 +352,7 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
     // Set socket to non-blocking mode to avoid hanging
     setSocketNonBlocking(clientSocket);
 
-    char buffer[1024];
+    unsigned char buffer[1024];
     ssize_t bytesRead;
 
     while (true)
@@ -410,7 +410,7 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                 // Skip telnet commands (simplified handling)
                 if (i + 1 < bytesRead)
                 {
-                    if (buffer[i + 1] == 0xFF)  // Literal 0xFF
+                    if (static_cast<unsigned char>(buffer[i + 1]) == 0xFF)  // Literal 0xFF
                     {
                         // Keep one 0xFF, skip the next
                         i++;
