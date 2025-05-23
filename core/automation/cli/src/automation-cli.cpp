@@ -12,19 +12,15 @@
 
 using namespace std::string_literals;
 
-AutomationCLI::AutomationCLI() :
-    _emulator(nullptr),
-    _thread(nullptr),
-    _stopThread(false),
-    _port(8765),
-    _serverSocket(INVALID_SOCKET)
+AutomationCLI::AutomationCLI()
+    : _emulator(nullptr), _thread(nullptr), _stopThread(false), _port(8765), _serverSocket(INVALID_SOCKET)
 {
     // Initialize platform sockets
     if (!initializeSockets())
     {
         std::cerr << "Failed to initialize socket library!" << std::endl;
     }
-    
+
     _cliApp.footer("\nType 'help' for a list of commands or 'exit' to quit.");
     _cliApp.set_help_flag("-h,--help", "Show help and exit");
 
@@ -47,7 +43,7 @@ AutomationCLI::AutomationCLI() :
 AutomationCLI::~AutomationCLI()
 {
     stop();
-    
+
     // Cleanup platform sockets
     cleanupSockets();
 }
@@ -265,6 +261,7 @@ std::unique_ptr<CLIProcessor> AutomationCLI::createProcessor()
 
 void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 {
+    std::string lineBuffer;  // Buffer to store the current line of input
     std::cout << "New client connection established on socket: " << clientSocket << std::endl;
 
     // Add this client socket to the active connections list
@@ -276,28 +273,47 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
     setSocketNonBlocking(clientSocket);
 
     // Configure telnet client for character-at-a-time mode with local echo
-    // This works better with Windows telnet client
-    unsigned char telnetInit[] =
-    {
-        0xFF, 0xFD, 0x22,  // IAC DO LINEMODE (we'll reject this)
-        0xFF, 0xFB, 0x01,  // IAC WILL ECHO
-        0xFF, 0xFD, 0x01,  // IAC DO ECHO
+    unsigned char telnetInit[] = {
+        0xFF, 0xFB, 0x01,  // IAC WILL ECHO (we'll do the echoing)
+        0xFF, 0xFD, 0x01,  // IAC DO ECHO (let client echo)
         0xFF, 0xFB, 0x03,  // IAC WILL SUPPRESS GO AHEAD
         0xFF, 0xFD, 0x03,  // IAC DO SUPPRESS GO AHEAD
-        0xFF, 0xFC, 0x22,  // IAC WON'T LINEMODE (reject line mode)
-        0xFF, 0xFC, 0x01   // IAC WON'T ECHO (let client handle echo)
+        0xFF, 0xFC, 0x22   // IAC WON'T LINEMODE (reject line mode)
     };
     send(clientSocket, (const char*)telnetInit, sizeof(telnetInit), 0);
     
-    // Send WILL SUPPRESS GO AHEAD again to ensure it's set
-    unsigned char willSuppressGA[] = {0xFF, 0xFB, 0x03};
-    send(clientSocket, (const char*)willSuppressGA, sizeof(willSuppressGA), 0);
+    // Set the socket to character mode
+    #ifdef _WIN32
+        unsigned long mode = 1;  // 1 to enable non-blocking mode
+        ioctlsocket(clientSocket, FIONBIO, &mode);
+    #else
+        int flags = fcntl(clientSocket, F_GETFL, 0);
+        fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
+    #endif
 
     // Create a new session for this client
     ClientSession session(clientSocket);
 
     // Create a CLI processor for this client
     auto processor = createProcessor();
+    
+    // Track if we've shown the welcome message
+    static bool hasShownWelcome = false;
+    
+    // Send welcome message only once
+    if (!hasShownWelcome) {
+        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI." + std::string(NEWLINE) + 
+                              "Type 'help' for commands." + std::string(NEWLINE);
+        send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+        hasShownWelcome = true;
+    }
+    
+    // Send initial prompt
+    std::string prompt = "> ";
+    send(clientSocket, prompt.c_str(), prompt.length(), 0);
+    
+    // Track if we've processed any commands yet
+    bool isFirstCommand = true;
 
     // Force initialization of the EmulatorManager BEFORE sending welcome message
     auto* emulatorManager = EmulatorManager::GetInstance();
@@ -312,18 +328,16 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
         // Initialize the processor with a dummy command but don't send it to the client
         processor->InitializeProcessor();
 
-        // Send welcome message AFTER EmulatorManager is fully initialized
-        #ifdef _WIN32
-            const char* newline = "\r\n";
-        #else
-            const char* newline = "\n";
-        #endif
-        
-        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI. Type 'help' for commands." + std::string(newline);
-        ssize_t bytesSent = send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+// Send welcome message AFTER EmulatorManager is fully initialized
+#ifdef _WIN32
+        const char* newline = "\r\n";
+#else
+        const char* newline = "\n";
+#endif
 
-        // Send initial prompt
-        sendPrompt(clientSocket, "initial welcome");
+        // Send welcome message with prompt
+        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI. Type 'help' for commands." + std::string(newline) + "> ";
+        ssize_t bytesSent = send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
     }
     else
     {
@@ -385,117 +399,112 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
             break;
         }
 
-        // Process telnet protocol commands (IAC = 0xFF)
-        bool processedTelnetCommand = false;
-        for (int i = 0; i < bytesRead; )
+        // Process incoming data
+        for (int i = 0; i < bytesRead; i++)
         {
-            if ((unsigned char)buffer[i] == 0xFF)  // IAC
+            unsigned char c = buffer[i];
+
+            // Handle telnet commands (IAC = 0xFF)
+            if (c == 0xFF)
             {
-                if (i + 1 >= bytesRead) break;  // Not enough data yet
-                
-                unsigned char verb = (unsigned char)buffer[i+1];
-                
-                if (verb == 0xFF)  // Literal 0xFF
+                // Skip telnet commands (simplified handling)
+                if (i + 1 < bytesRead)
                 {
-                    // Remove one of the 0xFFs
-                    memmove(buffer + i, buffer + i + 1, bytesRead - i - 1);
-                    bytesRead--;
-                    i++;
-                    continue;
-                }
-                else if (verb == 0xFD)  // DO
-                {
-                    // Handle DO commands
-                    if (i + 2 < bytesRead)
+                    if (buffer[i + 1] == 0xFF)  // Literal 0xFF
                     {
-                        unsigned char option = (unsigned char)buffer[i+2];
-                        unsigned char response[3] = {0xFF, 0xFC, option}; // WON'T
-                        
-                        // Special handling for certain options
-                        if (option == 0x01) // ECHO
-                            response[1] = 0xFB; // WILL
-                        else if (option == 0x03) // SUPPRESS GO AHEAD
-                            response[1] = 0xFB; // WILL
-                            
-                        send(clientSocket, (const char*)response, 3, 0);
+                        // Keep one 0xFF, skip the next
+                        i++;
                     }
-                    i += 3;
-                    processedTelnetCommand = true;
-                    continue;
-                }
-                else if (verb == 0xFB)  // WILL
-                {
-                    // Handle WILL commands
-                    if (i + 2 < bytesRead)
+                    else
                     {
-                        unsigned char option = (unsigned char)buffer[i+2];
-                        unsigned char response[3] = {0xFF, 0xFE, option}; // DON'T
-                        
-                        // Special handling for certain options
-                        if (option == 0x01) // ECHO
-                            response[1] = 0xFD; // DO
-                        else if (option == 0x03) // SUPPRESS GO AHEAD
-                            response[1] = 0xFD; // DO
-                            
-                        send(clientSocket, (const char*)response, 3, 0);
+                        // Skip telnet command (3 bytes: IAC VERB OPT)
+                        i += 2;
+                        continue;
                     }
-                    i += 3;
-                    processedTelnetCommand = true;
-                    continue;
-                }
-                else if (verb == 0xFE || verb == 0xFC)  // DON'T or WON'T
-                {
-                    // Skip these commands
-                    i += 3;
-                    processedTelnetCommand = true;
-                    continue;
                 }
                 else
                 {
-                    // Skip unknown command
-                    i += 2;
-                    continue;
+                    // Not enough data for a complete telnet command, wait for more
+                    break;
                 }
             }
-            i++;
-        }
 
-        if (processedTelnetCommand || bytesRead == 0)
-        {
-            // If we processed telnet commands, continue to next read
-            continue;
-        }
-
-        buffer[bytesRead] = '\0';
-
-        // Remove trailing newline if present
-        if (buffer[bytesRead - 1] == '\n')
-            buffer[bytesRead - 1] = '\0';
-        if (bytesRead > 1 && buffer[bytesRead - 2] == '\r')
-            buffer[bytesRead - 2] = '\0';
-
-        std::string command(buffer);
-
-        if (command.empty())
-        {
-            send(clientSocket, "> ", 2, 0);
-            continue;
-        }
-
-        // Process the command and capture any output
-        try
-        {
-            processor->ProcessCommand(session, command);
-        }
-        catch (const std::exception& e)
-        {
-            std::string errorMsg = "Error processing command: " + std::string(e.what()) + "\n";
-            send(clientSocket, errorMsg.c_str(), errorMsg.length(), 0);
-
-            // Send a prompt after the error message
-            if (command != "exit" && command != "quit")
+            // Handle backspace/delete
+            if (c == 0x7F || c == 0x08)  // DEL or Backspace
             {
-                sendPrompt(clientSocket, "after error");
+                if (!lineBuffer.empty())
+                {
+                    // Remove the last character from the buffer and send backspace sequence
+                    lineBuffer.pop_back();
+                    const char* backspace = "\b \b";
+                    send(clientSocket, backspace, 3, 0);
+                }
+                continue;
+            }
+
+            // Handle newline/return
+            if (c == '\r' || c == '\n')
+            {
+                // Skip the matching \n if we got \r\n
+                if (c == '\r' && i + 1 < bytesRead && buffer[i + 1] == '\n')
+                {
+                    i++;
+                }
+
+                // Echo the newline
+                send(clientSocket, NEWLINE, strlen(NEWLINE), 0);
+
+                if (!lineBuffer.empty())
+                {
+                    // Process the command
+                    std::string command = lineBuffer;
+                    bool shouldExit = (command == "exit" || command == "quit");
+                    lineBuffer.clear();
+
+                    // Process the command
+                    try
+                    {
+                        // ProcessCommand doesn't return a response, it sends output directly
+                        processor->ProcessCommand(session, command);
+                        // Send a newline after command output
+                        send(clientSocket, NEWLINE, strlen(NEWLINE), 0);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::string errorMsg = "Error: " + std::string(e.what()) + NEWLINE;
+                        send(clientSocket, errorMsg.c_str(), errorMsg.length(), 0);
+                    }
+
+                    // Exit if requested
+                    if (shouldExit)
+                    {
+                        break;
+                    }
+                }
+
+                // Send new prompt only if we processed a command
+                if (!lineBuffer.empty()) {
+                    sendPrompt(clientSocket, "next command");
+                }
+                continue;
+            }
+
+            // Handle regular characters
+            if (c >= 32 && c <= 126)  // Printable ASCII
+            {
+                // Add character to buffer
+                lineBuffer += static_cast<char>(c);
+                
+                // Echo the character back
+                char ch = static_cast<char>(c);
+                send(clientSocket, &ch, 1, 0);
+                
+                // Flush the socket to ensure the character is sent immediately
+                #ifdef _WIN32
+                    send(clientSocket, "", 0, 0);
+                #else
+                    send(clientSocket, "", 0, MSG_NOSIGNAL);
+                #endif
             }
         }
 
@@ -507,21 +516,20 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 #else
         int retval = getsockopt(clientSocket, SOL_SOCKET, SO_ERROR, &error, &len);
 #endif
-        if (retval != 0 || error != 0)
-        {
+        if (retval != 0 || error != 0) {
             std::cout << "Socket error detected, closing connection" << std::endl;
             break;
         }
 
-        // Send prompt for next command
-        sendPrompt(clientSocket, "next command");
-    }
-
-    // Remove this client socket from the active connections list
-    {
-        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-        _activeClientSockets.erase(std::remove(_activeClientSockets.begin(), _activeClientSockets.end(), clientSocket),
-                                   _activeClientSockets.end());
+        // Send prompt for next command if we don't have one already
+        if (lineBuffer.empty()) {
+            if (!isFirstCommand) {
+                std::string prompt = std::string(NEWLINE) + "> ";
+                send(clientSocket, prompt.c_str(), prompt.length(), 0);
+            } else {
+                isFirstCommand = false;
+            }
+        }
     }
 
     // Close the client socket
@@ -532,28 +540,29 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 // Send a command prompt to the client
 void AutomationCLI::sendPrompt(SOCKET clientSocket, const std::string& reason)
 {
-    #ifdef _WIN32
-        // On Windows, ensure we're at the start of the line
-        std::string cr = "\r";
-        send(clientSocket, cr.c_str(), cr.length(), 0);
-    #endif
+    std::string output;
     
-    std::string prompt = "> ";
-    ssize_t promptBytes = send(clientSocket, prompt.c_str(), prompt.length(), 0);
-
-    // Flush the output to ensure it's sent immediately
+    // Start with a newline to ensure we're on a new line
+    output += NEWLINE;
+    
+    // Add the prompt
+    output += "> ";
+    
+    // Add the reason if provided
+    if (!reason.empty()) {
+        output += " (" + reason + ")";
+    }
+    
+    // Clear to end of line
+    output += "\x1B[K";
+    
+    // Send the complete prompt
+    send(clientSocket, output.c_str(), output.length(), 0);
+    
+    // Flush the socket to ensure the prompt is sent immediately
     #ifdef _WIN32
-        // On Windows, we need to flush the socket buffer
-        // This is a no-op on most systems but helps with Windows telnet
         send(clientSocket, "", 0, 0);
+    #else
+        send(clientSocket, "", 0, MSG_NOSIGNAL);
     #endif
-
-    if (!reason.empty())
-    {
-        // std::cout << "Sent prompt: " << promptBytes << " bytes (" << reason << ")" << std::endl;
-    }
-    else
-    {
-        // std::cout << "Sent prompt: " << promptBytes << " bytes" << std::endl;
-    }
 }

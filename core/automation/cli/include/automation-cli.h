@@ -46,6 +46,13 @@ private:
     CLI::App _cliApp;
 
 private:
+    // Platform-specific newline sequence
+#ifdef _WIN32
+    static constexpr const char* NEWLINE = "\r\n";
+#else
+    static constexpr const char* NEWLINE = "\n";
+#endif
+
     std::shared_ptr<Emulator> _emulator;
     std::unique_ptr<std::thread> _thread;
     std::atomic<bool> _stopThread{false};

@@ -45,6 +45,12 @@ private:
 class CLIProcessor
 {
 public:
+    // Platform-specific newline constant
+    #ifdef _WIN32
+        static constexpr const char* NEWLINE = "\r\n";
+    #else
+        static constexpr const char* NEWLINE = "\n";
+    #endif
     // Define a member function pointer type for command handlers
     using CommandHandler = void (CLIProcessor::*)(const ClientSession&, const std::vector<std::string>&);
 

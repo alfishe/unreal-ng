@@ -1,18 +1,20 @@
 #include "cli-processor.h"
 
-#include <debugger/debugmanager.h>
+#include <3rdparty/message-center/eventqueue.h>
+#include <3rdparty/message-center/messagecenter.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <emulator/memory/memory.h>
 #include <emulator/platform.h>
-#include <3rdparty/message-center/messagecenter.h>
-#include <3rdparty/message-center/eventqueue.h>
+
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
+
 #include "platform_sockets.h"
 
 // ClientSession implementation
@@ -28,37 +30,34 @@ void ClientSession::SendResponse(const std::string& message) const
 CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 {
     // Initialize command handlers map
-    _commandHandlers =
-    {
-        {"help", &CLIProcessor::HandleHelp},
-        {"?", &CLIProcessor::HandleHelp},
-        {"status", &CLIProcessor::HandleStatus},
-        {"list", &CLIProcessor::HandleList},
-        {"select", &CLIProcessor::HandleSelect},
-        {"reset", &CLIProcessor::HandleReset},
-        {"pause", &CLIProcessor::HandlePause},
-        {"resume", &CLIProcessor::HandleResume},
-        {"step", &CLIProcessor::HandleStep},
-        {"memory", &CLIProcessor::HandleMemory},
-        {"registers", &CLIProcessor::HandleRegisters},
-        
-        // Breakpoint commands
-        {"bp", &CLIProcessor::HandleBreakpoint},      // Set execution breakpoint
-        {"break", &CLIProcessor::HandleBreakpoint},   // Alias for bp
-        {"breakpoint", &CLIProcessor::HandleBreakpoint}, // Alias for bp
-        {"bplist", &CLIProcessor::HandleBPList},     // List all breakpoints
-        {"wp", &CLIProcessor::HandleWatchpoint},     // Set memory read/write watchpoint
-        {"bport", &CLIProcessor::HandlePortBreakpoint}, // Set port breakpoint
-        {"bpclear", &CLIProcessor::HandleBPClear},   // Clear breakpoints
-        {"bpgroup", &CLIProcessor::HandleBPGroup},   // Manage breakpoint groups
-        {"bpon", &CLIProcessor::HandleBPActivate},   // Activate breakpoints
-        {"bpoff", &CLIProcessor::HandleBPDeactivate}, // Deactivate breakpoints
-        
-        {"open", &CLIProcessor::HandleOpen},
-        {"exit", &CLIProcessor::HandleExit},
-        {"quit", &CLIProcessor::HandleExit},
-        {"dummy", &CLIProcessor::HandleDummy}
-    };
+    _commandHandlers = {{"help", &CLIProcessor::HandleHelp},
+                        {"?", &CLIProcessor::HandleHelp},
+                        {"status", &CLIProcessor::HandleStatus},
+                        {"list", &CLIProcessor::HandleList},
+                        {"select", &CLIProcessor::HandleSelect},
+                        {"reset", &CLIProcessor::HandleReset},
+                        {"pause", &CLIProcessor::HandlePause},
+                        {"resume", &CLIProcessor::HandleResume},
+                        {"step", &CLIProcessor::HandleStep},
+                        {"memory", &CLIProcessor::HandleMemory},
+                        {"registers", &CLIProcessor::HandleRegisters},
+
+                        // Breakpoint commands
+                        {"bp", &CLIProcessor::HandleBreakpoint},          // Set execution breakpoint
+                        {"break", &CLIProcessor::HandleBreakpoint},       // Alias for bp
+                        {"breakpoint", &CLIProcessor::HandleBreakpoint},  // Alias for bp
+                        {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
+                        {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
+                        {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
+                        {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
+                        {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
+                        {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
+                        {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
+
+                        {"open", &CLIProcessor::HandleOpen},
+                        {"exit", &CLIProcessor::HandleExit},
+                        {"quit", &CLIProcessor::HandleExit},
+                        {"dummy", &CLIProcessor::HandleDummy}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -67,7 +66,7 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
     if (_isFirstCommand)
     {
         // Force a direct response to ensure the client connection is working
-        session.SendResponse("Processing first command...\n");
+        session.SendResponse(std::string("Processing first command...") + NEWLINE);
 
         // Force a refresh of the emulator manager
         auto* emulatorManager = EmulatorManager::GetInstance();
@@ -80,7 +79,7 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
         // Mark that we've handled the first command
         _isFirstCommand = false;
     }
-    
+
     // Check for auto-selection of emulators if none is currently selected
     // This handles the case where emulators appear asynchronously after connection
     if (session.GetSelectedEmulatorId().empty() && !_emulator)
@@ -91,7 +90,7 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
             // Force a refresh to get the latest emulator instances
             auto mostRecent = emulatorManager->GetMostRecentEmulator();
             auto emulatorIds = emulatorManager->GetEmulatorIds();
-            
+
             // Auto-select if any emulators are available
             if (!emulatorIds.empty())
             {
@@ -105,7 +104,7 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
                 {
                     selectedId = emulatorIds[0];
                 }
-                
+
                 // Update our local reference to the emulator
                 _emulator = emulatorManager->GetEmulator(selectedId);
             }
@@ -156,17 +155,17 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
     {
         try
         {
-            // Call the member function using the this pointer
+            // Call the member function using 'this' pointer to provide context to the handler
             (this->*(it->second))(session, args);
         }
         catch (const std::exception& e)
         {
-            session.SendResponse("Error processing command: " + std::string(e.what()) + "\n");
+            session.SendResponse("Error processing command: " + std::string(e.what()));
         }
     }
     else
     {
-        std::string error = "Unknown command: " + cmd + "\nType 'help' for available commands.\n";
+        std::string error = "Unknown command: " + cmd + NEWLINE + "Type 'help' for available commands.";
         session.SendResponse(error);
     }
 }
@@ -217,7 +216,7 @@ bool CLIProcessor::ParseAddress(const std::string& addressStr, uint16_t& result,
         // Default base is 10 (decimal)
         int base = 10;
         std::string processedStr = addressStr;
-        
+
         // Check for hex prefixes
         if (addressStr.size() >= 2)
         {
@@ -237,16 +236,16 @@ bool CLIProcessor::ParseAddress(const std::string& addressStr, uint16_t& result,
                 processedStr = addressStr.substr(1);
             }
         }
-        
+
         // Parse the number using the determined base
         unsigned long value = std::stoul(processedStr, nullptr, base);
-        
+
         // Check if the value is within the valid range
         if (value > maxValue)
         {
             return false;
         }
-        
+
         result = static_cast<uint16_t>(value);
         return true;
     }
@@ -268,30 +267,30 @@ void CLIProcessor::onBreakpointsChanged()
 void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<std::string>& args)
 {
     std::ostringstream oss;
-    oss << "Available commands:\n";
-    oss << "  help, ?       - Show this help message\n";
-    oss << "  status        - Show emulator status\n";
-    oss << "  list          - List available emulators\n";
-    oss << "  select <id>   - Select an emulator\n";
-    oss << "  reset         - Reset the emulator\n";
-    oss << "  pause         - Pause emulation\n";
-    oss << "  resume        - Resume emulation\n";
-    oss << "  step [count]  - Execute one or more CPU instructions\n";
-    oss << "  memory <addr> - View memory at address\n";
-    oss << "  registers     - Show CPU registers\n";
-    oss << "\nBreakpoint commands:\n";
-    oss << "  bp <addr>     - Set execution breakpoint at address\n";
-    oss << "  wp <addr> <type> - Set memory watchpoint (r/w/rw)\n";
-    oss << "  bport <port> <type> - Set port breakpoint (i/o/io)\n";
-    oss << "  bplist        - List all breakpoints\n";
-    oss << "  bpclear       - Clear breakpoints\n";
-    oss << "  bpgroup       - Manage breakpoint groups\n";
-    oss << "  bpon          - Activate breakpoints\n";
-    oss << "  bpoff         - Deactivate breakpoints\n";
-    oss << "\nOther commands:\n";
-    oss << "  open [file]   - Open a file or show file dialog\n";
-    oss << "  exit, quit    - Exit the CLI\n";
-    oss << "\nType any command followed by -h or --help for more information.\n";
+    oss << "Available commands:" << NEWLINE;
+    oss << "  help, ?       - Show this help message" << NEWLINE;
+    oss << "  status        - Show emulator status" << NEWLINE;
+    oss << "  list          - List available emulators" << NEWLINE;
+    oss << "  select <id>   - Select an emulator" << NEWLINE;
+    oss << "  reset         - Reset the emulator" << NEWLINE;
+    oss << "  pause         - Pause emulation" << NEWLINE;
+    oss << "  resume        - Resume emulation" << NEWLINE;
+    oss << "  step [count]  - Execute one or more CPU instructions" << NEWLINE;
+    oss << "  memory <addr> - View memory at address" << NEWLINE;
+    oss << "  registers     - Show CPU registers" << NEWLINE;
+    oss << NEWLINE << "Breakpoint commands:" << NEWLINE;
+    oss << "  bp <addr>     - Set execution breakpoint at address" << NEWLINE;
+    oss << "  wp <addr> <type> - Set memory watchpoint (r/w/rw)" << NEWLINE;
+    oss << "  bport <port> <type> - Set port breakpoint (i/o/io)" << NEWLINE;
+    oss << "  bplist        - List all breakpoints" << NEWLINE;
+    oss << "  bpclear       - Clear breakpoints" << NEWLINE;
+    oss << "  bpgroup       - Manage breakpoint groups" << NEWLINE;
+    oss << "  bpon          - Activate breakpoints" << NEWLINE;
+    oss << "  bpoff         - Deactivate breakpoints" << NEWLINE;
+    oss << NEWLINE << "Other commands:" << NEWLINE;
+    oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
+    oss << "  exit, quit    - Exit the CLI" << NEWLINE;
+    oss << NEWLINE << "Type any command followed by -h or --help for more information.";
 
     session.SendResponse(oss.str());
 }
@@ -306,40 +305,40 @@ void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<
 
     if (emulatorIds.empty())
     {
-        status = "No emulator instances found\n";
+        status = std::string("No emulator instances found") + NEWLINE;
     }
     else
     {
-        status = "Emulator Instances:\n";
-        status += "==================\n";
+        status = std::string("Emulator Instances:") + NEWLINE;
+        status += std::string("==================") + NEWLINE;
 
         for (const auto& id : emulatorIds)
         {
             auto emulator = emulatorManager->GetEmulator(id);
             if (emulator)
             {
-                status += "ID: " + id + "\n";
-                status += "Status: " + std::string(emulator->IsRunning() ? "Running" : "Stopped") + "\n";
-                status += "Debug: " + std::string(emulator->IsDebug() ? "On" : "Off") + "\n";
+                status += "ID: " + id + NEWLINE;
+                status += "Status: " + std::string(emulator->IsRunning() ? "Running" : "Stopped") + NEWLINE;
+                status += "Debug: " + std::string(emulator->IsDebug() ? "On" : "Off") + NEWLINE;
 
                 // Indicate if this is the currently selected emulator
                 // Check both the session's selected ID and our local _emulator reference
-                bool isSelected = (session.GetSelectedEmulatorId() == id) || 
-                                 (_emulator && _emulator->GetId() == id && session.GetSelectedEmulatorId().empty());
+                bool isSelected = (session.GetSelectedEmulatorId() == id) ||
+                                  (_emulator && _emulator->GetId() == id && session.GetSelectedEmulatorId().empty());
                 if (isSelected)
                 {
-                    status += "SELECTED\n";
+                    status += std::string("SELECTED") + NEWLINE;
                 }
 
-                status += "------------------\n";
+                status += std::string("------------------");
             }
         }
 
         // Add current active emulator status if available
         if (_emulator)
         {
-            status += "\nCurrent CLI Emulator: " + _emulator->GetId() + "\n";
-            status += "Status: " + std::string(_emulator->IsRunning() ? "Running" : "Stopped") + "\n";
+            status += std::string(NEWLINE) + "Current CLI Emulator: " + _emulator->GetId() + NEWLINE;
+            status += "Status: " + std::string(_emulator->IsRunning() ? "Running" : "Stopped");
         }
     }
 
@@ -351,7 +350,7 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
     auto* emulatorManager = EmulatorManager::GetInstance();
     if (!emulatorManager)
     {
-        session.SendResponse("Error: Unable to access emulator manager.\n");
+        session.SendResponse(std::string("Error: Unable to access emulator manager."));
         return;
     }
 
@@ -363,12 +362,12 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
 
     if (emulatorIds.empty())
     {
-        session.SendResponse("No emulator instances found.\n");
+        session.SendResponse(std::string("No emulator instances found."));
         return;
     }
 
-    std::string response = "Available emulator instances:\n";
-    response += "============================\n";
+    std::string response = std::string("Available emulator instances:") + NEWLINE;
+    response += std::string("============================") + NEWLINE;
 
     // Display emulators with index, ID, and status
     for (size_t i = 0; i < emulatorIds.size(); ++i)
@@ -380,8 +379,8 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
         {
             // Mark the currently selected emulator
             // Check both the session's selected ID and our local _emulator reference
-            bool isSelected = (session.GetSelectedEmulatorId() == id) || 
-                             (_emulator && _emulator->GetId() == id && session.GetSelectedEmulatorId().empty());
+            bool isSelected = (session.GetSelectedEmulatorId() == id) ||
+                              (_emulator && _emulator->GetId() == id && session.GetSelectedEmulatorId().empty());
             std::string selectedMarker = isSelected ? "* " : "  ";
 
             response += selectedMarker + "[" + std::to_string(i + 1) + "] ";
@@ -391,13 +390,14 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
             // Note: We'd need to add this to the Emulator class if it's not already there
             // response += " (" + emulator->GetSymbolicName() + ")";
 
-            response += "\n     Status: " + std::string(emulator->IsRunning() ? "Running" : "Stopped");
-            response += "\n     Debug: " + std::string(emulator->IsDebug() ? "On" : "Off");
-            response += "\n";
+            response +=
+                std::string(NEWLINE) + "     Status: " + std::string(emulator->IsRunning() ? "Running" : "Stopped");
+            response += std::string(NEWLINE) + "     Debug: " + std::string(emulator->IsDebug() ? "On" : "Off");
+            response += NEWLINE;
         }
     }
 
-    response += "\nUse 'select <index>' or 'select <id>' to choose an emulator.\n";
+    response += std::string(NEWLINE) + "Use 'select <index>' or 'select <id>' to choose an emulator.";
 
     session.SendResponse(response);
 }
@@ -406,8 +406,8 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
 {
     if (args.empty())
     {
-        session.SendResponse("Usage: select <index|id|name>\n");
-        session.SendResponse("Use 'list' to see available emulators.\n");
+        session.SendResponse(std::string("Usage: select <index|id|name>") + NEWLINE);
+        session.SendResponse("Use 'list' to see available emulators.");
         return;
     }
 
@@ -422,7 +422,7 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
 
     if (emulatorIds.empty())
     {
-        session.SendResponse("No emulator instances available.\n");
+        session.SendResponse(std::string("No emulator instances available."));
         return;
     }
 
@@ -442,13 +442,13 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
             }
             else
             {
-                session.SendResponse("Error: Index out of bounds\n");
+                session.SendResponse(std::string("Error: Index out of bounds"));
                 return;
             }
         }
         else
         {
-            session.SendResponse("Invalid emulator index. Use 'list' to see available emulators.\n");
+            session.SendResponse(std::string("Invalid emulator index. Use 'list' to see available emulators."));
             return;
         }
     }
@@ -487,8 +487,8 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
 
             if (!found)
             {
-                session.SendResponse("No emulator found matching: " + selector + "\n");
-                session.SendResponse("Use 'list' to see available emulators.\n");
+                session.SendResponse("No emulator found matching: " + selector + NEWLINE);
+                session.SendResponse("Use 'list' to see available emulators.");
                 return;
             }
         }
@@ -500,19 +500,21 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
     // Also update our local reference to the emulator
     _emulator = emulatorManager->GetEmulator(selectedId);
 
-    std::string response = "Selected emulator: " + selectedId;
+    std::stringstream ss;
+    ss << "Selected emulator: " << selectedId;
     if (_emulator)
     {
-        response += " (" + std::string(_emulator->IsRunning() ? "Running" : "Stopped") + ")";
+        ss << " (" + std::string(_emulator->IsRunning() ? "Running" : "Stopped") + ")";
     }
-    response += "\n";
 
-    session.SendResponse(response);
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleExit(const ClientSession& session, const std::vector<std::string>& args)
 {
-    session.SendResponse("Goodbye!\n");
+    std::stringstream ss;
+    ss << "Goodbye!";
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleDummy(const ClientSession& session, const std::vector<std::string>& args)
@@ -564,7 +566,7 @@ void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<s
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
@@ -578,23 +580,23 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     // Check if the emulator is already paused
     if (emulator->IsPaused())
     {
-        session.SendResponse("Emulator is already paused.\n");
+        session.SendResponse("Emulator is already paused.");
         return;
     }
 
     // Pause the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
     emulator->Pause();
-    
+
     // Confirm to the user
-    session.SendResponse("Emulation paused. Use 'resume' to continue execution.\n");
+    session.SendResponse("Emulation paused. Use 'resume' to continue execution.");
 }
 
 void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<std::string>& args)
@@ -603,23 +605,23 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     // Check if the emulator is already running
     if (!emulator->IsPaused())
     {
-        session.SendResponse("Emulator is already running.\n");
+        session.SendResponse("Emulator is already running.");
         return;
     }
 
     // Resume the emulator - this will trigger MessageCenter notifications
     // that the GUI will respond to (enabling/disabling buttons)
     emulator->Resume();
-    
+
     // Confirm to the user
-    session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.\n");
+    session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.");
 }
 
 void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<std::string>& args)
@@ -628,14 +630,14 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     // Check if emulator is paused
     if (!emulator->IsPaused())
     {
-        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.\n");
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
         return;
     }
 
@@ -658,13 +660,13 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     // Get memory and disassembler for instruction info
     Memory* memory = emulator->GetMemory();
     std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
-    
+
     if (!memory || !disassembler)
     {
-        session.SendResponse("Error: Unable to access memory or disassembler.\n");
+        session.SendResponse("Error: Unable to access memory or disassembler.");
         return;
     }
-    
+
     // Get the current PC and disassemble the instruction that's about to be executed
     Z80State* z80State = emulator->GetZ80State();
     if (!z80State)
@@ -672,99 +674,105 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
         session.SendResponse("Error: Unable to access Z80 state.\n");
         return;
     }
-    
+
     // Store the current PC to show what's about to be executed
     uint16_t initialPC = z80State->pc;
-    
+
     // Get physical address for the PC
     uint8_t* pcPhysicalAddress = memory->MapZ80AddressToPhysicalAddress(initialPC);
     if (!pcPhysicalAddress)
     {
-        session.SendResponse("Error: Unable to get physical address for PC.\n");
+        session.SendResponse("Error: Unable to get physical address for PC.");
         return;
     }
-    
+
     // Disassemble the instruction that's about to be executed
     uint8_t commandLen = 0;
     DecodedInstruction decodedBefore;
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
-        pcPhysicalAddress, 6, &commandLen, z80State, memory, &decodedBefore);
-    
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
+
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
     {
-        emulator->RunSingleCPUCycle(false); // false = don't skip breakpoints
+        emulator->RunSingleCPUCycle(false);  // false = don't skip breakpoints
     }
 
     // Get the Z80 state after execution
-    z80State = emulator->GetZ80State(); // Refresh state after execution
+    z80State = emulator->GetZ80State();  // Refresh state after execution
     if (!z80State)
     {
-        session.SendResponse("Error: Unable to access Z80 state after execution.\n");
+        session.SendResponse("Error: Unable to access Z80 state after execution.");
         return;
     }
-    
+
     // Get the new PC and disassemble the next instruction to be executed
     uint16_t newPC = z80State->pc;
     pcPhysicalAddress = memory->MapZ80AddressToPhysicalAddress(newPC);
     if (!pcPhysicalAddress)
     {
-        session.SendResponse("Error: Unable to get physical address for new PC.\n");
+        session.SendResponse("Error: Unable to get physical address for new PC.");
         return;
     }
-    
+
     // Disassemble the next instruction to be executed
     commandLen = 0;
     DecodedInstruction decodedAfter;
-    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(
-        pcPhysicalAddress, 6, &commandLen, z80State, memory, &decodedAfter);
+    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
+                                                                                     z80State, memory, &decodedAfter);
 
     // Format response with CPU state information
     std::stringstream ss;
-    ss << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << "\n";
-    
+    ss << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << NEWLINE;
+
     // Show executed instruction
     ss << std::hex << std::uppercase << std::setfill('0');
     ss << "Executed: [$" << std::setw(4) << initialPC << "] ";
-    
+
     // Add hex dump of the executed instruction
-    if (decodedBefore.instructionBytes.size() > 0) {
-        for (uint8_t byte : decodedBefore.instructionBytes) {
+    if (decodedBefore.instructionBytes.size() > 0)
+    {
+        for (uint8_t byte : decodedBefore.instructionBytes)
+        {
             ss << std::setw(2) << static_cast<int>(byte) << " ";
         }
         // Add padding for alignment if needed
-        for (size_t i = decodedBefore.instructionBytes.size(); i < 4; i++) {
+        for (size_t i = decodedBefore.instructionBytes.size(); i < 4; i++)
+        {
             ss << "   ";
         }
     }
-    
-    ss << instructionBefore << "\n";
-    
+
+    ss << instructionBefore << NEWLINE;
+
     // Show next instruction
     ss << "Next:     [$" << std::setw(4) << newPC << "] ";
-    
+
     // Add hex dump of the next instruction
-    if (decodedAfter.instructionBytes.size() > 0) {
-        for (uint8_t byte : decodedAfter.instructionBytes) {
+    if (decodedAfter.instructionBytes.size() > 0)
+    {
+        for (uint8_t byte : decodedAfter.instructionBytes)
+        {
             ss << std::setw(2) << static_cast<int>(byte) << " ";
         }
         // Add padding for alignment if needed
-        for (size_t i = decodedAfter.instructionBytes.size(); i < 4; i++) {
+        for (size_t i = decodedAfter.instructionBytes.size(); i < 4; i++)
+        {
             ss << "   ";
         }
     }
-    
+
     ss << instructionAfter << "\n\n";
-    
+
     // Format current PC and registers
     ss << "PC: $" << std::setw(4) << z80State->pc << "  ";
-    
+
     // Show main registers (compact format)
     ss << "AF: $" << std::setw(4) << z80State->af << "  ";
     ss << "BC: $" << std::setw(4) << z80State->bc << "  ";
     ss << "DE: $" << std::setw(4) << z80State->de << "  ";
-    ss << "HL: $" << std::setw(4) << z80State->hl << "\n";
-    
+    ss << "HL: $" << std::setw(4) << z80State->hl << NEWLINE;
+
     // Show flags
     ss << "Flags: ";
     ss << (z80State->f & 0x80 ? "S" : "-");
@@ -775,11 +783,11 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     ss << (z80State->f & 0x04 ? "P" : "-");
     ss << (z80State->f & 0x02 ? "N" : "-");
     ss << (z80State->f & 0x01 ? "C" : "-");
-    ss << "\n";
-    
+    ss << NEWLINE;
+
     // Add note about viewing full register state
     ss << "\nUse 'registers' command to view full CPU state\n";
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -789,26 +797,26 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     if (args.empty())
     {
-        session.SendResponse("Usage: memory <address>\n");
-        session.SendResponse("Displays memory contents at the specified address.\n");
-        session.SendResponse("Examples:\n");
-        session.SendResponse("  memory 0x1000    - View memory at address 0x1000 (hex)\n");
-        session.SendResponse("  memory $8000     - View memory at address $8000 (hex)\n");
-        session.SendResponse("  memory #C000     - View memory at address #C000 (hex)\n");
-        session.SendResponse("  memory 32768     - View memory at address 32768 (decimal)\n");
+        session.SendResponse(std::string("Usage: memory <address>") + NEWLINE);
+        session.SendResponse(std::string("Displays memory contents at the specified address.") + NEWLINE);
+        session.SendResponse(std::string("Examples:") + NEWLINE);
+        session.SendResponse(std::string("  memory 0x1000    - View memory at address 0x1000 (hex)") + NEWLINE);
+        session.SendResponse(std::string("  memory $8000     - View memory at address $8000 (hex)") + NEWLINE);
+        session.SendResponse(std::string("  memory #C000     - View memory at address #C000 (hex)") + NEWLINE);
+        session.SendResponse(std::string("  memory 32768     - View memory at address 32768 (decimal)") + NEWLINE);
         return;
     }
 
     uint16_t address;
     if (!ParseAddress(args[0], address))
     {
-        session.SendResponse("Invalid address format or out of range (must be 0-65535)\n");
+        session.SendResponse("Invalid address format or out of range (must be 0-65535)");
         return;
     }
 
@@ -820,7 +828,7 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     }
 
     std::ostringstream oss;
-    oss << "Memory at 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << address << ":\n";
+    oss << "Memory at 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << address << ":" << NEWLINE;
 
     // Display 8 rows of 16 bytes each
     for (int row = 0; row < 8; ++row)
@@ -845,8 +853,6 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
             uint8_t value = memory->DirectReadFromZ80Memory(byteAddr);
             oss << (value >= 32 && value <= 126 ? static_cast<char>(value) : '.');
         }
-
-        oss << "\n";
     }
 
     session.SendResponse(oss.str());
@@ -858,7 +864,7 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
@@ -866,74 +872,74 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
     Z80State* z80State = emulator->GetZ80State();
     if (!z80State)
     {
-        session.SendResponse("Error: Unable to access Z80 state.\n");
+        session.SendResponse("Error: Unable to access Z80 state.");
         return;
     }
 
     // Format the register values
     std::stringstream ss;
-    ss << "Z80 Registers:\n";
-    ss << "=============\n\n";
-    
+    ss << "Z80 Registers:" << NEWLINE;
+    ss << "=============" << NEWLINE << NEWLINE;
+
     // Main register pairs and alternate registers side by side
-    ss << "Main registers:                     Alternate registers:\n";
+    ss << "Main registers:                     Alternate registers:" << NEWLINE;
     ss << std::hex << std::uppercase << std::setfill('0');
-    
+
     // Access alternate registers from the shadow registers in Z80State
-    ss << "  AF: " << std::setw(4) << z80State->af << "  (A: " << std::setw(2) << static_cast<int>(z80State->a) 
+    ss << "  AF: " << std::setw(4) << z80State->af << "  (A: " << std::setw(2) << static_cast<int>(z80State->a)
        << ", F: " << std::setw(2) << static_cast<int>(z80State->f) << ")";
-    ss << "           AF': " << std::setw(4) << z80State->alt.af << "  (A': " << std::setw(2) << static_cast<int>(z80State->alt.a) 
-       << ", F': " << std::setw(2) << static_cast<int>(z80State->alt.f) << ")\n";
-       
-    ss << "  BC: " << std::setw(4) << z80State->bc << "  (B: " << std::setw(2) << static_cast<int>(z80State->b) 
+    ss << "           AF': " << std::setw(4) << z80State->alt.af << "  (A': " << std::setw(2)
+       << static_cast<int>(z80State->alt.a) << ", F': " << std::setw(2) << static_cast<int>(z80State->alt.f) << ")" << NEWLINE;
+
+    ss << "  BC: " << std::setw(4) << z80State->bc << "  (B: " << std::setw(2) << static_cast<int>(z80State->b)
        << ", C: " << std::setw(2) << static_cast<int>(z80State->c) << ")";
-    ss << "           BC': " << std::setw(4) << z80State->alt.bc << "  (B': " << std::setw(2) << static_cast<int>(z80State->alt.b) 
-       << ", C': " << std::setw(2) << static_cast<int>(z80State->alt.c) << ")\n";
-       
-    ss << "  DE: " << std::setw(4) << z80State->de << "  (D: " << std::setw(2) << static_cast<int>(z80State->d) 
+    ss << "           BC': " << std::setw(4) << z80State->alt.bc << "  (B': " << std::setw(2)
+       << static_cast<int>(z80State->alt.b) << ", C': " << std::setw(2) << static_cast<int>(z80State->alt.c) << ")" << NEWLINE;
+
+    ss << "  DE: " << std::setw(4) << z80State->de << "  (D: " << std::setw(2) << static_cast<int>(z80State->d)
        << ", E: " << std::setw(2) << static_cast<int>(z80State->e) << ")";
-    ss << "           DE': " << std::setw(4) << z80State->alt.de << "  (D': " << std::setw(2) << static_cast<int>(z80State->alt.d) 
-       << ", E': " << std::setw(2) << static_cast<int>(z80State->alt.e) << ")\n";
-       
-    ss << "  HL: " << std::setw(4) << z80State->hl << "  (H: " << std::setw(2) << static_cast<int>(z80State->h) 
+    ss << "           DE': " << std::setw(4) << z80State->alt.de << "  (D': " << std::setw(2)
+       << static_cast<int>(z80State->alt.d) << ", E': " << std::setw(2) << static_cast<int>(z80State->alt.e) << ")" << NEWLINE;
+
+    ss << "  HL: " << std::setw(4) << z80State->hl << "  (H: " << std::setw(2) << static_cast<int>(z80State->h)
        << ", L: " << std::setw(2) << static_cast<int>(z80State->l) << ")";
-    ss << "           HL': " << std::setw(4) << z80State->alt.hl << "  (H': " << std::setw(2) << static_cast<int>(z80State->alt.h) 
-       << ", L': " << std::setw(2) << static_cast<int>(z80State->alt.l) << ")\n";
-       
-    ss << "\n";
-    
+    ss << "           HL': " << std::setw(4) << z80State->alt.hl << "  (H': " << std::setw(2)
+       << static_cast<int>(z80State->alt.h) << ", L': " << std::setw(2) << static_cast<int>(z80State->alt.l) << ")" << NEWLINE;
+
+    ss << NEWLINE;
+
     // Index and special registers in two columns
-    ss << "Index registers:                    Special registers:\n";
-    ss << "  IX: " << std::setw(4) << z80State->ix << "  (IXH: " << std::setw(2) << static_cast<int>(z80State->xh) 
+    ss << "Index registers:                    Special registers:" << NEWLINE;
+    ss << "  IX: " << std::setw(4) << z80State->ix << "  (IXH: " << std::setw(2) << static_cast<int>(z80State->xh)
        << ", IXL: " << std::setw(2) << static_cast<int>(z80State->xl) << ")";
-    ss << "       PC: " << std::setw(4) << z80State->pc << "\n";
-       
-    ss << "  IY: " << std::setw(4) << z80State->iy << "  (IYH: " << std::setw(2) << static_cast<int>(z80State->yh) 
+    ss << "       PC: " << std::setw(4) << z80State->pc << NEWLINE;
+
+    ss << "  IY: " << std::setw(4) << z80State->iy << "  (IYH: " << std::setw(2) << static_cast<int>(z80State->yh)
        << ", IYL: " << std::setw(2) << static_cast<int>(z80State->yl) << ")";
-    ss << "       SP: " << std::setw(4) << z80State->sp << "\n";
-    
+    ss << "       SP: " << std::setw(4) << z80State->sp << NEWLINE;
+
     // Empty line for IR and first line of flags
-    ss << "                                     IR: " << std::setw(4) << z80State->ir_ << "  (I: " << std::setw(2) << static_cast<int>(z80State->i) 
-       << ", R: " << std::setw(2) << static_cast<int>(z80State->r_low) << ")\n\n";
-    
+    ss << "                                     IR: " << std::setw(4) << z80State->ir_ << "  (I: " << std::setw(2)
+       << static_cast<int>(z80State->i) << ", R: " << std::setw(2) << static_cast<int>(z80State->r_low) << ")" << NEWLINE;
+    ss << NEWLINE;
+
     // Flags and interrupt state in two columns
     ss << "Flags (" << std::setw(2) << static_cast<int>(z80State->f) << "):                         Interrupt state:\n";
     ss << "  S: " << ((z80State->f & 0x80) ? "1" : "0") << " (Sign)";
-    ss << "                        IFF1: " << (z80State->iff1 ? "Enabled" : "Disabled") << "\n";
-    
+    ss << "                        IFF1: " << (z80State->iff1 ? "Enabled" : "Disabled") << NEWLINE;
+
     ss << "  Z: " << ((z80State->f & 0x40) ? "1" : "0") << " (Zero)";
-    ss << "                        IFF2: " << (z80State->iff2 ? "Enabled" : "Disabled") << "\n";
-    
+    ss << "                        IFF2: " << (z80State->iff2 ? "Enabled" : "Disabled") << NEWLINE;
+
     ss << "  5: " << ((z80State->f & 0x20) ? "1" : "0") << " (Unused bit 5)";
-    ss << "                HALT: " << (z80State->halted ? "Yes" : "No") << "\n";
-    
-    ss << "  H: " << ((z80State->f & 0x10) ? "1" : "0") << " (Half-carry)\n";
-    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)\n";
-    ss << "  P/V: " << ((z80State->f & 0x04) ? "1" : "0") << " (Parity/Overflow)\n";
-    ss << "  N: " << ((z80State->f & 0x02) ? "1" : "0") << " (Add/Subtract)\n";
+    ss << "                HALT: " << (z80State->halted ? "Yes" : "No") << NEWLINE;
+
+    ss << "  H: " << ((z80State->f & 0x10) ? "1" : "0") << " (Half-carry)" << NEWLINE;
+    ss << "  3: " << ((z80State->f & 0x08) ? "1" : "0") << " (Unused bit 3)" << NEWLINE;
+    ss << "  P/V: " << ((z80State->f & 0x04) ? "1" : "0") << " (Parity/Overflow)" << NEWLINE;
+    ss << "  N: " << ((z80State->f & 0x02) ? "1" : "0") << " (Add/Subtract)" << NEWLINE;
     ss << "  C: " << ((z80State->f & 0x01) ? "1" : "0") << " (Carry)";
-    ss << std::endl;
-    
+
     // Send the formatted register dump
     session.SendResponse(ss.str());
 }
@@ -944,35 +950,38 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     if (args.empty())
     {
-        session.SendResponse("Usage: bp <address> [note]\n");
-        session.SendResponse("Sets an execution breakpoint at the specified address.\n");
-        session.SendResponse("Examples:\n");
-        session.SendResponse("  bp 0x1234       - Set breakpoint at address 0x1234\n");
-        session.SendResponse("  bp $1234        - Set breakpoint at address $1234 (hex)\n");
-        session.SendResponse("  bp #1234        - Set breakpoint at address #1234 (hex)\n");
-        session.SendResponse("  bp 1234         - Set breakpoint at address 1234 (decimal)\n");
-        session.SendResponse("  bp 1234 Main loop - Set breakpoint with a note\n");
-        session.SendResponse("Use 'bplist' to view all breakpoints\n");
+        stringstream ss;
+        ss << "Usage: bp <address> [note]" << NEWLINE
+           << "Sets an execution breakpoint at the specified address." << NEWLINE
+           << "Examples:" << NEWLINE
+           << "  bp 0x1234       - Set breakpoint at address 0x1234" << NEWLINE
+           << "  bp $1234        - Set breakpoint at address $1234 (hex)" << NEWLINE
+           << "  bp #1234        - Set breakpoint at address #1234 (hex)" << NEWLINE
+           << "  bp 1234         - Set breakpoint at address 1234 (decimal)" << NEWLINE
+           << "  bp 1234 Main loop - Set breakpoint with a note" << NEWLINE
+           << "Use 'bplist' to view all breakpoints";
+        session.SendResponse(ss.str());
+
         return;
     }
 
     uint16_t address;
     if (!ParseAddress(args[0], address))
     {
-        session.SendResponse("Invalid address format or out of range (must be 0-65535)\n");
+        session.SendResponse("Invalid address format or out of range (must be 0-65535)");
         return;
     }
 
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
@@ -985,10 +994,11 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
         std::string note;
         for (size_t i = 1; i < args.size(); ++i)
         {
-            if (i > 1) note += " ";
+            if (i > 1)
+                note += " ";
             note += args[i];
         }
-        
+
         // Set the note for this breakpoint
         auto& breakpoints = bpManager->GetAllBreakpoints();
         if (breakpoints.find(bpId) != breakpoints.end())
@@ -1000,14 +1010,14 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     std::ostringstream oss;
     if (bpId != BRK_INVALID)
     {
-        oss << "Breakpoint #" << bpId << " set at 0x" << std::hex << std::setw(4) << std::setfill('0') << address << "\n";
-        
+        oss << "Breakpoint #" << bpId << " set at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else
     {
-        oss << "Failed to set breakpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << address << "\n";
+        oss << "Failed to set breakpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
     }
 
     session.SendResponse(oss.str());
@@ -1019,14 +1029,14 @@ void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
@@ -1050,23 +1060,26 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     if (args.empty() || args.size() < 2)
     {
-        session.SendResponse("Usage: wp <address> <type> [note]\n");
-        session.SendResponse("Sets a memory watchpoint at the specified address.\n");
-        session.SendResponse("Types:\n");
-        session.SendResponse("  r    - Watch for memory reads\n");
-        session.SendResponse("  w    - Watch for memory writes\n");
-        session.SendResponse("  rw   - Watch for both reads and writes\n");
-        session.SendResponse("Examples:\n");
-        session.SendResponse("  wp 0x1234 r     - Watch for reads at address 0x1234\n");
-        session.SendResponse("  wp $4000 w      - Watch for writes at address $4000 (hex)\n");
-        session.SendResponse("  wp #8000 rw     - Watch for reads/writes at address #8000 (hex)\n");
-        session.SendResponse("  wp 49152 rw Stack pointer - Watch for reads/writes with a note\n");
+        std::stringstream ss;
+        ss << "Usage: wp <address> <type> [note]" << NEWLINE
+           << "Sets a memory watchpoint at the specified address." << NEWLINE
+           << "Types:" << NEWLINE
+           << "  r    - Watch for memory reads" << NEWLINE
+           << "  w    - Watch for memory writes" << NEWLINE
+           << "  rw   - Watch for both reads and writes" << NEWLINE
+           << "Examples:" << NEWLINE
+           << "  wp 0x1234 r     - Watch for reads at address 0x1234" << NEWLINE
+           << "  wp $4000 w      - Watch for writes at address $4000 (hex)" << NEWLINE
+           << "  wp #8000 rw     - Watch for reads/writes at address #8000 (hex)" << NEWLINE
+           << "  wp 49152 rw Stack pointer - Watch for reads/writes with a note";
+        session.SendResponse(ss.str());
+
         return;
     }
 
@@ -1079,23 +1092,23 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
 
     std::string typeStr = args[1];
     uint8_t memoryType = BRK_MEM_NONE;
-    
+
     // Parse the type string
     if (typeStr.find('r') != std::string::npos)
         memoryType |= BRK_MEM_READ;
     if (typeStr.find('w') != std::string::npos)
         memoryType |= BRK_MEM_WRITE;
-        
+
     if (memoryType == BRK_MEM_NONE)
     {
-        session.SendResponse("Invalid watchpoint type. Use 'r', 'w', or 'rw'.\n");
+        session.SendResponse("Invalid watchpoint type. Use 'r', 'w', or 'rw'.");
         return;
     }
-    
+
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
@@ -1108,10 +1121,11 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
         std::string note;
         for (size_t i = 2; i < args.size(); ++i)
         {
-            if (i > 2) note += " ";
+            if (i > 2)
+                note += " ";
             note += args[i];
         }
-        
+
         // Set the note for this breakpoint
         auto& breakpoints = bpManager->GetAllBreakpoints();
         if (breakpoints.find(bpId) != breakpoints.end())
@@ -1125,14 +1139,16 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     {
         oss << "Watchpoint #" << bpId << " set at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
         oss << " (";
-        if (memoryType & BRK_MEM_READ) oss << "read";
-        if ((memoryType & BRK_MEM_READ) && (memoryType & BRK_MEM_WRITE)) oss << "/";
-        if (memoryType & BRK_MEM_WRITE) oss << "write";
-        oss << ")\n";
+        if (memoryType & BRK_MEM_READ)
+            oss << "read";
+        if ((memoryType & BRK_MEM_READ) && (memoryType & BRK_MEM_WRITE))
+            oss << "/";
+        if (memoryType & BRK_MEM_WRITE)
+            oss << "write";
     }
     else
     {
-        oss << "Failed to set watchpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << address << "\n";
+        oss << "Failed to set watchpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << address;
     }
 
     session.SendResponse(oss.str());
@@ -1144,23 +1160,26 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     if (args.empty() || args.size() < 2)
     {
-        session.SendResponse("Usage: bport <port> <type> [note]\n");
-        session.SendResponse("Sets a port breakpoint at the specified port address.\n");
-        session.SendResponse("Types:\n");
-        session.SendResponse("  i    - Watch for port IN operations\n");
-        session.SendResponse("  o    - Watch for port OUT operations\n");
-        session.SendResponse("  io   - Watch for both IN and OUT operations\n");
-        session.SendResponse("Examples:\n");
-        session.SendResponse("  bport 0x1234 i     - Watch for IN operations at port 0x1234\n");
-        session.SendResponse("  bport $FE o        - Watch for OUT operations at port $FE (hex)\n");
-        session.SendResponse("  bport #A0 io       - Watch for IN/OUT at port #A0 (hex)\n");
-        session.SendResponse("  bport 254 io Keyboard port - Watch for IN/OUT with a note\n");
+        std::stringstream ss;
+        ss << "Usage: bport <port> <type> [note]" << NEWLINE
+           << "Sets a port breakpoint at the specified port address." << NEWLINE
+           << "Types:" << NEWLINE
+           << "  i    - Watch for port IN operations" << NEWLINE
+           << "  o    - Watch for port OUT operations" << NEWLINE
+           << "  io   - Watch for both IN and OUT operations" << NEWLINE
+           << "Examples:" << NEWLINE
+           << "  bport 0x1234 i     - Watch for IN operations at port 0x1234" << NEWLINE
+           << "  bport $FE o        - Watch for OUT operations at port $FE (hex)" << NEWLINE
+           << "  bport #A0 io       - Watch for IN/OUT at port #A0 (hex)" << NEWLINE
+           << "  bport 254 io Keyboard port - Watch for IN/OUT with a note";
+        session.SendResponse(ss.str());
+
         return;
     }
 
@@ -1173,23 +1192,23 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
 
     std::string typeStr = args[1];
     uint8_t ioType = BRK_IO_NONE;
-    
+
     // Parse the type string
     if (typeStr.find('i') != std::string::npos)
         ioType |= BRK_IO_IN;
     if (typeStr.find('o') != std::string::npos)
         ioType |= BRK_IO_OUT;
-        
+
     if (ioType == BRK_IO_NONE)
     {
-        session.SendResponse("Invalid port breakpoint type. Use 'i', 'o', or 'io'.\n");
+        session.SendResponse("Invalid port breakpoint type. Use 'i', 'o', or 'io'.");
         return;
     }
-    
+
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
@@ -1202,10 +1221,11 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
         std::string note;
         for (size_t i = 2; i < args.size(); ++i)
         {
-            if (i > 2) note += " ";
+            if (i > 2)
+                note += " ";
             note += args[i];
         }
-        
+
         // Set the note for this breakpoint
         auto& breakpoints = bpManager->GetAllBreakpoints();
         if (breakpoints.find(bpId) != breakpoints.end())
@@ -1217,16 +1237,20 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
     std::ostringstream oss;
     if (bpId != BRK_INVALID)
     {
-        oss << "Port breakpoint #" << bpId << " set at port 0x" << std::hex << std::setw(4) << std::setfill('0') << port;
+        oss << "Port breakpoint #" << bpId << " set at port 0x" << std::hex << std::setw(4) << std::setfill('0')
+            << port;
         oss << " (";
-        if (ioType & BRK_IO_IN) oss << "in";
-        if ((ioType & BRK_IO_IN) && (ioType & BRK_IO_OUT)) oss << "/";
-        if (ioType & BRK_IO_OUT) oss << "out";
-        oss << ")\n";
+        if (ioType & BRK_IO_IN)
+            oss << "in";
+        if ((ioType & BRK_IO_IN) && (ioType & BRK_IO_OUT))
+            oss << "/";
+        if (ioType & BRK_IO_OUT)
+            oss << "out";
+        oss << ")";
     }
     else
     {
-        oss << "Failed to set port breakpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << port << "\n";
+        oss << "Failed to set port breakpoint at 0x" << std::hex << std::setw(4) << std::setfill('0') << port;
     }
 
     session.SendResponse(oss.str());
@@ -1238,43 +1262,46 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
     if (args.empty())
     {
-        session.SendResponse("Usage: bpclear <option>\n");
-        session.SendResponse("Options:\n");
-        session.SendResponse("  all       - Clear all breakpoints\n");
-        session.SendResponse("  <id>      - Clear breakpoint with specific ID\n");
-        session.SendResponse("  addr <addr> - Clear breakpoint at specific address\n");
-        session.SendResponse("  port <port> - Clear breakpoint at specific port\n");
-        session.SendResponse("  mem       - Clear all memory breakpoints\n");
-        session.SendResponse("  port      - Clear all port breakpoints\n");
-        session.SendResponse("  read      - Clear all memory read breakpoints\n");
-        session.SendResponse("  write     - Clear all memory write breakpoints\n");
-        session.SendResponse("  exec      - Clear all execution breakpoints\n");
-        session.SendResponse("  in        - Clear all port IN breakpoints\n");
-        session.SendResponse("  out       - Clear all port OUT breakpoints\n");
-        session.SendResponse("  group <name> - Clear all breakpoints in a group\n");
+        std::stringstream ss;
+        ss << "Usage: bpclear <option>" << NEWLINE
+           << "Options:" << NEWLINE
+           << "  all       - Clear all breakpoints" << NEWLINE
+           << "  <id>      - Clear breakpoint with specific ID" << NEWLINE
+           << "  addr <addr> - Clear breakpoint at specific address" << NEWLINE
+           << "  port <port> - Clear breakpoint at specific port" << NEWLINE
+           << "  mem       - Clear all memory breakpoints" << NEWLINE
+           << "  port      - Clear all port breakpoints" << NEWLINE
+           << "  read      - Clear all memory read breakpoints" << NEWLINE
+           << "  write     - Clear all memory write breakpoints" << NEWLINE
+           << "  exec      - Clear all execution breakpoints" << NEWLINE
+           << "  in        - Clear all port IN breakpoints" << NEWLINE
+           << "  out       - Clear all port OUT breakpoints" << NEWLINE
+           << "  group <name> - Clear all breakpoints in a group";
+        session.SendResponse(ss.str());
+
         return;
     }
 
     std::string option = args[0];
-    
+
     if (option == "all")
     {
         bpManager->ClearBreakpoints();
         session.SendResponse("All breakpoints cleared\n");
-        
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1283,26 +1310,26 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         uint16_t address;
         if (!ParseAddress(args[1], address))
         {
-            session.SendResponse("Invalid address format or out of range (must be 0-65535)\n");
+            session.SendResponse("Invalid address format or out of range (must be 0-65535)");
             return;
         }
-        
+
         bool result = bpManager->RemoveBreakpointByAddress(address);
         if (result)
         {
-            session.SendResponse("Breakpoint at address 0x" + std::to_string(address) + " cleared\n");
-            
+            session.SendResponse("Breakpoint at address 0x" + std::to_string(address) + " cleared");
+
             // Notify UI components that breakpoints have changed
             onBreakpointsChanged();
         }
         else
-            session.SendResponse("No breakpoint found at address 0x" + std::to_string(address) + "\n");
+            session.SendResponse("No breakpoint found at address 0x" + std::to_string(address));
     }
     else if (option == "port" && args.size() == 1)
     {
         bpManager->RemoveBreakpointsByType(BRK_IO);
-        session.SendResponse("All port breakpoints cleared\n");
-        
+        session.SendResponse("All port breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1311,66 +1338,66 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
         uint16_t port;
         if (!ParseAddress(args[1], port))
         {
-            session.SendResponse("Invalid port format or out of range (must be 0-65535)\n");
+            session.SendResponse("Invalid port format or out of range (must be 0-65535)");
             return;
         }
-        
+
         bool result = bpManager->RemoveBreakpointByPort(port);
         if (result)
         {
-            session.SendResponse("Breakpoint at port 0x" + std::to_string(port) + " cleared\n");
-            
+            session.SendResponse("Breakpoint at port 0x" + std::to_string(port) + " cleared");
+
             // Notify UI components that breakpoints have changed
             onBreakpointsChanged();
         }
         else
-            session.SendResponse("No breakpoint found at port 0x" + std::to_string(port) + "\n");
+            session.SendResponse("No breakpoint found at port 0x" + std::to_string(port));
     }
     else if (option == "mem")
     {
         bpManager->RemoveBreakpointsByType(BRK_MEMORY);
-        session.SendResponse("All memory breakpoints cleared\n");
-        
+        session.SendResponse("All memory breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "read")
     {
         bpManager->RemoveMemoryBreakpointsByType(BRK_MEM_READ);
-        session.SendResponse("All memory read breakpoints cleared\n");
-        
+        session.SendResponse("All memory read breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "write")
     {
         bpManager->RemoveMemoryBreakpointsByType(BRK_MEM_WRITE);
-        session.SendResponse("All memory write breakpoints cleared\n");
-        
+        session.SendResponse("All memory write breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "exec")
     {
         bpManager->RemoveMemoryBreakpointsByType(BRK_MEM_EXECUTE);
-        session.SendResponse("All execution breakpoints cleared\n");
-        
+        session.SendResponse("All execution breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "in")
     {
         bpManager->RemovePortBreakpointsByType(BRK_IO_IN);
-        session.SendResponse("All port IN breakpoints cleared\n");
-        
+        session.SendResponse("All port IN breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "out")
     {
         bpManager->RemovePortBreakpointsByType(BRK_IO_OUT);
-        session.SendResponse("All port OUT breakpoints cleared\n");
-        
+        session.SendResponse("All port OUT breakpoints cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1378,8 +1405,8 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
     {
         std::string groupName = args[1];
         bpManager->RemoveBreakpointGroup(groupName);
-        session.SendResponse("All breakpoints in group '" + groupName + "' cleared\n");
-        
+        session.SendResponse("All breakpoints in group '" + groupName + "' cleared");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1392,17 +1419,17 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
             bool result = bpManager->RemoveBreakpointByID(id);
             if (result)
             {
-                session.SendResponse("Breakpoint #" + std::to_string(id) + " cleared\n");
-                
+                session.SendResponse("Breakpoint #" + std::to_string(id) + " cleared");
+
                 // Notify UI components that breakpoints have changed
                 onBreakpointsChanged();
             }
             else
-                session.SendResponse("No breakpoint found with ID " + std::to_string(id) + "\n");
+                session.SendResponse("No breakpoint found with ID " + std::to_string(id));
         }
         else
         {
-            session.SendResponse("Invalid option or breakpoint ID. Use 'bpclear' for help.\n");
+            session.SendResponse("Invalid option or breakpoint ID. Use 'bpclear' for help.");
         }
     }
 }
@@ -1413,48 +1440,50 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
     if (args.empty())
     {
-        session.SendResponse("Usage: bpgroup <command> [parameters]\n");
-        session.SendResponse("Commands:\n");
-        session.SendResponse("  list             - List all breakpoint groups\n");
-        session.SendResponse("  show <name>      - Show breakpoints in a specific group\n");
-        session.SendResponse("  set <id> <name>  - Assign a breakpoint to a group\n");
-        session.SendResponse("  remove <id>      - Remove a breakpoint from its group (sets to 'default')\n");
+        std::stringstream ss;
+        ss << "Usage: bpgroup <command> [parameters]" << NEWLINE
+           << "Commands:" << NEWLINE
+           << "  list             - List all breakpoint groups" << NEWLINE
+           << "  show <name>      - Show breakpoints in a specific group" << NEWLINE
+           << "  set <id> <name>  - Assign a breakpoint to a group" << NEWLINE
+           << "  remove <id>      - Remove a breakpoint from its group (sets to 'default')";
+        session.SendResponse(ss.str());
         return;
     }
 
     std::string command = args[0];
-    
+
     if (command == "list")
     {
         std::vector<std::string> groups = bpManager->GetBreakpointGroups();
-        
+
         if (groups.empty())
         {
-            session.SendResponse("No breakpoint groups defined\n");
+            session.SendResponse("No breakpoint groups defined");
             return;
         }
-        
+
         std::ostringstream oss;
-        oss << "Breakpoint groups:\n";
+        oss << "Breakpoint groups:" << NEWLINE;
         for (const auto& group : groups)
         {
             auto breakpoints = bpManager->GetBreakpointsByGroup(group);
-            oss << "  " << group << " (" << breakpoints.size() << " breakpoints)\n";
+            oss << "  " << group << " (" << breakpoints.size() << " breakpoints)" << NEWLINE;
         }
-        
+
         session.SendResponse(oss.str());
     }
     else if (command == "show" && args.size() > 1)
@@ -1468,45 +1497,45 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
         uint16_t id;
         if (!ParseAddress(args[1], id))
         {
-            session.SendResponse("Invalid breakpoint ID format or out of range\n");
+            session.SendResponse("Invalid breakpoint ID format or out of range");
             return;
         }
-        
+
         std::string groupName = args[2];
         bool result = bpManager->SetBreakpointGroup(id, groupName);
         if (result)
         {
-            session.SendResponse("Breakpoint #" + std::to_string(id) + " assigned to group '" + groupName + "'\n");
-            
+            session.SendResponse("Breakpoint #" + std::to_string(id) + " assigned to group '" + groupName + "'");
+
             // Notify UI components that breakpoints have changed
             onBreakpointsChanged();
         }
         else
-            session.SendResponse("Failed to assign breakpoint to group. Check if the breakpoint ID is valid.\n");
+            session.SendResponse("Failed to assign breakpoint to group. Check if the breakpoint ID is valid.");
     }
     else if (command == "remove" && args.size() > 1)
     {
         uint16_t id;
         if (!ParseAddress(args[1], id))
         {
-            session.SendResponse("Invalid breakpoint ID format or out of range\n");
+            session.SendResponse("Invalid breakpoint ID format or out of range");
             return;
         }
-        
+
         bool result = bpManager->RemoveBreakpointFromGroup(id);
         if (result)
         {
-            session.SendResponse("Breakpoint #" + std::to_string(id) + " removed from its group (set to 'default')\n");
-            
+            session.SendResponse("Breakpoint #" + std::to_string(id) + " removed from its group (set to 'default')");
+
             // Notify UI components that breakpoints have changed
             onBreakpointsChanged();
         }
         else
-            session.SendResponse("Failed to remove breakpoint from group. Check if the breakpoint ID is valid.\n");
+            session.SendResponse("Failed to remove breakpoint from group. Check if the breakpoint ID is valid.");
     }
     else
     {
-        session.SendResponse("Invalid command. Use 'bpgroup' for help.\n");
+        session.SendResponse("Invalid command. Use 'bpgroup' for help.");
     }
 }
 
@@ -1516,97 +1545,99 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
     if (args.empty())
     {
-        session.SendResponse("Usage: bpon <option>\n");
-        session.SendResponse("Options:\n");
-        session.SendResponse("  all       - Activate all breakpoints\n");
-        session.SendResponse("  <id>      - Activate breakpoint with specific ID\n");
-        session.SendResponse("  mem       - Activate all memory breakpoints\n");
-        session.SendResponse("  port      - Activate all port breakpoints\n");
-        session.SendResponse("  read      - Activate all memory read breakpoints\n");
-        session.SendResponse("  write     - Activate all memory write breakpoints\n");
-        session.SendResponse("  exec      - Activate all execution breakpoints\n");
-        session.SendResponse("  in        - Activate all port IN breakpoints\n");
-        session.SendResponse("  out       - Activate all port OUT breakpoints\n");
-        session.SendResponse("  group <name> - Activate all breakpoints in a group\n");
+        std::stringstream ss;
+        ss << "Usage: bpon <option>" << NEWLINE
+           << "Options:" << NEWLINE
+           << "  all       - Activate all breakpoints" << NEWLINE
+           << "  <id>      - Activate breakpoint with specific ID" << NEWLINE
+           << "  mem       - Activate all memory breakpoints" << NEWLINE
+           << "  port      - Activate all port breakpoints" << NEWLINE
+           << "  read      - Activate all memory read breakpoints" << NEWLINE
+           << "  write     - Activate all memory write breakpoints" << NEWLINE
+           << "  exec      - Activate all execution breakpoints" << NEWLINE
+           << "  in        - Activate all port IN breakpoints" << NEWLINE
+           << "  out       - Activate all port OUT breakpoints" << NEWLINE
+           << "  group <name> - Activate all breakpoints in a group";
+        session.SendResponse(ss.str());
         return;
     }
 
     std::string option = args[0];
-    
+
     if (option == "all")
     {
         bpManager->ActivateAllBreakpoints();
-        session.SendResponse("All breakpoints activated\n");
-        
+        session.SendResponse("All breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "mem")
     {
         bpManager->ActivateBreakpointsByType(BRK_MEMORY);
-        session.SendResponse("All memory breakpoints activated\n");
-        
+        session.SendResponse("All memory breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "port")
     {
         bpManager->ActivateBreakpointsByType(BRK_IO);
-        session.SendResponse("All port breakpoints activated\n");
-        
+        session.SendResponse("All port breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "read")
     {
         bpManager->ActivateMemoryBreakpointsByType(BRK_MEM_READ);
-        session.SendResponse("All memory read breakpoints activated\n");
-        
+        session.SendResponse("All memory read breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "write")
     {
         bpManager->ActivateMemoryBreakpointsByType(BRK_MEM_WRITE);
-        session.SendResponse("All memory write breakpoints activated\n");
-        
+        session.SendResponse("All memory write breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "exec")
     {
         bpManager->ActivateMemoryBreakpointsByType(BRK_MEM_EXECUTE);
-        session.SendResponse("All execution breakpoints activated\n");
-        
+        session.SendResponse("All execution breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "in")
     {
         bpManager->ActivatePortBreakpointsByType(BRK_IO_IN);
-        session.SendResponse("All port IN breakpoints activated\n");
-        
+        session.SendResponse("All port IN breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "out")
     {
         bpManager->ActivatePortBreakpointsByType(BRK_IO_OUT);
-        session.SendResponse("All port OUT breakpoints activated\n");
-        
+        session.SendResponse("All port OUT breakpoints activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1614,8 +1645,8 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
     {
         std::string groupName = args[1];
         bpManager->ActivateBreakpointGroup(groupName);
-        session.SendResponse("All breakpoints in group '" + groupName + "' activated\n");
-        
+        session.SendResponse("All breakpoints in group '" + groupName + "' activated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1628,17 +1659,17 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
             bool result = bpManager->ActivateBreakpoint(id);
             if (result)
             {
-                session.SendResponse("Breakpoint #" + std::to_string(id) + " activated\n");
-                
+                session.SendResponse("Breakpoint #" + std::to_string(id) + " activated");
+
                 // Notify UI components that breakpoints have changed
                 onBreakpointsChanged();
             }
             else
-                session.SendResponse("No breakpoint found with ID " + std::to_string(id) + "\n");
+                session.SendResponse("No breakpoint found with ID " + std::to_string(id));
         }
         else
         {
-            session.SendResponse("Invalid option or breakpoint ID. Use 'bpon' for help.\n");
+            session.SendResponse("Invalid option or breakpoint ID. Use 'bpon' for help.");
         }
     }
 }
@@ -1649,97 +1680,99 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.\n");
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
         return;
     }
 
     BreakpointManager* bpManager = emulator->GetBreakpointManager();
     if (!bpManager)
     {
-        session.SendResponse("Breakpoint manager not available\n");
+        session.SendResponse("Breakpoint manager not available");
         return;
     }
 
     if (args.empty())
     {
-        session.SendResponse("Usage: bpoff <option>\n");
-        session.SendResponse("Options:\n");
-        session.SendResponse("  all       - Deactivate all breakpoints\n");
-        session.SendResponse("  <id>      - Deactivate breakpoint with specific ID\n");
-        session.SendResponse("  mem       - Deactivate all memory breakpoints\n");
-        session.SendResponse("  port      - Deactivate all port breakpoints\n");
-        session.SendResponse("  read      - Deactivate all memory read breakpoints\n");
-        session.SendResponse("  write     - Deactivate all memory write breakpoints\n");
-        session.SendResponse("  exec      - Deactivate all execution breakpoints\n");
-        session.SendResponse("  in        - Deactivate all port IN breakpoints\n");
-        session.SendResponse("  out       - Deactivate all port OUT breakpoints\n");
-        session.SendResponse("  group <name> - Deactivate all breakpoints in a group\n");
+        std::stringstream ss;
+        ss << "Usage: bpoff <option>" << NEWLINE
+           << "Options:" << NEWLINE
+           << "  all       - Deactivate all breakpoints" << NEWLINE
+           << "  <id>      - Deactivate breakpoint with specific ID" << NEWLINE
+           << "  mem       - Deactivate all memory breakpoints" << NEWLINE
+           << "  port      - Deactivate all port breakpoints" << NEWLINE
+           << "  read      - Deactivate all memory read breakpoints" << NEWLINE
+           << "  write     - Deactivate all memory write breakpoints" << NEWLINE
+           << "  exec      - Deactivate all execution breakpoints" << NEWLINE
+           << "  in        - Deactivate all port IN breakpoints" << NEWLINE
+           << "  out       - Deactivate all port OUT breakpoints" << NEWLINE
+           << "  group <name> - Deactivate all breakpoints in a group";
+        session.SendResponse(ss.str());
         return;
     }
 
     std::string option = args[0];
-    
+
     if (option == "all")
     {
         bpManager->DeactivateAllBreakpoints();
-        session.SendResponse("All breakpoints deactivated\n");
-        
+        session.SendResponse("All breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "mem")
     {
         bpManager->DeactivateBreakpointsByType(BRK_MEMORY);
-        session.SendResponse("All memory breakpoints deactivated\n");
-        
+        session.SendResponse("All memory breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "port")
     {
         bpManager->DeactivateBreakpointsByType(BRK_IO);
-        session.SendResponse("All port breakpoints deactivated\n");
-        
+        session.SendResponse("All port breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "read")
     {
         bpManager->DeactivateMemoryBreakpointsByType(BRK_MEM_READ);
-        session.SendResponse("All memory read breakpoints deactivated\n");
-        
+        session.SendResponse("All memory read breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "write")
     {
         bpManager->DeactivateMemoryBreakpointsByType(BRK_MEM_WRITE);
-        session.SendResponse("All memory write breakpoints deactivated\n");
-        
+        session.SendResponse("All memory write breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "exec")
     {
         bpManager->DeactivateMemoryBreakpointsByType(BRK_MEM_EXECUTE);
-        session.SendResponse("All execution breakpoints deactivated\n");
-        
+        session.SendResponse("All execution breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "in")
     {
         bpManager->DeactivatePortBreakpointsByType(BRK_IO_IN);
-        session.SendResponse("All port IN breakpoints deactivated\n");
-        
+        session.SendResponse("All port IN breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
     else if (option == "out")
     {
         bpManager->DeactivatePortBreakpointsByType(BRK_IO_OUT);
-        session.SendResponse("All port OUT breakpoints deactivated\n");
-        
+        session.SendResponse("All port OUT breakpoints deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1747,8 +1780,8 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
     {
         std::string groupName = args[1];
         bpManager->DeactivateBreakpointGroup(groupName);
-        session.SendResponse("All breakpoints in group '" + groupName + "' deactivated\n");
-        
+        session.SendResponse("All breakpoints in group '" + groupName + "' deactivated");
+
         // Notify UI components that breakpoints have changed
         onBreakpointsChanged();
     }
@@ -1761,17 +1794,17 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
             bool result = bpManager->DeactivateBreakpoint(id);
             if (result)
             {
-                session.SendResponse("Breakpoint #" + std::to_string(id) + " deactivated\n");
-                
+                session.SendResponse("Breakpoint #" + std::to_string(id) + " deactivated");
+
                 // Notify UI components that breakpoints have changed
                 onBreakpointsChanged();
             }
             else
-                session.SendResponse("No breakpoint found with ID " + std::to_string(id) + "\n");
+                session.SendResponse("No breakpoint found with ID " + std::to_string(id));
         }
         else
         {
-            session.SendResponse("Invalid option or breakpoint ID. Use 'bpoff' for help.\n");
+            session.SendResponse("Invalid option or breakpoint ID. Use 'bpoff' for help.");
         }
     }
 }
@@ -1780,7 +1813,7 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
 {
     // Get the MessageCenter instance
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    
+
     if (args.empty())
     {
         // No filepath provided, send a message to open the file dialog
@@ -1791,9 +1824,9 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
     {
         // Filepath provided, check if it exists
         std::string filepath = args[0];
-        
+
         // Send the filepath in the message payload using the existing SimpleTextPayload
-        session.SendResponse("Requesting to open file: " + filepath + "\n");
+        session.SendResponse("Requesting to open file: " + filepath);
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
 }
