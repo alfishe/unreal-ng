@@ -384,7 +384,7 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
         }
 
         // Data is available, read it
-        bytesRead = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+        bytesRead = recv(clientSocket, (char*)buffer, sizeof(buffer) - 1, 0);
 
         if (bytesRead <= 0)
         {
