@@ -3,7 +3,6 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
-#include <memory>
 #include <thread>
 
 /// region <Methods>
@@ -58,8 +57,15 @@ bool Automation::startLua()
 {
     bool result = true;
 
-    _lua = std::make_unique<AutomationLua>();
-    _lua->start();
+    _lua = new AutomationLua();
+    if (_lua)
+    {
+        _lua->start();
+    }
+    else
+    {
+        result = false;
+    }
 
     return result;
 }
@@ -70,8 +76,15 @@ bool Automation::startPython()
 {
     bool result = true;
 
-    _python = std::make_unique<AutomationPython>();
-    _python->start();
+    _python = new AutomationPython();
+    if (_python)
+    {
+        _python->start();
+    }
+    else
+    {
+        result = false;
+    }
 
     return result;
 }
@@ -82,8 +95,15 @@ bool Automation::startWebAPI()
 {
     bool result = true;
 
-    _webAPI = std::make_unique<AutomationWebAPI>();
-    _webAPI->start();
+    _webAPI = new AutomationWebAPI();
+    if (_webAPI)
+    {
+        _webAPI->start();
+    }
+    else
+    {
+        result = false;
+    }
 
     return result;
 }
@@ -95,7 +115,8 @@ void Automation::stopLua()
     if (_lua)
     {
         _lua->stop();
-        _lua.reset();
+        delete _lua;
+        _lua = nullptr;
     }
 }
 #endif
@@ -106,7 +127,8 @@ void Automation::stopPython()
     if (_python)
     {
         _python->stop();
-        _python.reset();
+        delete _python;
+        _python = nullptr;
     }
 }
 #endif
@@ -117,7 +139,8 @@ void Automation::stopWebAPI()
     if (_webAPI)
     {
         _webAPI->stop();
-        _webAPI.reset();
+        delete _webAPI;
+        _webAPI = nullptr;
     }
 }
 #endif
@@ -127,7 +150,8 @@ bool Automation::startCLI()
 {
     bool result = true;
 
-    _cli = createAutomationCLI();
+    _cli = new AutomationCLI();
+
     if (_cli)
     {
         result = _cli->start();
@@ -145,7 +169,8 @@ void Automation::stopCLI()
     if (_cli)
     {
         _cli->stop();
-        _cli.reset();
+        delete _cli;
+        _cli = nullptr;
     }
 }
 #endif

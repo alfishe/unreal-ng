@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "platform_sockets.h"
 
 /**
  * @brief Session context for a client connection
@@ -14,9 +15,9 @@
 class ClientSession
 {
 public:
-    ClientSession(int clientSocket) : _clientSocket(clientSocket), _selectedEmulatorId("") {}
+    ClientSession(SOCKET clientSocket) : _clientSocket(clientSocket), _selectedEmulatorId("") {}
 
-    int GetSocket() const
+    SOCKET GetSocket() const
     {
         return _clientSocket;
     }
@@ -34,7 +35,7 @@ public:
     void SendResponse(const std::string& message) const;
 
 private:
-    int _clientSocket;
+    SOCKET _clientSocket;
     std::string _selectedEmulatorId;  // ID of the currently selected emulator
 };
 

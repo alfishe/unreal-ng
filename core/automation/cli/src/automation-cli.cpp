@@ -1,12 +1,7 @@
 #include "automation-cli.h"
 
-#include <arpa/inet.h>
 #include <emulator/emulatormanager.h>
-#include <fcntl.h>
-#include <netinet/in.h>
 #include <stdio.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
@@ -17,14 +12,24 @@
 
 using namespace std::string_literals;
 
-AutomationCLI::AutomationCLI()
-    : _emulator(nullptr), _thread(nullptr), _stopThread(false), _port(8765), _serverSocket(-1)
+AutomationCLI::AutomationCLI() :
+    _emulator(nullptr),
+    _thread(nullptr),
+    _stopThread(false),
+    _port(8765),
+    _serverSocket(INVALID_SOCKET)
 {
+    // Initialize platform sockets
+    if (!initializeSockets())
+    {
+        std::cerr << "Failed to initialize socket library!" << std::endl;
+    }
+    
     _cliApp.footer("\nType 'help' for a list of commands or 'exit' to quit.");
     _cliApp.set_help_flag("-h,--help", "Show help and exit");
 
     // Initialize the EmulatorManager during construction
-    auto* emulatorManager = EmulatorManager::GetInstance();
+    EmulatorManager* emulatorManager = EmulatorManager::GetInstance();
     if (emulatorManager)
     {
         // Force a refresh of emulator instances
@@ -42,6 +47,9 @@ AutomationCLI::AutomationCLI()
 AutomationCLI::~AutomationCLI()
 {
     stop();
+    
+    // Cleanup platform sockets
+    cleanupSockets();
 }
 
 bool AutomationCLI::start(uint16_t port)
@@ -55,7 +63,7 @@ bool AutomationCLI::start(uint16_t port)
 
     _port = port;
     _stopThread = false;
-    _serverSocket = -1;  // Ensure socket is reset
+    _serverSocket = INVALID_SOCKET;  // Ensure socket is reset
 
     try
     {
@@ -102,11 +110,11 @@ void AutomationCLI::stop()
         }
 
         // Close the server socket to unblock accept()
-        if (_serverSocket != -1)
+        if (_serverSocket != INVALID_SOCKET)
         {
             std::cout << "Closing server socket: " << _serverSocket << std::endl;
             close(_serverSocket);
-            _serverSocket = -1;
+            _serverSocket = INVALID_SOCKET;
         }
 
         // Move the thread pointer out so we can join it outside the lock
@@ -131,29 +139,23 @@ void AutomationCLI::stop()
     std::cout << "CLI server stopped" << std::endl;
 }
 
-bool AutomationCLI::isRunning() const
-{
-    std::lock_guard<std::mutex> lock(_mutex);
-    return _thread != nullptr;
-}
-
 void AutomationCLI::run()
 {
     // Initialize socket
     _serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (_serverSocket == -1)
+    if (_serverSocket == INVALID_SOCKET)
     {
-        std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
+        std::cerr << "Failed to create socket: " << strerror(getLastSocketError()) << std::endl;
         return;
     }
 
     // Set SO_REUSEADDR to allow reuse of local addresses
     int opt = 1;
-    if (setsockopt(_serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    if (setsockopt(_serverSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt)) < 0)
     {
-        std::cerr << "setsockopt(SO_REUSEADDR) failed: " << strerror(errno) << std::endl;
+        std::cerr << "setsockopt(SO_REUSEADDR) failed: " << strerror(getLastSocketError()) << std::endl;
         close(_serverSocket);
-        _serverSocket = -1;
+        _serverSocket = INVALID_SOCKET;
         return;
     }
 
@@ -162,19 +164,19 @@ void AutomationCLI::run()
     serverAddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serverAddr.sin_port = htons(_port);
 
-    if (bind(_serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1)
+    if (bind(_serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
     {
-        std::cerr << "Failed to bind to port " << _port << ": " << strerror(errno) << std::endl;
+        std::cerr << "Failed to bind to port " << _port << ": " << strerror(getLastSocketError()) << std::endl;
         close(_serverSocket);
-        _serverSocket = -1;
+        _serverSocket = INVALID_SOCKET;
         return;
     }
 
-    if (listen(_serverSocket, 5) == -1)
+    if (listen(_serverSocket, 5) == SOCKET_ERROR)
     {
-        std::cerr << "Failed to listen on socket: " << strerror(errno) << std::endl;
+        std::cerr << "Failed to listen on socket: " << strerror(getLastSocketError()) << std::endl;
         close(_serverSocket);
-        _serverSocket = -1;
+        _serverSocket = INVALID_SOCKET;
         return;
     }
 
@@ -203,12 +205,17 @@ void AutomationCLI::run()
 
         if (activity < 0)
         {
-            if (errno == EINTR)
+            int errorCode = getLastSocketError();
+#ifdef _WIN32
+            if (errorCode == WSAEINTR)
+#else
+            if (errorCode == EINTR)
+#endif
             {
                 // Interrupted system call, just retry
                 continue;
             }
-            std::cerr << "select error: " << strerror(errno) << std::endl;
+            std::cerr << "select error: " << strerror(errorCode) << std::endl;
             break;
         }
 
@@ -223,11 +230,11 @@ void AutomationCLI::run()
             // Accept a new client connection
             sockaddr_in clientAddr{};
             socklen_t clientLen = sizeof(clientAddr);
-            int clientSocket = accept(_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
+            SOCKET clientSocket = accept(_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
 
-            if (clientSocket < 0)
+            if (clientSocket == INVALID_SOCKET)
             {
-                std::cerr << "Failed to accept connection: " << strerror(errno) << std::endl;
+                std::cerr << "Failed to accept connection: " << strerror(getLastSocketError()) << std::endl;
                 continue;
             }
 
@@ -240,10 +247,10 @@ void AutomationCLI::run()
         }
     }
 
-    if (_serverSocket != -1)
+    if (_serverSocket != INVALID_SOCKET)
     {
         close(_serverSocket);
-        _serverSocket = -1;
+        _serverSocket = INVALID_SOCKET;
     }
 
     std::cout << "CLI server stopped" << std::endl;
@@ -256,15 +263,35 @@ std::unique_ptr<CLIProcessor> AutomationCLI::createProcessor()
     return processor;
 }
 
-void AutomationCLI::handleClientConnection(int clientSocket)
+void AutomationCLI::handleClientConnection(SOCKET clientSocket)
 {
     std::cout << "New client connection established on socket: " << clientSocket << std::endl;
 
     // Add this client socket to the active connections list
     {
         std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-        _activeClientSockets.push_back(clientSocket);
     }
+
+    // Set socket to non-blocking mode
+    setSocketNonBlocking(clientSocket);
+
+    // Configure telnet client for character-at-a-time mode with local echo
+    // This works better with Windows telnet client
+    unsigned char telnetInit[] =
+    {
+        0xFF, 0xFD, 0x22,  // IAC DO LINEMODE (we'll reject this)
+        0xFF, 0xFB, 0x01,  // IAC WILL ECHO
+        0xFF, 0xFD, 0x01,  // IAC DO ECHO
+        0xFF, 0xFB, 0x03,  // IAC WILL SUPPRESS GO AHEAD
+        0xFF, 0xFD, 0x03,  // IAC DO SUPPRESS GO AHEAD
+        0xFF, 0xFC, 0x22,  // IAC WON'T LINEMODE (reject line mode)
+        0xFF, 0xFC, 0x01   // IAC WON'T ECHO (let client handle echo)
+    };
+    send(clientSocket, (const char*)telnetInit, sizeof(telnetInit), 0);
+    
+    // Send WILL SUPPRESS GO AHEAD again to ensure it's set
+    unsigned char willSuppressGA[] = {0xFF, 0xFB, 0x03};
+    send(clientSocket, (const char*)willSuppressGA, sizeof(willSuppressGA), 0);
 
     // Create a new session for this client
     ClientSession session(clientSocket);
@@ -286,7 +313,13 @@ void AutomationCLI::handleClientConnection(int clientSocket)
         processor->InitializeProcessor();
 
         // Send welcome message AFTER EmulatorManager is fully initialized
-        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI. Type 'help' for commands.\n";
+        #ifdef _WIN32
+            const char* newline = "\r\n";
+        #else
+            const char* newline = "\n";
+        #endif
+        
+        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI. Type 'help' for commands." + std::string(newline);
         ssize_t bytesSent = send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
 
         // Send initial prompt
@@ -303,8 +336,7 @@ void AutomationCLI::handleClientConnection(int clientSocket)
     }
 
     // Set socket to non-blocking mode to avoid hanging
-    int flags = fcntl(clientSocket, F_GETFL, 0);
-    fcntl(clientSocket, F_SETFL, flags | O_NONBLOCK);
+    setSocketNonBlocking(clientSocket);
 
     char buffer[1024];
     ssize_t bytesRead;
@@ -325,9 +357,9 @@ void AutomationCLI::handleClientConnection(int clientSocket)
 
         int selectResult = select(clientSocket + 1, &readSet, NULL, NULL, &timeout);
 
-        if (selectResult == -1)
+        if (selectResult == SOCKET_ERROR)
         {
-            std::cerr << "Select error: " << strerror(errno) << std::endl;
+            std::cerr << "Select error: " << strerror(getLastSocketError()) << std::endl;
             break;
         }
 
@@ -348,24 +380,89 @@ void AutomationCLI::handleClientConnection(int clientSocket)
             }
             else
             {
-                std::cerr << "Recv error: " << strerror(errno) << std::endl;
+                std::cerr << "Recv error: " << strerror(getLastSocketError()) << std::endl;
             }
             break;
         }
 
-        // Check for telnet protocol commands (IAC = 0xFF)
-        bool containsTelnetCommands = false;
-        for (int i = 0; i < bytesRead; i++)
+        // Process telnet protocol commands (IAC = 0xFF)
+        bool processedTelnetCommand = false;
+        for (int i = 0; i < bytesRead; )
         {
-            if ((unsigned char)buffer[i] == 0xFF)
+            if ((unsigned char)buffer[i] == 0xFF)  // IAC
             {
-                containsTelnetCommands = true;
-                break;
+                if (i + 1 >= bytesRead) break;  // Not enough data yet
+                
+                unsigned char verb = (unsigned char)buffer[i+1];
+                
+                if (verb == 0xFF)  // Literal 0xFF
+                {
+                    // Remove one of the 0xFFs
+                    memmove(buffer + i, buffer + i + 1, bytesRead - i - 1);
+                    bytesRead--;
+                    i++;
+                    continue;
+                }
+                else if (verb == 0xFD)  // DO
+                {
+                    // Handle DO commands
+                    if (i + 2 < bytesRead)
+                    {
+                        unsigned char option = (unsigned char)buffer[i+2];
+                        unsigned char response[3] = {0xFF, 0xFC, option}; // WON'T
+                        
+                        // Special handling for certain options
+                        if (option == 0x01) // ECHO
+                            response[1] = 0xFB; // WILL
+                        else if (option == 0x03) // SUPPRESS GO AHEAD
+                            response[1] = 0xFB; // WILL
+                            
+                        send(clientSocket, (const char*)response, 3, 0);
+                    }
+                    i += 3;
+                    processedTelnetCommand = true;
+                    continue;
+                }
+                else if (verb == 0xFB)  // WILL
+                {
+                    // Handle WILL commands
+                    if (i + 2 < bytesRead)
+                    {
+                        unsigned char option = (unsigned char)buffer[i+2];
+                        unsigned char response[3] = {0xFF, 0xFE, option}; // DON'T
+                        
+                        // Special handling for certain options
+                        if (option == 0x01) // ECHO
+                            response[1] = 0xFD; // DO
+                        else if (option == 0x03) // SUPPRESS GO AHEAD
+                            response[1] = 0xFD; // DO
+                            
+                        send(clientSocket, (const char*)response, 3, 0);
+                    }
+                    i += 3;
+                    processedTelnetCommand = true;
+                    continue;
+                }
+                else if (verb == 0xFE || verb == 0xFC)  // DON'T or WON'T
+                {
+                    // Skip these commands
+                    i += 3;
+                    processedTelnetCommand = true;
+                    continue;
+                }
+                else
+                {
+                    // Skip unknown command
+                    i += 2;
+                    continue;
+                }
             }
+            i++;
         }
 
-        if (containsTelnetCommands)
+        if (processedTelnetCommand || bytesRead == 0)
         {
+            // If we processed telnet commands, continue to next read
             continue;
         }
 
@@ -405,7 +502,11 @@ void AutomationCLI::handleClientConnection(int clientSocket)
         // Check if socket was closed by the command handler (e.g., exit/quit)
         int error = 0;
         socklen_t len = sizeof(error);
+#ifdef _WIN32
+        int retval = getsockopt(clientSocket, SOL_SOCKET, SO_ERROR, (char*)&error, &len);
+#else
         int retval = getsockopt(clientSocket, SOL_SOCKET, SO_ERROR, &error, &len);
+#endif
         if (retval != 0 || error != 0)
         {
             std::cout << "Socket error detected, closing connection" << std::endl;
@@ -429,10 +530,23 @@ void AutomationCLI::handleClientConnection(int clientSocket)
 }
 
 // Send a command prompt to the client
-void AutomationCLI::sendPrompt(int clientSocket, const std::string& reason)
+void AutomationCLI::sendPrompt(SOCKET clientSocket, const std::string& reason)
 {
+    #ifdef _WIN32
+        // On Windows, ensure we're at the start of the line
+        std::string cr = "\r";
+        send(clientSocket, cr.c_str(), cr.length(), 0);
+    #endif
+    
     std::string prompt = "> ";
     ssize_t promptBytes = send(clientSocket, prompt.c_str(), prompt.length(), 0);
+
+    // Flush the output to ensure it's sent immediately
+    #ifdef _WIN32
+        // On Windows, we need to flush the socket buffer
+        // This is a no-op on most systems but helps with Windows telnet
+        send(clientSocket, "", 0, 0);
+    #endif
 
     if (!reason.empty())
     {
@@ -442,10 +556,4 @@ void AutomationCLI::sendPrompt(int clientSocket, const std::string& reason)
     {
         // std::cout << "Sent prompt: " << promptBytes << " bytes" << std::endl;
     }
-}
-
-// Factory function implementation
-std::unique_ptr<AutomationCLI> createAutomationCLI()
-{
-    return std::make_unique<AutomationCLI>();
 }

@@ -24,21 +24,27 @@ class Automation
     /// region <Fields>
 protected:
 #if ENABLE_LUA_AUTOMATION
-    std::unique_ptr<AutomationLua> _lua;
+    AutomationLua* _lua = nullptr;
 #endif
 
 #if ENABLE_PYTHON_AUTOMATION
-    std::unique_ptr<AutomationPython> _python;
+    AutomationPython* _python = nullptr;
 #endif
 
 #if ENABLE_WEBAPI_AUTOMATION
-    std::unique_ptr<AutomationWebAPI> _webAPI;
+    AutomationWebAPI* _webAPI = nullptr;
 #endif
 
 #if ENABLE_CLI_AUTOMATION
-    std::unique_ptr<AutomationCLI> _cli;
+    AutomationCLI* _cli = nullptr;
 #endif
     /// endregion </Fields>
+
+    /// region <Constructors / destructors>
+public:
+    Automation() = default;
+    virtual ~Automation() { stop(); };
+    /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:

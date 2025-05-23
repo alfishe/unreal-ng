@@ -8,20 +8,14 @@
 #include <functional>
 #include <unordered_map>
 #include <vector>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
+#include "platform_sockets.h"
 #include <emulator/emulator.h>
 #include "cli-processor.h"
 #include "../lib/cli11/CLI11.hpp"
 
 
-
-
-/**
- * @brief Automation CLI class that handles the TCP server for CLI connections
- */
+///
+/// @brief Automation CLI class that handles the TCP server for CLI connections
 class AutomationCLI
 {
 public:
@@ -37,17 +31,16 @@ public:
 
     bool start(uint16_t port = 8765);
     void stop();
-    bool isRunning() const;
 
 private:
     void run();
-    void handleClientConnection(int clientSocket);
+    void handleClientConnection(SOCKET clientSocket);
     
     // CLI processor for handling commands
     std::unique_ptr<CLIProcessor> createProcessor();
     
     // Send a command prompt to the client
-    void sendPrompt(int clientSocket, const std::string& reason = "");
+    void sendPrompt(SOCKET clientSocket, const std::string& reason = "");
 
     // CLI11 app instance
     CLI::App _cliApp;
@@ -58,10 +51,10 @@ private:
     std::atomic<bool> _stopThread{false};
     mutable std::mutex _mutex;
     uint16_t _port;
-    int _serverSocket{-1};
+    SOCKET _serverSocket{INVALID_SOCKET};
     
     // Track active client connections for clean shutdown
-    std::vector<int> _activeClientSockets;
+    std::vector<SOCKET> _activeClientSockets;
     std::mutex _clientSocketsMutex;
 };
 

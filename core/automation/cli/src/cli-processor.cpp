@@ -13,13 +13,12 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "platform_sockets.h"
 
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const
 {
-    if (_clientSocket != -1)
+    if (_clientSocket != INVALID_SOCKET)
     {
         send(_clientSocket, message.c_str(), message.length(), 0);
     }

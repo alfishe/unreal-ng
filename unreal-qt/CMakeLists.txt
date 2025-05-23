@@ -183,6 +183,11 @@ if (INCLUDE_AUTOMATION)
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
+    
+    # Link Winsock on Windows for automation
+    if(WIN32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+    endif()
 else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 

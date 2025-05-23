@@ -50,6 +50,11 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# Link against Winsock on Windows
+if (WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+endif ()
+
 # Install the library
 install(TARGETS automation-cli
     ARCHIVE DESTINATION lib
