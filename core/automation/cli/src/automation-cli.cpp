@@ -103,7 +103,7 @@ void AutomationCLI::stop()
     }
 
     // Close all active client connections to unblock any threads waiting on recv()
-    std::vector<int> clientSocketsCopy;
+    std::vector<SOCKET> clientSocketsCopy;
     {
         std::lock_guard<std::mutex> lock(_clientSocketsMutex);
         clientSocketsCopy = _activeClientSockets;
@@ -255,7 +255,7 @@ void AutomationCLI::run()
             // Check for any disconnected clients and remove them
             {
                 std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-                auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](int sock) {
+                auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](SOCKET sock) {
                     fd_set set;
                     FD_ZERO(&set);
                     FD_SET(sock, &set);
