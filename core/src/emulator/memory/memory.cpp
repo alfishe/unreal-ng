@@ -413,7 +413,7 @@ void Memory::AllocateAndExportMemoryToMmap()
 #else
     // Unix/Linux/macOS implementation
     // Create a shared memory name
-    std::string shmName = "/zxspectrum";
+    std::string shmName = "/zxspectrum_memory-" + std::to_string(getpid());
 
     // Try to clean up any existing shared memory with this name
     shm_unlink(shmName.c_str());
