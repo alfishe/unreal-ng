@@ -1,0 +1,10 @@
+
+# Core Dependencies
+psutil>=5.9.0  # Used for process management and system monitoring in monitor_mmap_file.py and monitor_mmap_shm.py
+
+# Image Processing
+Pillow>=9.0.0  # Used in dump_shared_memory.py for screen extraction and image processing
+
+# Platform-Specific Dependencies
+pywin32>=305; sys_platform == 'win32'  # Windows-specific functionality for shared memory access
+posix_ipc>=1.0.5; sys_platform != 'win32'  # POSIX shared memory operations for macOS/Linux
