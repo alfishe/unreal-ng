@@ -274,7 +274,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
 
     /// endregion </Update counters>
 
-    // Raise flag that video memory was changed
+    // Raise a flag that video memory was changed
     if (addr >= 0x4000 && addr <= 0x5B00)
     {
         _state->video_memory_changed = true;
