@@ -103,14 +103,14 @@ void AutomationCLI::stop()
     }
 
     // Close all active client connections to unblock any threads waiting on recv()
-    std::vector<int> clientSocketsCopy;
+    std::vector<SOCKET> clientSocketsCopy;
     {
         std::lock_guard<std::mutex> lock(_clientSocketsMutex);
         clientSocketsCopy = _activeClientSockets;
         _activeClientSockets.clear();
     }
 
-    for (int clientSocket : clientSocketsCopy)
+    for (SOCKET clientSocket : clientSocketsCopy)
     {
         if (clientSocket != INVALID_SOCKET)
         {
