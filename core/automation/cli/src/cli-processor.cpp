@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "platform_sockets.h"
+#include "platform-sockets.h"
 
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const

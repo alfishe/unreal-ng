@@ -3,9 +3,30 @@
 // Platform-specific socket implementation
 #ifdef _WIN32
 // Windows socket headers
+#ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <io.h>
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
+
+// Platform-specific defines
+#define SOCKET_CLOSE_GRACEFUL 1
+#define SOCKET_ERROR_AGAIN WSAEWOULDBLOCK
+
+#ifndef _WIN32
+// Platform-specific defines for non-Windows
+#define SOCKET_ERROR_AGAIN EAGAIN
+#endif
+
+// Ensure FIONBIO is defined
+#ifndef FIONBIO
+    #define FIONBIO 0x8004667E  // Standard FIONBIO value for Windows
+#endif
 
 // Define UNIX-like constants and types for Windows
 #define SOCK_NONBLOCK 0
@@ -37,6 +58,17 @@ inline void cleanupSockets()
     WSACleanup();
 }
 
+// Close socket safely (Windows implementation)
+inline void closeSocket(SOCKET& sock)
+{
+    if (sock != INVALID_SOCKET)
+    {
+        shutdown(sock, SD_BOTH);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+    }
+}
+
 // Windows-specific socket error handling
 inline int getLastSocketError()
 {
@@ -46,7 +78,10 @@ inline int getLastSocketError()
 // Set socket to non-blocking mode (Windows implementation)
 inline bool setSocketNonBlocking(SOCKET sock)
 {
-    u_long mode = 1;
+    if (sock == INVALID_SOCKET) {
+        return false;
+    }
+    u_long mode = 1;  // 1 to enable non-blocking mode
     return ioctlsocket(sock, FIONBIO, &mode) == 0;
 }
 }  // namespace win_sockets
@@ -74,7 +109,18 @@ inline bool initializeSockets()
 
 inline void cleanupSockets()
 {
-    // No cleanup needed for UNIX sockets
+    // No cleanup needed for UNIX
+}
+
+// Close socket safely (UNIX implementation)
+inline void closeSocket(SOCKET& sock)
+{
+    if (sock != INVALID_SOCKET)
+    {
+        shutdown(sock, SHUT_RDWR);
+        close(sock);
+        sock = INVALID_SOCKET;
+    }
 }
 
 // UNIX-specific socket error handling
@@ -95,6 +141,17 @@ inline bool setSocketNonBlocking(SOCKET sock)
 #endif
 
 // Platform-agnostic interface
+
+// Close socket safely (platform-agnostic)
+inline void closeSocket(SOCKET& sock)
+{
+#ifdef _WIN32
+    win_sockets::closeSocket(sock);
+#else
+    unix_sockets::closeSocket(sock);
+#endif
+}
+
 #ifdef _WIN32
 // Use Windows implementations
 inline int close(SOCKET s)

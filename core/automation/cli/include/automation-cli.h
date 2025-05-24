@@ -8,7 +8,7 @@
 #include <functional>
 #include <unordered_map>
 #include <vector>
-#include "platform_sockets.h"
+#include "platform-sockets.h"
 #include <emulator/emulator.h>
 #include "cli-processor.h"
 #include "../lib/cli11/CLI11.hpp"
@@ -39,19 +39,16 @@ private:
     // CLI processor for handling commands
     std::unique_ptr<CLIProcessor> createProcessor();
     
-    // Send a command prompt to the client
-    void sendPrompt(SOCKET clientSocket, const std::string& reason = "");
+    // Send a response to a client, with optional prompt
+    // If prompt is true, adds a '> ' prefix and optional reason in parentheses
+    void SendResponse(SOCKET clientSocket, const std::string& message, bool prompt = false, const std::string& reason = "") const;
 
     // CLI11 app instance
     CLI::App _cliApp;
 
 private:
     // Platform-specific newline sequence
-#ifdef _WIN32
     static constexpr const char* NEWLINE = "\r\n";
-#else
-    static constexpr const char* NEWLINE = "\n";
-#endif
 
     std::shared_ptr<Emulator> _emulator;
     std::unique_ptr<std::thread> _thread;

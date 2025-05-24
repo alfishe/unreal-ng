@@ -7,7 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "platform_sockets.h"
+#include "platform-sockets.h"
 
 /**
  * @brief Session context for a client connection
@@ -45,12 +45,8 @@ private:
 class CLIProcessor
 {
 public:
-    // Platform-specific newline constant
-    #ifdef _WIN32
+    // Newline constant (using CRLF for all platforms)
         static constexpr const char* NEWLINE = "\r\n";
-    #else
-        static constexpr const char* NEWLINE = "\n";
-    #endif
     // Define a member function pointer type for command handlers
     using CommandHandler = void (CLIProcessor::*)(const ClientSession&, const std::vector<std::string>&);
 

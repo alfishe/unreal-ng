@@ -126,18 +126,32 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     /// endregion </Debug>
 }
 
+void MainWindow::cleanupAutomation()
+{
+#ifdef ENABLE_AUTOMATION
+    if (_automation)
+    {
+        _automation->stop();
+        _automation.reset();
+        qDebug() << "Automation cleanup complete";
+    }
+#endif
+}
+
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
+    
+    // Clean up automation resources first
+    cleanupAutomation();
 
     // Deinit audio subsystem
     if (_soundManager)
     {
         _soundManager->deinit();
         delete _soundManager;
+        _soundManager = nullptr;
     }
-
-    // Automation system is already stopped in closeEvent
 
     if (debuggerWindow != nullptr)
     {
@@ -175,18 +189,11 @@ void MainWindow::showEvent(QShowEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    // Clean up automation resources
+    cleanupAutomation();
+
     event->accept();
     qDebug() << "QCloseEvent : Closing application";
-
-    // Stop automation system (including CLI server) first to ensure graceful shutdown
-#ifdef ENABLE_AUTOMATION
-    qDebug() << "QCloseEvent : Stopping automation system";
-    if (_automation)
-    {
-        _automation->stop();
-        _automation.reset();
-    }
-#endif
 
     // Stop emulator
     if (_emulator)

@@ -89,6 +89,9 @@ private:
     // Save the last directory path to settings
     void saveLastDirectory(const QString& path);
     
+    // Clean up automation resources
+    void cleanupAutomation();
+    
     // Platform-specific initialization methods
     void initializePlatformMacOS();
     void initializePlatformWindows();
