@@ -20,6 +20,8 @@ from typing import Optional, Dict, List, Tuple, BinaryIO
 
 # Import platform-specific modules
 IS_WINDOWS = platform.system() == 'Windows'
+IS_MACOS = platform.system() == 'Darwin'
+IS_LINUX = platform.system() == 'Linux'
 if IS_WINDOWS:
     import win32con
     import win32api
@@ -157,13 +159,13 @@ def _connect_to_shared_memory_windows(pid: int):
             shm.close()
         return None
 
-def _connect_to_shared_memory_unix(pid: int):
-    """Connect to the emulator's shared memory on Unix/Linux/macOS."""
+def _connect_to_shared_memory_macos(pid: int):
+    """Connect to the emulator's shared memory on macOS."""
     try:
         import posix_ipc
         
         shm_name = f"/zxspectrum_memory-{pid}"
-        print(f"Connecting to Unix shared memory: {shm_name}")
+        print(f"Connecting to macOS shared memory: {shm_name}")
         
         try:
             # Try to open the shared memory
@@ -211,6 +213,60 @@ def _connect_to_shared_memory_unix(pid: int):
     
     return None
 
+def _connect_to_shared_memory_linux(pid):
+    """Connect to the emulator's shared memory on Linux."""
+    try:
+        import posix_ipc
+
+        shm_name = f"/zxspectrum_memory-{pid}"
+        print(f"Connecting to Linux shared memory: {shm_name}")
+
+        try:
+            # Try to open the shared memory
+            shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
+
+            # Get the size of the shared memory
+            try:
+                size = shm.size
+                print(f"Shared memory size: {size} bytes")
+
+                # Memory map the shared memory object
+                mapped_memory = mmap.mmap(
+                    fileno=shm.fd,
+                    length=shm.size,
+                    access=mmap.ACCESS_READ,
+                    flags=mmap.MAP_SHARED,
+                    offset=0
+                )
+
+                # Close the shared memory object as we don't need it anymore
+                # The file descriptor is now owned by the mmap object
+                shm.close_fd()
+
+                return mapped_memory
+
+            except Exception as e:
+                print(f"Failed to map shared memory: {e}")
+                shm.close_fd()
+                return None
+
+        except posix_ipc.ExistentialError:
+            print(f"Shared memory not found: {shm_name}")
+            print("Make sure the emulator is running with shared memory enabled.")
+            return None
+
+    except ImportError:
+        print("Error: The 'posix_ipc' module is required for shared memory access.")
+        print("Install it with: pip install posix_ipc")
+        return None
+    except Exception as e:
+        print(f"Error accessing shared memory: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+    return None
+
 def connect_to_shared_memory(pid: int):
     """Connect to the emulator's shared memory.
     
@@ -222,8 +278,10 @@ def connect_to_shared_memory(pid: int):
     """
     if IS_WINDOWS:
         return _connect_to_shared_memory_windows(pid)
-    else:
-        return _connect_to_shared_memory_unix(pid)
+    elif IS_MACOS:
+        return _connect_to_shared_memory_macos(pid)
+    elif IS_LINUX:
+        return _connect_to_shared_memory_linux(pid)
 
 def get_shared_memory_size(shm_handle) -> int:
     """Get the size of the shared memory segment.
