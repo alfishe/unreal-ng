@@ -48,7 +48,12 @@ if (NOT DEFINED QT_INSTALL_PATH)
             "$ENV{QTDIR}"
         )
     elseif (UNIX AND NOT APPLE)  # Linux
-        set(QT_INSTALL_PATH "$ENV{HOME}/Qt/6.5.0/gcc_64")
+        list(APPEND QT_INSTALL_PATH
+            "$ENV{HOME}/Qt/6.5.0/gcc_64"
+            "$ENV{HOME}/Qt/6.5.3/gcc_64"
+            "$ENV{HOME}/Qt/6.9.0/gcc_64"
+            "$ENV{QTDIR}"
+        )
     elseif (WIN32)  # Windows
         set(QT_INSTALL_PATH "C:/Qt/6.5.0/msvc2019_64")
     endif ()
