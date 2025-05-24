@@ -10,9 +10,24 @@ import sys
 import time
 import psutil
 import mmap
-import posix_ipc
+import os
+import platform
 from pathlib import Path
 from typing import Optional, Dict, Set, Tuple, Callable, Any
+
+# Import platform-specific modules
+IS_WINDOWS = platform.system() == 'Windows'
+IS_MACOS = platform.system() == 'Darwin'
+IS_LINUX = platform.system() == 'Linux'
+
+if IS_WINDOWS:
+    import win32con
+    import win32api
+    import win32file
+    import win32security
+    import pywintypes
+else:
+    import posix_ipc
 
 # Debug mode flag - set to True to enable detailed debug output
 DEBUG_MODE = False
@@ -106,59 +121,276 @@ def get_page_info(page_num: int) -> Tuple[str, int]:
     rel_page = page_num - region.start_page
     return region.name, rel_page
 
-def find_shared_memory() -> Optional[Tuple[str, int]]:
-    """Find the shared memory region and verify the owner PID."""
-    try:
-        import subprocess
-        import re
+def find_emulator_process() -> Optional[int]:
+    """Find a running emulator process and return its PID.
+    
+    Searches for processes with names 'unreal-ng' or 'unreal-qt' across all platforms.
+    
+    Returns:
+        int or None: PID of the emulator process if found, None otherwise
+    """
+    # Define the target process names to look for
+    target_names = ['unreal-ng', 'unreal-qt']
+    
+    if IS_WINDOWS:
+        # Windows: Look for exact executable names with .exe extension
+        windows_targets = [name + '.exe' for name in target_names] + target_names
         
-        # First, find all emulator processes
-        emulator_processes = []
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        for proc in psutil.process_iter(['pid', 'exe', 'name']):
             try:
-                cmdline = ' '.join(proc.info['cmdline'] or [])
-                if 'unreal-ng' in cmdline:
-                    emulator_processes.append({
-                        'pid': proc.info['pid'],
-                        'cmdline': cmdline
-                    })
+                # Check executable name
+                if proc.info.get('exe'):
+                    exe_name = os.path.basename(proc.info['exe'])
+                    if exe_name in windows_targets:
+                        return proc.info['pid']
+                        
+                # Fallback to process name
+                if proc.info.get('name') and proc.info['name'] in windows_targets:
+                    return proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
+    else:
+        # Unix/Linux/macOS: Check executable names and command line
+        for proc in psutil.process_iter(['pid', 'exe', 'name', 'cmdline']):
+            try:
+                # Check executable name
+                if proc.info.get('exe'):
+                    exe_name = os.path.basename(proc.info['exe'])
+                    if exe_name in target_names:
+                        return proc.info['pid']
+                        
+                # Check process name
+                if proc.info.get('name') and proc.info['name'] in target_names:
+                    return proc.info['pid']
+                    
+                # Check command line for exact matches
+                if proc.info.get('cmdline'):
+                    for cmd in proc.info['cmdline']:
+                        # Check for exact name or path ending with the name
+                        for name in target_names:
+                            if cmd == name or cmd.endswith('/' + name):
+                                return proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    
+    return None
+
+def _connect_to_shared_memory_windows(pid: int):
+    """Connect to the emulator's shared memory on Windows."""
+    shm_name = f"Local\\zxspectrum_memory{pid}"
+    
+    try:
+        print(f"Connecting to Windows shared memory: {shm_name}")
         
-        if not emulator_processes:
-            print("No running emulator process found. Please start the emulator first.")
+        # Calculate the expected size based on memory regions
+        MAP_SIZE = (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE
+        
+        try:
+            # First check if the shared memory exists using Windows API
+            import ctypes
+            from ctypes.wintypes import HANDLE, DWORD, LPCWSTR, BOOL
+            
+            # Define Windows API constants
+            FILE_MAP_READ = 0x0004
+            
+            # Get handle to kernel32.dll
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            
+            # Define function prototypes
+            kernel32.OpenFileMappingW.argtypes = [DWORD, BOOL, LPCWSTR]
+            kernel32.OpenFileMappingW.restype = HANDLE
+            kernel32.CloseHandle.argtypes = [HANDLE]
+            kernel32.CloseHandle.restype = BOOL
+            
+            # Try to open the file mapping
+            handle = kernel32.OpenFileMappingW(FILE_MAP_READ, False, shm_name)
+            
+            if not handle:
+                error_code = ctypes.get_last_error()
+                if error_code == 2:  # ERROR_FILE_NOT_FOUND
+                    print("The shared memory does not exist. Is the emulator running with shared memory enabled?")
+                    return None
+                elif error_code == 5:  # ERROR_ACCESS_DENIED
+                    print("Access denied. Try running this script as Administrator.")
+                    return None
+                else:
+                    print(f"Windows error: {error_code}")
+                    return None
+            
+            # Close the handle as we'll use mmap instead
+            kernel32.CloseHandle(handle)
+            
+            # Now open the shared memory with mmap
+            shm = mmap.mmap(-1, MAP_SIZE, tagname=shm_name, access=mmap.ACCESS_READ)
+            
+            # Reset the position after any checks
+            shm.seek(0)
+            
+            print(f"Successfully connected to shared memory ({MAP_SIZE} bytes)")
+            return shm
+            
+        except WindowsError as we:
+            if we.winerror == 2:  # File not found
+                print("The shared memory does not exist. Is the emulator running with shared memory enabled?")
+            elif we.winerror == 5:  # Access denied
+                print("Access denied. Try running this script as Administrator.")
+            else:
+                print(f"Windows error: {we}")
             return None
             
-        print(f"Found emulator processes: {[p['pid'] for p in emulator_processes]}")
+    except Exception as e:
+        print(f"Error accessing shared memory: {e}")
+        if 'shm' in locals() and shm and not shm.closed:
+            shm.close()
+        return None
+
+def _connect_to_shared_memory_macos(pid: int):
+    """Connect to the emulator's shared memory on macOS."""
+    try:
+        import posix_ipc
         
-        # Try to connect to shared memory
-        shm_name = "/zxspectrum"
+        shm_name = f"/zxspectrum_memory-{pid}"
+        print(f"Connecting to macOS shared memory: {shm_name}")
         
         try:
             # Try to open the shared memory
             shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
             
-            # If we successfully opened the shared memory, use the first process ID
-            pid = emulator_processes[0]['pid']
-            print(f"Successfully connected to shared memory: {shm_name}, using PID={pid}")
-            
-            # Close the file descriptor - we'll reopen it in the monitor function
-            shm.close_fd()
-            
-            return shm_name, pid
-            
+            # Get the size of the shared memory
+            try:
+                size = shm.size
+                print(f"Shared memory size: {size} bytes")
+
+                # Memory map the shared memory object
+                mapped_memory = mmap.mmap(
+                    fileno=shm.fd,
+                    length=shm.size,
+                    access=mmap.ACCESS_READ,
+                    flags=mmap.MAP_SHARED,
+                    offset=0
+                )
+
+                # Close the shared memory object as we don't need it anymore
+                # The file descriptor is now owned by the mmap object
+                shm.close_fd()
+                
+                return mapped_memory
+                
+            except Exception as e:
+                print(f"Failed to map shared memory: {e}")
+                shm.close_fd()
+                return None
+                
         except posix_ipc.ExistentialError:
             print(f"Shared memory not found: {shm_name}")
             print("Make sure the emulator is running with shared memory enabled.")
-            return None
-        except Exception as e:
-            print(f"Error accessing shared memory: {e}")
             return None
             
     except ImportError:
         print("Error: The 'posix_ipc' module is required for shared memory access.")
         print("Install it with: pip install posix_ipc")
         return None
+    except Exception as e:
+        print(f"Error accessing shared memory: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+    
+    return None
+
+def _connect_to_shared_memory_linux(pid):
+    """Connect to the emulator's shared memory on Linux."""
+    try:
+        import posix_ipc
+
+        shm_name = f"/dev/shm/zxspectrum_memory-{pid}"
+        print(f"Connecting to Linux shared memory: {shm_name}")
+
+        try:
+            # Try to open the shared memory
+            shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
+
+            # Get the size of the shared memory
+            try:
+                size = shm.size
+                print(f"Shared memory size: {size} bytes")
+
+                # Memory map the shared memory object
+                mapped_memory = mmap.mmap(
+                    fileno=shm.fd,
+                    length=shm.size,
+                    access=mmap.ACCESS_READ,
+                    flags=mmap.MAP_SHARED,
+                    offset=0
+                )
+
+                # Close the shared memory object as we don't need it anymore
+                # The file descriptor is now owned by the mmap object
+                shm.close_fd()
+
+                return mapped_memory
+
+            except Exception as e:
+                print(f"Failed to map shared memory: {e}")
+                shm.close_fd()
+                return None
+
+        except posix_ipc.ExistentialError:
+            print(f"Shared memory not found: {shm_name}")
+            print("Make sure the emulator is running with shared memory enabled.")
+            return None
+
+    except ImportError:
+        print("Error: The 'posix_ipc' module is required for shared memory access.")
+        print("Install it with: pip install posix_ipc")
+        return None
+    except Exception as e:
+        print(f"Error accessing shared memory: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+    return None
+
+def connect_to_shared_memory(pid: int):
+    """Connect to the emulator's shared memory.
+    
+    Args:
+        pid: Process ID of the emulator
+        
+    Returns:
+        mmap.mmap object if successful, None otherwise
+    """
+    if IS_WINDOWS:
+        return _connect_to_shared_memory_windows(pid)
+    elif IS_MACOS:
+        return _connect_to_shared_memory_macos(pid)
+    elif IS_LINUX:
+        return _connect_to_shared_memory_linux(pid)
+
+def find_shared_memory() -> Optional[Tuple[int, mmap.mmap]]:
+    """Find the shared memory region and verify the owner PID.
+    
+    Returns:
+        Tuple of (pid, mmap object) if successful, None otherwise
+    """
+    try:
+        # Find emulator process
+        pid = find_emulator_process()
+        if not pid:
+            print("No running emulator process found. Please start the emulator first.")
+            return None
+            
+        print(f"Found emulator process with PID: {pid}")
+        
+        # Connect to shared memory
+        shm = connect_to_shared_memory(pid)
+        if not shm:
+            print("Failed to connect to shared memory.")
+            return None
+            
+        return pid, shm
+            
     except Exception as e:
         print(f"Error finding shared memory: {e}")
         import traceback
@@ -193,7 +425,7 @@ def get_page_display_name(page_num: int) -> str:
     region, rel_page = get_page_info(page_num)
     return f"{region}{rel_page:3d} (0x{page_num * PAGE_SIZE:06x})"
 
-def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02):  # 50Hz = 20ms
+def monitor_shared_memory(pid: int, shm: mmap.mmap, update_interval: float = 0.02):  # 50Hz = 20ms
     """Monitor the shared memory region for changes with a clean, updating display."""
     global prev_pages
     
@@ -240,7 +472,8 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
     
     def print_header():
         """Print the header section on line 1."""
-        print_at_line(1, f"Monitoring {shm_name} (PID: {pid})", clear=True)
+        shm_type = "Windows" if IS_WINDOWS else "macOS" if IS_MACOS else "Linux" if IS_LINUX else "Unknown"
+        print_at_line(1, f"Monitoring {shm_type} shared memory (PID: {pid})", clear=True)
     
     def print_time():
         """Print the current time on line 2."""
@@ -277,32 +510,14 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
     last_memory_check = 0
     initial_scan = True  # Flag to track initial scan
     
-    shm = None
     try:
-        # Try to open the shared memory
-        try:
-            print(f"Attempting to connect to shared memory: '{shm_name}'")
-            shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
-            print(f"Connected to shared memory '{shm_name}' (size: {shm.size} bytes)")
-            
-            # Print memory region information (only in debug mode)
-            if DEBUG_MODE:
-                print("\nMemory Regions:")
-                for region in MEMORY_REGIONS:
-                    region_size = (region.end_page - region.start_page + 1) * PAGE_SIZE
-                    print(f"  {region.name}: pages {region.start_page}-{region.end_page} (0x{region.start_page*PAGE_SIZE:06x}-0x{(region.end_page+1)*PAGE_SIZE-1:06x}, {region_size} bytes)")
-                print(f"\nTotal expected memory: {(MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE} bytes")
-            
-        except posix_ipc.ExistentialError:
-            print(f"\n\033[91mError: Shared memory '{shm_name}' not found\033[0m")
-            print("Make sure the emulator is running with shared memory enabled.")
-            print("Check if the emulator was started with the correct shared memory settings.")
-            return
-        except Exception as e:
-            print(f"\n\033[91mError opening shared memory: {e}\033[0m")
-            import traceback
-            traceback.print_exc()
-            return
+        # Print memory region information (only in debug mode)
+        if DEBUG_MODE:
+            print("\nMemory Regions:")
+            for region in MEMORY_REGIONS:
+                region_size = (region.end_page - region.start_page + 1) * PAGE_SIZE
+                print(f"  {region.name}: pages {region.start_page}-{region.end_page} (0x{region.start_page*PAGE_SIZE:06x}-0x{(region.end_page+1)*PAGE_SIZE-1:06x}, {region_size} bytes)")
+            print(f"\nTotal expected memory: {(MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE} bytes")
         
         while True:
             current_time = time.time()
@@ -323,12 +538,11 @@ def monitor_shared_memory(shm_name: str, pid: int, update_interval: float = 0.02
                 
                 # Read current memory state from shared memory
                 try:
-                    # Map the shared memory and read its content
+                    # Read the shared memory content
                     try:
-                        # Map and read shared memory
-                        mm = mmap.mmap(shm.fd, shm.size, mmap.MAP_SHARED, mmap.PROT_READ)
-                        current_data = mm.read()
-                        mm.close()
+                        # Read from the already mapped memory
+                        shm.seek(0)  # Reset position to start
+                        current_data = shm.read()
                         
                         # Clean monitoring area and reset on first successful scan
                         if initial_scan:
@@ -473,8 +687,8 @@ def main():
     if result is None:
         return 1
         
-    shm_name, pid = result
-    monitor_shared_memory(shm_name, pid)
+    pid, shm = result
+    monitor_shared_memory(pid, shm)
     return 0
 
 if __name__ == "__main__":
