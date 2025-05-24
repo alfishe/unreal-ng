@@ -362,8 +362,8 @@ void Memory::AllocateAndExportMemoryToMmap()
 #ifdef USE_SHAREDMEM_MAPPING
 #ifdef _WIN32
     // Windows implementation using named shared memory
-    std::string shmName = "Local\\ZXSpectrumMemory";
-    
+    std::string shmName = "Local\\zxspectrum_memory" + std::to_string(GetCurrentProcessId());
+
     // Clean up any existing mapping with the same name
     if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
     {
@@ -698,7 +698,8 @@ void Memory::SyncToDisk()
         {
             LOGWARNING("Windows: FlushViewOfFile failed: " + std::to_string(GetLastError()));
         }
-        LOGINFO("Windows: FlushViewOfFile called.");
+
+        MLOGDEBUG("Windows: FlushViewOfFile called.");
     }
 #else
 #endif
