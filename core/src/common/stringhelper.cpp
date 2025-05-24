@@ -266,3 +266,22 @@ std::string StringHelper::FormatWithThousandsDelimiter(int64_t n)
 
     return result;
 }
+
+std::string StringHelper::FormatWithCustomThousandsDelimiter(int64_t n, char delimiter)
+{
+    // Create a custom locale with the specified thousands separator
+    struct CustomDelimiterPunct : std::numpunct<char> 
+    {
+        char m_delimiter;
+        CustomDelimiterPunct(char delim) : m_delimiter(delim) {}
+        char do_thousands_sep() const override { return m_delimiter; }
+        std::string do_grouping() const override { return "\03"; }
+    };
+
+    std::stringstream ss;
+    ss.imbue(std::locale(std::locale::classic(), new CustomDelimiterPunct(delimiter)));
+    ss << n;
+
+    std::string result = ss.str();
+    return result;
+}

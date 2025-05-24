@@ -74,6 +74,7 @@ public:
     }
 
     static std::string FormatWithThousandsDelimiter(int64_t n);
+    static std::string FormatWithCustomThousandsDelimiter(int64_t n, char delimiter = ',');
 
     /// Format any integer number to bit quads
     /// int8  => b'0110'1111
