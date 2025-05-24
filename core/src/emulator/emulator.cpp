@@ -395,6 +395,14 @@ void Emulator::ReleaseNoGuard()
 void Emulator::GetSystemInfo()
 {
 	HOST& host = _context->host;
+    
+    // Initialize host structure members
+    memset(host.cpu_model, 0, sizeof(host.cpu_model));
+    host.mmx = 0;
+    host.sse = 0;
+    host.sse2 = 0;
+    host.cpufq = 0;
+    host.ticks_frame = 0;
 
 #if defined(__x86__) || defined(__x86_64__)
     char cpuString[49];

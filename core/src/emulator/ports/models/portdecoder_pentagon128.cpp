@@ -13,6 +13,17 @@
 PortDecoder_Pentagon128::PortDecoder_Pentagon128(EmulatorContext* context) : PortDecoder(context)
 {
     _7FFD_Locked = false;
+    
+    // Initialize screen pointer from context
+    if (_context != nullptr)
+    {
+        _screen = _context->pScreen;
+    }
+    else
+    {
+        // If context is null, we can't initialize screen
+        _screen = nullptr;
+    }
 }
 
 PortDecoder_Pentagon128::~PortDecoder_Pentagon128()
@@ -333,10 +344,14 @@ void PortDecoder_Pentagon128::Port_7FFD_Out(uint16_t port, uint8_t value, uint16
 
     // Detect if screen switch requested. Do not switch screen if state not changed
     uint8_t prevScreenNumber = (_state->p7FFD & 0b00001000) >> 3;
-    if (prevScreenNumber != screenNumber)
+    if (prevScreenNumber != screenNumber && _screen != nullptr)
     {
         SpectrumScreenEnum screen = screenNumber ? SCREEN_SHADOW : SCREEN_NORMAL;
         _screen->SetActiveScreen(screen);
+    }
+    else if (_screen == nullptr)
+    {
+        MLOGWARNING("Port_7FFD_Out: Screen pointer is null, cannot switch screen");
     }
 
     // Cache out port value in state

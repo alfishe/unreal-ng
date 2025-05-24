@@ -43,6 +43,13 @@ Screen::Screen(EmulatorContext* context)
     _memory = _context->pMemory;
     _logger = _context->pModuleLogger;
 
+    _borderColor = 0;
+    _mode = M_ZX48;
+    _nullCallback = nullptr;
+    _drawCallback = nullptr;
+    _borderCallback = nullptr;
+    _currentDrawCallback = nullptr;
+    _prevTstate = 0;
 
     // Set Normal screen (Bank 5) mode by default
     _activeScreen = 0;
