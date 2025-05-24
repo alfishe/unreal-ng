@@ -107,8 +107,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 #endif
 
 #ifdef ENABLE_AUTOMATION
-    if (_automation)
-        _automation->start();
+
+    // Delay automation modules start, so the main thread is not blocked, and automation is fully initialized
+    // Otherwise race conditions
+    // TODO: implement proper waiting until automation is fully initialized
+    QTimer::singleShot(300, this, [this]()
+    {
+        if (_automation)
+        {
+            _automation->start();
+        }
+    });
+
 #endif
 
     /// region <Debug>
