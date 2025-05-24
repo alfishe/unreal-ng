@@ -11,12 +11,21 @@ import sys
 import time
 import argparse
 import psutil
-import posix_ipc
 import mmap
 import hashlib
 import subprocess
+import platform
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, BinaryIO
+
+# Import platform-specific modules
+IS_WINDOWS = platform.system() == 'Windows'
+if IS_WINDOWS:
+    import win32con
+    import win32api
+    import pywintypes
+else:
+    import posix_ipc
 
 # Import PIL for image processing
 try:
@@ -25,7 +34,247 @@ except ImportError:
     print("Warning: PIL/Pillow not installed. Screen extraction will be disabled.")
     print("Install with: pip install pillow")
 
-# Memory layout constants (must match emulator)
+def find_emulator_process() -> Optional[int]:
+    """Find a running emulator process and return its PID.
+    
+    Searches for processes with names 'unreal-ng' or 'unreal-qt' across all platforms.
+    
+    Returns:
+        int or None: PID of the emulator process if found, None otherwise
+    """
+    # Define the target process names to look for
+    target_names = ['unreal-ng', 'unreal-qt']
+    
+    if IS_WINDOWS:
+        # Windows: Look for exact executable names with .exe extension
+        windows_targets = [name + '.exe' for name in target_names] + target_names
+        
+        for proc in psutil.process_iter(['pid', 'exe', 'name']):
+            try:
+                # Check executable name
+                if proc.info.get('exe'):
+                    exe_name = os.path.basename(proc.info['exe'])
+                    if exe_name in windows_targets:
+                        return proc.info['pid']
+                        
+                # Fallback to process name
+                if proc.info.get('name') and proc.info['name'] in windows_targets:
+                    return proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    else:
+        # Unix/Linux/macOS: Check executable names and command line
+        for proc in psutil.process_iter(['pid', 'exe', 'name', 'cmdline']):
+            try:
+                # Check executable name
+                if proc.info.get('exe'):
+                    exe_name = os.path.basename(proc.info['exe'])
+                    if exe_name in target_names:
+                        return proc.info['pid']
+                        
+                # Check process name
+                if proc.info.get('name') and proc.info['name'] in target_names:
+                    return proc.info['pid']
+                    
+                # Check command line for exact matches
+                if proc.info.get('cmdline'):
+                    for cmd in proc.info['cmdline']:
+                        # Check for exact name or path ending with the name
+                        for name in target_names:
+                            if cmd == name or cmd.endswith('/' + name):
+                                return proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+                
+    return None
+
+def _connect_to_shared_memory_windows(pid: int):
+    """Connect to the emulator's shared memory on Windows."""
+    shm_name = f"Local\\zxspectrum_memory{pid}"
+    
+    try:
+        print(f"Connecting to Windows shared memory: {shm_name}")
+        
+        # Calculate the expected size based on memory regions
+        MAP_SIZE = (MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES + MAX_ROM_PAGES) * PAGE_SIZE
+        
+        try:
+            # First check if the shared memory exists using Windows API
+            import ctypes
+            from ctypes.wintypes import HANDLE, DWORD, LPCWSTR, BOOL
+            
+            # Define Windows API constants
+            FILE_MAP_READ = 0x0004
+            
+            # Get handle to kernel32.dll
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            
+            # Define function prototypes
+            kernel32.OpenFileMappingW.argtypes = [DWORD, BOOL, LPCWSTR]
+            kernel32.OpenFileMappingW.restype = HANDLE
+            kernel32.CloseHandle.argtypes = [HANDLE]
+            kernel32.CloseHandle.restype = BOOL
+            
+            # Try to open the file mapping
+            handle = kernel32.OpenFileMappingW(FILE_MAP_READ, False, shm_name)
+            
+            if not handle:
+                error_code = ctypes.get_last_error()
+                if error_code == 2:  # ERROR_FILE_NOT_FOUND
+                    print("The shared memory does not exist. Is the emulator running with shared memory enabled?")
+                    return None
+                elif error_code == 5:  # ERROR_ACCESS_DENIED
+                    print("Access denied. Try running this script as Administrator.")
+                    return None
+                else:
+                    print(f"Windows error: {error_code}")
+                    return None
+            
+            # Close the handle as we'll use mmap instead
+            kernel32.CloseHandle(handle)
+            
+            # Now open the shared memory with mmap
+            shm = mmap.mmap(-1, MAP_SIZE, tagname=shm_name, access=mmap.ACCESS_READ)
+            
+            # Reset the position after any checks
+            shm.seek(0)
+            
+            print(f"Successfully connected to shared memory ({MAP_SIZE} bytes)")
+            return shm
+            
+        except WindowsError as we:
+            if we.winerror == 2:  # File not found
+                print("The shared memory does not exist. Is the emulator running with shared memory enabled?")
+            elif we.winerror == 5:  # Access denied
+                print("Access denied. Try running this script as Administrator.")
+            else:
+                print(f"Windows error: {we}")
+            return None
+            
+    except Exception as e:
+        print(f"Error accessing shared memory: {e}")
+        if 'shm' in locals() and shm and not shm.closed:
+            shm.close()
+        return None
+
+def _connect_to_shared_memory_unix(pid: int):
+    """Connect to the emulator's shared memory on Unix/Linux/macOS."""
+    shm_name = f"/zxspectrum_memory{pid}"
+    try:
+        print(f"Connecting to Unix shared memory: {shm_name}")
+        shm_fd = os.open(shm_name, os.O_RDONLY)
+        
+        # Get the actual size using fstat
+        file_info = os.fstat(shm_fd)
+        actual_size = file_info.st_size
+        
+        if actual_size != TOTAL_SIZE:
+            print(f"Warning: Expected shared memory size {TOTAL_SIZE} bytes, got {actual_size} bytes")
+        
+        shm = mmap.mmap(shm_fd, actual_size, mmap.MAP_SHARED, mmap.PROT_READ)
+        os.close(shm_fd)  # We can close the file descriptor after mmap
+        print(f"Successfully connected to shared memory ({actual_size} bytes)")
+        return shm
+        
+    except FileNotFoundError:
+        print(f"Shared memory not found: {shm_name}. Is the emulator running with shared memory enabled?")
+    except Exception as e:
+        print(f"Error accessing shared memory: {e}")
+    return None
+
+def connect_to_shared_memory(pid: int):
+    """Connect to the emulator's shared memory.
+    
+    Args:
+        pid: Process ID of the emulator
+        
+    Returns:
+        mmap.mmap object if successful, None otherwise
+    """
+    if IS_WINDOWS:
+        return _connect_to_shared_memory_windows(pid)
+    else:
+        return _connect_to_shared_memory_unix(pid)
+
+def get_shared_memory_size(shm_handle) -> int:
+    """Get the size of the shared memory segment.
+    
+    Args:
+        shm_handle: Open shared memory handle (mmap.mmap object on Windows, file descriptor on Unix)
+        
+    Returns:
+        int: Size of the shared memory segment in bytes, or 0 if unable to determine
+    """
+    try:
+        if platform.system() == 'Windows':
+            # On Windows, we can use the size of the memory-mapped file
+            import msvcrt
+            import os
+            
+            # Get the file handle from the mmap object
+            file_handle = msvcrt.get_osfhandle(shm_handle.fileno())
+            
+            # Get file size using Windows API
+            import ctypes
+            from ctypes.wintypes import DWORD, LARGE_INTEGER
+            
+            class LARGE_INTEGER(ctypes.Structure):
+                _fields_ = [("QuadPart", ctypes.c_longlong)]
+            
+            file_size = LARGE_INTEGER()
+            ctypes.windll.kernel32.GetFileSizeEx(
+                file_handle,
+                ctypes.byref(file_size)
+            )
+            
+            return file_size.QuadPart
+            
+        else:
+            # On Unix, use fstat to get the size of the shared memory file
+            import os
+            return os.fstat(shm_handle.fileno()).st_size
+            
+    except Exception as e:
+        print(f"Warning: Could not determine shared memory size: {e}")
+        return 0
+
+
+from typing import Optional, Dict, List, Tuple, BinaryIO, NamedTuple
+
+
+class RegionStats:
+    """Class to track statistics for a memory region."""
+    def __init__(self, name: str, total_pages: int):
+        self.name = name
+        self.total_pages = total_pages
+        self.saved_pages = 0
+        self.skipped_pages = 0
+        self.empty_pages = 0
+        self.identified_roms = 0  # Track number of identified ROMs
+
+    def add_saved(self):
+        """Increment the count of saved pages."""
+        self.saved_pages += 1
+
+    def add_skipped(self, empty: bool = False):
+        """Increment the count of skipped pages.
+        
+        Args:
+            empty: If True, also increments the empty pages counter
+        """
+        self.skipped_pages += 1
+        if empty:
+            self.empty_pages += 1
+
+    def __str__(self) -> str:
+        """Return a string representation of the statistics."""
+        return (
+            f"{self.name}: {self.saved_pages} saved, "
+            f"{self.skipped_pages} skipped ({self.empty_pages} empty), "
+            f"{self.total_pages} total"
+        )
+
+
 PAGE_SIZE = 0x4000  # 16KB per page
 MAX_RAM_PAGES = 256
 MAX_CACHE_PAGES = 2
@@ -257,7 +506,7 @@ def extract_zx_spectrum_screen(data: bytes, output_path: str, verbose: bool = Fa
         return False
 
 def save_page(output_dir: str, region: MemoryRegion, page_num: int, data: bytes, 
-             skip_empty: bool = True, verbose: bool = False) -> Tuple[bool, Optional[str]]:
+             skip_empty: bool = True, verbose: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
     """Save a memory page to a file.
     
     Args:
@@ -269,35 +518,35 @@ def save_page(output_dir: str, region: MemoryRegion, page_num: int, data: bytes,
         verbose: Print verbose output
         
     Returns:
-        Tuple[bool, Optional[str]]: (success, ROM description if identified)
+        Tuple[bool, Optional[str], Optional[str]]: (success, ROM description if identified, skip reason)
     """
-    # Calculate relative page number
     rel_page = page_num - region.start_page
-    
-    # Check if page is empty
-    if skip_empty and is_page_empty(data):
-        if verbose:
-            print(f"Skipping empty page: {region.name}_{rel_page:03d}")
-        return False, None
-    
-    # For ROM pages, try to identify them
+    is_rom = region.name == "ROM"
+    is_empty = is_page_empty(data)
     rom_description = None
-    if region.name == "ROM":
-        _, rom_description = identify_rom(data)
+    
+    # Handle empty pages
+    if is_empty and skip_empty:
         if verbose:
-            if rom_description:
-                print(f"Identified ROM page {rel_page:03d} as: {rom_description}")
-            else:
-                print(f"Could not identify ROM page {rel_page:03d}")
+            print(f"Skipping empty {region.name} page: {rel_page:03d}")
+        return False, None, 'empty'  # Indicate this was an empty page skip
     
-    # Generate filename
+    # Try to identify ROMs
+    if is_rom:
+        rom_hash, rom_description = identify_rom(data)
+        if not rom_description:
+            if verbose:
+                print(f"Skipping unknown ROM page: {rel_page:03d}")
+            return False, None, 'unknown_rom'  # Indicate this was an unknown ROM skip
+        if verbose:
+            print(f"Identified ROM page {rel_page:03d} as: {rom_description}")
+    
+    # Generate filename and ensure output directory exists
     filename = get_page_filename(region.name, page_num, rel_page, rom_description)
-    
-    # Create region subdirectory
     region_dir = os.path.join(output_dir, region.name)
     os.makedirs(region_dir, exist_ok=True)
     
-    # Save the page
+    # Save the page data
     filepath = os.path.join(region_dir, filename)
     try:
         with open(filepath, 'wb') as f:
@@ -306,262 +555,203 @@ def save_page(output_dir: str, region: MemoryRegion, page_num: int, data: bytes,
             print(f"Saved {filename} ({len(data)} bytes)")
             if rom_description:
                 print(f"  ROM identified as: {rom_description}")
-        return True, rom_description
-    except IOError as e:
+        return True, rom_description, None  # Success, no skip reason
+    except Exception as e:
         print(f"Error saving {filename}: {e}", file=sys.stderr)
-        return False, None
+        return False, None, 'error'  # Indicate this was an error
 
-def find_emulator_processes() -> List[dict]:
-    """Find running emulator processes."""
-    emulator_processes = []
-    
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            # Look for the emulator process
-            if 'unreal-ng' in ' '.join(proc.info['cmdline'] or []):
-                emulator_processes.append({
-                    'pid': proc.info['pid'],
-                    'name': proc.info['name'],
-                    'cmdline': ' '.join(proc.info['cmdline'] or [])
-                })
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    
-    return emulator_processes
 
-def connect_to_shared_memory(pid: Optional[int] = None) -> Optional[Tuple[str, int]]:
-    """Connect to the shared memory segment used by the emulator.
+def cleanup_shared_memory(shm, verbose: bool = False) -> None:
+    """Safely close the shared memory handle in a cross-platform manner.
+    
+    Handles both Windows and Unix-style shared memory objects.
     
     Args:
-        pid: Optional process ID to connect to. If None, will try to find the emulator process.
-        
-    Returns:
-        Tuple of (shared_memory_name, owner_pid) or None if not found
+        shm: Shared memory object to close (mmap.mmap on Windows, posix_ipc.SharedMemory on Unix)
+        verbose: Whether to print status messages
     """
-    shm_name = "/zxspectrum"
-    
-    if pid is None:
-        # Try to find the emulator process
-        emulator_processes = find_emulator_processes()
-        if not emulator_processes:
-            print("No emulator processes found")
-            return None
+    if not shm:
+        return
         
-        # Use the first emulator process found
-        pid = emulator_processes[0]['pid']
-        print(f"Using emulator process: {pid}")
-    
     try:
-        # Try to open the shared memory
-        shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
-        print(f"Connected to shared memory: {shm_name}")
-        return shm_name, pid
-    except posix_ipc.ExistentialError:
-        print(f"Shared memory not found: {shm_name}")
-        print("Make sure the emulator is running with shared memory enabled.")
-        return None
+        if verbose:
+            print("Cleaning up shared memory resources...")
+            
+        # Handle Windows mmap object
+        if hasattr(shm, 'close') and callable(getattr(shm, 'close')):
+            if not getattr(shm, 'closed', True):
+                if verbose:
+                    print("  Closing memory map...")
+                shm.close()
+                
+        # Handle Unix shared memory file descriptor
+        if hasattr(shm, 'close_fd') and callable(getattr(shm, 'close_fd')):
+            if verbose:
+                print("  Closing shared memory file descriptor...")
+            shm.close_fd()
+            
+        # Handle Unix shared memory unlink if available
+        if hasattr(shm, 'unlink') and callable(getattr(shm, 'unlink')):
+            try:
+                if verbose:
+                    print("  Unlinking shared memory...")
+                shm.unlink()
+            except Exception as e:
+                if verbose:
+                    print(f"  Note: Could not unlink shared memory (may be already unlinked): {e}")
+                    
     except Exception as e:
-        print(f"Error accessing shared memory: {e}")
-        return None
+        print(f"Warning: Error during shared memory cleanup: {e}", file=sys.stderr)
 
-def get_shared_memory_size(shm_name: str) -> int:
-    """Get the size of the shared memory segment."""
-    try:
-        # On macOS, we can use the `ls` command to get the size of the shared memory file
-        result = subprocess.run(['ls', '-l', f'/dev/shm{shm_name}'], 
-                              capture_output=True, text=True)
-        if result.returncode == 0:
-            # Extract the size from the ls -l output
-            parts = result.stdout.strip().split()
-            if len(parts) >= 5:
-                return int(parts[4])
-    except Exception as e:
-        print(f"Warning: Could not determine shared memory size: {e}")
-    
-    return 0
 
-class RegionStats:
-    def __init__(self, name: str, total_pages: int):
-        self.name = name
-        self.total_pages = total_pages
-        self.saved_pages = 0
-        self.skipped_pages = 0
-        self.identified_roms = 0
-
-    def print_stats(self):
-        """Print statistics for this memory region."""
-        stats = f"Total:{self.total_pages:3d} Saved:{self.saved_pages:3d} Skipped:{self.skipped_pages:3d}"
-        if self.name == "ROM" and self.identified_roms > 0:
-            stats += f" ROMs:{self.identified_roms:3d}"
-        print(f"  {stats}")
-
-def dump_shared_memory(output_dir: str, skip_empty: bool = True, verbose: bool = False, extract_screens: bool = True) -> bool:
+def dump_shared_memory(output_dir: str, shm: mmap.mmap, skip_empty: bool = True, verbose: bool = False, extract_screens: bool = True) -> bool:
     """Dump all memory pages from shared memory to files.
+    
+    Note: This function does not close the shared memory handle. The caller is responsible
+    for cleaning up the shared memory after use.
     
     Args:
         output_dir: Output directory for saved pages
+        shm: Shared memory object to read from
         skip_empty: Skip saving pages that contain only zeros
         verbose: Print verbose output
+        extract_screens: Whether to extract ZX-Spectrum screens from RAM
         
     Returns:
         bool: True if successful, False otherwise
     """
+    # Initialize statistics
+    stats = {}
+    total_saved = 0
+    total_skipped = 0
+    total_pages = 0
+    
     try:
-        # Connect to shared memory
-        result = connect_to_shared_memory()
-        if not result:
-            return False
-        
-        shm_name, _ = result
-        
-        # Get shared memory size for debugging
-        shm_size = get_shared_memory_size(shm_name)
-        if shm_size > 0:
-            print(f"Shared memory size: {shm_size} bytes")
-        
-        # Open the shared memory
-        print(f"Opening shared memory: {shm_name}")
-        shm = posix_ipc.SharedMemory(shm_name, 0)  # 0 for read-only
-        
-        try:
-            # Print shared memory info
-            print(f"Shared memory opened successfully. Size: {shm.size} bytes")
+        # Initialize region stats and calculate total pages
+        for region in MEMORY_REGIONS:
+            region_pages = region.end_page - region.start_page + 1
+            stats[region.name] = RegionStats(region.name, region_pages)
+            total_pages += region_pages
             
-            # Map the shared memory
-            print("Mapping shared memory...")
-            mm = mmap.mmap(shm.fd, shm.size, mmap.MAP_SHARED, mmap.PROT_READ)
+        # Ensure output directory exists
+        ensure_output_dir(output_dir, clear=True)
+        
+        # Process each memory region
+        for region in MEMORY_REGIONS:
+            if verbose:
+                print(f"\nProcessing {region.name} region (pages {region.start_page}-{region.end_page})...")
             
-            # Ensure output directory exists
-            ensure_output_dir(output_dir, clear=True)
-            
-            # Initialize statistics
-            stats = {}
-            total_saved = 0
-            total_skipped = 0
-            total_pages = 0
-            
-            # Process each memory region
-            for region in MEMORY_REGIONS:
-                region_pages = region.end_page - region.start_page + 1
-                stats[region.name] = RegionStats(region.name, region_pages)
-                total_pages += region_pages
+            for page_num in range(region.start_page, region.end_page + 1):
+                # Calculate offset and read page data
+                offset = page_num * PAGE_SIZE
+                if offset + PAGE_SIZE > shm.size():
+                    if verbose:
+                        print(f"  Page {page_num:3d}: Offset 0x{offset:08x} out of range (max 0x{shm.size():08x})")
+                    continue
                 
-                if verbose:
-                    print(f"\nProcessing {region.name} region (pages {region.start_page}-{region.end_page})...")
+                shm.seek(offset)
+                page_data = shm.read(PAGE_SIZE)
                 
-                for page_num in range(region.start_page, region.end_page + 1):
-                    # Calculate offset and size
-                    offset = page_num * PAGE_SIZE
-                    if offset + PAGE_SIZE > mm.size():
-                        if verbose:
-                            print(f"  Page {page_num:3d}: Offset 0x{offset:08x} out of range (max 0x{mm.size():08x})")
-                        continue
+                # Save the page (handles empty pages and ROM identification)
+                success, rom_description, skip_reason = save_page(output_dir, region, page_num, page_data, skip_empty, verbose)
+                
+                # Update statistics
+                if success:
+                    stats[region.name].saved_pages += 1
+                    total_saved += 1
+                    if region.name == "ROM" and rom_description:
+                        stats[region.name].identified_roms += 1
                     
-                    # Read page data
-                    mm.seek(offset)
-                    page_data = mm.read(PAGE_SIZE)
-                    
-                    # Save the page
-                    try:
-                        success, rom_description = save_page(output_dir, region, page_num, page_data, skip_empty, verbose)
-                        if success:
-                            stats[region.name].saved_pages += 1
-                            total_saved += 1
-                            
-                            # Track identified ROMs
-                            if region.name == "ROM" and rom_description:
-                                stats[region.name].identified_roms += 1
-                        else:
-                            stats[region.name].skipped_pages += 1
-                            total_skipped += 1
-                            
-                        # Extract ZX-Spectrum screen from RAM pages 5 and 7 if they're not empty
-                        if extract_screens and region.name == "RAM" and not is_page_empty(page_data):
-                            rel_page = page_num - region.start_page
-                            if rel_page == 5 or rel_page == 7:
-                                screen_path = os.path.join(output_dir, f"screen_{rel_page:03d}.png")
-                                if extract_zx_spectrum_screen(page_data, screen_path, verbose):
-                                    print(f"Extracted ZX-Spectrum screen from RAM page {rel_page} to {screen_path}")
-                    except Exception as e:
-                        print(f"  Error processing page {page_num} (offset 0x{offset:X}): {e}")
-                        continue
+                    # Extract ZX-Spectrum screen from RAM pages 5 and 7
+                    if extract_screens and region.name == "RAM" and not is_page_empty(page_data):
+                        rel_page = page_num - region.start_page
+                        if rel_page in (5, 7):
+                            screen_path = os.path.join(output_dir, f"screen_{rel_page:03d}.png")
+                            if extract_zx_spectrum_screen(page_data, screen_path, verbose) and verbose:
+                                print(f"Extracted ZX-Spectrum screen from RAM page {rel_page} to {screen_path}")
+                else:
+                    stats[region.name].skipped_pages += 1
+                    total_skipped += 1
+                    if skip_reason == 'empty':
+                        stats[region.name].empty_pages += 1
+        
+        # Print statistics for each region
+        print("\nMemory Region Statistics:")
+        for region_name, region_stats in stats.items():
+            print(f"\n{region_name} Region:")
+            print(str(region_stats))
+        
+        # Print overall statistics
+        print("\nOverall Statistics:")
+        print(f"  Total:{total_pages:3d} Saved:{total_saved:3d} Skipped:{total_skipped:3d}")
+        
+        if verbose:
+            print("\nMemory dump completed successfully!")
             
-            # Print statistics for each region
-            print("\nMemory Region Statistics:")
-            for region_name, region_stats in stats.items():
-                print(f"\n{region_name} Region:")
-                region_stats.print_stats()
-            
-            # Print overall statistics
-            print("\nOverall Statistics:")
-            print(f"  Total:{total_pages:3d} Saved:{total_saved:3d} Skipped:{total_skipped:3d}")
-            
-            # Clean up
-            print("\nCleaning up...")
-            mm.close()
-            shm.close_fd()
-            
-            print(f"\nDump complete. Output directory: {output_dir}")
-            return True
-            
-        except Exception as e:
-            print(f"Error during memory mapping: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            return False
-            
-        finally:
-            # Always close the shared memory handle
-            if 'shm' in locals():
-                shm.close_fd()
-                
+        return True
+        
     except Exception as e:
-        print(f"Error in dump_shared_memory: {e}", file=sys.stderr)
+        print(f"\nError in dump_shared_memory: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc()
         return False
 
+
 def main() -> int:
     """Main function."""
-    parser = argparse.ArgumentParser(
-        description='Dump shared memory pages from ZX-Spectrum Emulator',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-    
-    # Optional arguments
-    parser.add_argument('-o', '--output-dir', 
-                      default='pages',
-                      help='Output directory for saved pages')
-    
-    parser.add_argument('--skip-empty-pages',
-                      action='store_true',
-                      default=True,
-                      help="Skip writing pages that contain only zeros")
-    
-    parser.add_argument('--no-skip-empty',
-                      dest='skip_empty_pages',
-                      action='store_false',
-                      help="Don't skip empty pages")
-                      
-    parser.add_argument('--no-screens',
-                      action='store_true',
-                      help="Disable screen extraction")
-                      
+    parser = argparse.ArgumentParser(description='Dump ZX-Spectrum emulator memory to files')
+    parser.add_argument('-o', '--output', default='memory_dump',
+                      help='Output directory (default: memory_dump)')
+    parser.add_argument('--no-screens', action='store_true',
+                      help='Do not extract screen images')
+    parser.add_argument('--no-skip-empty', dest='skip_empty', action='store_false',
+                      help='Do not skip empty memory pages')
+    parser.set_defaults(skip_empty=True)
     parser.add_argument('-v', '--verbose',
                       action='store_true',
-                      help="Enable verbose output")
+                      help='Enable verbose output (shows progress and details)')
     
     args = parser.parse_args()
     
-    # Dump the shared memory
-    success = dump_shared_memory(
-        output_dir=args.output_dir, 
-        skip_empty=args.skip_empty_pages, 
-        verbose=args.verbose,
-        extract_screens=not args.no_screens
-    )
+    # Find the emulator process
+    pid = find_emulator_process()
+    if not pid:
+        print("Error: Could not find the emulator process. Please make sure the emulator is running.")
+        return 1
     
-    return 0 if success else 1
+    if args.verbose:
+        print(f"Found emulator process with PID: {pid}")
+    
+    # Initialize shm to None for the finally block
+    shm = None
+    try:
+        # Connect to shared memory
+        shm = connect_to_shared_memory(pid)
+        if not shm:
+            return 1
+            
+        # Dump memory pages
+        if args.verbose:
+            print(f"\nOutput directory: {args.output}")
+            print(f"Skipping empty pages: {'Yes' if args.skip_empty else 'No'}")
+            
+        if not dump_shared_memory(args.output, shm, skip_empty=args.skip_empty, 
+                              verbose=args.verbose, extract_screens=not args.no_screens):
+            return 1
+            
+        if args.verbose:
+            print("\nMemory dump completed successfully!")
+            
+        return 0
+            
+    except Exception as e:
+        print(f"\nError: {e}")
+        traceback.print_exc()
+        return 1
+        
+    finally:
+        # Ensure shared memory is properly closed
+        cleanup_shared_memory(shm, verbose=args.verbose)
 
 if __name__ == "__main__":
     sys.exit(main())
