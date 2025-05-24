@@ -478,6 +478,13 @@ public:
     };
 
 public:
+    static constexpr const auto ONE_SECOND = std::chrono::seconds(1);
+    static constexpr const auto ONE_MILLISECOND = std::chrono::milliseconds(1);
+    static constexpr const auto ONE_MICROSECOND = std::chrono::microseconds(1);
+    static constexpr const size_t MILLISECONDS_PER_SECOND = std::chrono::milliseconds(ONE_SECOND).count();
+    static constexpr const size_t MICROSECONDS_PER_SECOND = std::chrono::microseconds(ONE_SECOND).count();
+    static constexpr const size_t MICROSECONDS_PER_MILLISECOND = std::chrono::milliseconds(ONE_MILLISECOND).count();
+
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000; // 3500 t-states per millisecond
     static constexpr const double TSTATES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0; // 3.5 t-states per microsecond
@@ -520,6 +527,10 @@ public:
     // Stepping rates from WD93 datasheet
     static constexpr const uint8_t  STEP_TIMINGS_MS_1MHZ[] = { 6, 12, 20, 30 };
     static constexpr const uint8_t STEP_TIMINGS_MS_2MHZ[] = { 3, 6, 10, 15 };
+
+    // Disk rotation and timing constants
+    static constexpr const size_t DISK_ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
+    static constexpr const size_t INDEX_STROBE_DURATION_TSTATES = DISK_ROTATION_PERIOD_TSTATES / 100 * 2;  // 2% of rotation period
 
     /// endregion </Constants>
 
@@ -591,6 +602,8 @@ protected:
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
     bool _index = false;                // Current state of index strobe
+    bool _prevIndex = false;            // Previous state of index strobe
+    uint64_t _lastIndexPulseStartTime = 0;   // T-state when the current index pulse started (0 if no active pulse)
     size_t _indexPulseCounter = 0;      // Index pulses counter
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
 
@@ -853,6 +866,7 @@ public:
     std::string dumpCommand(uint8_t value);
     std::string dumpStep();
     std::string dumpFullState();
+    std::string dumpIndexStrobeData(bool skipNoTransitions = true);
 
     static inline size_t convertTStatesToMs(size_t tStates)
     {
@@ -921,6 +935,8 @@ public:
     using WD1793::_seek_error;
 
     using WD1793::_index;
+    using WD1793::_prevIndex;
+    using WD1793::_lastIndexPulseStartTime;
     using WD1793::_indexPulseCounter;
 
     using WD1793::isType1Command;
@@ -958,6 +974,8 @@ public:
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;
     using WD1793::getDrive;
+    using WD1793::processFDDMotorState;
+    using WD1793::processFDDIndexStrobe;
 };
 
 #endif // _CODE_UNDER_TEST
