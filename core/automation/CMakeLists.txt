@@ -156,6 +156,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 # Add conditional compiler definitions for automation modules
+# Must exactly match the definitions in unreal-qt/CMakeLists.txt!!!
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>

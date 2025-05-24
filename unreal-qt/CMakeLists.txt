@@ -145,6 +145,14 @@ if (ENABLE_AUTOMATION)
     )
 
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
+
+    # Must exactly match the definitions in core/automation/CMakeLists.txt!!!
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+    )
 endif ()
 
 # Debug configuration
