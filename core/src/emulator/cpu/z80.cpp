@@ -30,6 +30,8 @@ Z80::Z80(EmulatorContext* context) : Z80State {}
 	// Ensure register memory and unions do not contain garbage
 	Z80State::
 	tt = 0;
+	t = 0;                  // Initialize t-state counter
+	eipos = 0;              // Initialize EI command position
 	pc = 0;
 	sp = 0;
 	ir_ = 0;
@@ -45,7 +47,6 @@ Z80::Z80(EmulatorContext* context) : Z80State {}
 	alt.de = 0;
 	alt.hl = 0;
 	memptr = 0;
-
 
 	tpi = 0;
 	rate = (1 << 8);

@@ -23,6 +23,7 @@
 DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
+    _curPageOffset = 0;  // Initialize to 0 to prevent uninitialized memory access
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);

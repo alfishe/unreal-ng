@@ -36,13 +36,41 @@ std::string Screen::GetColorName(uint8_t color)
 
 Screen::Screen(EmulatorContext* context)
 {
+    // Initialize pointers and basic state
     _context = context;
     _state = &_context->emulatorState;
     _system = _context->pCore;
-    _cpu = _system->GetZ80();
+    _cpu = _system ? _system->GetZ80() : nullptr;
     _memory = _context->pMemory;
     _logger = _context->pModuleLogger;
 
+    // Initialize video control structure
+    memset(&_vid, 0, sizeof(_vid));
+    _vid.raster = raster[R_256_192];  // Default to standard ZX Spectrum raster
+    _vid.mode = M_ZX48;               // Default to ZX48 mode
+    _vid.mode_next = M_ZX48;
+    _vid.t_next = 0;
+    _vid.vptr = 0;
+    _vid.xctr = 0;
+    _vid.yctr = 0;
+    _vid.ygctr = 0;
+    _vid.buf = 0;
+    _vid.flash = 0;
+    _vid.line = 0;
+    _vid.line_pos = 0;
+    _vid.ts_pos = 0;
+    _vid.memcyc_lcmd = 0;
+
+    // Initialize color lookup table
+    memset(_vid.clut, 0, sizeof(_vid.clut));
+
+    // Initialize memory counters
+    InitMemoryCounters();
+    
+    // Initialize TS line buffers
+    memset(_vid.tsline, 0, sizeof(_vid.tsline));
+
+    // Initialize remaining members
     _borderColor = 0;
     _mode = M_ZX48;
     _nullCallback = nullptr;
@@ -105,6 +133,21 @@ void Screen::InitFrame()
 //
 void Screen::InitRaster()
 {
+    // Check for null pointers before proceeding
+    if (!_context || !_state)
+    {
+        // Log error and set to safe defaults
+        if (_logger)
+        {
+            _logger->Error(_MODULE, _SUBMODULE, "Screen::InitRaster called with null _context or _state, using defaults");
+        }
+        
+        // Set to default ZX Spectrum 48K mode
+        _vid.mode = M_ZX48;
+        _vid.raster = raster[R_256_192];
+        return;
+    }
+
     EmulatorState& state = _context->emulatorState;
     const CONFIG& config = _context->config;
     VideoControl& video = _vid;
@@ -196,13 +239,21 @@ void Screen::InitRaster()
 
 void Screen::InitMemoryCounters()
 {
-    _state->video_memory_changed = false;
+    // Initialize all memory cycle counters to zero
+    for (int i = 0; i < 320; i++)
+    {
+        _vid.memvidcyc[i] = 0;
+        _vid.memcpucyc[i] = 0;
+        _vid.memtsscyc[i] = 0;
+        _vid.memtstcyc[i] = 0;
+        _vid.memdmacyc[i] = 0;
+    }
 
-    memset(_vid.memcpucyc, 0, 320 * sizeof(_vid.memcpucyc[0]));
-    memset(_vid.memvidcyc, 0, 320 * sizeof(_vid.memvidcyc[0]));
-    memset(_vid.memtsscyc, 0, 320 * sizeof(_vid.memtsscyc[0]));
-    memset(_vid.memtstcyc, 0, 320 * sizeof(_vid.memtstcyc[0]));
-    memset(_vid.memdmacyc, 0, 320 * sizeof(_vid.memdmacyc[0]));
+    // Reset video memory changed flag if state is available
+    if (_state)
+    {
+        _state->video_memory_changed = false;
+    }
 }
 
 /// endregion </Initialization>
@@ -293,7 +344,7 @@ void Screen::SetActiveScreen(SpectrumScreenEnum screen)
             activeScreenMemoryOffset = memory.RAMPageAddress(7);
             break;
         default:
-            LOGERROR("Screen::SetActiveScreen - Invalid screen mode specified %d. Only 0=Normal, 1=Shadow are valid", screen);
+            MLOGERROR("Screen::SetActiveScreen - Invalid screen mode specified %d. Only 0=Normal, 1=Shadow are valid", screen);
             assert("Invalid screen");
             break;
     }
@@ -353,7 +404,7 @@ void Screen::SaveZXSpectrumNativeScreen()
     int frameNumber = _state->frame_counter;
 
     Logger::UnmuteSilent();
-    LOGDEBUG("Saving ZX Native screen: RAN%d (0x%08x)", bank, buffer);
+    MLOGDEBUG("Saving ZX Native screen: RAN%d (0x%08x)", bank, buffer);
     Logger::MuteSilent();
 
     ImageHelper::SaveZXSpectrumNativeScreen(buffer, frameNumber);
@@ -622,7 +673,7 @@ void Screen::DrawZX(uint32_t n)
 
 	if (n > sizeof vbuf[0])
 	{
-		LOGERROR("Standard ZX-Spectrum cannot have more than %d video lines", sizeof vbuf[0]);
+		MLOGERROR("Standard ZX-Spectrum cannot have more than %d video lines", sizeof vbuf[0]);
 		return;
 	}
 
