@@ -513,6 +513,16 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     // Reset WDC internal time marks
     fdc.resetTime();
 
+    // Ensure we have a disk in the drive
+    DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+    EXPECT_TRUE(fdc.getDrive()->isDiskInserted()) << "Disk image must be inserted";
+
+    // Reset index pulse tracking
+    fdc._indexPulseCounter = 0;
+    fdc._prevIndex = false;
+    fdc._index = false;
+
     /// region <Perform simulation loop>
     bool motorStarted = false;
     bool motorStopped = false;
