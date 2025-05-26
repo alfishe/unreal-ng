@@ -214,8 +214,15 @@ void Screen::InitRaster()
         video.mode = M_GMX;
     }
 
-    // Sinclair
-    //video.mode = M_ZX48;
+    // All ZX Spectrum clones must start with ZX_48 video mode on emulator start (first frame)
+    // This is the default initial mode for all configurations
+    if (_state->frame_counter == 0) // On emulator start (first frame)
+    {
+        video.mode = M_ZX48;
+    }
+    // Note: We don't set a default mode for subsequent frames
+    // If no mode was selected by the configuration checks above, we keep the previous mode
+    // This prevents unnecessary framebuffer reallocation
 
     ///endregion
 
