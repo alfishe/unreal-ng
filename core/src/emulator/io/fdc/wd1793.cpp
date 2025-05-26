@@ -435,6 +435,7 @@ uint8_t WD1793::getStatusRegister()
         {
             _statusRegister &= ~WDS_WRITEPROTECTED;
         };
+
         // Set head load state based on HLD and HLT signals
         uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128Register & 0b0000'1000)) ? WDS_HEADLOADED : 0;
         if (headStatus)
@@ -445,6 +446,7 @@ uint8_t WD1793::getStatusRegister()
         {
             _statusRegister &= ~headStatus;
         };
+
         if (_seek_error)
         {
             _statusRegister |= WDS_SEEKERR;
@@ -453,6 +455,7 @@ uint8_t WD1793::getStatusRegister()
         {
             _statusRegister &= ~WDS_SEEKERR;
         };
+
         if (_crc_error)
         {
             _statusRegister |= WDS_CRCERR;
@@ -461,6 +464,7 @@ uint8_t WD1793::getStatusRegister()
         {
             _statusRegister &= ~WDS_CRCERR;
         };
+
         if (_selectedDrive->isTrack00())
         {
             _statusRegister |= WDS_TRK00;
@@ -469,6 +473,7 @@ uint8_t WD1793::getStatusRegister()
         {
             _statusRegister &= ~WDS_TRK00;
         };
+
         if (_index)
         {
             _statusRegister |= WDS_INDEX;
@@ -826,10 +831,20 @@ uint8_t WD1793::getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value)
 /// @param value Command written
 void WD1793::processWD93Command(uint8_t value)
 {
-    static constexpr CommandHandler const commandTable[] = {
-        &WD1793::cmdRestore,   &WD1793::cmdSeek,       &WD1793::cmdStep,          &WD1793::cmdStepIn,
-        &WD1793::cmdStepOut,   &WD1793::cmdReadSector, &WD1793::cmdWriteSector,   &WD1793::cmdReadAddress,
-        &WD1793::cmdReadTrack, &WD1793::cmdWriteTrack, &WD1793::cmdForceInterrupt};
+    static constexpr CommandHandler const commandTable[] =
+    {
+        &WD1793::cmdRestore,
+        &WD1793::cmdSeek,
+        &WD1793::cmdStep,
+        &WD1793::cmdStepIn,
+        &WD1793::cmdStepOut,
+        &WD1793::cmdReadSector,
+        &WD1793::cmdWriteSector,
+        &WD1793::cmdReadAddress,
+        &WD1793::cmdReadTrack,
+        &WD1793::cmdWriteTrack,
+        &WD1793::cmdForceInterrupt
+    };
 
     // Decode command
     WD1793::WD_COMMANDS command = decodeWD93Command(value);
@@ -1882,16 +1897,20 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             result = getStatusRegister();
 
             // TODO: remove debug
-            MLOGINFO("In #1F - 0x%02X - %s", result, dumpStatusRegister(_lastDecodedCmd).c_str());
+            MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result, dumpStatusRegister(_lastDecodedCmd).c_str(), pc, memBankName.c_str());
 
             // Reset INTRQ (Interrupt request) flag - status register is read
             clearIntrq();
             break;
         case PORT_3F:  // Return the current track number
             result = _trackRegister;
+
+            MLOGDEBUG("In #3F (Get Track Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
             break;
         case PORT_5F:  // Return current sector number
             result = _sectorRegister;
+
+            MLOGDEBUG("In #5F (Get Sector Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
             break;
         case PORT_7F:  // Return data byte and update internal state
             // Read Data Register
@@ -1899,12 +1918,14 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
 
             // Reset DRQ (Data Request) flag
             clearDrq();
+
+            MLOGDEBUG("In #7F (Get Data Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
             break;
         case PORT_FF:  // Handle Beta128 system port (#FF)
             // Only bits 6 and 7 are used
             result = _beta128status | (_beta128Register & 0x3F);
-            // MLOGINFO("In #FF Beta128: %s pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc,
-            // memBankName.c_str());
+
+            MLOGDEBUG("In #FF Beta128: %s, pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc, memBankName.c_str());
             break;
         default:
             break;
@@ -2054,20 +2075,18 @@ void WD1793::detachFromPorts()
 /// region <Debug methods>
 std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
 {
-    static constexpr const char* STATUS_REGISTER_FLAGS[][8] = {
-        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT",
-         "NOT READY"},  // RESTORE
+    static constexpr const char* STATUS_REGISTER_FLAGS[][8] =
+    {
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // RESTORE
         {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // SEEK
         {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
-        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT",
-         "NOT READY"},  // STEP IN
-        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT",
-         "NOT READY"},                                                                                  // STEP OUT
-        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "RECORD TYPE", "ZERO6", "NOT READY"},          // READ SECTOR
-        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
-        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "ZERO5", "ZERO6", "NOT READY"},                // READ ADDRESS
-        {"BUSY", "DRQ", "LOST DATA", "ZERO3", "ZERO4", "ZERO5", "ZERO6", "NOT READY"},                  // READ TRACK
-        {"BUSY", "DRQ", "LOST DATA", "ZERO3", "ZERO4", "WRITE FAULT", "WRITE PROTECT", "NOT READY"},    // WRITE TRACK
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
+        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "RECORD TYPE", "ZERO6", "NOT READY"},                 // READ SECTOR
+        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "WRITE FAULT", "WRITE PROTECT", "NOT READY"},         // WRITE SECTOR
+        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "ZERO5", "ZERO6", "NOT READY"},                       // READ ADDRESS
+        {"BUSY", "DRQ", "LOST DATA", "ZERO3", "ZERO4", "ZERO5", "ZERO6", "NOT READY"},                         // READ TRACK
+        {"BUSY", "DRQ", "LOST DATA", "ZERO3", "ZERO4", "WRITE FAULT", "WRITE PROTECT", "NOT READY"},           // WRITE TRACK
         // FORCE INTERRUPT doesn't have its own status bits. Bits from the previous / ongoing command to be shown
         // instead
     };
@@ -2083,7 +2102,8 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
         case WD_CMD_FORCE_INTERRUPT:
             ss << "Force interrupt" << std::endl;
             break;
-        default: {
+        default:
+        {
             for (uint8_t i = 0; i < 8; i++)
             {
                 if (status & 0x01)
