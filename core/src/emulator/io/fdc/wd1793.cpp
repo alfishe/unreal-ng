@@ -85,6 +85,14 @@ void WD1793::internalReset()
     _dataRegister = 0;
 
     _indexPulseCounter = 0;
+    _index = false;
+    _prevIndex = false;
+    _lastIndexPulseStartTime = 0;
+    _motorTimeoutTStates = 0;
+    _lastTime = 0;
+    _diffTime = 0;
+
+    _lastCmdValue = 0;
     _delayTStates = 0;
     _headLoaded = false;
 
@@ -224,7 +232,7 @@ void WD1793::processFDDIndexStrobe()
         TSTATES_PER_MS * FDD::DISK_INDEX_STROBE_DURATION_MS;
 
     bool diskInserted = _selectedDrive && _selectedDrive->isDiskInserted();
-    bool motorOn = _motorTimeoutTStates > 0;
+    bool motorOn = _motorTimeoutTStates > 0 && _selectedDrive->getMotor();
     bool oldIndex = _index;
 
     if (diskInserted && motorOn)
@@ -352,6 +360,12 @@ void WD1793::startFDDMotor()
 void WD1793::stopFDDMotor()
 {
     _selectedDrive->setMotor(false);
+    _motorTimeoutTStates = 0;
+    
+    // Reset index pulse counter and related state when motor is stopped
+    _index = false;
+    _prevIndex = false;
+    _lastIndexPulseStartTime = 0;
 
     MLOGINFO("FDD motor stopped");
 

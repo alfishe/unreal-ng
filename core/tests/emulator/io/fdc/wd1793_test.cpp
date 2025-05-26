@@ -506,7 +506,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    _context->pModuleLogger->SetLoggingLevel(LogDebug);
 
     WD1793CUT fdc(_context);
 
@@ -530,7 +530,12 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     int64_t motorStopTStates = 0;
 
     /// region <Pre-checks>
-    EXPECT_EQ(fdc._indexPulseCounter, 0);
+    bool diskInserted = fdc._selectedDrive && fdc._selectedDrive->isDiskInserted();
+    bool motorOn = fdc._motorTimeoutTStates > 0;
+
+    EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter should be zero at the beginning of the test";
+    EXPECT_EQ(diskInserted, true) << "Disk image must be inserted before starting the test";
+    EXPECT_EQ(motorOn, false) << "FDD motor should be stopped before starting the test";
     /// endregion </Pre-checks>
 
     size_t clk;
@@ -541,7 +546,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
             EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter shouldn't increment when FDD motor is stopped";
         }
 
-        // Start motor after 1 second delay
+        // Start motor after 1-second delay
         if (clk > Z80_FREQUENCY && !motorStarted && !motorStopped)  // Block motor re-start by checking motorStopped flag meaning it was done intentionally
         {
             // Trigger motor start
@@ -551,8 +556,16 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
             motorStarted = true;
         }
 
-        // Stop motor after 0.5 second after start
-        if (!motorStopped && clk >= 1.5 * Z80_FREQUENCY)
+        // All the time until the explicit stop motor should be on
+        if (clk > Z80_FREQUENCY && clk < 2 * Z80_FREQUENCY)
+        {
+            bool motorOn = fdc._selectedDrive->getMotor() && motorStarted && !motorStopped;
+            EXPECT_EQ(motorOn, true) << "Motor should be on between 1 and 2 seconds after start";
+        }
+
+        // Stop motor after 1 second after start
+        // We expect that FDD_RPM index pulses will be detected
+        if (!motorStopped && clk >= 2 * Z80_FREQUENCY)
         {
             fdc.stopFDDMotor();
 
@@ -580,7 +593,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     EXPECT_NE(motorStopTStates, 0);
 
     // Check motor still switched off within specs
-    size_t estimatedMotorOnTStates = 0.5 * Z80_FREQUENCY;
+    size_t estimatedMotorOnTStates = 1 * Z80_FREQUENCY;
     size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
     EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
 
