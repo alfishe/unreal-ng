@@ -1755,6 +1755,21 @@ void Memory::DefaultBanksFor48k()
 
 /// region <Debug methods>
 
+/// Gets the bank name for a given Z80 address
+/// @param address - Address in Z80 address space (0x0000-0xFFFF)
+/// @return bank name string (e.g., "ROM 0", "RAM 5")
+std::string Memory::GetBankNameForAddress(uint16_t address)
+{
+    // Determine which 16KB bank the address belongs to (0-3)
+    uint8_t bank = address >> 14;  // Divide by 16384 (0x4000) to get bank number
+    
+    // Use the existing method to get the bank name
+    return GetCurrentBankName(bank);
+}
+
+/// Gets the current bank name for a given bank index
+/// @param bank - Bank index (0-3)
+/// @return bank name string (e.g., "ROM 0", "RAM 5")
 std::string Memory::GetCurrentBankName(uint8_t bank)
 {
     std::string result = "<UNKNOWN>";
@@ -1787,6 +1802,8 @@ std::string Memory::GetCurrentBankName(uint8_t bank)
     return result;
 }
 
+/// Dumps memory bank information
+/// @return string containing bank information for all four banks
 std::string Memory::DumpMemoryBankInfo()
 {
     std::string result;
@@ -1803,6 +1820,8 @@ std::string Memory::DumpMemoryBankInfo()
     return result;
 }
 
+/// Dumps all memory regions
+/// @return string containing memory regions information
 std::string Memory::DumpAllMemoryRegions()
 {
     std::string result = "\n\nMemory regions:\n";

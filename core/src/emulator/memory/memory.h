@@ -273,6 +273,7 @@ public:
     void SetROMDOS(bool updatePorts = false);
     void SetROMSystem(bool updatePorts = false);
 
+    std::string GetBankNameForAddress(uint16_t address);
     std::string GetCurrentBankName(uint8_t bank);
     std::string DumpMemoryBankInfo();
     std::string DumpAllMemoryRegions();
