@@ -354,11 +354,14 @@ void WD1793::stopFDDMotor()
     _selectedDrive->setMotor(false);
 
     MLOGINFO("FDD motor stopped");
-    if (_DEBUG)
+
+#if defined (_DEBUG)
     {
         double milliseconds = ((double)_time * 1000.0) / Z80_FREQUENCY;
         MLOGINFO("FDD motor stopped: %.2f ms (T-states: %llu)", milliseconds, _time);
     }
+#endif // _DEBUG
+
     MLOGEMPTY();
     MLOGEMPTY();
 }
