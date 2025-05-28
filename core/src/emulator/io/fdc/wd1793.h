@@ -870,7 +870,7 @@ public:
 public:
     std::string dumpStatusRegister(WD_COMMANDS command);
     std::string dumpBeta128Register();
-    std::string dumpCommand(uint8_t value);
+    std::string dumpCommand(uint8_t value) const;
     std::string dumpStep();
     std::string dumpFullState();
     std::string dumpIndexStrobeData(bool skipNoTransitions = true);
