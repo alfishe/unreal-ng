@@ -1170,9 +1170,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
 /// is reset and the rest of the status bits are updated or cleared. In this case, Status reflects the Type I commands.
 void WD1793::cmdForceInterrupt(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Force Interrupt: %d | %s", value, StringHelper::FormatBinary(value).c_str());
-    MLOGINFO(message.c_str());
+    MLOGINFO("Command Force Interrupt: 0x%02X | %s", value, StringHelper::FormatBinary(value).c_str());
 
     bool noCommandExecuted = _state == S_IDLE;
     WDSTATE prevState = _state;
@@ -1184,7 +1182,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     {
         // Handling interrupts in decreasing priority
 
-        if (value & WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT)  // Bit3 (J3) - Immediate interrupt
+        if (value & WD_FORCE_INTERRUPT_IMMEDIATE)  // Bit3 (J3) - Immediate interrupt
         {
             _state = S_IDLE;
             _state2 = S_IDLE;
@@ -1262,15 +1260,17 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             _statusRegister &= ~WDS_INDEX;
         };
 
-        MLOGINFO("<<== FORCE_INTERRUPT, no active command status: %s, beta128: %s",
-                 StringHelper::FormatBinary(_statusRegister).c_str(),
-                 StringHelper::FormatBinary(_beta128status).c_str());
+        MLOGINFO("<<== FORCE_INTERRUPT, no active command");
+        MLOGINFO("  Status: %s", StringHelper::FormatBinary(_statusRegister).c_str());
+        MLOGINFO("  Beta128: %s\n", StringHelper::FormatBinary(_beta128status).c_str());
     }
     else
     {
-        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s state2: %s",
-                 getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str(),
-                 WDSTATEToString(prevState2).c_str());
+        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted");
+        MLOGINFO("  Command: %s", getWD_COMMANDName(_lastDecodedCmd));
+        MLOGINFO("  State: %s, State2: %s\n", 
+                WDSTATEToString(prevState).c_str(),
+                WDSTATEToString(prevState2).c_str());
     }
 }
 
@@ -1896,8 +1896,24 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
         case PORT_1F:  // Return status register value
             result = getStatusRegister();
 
-            // TODO: remove debug
-            MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", result, dumpStatusRegister(_lastDecodedCmd).c_str(), pc, memBankName.c_str());
+            {
+                std::string statusInfo = dumpStatusRegister(_lastDecodedCmd);
+                // Replace newlines with spaces for cleaner log output
+                std::replace(statusInfo.begin(), statusInfo.end(), '\n', ' ');
+                // Remove any double spaces that might have been created
+                std::string::size_type pos;
+                while ((pos = statusInfo.find("  ")) != std::string::npos)
+                {
+                    statusInfo.replace(pos, 2, " ");
+                }
+                // Trim trailing space
+                if (!statusInfo.empty() && statusInfo.back() == ' ')
+                {
+                    statusInfo.pop_back();
+                }
+                MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", 
+                         result, statusInfo.c_str(), pc, memBankName.c_str());
+            }
 
             // Reset INTRQ (Interrupt request) flag - status register is read
             clearIntrq();
@@ -2094,13 +2110,12 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
     std::stringstream ss;
     uint8_t status = _statusRegister;
 
-    ss << StringHelper::Format("Command: %s. Status: 0x%02X", getWD_COMMANDName(command), status) << std::endl;
-    ss << "  ";
+    ss << StringHelper::Format("Command: %s. Status: 0x%02X. ", getWD_COMMANDName(command), status);
 
     switch (command)
     {
         case WD_CMD_FORCE_INTERRUPT:
-            ss << "Force interrupt" << std::endl;
+            ss << "Force interrupt";
             break;
         default:
         {
@@ -2120,10 +2135,7 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
         }
         break;
     }
-    ss << std::endl;
-
     std::string result = ss.str();
-
     return result;
 }
 
@@ -2162,7 +2174,7 @@ std::string WD1793::dumpBeta128Register()
     return result;
 }
 
-std::string WD1793::dumpCommand(uint8_t value)
+std::string WD1793::dumpCommand(uint8_t value) const
 {
     std::stringstream ss;
 

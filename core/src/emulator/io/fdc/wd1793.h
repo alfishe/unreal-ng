@@ -32,7 +32,9 @@ public:
         WD_CMD_READ_TRACK,      // Read Track      - Read the entire contents of a track into the FDC's internal buffer
         WD_CMD_WRITE_TRACK,     // Write Track     - Write an entire track worth of data from the FDC's internal buffer to the floppy disk
 
-        WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
+        WD_CMD_FORCE_INTERRUPT, // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
+
+        WD_CMD_INVALID          // Default initializer
     };
 
     static inline const char* getWD_COMMANDName(WD_COMMANDS command)
@@ -318,14 +320,16 @@ public:
         CMD_MULTIPLE      = 0x10
     };
 
-    // Force Interrupt command parameter bits
-    enum WD_FORCE_INTERRUPT_BITS : uint8_t
+    /// region <Force Interrupt command flags>
+    enum WD_FORCE_INTERRUPT : uint8_t
     {
-        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
-        WD_FORCE_INTERRUPT_READY                = 0x02,
-        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
-        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
+        WD_FORCE_INTERRUPT_NONE = 0,
+        WD_FORCE_INTERRUPT_NOT_READY = 0b0000'0001,   // Bit0 (J0) - Not-Ready to Ready transition
+        WD_FORCE_INTERRUPT_READY = 0b0000'0010,       // Bit1 (J1) - Ready to Not-Ready transition
+        WD_FORCE_INTERRUPT_INDEX_PULSE = 0b0000'0100, // Bit2 (J2) - Index pulse
+        WD_FORCE_INTERRUPT_IMMEDIATE = 0b0000'1000    // Bit3 (J3) - Immediate interrupt
     };
+    /// endregion </Force Interrupt command flags>
 
     enum BETA128_COMMAND_BITS : uint8_t
     {
@@ -619,6 +623,9 @@ protected:
     // TODO: Remove temporary fields once switched to WD93State.signals
     bool _intrq_out = false;
     bool _drq_out = false;
+    
+    // Force Interrupt command conditions (I0-I3 bits)
+    uint8_t _interruptConditions = 0;   // Stores the interrupt condition flags from the Force Interrupt command
 
     /// endregion </Fields>
 
@@ -938,6 +945,7 @@ public:
     using WD1793::_prevIndex;
     using WD1793::_lastIndexPulseStartTime;
     using WD1793::_indexPulseCounter;
+    using WD1793::_interruptConditions;
 
     using WD1793::isType1Command;
     using WD1793::isType2Command;
