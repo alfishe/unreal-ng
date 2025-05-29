@@ -16,7 +16,7 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _context = context;
     _logger = context->pModuleLogger;
 
-    _collector = std::make_unique<WD1793Collector>();
+    _collector = new WD1793Collector();
 
     /// region <Create FDD instances
 
@@ -36,6 +36,9 @@ WD1793::~WD1793()
     // Dump collected events file to disk
     std::string filename = FileHelper::GetExecutablePath() + "/wd1793_events.csv";
     _collector->dumpCollectedCommandInfo(filename);
+    
+    delete _collector;
+    _collector = nullptr;
 
     for (size_t i = 0; i < 4; i++)
     {

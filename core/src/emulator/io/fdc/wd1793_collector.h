@@ -1,11 +1,9 @@
 #pragma once
 #include "stdafx.h"
+
 #include "common/modulelogger.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/wd1793state.h"
-
-// Forward declaration
-class WD1793;
 
 /// Helper class to perform comprehensive data collection from WD1793 class
 /// @details This class provides functionality to collect, record, and analyze operations

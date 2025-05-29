@@ -551,7 +551,7 @@ public:
 
     /// region <Fields>
 protected:
-    std::unique_ptr<WD1793Collector> _collector = nullptr;
+    WD1793Collector* _collector = nullptr;
 
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
