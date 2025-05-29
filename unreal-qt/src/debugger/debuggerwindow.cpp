@@ -162,6 +162,7 @@ void DebuggerWindow::reset()
 
  void DebuggerWindow::updateState()
  {
+   qDebug() << "DebuggerWindow::updateState() called - emulator state:" << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
     if (_emulator)
     {
         Z80State* state = _emulator->GetZ80State();
@@ -172,6 +173,7 @@ void DebuggerWindow::reset()
 
         // Update disassembler widget
         ui->disassemblerWidget->setDisassemblerAddress(state->Z80Registers::pc);
+        ui->disassemblerWidget->refresh();
 
         // Update memory banks widget
         ui->memorypagesWidget->refresh();
@@ -228,6 +230,9 @@ void DebuggerWindow::reset()
         waitInterruptAction->setEnabled(false);
         resetAction->setEnabled(false);
         breakpointsAction->setEnabled(false);
+        
+        // Update disassembler widget to show detached state
+        ui->disassemblerWidget->refresh();
     }
  }
 
@@ -421,6 +426,12 @@ void DebuggerWindow::continueExecution()
         waitInterruptAction->setEnabled(false);
 
         _emulator->Resume();
+        
+        // Force immediate update of the disassembler widget state
+        ui->disassemblerWidget->refresh();
+        
+        // Update all widgets to reflect the new state
+        updateState();
     }
 }
 
