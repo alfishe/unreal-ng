@@ -928,8 +928,7 @@ void WD1793::cmdRestore(uint8_t value)
 /// @param value
 void WD1793::cmdSeek(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Seek: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message = StringHelper::Format("Command Seek: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     message += StringHelper::Format(" From trk: %d, to trk: %d", _trackRegister, _dataRegister);
     MLOGINFO(message.c_str());
 
@@ -1986,9 +1985,6 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
                                               StringHelper::FormatBinary(_beta128status).c_str())
                              .c_str());
             }
-
-            // Register call in a collection
-            //_collector->collectWD1793CallsInfo(*this, port, value, true);
 
             /// endregion </Debug logging>
 

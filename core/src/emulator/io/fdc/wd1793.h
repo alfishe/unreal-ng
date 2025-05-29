@@ -650,6 +650,7 @@ public:
     uint8_t getTrackRegister() const { return _trackRegister; }
     uint8_t getSectorRegister() const { return _sectorRegister; }
     uint8_t getDataRegister() const { return _dataRegister; }
+    uint8_t getBeta128Status() const { return _beta128status; }
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
