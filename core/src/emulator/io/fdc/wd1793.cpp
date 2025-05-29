@@ -1,7 +1,9 @@
 #include "wd1793.h"
+#include "wd1793_collector.h"
 
 #include <sstream>
 
+#include "common/filehelper.h"
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
@@ -13,6 +15,8 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 {
     _context = context;
     _logger = context->pModuleLogger;
+
+    _collector = std::make_unique<WD1793Collector>();
 
     /// region <Create FDD instances
 
@@ -29,6 +33,10 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 
 WD1793::~WD1793()
 {
+    // Dump collected events file to disk
+    std::string filename = FileHelper::GetExecutablePath() + "/wd1793_events.csv";
+    _collector->dumpCollectedCommandInfo(filename);
+
     for (size_t i = 0; i < 4; i++)
     {
         FDD* diskDrive = _context->coreState.diskDrives[i];
@@ -1978,6 +1986,10 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
                                               StringHelper::FormatBinary(_beta128status).c_str())
                              .c_str());
             }
+
+            // Register call in a collection
+            //_collector->collectWD1793CallsInfo(*this, port, value, true);
+
             /// endregion </Debug logging>
 
             // Reset INTRQ (Interrupt request) flag - command register is written to

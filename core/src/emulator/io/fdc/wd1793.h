@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include <queue>
+#include <vector>
 #include <common/stringhelper.h>
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -12,8 +13,12 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793state.h"
 
+class WD1793Collector;
+
 class WD1793 : public PortDecoder, public PortDevice
 {
+    friend WD1793Collector;
+
     /// region <Types>
 public:
     /// region <WD1793 / VG93 commands>
@@ -546,6 +551,8 @@ public:
 
     /// region <Fields>
 protected:
+    std::unique_ptr<WD1793Collector> _collector = nullptr;
+
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
 
@@ -578,9 +585,11 @@ protected:
     uint8_t _drive = 0;                 // Currently selected drive index [0..3]
     bool _sideUp = false;               // False - bottom side. True - top side
 
+    // WD1793 state getters - moved to public section
     WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE; // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
     WDSTATE _state = S_IDLE;
+    
     WDSTATE _state2 = S_IDLE;
     std::queue<FSMEvent> _operationFIFO;    // Holds FIFO queue for scheduled state transitions (when WD1793 command requires complex FSM flow)
 
@@ -633,6 +642,14 @@ protected:
 public:
     FDD* getDrive() { return _selectedDrive; }
     void setDrive(FDD* drive) { _selectedDrive = drive; }
+
+    // Getters for WD1793 state and registers
+    const WD93State& getState() const { return _wd93State; }
+    WD_COMMANDS getLastDecodedCommand() const { return _lastDecodedCmd; }
+    uint8_t getStatusRegister() const { return _statusRegister; }
+    uint8_t getTrackRegister() const { return _trackRegister; }
+    uint8_t getSectorRegister() const { return _sectorRegister; }
+    uint8_t getDataRegister() const { return _dataRegister; }
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
