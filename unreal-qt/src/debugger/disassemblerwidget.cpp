@@ -92,6 +92,10 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this, &DisassemblerWidget::showGoToAddressDialog);
+    
+    // Connect signals for mouse wheel navigation
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::wheelScrollUp, this, &DisassemblerWidget::navigateUp);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::wheelScrollDown, this, &DisassemblerWidget::navigateDown);
 
     // Connect mouse click events for breakpoint toggling
     m_disassemblyTextEdit->viewport()->installEventFilter(this);

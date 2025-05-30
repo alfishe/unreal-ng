@@ -39,6 +39,8 @@ signals:
     void enterPressed();
     void toggleScrollMode();
     void goToAddressRequested();
+    void wheelScrollUp();
+    void wheelScrollDown();
 
 protected:
     void keyPressEvent(QKeyEvent* event) override
@@ -74,6 +76,31 @@ protected:
         else
         {
             QPlainTextEdit::keyPressEvent(event);
+        }
+    }
+    
+    void wheelEvent(QWheelEvent* event) override
+    {
+        // Check if the wheel event is vertical scrolling
+        if (event->angleDelta().y() != 0)
+        {
+            // Determine scroll direction
+            if (event->angleDelta().y() > 0)
+            {
+                // Scroll up (wheel moved up)
+                emit wheelScrollUp();
+            }
+            else
+            {
+                // Scroll down (wheel moved down)
+                emit wheelScrollDown();
+            }
+            event->accept();
+        }
+        else
+        {
+            // Pass horizontal scrolling to the parent class
+            QPlainTextEdit::wheelEvent(event);
         }
     }
 };
