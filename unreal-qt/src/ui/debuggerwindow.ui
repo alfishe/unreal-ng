@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>879</width>
-    <height>593</height>
+    <width>1106</width>
+    <height>686</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -115,7 +115,7 @@
       <widget class="QHexView" name="hexView">
        <property name="minimumSize">
         <size>
-         <width>360</width>
+         <width>448</width>
          <height>300</height>
         </size>
        </property>
@@ -150,7 +150,7 @@
       <widget class="DisassemblerWidget" name="disassemblerWidget" native="true">
        <property name="minimumSize">
         <size>
-         <width>360</width>
+         <width>480</width>
          <height>300</height>
         </size>
        </property>
