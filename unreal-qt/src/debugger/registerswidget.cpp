@@ -137,13 +137,19 @@ void RegistersWidget::showRegisterContextMenu(QLabel* label, uint16_t address, c
     
     // Create actions
     QAction* jumpToAction = new QAction("Jump to in Disassembly", &contextMenu);
+    QAction* showInMemoryAction = new QAction("Show in Memory View", &contextMenu);
     
     // Add actions to menu
     contextMenu.addAction(jumpToAction);
+    contextMenu.addAction(showInMemoryAction);
     
     // Connect actions
     connect(jumpToAction, &QAction::triggered, [this, address]() {
         emit jumpToAddressInDisassembly(address);
+    });
+    
+    connect(showInMemoryAction, &QAction::triggered, [this, address]() {
+        emit changeMemoryViewZ80Address(address);
     });
     
     // Show the menu at the cursor position
