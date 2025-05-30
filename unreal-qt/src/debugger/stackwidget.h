@@ -4,6 +4,9 @@
 #include <QLabel>
 #include <QThread>
 #include <QWidget>
+#include <QMenu>
+#include <QAction>
+#include <QContextMenuEvent>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class StackWidget; }
@@ -26,10 +29,16 @@ protected:
     Emulator* getEmulator();
     EmulatorContext* getEmulatorContext();
     Memory* getMemory();
+    
+    // Context menu handling
+    bool eventFilter(QObject* obj, QEvent* event) override;
+    void setupContextMenus();
+    void showStackAddressContextMenu(QLabel* label, int stackIndex, const QPoint& pos);
 
 signals:
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewAddress(uint8_t* addr, size_t size, uint16_t offset, uint16_t curaddr);
+    void jumpToAddressInDisassembly(uint16_t addr);
 
     /// region <Event handlers / Slots>
 public slots:

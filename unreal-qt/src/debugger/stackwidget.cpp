@@ -29,6 +29,9 @@ StackWidget::StackWidget(QWidget *parent) : QWidget(parent), ui(new Ui::StackWid
     connect(sp1Value, SIGNAL(doubleClicked()), this, SLOT(sp1Value_doubleClicked()));
     connect(sp2Value, SIGNAL(doubleClicked()), this, SLOT(sp2Value_doubleClicked()));
     connect(sp3Value, SIGNAL(doubleClicked()), this, SLOT(sp3Value_doubleClicked()));
+    
+    // Set up context menus for stack addresses
+    setupContextMenus();
 }
 
 StackWidget::~StackWidget()
@@ -50,6 +53,72 @@ EmulatorContext* StackWidget::getEmulatorContext()
 Memory* StackWidget::getMemory()
 {
     return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+}
+
+void StackWidget::setupContextMenus()
+{
+    // Install event filter on all stack address labels
+    sp0Value->installEventFilter(this);
+    sp1Value->installEventFilter(this);
+    sp2Value->installEventFilter(this);
+    sp3Value->installEventFilter(this);
+}
+
+bool StackWidget::eventFilter(QObject* obj, QEvent* event)
+{
+    if (event->type() == QEvent::ContextMenu)
+    {
+        QContextMenuEvent* contextEvent = static_cast<QContextMenuEvent*>(event);
+        QLabel* label = qobject_cast<QLabel*>(obj);
+        
+        if (label)
+        {
+            int stackIndex = -1;
+            
+            // Determine which stack address was right-clicked
+            if (label == sp0Value)
+                stackIndex = 0;
+            else if (label == sp1Value)
+                stackIndex = 1;
+            else if (label == sp2Value)
+                stackIndex = 2;
+            else if (label == sp3Value)
+                stackIndex = 3;
+            else
+                return QWidget::eventFilter(obj, event);
+            
+            // Show context menu for this stack address
+            showStackAddressContextMenu(label, stackIndex, contextEvent->globalPos());
+            return true;
+        }
+    }
+    
+    // Pass the event to the parent class
+    return QWidget::eventFilter(obj, event);
+}
+
+void StackWidget::showStackAddressContextMenu(QLabel* label, int stackIndex, const QPoint& pos)
+{
+    // Get the stack value for this index
+    uint16_t stackValues[4] = {};
+    readStackIntoArray(stackValues, 4);
+    uint16_t address = stackValues[stackIndex];
+    
+    QMenu contextMenu("Stack Address Actions", this);
+    
+    // Create actions
+    QAction* jumpToAction = new QAction("Jump to in Disassembly", &contextMenu);
+    
+    // Add actions to menu
+    contextMenu.addAction(jumpToAction);
+    
+    // Connect actions
+    connect(jumpToAction, &QAction::triggered, [this, address]() {
+        emit jumpToAddressInDisassembly(address);
+    });
+    
+    // Show the menu at the cursor position
+    contextMenu.exec(pos);
 }
 
 

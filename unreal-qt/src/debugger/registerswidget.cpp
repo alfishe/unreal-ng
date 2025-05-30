@@ -27,6 +27,9 @@ RegistersWidget::RegistersWidget(QWidget *parent) : QWidget(parent), ui(new Ui::
     connect(ui->valPC, SIGNAL(doubleClicked()), this, SLOT(pc_doubleClicked()));
     connect(ui->valIX, SIGNAL(doubleClicked()), this, SLOT(ix_doubleClicked()));
     connect(ui->valIY, SIGNAL(doubleClicked()), this, SLOT(iy_doubleClicked()));
+    
+    // Set up context menus for register values
+    setupContextMenus();
 }
 
 RegistersWidget::~RegistersWidget()
@@ -66,6 +69,85 @@ Memory* RegistersWidget::getMemory()
 Z80Registers* RegistersWidget::getRegisters()
 {
     return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
+}
+
+void RegistersWidget::setupContextMenus()
+{
+    // Install event filter on all register value labels
+    ui->valBC->installEventFilter(this);
+    ui->valDE->installEventFilter(this);
+    ui->valHL->installEventFilter(this);
+    ui->valBC1->installEventFilter(this);
+    ui->valDE1->installEventFilter(this);
+    ui->valHL1->installEventFilter(this);
+    ui->valSP->installEventFilter(this);
+    ui->valPC->installEventFilter(this);
+    ui->valIX->installEventFilter(this);
+    ui->valIY->installEventFilter(this);
+}
+
+bool RegistersWidget::eventFilter(QObject* obj, QEvent* event)
+{
+    if (event->type() == QEvent::ContextMenu)
+    {
+        QContextMenuEvent* contextEvent = static_cast<QContextMenuEvent*>(event);
+        QLabel* label = qobject_cast<QLabel*>(obj);
+        
+        if (label)
+        {
+            uint16_t address = 0;
+            
+            // Determine which register was right-clicked
+            if (label == ui->valBC)
+                address = m_z80Registers->bc;
+            else if (label == ui->valDE)
+                address = m_z80Registers->de;
+            else if (label == ui->valHL)
+                address = m_z80Registers->hl;
+            else if (label == ui->valBC1)
+                address = m_z80Registers->alt.bc;
+            else if (label == ui->valDE1)
+                address = m_z80Registers->alt.de;
+            else if (label == ui->valHL1)
+                address = m_z80Registers->alt.hl;
+            else if (label == ui->valSP)
+                address = m_z80Registers->sp;
+            else if (label == ui->valPC)
+                address = m_z80Registers->pc;
+            else if (label == ui->valIX)
+                address = m_z80Registers->ix;
+            else if (label == ui->valIY)
+                address = m_z80Registers->iy;
+            else
+                return QWidget::eventFilter(obj, event);
+            
+            // Show context menu for this register
+            showRegisterContextMenu(label, address, contextEvent->globalPos());
+            return true;
+        }
+    }
+    
+    // Pass the event to the parent class
+    return QWidget::eventFilter(obj, event);
+}
+
+void RegistersWidget::showRegisterContextMenu(QLabel* label, uint16_t address, const QPoint& pos)
+{
+    QMenu contextMenu("Register Actions", this);
+    
+    // Create actions
+    QAction* jumpToAction = new QAction("Jump to in Disassembly", &contextMenu);
+    
+    // Add actions to menu
+    contextMenu.addAction(jumpToAction);
+    
+    // Connect actions
+    connect(jumpToAction, &QAction::triggered, [this, address]() {
+        emit jumpToAddressInDisassembly(address);
+    });
+    
+    // Show the menu at the cursor position
+    contextMenu.exec(pos);
 }
 
 /// region <Event handlers / Slots>

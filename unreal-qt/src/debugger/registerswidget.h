@@ -3,6 +3,10 @@
 
 #include <QThread>
 #include <QWidget>
+#include <QMenu>
+#include <QAction>
+#include <QContextMenuEvent>
+#include <QLabel>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -29,6 +33,11 @@ protected:
     EmulatorContext* getEmulatorContext();
     Memory* getMemory();
     Z80Registers* getRegisters();
+    
+    // Context menu handling
+    bool eventFilter(QObject* obj, QEvent* event) override;
+    void setupContextMenus();
+    void showRegisterContextMenu(QLabel* label, uint16_t address, const QPoint& pos);
 
     /// region <Event handlers / Slots>
 public slots:
@@ -51,6 +60,7 @@ public slots:
 signals:
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewAddress(uint8_t* addr, size_t size, uint16_t offset, uint16_t curaddr);
+    void jumpToAddressInDisassembly(uint16_t addr);
 
 private:
     Ui::RegistersWidget* ui;
