@@ -4,6 +4,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QMouseEvent>
+#include <QTextBlock>
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -46,6 +48,10 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     m_pcHighlightFormat.setBackground(QColor(255, 255, 0, 100));  // Light yellow background
     m_pcHighlightFormat.setForeground(QColor(0, 0, 0));           // Black text
 
+    // Setup breakpoint highlight format
+    m_breakpointFormat.setBackground(QColor(255, 0, 0, 100));     // Light red background
+    m_breakpointFormat.setForeground(QColor(0, 0, 0));           // Black text
+
     // Create scroll mode indicator label
     m_scrollModeIndicator = new QLabel(this);
     m_scrollModeIndicator->setFrameStyle(QFrame::Panel | QFrame::Raised);
@@ -85,11 +91,15 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyDownPressed, this, &DisassemblerWidget::navigateDown);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
+
+    // Connect mouse click events for breakpoint toggling
+    m_disassemblyTextEdit->viewport()->installEventFilter(this);
 }
 
 DisassemblerWidget::~DisassemblerWidget()
 {
-    // detach();
+    // Remove event filter
+    m_disassemblyTextEdit->viewport()->removeEventFilter(this);
 }
 
 // Helper methods
@@ -118,11 +128,22 @@ std::unique_ptr<Z80Disassembler>& DisassemblerWidget::getDisassembler()
     return m_debuggerWindow->getEmulator()->GetContext()->pDebugManager->GetDisassembler();
 }
 
+BreakpointManager* DisassemblerWidget::getBreakpointManager() const
+{
+    return m_debuggerWindow->getEmulator()->GetBreakpointManager();
+}
+
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
     Memory& memory = *getMemory();
     Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
+
+    // Clear the address map before generating new disassembly
+    m_addressMap.clear();
+    
+    // Store the starting address to help with debugging
+    int baseLineNumber = 0; // First line in the disassembly view
 
     // Store the current PC and display address
     m_currentPC = registers->pc;
@@ -142,6 +163,10 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
         std::string runtime;
 
+        // Store the line number to address mapping for breakpoint handling
+        // Map the actual line number in the text editor to the address
+        m_addressMap[baseLineNumber + i] = pc;
+
         if (decoded.hasRuntime)
         {
             runtime = disassembler.getRuntimeHints(decoded);
@@ -154,8 +179,11 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         pcPhysicalAddress += decoded.fullCommandLen;
         pc += decoded.fullCommandLen;
 
-        // Format value like: $15FB: CD 2C 16   call #162C
-        ss << StringHelper::Format("$%s: %-11s   %s%s", pcAddress.c_str(), hex.c_str(), command.c_str(),
+        // Format value like: [B] $15FB: CD 2C 16   call #162C
+        // Add a breakpoint column at the beginning - check for breakpoint at the CURRENT address
+        // not the next one (pc already got incremented above)
+        std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
+        ss << StringHelper::Format("[%s] $%s: %-11s   %s%s", breakpointMarker.c_str(), pcAddress.c_str(), hex.c_str(), command.c_str(),
                                    runtime.c_str())
            << std::endl;
     }
@@ -172,8 +200,9 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
                                                      value.c_str(), read, write, execute);
     m_disassemblyTextEdit->setPlainText(accessedValue.c_str());
 
-    // Highlight the current PC instruction
+    // Highlight the current PC instruction and any breakpoints
     highlightCurrentPC();
+    updateBreakpointHighlighting();
 }
 
 void DisassemblerWidget::highlightCurrentPC()
@@ -206,7 +235,7 @@ void DisassemblerWidget::highlightCurrentPC()
         selection.format = m_pcHighlightFormat;
 
         // Apply the selection
-        QList<QTextEdit::ExtraSelection> extraSelections;
+        QList<QTextEdit::ExtraSelection> extraSelections = m_disassemblyTextEdit->extraSelections();
         extraSelections.append(selection);
         m_disassemblyTextEdit->setExtraSelections(extraSelections);
 
@@ -241,11 +270,11 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
         m_isActive = false;
         return;
     }
-    
+
     // Check if the emulator is paused (active debugging state)
     EmulatorStateEnum state = emulator->GetState();
     bool isPaused = emulator->IsPaused(); // Use the IsPaused() method which handles all paused states
-    
+
     // Convert state enum to string for debug output
     QString stateName;
     switch (state) {
@@ -257,9 +286,9 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
         case EmulatorStateEnum::StateStopped: stateName = "Stopped"; break;
         default: stateName = "Invalid"; break;
     }
-    
+
     qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Emulator state:" << stateName << "isPaused:" << isPaused;
-    
+
     // Update the state indicator
     if (isPaused)
     {
@@ -281,8 +310,15 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
 
 void DisassemblerWidget::toggleScrollMode()
 {
-    // Toggle between byte and command scroll modes
-    m_scrollMode = (m_scrollMode == ScrollMode::Byte) ? ScrollMode::Command : ScrollMode::Byte;
+    // Toggle between byte and command modes
+    if (m_scrollMode == ScrollMode::Byte)
+    {
+        m_scrollMode = ScrollMode::Command;
+    }
+    else
+    {
+        m_scrollMode = ScrollMode::Byte;
+    }
 
     // Update the indicator
     updateScrollModeIndicator();
@@ -409,7 +445,7 @@ void DisassemblerWidget::reset()
 void DisassemblerWidget::refresh()
 {
     qDebug() << "DisassemblerWidget::refresh() called";
-    
+
     // Update the disassembly view with current PC
     if (getEmulator() && getZ80Registers())
     {
@@ -419,4 +455,161 @@ void DisassemblerWidget::refresh()
 
     // Update the debugger state indicator
     updateDebuggerStateIndicator();
+}
+
+// Breakpoint methods
+bool DisassemblerWidget::hasBreakpointAtAddress(uint16_t address) const
+{
+    const BreakpointManager* bpManager = getBreakpointManager();
+    if (!bpManager)
+        return false;
+
+    // Check all breakpoints to see if there's an execution breakpoint at this address
+    const auto& allBreakpoints = bpManager->GetAllBreakpoints();
+    for (const auto& pair : allBreakpoints)
+    {
+        const BreakpointDescriptor* bp = pair.second;
+        if (bp->type == BRK_MEMORY &&
+            (bp->memoryType & BRK_MEM_EXECUTE) &&
+            bp->z80address == address &&
+            bp->active)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void DisassemblerWidget::updateBreakpointHighlighting()
+{
+    QList<QTextEdit::ExtraSelection> extraSelections = m_disassemblyTextEdit->extraSelections();
+    
+    // Get the document and iterate through its blocks (lines) safely
+    QTextDocument* doc = m_disassemblyTextEdit->document();
+    if (!doc) return;
+    
+    for (QTextBlock block = doc->begin(); block.isValid(); block = block.next())
+    {
+        // Get the text of the current line
+        QString lineText = block.text();
+        
+        // Check if this line has a breakpoint marker
+        if (lineText.startsWith("[●]"))
+        {
+            // Create a cursor for this block
+            QTextCursor blockCursor(block);
+            
+            // Select the entire line
+            blockCursor.movePosition(QTextCursor::StartOfLine);
+            blockCursor.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
+            
+            // Create and add the selection
+            QTextEdit::ExtraSelection selection;
+            selection.cursor = blockCursor;
+            selection.format = m_breakpointFormat;
+            extraSelections.append(selection);
+        }
+    }
+    
+    // Apply all the selections
+    m_disassemblyTextEdit->setExtraSelections(extraSelections);
+}
+
+void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
+{
+    BreakpointManager* bpManager = getBreakpointManager();
+    if (!bpManager)
+        return;
+
+    // Check if there's already a breakpoint at this address
+    if (hasBreakpointAtAddress(address))
+    {
+        // Find the breakpoint ID and remove it
+        const auto& allBreakpoints = bpManager->GetAllBreakpoints();
+        for (const auto& pair : allBreakpoints)
+        {
+            const BreakpointDescriptor* bp = pair.second;
+            if (bp->type == BRK_MEMORY &&
+                (bp->memoryType & BRK_MEM_EXECUTE) &&
+                bp->z80address == address)
+            {
+                bpManager->RemoveBreakpointByID(bp->breakpointID);
+                break;
+            }
+        }
+    }
+    else
+    {
+        // Add a new execution breakpoint
+        bpManager->AddCombinedMemoryBreakpoint(address, BRK_MEM_EXECUTE);
+    }
+
+    // Refresh the disassembly to show the updated breakpoint
+    refresh();
+}
+
+void DisassemblerWidget::handleBreakpointClick(int lineNumber)
+{
+    // Debug output to help diagnose issues
+    qDebug() << "Clicked on line number:" << lineNumber;
+    qDebug() << "Address map contains:" << m_addressMap.size() << "entries";
+    
+    // Check if the line number is valid and has an address mapping
+    if (m_addressMap.find(lineNumber) != m_addressMap.end())
+    {
+        uint16_t address = m_addressMap[lineNumber];
+        qDebug() << "Found address:" << QString::number(address, 16) << "for line" << lineNumber;
+        toggleBreakpointAtAddress(address);
+    }
+    else
+    {
+        qDebug() << "No address mapping found for line" << lineNumber;
+        
+        // If we don't have an exact match, try to find the closest line
+        // This helps with clicks that might be slightly off
+        int closestLine = -1;
+        int minDistance = 999;
+        
+        for (const auto& pair : m_addressMap)
+        {
+            int distance = std::abs(pair.first - lineNumber);
+            if (distance < minDistance)
+            {
+                minDistance = distance;
+                closestLine = pair.first;
+            }
+        }
+        
+        if (closestLine >= 0 && minDistance <= 1) // Only use if very close
+        {
+            qDebug() << "Using closest line:" << closestLine << "with address:" << QString::number(m_addressMap[closestLine], 16);
+            toggleBreakpointAtAddress(m_addressMap[closestLine]);
+        }
+    }
+}
+
+// Override event filter to handle mouse clicks for breakpoint toggling
+bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj == m_disassemblyTextEdit->viewport() && event->type() == QEvent::MouseButtonPress)
+    {
+        QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+        
+        // Check if the click is in the breakpoint column (first few pixels)
+        if (mouseEvent->position().x() < 20)
+        {
+            // Get the line number at the click position
+            QTextCursor cursor = m_disassemblyTextEdit->cursorForPosition(mouseEvent->pos());
+            int lineNumber = cursor.blockNumber();
+            
+            // Toggle breakpoint at this line
+            handleBreakpointClick(lineNumber);
+            
+            return true; // Event handled
+        }
+    }
+    
+    // Pass the event to the parent class
+    return QWidget::eventFilter(obj, event);
 }

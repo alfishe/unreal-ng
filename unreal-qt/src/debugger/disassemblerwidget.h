@@ -13,6 +13,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -89,6 +90,10 @@ protected:
     Memory* getMemory();
     Z80Registers* getZ80Registers();
     std::unique_ptr<Z80Disassembler>& getDisassembler();
+    BreakpointManager* getBreakpointManager() const;
+    
+    // Event handling
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
     std::string formatRuntimeInformation();
     void highlightCurrentPC();
@@ -96,12 +101,18 @@ protected:
     void updateDebuggerStateIndicator();
     uint16_t getNextCommandAddress(uint16_t currentAddress);
     uint16_t getPreviousCommandAddress(uint16_t currentAddress);
+    
+    // Breakpoint methods
+    void toggleBreakpointAtAddress(uint16_t address);
+    bool hasBreakpointAtAddress(uint16_t address) const;
+    void updateBreakpointHighlighting();
 
     // Keyboard navigation handlers
     void navigateUp();
     void navigateDown();
     void returnToCurrentPC();
     void toggleScrollMode();
+    void handleBreakpointClick(int lineNumber);
 
 public slots:
     void reset();
@@ -118,9 +129,11 @@ private:
 
     uint16_t m_currentPC;                 // Current program counter
     uint16_t m_displayAddress;            // Address currently displayed at the top of the disassembly view
-    QTextCharFormat m_pcHighlightFormat;  // Format for highlighting current PC
-    ScrollMode m_scrollMode;              // Current scroll mode (byte or command)
-    bool m_isActive;                      // Whether debugger is in active (paused) state
+    QTextCharFormat m_pcHighlightFormat;      // Format for highlighting current PC
+    QTextCharFormat m_breakpointFormat;      // Format for highlighting breakpoints
+    ScrollMode m_scrollMode;                  // Current scroll mode (byte or command)
+    bool m_isActive;                          // Whether debugger is in active (paused) state
+    std::map<uint16_t, uint16_t> m_addressMap; // Maps line numbers to addresses
 
     DebuggerWindow* m_debuggerWindow;
 };
