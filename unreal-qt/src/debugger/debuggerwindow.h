@@ -50,7 +50,8 @@ private slots:
     // Debug toolbar actions
     void continueExecution();
     void pauseExecution();
-    void cpuStep();
+    void stepIn();
+    void stepOut();
     void frameStep();
     void waitInterrupt();
     void resetEmulator();
@@ -78,7 +79,8 @@ private:
     QToolBar* toolBar;
     QAction* continueAction;
     QAction* pauseAction;
-    QAction* cpuStepAction;
+    QAction* stepInAction;
+    QAction* stepOutAction;
     QAction* frameStepAction;
     QAction* waitInterruptAction;
     QAction* resetAction;

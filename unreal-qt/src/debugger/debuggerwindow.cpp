@@ -46,7 +46,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     // Populate actions
     continueAction = toolBar->addAction("Continue");
     pauseAction = toolBar->addAction("Pause");
-    cpuStepAction = toolBar->addAction("CPU step");
+    stepInAction = toolBar->addAction("Step In");
+    stepOutAction = toolBar->addAction("Step Out");
     frameStepAction = toolBar->addAction("Frame step");
     waitInterruptAction = toolBar->addAction("Wait INT");
     resetAction = toolBar->addAction("Reset");
@@ -55,7 +56,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
-    connect(cpuStepAction, &QAction::triggered, this, &DebuggerWindow::cpuStep);
+    connect(stepInAction, &QAction::triggered, this, &DebuggerWindow::stepIn);
+    connect(stepOutAction, &QAction::triggered, this, &DebuggerWindow::stepOut);
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
@@ -231,7 +233,8 @@ void DebuggerWindow::reset()
         // Disable all toolbar actions when no active emulator available
         continueAction->setEnabled(false);
         pauseAction->setEnabled(false);
-        cpuStepAction->setEnabled(false);
+        stepInAction->setEnabled(false);
+        stepOutAction->setEnabled(false);
         frameStepAction->setEnabled(false);
         waitInterruptAction->setEnabled(false);
         resetAction->setEnabled(false);
@@ -333,7 +336,8 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
             case StateStopped:
                 continueAction->setEnabled(false);
                 pauseAction->setEnabled(false);
-                cpuStepAction->setEnabled(false);
+                stepInAction->setEnabled(false);
+                stepOutAction->setEnabled(false);
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(false);
@@ -348,7 +352,8 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
             default:
                 continueAction->setEnabled(false);
                 pauseAction->setEnabled(true);
-                cpuStepAction->setEnabled(false);
+                stepInAction->setEnabled(false);
+                stepOutAction->setEnabled(false);
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(false);
@@ -358,7 +363,8 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
             case StateResumed:
                 continueAction->setEnabled(false);
                 pauseAction->setEnabled(true);
-                cpuStepAction->setEnabled(false);
+                stepInAction->setEnabled(false);
+                stepOutAction->setEnabled(false);
                 frameStepAction->setEnabled(false);
                 waitInterruptAction->setEnabled(false);
                 resetAction->setEnabled(true);
@@ -367,7 +373,8 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
             case StatePaused:
                 continueAction->setEnabled(true);
                 pauseAction->setEnabled(false);
-                cpuStepAction->setEnabled(true);
+                stepInAction->setEnabled(true);
+                stepOutAction->setEnabled(true);
                 frameStepAction->setEnabled(true);
                 waitInterruptAction->setEnabled(true);
                 resetAction->setEnabled(true);
@@ -395,7 +402,8 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
     {
         continueAction->setEnabled(true);
         pauseAction->setEnabled(false);
-        cpuStepAction->setEnabled(true);
+        stepInAction->setEnabled(true);
+        stepOutAction->setEnabled(true);
         frameStepAction->setEnabled(true);
         waitInterruptAction->setEnabled(true);
 
@@ -427,7 +435,8 @@ void DebuggerWindow::continueExecution()
     {
         continueAction->setEnabled(false);
         pauseAction->setEnabled(true);
-        cpuStepAction->setEnabled(false);
+        stepInAction->setEnabled(false);
+        stepOutAction->setEnabled(false);
         frameStepAction->setEnabled(false);
         waitInterruptAction->setEnabled(false);
 
@@ -452,7 +461,8 @@ void DebuggerWindow::pauseExecution()
 
         continueAction->setEnabled(true);
         pauseAction->setEnabled(false);
-        cpuStepAction->setEnabled(true);
+        stepInAction->setEnabled(true);
+        stepOutAction->setEnabled(true);
         frameStepAction->setEnabled(true);
         waitInterruptAction->setEnabled(true);
 
@@ -460,9 +470,9 @@ void DebuggerWindow::pauseExecution()
     }
 }
 
-void DebuggerWindow::cpuStep()
+void DebuggerWindow::stepIn()
 {
-    qDebug() << "DebuggerWindow::cpuStep()";
+    qDebug() << "DebuggerWindow::stepIn()";
 
     _breakpointTriggered = false;
 
@@ -472,6 +482,25 @@ void DebuggerWindow::cpuStep()
         bool skipBreakpoints = true;
         _emulator->RunSingleCPUCycle(skipBreakpoints);
 
+        updateState();
+    }
+}
+
+void DebuggerWindow::stepOut()
+{
+    qDebug() << "DebuggerWindow::stepOut()";
+
+    _breakpointTriggered = false;
+
+    if (_emulator)
+    {
+        // TODO: Implement step out functionality
+        // This would typically involve:
+        // 1. Analyzing the stack to find the return address
+        // 2. Setting a temporary breakpoint at the return address
+        // 3. Continuing execution until that breakpoint is hit
+        
+        // For now, just update the state
         updateState();
     }
 }
