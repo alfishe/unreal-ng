@@ -273,27 +273,11 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     }
 
     // Check if the emulator is paused (active debugging state)
-    EmulatorStateEnum state = emulator->GetState();
-    bool isPaused = emulator->IsPaused(); // Use the IsPaused() method which handles all paused states
-
-    // Convert state enum to string for debug output
-    QString stateName;
-    switch (state) {
-        case EmulatorStateEnum::StateUnknown: stateName = "Unknown"; break;
-        case EmulatorStateEnum::StateInitialized: stateName = "Initialized"; break;
-        case EmulatorStateEnum::StateRun: stateName = "Run"; break;
-        case EmulatorStateEnum::StatePaused: stateName = "Paused"; break;
-        case EmulatorStateEnum::StateResumed: stateName = "Resumed"; break;
-        case EmulatorStateEnum::StateStopped: stateName = "Stopped"; break;
-        default: stateName = "Invalid"; break;
-    }
-
-    qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Emulator state:" << stateName << "isPaused:" << isPaused;
+    bool isPaused = emulator->IsPaused();
 
     // Update the state indicator
     if (isPaused)
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting ACTIVE state";
         m_stateIndicator->setText("ACTIVE");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
@@ -301,7 +285,6 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     }
     else
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting DETACHED state";
         m_stateIndicator->setText("DETACHED");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
@@ -348,13 +331,18 @@ uint16_t DisassemblerWidget::getNextCommandAddress(uint16_t currentAddress)
 uint16_t DisassemblerWidget::getPreviousCommandAddress(uint16_t currentAddress)
 {
     // Finding the previous instruction is trickier since Z80 has variable-length instructions
-    // A simple approach is to try disassembling from a few bytes back and see if we land at our address
+    // We'll use a greedy approach to find the longest valid instruction that leads to our address
 
     if (!getEmulator() || !getMemory())
         return (currentAddress - 1) & 0xFFFF;
 
+    // Store the best match found so far
+    uint16_t bestMatch = (currentAddress - 1) & 0xFFFF;
+    bool foundMatch = false;
+    
     // Try up to 4 bytes back (longest Z80 instruction is 4 bytes)
-    for (int i = 1; i <= 4; i++)
+    // Start from the farthest (longest instruction) and work our way back
+    for (int i = 4; i >= 1; i--)
     {
         uint16_t testAddress = (currentAddress - i) & 0xFFFF;
         uint16_t nextAddr = getNextCommandAddress(testAddress);
@@ -362,12 +350,37 @@ uint16_t DisassemblerWidget::getPreviousCommandAddress(uint16_t currentAddress)
         if (nextAddr == currentAddress)
         {
             // We found an instruction that leads to our current address
+            // Since we're starting from the longest possible instructions,
+            // this is the longest valid instruction
             return testAddress;
         }
     }
 
     // If we can't find a perfect match, just go back 1 byte as fallback
     return (currentAddress - 1) & 0xFFFF;
+}
+
+uint16_t DisassemblerWidget::findInstructionBoundaryBefore(uint16_t targetAddress)
+{
+    if (!getEmulator() || !getMemory())
+        return (targetAddress - 1) & 0xFFFF;
+
+    // Simple approach: Try to find an instruction that ends exactly at our target
+    // Try up to 4 bytes back (longest Z80 instruction is 4 bytes)
+    for (int i = 1; i <= 4; i++)
+    {
+        uint16_t testAddress = (targetAddress - i) & 0xFFFF;
+        uint16_t nextAddr = getNextCommandAddress(testAddress);
+
+        if (nextAddr == targetAddress)
+        {
+            // We found an instruction that leads to our target address
+            return testAddress;
+        }
+    }
+
+    // If we can't find a perfect match, just go back 1 byte as fallback
+    return (targetAddress - 1) & 0xFFFF;
 }
 
 void DisassemblerWidget::navigateUp()
@@ -379,16 +392,25 @@ void DisassemblerWidget::navigateUp()
 
     if (m_scrollMode == ScrollMode::Byte)
     {
-        // Byte mode: move back one byte
-        prevAddress = m_displayAddress > 0 ? m_displayAddress - 1 : 0xFFFF;
+        // In byte mode, move back one byte
+        if (m_displayAddress > 0)
+        {
+            // Move back one byte
+            prevAddress = (m_displayAddress - 1) & 0xFFFF;
+        }
+        else
+        {
+            prevAddress = 0xFFFF;  // Wrap around to the end of memory
+        }
     }
     else
     {
-        // Command mode: move back one whole instruction
+        // Command mode: silently find the previous command address
+        // This ensures we jump directly to the previous instruction without intermediate steps
         prevAddress = getPreviousCommandAddress(m_displayAddress);
     }
 
-    // Update the disassembly view
+    // Update the disassembly view with the found address
     setDisassemblerAddress(prevAddress);
 }
 

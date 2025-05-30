@@ -112,6 +112,7 @@ protected:
     void updateDebuggerStateIndicator();
     uint16_t getNextCommandAddress(uint16_t currentAddress);
     uint16_t getPreviousCommandAddress(uint16_t currentAddress);
+    uint16_t findInstructionBoundaryBefore(uint16_t targetAddress);
     
     // Breakpoint methods
     void toggleBreakpointAtAddress(uint16_t address);
