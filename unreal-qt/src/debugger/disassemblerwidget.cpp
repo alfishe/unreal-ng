@@ -625,8 +625,19 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
     }
     else
     {
-        // Try decimal format
-        address = trimmed.toUInt(&ok, 10);
+        // Check if the input looks like hex (contains a-f or A-F)
+        static QRegularExpression hexPattern("[a-fA-F]");
+        if (hexPattern.match(trimmed).hasMatch())
+        {
+            // If it contains hex digits, treat as hex
+            address = trimmed.toUInt(&ok, 16);
+            qDebug() << "Detected hex format without prefix:" << trimmed << "-> 0x" << QString::number(address, 16);
+        }
+        else
+        {
+            // Try decimal format
+            address = trimmed.toUInt(&ok, 10);
+        }
     }
     
     // Ensure the address is within valid range (0-65535)
