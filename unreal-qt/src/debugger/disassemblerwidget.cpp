@@ -91,6 +91,7 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyDownPressed, this, &DisassemblerWidget::navigateDown);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this, &DisassemblerWidget::showGoToAddressDialog);
 
     // Connect mouse click events for breakpoint toggling
     m_disassemblyTextEdit->viewport()->installEventFilter(this);
@@ -587,6 +588,58 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
             toggleBreakpointAtAddress(m_addressMap[closestLine]);
         }
     }
+}
+
+void DisassemblerWidget::showGoToAddressDialog()
+{
+    bool ok;
+    QString text = QInputDialog::getText(this, tr("Go to Address"),
+                                       tr("Enter address (decimal or hex with 0x, $, or # prefix):"),
+                                       QLineEdit::Normal, QString(), &ok);
+    if (ok && !text.isEmpty())
+    {
+        uint16_t address = parseAddressInput(text);
+        goToAddress(address);
+    }
+}
+
+uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
+{
+    QString trimmed = input.trimmed();
+    bool ok;
+    uint16_t address = 0;
+    
+    // Check for hex format with various prefixes
+    if (trimmed.startsWith("0x", Qt::CaseInsensitive) ||
+        trimmed.startsWith("$") ||
+        trimmed.startsWith("#"))
+    {
+        // Remove the prefix
+        if (trimmed.startsWith("0x", Qt::CaseInsensitive))
+            trimmed = trimmed.mid(2);
+        else
+            trimmed = trimmed.mid(1);
+        
+        // Convert from hex
+        address = trimmed.toUInt(&ok, 16);
+    }
+    else
+    {
+        // Try decimal format
+        address = trimmed.toUInt(&ok, 10);
+    }
+    
+    // Ensure the address is within valid range (0-65535)
+    return address & 0xFFFF;
+}
+
+void DisassemblerWidget::goToAddress(uint16_t address)
+{
+    if (!getEmulator() || !getZ80Registers())
+        return;
+    
+    // Update the disassembly view to show the specified address
+    setDisassemblerAddress(address);
 }
 
 // Override event filter to handle mouse clicks for breakpoint toggling

@@ -9,6 +9,8 @@
 #include <QPlainTextEdit>
 #include <QTextCharFormat>
 #include <QWidget>
+#include <QInputDialog>
+#include <QRegularExpression>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -36,6 +38,7 @@ signals:
     void keyDownPressed();
     void enterPressed();
     void toggleScrollMode();
+    void goToAddressRequested();
 
 protected:
     void keyPressEvent(QKeyEvent* event) override
@@ -58,6 +61,14 @@ protected:
         else if (event->key() == Qt::Key_B)
         {
             emit toggleScrollMode();
+            event->accept();
+        }
+        else if (event->key() == Qt::Key_G && 
+                (event->modifiers() == Qt::ControlModifier || 
+                 event->modifiers() == Qt::MetaModifier))
+        {
+            // Ctrl+G on Windows/Linux or Cmd+G on macOS
+            emit goToAddressRequested();
             event->accept();
         }
         else
@@ -113,10 +124,13 @@ protected:
     void returnToCurrentPC();
     void toggleScrollMode();
     void handleBreakpointClick(int lineNumber);
+    void showGoToAddressDialog();
+    uint16_t parseAddressInput(const QString& input);
 
 public slots:
     void reset();
     void refresh();
+    void goToAddress(uint16_t address);
 
 signals:
 
