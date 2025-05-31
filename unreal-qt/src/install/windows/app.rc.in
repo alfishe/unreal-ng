@@ -1,0 +1,35 @@
+IDI_ICON1 ICON DISCARDABLE "@CMAKE_CURRENT_SOURCE_DIR@/src/install/windows/unreal.ico"
+
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     @CPACK_PACKAGE_VERSION_MAJOR@,@CPACK_PACKAGE_VERSION_MINOR@,@CPACK_PACKAGE_VERSION_PATCH@,0
+PRODUCTVERSION  @CPACK_PACKAGE_VERSION_MAJOR@,@CPACK_PACKAGE_VERSION_MINOR@,@CPACK_PACKAGE_VERSION_PATCH@,0
+FILEFLAGSMASK   0x3fL
+#ifdef _DEBUG
+FILEFLAGS       VS_FF_DEBUG
+#else
+FILEFLAGS       0x0L
+#endif
+FILEOS          VOS__WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "@CPACK_PACKAGE_VENDOR@\0"
+            VALUE "FileDescription",  "@CPACK_PACKAGE_DESCRIPTION_SUMMARY@\0"
+            VALUE "FileVersion",      "@CPACK_PACKAGE_VERSION@\0"
+            VALUE "LegalCopyright",   "Copyright (C) 2025 UnrealNG Team\0"
+            VALUE "OriginalFilename", "@PROJECT_NAME@.exe\0"
+            VALUE "ProductName",      "UnrealNG\0"
+            VALUE "ProductVersion",   "@CPACK_PACKAGE_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
