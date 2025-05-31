@@ -68,12 +68,24 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     m_stateIndicator->setStyleSheet(
         "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
 
+    // Create bank indicator label
+    m_bankIndicator = new QLabel(this);
+    m_bankIndicator->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_bankIndicator->setText("Bank: ROM");  // Default value
+
     // Position the indicators in the top-right corner
     QVBoxLayout* mainLayout = qobject_cast<QVBoxLayout*>(layout);
     if (mainLayout)
     {
         QHBoxLayout* topLayout = new QHBoxLayout();
+
+        // Add bank indicator on the left
+        topLayout->addWidget(m_bankIndicator);
+
+        // Add stretch to push other indicators to the right
         topLayout->addStretch();
+
+        // Add state and scroll mode indicators on the right
         topLayout->addWidget(m_stateIndicator);
         topLayout->addSpacing(5);  // Add a small gap between indicators
         topLayout->addWidget(m_scrollModeIndicator);
@@ -92,7 +104,7 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this, &DisassemblerWidget::showGoToAddressDialog);
-    
+
     // Connect signals for mouse wheel navigation
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::wheelScrollUp, this, &DisassemblerWidget::navigateUp);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::wheelScrollDown, this, &DisassemblerWidget::navigateDown);
@@ -146,13 +158,16 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
     // Clear the address map before generating new disassembly
     m_addressMap.clear();
-    
+
     // Store the starting address to help with debugging
     int baseLineNumber = 0; // First line in the disassembly view
 
     // Store the current PC and display address
     m_currentPC = registers->pc;
     m_displayAddress = pc;
+
+    // Update the bank indicator
+    updateBankIndicator(pc);
 
     uint8_t* pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(pc);
     uint8_t commandLen = 0;
@@ -282,6 +297,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     // Update the state indicator
     if (isPaused)
     {
+        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting ACTIVE state";
         m_stateIndicator->setText("ACTIVE");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
@@ -289,6 +305,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     }
     else
     {
+        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting DETACHED state";
         m_stateIndicator->setText("DETACHED");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
@@ -343,7 +360,7 @@ uint16_t DisassemblerWidget::getPreviousCommandAddress(uint16_t currentAddress)
     // Store the best match found so far
     uint16_t bestMatch = (currentAddress - 1) & 0xFFFF;
     bool foundMatch = false;
-    
+
     // Try up to 4 bytes back (longest Z80 instruction is 4 bytes)
     // Start from the farthest (longest instruction) and work our way back
     for (int i = 4; i >= 1; i--)
@@ -469,6 +486,68 @@ void DisassemblerWidget::reset()
     m_disassemblyTextEdit->setExtraSelections(QList<QTextEdit::ExtraSelection>());
 }
 
+void DisassemblerWidget::updateBankIndicator(uint16_t address)
+{
+    if (!getEmulator() || !getMemory())
+        return;
+
+    Memory& memory = *getMemory();
+
+    // Get the physical address for the current address
+    uint8_t* physicalAddress = memory.MapZ80AddressToPhysicalAddress(address);
+    std::string bankName = "Unknown";
+
+    // Determine bank based on address range
+    if (address < 0x4000)
+    {
+        // ROM 0 (0-16K)
+        bankName = "ROM 0";
+    }
+    else if (address < 0x8000)
+    {
+        // ROM 1-N (16K-32K)
+        uint8_t romPage = memory.GetROMPage();
+        bankName = "ROM " + std::to_string(romPage);
+    }
+    else if (address < 0xC000)
+    {
+        // RAM banks (32K-48K)
+        // Try to get the RAM page if the method is available
+        uint8_t ramPage = 0;
+
+        // Use different methods based on address range
+        if (address >= 0x8000 && address < 0xA000)
+        {
+            ramPage = 2; // Common convention for this range
+        }
+        else if (address >= 0xA000 && address < 0xC000)
+        {
+            ramPage = 3; // Common convention for this range
+        }
+
+        bankName = "RAM " + std::to_string(ramPage);
+    }
+    else
+    {
+        // System RAM (48K-64K)
+        bankName = "System RAM";
+    }
+
+    // Add the address range for clarity
+    QString addressRangeStr;
+    if (address < 0x4000)
+        addressRangeStr = "0000-3FFF";
+    else if (address < 0x8000)
+        addressRangeStr = "4000-7FFF";
+    else if (address < 0xC000)
+        addressRangeStr = "8000-BFFF";
+    else
+        addressRangeStr = "C000-FFFF";
+
+    // Update the bank indicator label with both bank name and address range
+    m_bankIndicator->setText(QString("Bank: %1 (%2)").arg(QString::fromStdString(bankName), addressRangeStr));
+}
+
 void DisassemblerWidget::refresh()
 {
     qDebug() << "DisassemblerWidget::refresh() called";
@@ -478,6 +557,9 @@ void DisassemblerWidget::refresh()
     {
         uint16_t currentPC = getZ80Registers()->pc;
         setDisassemblerAddress(currentPC);
+
+        // Also directly update the bank indicator to ensure it's current
+        updateBankIndicator(currentPC);
     }
 
     // Update the debugger state indicator
@@ -486,18 +568,18 @@ void DisassemblerWidget::refresh()
 
 void DisassemblerWidget::refreshPreservingPosition(uint16_t addressToKeep)
 {
-    qDebug() << "DisassemblerWidget::refreshPreservingPosition() called with address:" 
+    qDebug() << "DisassemblerWidget::refreshPreservingPosition() called with address:"
              << QString("0x%1").arg(addressToKeep, 4, 16, QLatin1Char('0')).toUpper();
-    
+
     // Store the current address to preserve
     m_displayAddress = addressToKeep;
-    
+
     // Refresh the disassembly view but keep the current address
     setDisassemblerAddress(addressToKeep);
-    
+
     // Update the debugger state indicator
     updateDebuggerStateIndicator();
-    
+
     // Update breakpoint highlighting
     updateBreakpointHighlighting();
 }
@@ -529,26 +611,26 @@ bool DisassemblerWidget::hasBreakpointAtAddress(uint16_t address) const
 void DisassemblerWidget::updateBreakpointHighlighting()
 {
     QList<QTextEdit::ExtraSelection> extraSelections = m_disassemblyTextEdit->extraSelections();
-    
+
     // Get the document and iterate through its blocks (lines) safely
     QTextDocument* doc = m_disassemblyTextEdit->document();
     if (!doc) return;
-    
+
     for (QTextBlock block = doc->begin(); block.isValid(); block = block.next())
     {
         // Get the text of the current line
         QString lineText = block.text();
-        
+
         // Check if this line has a breakpoint marker
         if (lineText.startsWith("[●]"))
         {
             // Create a cursor for this block
             QTextCursor blockCursor(block);
-            
+
             // Select the entire line
             blockCursor.movePosition(QTextCursor::StartOfLine);
             blockCursor.movePosition(QTextCursor::EndOfLine, QTextCursor::KeepAnchor);
-            
+
             // Create and add the selection
             QTextEdit::ExtraSelection selection;
             selection.cursor = blockCursor;
@@ -556,7 +638,7 @@ void DisassemblerWidget::updateBreakpointHighlighting()
             extraSelections.append(selection);
         }
     }
-    
+
     // Apply all the selections
     m_disassemblyTextEdit->setExtraSelections(extraSelections);
 }
@@ -602,7 +684,7 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
     // Debug output to help diagnose issues
     qDebug() << "Clicked on line number:" << lineNumber;
     qDebug() << "Address map contains:" << m_addressMap.size() << "entries";
-    
+
     // Check if the line number is valid and has an address mapping
     if (m_addressMap.find(lineNumber) != m_addressMap.end())
     {
@@ -613,12 +695,12 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
     else
     {
         qDebug() << "No address mapping found for line" << lineNumber;
-        
+
         // If we don't have an exact match, try to find the closest line
         // This helps with clicks that might be slightly off
         int closestLine = -1;
         int minDistance = 999;
-        
+
         for (const auto& pair : m_addressMap)
         {
             int distance = std::abs(pair.first - lineNumber);
@@ -628,7 +710,7 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
                 closestLine = pair.first;
             }
         }
-        
+
         if (closestLine >= 0 && minDistance <= 1) // Only use if very close
         {
             qDebug() << "Using closest line:" << closestLine << "with address:" << QString::number(m_addressMap[closestLine], 16);
@@ -641,8 +723,8 @@ void DisassemblerWidget::showGoToAddressDialog()
 {
     bool ok;
     QString text = QInputDialog::getText(this, tr("Go to Address"),
-                                       tr("Enter address (decimal or hex with 0x, $, or # prefix):"),
-                                       QLineEdit::Normal, QString(), &ok);
+                                         tr("Enter address (decimal or hex with 0x, $, or # prefix):"),
+                                         QLineEdit::Normal, QString(), &ok);
     if (ok && !text.isEmpty())
     {
         uint16_t address = parseAddressInput(text);
@@ -655,7 +737,7 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
     QString trimmed = input.trimmed();
     bool ok;
     uint16_t address = 0;
-    
+
     // Check for hex format with various prefixes
     if (trimmed.startsWith("0x", Qt::CaseInsensitive) ||
         trimmed.startsWith("$") ||
@@ -666,7 +748,7 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
             trimmed = trimmed.mid(2);
         else
             trimmed = trimmed.mid(1);
-        
+
         // Convert from hex
         address = trimmed.toUInt(&ok, 16);
     }
@@ -686,7 +768,7 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
             address = trimmed.toUInt(&ok, 10);
         }
     }
-    
+
     // Ensure the address is within valid range (0-65535)
     return address & 0xFFFF;
 }
@@ -695,7 +777,7 @@ void DisassemblerWidget::goToAddress(uint16_t address)
 {
     if (!getEmulator() || !getZ80Registers())
         return;
-    
+
     // Update the disassembly view to show the specified address
     setDisassemblerAddress(address);
 }
@@ -706,21 +788,21 @@ bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
     if (obj == m_disassemblyTextEdit->viewport() && event->type() == QEvent::MouseButtonPress)
     {
         QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
-        
+
         // Check if the click is in the breakpoint column (first few pixels)
         if (mouseEvent->position().x() < 20)
         {
             // Get the line number at the click position
             QTextCursor cursor = m_disassemblyTextEdit->cursorForPosition(mouseEvent->pos());
             int lineNumber = cursor.blockNumber();
-            
+
             // Toggle breakpoint at this line
             handleBreakpointClick(lineNumber);
-            
+
             return true; // Event handled
         }
     }
-    
+
     // Pass the event to the parent class
     return QWidget::eventFilter(obj, event);
 }

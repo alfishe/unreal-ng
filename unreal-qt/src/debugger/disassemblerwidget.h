@@ -137,6 +137,7 @@ protected:
     void highlightCurrentPC();
     void updateScrollModeIndicator();
     void updateDebuggerStateIndicator();
+    void updateBankIndicator(uint16_t address);
     uint16_t getNextCommandAddress(uint16_t currentAddress);
     uint16_t getPreviousCommandAddress(uint16_t currentAddress);
     uint16_t findInstructionBoundaryBefore(uint16_t targetAddress);
@@ -169,6 +170,7 @@ private:
     DisassemblyTextEdit* m_disassemblyTextEdit;
     QLabel* m_scrollModeIndicator;  // Label to show current scroll mode
     QLabel* m_stateIndicator;       // Label to show debugger state (Active/Detached)
+    QLabel* m_bankIndicator;        // Label to show current memory bank
 
     uint16_t m_currentPC;                 // Current program counter
     uint16_t m_displayAddress;            // Address currently displayed at the top of the disassembly view
