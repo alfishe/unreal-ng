@@ -8,6 +8,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
 #include <cstring>
+#include <queue>
 
 /// region <Information>
 
