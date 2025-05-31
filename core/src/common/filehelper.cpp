@@ -6,6 +6,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -52,6 +55,43 @@ std::string FileHelper::GetExecutablePath()
 #endif
 
     return exePath.parent_path().string();
+}
+
+std::string FileHelper::GetResourcesPath()
+{
+    std::string resourcesPath;
+
+#if defined(_WIN32)
+    // On Windows, resources are in the same directory as the executable
+    resourcesPath = GetExecutablePath();
+
+#elif defined(__APPLE__)
+    // On macOS, check if we're inside an app bundle
+    std::string execPath = GetExecutablePath();
+    
+    // Check if we're in an app bundle (path contains .app/Contents/MacOS)
+    if (execPath.find(".app/Contents/MacOS") != std::string::npos)
+    {
+        // We're in an app bundle, resources should be in Contents/Resources
+        fs::path path(execPath);
+        path = path.parent_path(); // Move from MacOS to Contents
+        path /= "Resources";      // Move to Resources directory
+        resourcesPath = path.string();
+    }
+    else
+    {
+        // Not in an app bundle, use executable directory
+        resourcesPath = execPath;
+    }
+
+#elif defined(__linux__)
+    // On Linux, resources are in the same directory as the executable
+    resourcesPath = GetExecutablePath();
+#else
+    #error "Unsupported platform"
+#endif
+
+    return resourcesPath;
 }
 
 std::string FileHelper::NormalizePath(const std::string& path, char separator)
