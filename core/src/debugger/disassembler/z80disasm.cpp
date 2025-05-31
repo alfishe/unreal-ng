@@ -2086,21 +2086,21 @@ bool Z80Disassembler::shouldStepOver(const uint8_t* buffer, size_t len)
 
     if (!buffer || len == 0)
         return result;
-    
+
     // Decode the instruction
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
     disassembleSingleCommand(buffer, len, &instructionLength, &decoded);
-    
+
     // Check if this is an instruction we should step over
     uint32_t flags = decoded.opcode.flags;
-    
+
     // CALL, RST, block instructions, or DJNZ should be stepped over
     if ((flags & OF_JUMP) || (flags & OF_RST) || (flags & OF_BLOCK) || (flags & OF_DJNZ))
     {
         result = true;
     }
-        
+
     return result;
 }
 
@@ -2108,24 +2108,25 @@ uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Mem
 {
     if (!memory)
         return (currentAddress + 1) & 0xFFFF;
-    
+
     // Read instruction bytes
-    uint8_t buffer[4]; // Max instruction length for Z80 is 4 bytes
+    uint8_t buffer[MAX_INSTRUCTION_LENGTH];
     for (size_t i = 0; i < sizeof(buffer); i++)
         buffer[i] = memory->DirectReadFromZ80Memory(currentAddress + i);
-    
+
     // Disassemble the current instruction to get its length
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
     disassembleSingleCommand(buffer, sizeof(buffer), &instructionLength, &decoded);
-    
+
     // Calculate the next address by adding the instruction length
     return (currentAddress + decoded.fullCommandLen) & 0xFFFF;
 }
 
 /// region <Helper methods>
 
-DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers, Memory* memory)
+DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers,
+                                                      Memory* memory)
 {
     DecodedInstruction result;
 
@@ -2151,7 +2152,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     [[maybe_unused]] uint8_t byteOperand = 0x00;
     // Command decoding state
     bool commandDecoded = false;
-    
+
     // These flags will be set based on the actual opcode flags during decoding
     bool hasDisplacement = false;
     bool hasJump = false;
@@ -2179,7 +2180,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         // Update effective prefix (for prefix chains like DD FD FD DD DD ...)
         if (isPrefix)
         {
-            if (prefix == 0x0000)   // No prefix
+            if (prefix == 0x0000)  // No prefix
             {
                 prefix = fetchByte;
             }
@@ -2233,7 +2234,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                 case 0xFDCB:
                     // DDCB and FDCB prefixes use another pattern <prefix> <displacement> <opcode>. No operands.
                     // DD CB <dd> E1 - set 4,(ix+dd),c
-                    operandsLen = 1;                    // DDCB and FDCB prefixed instructions are always have just single displacement
+                    operandsLen = 1;  // DDCB and FDCB prefixed instructions are always have just single displacement
                     displacement = fetchByte;
                     result.hasDisplacement = hasDisplacement;
                     result.displacement = displacement;
@@ -2278,12 +2279,12 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     result.isInterrupt = (opcode.flags & OF_INTERRUPT) != 0;
     result.isRegExchange = (opcode.flags & OF_REG_EXCHANGE) != 0;
     result.isDjnz = (opcode.flags & OF_DJNZ) != 0;
-    
+
     // Set flag-affecting properties
     result.affectsFlags = (opcode.flags & OF_FLAGS_AFFECTED) != 0;
     result.affectsAllFlags = (opcode.flags & OF_FLAGS_ALL) != 0;
     result.affectsSZFlags = (opcode.flags & OF_FLAGS_SZ) != 0;
-    
+
     // Preserve all opcode information
     result.opcode.flags = opcode.flags;  // Ensure all opcode flags are preserved
     result.opcode.t = opcode.t;
@@ -2670,5 +2671,327 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
     return result;
 }
 
+/// @brief Get address ranges that should be excluded from breakpoint triggering during step-over
+/// @param currentPC Current program counter value
+/// @param memory Memory interface to read instructions
+/// @param maxDepth Maximum depth for call analysis (to prevent infinite recursion)
+/// @return Vector of address range pairs (start, end) that should be excluded
+std::vector<std::pair<uint16_t, uint16_t>> Z80Disassembler::getStepOverExclusionRanges(uint16_t currentPC,
+                                                                                       Memory* memory, int maxDepth)
+{
+    std::vector<std::pair<uint16_t, uint16_t>> result;
+    std::stringstream logStream;
+    logStream << "StepOver analysis for PC=" << StringHelper::Format("0x%04X", currentPC) << ": ";
+
+    if (!memory)
+        return result;
+
+    // Read instruction bytes at current PC
+    uint8_t buffer[MAX_INSTRUCTION_LENGTH];  // Buffer for instruction bytes
+    for (size_t i = 0; i < MAX_INSTRUCTION_LENGTH; i++)
+        buffer[i] = memory->DirectReadFromZ80Memory(currentPC + i);
+
+    // Decode the instruction
+    DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer));
+    if (!decoded.isValid)
+        return result;
+
+    // Get the next instruction address
+    uint16_t nextPC = getNextInstructionAddress(currentPC, memory);
+    logStream << "NextPC=" << StringHelper::Format("0x%04X", nextPC) << ", ";
+
+    // Check instruction type and determine exclusion ranges
+    if (decoded.hasJump && !decoded.hasRelativeJump)
+    {
+        logStream << "Type=CALL, ";
+        // For CALL instructions, we need to analyze the called function
+        if (maxDepth > 0)
+        {
+            // Add range from current PC to next instruction
+            if (currentPC + 1 < nextPC)
+            {
+                result.push_back(std::make_pair(currentPC + 1, nextPC - 1));
+                logStream << "Range1=[" << StringHelper::Format("0x%04X", currentPC + 1) << "-"
+                          << StringHelper::Format("0x%04X", nextPC - 1) << "], ";
+            }
+
+            // For CALL instructions, add the target address and analyze the called function
+            uint16_t targetAddress = decoded.jumpAddr;
+            logStream << "Target=" << StringHelper::Format("0x%04X", targetAddress) << ", ";
+
+            // Analyze the called function to find address ranges
+            analyzeCalledFunction(targetAddress, memory, result, maxDepth - 1);
+        }
+    }
+    else if (decoded.isRst)
+    {
+        logStream << "Type=RST, ";
+        // For RST instructions, similar to CALL
+        if (maxDepth > 0)
+        {
+            // Add range from current PC to next instruction
+            if (currentPC + 1 < nextPC)
+            {
+                result.push_back(std::make_pair(currentPC + 1, nextPC - 1));
+                logStream << "Range1=[" << StringHelper::Format("0x%04X", currentPC + 1) << "-"
+                          << StringHelper::Format("0x%04X", nextPC - 1) << "], ";
+            }
+
+            // RST jumps to a fixed address in page 0
+            uint16_t targetAddress = decoded.jumpAddr;
+            logStream << "Target=" << StringHelper::Format("0x%04X", targetAddress) << ", ";
+
+            // Analyze the called function to find address ranges
+            analyzeCalledFunction(targetAddress, memory, result, maxDepth - 1);
+        }
+    }
+    else if (decoded.isDjnz)
+    {
+        logStream << "Type=DJNZ, ";
+        // For DJNZ, we need to include the loop body
+        int8_t offset = decoded.relJumpOffset;
+
+        // Calculate target address for the relative jump
+        uint16_t targetAddress = nextPC + offset;
+        logStream << "Target=" << StringHelper::Format("0x%04X", targetAddress) << ", ";
+
+        // Add range between current instruction and target
+        if (targetAddress > nextPC)
+        {
+            // Forward jump
+            result.push_back(std::make_pair(nextPC, targetAddress - 1));
+            logStream << "Range1=[" << StringHelper::Format("0x%04X", nextPC) << "-"
+                      << StringHelper::Format("0x%04X", targetAddress - 1) << "], ";
+        }
+        else
+        {
+            // Backward jump (loop)
+            result.push_back(std::make_pair(targetAddress, nextPC - 1));
+            logStream << "Range1=[" << StringHelper::Format("0x%04X", targetAddress) << "-"
+                      << StringHelper::Format("0x%04X", nextPC - 1) << "], ";
+        }
+    }
+    else if (decoded.isBlockOp)
+    {
+        logStream << "Type=BLOCK, ";
+        // For block operations (LDIR, LDDR, etc.), include the range between current and next
+        if (currentPC + 1 < nextPC)
+        {
+            result.push_back(std::make_pair(currentPC + 1, nextPC - 1));
+            logStream << "Range1=[" << StringHelper::Format("0x%04X", currentPC + 1) << "-"
+                      << StringHelper::Format("0x%04X", nextPC - 1) << "], ";
+        }
+    }
+    else
+    {
+        logStream << "Type=REGULAR, ";
+    }
+
+    // Log summary of exclusion ranges
+    logStream << "ExclusionRanges=[";
+    for (size_t i = 0; i < result.size(); i++)
+    {
+        if (i > 0)
+            logStream << ", ";
+        logStream << StringHelper::Format("0x%04X", result[i].first) << "-"
+                  << StringHelper::Format("0x%04X", result[i].second);
+    }
+    logStream << "]";
+
+    MLOGDEBUG("%s", logStream.str().c_str());
+    return result;
+}
+
+/// @brief Helper method to analyze a called function for step-over exclusion ranges
+/// @param functionAddress Start address of the function
+/// @param memory Memory interface to read instructions
+/// @param ranges Vector to populate with exclusion ranges
+/// @param maxDepth Maximum recursion depth
+void Z80Disassembler::analyzeCalledFunction(uint16_t functionAddress, Memory* memory,
+                                            std::vector<std::pair<uint16_t, uint16_t>>& ranges, int maxDepth)
+{
+    if (maxDepth <= 0 || !memory)
+        return;
+
+    // Create a tree structure for logging the traversal
+    std::map<uint16_t, std::vector<uint16_t>> branchTree;
+    std::map<uint16_t, std::string> instructionTypes;
+    std::map<uint16_t, std::string> disassembly;
+
+    // Set to track addresses we've already visited (to prevent infinite loops)
+    std::set<uint16_t> visitedAddresses;
+
+    // Queue of addresses to analyze
+    std::queue<uint16_t> addressesToAnalyze;
+    addressesToAnalyze.push(functionAddress);
+
+    // Track the function range
+    uint16_t functionStart = functionAddress;
+    uint16_t functionEnd = functionAddress;
+
+    // Limit the number of instructions to analyze to prevent excessive processing
+    const int MAX_INSTRUCTIONS = 1000;
+    int instructionsAnalyzed = 0;
+
+    while (!addressesToAnalyze.empty() && instructionsAnalyzed < MAX_INSTRUCTIONS)
+    {
+        uint16_t currentAddress = addressesToAnalyze.front();
+        addressesToAnalyze.pop();
+
+        // Skip if we've already visited this address
+        if (visitedAddresses.find(currentAddress) != visitedAddresses.end())
+            continue;
+
+        visitedAddresses.insert(currentAddress);
+        instructionsAnalyzed++;
+
+        // Update function range
+        functionStart = std::min(functionStart, currentAddress);
+        functionEnd = std::max(functionEnd, currentAddress);
+
+        // Read instruction bytes
+        uint8_t buffer[MAX_INSTRUCTION_LENGTH];
+        for (size_t i = 0; i < MAX_INSTRUCTION_LENGTH; i++)
+            buffer[i] = memory->DirectReadFromZ80Memory(currentAddress + i);
+
+        // Decode the instruction
+        DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer));
+        if (!decoded.isValid)
+            continue;
+
+        // Get next instruction address
+        uint16_t nextAddress = currentAddress + decoded.fullCommandLen;
+
+        // Store disassembly for logging
+        std::string instrType;
+        if (decoded.hasReturn)
+        {
+            instrType = "RET";
+        }
+        else if (decoded.hasJump && !decoded.hasRelativeJump)
+        {
+            instrType = decoded.hasCondition ? "COND_JUMP" : "JUMP";
+        }
+        else if (decoded.hasRelativeJump)
+        {
+            instrType = decoded.hasCondition ? "COND_REL_JUMP" : "REL_JUMP";
+        }
+        else if (decoded.isBlockOp)
+        {
+            instrType = "BLOCK";
+        }
+        else
+        {
+            instrType = "REGULAR";
+        }
+
+        instructionTypes[currentAddress] = instrType;
+        disassembly[currentAddress] = formatMnemonic(decoded);
+
+        // Check for RET instruction (end of function)
+        if (decoded.hasReturn)
+            continue;
+
+        // Check for jumps and calls
+        if (decoded.hasJump && !decoded.hasRelativeJump)
+        {
+            // For unconditional jumps, follow the jump target
+            if (!decoded.hasCondition)
+            {
+                addressesToAnalyze.push(decoded.jumpAddr);
+                branchTree[currentAddress].push_back(decoded.jumpAddr);
+            }
+            else
+            {
+                // For conditional jumps, follow both paths
+                addressesToAnalyze.push(nextAddress);
+                addressesToAnalyze.push(decoded.jumpAddr);
+                branchTree[currentAddress].push_back(nextAddress);
+                branchTree[currentAddress].push_back(decoded.jumpAddr);
+            }
+        }
+        else if (decoded.hasRelativeJump)
+        {
+            // For relative jumps, calculate target address
+            int8_t offset = decoded.relJumpOffset;
+            uint16_t targetAddress = nextAddress + offset;
+
+            // Follow both paths for conditional jumps
+            if (decoded.hasCondition)
+            {
+                addressesToAnalyze.push(nextAddress);
+                branchTree[currentAddress].push_back(nextAddress);
+            }
+
+            addressesToAnalyze.push(targetAddress);
+            branchTree[currentAddress].push_back(targetAddress);
+        }
+        else
+        {
+            // For regular instructions, continue to next instruction
+            addressesToAnalyze.push(nextAddress);
+            branchTree[currentAddress].push_back(nextAddress);
+        }
+    }
+
+    // Add the entire function range as an exclusion range
+    if (functionEnd >= functionStart)
+    {
+        ranges.push_back(std::make_pair(functionStart, functionEnd));
+    }
+
+    // Generate tree-formatted log output
+    std::stringstream logStream;
+    logStream << "\nFunction Analysis Tree for " << StringHelper::Format("0x%04X", functionAddress) << ":\n";
+
+    // Helper function to print the tree recursively
+    std::function<void(uint16_t, int, std::set<uint16_t>&)> printTree = [&](uint16_t addr, int depth,
+                                                                            std::set<uint16_t>& printed) {
+        if (printed.find(addr) != printed.end())
+            return;
+
+        printed.insert(addr);
+
+        // Indent based on depth
+        for (int i = 0; i < depth; i++)
+            logStream << "  ";
+
+        // Print address and instruction type
+        logStream << StringHelper::Format("0x%04X", addr);
+
+        // Add instruction type if available
+        if (instructionTypes.find(addr) != instructionTypes.end())
+            logStream << " [" << instructionTypes[addr] << "]";
+
+        // Add disassembly if available
+        if (disassembly.find(addr) != disassembly.end())
+            logStream << ": " << disassembly[addr];
+
+        logStream << "\n";
+
+        // Print children
+        if (branchTree.find(addr) != branchTree.end())
+        {
+            for (uint16_t child : branchTree[addr])
+            {
+                printTree(child, depth + 1, printed);
+            }
+        }
+    };
+
+    // Start printing from the root
+    std::set<uint16_t> printedAddresses;
+    printTree(functionAddress, 0, printedAddresses);
+
+    // Add summary information
+    logStream << std::endl;
+    logStream << "Summary: ";
+    logStream << "FuncRange=[" << StringHelper::Format("0x%04X", functionStart) << "-"
+              << StringHelper::Format("0x%04X", functionEnd) << "], ";
+    logStream << "Visited=" << visitedAddresses.size() << ", Analyzed=" << instructionsAnalyzed;
+
+    // Log the complete tree
+    MLOGDEBUG("%s", logStream.str().c_str());
+}
 
 /// endregion </Helper methods>

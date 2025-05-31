@@ -82,12 +82,21 @@ protected:
     // Helper method to get the address of the next instruction
     uint16_t getNextInstructionAddress(uint16_t address);
     
+    // Helper method to restore deactivated breakpoints
+    void restoreDeactivatedBreakpoints();
+    
     // Fields
     Emulator* _emulator = nullptr;
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
     size_t _curPageOffset;  // Currently displayed in hex view memory page offset
     uint16_t _stepOutBreakpointID = BRK_INVALID;  // Stores the ID of the temporary breakpoint used for step out
+    uint16_t _stepOverBreakpointID = BRK_INVALID;  // Stores the ID of the temporary breakpoint used for step over
+    
+    // Step operation state tracking
+    bool _inStepOutOperation = false;  // Flag indicating we're in a step-out operation
+    bool _inStepOverOperation = false;  // Flag indicating we're in a step-over operation
+    std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints
 
     // UI fields
 private:

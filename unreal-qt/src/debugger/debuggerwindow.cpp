@@ -305,7 +305,28 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     breakpointsAction->setEnabled(canManageBreakpoints);
  }
 
- /// endregion </Helper methods>
+ void DebuggerWindow::restoreDeactivatedBreakpoints()
+{
+    if (_deactivatedBreakpoints.empty() || !_emulator)
+        return;
+        
+    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    if (!bpManager)
+        return;
+    
+    qDebug() << "Step Over: Restoring" << _deactivatedBreakpoints.size() << "temporarily deactivated breakpoints";
+    
+    for (uint16_t id : _deactivatedBreakpoints)
+    {
+        bpManager->ActivateBreakpoint(id);
+        qDebug() << "Step Over: Restored breakpoint with ID:" << id;
+    }
+    
+    _deactivatedBreakpoints.clear();
+    _inStepOverOperation = false;
+}
+
+/// endregion </Helper methods>
 
 /// region <QT Helper methods>
 
@@ -403,51 +424,36 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
 
 void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 {
-    if (message == nullptr || message->obj == nullptr)
-        return;
-
-    qDebug() << "DebuggerWindow::handleMessageBreakpointTriggered()";
-
-    _breakpointTriggered = true;
-
-    SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
-    uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+    Q_UNUSED(id);
     
-    // Check if this is our temporary step out breakpoint
-    bool isStepOutBreakpoint = (_stepOutBreakpointID != BRK_INVALID && breakpointID == _stepOutBreakpointID);
-    
-    if (isStepOutBreakpoint)
+    SimpleNumberPayload* payload = dynamic_cast<SimpleNumberPayload*>(message->obj);
+    if (payload)
     {
-        qDebug() << "Step Out: Temporary breakpoint hit, removing breakpoint ID:" << breakpointID;
+        uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
         
-        // Remove the temporary breakpoint
         if (_emulator && _emulator->GetBreakpointManager())
         {
-            _emulator->GetBreakpointManager()->RemoveBreakpointByID(_stepOutBreakpointID);
-            _stepOutBreakpointID = BRK_INVALID; // Reset the ID
-        }
-    }
-    
-    // Check if this is a temporary breakpoint that was triggered
-    if (_emulator && _emulator->GetBreakpointManager())
-    {
-        BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-        
-        // Get all breakpoints and check if this is a Step Over breakpoint
-        const auto& allBreakpoints = bpManager->GetAllBreakpoints();
-        auto it = allBreakpoints.find(breakpointID);
-        
-        if (it != allBreakpoints.end())
-        {
-            const BreakpointDescriptor* bp = it->second;
+            BreakpointManager* bpManager = _emulator->GetBreakpointManager();
             
-            // Check if this is a Step Over breakpoint by looking at the note field
-            if (bp->note == STEP_OVER_NOTE)
+            // If we're stepping out and this is our temporary breakpoint, clear it
+            if (_inStepOutOperation && breakpointID == _stepOutBreakpointID)
+            {
+                qDebug() << "Step Out: Temporary breakpoint hit, removing breakpoint ID:" << breakpointID;
+                bpManager->RemoveBreakpointByID(breakpointID);
+                _stepOutBreakpointID = BRK_INVALID;
+                _inStepOutOperation = false;
+                qDebug() << "Step Out: Operation completed, flags reset";
+            }
+            // If we're in a step-over operation and this is our step-over breakpoint
+            else if (_inStepOverOperation && breakpointID == _stepOverBreakpointID)
             {
                 qDebug() << "Step Over: Temporary breakpoint hit, removing breakpoint ID:" << breakpointID;
                 bpManager->RemoveBreakpointByID(breakpointID);
+                _stepOverBreakpointID = BRK_INVALID;
+                _inStepOverOperation = false; // Ensure flag is reset before restoring breakpoints
+                qDebug() << "Step Over: Operation completed, flags reset";
+                restoreDeactivatedBreakpoints();
             }
-            // We already handle Step Out breakpoints above, so no need to duplicate that logic here
         }
     }
 
@@ -591,8 +597,38 @@ void DebuggerWindow::stepOver()
         // Get the address of the next instruction
         uint16_t nextInstructionAddress = disassembler->getNextInstructionAddress(pc, _emulator->GetMemory());
         
+        // Get the exclusion ranges for step-over
+        std::vector<std::pair<uint16_t, uint16_t>> exclusionRanges = 
+            disassembler->getStepOverExclusionRanges(pc, _emulator->GetMemory(), 5); // Max depth of 5 for nested calls
+        
         // Set a temporary breakpoint at the next instruction and continue execution until we reach it
         BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+        
+        // Store breakpoints that we'll need to restore later
+        _deactivatedBreakpoints.clear();
+        
+        // Find all execution breakpoints within the exclusion ranges
+        const BreakpointMapByID& allBreakpoints = bpManager->GetAllBreakpoints();
+        for (const auto& [bpId, bp] : allBreakpoints)
+        {
+            // Only consider active execution breakpoints
+            if (bp->active && (bp->type == BRK_MEMORY) && (bp->memoryType & BRK_MEM_EXECUTE))
+            {
+                // Check if the breakpoint is within any exclusion range
+                for (const auto& range : exclusionRanges)
+                {
+                    if (bp->z80address >= range.first && bp->z80address <= range.second)
+                    {
+                        // Deactivate the breakpoint temporarily
+                        bpManager->DeactivateBreakpoint(bpId);
+                        _deactivatedBreakpoints.push_back(bpId);
+                        qDebug() << "Step Over: Temporarily deactivated breakpoint at address:" 
+                                 << QString("0x%1").arg(bp->z80address, 4, 16, QLatin1Char('0')).toUpper();
+                        break;
+                    }
+                }
+            }
+        }
         
         // Create a breakpoint descriptor with the note field already set
         BreakpointDescriptor* bpDesc = new BreakpointDescriptor();
@@ -601,17 +637,20 @@ void DebuggerWindow::stepOver()
         bpDesc->z80address = nextInstructionAddress;
         bpDesc->note = STEP_OVER_NOTE;
         
-        // Add the breakpoint
-        uint16_t bpId = bpManager->AddBreakpoint(bpDesc);
+        // Add the breakpoint and store its ID
+        _stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc);
         
         // Set its group if successfully added
-        if (bpId != BRK_INVALID)
+        if (_stepOverBreakpointID != BRK_INVALID)
         {
-            bpManager->SetBreakpointGroup(bpId, TEMP_BREAKPOINT_GROUP);
+            bpManager->SetBreakpointGroup(_stepOverBreakpointID, TEMP_BREAKPOINT_GROUP);
         }
         
-        if (bpId != BRK_INVALID)
+        if (_stepOverBreakpointID != BRK_INVALID)
         {
+            // Set flag to indicate we're in a step-over operation
+            _inStepOverOperation = true;
+            
             // Continue execution until the breakpoint is hit
             continueExecution();
         }
@@ -619,6 +658,9 @@ void DebuggerWindow::stepOver()
         {
             qDebug() << "Step Over: Failed to set breakpoint at address:" 
                      << QString("0x%1").arg(nextInstructionAddress, 4, 16, QLatin1Char('0')).toUpper();
+            
+            // Restore any deactivated breakpoints
+            restoreDeactivatedBreakpoints();
             
             // If we couldn't set the breakpoint, just do a normal step
             stepIn();
@@ -672,6 +714,9 @@ void DebuggerWindow::stepOut()
         
         if (_stepOutBreakpointID != BRK_INVALID)
         {
+            // Set flag to indicate we're in a step-out operation
+            _inStepOutOperation = true;
+            
             qDebug() << "Step Out: Successfully set breakpoint ID:" << _stepOutBreakpointID << "at address:" 
                      << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
             
@@ -684,10 +729,12 @@ void DebuggerWindow::stepOut()
                      << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
             
             // If we couldn't set the breakpoint, just do a normal step
+            qDebug() << "Step Out: Failed to set breakpoint, falling back to step-in";
             stepIn();
         }
-        updateState();
     }
+    
+    updateState();
 }
 
 void DebuggerWindow::frameStep()

@@ -261,6 +261,9 @@ class Memory;
 
 class Z80Disassembler
 {
+    /// Maximum length of a Z80 instruction in bytes (prefix + opcode + operands)
+    static constexpr size_t MAX_INSTRUCTION_LENGTH = 4;
+    
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISASSEMBLER;
@@ -297,6 +300,11 @@ public:
     // Helper methods for debugger step functionality
     bool shouldStepOver(const uint8_t* buffer, size_t len);
     uint16_t getNextInstructionAddress(uint16_t currentAddress, Memory* memory);
+        
+    // Get address ranges that should be excluded from breakpoint triggering during step-over
+    // Returns vector of address range pairs (start, end) that should be excluded
+    std::vector<std::pair<uint16_t, uint16_t>> getStepOverExclusionRanges(
+        uint16_t currentPC, Memory* memory, int maxDepth = 5);
 
     /// region <Helper methods>
 protected:
@@ -310,6 +318,10 @@ protected:
     std::string formatMnemonic(const DecodedInstruction& decoded);
     std::vector<uint8_t> parseOperands(std::string& mnemonic, uint8_t* expectedOperandsLen = nullptr);
     std::string formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic, std::vector<uint16_t>& values);
+    
+    // Helper method for step-over exclusion ranges
+    void analyzeCalledFunction(uint16_t functionAddress, Memory* memory, 
+                              std::vector<std::pair<uint16_t, uint16_t>>& ranges, int maxDepth);
 
     /// endregion </Helper methods>
 };
