@@ -158,6 +158,7 @@ protected:
 public slots:
     void reset();
     void refresh();
+    void refreshPreservingPosition(uint16_t addressToKeep);
     void goToAddress(uint16_t address);
 
 signals:

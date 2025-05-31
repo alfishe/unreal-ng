@@ -484,6 +484,24 @@ void DisassemblerWidget::refresh()
     updateDebuggerStateIndicator();
 }
 
+void DisassemblerWidget::refreshPreservingPosition(uint16_t addressToKeep)
+{
+    qDebug() << "DisassemblerWidget::refreshPreservingPosition() called with address:" 
+             << QString("0x%1").arg(addressToKeep, 4, 16, QLatin1Char('0')).toUpper();
+    
+    // Store the current address to preserve
+    m_displayAddress = addressToKeep;
+    
+    // Refresh the disassembly view but keep the current address
+    setDisassemblerAddress(addressToKeep);
+    
+    // Update the debugger state indicator
+    updateDebuggerStateIndicator();
+    
+    // Update breakpoint highlighting
+    updateBreakpointHighlighting();
+}
+
 // Breakpoint methods
 bool DisassemblerWidget::hasBreakpointAtAddress(uint16_t address) const
 {
@@ -549,6 +567,9 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
     if (!bpManager)
         return;
 
+    // Store current view address before toggling breakpoint
+    uint16_t currentViewAddress = m_displayAddress;
+
     // Check if there's already a breakpoint at this address
     if (hasBreakpointAtAddress(address))
     {
@@ -572,8 +593,8 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
         bpManager->AddCombinedMemoryBreakpoint(address, BRK_MEM_EXECUTE);
     }
 
-    // Refresh the disassembly to show the updated breakpoint
-    refresh();
+    // Refresh the disassembly but maintain the current view position
+    refreshPreservingPosition(currentViewAddress);
 }
 
 void DisassemblerWidget::handleBreakpointClick(int lineNumber)
