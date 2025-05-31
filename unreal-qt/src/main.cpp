@@ -4,6 +4,7 @@
 #include <QFontDatabase>
 #include <QDebug>
 #include <QDir>
+#include <common/filehelper.h>
 
 int fontID = -1;
 
@@ -13,16 +14,18 @@ void registerFonts(QApplication& app)
     /// region <Load monospace font>
     // Note: All fonts and resources used on windows must be loaded before window object(s) instantiated
 
-    // Load custom monospace font from TTF file
-
-    QString appPath = app.applicationDirPath();
-    QDir filePath(appPath);
+    // Use FileHelper to get the resources path (handles macOS app bundle automatically)
+    std::string resourcesPathStr = FileHelper::GetResourcesPath();
+    QString resourcesPath = QString::fromStdString(resourcesPathStr);
+    QDir filePath(resourcesPath);
+    
     QString fontPath = filePath.filePath("fonts/consolas.ttf");
-    qDebug() << fontPath;
+    qDebug() << "Looking for font at:" << fontPath;
 
     QFile fontFile(fontPath);
     if (fontFile.exists())
     {
+        qDebug() << "Font file found at:" << fontPath;
         fontFile.open(QIODevice::ReadOnly);
         QByteArray fontdata = fontFile.readAll();
         if (!fontdata.isEmpty())
@@ -36,6 +39,10 @@ void registerFonts(QApplication& app)
         }
 
         fontFile.close();
+    }
+    else
+    {
+        qCritical() << "Font file not found at:" << fontPath;
     }
 
     QStringList fontFamilies = QFontDatabase::families();

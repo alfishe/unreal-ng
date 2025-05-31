@@ -3,8 +3,9 @@
 #include "common/modulelogger.h"
 
 #include "config.h"
-#include "common/filehelper.h"
 #include "common/stringhelper.h"
+#include "common/filehelper.h"
+#include <filesystem>
 #include "emulator/platform.h"
 #include "emulator/memory/memory.h"
 #include <cassert>
@@ -32,8 +33,72 @@ const char* Config::GetDefaultConfig()
 
 string Config::GetScreenshotsFolder()
 {
-	static string exePath = FileHelper::GetExecutablePath();
-	static string screenshotsPath = FileHelper::PathCombine(exePath, "/screenshots");
+	static string screenshotsPath;
+	static bool initialized = false;
+	
+	if (!initialized)
+	{
+#ifdef __APPLE__
+		// On macOS, check if we're running from a DMG or other read-only location
+		std::string basePath = FileHelper::GetResourcesPath();
+		std::string testPath = FileHelper::PathCombine(basePath, "/screenshots");
+		
+		// Try to create the directory to test if it's writable
+		bool isWritable = false;
+		try {
+			if (!std::filesystem::exists(testPath)) {
+				isWritable = std::filesystem::create_directories(testPath);
+			} else {
+				// Directory exists, check if it's writable by creating a test file
+				std::string testFile = FileHelper::PathCombine(testPath, "/test.tmp");
+				FILE* fp = fopen(testFile.c_str(), "w");
+				if (fp) {
+					fclose(fp);
+					remove(testFile.c_str());
+					isWritable = true;
+				}
+			}
+		} catch (const std::exception&) {
+			isWritable = false;
+		}
+		
+		if (!isWritable) {
+			// If not writable (e.g., running from DMG), use ~/Library/Application Support/UnrealNG/
+			const char* homeDir = getenv("HOME");
+			if (homeDir) {
+				std::string dirPath = std::string(homeDir) + "/Library/Application Support/UnrealNG/screenshots";
+				// Create the directory if it doesn't exist
+				try {
+					std::filesystem::create_directories(dirPath);
+				} catch (const std::exception&) {
+					// If we can't create the directory, fall back to temporary directory
+					dirPath = "/tmp/UnrealNG/screenshots";
+					std::filesystem::create_directories(dirPath);
+				}
+				screenshotsPath = dirPath;
+			} else {
+				// Fallback to temporary directory if HOME is not available
+				screenshotsPath = "/tmp/UnrealNG/screenshots";
+				std::filesystem::create_directories(screenshotsPath);
+			}
+		} else {
+			// Location is writable, use it
+			screenshotsPath = testPath;
+		}
+#else
+		// On Windows and Linux, use the executable directory
+		std::string basePath = FileHelper::GetExecutablePath();
+		screenshotsPath = FileHelper::PathCombine(basePath, "/screenshots");
+		
+		// Create the directory if it doesn't exist
+		try {
+			std::filesystem::create_directories(screenshotsPath);
+		} catch (const std::exception&) {
+			// Ignore errors
+		}
+#endif
+		initialized = true;
+	}
 
 	return screenshotsPath;
 }
@@ -42,7 +107,7 @@ bool Config::LoadConfig()
 {
 	bool result = false;
 
-	// Use 'unreal.ini' file located in the same folder as executable by default
+	// First try to load config from executable directory
 	std::string path = FileHelper::GetExecutablePath();
 	if (!path.empty())
 	{
@@ -55,7 +120,26 @@ bool Config::LoadConfig()
 		}
 		else
 		{
-			MLOGERROR("Config::LoadConfig() - unable to process config file");
+			// If not found in executable directory, try resources directory (especially for macOS app bundles)
+			std::string resourcesPath = FileHelper::GetResourcesPath();
+			if (!resourcesPath.empty() && resourcesPath != path) // Only try if different from executable path
+			{
+				std::string resourceConfigPath = FileHelper::PathCombine(resourcesPath, GetDefaultConfig());
+				std::string absoluteResourceConfigPath = FileHelper::AbsolutePath(resourceConfigPath);
+
+				if (LoadConfig(absoluteResourceConfigPath))
+				{
+					result = true;
+				}
+				else
+				{
+					MLOGERROR("Config::LoadConfig() - unable to process config file from executable or resources path");
+				}
+			}
+			else
+			{
+				MLOGERROR("Config::LoadConfig() - unable to process config file");
+			}
 		}
 	}
 	else
