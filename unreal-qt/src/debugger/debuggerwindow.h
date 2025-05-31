@@ -2,14 +2,17 @@
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
+#include <debugger/breakpoints/breakpointmanager.h>
+#include <emulator/emulator.h>
+
 #include <QAction>
 #include <QDebug>
 #include <QToolBar>
 #include <QWidget>
-#include <emulator/emulator.h>
+
 #include "3rdparty/message-center/messagecenter.h"
-#include "QHexView/qhexview.h"
 #include "QHexView/model/buffer/qmemorybuffer.h"
+#include "QHexView/qhexview.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class DebuggerWindow; }
@@ -34,6 +37,7 @@ protected:
     void updateState();
     void loadState();
     void saveState();
+    void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints);
     /// endregion <Helper methods>
 
     /// region <QT Helper methods>
@@ -71,6 +75,7 @@ protected:
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
     size_t _curPageOffset;  // Currently displayed in hex view memory page offset
+    uint16_t _stepOutBreakpointID = BRK_INVALID;  // Stores the ID of the temporary breakpoint used for step out
 
     // UI fields
 private:

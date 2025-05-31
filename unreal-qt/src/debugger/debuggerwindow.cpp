@@ -230,16 +230,8 @@ void DebuggerWindow::reset()
     }
     else
     {
-        // Disable all toolbar actions when no active emulator available
-        continueAction->setEnabled(false);
-        pauseAction->setEnabled(false);
-        stepInAction->setEnabled(false);
-        stepOutAction->setEnabled(false);
-        frameStepAction->setEnabled(false);
-        waitInterruptAction->setEnabled(false);
-        resetAction->setEnabled(false);
-        breakpointsAction->setEnabled(false);
-        
+        updateToolbarActions(false, false, false, false, false);
+
         // Update disassembler widget to show detached state
         ui->disassemblerWidget->refresh();
     }
@@ -265,12 +257,37 @@ void DebuggerWindow::reset()
     /// </Test>
  }
 
- ///
- /// \brief DebuggerWindow::saveState
- /// Persists debugger state (including breakpoints)
- void DebuggerWindow::saveState()
- {
+///
+/// \brief DebuggerWindow::saveState
+/// Persists debugger state (including breakpoints)
+void DebuggerWindow::saveState()
+{
+    // TODO: Implement state persistence
+}
 
+///
+/// \brief DebuggerWindow::updateToolbarActions
+/// Updates the state of all toolbar actions based on emulator state
+/// \param canContinue - Enable/disable Continue action
+/// \param canPause - Enable/disable Pause action
+/// \param canStep - Enable/disable Step actions (Step In, Step Out, etc.)
+/// \param canReset - Enable/disable Reset action
+/// \param canManageBreakpoints - Enable/disable Breakpoints action
+void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints)
+{
+    // Update main execution control actions
+    continueAction->setEnabled(canContinue);
+    pauseAction->setEnabled(canPause);
+    resetAction->setEnabled(canReset);
+    
+    // Update stepping actions
+    stepInAction->setEnabled(canStep);
+    stepOutAction->setEnabled(canStep);
+    frameStepAction->setEnabled(canStep);
+    waitInterruptAction->setEnabled(canStep);
+    
+    // Update breakpoint management
+    breakpointsAction->setEnabled(canManageBreakpoints);
  }
 
  /// endregion </Helper methods>
@@ -334,51 +351,34 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
         {
             case StateUnknown:
             case StateStopped:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(false);
-                stepInAction->setEnabled(false);
-                stepOutAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(false);
-                breakpointsAction->setEnabled(false);
+                // When emulator is stopped:
+                // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF)
+                updateToolbarActions(false, false, false, false, false);
 
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
                 reset();
                 break;
+                
             case StateInitialized:
             default:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(true);
-                stepInAction->setEnabled(false);
-                stepOutAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(false);
-                breakpointsAction->setEnabled(true); // Enable breakpoints button when emulator is available
+                // When emulator is initialized:
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON)
+                updateToolbarActions(false, true, false, false, true);
                 break;
+                
             case StateRun:
             case StateResumed:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(true);
-                stepInAction->setEnabled(false);
-                stepOutAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(true);
-                breakpointsAction->setEnabled(true); // Enable breakpoints button when emulator is running
+                // When emulator is running:
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
+                updateToolbarActions(false, true, false, true, true);
                 break;
+                
             case StatePaused:
-                continueAction->setEnabled(true);
-                pauseAction->setEnabled(false);
-                stepInAction->setEnabled(true);
-                stepOutAction->setEnabled(true);
-                frameStepAction->setEnabled(true);
-                waitInterruptAction->setEnabled(true);
-                resetAction->setEnabled(true);
-                breakpointsAction->setEnabled(true); // Enable breakpoints button when emulator is paused
+                // When emulator is paused:
+                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
+                updateToolbarActions(true, false, true, true, true);
                 break;
         }
 
@@ -400,12 +400,9 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
     dispatchToMainThread([this]()
     {
-        continueAction->setEnabled(true);
-        pauseAction->setEnabled(false);
-        stepInAction->setEnabled(true);
-        stepOutAction->setEnabled(true);
-        frameStepAction->setEnabled(true);
-        waitInterruptAction->setEnabled(true);
+        // When a breakpoint is hit:
+        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
+        updateToolbarActions(true, false, true, true, true);
 
         updateState();
     });
@@ -431,21 +428,17 @@ void DebuggerWindow::continueExecution()
 
     _breakpointTriggered = false;
 
-    if (_emulator && _emulator->IsPaused())
+    if (_emulator && !_emulator->IsRunning())
     {
-        continueAction->setEnabled(false);
-        pauseAction->setEnabled(true);
-        stepInAction->setEnabled(false);
-        stepOutAction->setEnabled(false);
-        frameStepAction->setEnabled(false);
-        waitInterruptAction->setEnabled(false);
-
         _emulator->Resume();
+
+        // When emulator is running:
+        // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
+        updateToolbarActions(false, true, false, true, true);
         
         // Force immediate update of the disassembler widget state
         ui->disassemblerWidget->refresh();
         
-        // Update all widgets to reflect the new state
         updateState();
     }
 }
@@ -459,12 +452,9 @@ void DebuggerWindow::pauseExecution()
         _emulator->Pause();
         _emulator->DebugOn();
 
-        continueAction->setEnabled(true);
-        pauseAction->setEnabled(false);
-        stepInAction->setEnabled(true);
-        stepOutAction->setEnabled(true);
-        frameStepAction->setEnabled(true);
-        waitInterruptAction->setEnabled(true);
+        // When emulator is paused:
+        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
+        updateToolbarActions(true, false, true, true, true);
 
         updateState();
     }
