@@ -10,7 +10,7 @@
 /// Represents opcode dictionary data record from disassembler decoding tables
 struct OpCode
 {
-    uint16_t flags;
+    uint32_t flags;
     uint8_t t;				// T-states for unconditional operations
     uint8_t met_t;          // T-states for conditional operation when condition met
     uint8_t notmet_t;       // T-states for conditional operation when condition not met
@@ -44,6 +44,15 @@ struct DecodedInstruction
 
     bool hasCondition = false;
     bool hasVariableCycles = false;
+    bool isRst = false;             // RST instruction (jump to predefined address)
+    bool isBlockOp = false;         // Block operations (LDI, LDIR, etc.)
+    bool isIO = false;              // I/O operations (IN, OUT)
+    bool isInterrupt = false;       // Interrupt-related (EI, DI, IM)
+    bool isRegExchange = false;     // Register exchange operations (EX)
+    bool isDjnz = false;            // DJNZ instruction
+    bool affectsFlags = false;      // Instruction modifies flags
+    bool affectsAllFlags = false;   // All flags affected (AND, OR, XOR)
+    bool affectsSZFlags = false;    // Only S and Z flags affected
 
     int8_t displacement = 0x00;             // 8-bit signed displacement (offset) for IX/IY indexed operations
     int8_t relJumpOffset = 0x00;            // 8-bit relative jump offset
@@ -115,8 +124,7 @@ constexpr uint32_t OF_REG_EXCHANGE = (1UL << 14);   // Register exchange operati
 constexpr uint32_t OF_BLOCK = (1UL << 15);          // Block operations (LDI, LDIR, etc.)
 constexpr uint32_t OF_IO = (1UL << 16);             // I/O operations (IN, OUT)
 constexpr uint32_t OF_INTERRUPT = (1UL << 17);      // Interrupt-related (EI, DI, IM)
-
-constexpr uint32_t OF_SKIPABLE = (1UL << 31);       // opcode is skippable during single step debug
+constexpr uint32_t OF_DJNZ = (1UL << 18);           // DJNZ instruction
 
 namespace OpFlags
 {
@@ -175,11 +183,12 @@ namespace OpFlags
     // Operation type flags
     namespace Operation
     {
+        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
         constexpr Flag RegExchange{1UL << 14, "RegExchange", "Register exchange operations"};
         constexpr Flag Block{1UL << 15, "Block", "Block operations (LDI, LDIR, etc.)"};
         constexpr Flag IO{1UL << 16, "IO", "I/O operations (IN, OUT)"};
         constexpr Flag Interrupt{1UL << 17, "Interrupt", "Interrupt-related (EI, DI, IM)"};
-        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
+        constexpr Flag Djnz{1UL << 18, "Djnz", "DJNZ instruction"};
     }
 
     // Debug flags
@@ -284,6 +293,10 @@ public:
     std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
 
     std::string getRuntimeHints(DecodedInstruction& decoded);
+    
+    // Helper methods for debugger step functionality
+    bool shouldStepOver(const uint8_t* buffer, size_t len);
+    uint16_t getNextInstructionAddress(uint16_t currentAddress, Memory* memory);
 
     /// region <Helper methods>
 protected:

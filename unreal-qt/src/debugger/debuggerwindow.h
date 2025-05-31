@@ -55,6 +55,7 @@ private slots:
     void continueExecution();
     void pauseExecution();
     void stepIn();
+    void stepOver();
     void stepOut();
     void frameStep();
     void waitInterrupt();
@@ -69,8 +70,19 @@ private slots:
 
 signals:
 
-    // Fields
 protected:
+    // Constants for breakpoint management
+    static constexpr const char* TEMP_BREAKPOINT_GROUP = "TemporaryBreakpoints";  // Group for all temporary breakpoints
+    static constexpr const char* STEP_OVER_NOTE = "StepOver";                     // Note for step over breakpoints
+    static constexpr const char* STEP_OUT_NOTE = "StepOut";                       // Note for step out breakpoints
+    
+    // Helper method to determine if an instruction should be stepped over
+    bool shouldStepOver(uint16_t address);
+    
+    // Helper method to get the address of the next instruction
+    uint16_t getNextInstructionAddress(uint16_t address);
+    
+    // Fields
     Emulator* _emulator = nullptr;
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
@@ -85,6 +97,7 @@ private:
     QAction* continueAction;
     QAction* pauseAction;
     QAction* stepInAction;
+    QAction* stepOverAction;
     QAction* stepOutAction;
     QAction* frameStepAction;
     QAction* waitInterruptAction;

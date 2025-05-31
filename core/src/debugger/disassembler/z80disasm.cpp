@@ -20,11 +20,27 @@
 
 /// region <Static>
 
-// Operands
-// :1 - 1 byte
-// :2 - 2 bytes
-// :1 and OF_RELJUMP - relative jump offset 1 byte
-// :1 and OF_DISP - index register (IX or IY) displacement, 1 byte
+// Operand placeholders in mnemonics:
+// :1 - 1 byte immediate value (e.g., "ld a,:1" for LD A,n)
+// :2 - 2 byte immediate value (e.g., "ld hl,:2" for LD HL,nn)
+// :1 and OF_RELJUMP - relative jump offset 1 byte (e.g., "jr :1" for JR e)
+// :1 and OF_DISP - index register (IX or IY) displacement, 1 byte (e.g., "ld (ix+:1),a")
+
+// Instruction flags and their meanings:
+// OF_NONE - No special flags
+// OF_PREFIX - Current byte is an opcode prefix (ED, CB, DD, FD)
+// OF_MBYTE - Operand is a byte from memory
+// OF_MWORD - Operand is a word from memory
+// OF_DISP - Instruction uses index register displacement (IX+d, IY+d)
+// OF_MEMADR - Operand contains memory address (nn)
+// OF_CONDITION - Instruction checks a condition (Z, NZ, C, NC, etc.)
+// OF_RELJUMP - Instruction uses relative jump offset (JR, DJNZ)
+// OF_VAR_T - Instruction takes variable number of T-states (cycles)
+// OF_JUMP - Instruction is a jump or call (JP, CALL)
+// OF_RET - Instruction returns from a call (RET)
+// OF_RST - Restart instruction (RST n)
+// OF_FLAGS_AFFECTED - Instruction modifies flags
+// OF_BLOCK - Block operations (LDIR, LDDR, CPIR, etc.)
 
 /// region <No prefix opcodes>
 
@@ -47,7 +63,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
     { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
     
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 13, 8, "djnz :1" },  // 0x10
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE | OF_DJNZ, 0, 13, 8, "djnz :1" },  // 0x10
     { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
     { OF_MWORD,  7, 0, 0, "ld (de),:2" },                           // 0x12
     { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
@@ -604,7 +620,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                      // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                          // 0x0F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 17, 12, "djnz :1" },    // 0x10
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE | OF_DJNZ, 0, 17, 12, "djnz :1" },    // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                     // 0x11
     { OF_MWORD, 11, 0, 0, "ld (de),:2" },                   // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                        // 0x13
@@ -1053,18 +1069,18 @@ OpCode Z80Disassembler::edOpcodes[256] =
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xAE
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xAF
 
-    { OF_VAR_T,  0, 16, 21, "ldir" },                       // 0xB0
-    { OF_VAR_T,  0, 16, 21, "cpir" },                       // 0xB1
-    { OF_VAR_T,  0, 16, 21, "inir" },                       // 0xB2
-    { OF_VAR_T,  0, 16, 21, "otir" },                       // 0xB3
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "ldir" },            // 0xB0
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "cpir" },            // 0xB1
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "inir" },            // 0xB2
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "otir" },            // 0xB3
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xB4
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xB5
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xB6
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xB7
-    { OF_VAR_T,  0, 16, 21, "lddr" },                       // 0xB8
-    { OF_VAR_T,  0, 16, 21, "cpdr" },                       // 0xB9
-    { OF_VAR_T,  0, 16, 21, "indr" },                       // 0xBA
-    { OF_VAR_T,  0, 16, 21, "otdr" },                       // 0xBB
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "lddr" },            // 0xB8
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "cpdr" },            // 0xB9
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "indr" },            // 0xBA
+    { OF_VAR_T | OF_BLOCK,  0, 16, 21, "otdr" },            // 0xBB
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xBC
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xBD
     { OF_NONE,  8, 0, 0, "nop *" },                         // 0xBE
@@ -1162,7 +1178,7 @@ OpCode Z80Disassembler::fdOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                      // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                          // 0x0F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 17, 12, "djnz :1" },    // 0x10
+    { OF_CONDITION | OF_RELJUMP | OF_MBYTE | OF_DJNZ, 0, 17, 12, "djnz :1" },    // 0x10
     { OF_NONE, 14, 0, 0, "ld de,:2" },                      // 0x11
     { OF_NONE, 11, 0, 0, "ld (de),:2" },                    // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                        // 0x13
@@ -2024,25 +2040,87 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
 
 std::string Z80Disassembler::getRuntimeHints(DecodedInstruction& decoded)
 {
+    if (!decoded.hasRuntime)
+        return "";
+
     std::string result;
 
-    // No runtime information available
-    if (!decoded.hasRuntime)
+    if (decoded.hasJump)
     {
-        return result;
+        result += StringHelper::Format("Jump to: #%04X", decoded.jumpAddr);
     }
-
-    if (decoded.hasRelativeJump)
+    else if (decoded.hasRelativeJump)
     {
-        result = StringHelper::Format("(#%04X)", decoded.relJumpAddr);
+        result += StringHelper::Format("Jump to: #%04X", decoded.relJumpAddr);
     }
-
-    if (decoded.hasReturn)
+    else if (decoded.hasDisplacement)
     {
-        result = StringHelper::Format("(#%04X)", decoded.returnAddr);
+        result += StringHelper::Format("Index addr: #%04X", decoded.displacementAddr);
+    }
+    else if (decoded.hasReturn)
+    {
+        result += StringHelper::Format("Return to: #%04X", decoded.returnAddr);
     }
 
     return result;
+}
+
+/// @brief Determines if the instruction at the specified memory location should be stepped over
+/// @param buffer Pointer to the buffer containing the instruction bytes to be decoded
+/// @param len Length of the buffer in bytes, must be at least 1 byte
+/// @return bool True if the instruction should be stepped over, false otherwise
+/// @note The method performs the following steps:
+///       1. Decodes the instruction using disassembleSingleCommand()
+///       2. Examines the opcode flags from the decoded instruction
+///       3. Returns true if any of these flags are set:
+///          - OF_JUMP  : For CALL and similar instructions
+///          - OF_RST   : For RST (restart) instructions
+///          - OF_BLOCK : For block operations (LDI, LDIR, etc.)
+///          - OF_DJNZ  : For DJNZ (decrement and jump if not zero) instructions
+/// @note The opcode flags are defined in z80disasm.h as part of the OpCode structure.
+///       The flags are stored in the 'flags' field of the DecodedInstruction.opcode member.
+///       The actual opcode tables are defined as static arrays in the Z80Disassembler class.
+bool Z80Disassembler::shouldStepOver(const uint8_t* buffer, size_t len)
+{
+    bool result = false;
+
+    if (!buffer || len == 0)
+        return result;
+    
+    // Decode the instruction
+    DecodedInstruction decoded;
+    uint8_t instructionLength = 0;
+    disassembleSingleCommand(buffer, len, &instructionLength, &decoded);
+    
+    // Check if this is an instruction we should step over
+    uint32_t flags = decoded.opcode.flags;
+    
+    // CALL, RST, block instructions, or DJNZ should be stepped over
+    if ((flags & OF_JUMP) || (flags & OF_RST) || (flags & OF_BLOCK) || (flags & OF_DJNZ))
+    {
+        result = true;
+    }
+        
+    return result;
+}
+
+uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Memory* memory)
+{
+    if (!memory)
+        return (currentAddress + 1) & 0xFFFF;
+    
+    // Read instruction bytes
+    uint8_t buffer[4]; // Max instruction length for Z80 is 4 bytes
+    for (size_t i = 0; i < sizeof(buffer); i++)
+        buffer[i] = memory->DirectReadFromZ80Memory(currentAddress + i);
+    
+    // Disassemble the current instruction to get its length
+    DecodedInstruction decoded;
+    uint8_t instructionLength = 0;
+    disassembleSingleCommand(buffer, sizeof(buffer), &instructionLength, &decoded);
+    
+    // Calculate the next address by adding the instruction length
+    return (currentAddress + decoded.fullCommandLen) & 0xFFFF;
 }
 
 /// region <Helper methods>
@@ -2071,14 +2149,16 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     [[maybe_unused]] uint8_t jumpOffset = 0x00;
     [[maybe_unused]] uint16_t wordOperand = 0x0000;
     [[maybe_unused]] uint8_t byteOperand = 0x00;
+    // Command decoding state
+    bool commandDecoded = false;
+    
+    // These flags will be set based on the actual opcode flags during decoding
     bool hasDisplacement = false;
     bool hasJump = false;
     bool hasRelativeJump = false;
     bool hasReturn = false;
     bool hasByteArgument = false;
     bool hasWordArgument = false;
-
-    bool commandDecoded = false;
 
     // Fetch longest possible prefixed command
     do
@@ -2181,15 +2261,34 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     result.operandsLen = operandsLen;
     result.opcode = opcode;
 
+    // Set instruction type flags
     result.hasJump = hasJump || (opcode.flags & OF_RST) != 0;
     result.hasRelativeJump = hasRelativeJump;
     result.hasReturn = hasReturn;
     result.hasByteOperand = hasByteArgument;
     result.hasWordOperand = hasWordArgument;
     result.hasCondition = (opcode.flags & OF_CONDITION) != 0;
-    // Variable cycles are only for instructions like DJNZ where cycles depend on a counter
-    result.hasVariableCycles = (opcode.flags & OF_VAR_T) != 0;
-    result.hasDisplacement = (opcode.flags & OF_DISP) != 0;
+    result.hasDisplacement = hasDisplacement;
+    result.hasVariableCycles = (opcode.flags & OF_VAR_T) != 0;  // For instructions like DJNZ where cycles depend on a counter
+    
+    // Set additional instruction type flags
+    result.isRst = (opcode.flags & OF_RST) != 0;
+    result.isBlockOp = (opcode.flags & OF_BLOCK) != 0;
+    result.isIO = (opcode.flags & OF_IO) != 0;
+    result.isInterrupt = (opcode.flags & OF_INTERRUPT) != 0;
+    result.isRegExchange = (opcode.flags & OF_REG_EXCHANGE) != 0;
+    result.isDjnz = (opcode.flags & OF_DJNZ) != 0;
+    
+    // Set flag-affecting properties
+    result.affectsFlags = (opcode.flags & OF_FLAGS_AFFECTED) != 0;
+    result.affectsAllFlags = (opcode.flags & OF_FLAGS_ALL) != 0;
+    result.affectsSZFlags = (opcode.flags & OF_FLAGS_SZ) != 0;
+    
+    // Preserve all opcode information
+    result.opcode.flags = opcode.flags;  // Ensure all opcode flags are preserved
+    result.opcode.t = opcode.t;
+    result.opcode.met_t = opcode.met_t;
+    result.opcode.notmet_t = opcode.notmet_t;
 
     /// region <Actualize values according flags>
     if (hasByteArgument)

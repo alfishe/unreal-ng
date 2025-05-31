@@ -432,20 +432,18 @@ void BreakpointManager::DeactivatePortBreakpointsByType(uint8_t ioType)
 
 uint16_t BreakpointManager::AddBreakpointToGroup(BreakpointDescriptor* descriptor, const std::string& groupName)
 {
-    if (descriptor == nullptr || groupName.empty())
+    if (descriptor == nullptr || groupName.empty() || descriptor->breakpointID == BRK_INVALID)
     {
         return BRK_INVALID;
     }
 
     // If the breakpoint is already in the specified group, return its ID
-    if (descriptor->group == groupName)
+    if (descriptor->group != groupName)
     {
-        return descriptor->breakpointID;
+        // Update the group name
+        descriptor->group = groupName;
     }
 
-    // Update the group name
-    descriptor->group = groupName;
-    
     return descriptor->breakpointID;
 }
 
