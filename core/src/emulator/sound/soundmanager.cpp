@@ -50,9 +50,9 @@ void SoundManager::reset()
     _prevRightValue = 0;
 
     // New wave file
-    closeWaveFile();
-    std::string filePath = "unreal.wav";
-    openWaveFile(filePath);
+    //closeWaveFile();
+    //std::string filePath = "unreal.wav";
+    //openWaveFile(filePath);
 }
 
 void SoundManager::mute()

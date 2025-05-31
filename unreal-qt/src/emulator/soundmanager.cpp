@@ -53,6 +53,7 @@ void AppSoundManager::start()
     ma_device_start(&_audioDevice);     // The device is sleeping by default, so you'll need to start it manually.
 
     // New wave file
+    /*
     if (_tinyWav.file)
         tinywav_close_write(&_tinyWav);
     std::string filePath = "unreal-qt.wav";
@@ -63,6 +64,7 @@ void AppSoundManager::start()
             TW_INT16,
             TW_INTERLEAVED,
             filePath.c_str());
+    */
 }
 
 void AppSoundManager::stop()
