@@ -299,26 +299,26 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
     return oss.str();
 }
 
-std::string BreakpointManager::GetBreakpointListAsString() const
+std::string BreakpointManager::GetBreakpointListAsString(const std::string& newline) const
 {
     std::ostringstream oss;
-    
+
     if (_breakpointMapByID.empty())
     {
-        oss << "No breakpoints set\n";
+        oss << "No breakpoints set" << newline;
         return oss.str();
     }
-    
+
     // Header
-    oss << "ID   Type       Address  Access Status   Note\n";
-    oss << "---- ---------- -------- ----- -------- ---------------\n";
-    
+    oss << "ID   Type       Address  Access Status   Note" << newline;
+    oss << "---- ---------- -------- ----- -------- ---------------" << newline;
+
     // List all breakpoints
     for (const auto& pair : _breakpointMapByID)
     {
-        oss << FormatBreakpointInfo(pair.first) << "\n";
+        oss << FormatBreakpointInfo(pair.first) << newline;
     }
-    
+
     return oss.str();
 }
 

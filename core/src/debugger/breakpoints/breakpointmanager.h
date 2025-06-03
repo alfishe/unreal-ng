@@ -158,7 +158,8 @@ public:
     // Breakpoint listing
     const BreakpointMapByID& GetAllBreakpoints() const;
     std::string FormatBreakpointInfo(uint16_t breakpointID) const;
-    std::string GetBreakpointListAsString() const;
+    std::string GetBreakpointListAsString(const std::string& newline = "\n") const;
+
     
     // Breakpoint activation/deactivation
     bool ActivateBreakpoint(uint16_t breakpointID);
