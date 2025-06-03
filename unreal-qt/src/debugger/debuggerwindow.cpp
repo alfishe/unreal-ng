@@ -16,6 +16,8 @@
 #include "debugger/breakpointdialog.h"
 #include "debugger/breakpointeditor.h"
 #include "debugger/breakpointgroupdialog.h"
+#include "debugger/labeleditor.h"
+
 #include "emulator/emulator.h"
 
 /// region <Constructor / destructors>
@@ -68,6 +70,8 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     waitInterruptAction = toolBar->addAction("Wait INT");
     resetAction = toolBar->addAction("Reset");
     toolBar->addWidget(spacer);
+    labelsAction = new QAction("Labels", this);
+    toolBar->addAction(labelsAction);
     breakpointsAction = toolBar->addAction("Breakpoints");
 
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
@@ -75,6 +79,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
+    connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
 
     // Subscribe to events leading to MemoryView changes
@@ -150,12 +155,24 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
 
-    // Load debugger state from disk
-    loadState();
-
-    pauseAction->setEnabled(true);
-
-    updateState();
+    if (_emulator)
+    {
+        // Load debugger state from disk
+        loadState();
+        
+        // Initially disable all actions, including breakpoints and labels
+        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+        updateToolbarActions(false, false, false, false, false, false);
+        
+        // Update the full state which will set the correct button states
+        updateState();
+    }
+    else
+    {
+        // No emulator available, disable all actions
+        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+        updateToolbarActions(false, false, false, false, false, false);
+    }
 }
 
 Emulator* DebuggerWindow::getEmulator()
@@ -182,9 +199,9 @@ void DebuggerWindow::reset()
 
 /// region <Helper methods>
 
- void DebuggerWindow::updateState()
- {
-   qDebug() << "DebuggerWindow::updateState() called - emulator state:" << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
+void DebuggerWindow::updateState()
+{
+    qDebug() << "DebuggerWindow::updateState() called - emulator state:" << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
     if (_emulator)
     {
         Z80State* state = _emulator->GetZ80State();
@@ -244,7 +261,9 @@ void DebuggerWindow::reset()
     }
     else
     {
-        updateToolbarActions(false, false, false, false, false);
+        // No emulator available, disable all actions
+        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+        updateToolbarActions(false, false, false, false, false, false);
 
         // Update disassembler widget to show detached state
         ui->disassemblerWidget->refresh();
@@ -287,7 +306,7 @@ void DebuggerWindow::saveState()
 /// \param canStep - Enable/disable Step actions (Step In, Step Out, etc.)
 /// \param canReset - Enable/disable Reset action
 /// \param canManageBreakpoints - Enable/disable Breakpoints action
-void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints)
+void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints, bool canManageLabels)
 {
     // Update main execution control actions
     continueAction->setEnabled(canContinue);
@@ -303,6 +322,7 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     
     // Update breakpoint management
     breakpointsAction->setEnabled(canManageBreakpoints);
+    labelsAction->setEnabled(canManageLabels);
  }
 
  void DebuggerWindow::restoreDeactivatedBreakpoints()
@@ -388,8 +408,8 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
             case StateUnknown:
             case StateStopped:
                 // When emulator is stopped:
-                // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF)
-                updateToolbarActions(false, false, false, false, false);
+                // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+                updateToolbarActions(false, false, false, false, false, false);
 
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
@@ -400,21 +420,21 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
             case StateInitialized:
             default:
                 // When emulator is initialized:
-                // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON)
-                updateToolbarActions(false, true, false, false, true);
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(false, true, false, false, true, true);
                 break;
                 
             case StateRun:
             case StateResumed:
                 // When emulator is running:
                 // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
-                updateToolbarActions(false, true, false, true, true);
+                updateToolbarActions(false, true, false, true, true, true);
                 break;
                 
             case StatePaused:
                 // When emulator is paused:
-                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
-                updateToolbarActions(true, false, true, true, true);
+                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(true, false, true, true, true, true);
                 break;
         }
 
@@ -460,8 +480,8 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
     dispatchToMainThread([this]()
     {
         // When a breakpoint is hit:
-        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
-        updateToolbarActions(true, false, true, true, true);
+        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+        updateToolbarActions(true, false, true, true, true, true);
 
         updateState();
     });
@@ -493,7 +513,7 @@ void DebuggerWindow::continueExecution()
 
         // When emulator is running:
         // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
-        updateToolbarActions(false, true, false, true, true);
+        updateToolbarActions(false, true, false, true, true, true);
         
         // Force immediate update of the disassembler widget state
         ui->disassemblerWidget->refresh();
@@ -513,7 +533,7 @@ void DebuggerWindow::pauseExecution()
 
         // When emulator is paused:
         // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
-        updateToolbarActions(true, false, true, true, true);
+        updateToolbarActions(true, false, true, true, true, true);
 
         updateState();
     }
@@ -842,6 +862,23 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
     // otherwise widget is unaware of the document and where to jump so just skipping the request
     ui->hexView->gotoOffset(currentAddress);       // Position cursor on the byte with offset
     ui->hexView->update();
+}
+
+void DebuggerWindow::showLabelManager()
+{
+    qDebug() << "DebuggerWindow::showLabelManager()";
+
+    if (!_emulator)
+    {
+        QMessageBox::warning(this, "Warning", "No emulator selected");
+        return;
+    }
+
+    LabelEditor labelEditor(_emulator->GetDebugManager()->GetLabelManager(), this);
+    labelEditor.exec();
+
+    // Update debugger state after dialog closes (if needed)
+    updateState(); // Refresh in case labels changed that affect disassembly, etc.
 }
 
 /// endregion </Event handlers / Slots>

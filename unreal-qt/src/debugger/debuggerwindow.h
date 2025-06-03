@@ -3,6 +3,8 @@
 #define DEBUGGERWINDOW_H
 
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpointgroupdialog.h>
+#include <debugger/labeldialog.h>
 #include <emulator/emulator.h>
 
 #include <QAction>
@@ -37,7 +39,7 @@ protected:
     void updateState();
     void loadState();
     void saveState();
-    void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints);
+    void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints, bool canManageLabels);
     /// endregion <Helper methods>
 
     /// region <QT Helper methods>
@@ -61,6 +63,7 @@ private slots:
     void waitInterrupt();
     void resetEmulator();
     void showBreakpointManager();
+    void showLabelManager();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -112,6 +115,7 @@ private:
     QAction* waitInterruptAction;
     QAction* resetAction;
     QAction* breakpointsAction;
+    QAction* labelsAction;
 };
 
 #endif // DEBUGGERWINDOW_H

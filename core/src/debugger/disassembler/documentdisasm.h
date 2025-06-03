@@ -37,10 +37,10 @@ public:
     bool LoadLabels(const std::string& path) { return _disassembler->GetLabelManager()->LoadLabels(path); }
     bool SaveLabels(const std::string& path, LabelManager::FileFormat format = LabelManager::FileFormat::SYM) const 
     { return _disassembler->GetLabelManager()->SaveLabels(path, format); }
-    bool AddLabel(const std::string& name, uint16_t z80Address, uint32_t physicalAddress = 0,
+    bool AddLabel(const std::string& name, uint16_t z80Address, uint8_t bank = 0xFF, uint16_t bankAddress = 0xFFFF,
                  const std::string& type = "", const std::string& module = "", 
-                 const std::string& comment = "")
-    { return _disassembler->GetLabelManager()->AddLabel(name, z80Address, physicalAddress, type, module, comment); }
+                 const std::string& comment = "", bool active = true)
+    { return _disassembler->GetLabelManager()->AddLabel(name, z80Address, bank, bankAddress, type, module, comment, active); }
     bool RemoveLabel(const std::string& name) { return _disassembler->GetLabelManager()->RemoveLabel(name); }
     void ClearAllLabels() { _disassembler->GetLabelManager()->ClearAllLabels(); }
     std::shared_ptr<Label> GetLabelByZ80Address(uint16_t address) const 

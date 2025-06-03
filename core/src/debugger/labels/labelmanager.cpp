@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <cctype>
+#include <limits> // Required for UINT32_MAX
 
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
@@ -49,8 +50,27 @@ LabelManager::~LabelManager()
 // @param comment Optional comment for the label
 // @return true if the label was added successfully
 // @return false if the label name is empty or a label with this name already exists
-bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint32_t physicalAddress,
-                           const std::string& type, const std::string& module, const std::string& comment)
+// Static helper function to calculate physical address
+// This is a simplified calculation. A real implementation might need more context from EmulatorContext/MemoryMapper.
+static uint32_t CalculateLabelPhysicalAddress(uint16_t /*z80Addr*/, uint8_t bank, uint16_t bankAddrInPage, EmulatorContext* /*context*/)
+{
+    if (bank == 0xFF) // Label is Z80-address-specific, bank-agnostic.
+    {
+        // This type of label does not map to a single, fixed physical address.
+        // Its "physicality" is resolved at runtime based on the currently paged bank.
+        // Return a sentinel value.
+        return UINT32_MAX; 
+    }
+
+    // Label is specific to a bank and an offset within that bank.
+    // TODO: Ideally, use EmulatorContext to get page size and perform mapping if a memory mapper exists.
+    // For now, using a common 16KB page size (0x4000).
+    const uint32_t BANK_PAGE_SIZE = 0x4000; // Assuming 16KB pages
+    return (static_cast<uint32_t>(bank) * BANK_PAGE_SIZE) + bankAddrInPage;
+}
+
+bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint8_t bank, uint16_t bankAddress,
+                           const std::string& type, const std::string& module, const std::string& comment, bool active)
 {
     if (name.empty())
     {
@@ -61,16 +81,19 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint32
     auto label = std::make_shared<Label>();
     label->name = name;
     label->address = z80Address;
-    label->physicalAddress = physicalAddress;
+    label->bank = bank;
+    label->bankAddress = bankAddress;
     label->type = type;
     label->module = module;
     label->comment = comment;
+    label->active = active;
+    label->physicalAddress = CalculateLabelPhysicalAddress(label->address, label->bank, label->bankAddress, _context);
 
     // Add to all lookup maps
     _labelsByZ80Address[z80Address] = label;
-    if (physicalAddress != 0)
+    if (label->physicalAddress != UINT32_MAX) 
     {
-        _labelsByPhysicalAddress[physicalAddress] = label;
+        _labelsByPhysicalAddress[label->physicalAddress] = label;
     }
     _labelsByName[name] = label;
 
@@ -93,7 +116,7 @@ bool LabelManager::RemoveLabel(const std::string& name)
     
     // Remove from all maps
     _labelsByZ80Address.erase(label->address);
-    if (label->physicalAddress != 0)
+    if (label->physicalAddress != UINT32_MAX)
     {
         _labelsByPhysicalAddress.erase(label->physicalAddress);
     }
@@ -156,6 +179,58 @@ std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabels() const
 size_t LabelManager::GetLabelCount() const
 {
     return _labelsByName.size();
+}
+
+bool LabelManager::UpdateLabel(const Label& updatedLabel)
+{
+    auto it = _labelsByName.find(updatedLabel.name);
+    if (it == _labelsByName.end())
+    {
+        // Label with this name does not exist, cannot update
+        if (_logger) _logger->Warning(_MODULE, _SUBMODULE, "UpdateLabel failed: Label '%s' not found.", updatedLabel.name.c_str());
+        return false;
+    }
+
+    std::shared_ptr<Label> existingLabel = it->second;
+
+    // Store old addresses for map updates
+    uint16_t oldZ80Address = existingLabel->address;
+    uint32_t oldPhysicalAddress = existingLabel->physicalAddress;
+
+    // Update label properties (name is the key, so it's not changed here)
+    existingLabel->address = updatedLabel.address;
+    existingLabel->bank = updatedLabel.bank;
+    existingLabel->bankAddress = updatedLabel.bankAddress;
+    existingLabel->type = updatedLabel.type;
+    existingLabel->module = updatedLabel.module;
+    existingLabel->comment = updatedLabel.comment;
+    existingLabel->active = updatedLabel.active;
+
+    // Recalculate physical address
+    existingLabel->physicalAddress = CalculateLabelPhysicalAddress(existingLabel->address, existingLabel->bank, existingLabel->bankAddress, _context);
+
+    // Update Z80 address map if address changed
+    if (existingLabel->address != oldZ80Address)
+    {
+        _labelsByZ80Address.erase(oldZ80Address);
+        _labelsByZ80Address[existingLabel->address] = existingLabel;
+    }
+
+    // Update physical address map if physical address changed
+    // Update physical address map if physical address changed or its validity changed
+    if (existingLabel->physicalAddress != oldPhysicalAddress)
+    {
+        if (oldPhysicalAddress != UINT32_MAX) // If old physical address was valid, remove it
+        {
+            _labelsByPhysicalAddress.erase(oldPhysicalAddress);
+        }
+        if (existingLabel->physicalAddress != UINT32_MAX) // If new physical address is valid, add it
+        {
+            _labelsByPhysicalAddress[existingLabel->physicalAddress] = existingLabel;
+        }
+    }
+    if (_logger) _logger->Debug(_MODULE, _SUBMODULE, "Label '%s' updated successfully.", existingLabel->name.c_str());
+    return true;
 }
 
 /// endregion </Label management>
@@ -364,31 +439,11 @@ bool LabelManager::ParseMapFile(std::istream& input)
         
         // Variables to hold parsed components
         std::string addressStr;  // First column: memory address in hex
-        std::string secondField; // Second column: either type or name
-        std::string thirdField;  // Third column: name (if present)
+        std::string name;        // Second column: label name
         
-        // Read at least two columns (address and one more field)
-        if (iss >> addressStr >> secondField)
+        // Read address and name
+        if (iss >> addressStr >> name)
         {
-            // Default values
-            std::string name;
-            std::string type = "code";  // Default type for two-column format
-            
-            // Try to read third field to determine format
-            if (iss >> thirdField)
-            {
-                // Three-column format: ADDR TYPE NAME
-                // Example: "A250 code RD_SEC"
-                type = secondField;
-                name = thirdField;
-            }
-            else
-            {
-                // Two-column format: ADDR NAME
-                // Example: "A250 RD_SEC"
-                name = secondField;
-            }
-            
             // Extract comment if present (after semicolon)
             std::string comment;
             size_t commentPos = line.find(';');
@@ -401,9 +456,7 @@ bool LabelManager::ParseMapFile(std::istream& input)
             uint16_t address = ParseHex16(addressStr);
             if (address != 0xFFFF)  // 0xFFFF indicates parse error
             {
-                // Use default type 'code' if not specified in the file
-                std::string labelType = type.empty() ? "code" : type;
-                AddLabel(name, address, 0, labelType, "", comment);
+                AddLabel(name, address, 0, 0, "code", "", comment);
             }
         }
     }
@@ -469,7 +522,7 @@ bool LabelManager::ParseSymFile(std::istream& input)
         uint16_t address = ParseHex16(addressStr);
         if (address != 0xFFFF)
         {
-            AddLabel(name, address, 0, type, "", comment);
+            AddLabel(name, address, 0, 0, type, "", comment);
         }
     }
     
@@ -503,7 +556,7 @@ bool LabelManager::ParseViceSymFile(std::istream& input)
                 
                 if (address != 0xFFFF)
                 {
-                    AddLabel(name, address, 0, "code");
+                    AddLabel(name, address, 0, 0, "code", "", "", true);
                 }
             }
         }
@@ -541,7 +594,7 @@ bool LabelManager::ParseSJASMSymFile(std::istream& input)
             uint16_t address = ParseHex16(addrStr);
             if (address != 0xFFFF)
             {
-                AddLabel(name, address);
+                AddLabel(name, address, 0xFF, 0xFFFF, "code", "", "", true);
             }
         }
     }
@@ -585,7 +638,7 @@ bool LabelManager::ParseZ88DKSymFile(std::istream& input)
                 uint16_t address = ParseHex16(addrStr);
                 if (address != 0xFFFF)
                 {
-                    AddLabel(name, address);
+                    AddLabel(name, address, 0, 0, "", "", "", true);
                 }
             }
         }

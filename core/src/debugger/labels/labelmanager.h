@@ -69,9 +69,10 @@ public:
     /// region <Methods>
 public:
     // Label management
-    bool AddLabel(const std::string& name, uint16_t z80Address, uint32_t physicalAddress = 0, 
+    bool AddLabel(const std::string& name, uint16_t z80Address, uint8_t bank, uint16_t bankAddress, 
                  const std::string& type = "", const std::string& module = "", 
-                 const std::string& comment = "");
+                 const std::string& comment = "", bool active = true);
+    bool UpdateLabel(const Label& updatedLabel);
     bool RemoveLabel(const std::string& name);
     void ClearAllLabels();
     
