@@ -420,52 +420,67 @@ void LabelEditor::populateLabelTable()
         return;
     }
 
-    // Disable sorting while updating to prevent visual glitches
-    _labelTable->setSortingEnabled(false);
-
-    // Clear existing items
-    _labelTable->setRowCount(0);
-
     try
     {
+        // Disable sorting while updating to prevent visual glitches
+        _labelTable->setSortingEnabled(false);
+        _labelTable->setRowCount(0);
+
         // Get all labels from the manager
         auto labels = _labelManager->GetAllLabels();
+        _labelTable->setRowCount(static_cast<int>(labels.size()));
 
-        // Populate the table
+        int row = 0;
         for (const auto& label : labels)
         {
             if (!label)
                 continue;
 
-            int row = _labelTable->rowCount();
-            _labelTable->insertRow(row);
-
-            // Add label data to columns
+            // Name
             _labelTable->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(label->name)));
+
+            // Address
             _labelTable->setItem(
                 row, 1, new QTableWidgetItem(QString("0x%1").arg(label->address, 4, 16, QChar('0')).toUpper()));
 
+            // Bank
             _labelTable->setItem(row, 2,
-                                 new QTableWidgetItem(label->bank == 0xFF ? "N/A" : QString::number(label->bank)));
+                                 new QTableWidgetItem(label->bank == UINT16_MAX ? "*" : QString::number(label->bank)));
 
+            // Bank Offset
             _labelTable->setItem(
                 row, 3,
-                new QTableWidgetItem(label->bankAddress == 0xFFFF
-                                         ? "N/A"
-                                         : QString("0x%1").arg(label->bankAddress, 4, 16, QChar('0')).toUpper()));
+                new QTableWidgetItem(label->bankOffset == UINT16_MAX
+                                         ? "*"
+                                         : QString("0x%1").arg(label->bankOffset, 4, 16, QChar('0')).toUpper()));
 
-            _labelTable->setItem(row, 4, new QTableWidgetItem(QString::fromStdString(label->type)));
-            _labelTable->setItem(row, 5, new QTableWidgetItem(QString::fromStdString(label->module)));
-            _labelTable->setItem(row, 6, new QTableWidgetItem(QString::fromStdString(label->comment)));
-            
-            // Store the label pointer in the first column's item for later reference
+            // Bank Type
+            _labelTable->setItem(row, 4, new QTableWidgetItem(label->isROM() ? "ROM" : "RAM"));
+
+            // Type
+            _labelTable->setItem(row, 5, new QTableWidgetItem(QString::fromStdString(label->type)));
+
+            // Module
+            _labelTable->setItem(row, 6, new QTableWidgetItem(QString::fromStdString(label->module)));
+
+            // Comment
+            _labelTable->setItem(row, 7, new QTableWidgetItem(QString::fromStdString(label->comment)));
+
+            // Active state
+            QTableWidgetItem* activeItem = new QTableWidgetItem();
+            activeItem->setCheckState(label->active ? Qt::Checked : Qt::Unchecked);
+            _labelTable->setItem(row, 8, activeItem);
+
+            // Store the label name in the first column's item for later reference
             if (QTableWidgetItem* nameItem = _labelTable->item(row, 0))
             {
-                nameItem->setData(Qt::UserRole, QVariant::fromValue((void*)label.get()));
+                nameItem->setData(Qt::UserRole, QString::fromStdString(label->name));
             }
+
+            row++;
         }
-        
-        // Re-enable sorting if needed
+
+        // Re-enable sorting
         _labelTable->setSortingEnabled(true);
     }
     catch (const std::exception& e)
@@ -492,7 +507,7 @@ void LabelEditor::deleteLabel()
     }
 
     int row = selectedItems.first()->row();
-    Label* labelToDelete = getLabelFromRow(row);
+    std::shared_ptr<Label> labelToDelete = getLabelFromRow(row);
 
     if (labelToDelete)
     {
@@ -546,27 +561,36 @@ void LabelEditor::addLabel()
     {
         // Create dialog in Add mode
         LabelDialog dialog(_labelManager, this);
-        
+
         if (dialog.exec() == QDialog::Accepted)
         {
             // Get the new label from the dialog
             Label newLabel = dialog.getLabel();
-            
+
             // Check if a label with this name already exists
             if (_labelManager->GetLabelByName(newLabel.name))
             {
-                QString errorMsg = tr("A label with the name '%1' already exists")
-                                    .arg(QString::fromStdString(newLabel.name));
+                QString errorMsg =
+                    tr("A label with the name '%1' already exists").arg(QString::fromStdString(newLabel.name));
                 _statusBar->showMessage(errorMsg, 3000);
                 QMessageBox::warning(this, tr("Add Label Failed"), errorMsg);
                 return;
             }
 
+            // Create a new label with default values
+            newLabel.name = "NEW_LABEL";
+            newLabel.address = 0x0000;
+            newLabel.bank = UINT16_MAX;        // Any bank by default
+            newLabel.bankOffset = UINT16_MAX;  // Any bank offset by default
+            newLabel.type = "code";
+            newLabel.module = "";
+            newLabel.comment = "";
+            newLabel.active = true;
+
             // Add the new label
-            _labelManager->AddLabel(newLabel.name, newLabel.address, newLabel.bank,
-                                  newLabel.bankAddress, newLabel.type, newLabel.module,
-                                  newLabel.comment, newLabel.active);
-            
+            _labelManager->AddLabel(newLabel.name, newLabel.address, newLabel.bank, newLabel.bankOffset, newLabel.type,
+                                    newLabel.module, newLabel.comment, newLabel.active);
+
             refreshLabelList();
             _statusBar->showMessage(tr("Added new label: %1").arg(QString::fromStdString(newLabel.name)), 3000);
         }
@@ -595,46 +619,64 @@ void LabelEditor::editLabel()
     }
 
     int row = selectedItems.first()->row();
-    if (Label* originalLabel = getLabelFromRow(row))
+    std::shared_ptr<Label> originalLabel = getLabelFromRow(row);
+    if (!originalLabel)
     {
-        try
-        {
-            // Create dialog in Edit mode with the original label
-            Label editedLabel = *originalLabel;  // Create a copy for editing
-            LabelDialog dialog(editedLabel, _labelManager, this);
-            
-            if (dialog.exec() == QDialog::Accepted)
-            {
-                // Get the edited label from the dialog
-                editedLabel = dialog.getLabel();
-                
-                // Check if name was changed and if the new name conflicts with an existing label
-                if (originalLabel->name != editedLabel.name && 
-                    _labelManager->GetLabelByName(editedLabel.name))
-                {
-                    QString errorMsg = tr("A label with the name '%1' already exists")
-                                        .arg(QString::fromStdString(editedLabel.name));
-                    _statusBar->showMessage(errorMsg, 3000);
-                    QMessageBox::warning(this, tr("Edit Label Failed"), errorMsg);
-                    return;
-                }
+        _statusBar->showMessage(tr("Error: Could not find the selected label"), 3000);
+        return;
+    }
 
-                // Remove old label and add the edited one
-                _labelManager->RemoveLabel(originalLabel->name);
-                _labelManager->AddLabel(editedLabel.name, editedLabel.address, editedLabel.bank,
-                                      editedLabel.bankAddress, editedLabel.type, editedLabel.module,
-                                      editedLabel.comment, editedLabel.active);
-                
-                refreshLabelList();
-                _statusBar->showMessage(tr("Updated label: %1").arg(QString::fromStdString(editedLabel.name)), 3000);
-            }
-        }
-        catch (const std::exception& e)
+    try
+    {
+        // Create a copy of the label to edit
+        Label editedLabel = *originalLabel;
+        
+        // Ensure bank and bankOffset are properly initialized if they were not set before
+        if (editedLabel.bank == 0xFFFF)
+            editedLabel.bank = UINT16_MAX;
+        if (editedLabel.bankOffset == 0xFFFF)
+            editedLabel.bankOffset = UINT16_MAX;
+
+        // Create dialog in Edit mode with the label copy
+        LabelDialog dialog(editedLabel, _labelManager, this);
+
+        if (dialog.exec() == QDialog::Accepted)
         {
-            QString errorMsg = tr("Error editing label: %1").arg(e.what());
-            _statusBar->showMessage(errorMsg, 3000);
-            QMessageBox::critical(this, tr("Error"), errorMsg);
+            // Get the edited label from the dialog
+            Label updatedLabel = dialog.getLabel();
+            
+            // Check if name was changed and if the new name conflicts with an existing label
+            if (originalLabel->name != updatedLabel.name && 
+                _labelManager->GetLabelByName(updatedLabel.name))
+            {
+                QString errorMsg = tr("A label with the name '%1' already exists")
+                                    .arg(QString::fromStdString(updatedLabel.name));
+                _statusBar->showMessage(errorMsg, 3000);
+                QMessageBox::warning(this, tr("Edit Label Failed"), errorMsg);
+                return;
+            }
+            
+            // Update the label in the label manager
+            if (_labelManager->UpdateLabel(updatedLabel))
+            {
+                // Refresh the label list to show changes
+                refreshLabelList();
+                _statusBar->showMessage(tr("Label updated successfully"), 3000);
+            }
+            else
+            {
+                _statusBar->showMessage(tr("Failed to update label"), 3000);
+                QMessageBox::warning(this, tr("Edit Label Failed"), 
+                                   tr("Failed to update the label in the label manager."));
+            }
+
         }
+    }
+    catch (const std::exception& e)
+    {
+        QString errorMsg = tr("Error editing label: %1").arg(e.what());
+        _statusBar->showMessage(errorMsg, 3000);
+        QMessageBox::critical(this, tr("Error"), errorMsg);
     }
 }
 
@@ -718,20 +760,76 @@ void LabelEditor::setupShortcuts()
     connect(deleteShortcut, &QShortcut::activated, this, &LabelEditor::deleteLabel);
 }
 
-Label* LabelEditor::getLabelFromRow(int row) const
+std::shared_ptr<Label> LabelEditor::getLabelFromRow(int row) const
 {
-    if (row < 0 || row >= _labelTable->rowCount())
+    if (row < 0 || row >= _labelTable->rowCount() || !_labelManager)
         return nullptr;
-        
+
+    // First try to get the label from the item's user data (most reliable)
     QTableWidgetItem* item = _labelTable->item(row, 0);  // Get the name column item
-    if (!item)
+    if (item)
+    {
+        QVariant data = item->data(Qt::UserRole);
+        if (data.isValid() && !data.isNull())
+        {
+            // The user data should be stored as a pointer to the label's name
+            std::string labelName = data.toString().toStdString();
+            if (!labelName.empty())
+            {
+                return _labelManager->GetLabelByName(labelName);
+            }
+        }
+    }
+
+    // If user data is not available or invalid, try to find by name and address
+    QString name = _labelTable->item(row, 0)->text();
+    if (name.isEmpty())
         return nullptr;
-        
-    // Get the label pointer from the item's data
-    QVariant data = item->data(Qt::UserRole);
-    if (!data.isValid() || data.isNull())
+
+    // Find the label in the label manager
+    std::shared_ptr<Label> label = _labelManager->GetLabelByName(name.toStdString());
+    if (label)
+        return label;
+
+    // If not found by name, try by address
+    if (!_labelTable->item(row, 1))
         return nullptr;
-        
-    // Convert the void* back to Label*
-    return static_cast<Label*>(data.value<void*>());
+
+    // Try to find by address if not found by name
+    QString addressStr = _labelTable->item(row, 1)->text();
+    bool ok;
+    uint16_t address = addressStr.toUShort(&ok, 16);
+    if (!ok)
+        return nullptr;
+
+    // Get bank if available
+    bool hasBank = false;
+    uint8_t bank = 0;
+    if (_labelTable->item(row, 2) && _labelTable->item(row, 2)->text() != "*" &&
+        _labelTable->item(row, 2)->text() != "N/A")
+    {
+        bank = static_cast<uint8_t>(_labelTable->item(row, 2)->text().toUShort(&ok));
+        hasBank = ok;
+    }
+
+    // Try to find by Z80 address first (most common case)
+    label = _labelManager->GetLabelByZ80Address(address);
+    if (!label)
+        return nullptr;
+
+    // If we have a bank and the found label doesn't match, try to find a better match
+    if (hasBank && label->bank != bank)
+    {
+        // No direct bank-specific lookup available, so we need to scan all labels
+        auto allLabels = _labelManager->GetAllLabels();
+        for (const auto& l : allLabels)
+        {
+            if (l->address == address && l->bank == bank)
+            {
+                return l;
+            }
+        }
+    }
+
+    return label;
 }

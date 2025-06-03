@@ -69,7 +69,7 @@ static uint32_t CalculateLabelPhysicalAddress(uint16_t /*z80Addr*/, uint8_t bank
     return (static_cast<uint32_t>(bank) * BANK_PAGE_SIZE) + bankAddrInPage;
 }
 
-bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint8_t bank, uint16_t bankAddress,
+bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16_t bank, uint16_t bankOffset,
                            const std::string& type, const std::string& module, const std::string& comment, bool active)
 {
     if (name.empty())
@@ -82,12 +82,19 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint8_
     label->name = name;
     label->address = z80Address;
     label->bank = bank;
-    label->bankAddress = bankAddress;
+    label->bankOffset = bankOffset;
     label->type = type;
     label->module = module;
     label->comment = comment;
     label->active = active;
-    label->physicalAddress = CalculateLabelPhysicalAddress(label->address, label->bank, label->bankAddress, _context);
+    
+    // If address is in ROM area (below 0x4000) and bank is not specified, set bank type to ROM
+    if (z80Address < 0x4000 && bank == UINT16_MAX)
+    {
+        label->setBankTypeROM();
+    }
+    
+    label->physicalAddress = CalculateLabelPhysicalAddress(label->address, label->bank, label->bankOffset, _context);
 
     // Add to all lookup maps
     _labelsByZ80Address[z80Address] = label;
@@ -200,14 +207,14 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
     // Update label properties (name is the key, so it's not changed here)
     existingLabel->address = updatedLabel.address;
     existingLabel->bank = updatedLabel.bank;
-    existingLabel->bankAddress = updatedLabel.bankAddress;
+    existingLabel->bankOffset = updatedLabel.bankOffset;
     existingLabel->type = updatedLabel.type;
     existingLabel->module = updatedLabel.module;
     existingLabel->comment = updatedLabel.comment;
     existingLabel->active = updatedLabel.active;
 
     // Recalculate physical address
-    existingLabel->physicalAddress = CalculateLabelPhysicalAddress(existingLabel->address, existingLabel->bank, existingLabel->bankAddress, _context);
+    existingLabel->physicalAddress = CalculateLabelPhysicalAddress(existingLabel->address, existingLabel->bank, existingLabel->bankOffset, _context);
 
     // Update Z80 address map if address changed
     if (existingLabel->address != oldZ80Address)
@@ -456,7 +463,8 @@ bool LabelManager::ParseMapFile(std::istream& input)
             uint16_t address = ParseHex16(addressStr);
             if (address != 0xFFFF)  // 0xFFFF indicates parse error
             {
-                AddLabel(name, address, 0, 0, "code", "", comment);
+                // Use UINT16_MAX for bank and bankOffset to indicate they're not specified
+                AddLabel(name, address, UINT16_MAX, UINT16_MAX, "code", "", comment);
             }
         }
     }
@@ -522,7 +530,8 @@ bool LabelManager::ParseSymFile(std::istream& input)
         uint16_t address = ParseHex16(addressStr);
         if (address != 0xFFFF)
         {
-            AddLabel(name, address, 0, 0, type, "", comment);
+            // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
+            AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", comment);
         }
     }
     
@@ -556,7 +565,8 @@ bool LabelManager::ParseViceSymFile(std::istream& input)
                 
                 if (address != 0xFFFF)
                 {
-                    AddLabel(name, address, 0, 0, "code", "", "", true);
+                    // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
+                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, "code", "", "", true);
                 }
             }
         }
@@ -594,7 +604,8 @@ bool LabelManager::ParseSJASMSymFile(std::istream& input)
             uint16_t address = ParseHex16(addrStr);
             if (address != 0xFFFF)
             {
-                AddLabel(name, address, 0xFF, 0xFFFF, "code", "", "", true);
+                // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
+                AddLabel(name, address, UINT8_MAX, UINT16_MAX, "code", "", "", true);
             }
         }
     }
@@ -638,7 +649,8 @@ bool LabelManager::ParseZ88DKSymFile(std::istream& input)
                 uint16_t address = ParseHex16(addrStr);
                 if (address != 0xFFFF)
                 {
-                    AddLabel(name, address, 0, 0, "", "", "", true);
+                    // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
+                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, "", "", "", true);
                 }
             }
         }

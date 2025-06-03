@@ -84,7 +84,7 @@ private:
     void openRecentFile(QAction* action);
     
     // Helper to get a label from a table row
-    Label* getLabelFromRow(int row) const;
+    std::shared_ptr<Label> getLabelFromRow(int row) const;
 
     LabelManager* _labelManager = nullptr;
 

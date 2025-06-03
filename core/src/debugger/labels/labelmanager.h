@@ -1,12 +1,14 @@
 #pragma once
 #include "stdafx.h"
 
+#include <cstdint>
 #include <string>
 #include <map>
 #include <vector>
 #include <memory>
 #include <filesystem>
 #include "emulator/platform.h"
+#include "emulator/memory/memory.h"
 
 // Forward declarations
 class ModuleLogger;
@@ -15,16 +17,26 @@ class EmulatorContext;
 /// @brief Structure representing a single label with address and type information
 struct Label
 {
+    // Member variables
     std::string name;              // Symbol name (e.g., "main", "data_buffer")
-    uint16_t address;              // Z80 address space (0x0000-0xFFFF)
-    uint8_t bank = 0xFF;           // Memory bank number (0-254, 0xFF = no bank)
-    uint16_t bankAddress = 0xFFFF; // Address within memory bank (0x0000-0x4000)
-    uint32_t physicalAddress;      // Physical memory address (absolute in emulated system)
-    std::string type;              // Symbol type ("code", "data", "bss", "const")
+    uint16_t address = 0;          // Z80 address space (0x0000-0xFFFF)
+    uint16_t bank = UINT16_MAX;    // Memory bank number (0-254, 0xFFFF = any bank)
+    uint16_t bankOffset = UINT16_MAX;  // Address within memory bank (0x0000-0x4000)
+    MemoryBankModeEnum bankType = BANK_RAM; // Type of bank (RAM or ROM)
+    uint32_t physicalAddress = 0;  // Physical memory address (absolute in emulated system)
+    std::string type;              // Symbol type ("code", "data", "const")
     std::string module;            // Module/segment name this label belongs to
     std::string comment;           // Optional comment or description
-
     bool active = true;            // Whether the label is currently active (can be toggled)
+
+    Label() = default;
+    ~Label() = default;
+
+    // Helper methods for bank type
+    bool isROM() const { return bankType == BANK_ROM; }
+    bool isRAM() const { return bankType == BANK_RAM; }
+    void setBankTypeROM() { bankType = BANK_ROM; }
+    void setBankTypeRAM() { bankType = BANK_RAM; }
 };
 
 class LabelManager
@@ -69,7 +81,7 @@ public:
     /// region <Methods>
 public:
     // Label management
-    bool AddLabel(const std::string& name, uint16_t z80Address, uint8_t bank, uint16_t bankAddress, 
+    bool AddLabel(const std::string& name, uint16_t z80Address, uint16_t bank, uint16_t bankAddress, 
                  const std::string& type = "", const std::string& module = "", 
                  const std::string& comment = "", bool active = true);
     bool UpdateLabel(const Label& updatedLabel);
