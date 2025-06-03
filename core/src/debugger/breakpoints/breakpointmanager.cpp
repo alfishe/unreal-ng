@@ -82,31 +82,41 @@ bool BreakpointManager::RemoveBreakpoint(BreakpointDescriptor* descriptor)
 
 bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
 {
-    bool result = false;
+    auto it = _breakpointMapByID.find(breakpointID);
+    if (it == _breakpointMapByID.end())
+        return false;
 
-    if (key_exists(_breakpointMapByID, breakpointID))
+    BreakpointDescriptor* breakpoint = it->second;
+
+    // Remove from type-specific maps
+    switch (breakpoint->type)
     {
-        BreakpointDescriptor* breakpoint = _breakpointMapByID[breakpointID];
-
-        switch (breakpoint->type)
-        {
-            case BRK_MEMORY:
-                _breakpointMapByAddress.erase(breakpoint->keyAddress);
-                break;
-            case BRK_IO:
-                _breakpointMapByPort.erase(breakpoint->z80address);
-                break;
-            default:
-                break;
-        }
-
-        _breakpointMapByID.erase(breakpoint->breakpointID);
-
-        // Disposing BreakpointDescriptor object created during add process
-        delete breakpoint;
+        case BRK_MEMORY:
+            _breakpointMapByAddress.erase(breakpoint->keyAddress);
+            break;
+        case BRK_IO:
+            _breakpointMapByPort.erase(breakpoint->z80address);
+            break;
+        default:
+            break;
     }
 
-    return result;
+    // Remove from ID map and delete the descriptor
+    _breakpointMapByID.erase(it);
+    delete breakpoint;
+
+    // Update the next ID to be one more than the current maximum ID
+    if (_breakpointMapByID.empty())
+    {
+        _breakpointIDSeq = 1;
+    }
+    else
+    {
+        // Since the map is ordered by key, the last element has the highest ID
+        _breakpointIDSeq = _breakpointMapByID.rbegin()->first + 1;
+    }
+
+    return true;
 }
 
 size_t BreakpointManager::GetBreakpointsCount()
@@ -790,14 +800,24 @@ uint16_t BreakpointManager::HandlePortOut(uint16_t portAddress)
 
 uint16_t BreakpointManager::GenerateNewBreakpointID()
 {
-    _breakpointIDSeq += 1;
+    // If no breakpoints exist, start with ID 1
+    if (_breakpointMapByID.empty())
+    {
+        _breakpointIDSeq = 1;
+        return _breakpointIDSeq;
+    }
 
-    // We depleted sequence, no more breakpoints can be created
-    if (_breakpointIDSeq == 0xFFFF)
+    // Since the map is ordered by key, the last element has the highest ID
+    uint16_t maxID = _breakpointMapByID.rbegin()->first;
+    
+    // Check for overflow (unlikely with uint16_t, but good practice)
+    if (maxID == 0xFFFF)
     {
         throw std::logic_error("BreakpointManager::GenerateNewBreakpointID - max number of breakpoint IDs: 0xFFFF (65535) already generated. No more breakpoints can be created");
     }
 
+    // Set the next ID to be one more than the maximum
+    _breakpointIDSeq = maxID + 1;
     return _breakpointIDSeq;
 }
 
