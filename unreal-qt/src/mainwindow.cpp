@@ -16,6 +16,7 @@
 
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
@@ -682,6 +683,12 @@ void MainWindow::dropEvent(QDropEvent* event)
             case FileDisk:
                 _emulator->LoadDisk(file);
                 break;
+            case FileSymbol:
+                if (_emulator && _emulator->GetDebugManager())
+                {
+                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+                }
+                break;
             default:
                 break;
         };
@@ -1256,6 +1263,12 @@ void MainWindow::openSpecificFile(const QString& filepath)
             case FileDisk:
                 _emulator->LoadDisk(file);
                 break;
+            case FileSymbol:
+                if (_emulator && _emulator->GetDebugManager())
+                {
+                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+                }
+                break;
             default:
                 qDebug() << "Unsupported file type:" << filepath;
                 break;
@@ -1299,6 +1312,12 @@ void MainWindow::openFileDialog()
                 break;
             case FileDisk:
                 _emulator->LoadDisk(file);
+                break;
+            case FileSymbol:
+                if (_emulator && _emulator->GetDebugManager())
+                {
+                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+                }
                 break;
             default:
                 qDebug() << "Unsupported file type:" << filePath;

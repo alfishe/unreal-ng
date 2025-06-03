@@ -1,18 +1,14 @@
 #include "stdafx.h"
 #include "documentdisasm.h"
 
-DocumentDisasm::DocumentDisasm()
+DocumentDisasm::DocumentDisasm(EmulatorContext* context) : _context(context)
 {
-    _disassembler = std::make_unique<Z80Disassembler>();
+    _disassembler = std::make_unique<Z80Disassembler>(context);
 }
 
 DocumentDisasm::~DocumentDisasm()
 {
-    if (_disassembler)
-    {
-        // Smart pointer will delete Z80Disassembler instance automatically
-        _disassembler = nullptr;
-    }
+    _disassembler.reset();
 }
 
 DisplayInstruction DocumentDisasm::getInstructionForZ80Address(uint16_t address)

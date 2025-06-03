@@ -47,6 +47,7 @@ protected:
     std::map<std::string, std::shared_ptr<Label>> _labelsByName;
     
     // File format detection and parsing helpers
+public:
     enum class FileFormat
     {
         UNKNOWN,

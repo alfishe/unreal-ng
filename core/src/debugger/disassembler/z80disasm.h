@@ -4,6 +4,8 @@
 #include <regex>
 #include <vector>
 #include "emulator/platform.h"
+#include "debugger/labels/labelmanager.h"
+#include "emulator/emulatorcontext.h"
 
 /// region <Types>
 
@@ -287,10 +289,16 @@ protected:
     /// region <Fields>
 protected:
     ModuleLogger* _logger;
+    EmulatorContext* _context;
+    std::unique_ptr<LabelManager> _labelManager;
     /// endregion </Fields>
 
 public:
+    explicit Z80Disassembler(EmulatorContext* context) : _logger(nullptr), _context(context), _labelManager(std::make_unique<LabelManager>(context)) {}
+    virtual ~Z80Disassembler() = default;
+
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
+    LabelManager* GetLabelManager() { return _labelManager.get(); }
     
     std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
@@ -334,6 +342,9 @@ protected:
 class Z80DisassemblerCUT : public Z80Disassembler
 {
 public:
+    // Add a constructor that calls the base class constructor with required parameters
+    Z80DisassemblerCUT(EmulatorContext* context) : Z80Disassembler(context) {};
+
     using Z80Disassembler::getByte;
     using Z80Disassembler::getWord;
     using Z80Disassembler::getRelativeOffset;

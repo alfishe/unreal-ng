@@ -14,7 +14,8 @@ enum SupportedFileCategoriesEnum
     FileSnapshot,
     FileTape,
     FileDisk,
-    FileArchive
+    FileArchive,
+    FileSymbol
 };
 
 enum SupportedPlatformEnum
