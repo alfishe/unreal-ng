@@ -152,13 +152,14 @@ void LabelEditor::setupUI()
     _labelTable->setSortingEnabled(true);
     _labelTable->setAlternatingRowColors(true);
     _labelTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    _labelTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
     // Set column widths
     _labelTable->setColumnWidth(0, 150);                           // Name
     _labelTable->setColumnWidth(1, 70);                            // Address
     _labelTable->setColumnWidth(2, 50);                            // Bank
-    _labelTable->setColumnWidth(3, 70);                            // Bank Offset
-    _labelTable->setColumnWidth(4, 80);                            // Type
+    _labelTable->setColumnWidth(3, 100);                           // Bank Offset
+    _labelTable->setColumnWidth(4, 64);                            // Type
     _labelTable->setColumnWidth(5, 100);                           // Module
     _labelTable->horizontalHeader()->setStretchLastSection(true);  // Comment
 
@@ -454,14 +455,20 @@ void LabelEditor::populateLabelTable()
                                          ? "*"
                                          : QString("0x%1").arg(label->bankOffset, 4, 16, QChar('0')).toUpper()));
 
-            // Bank Type
-            _labelTable->setItem(row, 4, new QTableWidgetItem(label->isROM() ? "ROM" : "RAM"));
+            // Bank Type (ROM/RAM)
+            QTableWidgetItem* bankTypeItem = new QTableWidgetItem(label->isROM() ? "ROM" : "RAM");
+            bankTypeItem->setTextAlignment(Qt::AlignCenter);
+            _labelTable->setItem(row, 4, bankTypeItem);
 
             // Type
-            _labelTable->setItem(row, 5, new QTableWidgetItem(QString::fromStdString(label->type)));
+            QTableWidgetItem* typeItem = new QTableWidgetItem(QString::fromStdString(label->type));
+            typeItem->setTextAlignment(Qt::AlignCenter);
+            _labelTable->setItem(row, 5, typeItem);
 
             // Module
-            _labelTable->setItem(row, 6, new QTableWidgetItem(QString::fromStdString(label->module)));
+            QTableWidgetItem* moduleItem = new QTableWidgetItem(QString::fromStdString(label->module));
+            moduleItem->setTextAlignment(Qt::AlignCenter);
+            _labelTable->setItem(row, 6, moduleItem);
 
             // Comment
             _labelTable->setItem(row, 7, new QTableWidgetItem(QString::fromStdString(label->comment)));
