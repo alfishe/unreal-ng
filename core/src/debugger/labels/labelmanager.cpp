@@ -1,20 +1,713 @@
 #include "stdafx.h"
 #include "labelmanager.h"
 
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+#include <cctype>
+
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
 
+// @file labelmanager.cpp
+// @brief Implementation of the LabelManager class for managing debug symbols and labels
+// 
+// This file contains the implementation of the LabelManager class which provides
+// functionality to manage debug symbols, labels, and their associated metadata.
+// It supports loading and saving labels in various formats and provides lookup
+// capabilities by address or name.
+
 /// region <Constructors / destructors>
 
+// @brief Construct a new LabelManager instance
+// @param context Pointer to the emulator context
 LabelManager::LabelManager(EmulatorContext *context)
 {
     _context = context;
     _logger = _context->pModuleLogger;
 }
 
+// @brief Destroy the LabelManager instance
+// 
+// Cleans up all allocated resources and removes all labels.
 LabelManager::~LabelManager()
 {
-
+    ClearAllLabels();
 }
 
 /// endregion </Constructors / destructors>
+
+/// region <Label management>
+
+// @brief Add a new label to the manager
+// @param name Unique name of the label
+// @param z80Address Z80 address of the label
+// @param physicalAddress Physical memory address (optional, 0 if not used)
+// @param type Type of the label (e.g., "code", "data", "bss")
+// @param module Module name this label belongs to (optional)
+// @param comment Optional comment for the label
+// @return true if the label was added successfully
+// @return false if the label name is empty or a label with this name already exists
+bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint32_t physicalAddress,
+                           const std::string& type, const std::string& module, const std::string& comment)
+{
+    if (name.empty())
+    {
+        return false;
+    }
+
+    // Create a new label
+    auto label = std::make_shared<Label>();
+    label->name = name;
+    label->address = z80Address;
+    label->physicalAddress = physicalAddress;
+    label->type = type;
+    label->module = module;
+    label->comment = comment;
+
+    // Add to all lookup maps
+    _labelsByZ80Address[z80Address] = label;
+    if (physicalAddress != 0)
+    {
+        _labelsByPhysicalAddress[physicalAddress] = label;
+    }
+    _labelsByName[name] = label;
+
+    return true;
+}
+
+// @brief Remove a label by its name
+// @param name Name of the label to remove
+// @return true if the label was found and removed
+// @return false if no label with the given name exists
+bool LabelManager::RemoveLabel(const std::string& name)
+{
+    auto it = _labelsByName.find(name);
+    if (it == _labelsByName.end())
+    {
+        return false;
+    }
+
+    std::shared_ptr<Label> label = it->second;
+    
+    // Remove from all maps
+    _labelsByZ80Address.erase(label->address);
+    if (label->physicalAddress != 0)
+    {
+        _labelsByPhysicalAddress.erase(label->physicalAddress);
+    }
+    _labelsByName.erase(it);
+
+    return true;
+}
+
+// @brief Remove all labels from the manager
+// 
+// Clears all internal data structures and frees all allocated resources.
+void LabelManager::ClearAllLabels()
+{
+    _labelsByZ80Address.clear();
+    _labelsByPhysicalAddress.clear();
+    _labelsByName.clear();
+}
+
+// @brief Find a label by its Z80 address
+// @param address Z80 address to search for
+// @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
+std::shared_ptr<Label> LabelManager::GetLabelByZ80Address(uint16_t address) const
+{
+    auto it = _labelsByZ80Address.find(address);
+    return it != _labelsByZ80Address.end() ? it->second : nullptr;
+}
+
+// @brief Find a label by its physical memory address
+// @param address Physical memory address to search for
+// @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
+std::shared_ptr<Label> LabelManager::GetLabelByPhysicalAddress(uint32_t address) const
+{
+    auto it = _labelsByPhysicalAddress.find(address);
+    return it != _labelsByPhysicalAddress.end() ? it->second : nullptr;
+}
+
+// @brief Find a label by its name
+// @param name Name of the label to find
+// @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
+std::shared_ptr<Label> LabelManager::GetLabelByName(const std::string& name) const
+{
+    auto it = _labelsByName.find(name);
+    return it != _labelsByName.end() ? it->second : nullptr;
+}
+
+// @brief Get all labels in the manager
+// @return std::vector<std::shared_ptr<Label>> Vector containing all labels
+std::vector<std::shared_ptr<Label>> LabelManager::GetAllLabels() const
+{
+    std::vector<std::shared_ptr<Label>> result;
+    for (const auto& pair : _labelsByName)
+    {
+        result.push_back(pair.second);
+    }
+    return result;
+}
+
+// @brief Get the total number of labels
+// @return size_t Number of labels currently managed
+size_t LabelManager::GetLabelCount() const
+{
+    return _labelsByName.size();
+}
+
+/// endregion </Label management>
+
+
+/// region <File operations>
+
+// @brief Load labels from a file, auto-detecting the file format
+// @param path Path to the file containing the labels
+// @return true if the file was loaded successfully
+// @return false if the file could not be opened or parsed
+bool LabelManager::LoadLabels(const std::string& path)
+{
+    if (path.empty())
+    {
+        return false;
+    }
+
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        LOGERROR("Failed to open label file: %s", path.c_str());
+        return false;
+    }
+
+    FileFormat format = DetectFileFormat(path);
+    bool result = false;
+
+    switch (format)
+    {
+        case FileFormat::MAP:
+            result = ParseMapFile(file);
+            break;
+        case FileFormat::SYM:
+            result = ParseSymFile(file);
+            break;
+        case FileFormat::VICE:
+            result = ParseViceSymFile(file);
+            break;
+        case FileFormat::SJASM:
+            result = ParseSJASMSymFile(file);
+            break;
+        case FileFormat::Z88DK:
+            result = ParseZ88DKSymFile(file);
+            break;
+        default:
+            LOGERROR("Unsupported label file format: %s", path.c_str());
+            break;
+    }
+
+    file.close();
+    return result;
+}
+
+// @brief Load labels from a map file
+// @param path Path to the map file
+// @return true if the file was loaded successfully
+// @return false if the file could not be opened or parsed
+bool LabelManager::LoadMapFile(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        return false;
+    }
+
+    return ParseMapFile(file);
+}
+
+// @brief Load labels from a symbol file
+// @param path Path to the symbol file
+// @return true if the file was loaded successfully
+// @return false if the file could not be opened or parsed
+bool LabelManager::LoadSymFile(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        return false;
+    }
+
+    return ParseSymFile(file);
+}
+
+// @brief Save all labels to a file in the specified format
+// @param path Path where to save the labels
+// @param format File format to use for saving
+// @return true if the file was saved successfully
+// @return false if the file could not be written
+bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
+{
+    std::ofstream file(path);
+    if (!file.is_open())
+    {
+        return false;
+    }
+
+    // Common header for all formats
+    file << "; Labels exported by UnrealNG Emulator" << std::endl;
+    file << "; Format: " << (format == FileFormat::SYM ? "Simple Symbol" : "Map") << std::endl << std::endl;
+
+    // Export all labels
+    for (const auto& pair : _labelsByName)
+    {
+        const auto& label = pair.second;
+        
+        switch (format)
+        {
+            case FileFormat::SYM:
+                file << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << label->address 
+                     << " " << label->name << " " << label->type;
+                if (!label->comment.empty())
+                {
+                    file << " ; " << label->comment;
+                }
+                file << std::endl;
+                break;
+                
+            case FileFormat::MAP:
+                file << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << label->address 
+                     << " " << label->type << " " << label->name;
+                if (!label->comment.empty())
+                {
+                    file << " ; " << label->comment;
+                }
+                file << std::endl;
+                break;
+                
+            default:
+                // Default to simple format
+                file << label->name << " = 0x" << std::hex << std::uppercase << label->address << "\n";
+                break;
+        }
+    }
+
+    file.close();
+    return true;
+}
+
+/// endregion </File operations>
+
+
+/// region <File format detection and parsing>
+
+// @brief Detect the format of a label file based on its extension and content
+// @param path Path to the file to analyze
+// @return FileFormat Detected file format or FileFormat::UNKNOWN if format cannot be determined
+LabelManager::FileFormat LabelManager::DetectFileFormat(const std::string& path) const
+{
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    if (ext == ".map")
+        return FileFormat::MAP;
+    else if (ext == ".sym")
+        return FileFormat::SYM;
+    else if (ext == ".vice")
+        return FileFormat::VICE;
+    else if (ext == ".s" || ext == ".asm")
+        return FileFormat::SJASM;
+    else if (ext == ".z88")
+        return FileFormat::Z88DK;
+
+    // Try to detect by content
+    std::ifstream file(path);
+    if (file.is_open())
+    {
+        std::string line;
+        if (std::getline(file, line))
+        {
+            // Check for common map file patterns
+            if (line.find("Linker script and memory map") != std::string::npos ||
+                line.find("Memory map") != std::string::npos)
+            {
+                return FileFormat::MAP;
+            }
+            // Check for VICE symbol format
+            else if (line.find("al") == 0 || line.find("add_label") == 0)
+            {
+                return FileFormat::VICE;
+            }
+        }
+        file.close();
+    }
+
+    return FileFormat::UNKNOWN;
+}
+
+// @brief Parse a map file from an input stream
+// @param input Input stream containing the map file data
+// @return true if the file was parsed successfully
+// @return false if a parse error occurred
+// @note Map file format: ADDR TYPE NAME [; COMMENT]
+// Example: 1234 code main ; Entry point
+bool LabelManager::ParseMapFile(std::istream& input)
+{
+    std::string line;
+    while (std::getline(input, line))
+    {
+        line = TrimWhitespace(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#')
+            continue;
+
+        // Create a string stream to parse the line
+        std::istringstream iss(line);
+        
+        // Variables to hold parsed components
+        std::string addressStr;  // First column: memory address in hex
+        std::string secondField; // Second column: either type or name
+        std::string thirdField;  // Third column: name (if present)
+        
+        // Read at least two columns (address and one more field)
+        if (iss >> addressStr >> secondField)
+        {
+            // Default values
+            std::string name;
+            std::string type = "code";  // Default type for two-column format
+            
+            // Try to read third field to determine format
+            if (iss >> thirdField)
+            {
+                // Three-column format: ADDR TYPE NAME
+                // Example: "A250 code RD_SEC"
+                type = secondField;
+                name = thirdField;
+            }
+            else
+            {
+                // Two-column format: ADDR NAME
+                // Example: "A250 RD_SEC"
+                name = secondField;
+            }
+            
+            // Extract comment if present (after semicolon)
+            std::string comment;
+            size_t commentPos = line.find(';');
+            if (commentPos != std::string::npos)
+            {
+                comment = line.substr(commentPos + 1);
+                comment = TrimWhitespace(comment);
+            }
+
+            uint16_t address = ParseHex16(addressStr);
+            if (address != 0xFFFF)  // 0xFFFF indicates parse error
+            {
+                // Use default type 'code' if not specified in the file
+                std::string labelType = type.empty() ? "code" : type;
+                AddLabel(name, address, 0, labelType, "", comment);
+            }
+        }
+    }
+    
+    return true;
+}
+
+// @brief Parse a simple symbol file from an input stream
+// @param input Input stream containing the symbol file data
+// @return true if the file was parsed successfully
+// @return false if a parse error occurred
+// @note Simple symbol format: ADDR NAME [TYPE] [; COMMENT]
+// Example: 1234 main code ; Entry point
+bool LabelManager::ParseSymFile(std::istream& input)
+{
+    const std::string DEFAULT_LABEL_TYPE = "code";
+    
+    std::string line;
+    while (std::getline(input, line))
+    {
+        // Skip empty lines and comments
+        line = TrimWhitespace(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#')
+        {
+            continue;
+        }
+
+        // Parse the line into components
+        std::istringstream lineStream(line);
+        std::string addressStr, name, type;
+        
+        // Read the address (required)
+        if (!(lineStream >> addressStr))
+        {
+            continue;  // Skip malformed lines
+        }
+        
+        // Read the name (required)
+        if (!(lineStream >> name))
+        {
+            continue;  // Skip lines without a name
+        }
+        
+        // Read type if present (optional, defaults to "code")
+        type = DEFAULT_LABEL_TYPE;
+        std::string potentialType;
+        if (lineStream >> potentialType)
+        {
+            // If we have a third field, it's the type
+            type = potentialType;
+        }
+        
+        // Extract comment if present (after semicolon)
+        std::string comment;
+        size_t commentPos = line.find(';');
+        if (commentPos != std::string::npos)
+        {
+            comment = line.substr(commentPos + 1);
+            comment = TrimWhitespace(comment);
+        }
+        
+        // Parse address and add the label if valid
+        uint16_t address = ParseHex16(addressStr);
+        if (address != 0xFFFF)
+        {
+            AddLabel(name, address, 0, type, "", comment);
+        }
+    }
+    
+    return true;
+}
+
+// @brief Parse a VICE emulator symbol file
+// @param input Input stream containing the VICE symbol file data
+// @return true if the file was parsed successfully
+// @return false if a parse error occurred
+// @note VICE symbol file format: .al ADDR "NAME"
+// Example: .al 0x1234 "main"
+bool LabelManager::ParseViceSymFile(std::istream& input)
+{
+    std::string line;
+    while (std::getline(input, line))
+    {
+        line = TrimWhitespace(line);
+        if (line.empty() || line[0] == '#')
+            continue;
+
+        // VICE format: al C:address name
+        if (line.find("al ") == 0)
+        {
+            std::vector<std::string> parts = SplitString(line, ' ');
+            if (parts.size() >= 3)
+            {
+                std::string addrStr = parts[1].substr(2); // Skip "C:" prefix
+                std::string name = parts[2];
+                uint16_t address = ParseHex16(addrStr);
+                
+                if (address != 0xFFFF)
+                {
+                    AddLabel(name, address, 0, "code");
+                }
+            }
+        }
+    }
+    
+    return true;
+}
+
+// @brief Parse an SJASM symbol file
+// @param input Input stream containing the SJASM symbol file data
+// @return true if the file was parsed successfully
+// @return false if a parse error occurred
+// @note SJASM symbol file format: NAME = VALUE ; TYPE
+// Example: main = 0x1234 ; code
+bool LabelManager::ParseSJASMSymFile(std::istream& input)
+{
+    std::string line;
+    while (std::getline(input, line))
+    {
+        line = TrimWhitespace(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#')
+            continue;
+
+        // SJASM format: LABEL EQU $ADDR
+        size_t equPos = line.find(" EQU ");
+        if (equPos != std::string::npos)
+        {
+            std::string name = line.substr(0, equPos);
+            std::string addrStr = line.substr(equPos + 5);
+            
+            // Remove $ prefix if present
+            if (!addrStr.empty() && addrStr[0] == '$')
+                addrStr = addrStr.substr(1);
+                
+            uint16_t address = ParseHex16(addrStr);
+            if (address != 0xFFFF)
+            {
+                AddLabel(name, address);
+            }
+        }
+    }
+    
+    return true;
+}
+
+// @brief Parse a Z88DK symbol file
+// @param input Input stream containing the Z88DK symbol file data
+// @return true if the file was parsed successfully
+// @return false if a parse error occurred
+// @note Z88DK symbol file format: DEFC NAME = VALUE ; TYPE
+// Example: DEFC main = 0x1234 ; code
+bool LabelManager::ParseZ88DKSymFile(std::istream& input)
+{
+    std::string line;
+    while (std::getline(input, line))
+    {
+        line = TrimWhitespace(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#')
+            continue;
+
+        // Z88DK format: DEFC name = $ADDR
+        if (line.find("DEFC ") == 0)
+        {
+            size_t nameStart = 5; // Length of "DEFC "
+            size_t eqPos = line.find('=');
+            
+            if (eqPos != std::string::npos)
+            {
+                std::string name = line.substr(nameStart, eqPos - nameStart);
+                name = TrimWhitespace(name);
+                
+                std::string addrStr = line.substr(eqPos + 1);
+                addrStr = TrimWhitespace(addrStr);
+                
+                // Remove $ prefix if present
+                if (!addrStr.empty() && addrStr[0] == '$')
+                    addrStr = addrStr.substr(1);
+                    
+                uint16_t address = ParseHex16(addrStr);
+                if (address != 0xFFFF)
+                {
+                    AddLabel(name, address);
+                }
+            }
+        }
+    }
+    
+    return true;
+}
+
+/// endregion </File format detection and parsing>
+
+
+/// region <Helper methods>
+
+// @brief Remove leading and trailing whitespace from a string
+// @param str Input string to trim
+// @return std::string Trimmed string
+std::string LabelManager::TrimWhitespace(const std::string& str)
+{
+    size_t first = str.find_first_not_of(" \t");
+    if (std::string::npos == first)
+    {
+        return "";
+    }
+    size_t last = str.find_last_not_of(" \t");
+    return str.substr(first, (last - first + 1));
+}
+
+// @brief Split a string into tokens using the specified delimiter
+// @param str String to split
+// @param delimiter Character to use as delimiter
+// @return std::vector<std::string> Vector of tokens
+std::vector<std::string> LabelManager::SplitString(const std::string& str, char delimiter)
+{
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream tokenStream(str);
+    
+    while (std::getline(tokenStream, token, delimiter))
+    {
+        token = TrimWhitespace(token);
+        if (!token.empty())
+        {
+            tokens.push_back(token);
+        }
+    }
+    
+    return tokens;
+}
+
+// @brief Check if a character is a valid hexadecimal digit
+// @param c Character to check
+// @return true if the character is 0-9, a-f, or A-F
+// @return false otherwise
+bool LabelManager::IsHexDigit(char c)
+{
+    return (c >= '0' && c <= '9') || 
+           (c >= 'a' && c <= 'f') || 
+           (c >= 'A' && c <= 'F');
+}
+
+// @brief Parse a 16-bit hexadecimal string to an integer
+// @param str String containing hexadecimal number (with or without 0x prefix)
+// @return uint16_t Parsed value, or 0xFFFF if parsing fails
+uint16_t LabelManager::ParseHex16(const std::string& str)
+{
+    if (str.empty())
+        return 0xFFFF;
+        
+    std::string s = str;
+    // Remove 0x or $ prefix if present
+    if (s.size() > 1 && (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')))
+        s = s.substr(2);
+    else if (s[0] == '$')
+        s = s.substr(1);
+        
+    // Check if all characters are valid hex digits
+    for (char c : s)
+    {
+        if (!IsHexDigit(c))
+            return 0xFFFF;
+    }
+    
+    try
+    {
+        return static_cast<uint16_t>(std::stoul(s, nullptr, 16));
+    }
+    catch (...)
+    {
+        return 0xFFFF;
+    }
+}
+
+// @brief Parse a 32-bit hexadecimal string to an integer
+// @param str String containing hexadecimal number (with or without 0x prefix)
+// @return uint32_t Parsed value, or 0xFFFFFFFF if parsing fails
+uint32_t LabelManager::ParseHex32(const std::string& str)
+{
+    if (str.empty())
+        return 0xFFFFFFFF;
+        
+    std::string s = str;
+    // Remove 0x or $ prefix if present
+    if (s.size() > 1 && (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')))
+        s = s.substr(2);
+    else if (s[0] == '$')
+        s = s.substr(1);
+        
+    // Check if all characters are valid hex digits
+    for (char c : s)
+    {
+        if (!IsHexDigit(c))
+            return 0xFFFFFFFF;
+    }
+    
+    try
+    {
+        return static_cast<uint32_t>(std::stoul(s, nullptr, 16));
+    }
+    catch (...)
+    {
+        return 0xFFFFFFFF;
+    }
+}
+
+/// endregion </Helper methods>
