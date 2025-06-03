@@ -15,12 +15,16 @@ class EmulatorContext;
 /// @brief Structure representing a single label with address and type information
 struct Label
 {
-    std::string name;
-    uint16_t address;            // Z80 address space
-    uint32_t physicalAddress;     // Physical memory address
-    std::string type;             // Code, Data, etc.
-    std::string module;           // Module/segment name
-    std::string comment;          // Optional comment
+    std::string name;              // Symbol name (e.g., "main", "data_buffer")
+    uint16_t address;              // Z80 address space (0x0000-0xFFFF)
+    uint8_t bank = 0xFF;           // Memory bank number (0-254, 0xFF = no bank)
+    uint16_t bankAddress = 0xFFFF; // Address within memory bank (0x0000-0x4000)
+    uint32_t physicalAddress;      // Physical memory address (absolute in emulated system)
+    std::string type;              // Symbol type ("code", "data", "bss", "const")
+    std::string module;            // Module/segment name this label belongs to
+    std::string comment;           // Optional comment or description
+
+    bool active = true;            // Whether the label is currently active (can be toggled)
 };
 
 class LabelManager
