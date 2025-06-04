@@ -146,7 +146,7 @@ void LabelEditor::setupUI()
     _labelTable = new QTableWidget(this);
     _labelTable->setColumnCount(7);
     _labelTable->setHorizontalHeaderLabels(
-        {tr("Name"), tr("Address"), tr("Bank"), tr("Bank Offset"), tr("Type"), tr("Module"), tr("Comment")});
+        {tr("Label"), tr("Address"), tr("Bank"), tr("Bank Offset"), tr("RAM/ROM"), tr("Type"), tr("Comment")});
     _labelTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     _labelTable->setSelectionMode(QAbstractItemView::SingleSelection);
     _labelTable->setSortingEnabled(true);
@@ -159,8 +159,8 @@ void LabelEditor::setupUI()
     _labelTable->setColumnWidth(1, 70);                            // Address
     _labelTable->setColumnWidth(2, 50);                            // Bank
     _labelTable->setColumnWidth(3, 100);                           // Bank Offset
-    _labelTable->setColumnWidth(4, 64);                            // Type
-    _labelTable->setColumnWidth(5, 100);                           // Module
+    _labelTable->setColumnWidth(4, 80);                            // Bank type (RAM / ROM)
+    _labelTable->setColumnWidth(5, 64);                            // Label type (code, data, const)
     _labelTable->horizontalHeader()->setStretchLastSection(true);  // Comment
 
     // Create buttons

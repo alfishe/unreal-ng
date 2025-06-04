@@ -447,10 +447,25 @@ bool LabelManager::ParseMapFile(std::istream& input)
         // Variables to hold parsed components
         std::string addressStr;  // First column: memory address in hex
         std::string name;        // Second column: label name
+        std::string typeStr;     // Third column: type in parentheses (e.g., (CODE))
+        std::string type = "code"; // Default type is "code"
         
-        // Read address and name
+        // Read address, name, and type
         if (iss >> addressStr >> name)
         {
+            // Try to read type in format (TYPE)
+            std::string token;
+            if (iss >> token)
+            {
+                if (token.size() >= 3 && token[0] == '(' && token[token.size()-1] == ')')
+                {
+                    // Extract type from (TYPE) and convert to lowercase
+                    type = token.substr(1, token.size() - 2);
+                    std::transform(type.begin(), type.end(), type.begin(), 
+                                 [](unsigned char c) { return std::tolower(c); });
+                }
+            }
+            
             // Extract comment if present (after semicolon)
             std::string comment;
             size_t commentPos = line.find(';');
@@ -464,7 +479,7 @@ bool LabelManager::ParseMapFile(std::istream& input)
             if (address != 0xFFFF)  // 0xFFFF indicates parse error
             {
                 // Use UINT16_MAX for bank and bankOffset to indicate they're not specified
-                AddLabel(name, address, UINT16_MAX, UINT16_MAX, "code", "", comment);
+                AddLabel(name, address, UINT16_MAX, UINT16_MAX, type, "", comment);
             }
         }
     }
@@ -508,13 +523,19 @@ bool LabelManager::ParseSymFile(std::istream& input)
             continue;  // Skip lines without a name
         }
         
-        // Read type if present (optional, defaults to "code")
+        // Read type if present in format (TYPE)
         type = DEFAULT_LABEL_TYPE;
-        std::string potentialType;
-        if (lineStream >> potentialType)
+        std::string token;
+        if (lineStream >> token)
         {
-            // If we have a third field, it's the type
-            type = potentialType;
+            // Check if the token is in (TYPE) format
+            if (token.size() >= 3 && token[0] == '(' && token[token.size()-1] == ')')
+            {
+                // Extract type from (TYPE) and convert to lowercase
+                type = token.substr(1, token.size() - 2);
+                std::transform(type.begin(), type.end(), type.begin(), 
+                             [](unsigned char c) { return std::tolower(c); });
+            }
         }
         
         // Extract comment if present (after semicolon)
@@ -553,20 +574,35 @@ bool LabelManager::ParseViceSymFile(std::istream& input)
         if (line.empty() || line[0] == '#')
             continue;
 
-        // VICE format: al C:address name
+        // VICE format: al C:address name (TYPE)
         if (line.find("al ") == 0)
         {
             std::vector<std::string> parts = SplitString(line, ' ');
             if (parts.size() >= 3)
             {
-                std::string addrStr = parts[1].substr(2); // Skip "C:" prefix
+                std::string addrStr = parts[1].substr(2);  // Skip "C:" prefix
                 std::string name = parts[2];
+                std::string type = "code";  // Default type
+
+                // Check for type in format (TYPE)
+                if (parts.size() >= 4)
+                {
+                    std::string token = parts[3];
+                    if (token.size() >= 3 && token[0] == '(' && token[token.size() - 1] == ')')
+                    {
+                        // Extract type from (TYPE) and convert to lowercase
+                        type = token.substr(1, token.size() - 2);
+                        std::transform(type.begin(), type.end(), type.begin(),
+                                       [](unsigned char c) { return std::tolower(c); });
+                    }
+                }
+
                 uint16_t address = ParseHex16(addrStr);
-                
+
                 if (address != 0xFFFF)
                 {
                     // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, "code", "", "", true);
+                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", "", true);
                 }
             }
         }
@@ -590,12 +626,33 @@ bool LabelManager::ParseSJASMSymFile(std::istream& input)
         if (line.empty() || line[0] == ';' || line[0] == '#')
             continue;
 
-        // SJASM format: LABEL EQU $ADDR
+        // SJASM format: LABEL EQU $ADDR ; (TYPE)
         size_t equPos = line.find(" EQU ");
         if (equPos != std::string::npos)
         {
             std::string name = line.substr(0, equPos);
-            std::string addrStr = line.substr(equPos + 5);
+            std::string rest = line.substr(equPos + 5);
+            
+            // Extract address and type
+            std::string addrStr = rest;
+            std::string type = "code"; // Default type
+            
+            // Check for comment with type
+            size_t commentPos = rest.find(';');
+            if (commentPos != std::string::npos)
+            {
+                addrStr = TrimWhitespace(rest.substr(0, commentPos));
+                std::string comment = TrimWhitespace(rest.substr(commentPos + 1));
+                
+                // Check if comment contains type in (TYPE) format
+                if (comment.size() >= 3 && comment[0] == '(' && comment[comment.size()-1] == ')')
+                {
+                    // Extract type from (TYPE) and convert to lowercase
+                    type = comment.substr(1, comment.size() - 2);
+                    std::transform(type.begin(), type.end(), type.begin(), 
+                                 [](unsigned char c) { return std::tolower(c); });
+                }
+            }
             
             // Remove $ prefix if present
             if (!addrStr.empty() && addrStr[0] == '$')
@@ -605,7 +662,7 @@ bool LabelManager::ParseSJASMSymFile(std::istream& input)
             if (address != 0xFFFF)
             {
                 // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-                AddLabel(name, address, UINT8_MAX, UINT16_MAX, "code", "", "", true);
+                AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", "", true);
             }
         }
     }
@@ -642,6 +699,27 @@ bool LabelManager::ParseZ88DKSymFile(std::istream& input)
                 std::string addrStr = line.substr(eqPos + 1);
                 addrStr = TrimWhitespace(addrStr);
                 
+                // Extract type from comment if present
+                std::string type = "code"; // Default type
+                size_t commentPos = addrStr.find(';');
+                if (commentPos != std::string::npos)
+                {
+                    // Extract the address part before the comment
+                    std::string addrPart = TrimWhitespace(addrStr.substr(0, commentPos));
+                    std::string comment = TrimWhitespace(addrStr.substr(commentPos + 1));
+                    
+                    // Check if comment contains type in (TYPE) format
+                    if (comment.size() >= 3 && comment[0] == '(' && comment[comment.size()-1] == ')')
+                    {
+                        // Extract type from (TYPE) and convert to lowercase
+                        type = comment.substr(1, comment.size() - 2);
+                        std::transform(type.begin(), type.end(), type.begin(), 
+                                     [](unsigned char c) { return std::tolower(c); });
+                    }
+                    
+                    addrStr = addrPart;
+                }
+                
                 // Remove $ prefix if present
                 if (!addrStr.empty() && addrStr[0] == '$')
                     addrStr = addrStr.substr(1);
@@ -650,7 +728,7 @@ bool LabelManager::ParseZ88DKSymFile(std::istream& input)
                 if (address != 0xFFFF)
                 {
                     // Use UINT8_MAX for bank and UINT16_MAX for bankOffset to indicate they're not specified
-                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, "", "", "", true);
+                    AddLabel(name, address, UINT8_MAX, UINT16_MAX, type, "", "", true);
                 }
             }
         }
