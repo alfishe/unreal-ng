@@ -117,7 +117,7 @@ void LabelManager_test::CreateTestSymFile()
 TEST_F(LabelManager_test, AddAndGetLabel)
 {
     // Test adding a single label
-    _labelManager->AddLabel("TEST_LABEL", 0x1234, 0x5678, "code", "module1", "Test label");
+    _labelManager->AddLabel("TEST_LABEL", 0x1234, 0x00, 0x5678, "code", "module1", "Test label");
     
     // Test getting the label by name
     auto label = _labelManager->GetLabelByName("TEST_LABEL");
@@ -143,7 +143,7 @@ TEST_F(LabelManager_test, AddAndGetLabel)
 TEST_F(LabelManager_test, RemoveLabel)
 {
     // Add a test label
-    _labelManager->AddLabel("TEST_LABEL", 0x1234);
+    _labelManager->AddLabel("TEST_LABEL", 0x1234, 0x00, 0x1234);
     
     // Verify it exists
     ASSERT_NE(_labelManager->GetLabelByName("TEST_LABEL"), nullptr);
@@ -164,9 +164,9 @@ TEST_F(LabelManager_test, RemoveLabel)
 TEST_F(LabelManager_test, ClearAllLabels)
 {
     // Add some test labels
-    _labelManager->AddLabel("LABEL1", 0x1000);
-    _labelManager->AddLabel("LABEL2", 0x2000);
-    _labelManager->AddLabel("LABEL3", 0x3000);
+    _labelManager->AddLabel("LABEL1", 0x1000, 0x00, 0x1000);
+    _labelManager->AddLabel("LABEL2", 0x2000, 0x00, 0x2000);
+    _labelManager->AddLabel("LABEL3", 0x3000, 0x00, 0x3000);
     
     // Verify they exist
     EXPECT_EQ(_labelManager->GetLabelCount(), 3);
@@ -275,9 +275,9 @@ TEST_F(LabelManager_test, AutoDetectFileFormat)
 TEST_F(LabelManager_test, SaveLabels)
 {
     // Add some test labels
-    _labelManager->AddLabel("LABEL1", 0x1000, 0, "code", "module1", "Test label 1");
-    _labelManager->AddLabel("LABEL2", 0x2000, 0, "data", "module1", "Test label 2");
-    _labelManager->AddLabel("LABEL3", 0x3000, 0, "bss", "module2", "Test label 3");
+    _labelManager->AddLabel("LABEL1", 0x1000, 0x00, 0x1000, "code", "module1", "Test label 1");
+    _labelManager->AddLabel("LABEL2", 0x2000, 0x00, 0x2000, "data", "module1", "Test label 2");
+    _labelManager->AddLabel("LABEL3", 0x3000, 0x00, 0x3000, "bss", "module2", "Test label 3");
     
     // Save to a file
     std::string tempFilePath = std::filesystem::temp_directory_path() / "saved_labels.sym";
