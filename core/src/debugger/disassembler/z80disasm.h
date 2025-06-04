@@ -73,7 +73,9 @@ struct DecodedInstruction
 
     std::string hexDump;
     std::string mnemonic;
-    std::string mnemonicWithLabel;
+    std::string label;
+    std::string annotation;
+    std::string comment;
 
     /// region <Constructors / Destructors>
 
@@ -313,6 +315,12 @@ public:
     // Returns vector of address range pairs (start, end) that should be excluded
     std::vector<std::pair<uint16_t, uint16_t>> getStepOverExclusionRanges(
         uint16_t currentPC, Memory* memory, int maxDepth = 5);
+    
+    /// @brief Generate a runtime annotation for a decoded instruction
+    /// @param decoded The decoded instruction
+    /// @param registers CPU registers for runtime state evaluation
+    /// @return String containing the annotation or empty string if not applicable
+    std::string getCommandAnnotation(const DecodedInstruction& decoded, Z80Registers* registers);
 
     /// region <Helper methods>
 protected:
