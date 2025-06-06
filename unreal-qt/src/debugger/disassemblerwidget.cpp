@@ -1,6 +1,7 @@
 #include "disassemblerwidget.h"
 
 #include <QApplication>
+#include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -34,8 +35,14 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     // Create a custom DisassemblyTextEdit and replace the default one
     DisassemblyTextEdit* customTextEdit = new DisassemblyTextEdit(this);
     customTextEdit->setReadOnly(true);
-    customTextEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
-    customTextEdit->setFont(ui->disassemblyTextEdit->font());
+    customTextEdit->setLineWrapMode(QTextEdit::NoWrap);
+    
+    // Set a monospace font for the disassembler
+    QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    font.setStyleHint(QFont::TypeWriter);
+    int newSize = 12;  // Default is usually 9 points
+    font.setPointSize(newSize);
+    customTextEdit->setFont(font);
 
     // Replace the original text edit with our custom one
     QLayout* layout = ui->disassemblyTextEdit->parentWidget()->layout();
@@ -254,21 +261,51 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         pcPhysicalAddress += decoded.fullCommandLen;
         pc += decoded.fullCommandLen;
 
-        // Format value like: [B] $15FB: CD 2C 16   call $162C (init_screen)
+        // Format value like: [B] $15FB: CD 2C 16   LABEL:    call $162C (init_screen)
         std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
-        ss << StringHelper::Format("[%s] $%s: %-11s   %s%s%s%s",
-            breakpointMarker.c_str(), 
-            pcAddress.c_str(), 
-            hex.c_str(), 
-            command.c_str(),
-            runtime.c_str(),
-            labelInfo.c_str(),
-            symbolicLabelInfo.c_str())
-           << std::endl;
+        
+        // Extract label from symbolicLabelInfo if present (format: "; LABEL:")
+        std::string labelColumn = "";
+        if (!symbolicLabelInfo.empty() && symbolicLabelInfo.size() > 2) {
+            // Remove the "; " prefix and ":" suffix
+            labelColumn = symbolicLabelInfo.substr(2, symbolicLabelInfo.size() - 3);
+        }
+        
+        // Format: [B] $ADDR: BYTECODE   LABEL:    MNEMONIC
+        if (!labelColumn.empty())
+        {
+            // Pre-format the label with blue color
+            std::string formattedLabel = StringHelper::Format("<span style='color:blue;'>%-12s</span>", labelColumn.c_str());
+            
+            ss << StringHelper::Format(
+                "[%s] $%s: %-11s %s%s%s%s",
+                breakpointMarker.c_str(), 
+                pcAddress.c_str(), 
+                hex.c_str(),
+                formattedLabel.c_str(),
+                command.c_str(),
+                runtime.c_str(),
+                labelInfo.c_str()
+            ) << std::endl;
+        } else {
+            // No label, use regular formatting
+            ss << StringHelper::Format("[%s] $%s: %-11s %-12s%s%s%s",
+                breakpointMarker.c_str(), 
+                pcAddress.c_str(), 
+                hex.c_str(),
+                "",  // Empty label column
+                command.c_str(),
+                runtime.c_str(),
+                labelInfo.c_str())
+               << std::endl;
+        }
     }
 
     std::string value = ss.str();
-    m_disassemblyTextEdit->setPlainText(value.c_str());
+    // Convert to QString and enable HTML formatting
+    QString htmlContent = QString("<pre style='font-family:monospace; white-space:pre;'>%1</pre>")
+        .arg(QString::fromStdString(value));
+    m_disassemblyTextEdit->setHtml(htmlContent);
 
     // Highlight the current PC instruction and any breakpoints
     highlightCurrentPC();
