@@ -459,16 +459,19 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
             qDebug() << "Maximized (Windows) - standard maximize";
             if (oldState == Qt::WindowNoState)
             {  // If maximizing from a normal (non-maximized, non-fullscreen) state
-                _normalGeometry = normalGeometry();  // Store pre-maximize geometry. normalGeometry() gives the geometry
-                                                     // *before* this maximization.
+                _normalGeometry = normalGeometry();  // Store pre-maximize geometry
                 qDebug() << "Stored geometry from Normal state for Maximize:" << _normalGeometry;
             }
         }
-        // If _isFullScreen is true here, it means the OS might have forced a maximized state
-        // while we thought we were fullscreen. We let _isFullScreen remain true,
-        // so if the user then un-maximizes, it might trigger a Qt::WindowNoState,
-        // and our _isFullScreen logic in that branch will attempt to restore to the *intended* normal state.
-        // `showMaximized()` is not needed here as Qt handles the state change itself.
+        else
+        {
+            // If we get here while _isFullScreen is true, it means we're in an inconsistent state
+            // This can happen if the user uses OS controls to maximize while in fullscreen
+            _isFullScreen = false;
+            setPalette(_originalPalette);
+            statusBar()->show();
+            startButton->show();
+        }
     }
     else if (newState & Qt::WindowFullScreen)  // Handle fullscreen state
     {
@@ -1075,34 +1078,45 @@ void MainWindow::handleFullScreenShortcutWindows()
         statusBar()->show();
         startButton->show();
 
+        // First show normal to ensure clean state
+        showNormal();
+        
         if (_preFullScreenState & Qt::WindowMaximized)
         {
-            // To reliably restore maximized state:
-            // 1. Show normal (to reset frame)
-            // 2. Show maximized (do not set geometry, let Qt handle it)
-            showNormal();
+            // Restore to maximized state
             showMaximized();
         }
-        else
+        else if (_normalGeometry.isValid())
         {
-            if (_normalGeometry.isValid())
-                setGeometry(_normalGeometry);
-            showNormal();
+            // Restore to normal state with saved geometry
+            setGeometry(_normalGeometry);
         }
     }
     else
     {
         // Store state and geometry before entering fullscreen
-        // Only store maximized geometry if window is framed and maximized
-        if ((windowState() & Qt::WindowMaximized) && !(windowFlags() & Qt::FramelessWindowHint))
+        bool wasMaximized = (windowState() & Qt::WindowMaximized) && !(windowFlags() & Qt::FramelessWindowHint);
+        _preFullScreenState = wasMaximized ? Qt::WindowMaximized : Qt::WindowNoState;
+        
+        // Always store the current geometry
+        if (wasMaximized)
         {
-            _preFullScreenState = Qt::WindowMaximized;
+            // If maximized, store both the current (maximized) state and the normal geometry
             _maximizedGeometry = geometry();
+            qDebug() << "Storing maximized geometry:" << _maximizedGeometry;
+            
+            // Store the normal geometry if we have it, otherwise use current geometry as fallback
+            if (!_normalGeometry.isValid())
+            {
+                _normalGeometry = normalGeometry();
+                qDebug() << "Using normal geometry from window:" << _normalGeometry;
+            }
         }
-        else if (!(windowState() & Qt::WindowMaximized))
+        else
         {
-            _preFullScreenState = Qt::WindowNoState;
+            // If normal, just store the normal geometry
             _normalGeometry = geometry();
+            qDebug() << "Storing normal geometry:" << _normalGeometry;
         }
         // Set palette and hide UI for fullscreen
         QPalette palette;
