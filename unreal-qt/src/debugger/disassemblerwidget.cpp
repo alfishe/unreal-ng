@@ -152,21 +152,13 @@ BreakpointManager* DisassemblerWidget::getBreakpointManager() const
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
+    // Number of instructions to disassemble
+    static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
+
     Memory& memory = *getMemory();
     Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
     LabelManager* labelManager = getEmulator()->GetDebugManager()->GetLabelManager();
-
-    // Debug output for label loading
-    if (labelManager)
-    {
-        qDebug() << "Label count:" << labelManager->GetLabelCount();
-        auto allLabels = labelManager->GetAllLabels();
-        for (const auto& label : allLabels)
-        {
-            qDebug() << "Label:" << QString::fromStdString(label->name) << "at" << QString::number(label->address, 16);
-        }
-    }
 
     // Clear the address map before generating new disassembly
     m_addressMap.clear();
@@ -186,8 +178,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     DecodedInstruction decoded;
     std::stringstream ss;
 
-    // Disassemble 10 instructions instead of just 4 to provide more context
-    for (size_t i = 0; i < 10; i++)
+    // Disassemble instructions to provide more context
+    for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE; i++)
     {
         std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
         std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
