@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "common/modulelogger.h"
+#include "emulator/cpu/cputables.h"
 
 #include "z80disasm.h"
 #include "common/dumphelper.h"
@@ -2028,6 +2029,12 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
         if (commandLen)
             *commandLen = decodedInstruction.fullCommandLen;
 
+        // Generate annotation if we have runtime context
+        if (registers != nullptr)
+        {
+            decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
+        }
+
         // Populate 'decoded' output param if available
         if (decoded != nullptr)
         {
@@ -2037,6 +2044,154 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
     }
 
     return result;
+}
+
+std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& decoded, Z80Registers* registers)
+{
+    if (!decoded.hasRuntime || !registers)
+    {
+        return "";
+    }
+
+    std::string annotation;
+    
+    // Handle conditional jumps and calls
+    if ((decoded.hasJump || decoded.hasRelativeJump) && decoded.hasCondition)
+    {
+        bool conditionMet = false;
+        
+        // Check condition based on the instruction
+        switch (decoded.command & 0xF8)  // Mask to get the condition bits
+        {
+            // NZ (not zero)
+            case 0xC0: // RET NZ
+            case 0xC2: // JP NZ, nn
+            case 0xC4: // CALL NZ, nn
+            case 0x20: // JR NZ, e
+                conditionMet = !(registers->f & ZF); // ZF = 0x40
+                break;
+                
+            // Z (zero)
+            case 0xC8: // RET Z
+            case 0xCA: // JP Z, nn
+            case 0xCC: // CALL Z, nn
+            case 0x28: // JR Z, e
+                conditionMet = (registers->f & ZF) != 0; // ZF = 0x40
+                break;
+                
+            // NC (no carry)
+            case 0xD0: // RET NC
+            case 0xD2: // JP NC, nn
+            case 0xD4: // CALL NC, nn
+            case 0x30: // JR NC, e
+                conditionMet = !(registers->f & CF); // CF = 0x01
+                break;
+                
+            // C (carry)
+            case 0xD8: // RET C
+            case 0xDA: // JP C, nn
+            case 0xDC: // CALL C, nn
+            case 0x38: // JR C, e
+                conditionMet = (registers->f & CF) != 0; // CF = 0x01
+                break;
+                
+            // PO (parity odd)
+            case 0xE0: // RET PO
+            case 0xE2: // JP PO, nn
+            case 0xE4: // CALL PO, nn
+                conditionMet = !(registers->f & PV); // PV = 0x04
+                break;
+                
+            // PE (parity even)
+            case 0xE8: // RET PE
+            case 0xEA: // JP PE, nn
+            case 0xEC: // CALL PE, nn
+                conditionMet = (registers->f & PV) != 0; // PV = 0x04
+                break;
+                
+            // P (positive)
+            case 0xF0: // RET P
+            case 0xF2: // JP P, nn
+            case 0xF4: // CALL P, nn
+                conditionMet = !(registers->f & SF); // SF = 0x80
+                break;
+                
+            // M (negative)
+            case 0xF8: // RET M
+            case 0xFA: // JP M, nn
+            case 0xFC: // CALL M, nn
+                conditionMet = (registers->f & SF) != 0; // SF = 0x80
+                break;
+        }
+        
+        if (decoded.hasJump)
+        {
+            annotation = StringHelper::Format("%s to #%04X", 
+                conditionMet ? "Will jump" : "Won't jump", 
+                decoded.jumpAddr);
+        }
+        else if (decoded.hasRelativeJump)
+        {
+            annotation = StringHelper::Format("%s to #%04X", 
+                conditionMet ? "Will jump" : "Won't jump", 
+                decoded.relJumpAddr);
+        }
+    }
+    // Handle DJNZ
+    else if (decoded.isDjnz)
+    {
+        uint8_t b = registers->b - 1;  // B is already decremented in the emulator
+        if (b != 0)
+        {
+            annotation = StringHelper::Format("Looping, B=%d", b);
+        }
+        else
+        {
+            annotation = "Loop done";
+        }
+    }
+    // Handle block operations
+    else if (decoded.isBlockOp)
+    {
+        // For block operations, show the current BC counter
+        if (registers->bc != 0)
+        {
+            annotation = StringHelper::Format("BC=%04X", registers->bc);
+        }
+        else
+        {
+            annotation = "Block complete";
+        }
+    }
+    // Handle calls and returns
+    else if (decoded.hasJump && !decoded.hasCondition)
+    {
+        // Check for RST instructions
+        if (decoded.isRst)
+        {
+            annotation = StringHelper::Format("Calling RST #%02X", decoded.jumpAddr & 0x38);
+        }
+        else
+        {
+            annotation = StringHelper::Format("Calling #%04X", decoded.jumpAddr);
+        }
+    }
+    else if (decoded.hasReturn && !decoded.hasCondition)
+    {
+        annotation = StringHelper::Format("Returning to #%04X", decoded.returnAddr);
+    }
+    // Handle relative jumps without condition (JR e)
+    else if (decoded.hasRelativeJump && !decoded.hasCondition)
+    {
+        annotation = StringHelper::Format("Jumping to #%04X", decoded.relJumpAddr);
+    }
+    // Handle indexed operations with displacement
+    else if (decoded.hasDisplacement)
+    {
+        annotation = StringHelper::Format("Effective address: #%04X", decoded.displacementAddr);
+    }
+    
+    return annotation;
 }
 
 std::string Z80Disassembler::getRuntimeHints(DecodedInstruction& decoded)

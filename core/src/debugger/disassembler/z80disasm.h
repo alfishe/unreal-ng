@@ -4,6 +4,8 @@
 #include <regex>
 #include <vector>
 #include "emulator/platform.h"
+#include "debugger/labels/labelmanager.h"
+#include "emulator/emulatorcontext.h"
 
 /// region <Types>
 
@@ -71,7 +73,9 @@ struct DecodedInstruction
 
     std::string hexDump;
     std::string mnemonic;
-    std::string mnemonicWithLabel;
+    std::string label;
+    std::string annotation;
+    std::string comment;
 
     /// region <Constructors / Destructors>
 
@@ -287,10 +291,16 @@ protected:
     /// region <Fields>
 protected:
     ModuleLogger* _logger;
+    EmulatorContext* _context;
+    std::unique_ptr<LabelManager> _labelManager;
     /// endregion </Fields>
 
 public:
+    explicit Z80Disassembler(EmulatorContext* context) : _logger(nullptr), _context(context), _labelManager(std::make_unique<LabelManager>(context)) {}
+    virtual ~Z80Disassembler() = default;
+
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
+    LabelManager* GetLabelManager() { return _labelManager.get(); }
     
     std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
     std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
@@ -305,6 +315,12 @@ public:
     // Returns vector of address range pairs (start, end) that should be excluded
     std::vector<std::pair<uint16_t, uint16_t>> getStepOverExclusionRanges(
         uint16_t currentPC, Memory* memory, int maxDepth = 5);
+    
+    /// @brief Generate a runtime annotation for a decoded instruction
+    /// @param decoded The decoded instruction
+    /// @param registers CPU registers for runtime state evaluation
+    /// @return String containing the annotation or empty string if not applicable
+    std::string getCommandAnnotation(const DecodedInstruction& decoded, Z80Registers* registers);
 
     /// region <Helper methods>
 protected:
@@ -334,6 +350,9 @@ protected:
 class Z80DisassemblerCUT : public Z80Disassembler
 {
 public:
+    // Add a constructor that calls the base class constructor with required parameters
+    Z80DisassemblerCUT(EmulatorContext* context) : Z80Disassembler(context) {};
+
     using Z80Disassembler::getByte;
     using Z80Disassembler::getWord;
     using Z80Disassembler::getRelativeOffset;

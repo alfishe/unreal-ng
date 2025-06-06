@@ -10,8 +10,8 @@
 
 void Disassembler_Test::SetUp()
 {
-    // Instantiate emulator with all peripherals, but no configuration loaded
-    _disasm = new Z80DisassemblerCUT();
+    _context = new EmulatorContext();
+    _disasm = new Z80DisassemblerCUT(_context);
 }
 
 void Disassembler_Test::TearDown()

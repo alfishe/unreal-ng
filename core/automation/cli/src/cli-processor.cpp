@@ -1050,7 +1050,7 @@ void CLIProcessor::HandleBPList(const ClientSession& session, const std::vector<
     }
 
     // No group specified, list all breakpoints
-    std::string list = bpManager->GetBreakpointListAsString();
+    std::string list = bpManager->GetBreakpointListAsString(NEWLINE);
     session.SendResponse(list);
 }
 

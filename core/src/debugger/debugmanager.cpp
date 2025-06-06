@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
 
 /// region <Constructors / Destructors>
 
@@ -12,7 +13,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _breakpoints = new BreakpointManager(context);
     _labels = new LabelManager(context);
 
-    _disassembler = std::make_unique<Z80Disassembler>();
+    _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);
 }
 

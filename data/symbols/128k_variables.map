@@ -1,0 +1,183 @@
+; --- SPECTRUM 128 SYSTEM VARIABLES ---
+; -------------------------------------
+; Address  Label      Type          Comments
+;-----------------------------------------------------------------------------------------------------------------------
+5B00       SWAP       (CODE)       ; R16 Paging subroutine.
+5B10       STOO       (CODE)       ; R17 Paging subroutine. Entered with interrupts already disabled and AF, BC on the stack.
+5B21       YOUNGER    (CODE)       ; R9 Paging subroutine.
+5B2A       REGNUOY    (CODE)       ; R16 Paging subroutine.
+5B3A       ONERR      (CODE)       ; R24 Paging subroutine.
+5B52       OLDHL      (DATA)       ; X2 Temporary register store while switching ROMs.
+5B54       OLDBC      (DATA)       ; X2 Temporary register store while switching ROMs.
+5B56       OLDAF      (DATA)       ; X2 Temporary register store while switching ROMs.
+5B58       TARGET     (DATA)       ; N2 Subroutine address in ROM 3.
+5B5A       RETADDR    (DATA)       ; X2 Return address in ROM 1.
+5B5C       BANKM      (DATA)       ; X1 Copy of last byte output to I/O port 7FFD (32765). Controls RAM paging, ROM switch, screen selection, I/O disabling. Must be kept up to date if interrupts enabled.
+5B5D       RAMRST     (DATA)       ; X1 RST 8 instruction. Used by ROM 1 to report old errors to ROM 3.
+5B5E       RAMERR     (DATA)       ; N1 Error number passed from ROM 1 to ROM 3. Also used by SAVE/LOAD as temporary drive store.
+5B5F       BAUD       (DATA)       ; 2 RS232 bit period in T states/26. Set by FORMAT LINE. (Note: See also 5CC3 for IF1 BAUD)
+5B61       SERFL      (DATA)       ; N2 Second-character-received-flag, and data.
+5B63       COL        (DATA)       ; N1 Current column from 1 to width.
+5B64       WIDTH      (DATA)       ; 1 Paper column width. Defaults to 80. (Note: See also 5CB1 for IF1 RS232 width)
+5B65       TVPARS     (DATA)       ; 1 Number of inline parameters expected by RS232.
+5B66       FLAGS3_128 (DATA)       ; 1 Various flags. Bit 2=expand tokens, Bit 3=RS232 print, Bit 4=disk interface present, Bit 5=drive B: present. (Renamed from FLAGS3 to avoid clash with IF1 FLAGS3)
+5B67       BANK678    (DATA)       ; X1 Copy of last byte output to I/O port 1FFD (8189). Controls +3 RAM/ROM switching, disk motor, Centronics strobe. Must be kept up to date if interrupts enabled.
+5B68       XLOC       (DATA)       ; N1 Holds X location when using the unexpanded COPY command.
+5B69       YLOC       (DATA)       ; N1 Holds Y location when using the unexpanded COPY command.
+5B6A       OLDSP      (DATA)       ; X2 Old SP (stack pointer when TSTACK is in use.
+5B6C       SYNRET     (DATA)       ; X2 Return address for ONERR.
+5B6E       LASTV      (DATA)       ; 5 Last value printed by calculator.
+5B73       RCLINE     (DATA)       ; 2 Current line being renumbered.
+5B75       RCSTART    (DATA)       ; 2 Starting line number for renumbering. Default 10.
+5B77       RCSTEP     (DATA)       ; 2 Incremental value for renumbering. Default 10.
+5B79       LODDRV     (DATA)       ; 1 Holds 'T' if LOAD/VERIFY/MERGE from tape, else 'A', 'B', 'M'.
+5B7A       SAVDRV     (DATA)       ; 1 Holds 'T' if SAVE to tape, else 'A', 'B', 'M'.
+5B7B       DUMPLF     (DATA)       ; 1 Number of 1/216ths used for line feeds in 'COPY EXP'. Normally 9. POKE with 8 for smaller dump.
+5B7C       STRIP1     (DATA)       ; N8 Stripe one bitmap.
+5B84       STRIP2     (DATA)       ; N8 Stripe two bitmap. Extends to 5B8B (23436).
+5BFF       TSTACK     (DATA)       ; X115 Temporary stack grows down from here. Used when RAM page 7 in. Min 115 bytes.
+
+; --- STANDARD 48K SPECTRUM SYSTEM VARIABLES ---
+; ----------------------------------------------
+; NOTES HEX  DECIMAL  IY   NAME    CONTENTS
+;-----------------------------------------------------------------------------------------------------------------------
+5C00       KSTATE     (DATA)       ; N8 IY-58 Used in reading the keyboard.
+5C08       LASTK      (DATA)       ; N1 IY-50 Stores newly pressed key.
+5C09       REPDEL     (DATA)       ; 1 IY-49 Time (in 50ths of a second) before key repeat. Default 35.
+5C0A       REPPER     (DATA)       ; 1 IY-48 Delay (in 50ths of a second) between successive repeats. Default 5.
+5C0B       DEFADD     (DATA)       ; N2 IY-47 Address of arguments of user defined function, else 0.
+5C0D       K_DATA     (DATA)       ; N1 IY-45 Stores 2nd byte of colour controls entered from keyboard.
+5C0E       TVDATA     (DATA)       ; N2 IY-44 Stores bytes of colour, AT and TAB controls going to TV.
+5C10       STRMS      (DATA)       ; X38 IY-42 Addresses of channels attached to streams &FD to &0F.
+5C36       CHARS      (DATA)       ; 2 IY-4 256 less than address of character set.
+5C38       RASP       (DATA)       ; 1 IY-2 Length of warning buzz.
+5C39       PIP        (DATA)       ; 1 IY-1 Length of keyboard click.
+5C3A       ERRNR      (DATA)       ; 1 IY+0 1 less than the report code. Starts at 255 (for -1).
+5C3B       FLAGS      (DATA)       ; X1 IY+1 Various flags: b7?, b6 Str/Num, b5 NewKey, b4 128KMode, b3 K/L In, b2 K/L Prn, b1 PrnTxt/Raw, b0 LeadSpace.
+5C3C       TVFLAG     (DATA)       ; X1 IY+2 TV Flags: b7?, b6?, b5 ClrLwKey, b4 AutoList, b3 ModeChg, b2?, b1?, b0?.
+5C3D       ERRSP      (DATA)       ; X2 IY+3 Address of item on machine stack for error return.
+5C3F       LISTSP     (DATA)       ; N2 IY+5 Address of return address from automatic listing.
+5C41       MODE       (DATA)       ; N1 IY+7 Specifies 'K', 'L', 'C', 'E' or 'G' cursor.
+5C42       NEWPPC     (DATA)       ; 2 IY+8 Line to be jumped to.
+5C44       NSPPC      (DATA)       ; 1 IY+10 Statement number in line to be jumped to.
+5C45       PPC        (DATA)       ; 2 IY+11 Line number of statement currently being executed.
+5C47       SUBPPC     (DATA)       ; 1 IY+13 Number within line of statement currently being executed.
+5C48       BORDCR     (DATA)       ; 1 IY+14 Border colour * 8; also lower screen attributes.
+5C49       E_PPC      (DATA)       ; 2 IY+15 Number of current line (with program cursor).
+5C4B       VARS       (DATA)       ; X2 IY+17 Address of variables.
+5C4D       DEST       (DATA)       ; N2 IY+19 Address of variable in assignment.
+5C4F       CHANS      (DATA)       ; X2 IY+21 Address of channel data. (See 5CB6/5CF0 for IF1 CHANS start)
+5C51       CURCHL     (DATA)       ; X2 IY+23 Address of channel currently being used for input/output.
+5C53       PROG       (DATA)       ; X2 IY+25 Address of BASIC program.
+5C55       NXTLIN     (DATA)       ; X2 IY+27 Address of next line in program. (Note: Original text has 5C57 for NXTLIN, typo? DATADD is also 5C57)
+5C57       DATADD     (DATA)       ; X2 IY+29 Address of terminator of last DATA item.
+5C59       E_LINE     (DATA)       ; X2 IY+31 Address of command being typed in.
+5C5B       K_CUR      (DATA)       ; 2 IY+33 Address of cursor.
+5C5D       CH_ADD     (DATA)       ; X2 IY+35 Address of the next character to be interpreted.
+5C5F       X_PTR      (DATA)       ; 2 IY+37 Address of the character after the [?] error marker.
+5C61       WORKSP     (DATA)       ; X2 IY+39 Address of temporary work space.
+5C63       STKBOT     (DATA)       ; X2 IY+41 Address of bottom of calculator stack.
+5C65       STKEND     (DATA)       ; X2 IY+43 Address of start of spare space.
+5C67       BREG       (DATA)       ; N1 IY+45 Calculator's B register.
+5C68       MEM        (DATA)       ; N2 IY+46 Address of area used for calculator's memory (usually MEMBOT).
+5C6A       FLAGS2     (DATA)       ; 1 IY+48 More flags: b7 DefTokIgnoreCase, b6 DefTokNoAbbrev, b5 DefTokSep, b4 OutChanK, b3 CapsLock, b2 ParseInQuote, b1 PrnBufNotEmpty, b0 ScreenClear.
+5C6B       DFSZ       (DATA)       ; X1 IY+49 The number of lines in lower part of screen.
+5C6C       S_TOP      (DATA)       ; 2 IY+50 The number of the top program line in automatic listings.
+5C6E       OLDPPC     (DATA)       ; 2 IY+52 Line number to which CONTINUE jumps.
+5C70       OSPPC      (DATA)       ; 1 IY+54 Number within line of statement to which CONTINUE jumps.
+5C71       FLAGX      (DATA)       ; N1 IY+55 Various flags: b7 INPLINE, b6 StrRes, b5 INPUT, b4?, b3?, b2?, b1 NewVar, b0 Slice/SimpleStr.
+5C72       STRLEN     (DATA)       ; N2 IY+56 Length of string type destination in assignment.
+5C74       T_ADDR     (DATA)       ; N2 IY+58 Address of next item in syntax table; file ops: 0=SAVE,1=LOAD,2=VERIFY,3=MERGE.
+5C76       SEED       (DATA)       ; 2 IY+60 The seed for RND. Set by RANDOMIZE.
+5C78       FRAMES     (DATA)       ; 3 IY+62 3-byte frame counter, incremented every 20ms.
+5C7B       UDG        (DATA)       ; 2 IY+65 Address of first user-defined graphic.
+5C7D       COORDS_X   (DATA)       ; 1 IY+67 X-coordinate of last point plotted. (Original COORDS implies X then Y)
+5C7E       COORDS_Y   (DATA)       ; 1 IY+68 Y-coordinate of last point plotted.
+5C7F       P_POSN     (DATA)       ; 1 IY+69 33-column number of printer position. [Current default device 'T' or '1'-'8']
+5C80       PRCC       (DATA)       ; X2 IY+70 Full address of next LPRINT pos (ZX printer buffer 5B00-5B1F). [Not used in 128K/some peripherals] [NMIADD on some systems]
+5C82       ECHO_E     (DATA)       ; 2 IY+72 33-column number and 24-line number (lower half, end of input buffer).
+5C84       DFCC       (DATA)       ; 2 IY+74 Address in display file of PRINT position.
+5C86       DFCCL      (DATA)       ; 2 IY+76 Like DFCC for lower part of screen.
+5C88       S_POSN_COL (DATA)       ; X1 IY+78 33-column number for PRINT position. (Original S_POSN implies col then line)
+5C89       S_POSN_ROW (DATA)       ; X1 IY+79 24-line number for PRINT position.
+5C8A       SPOSNL     (DATA)       ; X2 IY+80 Like S_POSN but for lower part.
+5C8C       SCRCT      (DATA)       ; 1 IY+82 Scroll counter before 'scroll?'. Poke >1 to disable prompt.
+5C8D       ATTRP      (DATA)       ; 1 IY+83 Permanent current colours, etc.
+5C8E       MASKP      (DATA)       ; 1 IY+84 Permanent transparency mask.
+5C8F       ATTRT      (DATA)       ; N1 IY+85 Temporary current colours, etc.
+5C90       MASKT      (DATA)       ; N1 IY+86 Temporary transparency mask.
+5C91       PFLAG      (DATA)       ; 1 IY+87 Print flags: b7 Pap9Perm, b6 Pap9Curr, b5 Ink9Perm, b4 Ink9Curr, b3 InvPerm, b2 InvCurr, b1 OverPerm, b0 OverCurr.
+5C92       MEMBOT     (DATA)       ; N30 IY+88 Calculator's memory area / miscellaneous workspace.
+5CB0       NMIADD     (DATA)       ; 2 IY+118 Holds user's NMI service routine address. [IF1: PRCOL]
+                                   ; With Interface 1 (or if used as such):
+                                   ; 5CB0 PRCOL (DATA) ; RS232 text output column
+                                   ; 5CB1 WIDTH_RS232 (DATA) ; RS232 text output width (Renamed from WIDTH to avoid clash with 5B64)
+5CB2       RAMTOP     (DATA)       ; 2 IY+120 Address of last byte of BASIC system area.
+5CB4       PRAMT      (DATA)       ; 2 IY+122 Address of last byte of physical RAM.
+
+; 5CB6                               ; Start of CHANS when no Interface 1 active.
+
+; --- INTERFACE 1 SYSTEM VARIABLES ---
+; ------------------------------------
+5CB6       FLAGS3     (DATA)       ; X1 IY+124 Various flags: b7 VERIFY, b6 MERGE, b5 SAVE, b4 LOAD/MOVE, b3 NetUse, b2 MainROMError, b1 CLEAR#/ShadowEntry, b0 NewCmd. ; IF1 INACTIVE: val F4 (is 1st byte of CHANS for 'K')
+5CB7       VECTOR     (DATA)       ; X2 IY+125 Normally points to 01F0 (ERR_6). For command extension. ; IF1 INACTIVE: val 09A8h
+5CB9       SBRT       (DATA)       ; X10 IY+127 ROM paging routine. ; IF1 INACTIVE: SBRT[0]=10h, SBRT[1]='K'(5CBA), SBRT[2]=F4h(5CBB for 'S' chan), etc. as CHANS area
+5CBA       H_L        (DATA)       ; (part of SBRT) Used to save HL when calling main ROM routines. ; IF1 INACTIVE: val 'K'
+5CC3       BAUD_IF1   (DATA)       ; 2 Timing constant for RS232 I/O. (3500000/(26*baudrate))-2. (Renamed from BAUD) ; IF1 INACTIVE: val 15 (low byte), 'R' (high byte at 5CC4, for 'R' chan)
+5CC5       NTSTAT     (DATA)       ; 1 Network station. ; IF1 INACTIVE: val F4 (for 'P' chan)
+5CC6       IOBORD     (DATA)       ; 1 Border colour during I/O, normally 0 (black). ; IF1 INACTIVE: val 09
+5CC7       SER_FL     (DATA)       ; N1 Number of buffered serial characters, 0 or 1. ; IF1 INACTIVE: val C4
+5CC8       SER_BF     (DATA)       ; N1 One-byte serial input buffer. ; IF1 INACTIVE: val 15
+5CC9       SECTOR     (DATA)       ; N2 Counter of sectors examined during Microdrive ops. ; IF1 INACTIVE: val 'P' (low byte), 80h (high byte at 5CCA, End of CHANS)
+5CCB       CHADD_     (DATA)       ; N2 Temporary store for CH_ADD. ; IF1 INACTIVE: val PROG (points to 1st byte of program, e.g. 800Dh)
+5CCD       NTRESP     (DATA)       ; 1 Store for network response code +1. ; IF1 INACTIVE: val 80 (3rd byte of program if CHADD_ points to PROG)
+
+; Network buffer:
+5CCE       NTDEST     (DATA)       ; 1 Destination station for current packet. ; IF1 INACTIVE: Program byte
+5CCF       NTSRCE     (DATA)       ; 1 Station number of sending machine in current packet. ; IF1 INACTIVE: Program byte
+5CD0       NTNUMB     (DATA)       ; X2 Current packet block number. ; IF1 INACTIVE: Program bytes
+5CD2       NTTYPE     (DATA)       ; N1 Packet type, 0=normal, 1=EOF. ; IF1 INACTIVE: Program byte
+5CD3       NTLEN      (DATA)       ; X1 Length of data block, 1-255. ; IF1 INACTIVE: Program byte
+5CD4       NTDCS      (DATA)       ; N1 Current data block checksum. ; IF1 INACTIVE: Program byte
+5CD5       NTCHS      (DATA)       ; N1 Current header block checksum. ; IF1 INACTIVE: Program byte
+
+; First 8-byte file specifier:
+5CD6       D_STR1     (DATA)       ; N2 Drive number 1-8, station 0-64, or baud rate 75-19200. ; IF1 INACTIVE: Program bytes
+5CD8       S_STR1     (DATA)       ; N1 Stream number 0-15. ; IF1 INACTIVE: Program byte
+5CD9       L_STR1     (DATA)       ; N1 Device specifier 'M', 'N', 'T' or 'B'. ; IF1 INACTIVE: Program byte
+5CDA       N_STR1     (DATA)       ; N2 Filename length. ; IF1 INACTIVE: Program bytes
+5CDC       FN_STR1    (DATA)       ; (Assumed label for Filename start) ; IF1 INACTIVE: Program bytes (Filename start implicitly here)
+
+; Second 8-byte file specifier, used by LOAD and MOVE:
+5CDE       D_STR2     (DATA)       ; N2 Drive number 1-8, station 0-64, or baud rate 75-19200.
+5CE0       S_STR2     (DATA)       ; N1 Stream number 0-15.
+5CE1       L_STR2     (DATA)       ; N1 Device specifier 'M', 'N', 'T' or 'B'.
+5CE2       N_STR2     (DATA)       ; N2 Filename length.
+5CE4       FN_STR2    (DATA)       ; (Assumed label for Filename start) (Filename start implicitly here)
+
+; File header workspace:
+5CE6       HD_00      (DATA)       ; N1 File type.
+5CE7       HD_0B      (DATA)       ; N2 Data block length.
+5CE9       HD_0D      (DATA)       ; N2 Data block start address.
+5CEB       HD_0F      (DATA)       ; N2 Program length without variables, or array name.
+5CED       HD_11      (DATA)       ; N2 Autostart line number, execute address, address called by hook code &32.
+5CEF       COPIES     (DATA)       ; N1 Number of copies made by SAVE. Reset to 1 after SAVE.
+
+; 5CF0                              ; Start of CHANS when Interface 1 active.
+
+; --- INTERFACE 1 SYSTEM VARIABLES WHEN INTERFACE 1 INACTIVE ---
+; (Comments for these alternative meanings are added to the original symbol definitions above where applicable)
+; The area 5CB6-5CCA is repurposed as CHANS data. Specific values for original IF1 variables in this mode:
+; FLAGS3 (5CB6) becomes F4 (CHANS for 'K').
+; VECTOR (5CB7-5CB8) becomes 09A8.
+; SBRT (5CB9-5CC2) area is used for CHANS. SBRT[0]=10, SBRT[1]='K', etc.
+; H_L (5CBA, part of SBRT) becomes 'K'.
+; BAUD_IF1 (5CC3-5CC4) becomes 15 and 'R' (part of 'R' chan).
+; NTSTAT (5CC5) becomes F4 (part of 'P' chan).
+; IOBORD (5CC6) becomes 09.
+; SER_FL (5CC7) becomes C4.
+; SER_BF (5CC8) becomes 15.
+; SECTOR (5CC9-5CCA) becomes 'P' and 80h (end of CHANS).
+; CHADD_ (5CCB-5CCC) points to PROG area (e.g. 800Dh).
+; NTRESP (5CCD) becomes program byte (e.g. 80h).
+; NTDEST onwards (5CCE+) become program bytes.

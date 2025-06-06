@@ -3,6 +3,8 @@
 #define DEBUGGERWINDOW_H
 
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/breakpointgroupdialog.h>
+#include <debugger/labeldialog.h>
 #include <emulator/emulator.h>
 
 #include <QAction>
@@ -37,7 +39,8 @@ protected:
     void updateState();
     void loadState();
     void saveState();
-    void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints);
+    void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints, bool canManageLabels);
+    void clearInterruptBreakpoints();
     /// endregion <Helper methods>
 
     /// region <QT Helper methods>
@@ -61,6 +64,7 @@ private slots:
     void waitInterrupt();
     void resetEmulator();
     void showBreakpointManager();
+    void showLabelManager();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -75,6 +79,8 @@ protected:
     static constexpr const char* TEMP_BREAKPOINT_GROUP = "TemporaryBreakpoints";  // Group for all temporary breakpoints
     static constexpr const char* STEP_OVER_NOTE = "StepOver";                     // Note for step over breakpoints
     static constexpr const char* STEP_OUT_NOTE = "StepOut";                       // Note for step out breakpoints
+    static constexpr const char* IM1_BREAKPOINT_GROUP = "_im1_interrupt_handler";  // Group for IM1 interrupt handler breakpoints
+    static constexpr const char* IM2_BREAKPOINT_GROUP = "_im2_interrupt_handler";  // Group for IM2 interrupt handler breakpoints
     
     // Helper method to determine if an instruction should be stepped over
     bool shouldStepOver(uint16_t address);
@@ -96,6 +102,7 @@ protected:
     // Step operation state tracking
     bool _inStepOutOperation = false;  // Flag indicating we're in a step-out operation
     bool _inStepOverOperation = false;  // Flag indicating we're in a step-over operation
+    bool _waitingForInterrupt = false;  // Flag indicating we're waiting for an interrupt
     std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints
 
     // UI fields
@@ -112,6 +119,7 @@ private:
     QAction* waitInterruptAction;
     QAction* resetAction;
     QAction* breakpointsAction;
+    QAction* labelsAction;
 };
 
 #endif // DEBUGGERWINDOW_H

@@ -1,0 +1,77 @@
+--- STANDARD 48K SPECTRUM SYSTEM VARIABLES ---
+; ----------------------------------------------
+; Address  Label      Type          Comments
+;-----------------------------------------------------------------------------------------------------------------------
+5C00       KSTATE     (DATA)       ; N8 IY-58 Used in reading the keyboard.
+5C08       LASTK      (DATA)       ; N1 IY-50 Stores newly pressed key.
+5C09       REPDEL     (DATA)       ; 1 IY-49 Time (in 50ths of a second) before key repeat. Default 35.
+5C0A       REPPER     (DATA)       ; 1 IY-48 Delay (in 50ths of a second) between successive repeats. Default 5.
+5C0B       DEFADD     (DATA)       ; N2 IY-47 Address of arguments of user defined function, else 0.
+5C0D       K_DATA     (DATA)       ; N1 IY-45 Stores 2nd byte of colour controls entered from keyboard.
+5C0E       TVDATA     (DATA)       ; N2 IY-44 Stores bytes of colour, AT and TAB controls going to TV.
+5C10       STRMS      (DATA)       ; X38 IY-42 Addresses of channels attached to streams &FD to &0F.
+5C36       CHARS      (DATA)       ; 2 IY-4 256 less than address of character set.
+5C38       RASP       (DATA)       ; 1 IY-2 Length of warning buzz.
+5C39       PIP        (DATA)       ; 1 IY-1 Length of keyboard click.
+5C3A       ERRNR      (DATA)       ; 1 IY+0 1 less than the report code. Starts at 255 (for -1).
+5C3B       FLAGS      (DATA)       ; X1 IY+1 Various flags: b7?, b6 Str/Num, b5 NewKey, b4 128KMode, b3 K/L In, b2 K/L Prn, b1 PrnTxt/Raw, b0 LeadSpace.
+5C3C       TVFLAG     (DATA)       ; X1 IY+2 TV Flags: b7?, b6?, b5 ClrLwKey, b4 AutoList, b3 ModeChg, b2?, b1?, b0?.
+5C3D       ERRSP      (DATA)       ; X2 IY+3 Address of item on machine stack for error return.
+5C3F       LISTSP     (DATA)       ; N2 IY+5 Address of return address from automatic listing.
+5C41       MODE       (DATA)       ; N1 IY+7 Specifies 'K', 'L', 'C', 'E' or 'G' cursor.
+5C42       NEWPPC     (DATA)       ; 2 IY+8 Line to be jumped to.
+5C44       NSPPC      (DATA)       ; 1 IY+10 Statement number in line to be jumped to.
+5C45       PPC        (DATA)       ; 2 IY+11 Line number of statement currently being executed.
+5C47       SUBPPC     (DATA)       ; 1 IY+13 Number within line of statement currently being executed.
+5C48       BORDCR     (DATA)       ; 1 IY+14 Border colour * 8; also lower screen attributes.
+5C49       E_PPC      (DATA)       ; 2 IY+15 Number of current line (with program cursor).
+5C4B       VARS       (DATA)       ; X2 IY+17 Address of variables.
+5C4D       DEST       (DATA)       ; N2 IY+19 Address of variable in assignment.
+5C4F       CHANS      (DATA)       ; X2 IY+21 Address of channel data. (See 5CB6/5CF0 for IF1 CHANS start)
+5C51       CURCHL     (DATA)       ; X2 IY+23 Address of channel currently being used for input/output.
+5C53       PROG       (DATA)       ; X2 IY+25 Address of BASIC program.
+5C55       NXTLIN     (DATA)       ; X2 IY+27 Address of next line in program. (Note: Original text has 5C57 for NXTLIN, typo? DATADD is also 5C57)
+5C57       DATADD     (DATA)       ; X2 IY+29 Address of terminator of last DATA item.
+5C59       E_LINE     (DATA)       ; X2 IY+31 Address of command being typed in.
+5C5B       K_CUR      (DATA)       ; 2 IY+33 Address of cursor.
+5C5D       CH_ADD     (DATA)       ; X2 IY+35 Address of the next character to be interpreted.
+5C5F       X_PTR      (DATA)       ; 2 IY+37 Address of the character after the [?] error marker.
+5C61       WORKSP     (DATA)       ; X2 IY+39 Address of temporary work space.
+5C63       STKBOT     (DATA)       ; X2 IY+41 Address of bottom of calculator stack.
+5C65       STKEND     (DATA)       ; X2 IY+43 Address of start of spare space.
+5C67       BREG       (DATA)       ; N1 IY+45 Calculator's B register.
+5C68       MEM        (DATA)       ; N2 IY+46 Address of area used for calculator's memory (usually MEMBOT).
+5C6A       FLAGS2     (DATA)       ; 1 IY+48 More flags: b7 DefTokIgnoreCase, b6 DefTokNoAbbrev, b5 DefTokSep, b4 OutChanK, b3 CapsLock, b2 ParseInQuote, b1 PrnBufNotEmpty, b0 ScreenClear.
+5C6B       DFSZ       (DATA)       ; X1 IY+49 The number of lines in lower part of screen.
+5C6C       S_TOP      (DATA)       ; 2 IY+50 The number of the top program line in automatic listings.
+5C6E       OLDPPC     (DATA)       ; 2 IY+52 Line number to which CONTINUE jumps.
+5C70       OSPPC      (DATA)       ; 1 IY+54 Number within line of statement to which CONTINUE jumps.
+5C71       FLAGX      (DATA)       ; N1 IY+55 Various flags: b7 INPLINE, b6 StrRes, b5 INPUT, b4?, b3?, b2?, b1 NewVar, b0 Slice/SimpleStr.
+5C72       STRLEN     (DATA)       ; N2 IY+56 Length of string type destination in assignment.
+5C74       T_ADDR     (DATA)       ; N2 IY+58 Address of next item in syntax table; file ops: 0=SAVE,1=LOAD,2=VERIFY,3=MERGE.
+5C76       SEED       (DATA)       ; 2 IY+60 The seed for RND. Set by RANDOMIZE.
+5C78       FRAMES     (DATA)       ; 3 IY+62 3-byte frame counter, incremented every 20ms.
+5C7B       UDG        (DATA)       ; 2 IY+65 Address of first user-defined graphic.
+5C7D       COORDS_X   (DATA)       ; 1 IY+67 X-coordinate of last point plotted. (Original COORDS implies X then Y)
+5C7E       COORDS_Y   (DATA)       ; 1 IY+68 Y-coordinate of last point plotted.
+5C7F       P_POSN     (DATA)       ; 1 IY+69 33-column number of printer position. [Current default device 'T' or '1'-'8']
+5C80       PRCC       (DATA)       ; X2 IY+70 Full address of next LPRINT pos (ZX printer buffer 5B00-5B1F). [Not used in 128K/some peripherals] [NMIADD on some systems]
+5C82       ECHO_E     (DATA)       ; 2 IY+72 33-column number and 24-line number (lower half, end of input buffer).
+5C84       DFCC       (DATA)       ; 2 IY+74 Address in display file of PRINT position.
+5C86       DFCCL      (DATA)       ; 2 IY+76 Like DFCC for lower part of screen.
+5C88       S_POSN_COL (DATA)       ; X1 IY+78 33-column number for PRINT position. (Original S_POSN implies col then line)
+5C89       S_POSN_ROW (DATA)       ; X1 IY+79 24-line number for PRINT position.
+5C8A       SPOSNL     (DATA)       ; X2 IY+80 Like S_POSN but for lower part.
+5C8C       SCRCT      (DATA)       ; 1 IY+82 Scroll counter before 'scroll?'. Poke >1 to disable prompt.
+5C8D       ATTRP      (DATA)       ; 1 IY+83 Permanent current colours, etc.
+5C8E       MASKP      (DATA)       ; 1 IY+84 Permanent transparency mask.
+5C8F       ATTRT      (DATA)       ; N1 IY+85 Temporary current colours, etc.
+5C90       MASKT      (DATA)       ; N1 IY+86 Temporary transparency mask.
+5C91       PFLAG      (DATA)       ; 1 IY+87 Print flags: b7 Pap9Perm, b6 Pap9Curr, b5 Ink9Perm, b4 Ink9Curr, b3 InvPerm, b2 InvCurr, b1 OverPerm, b0 OverCurr.
+5C92       MEMBOT     (DATA)       ; N30 IY+88 Calculator's memory area / miscellaneous workspace.
+5CB0       NMIADD     (DATA)       ; 2 IY+118 Holds user's NMI service routine address. [IF1: PRCOL]
+; With Interface 1 (or if used as such):
+; 5CB0 PRCOL (DATA) ; RS232 text output column
+; 5CB1 WIDTH_RS232 (DATA) ; RS232 text output width (Renamed from WIDTH to avoid clash with 5B64)
+5CB2       RAMTOP     (DATA)       ; 2 IY+120 Address of last byte of BASIC system area.
+5CB4       PRAMT      (DATA)       ; 2 IY+122 Address of last byte of physical RAM.

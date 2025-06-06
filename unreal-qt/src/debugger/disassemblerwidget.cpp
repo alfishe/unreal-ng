@@ -155,6 +155,18 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     Memory& memory = *getMemory();
     Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
+    LabelManager* labelManager = getEmulator()->GetDebugManager()->GetLabelManager();
+
+    // Debug output for label loading
+    if (labelManager)
+    {
+        qDebug() << "Label count:" << labelManager->GetLabelCount();
+        auto allLabels = labelManager->GetAllLabels();
+        for (const auto& label : allLabels)
+        {
+            qDebug() << "Label:" << QString::fromStdString(label->name) << "at" << QString::number(label->address, 16);
+        }
+    }
 
     // Clear the address map before generating new disassembly
     m_addressMap.clear();
@@ -187,6 +199,14 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         // Map the actual line number in the text editor to the address
         m_addressMap[baseLineNumber + i] = pc;
 
+        // Check for labels at the current address
+        std::string symbolicLabelInfo;
+        std::shared_ptr<Label> label = labelManager ? labelManager->GetLabelByZ80Address(pc) : nullptr;
+        if (label)
+        {
+            symbolicLabelInfo = StringHelper::Format("; %s:", label->name.c_str());
+        }
+
         if (decoded.hasRuntime)
         {
             runtime = disassembler.getRuntimeHints(decoded);
@@ -196,29 +216,67 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             }
         }
 
+        // Check for labels in operands
+        std::string labelInfo;
+        if (decoded.hasJump || decoded.hasRelativeJump)
+        {
+            uint16_t targetAddr = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+            std::shared_ptr<Label> targetLabel = labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
+            if (targetLabel)
+            {
+                // Add label name in parentheses after the address
+                std::string addrStr = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(targetAddr, ""));
+                size_t pos = command.find(addrStr);
+                if (pos != std::string::npos)
+                {
+                    command.insert(pos + addrStr.length(), StringHelper::Format(" (%s)", targetLabel->name.c_str()));
+                }
+            }
+        }
+        else if (decoded.hasWordOperand)
+        {
+            // Check for labels in word operands (e.g., LD HL,addr)
+            std::shared_ptr<Label> targetLabel = labelManager ? labelManager->GetLabelByZ80Address(decoded.wordOperand) : nullptr;
+            if (targetLabel)
+            {
+                // Add label name in parentheses after the address
+                std::string addrStr = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(decoded.wordOperand, ""));
+                size_t pos = command.find(addrStr);
+                if (pos != std::string::npos)
+                {
+                    command.insert(pos + addrStr.length(), StringHelper::Format(" (%s)", targetLabel->name.c_str()));
+                }
+            }
+        }
+        else if (decoded.hasDisplacement)
+        {
+            // Check for labels in indexed addressing (e.g., LD (IX+disp),A)
+            uint16_t targetAddr = (pc + decoded.displacement) & 0xFFFF;
+            std::shared_ptr<Label> targetLabel = labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
+            if (targetLabel)
+            {
+                labelInfo = StringHelper::Format(" ; %s", targetLabel->name.c_str());
+            }
+        }
+
         pcPhysicalAddress += decoded.fullCommandLen;
         pc += decoded.fullCommandLen;
 
-        // Format value like: [B] $15FB: CD 2C 16   call #162C
-        // Add a breakpoint column at the beginning - check for breakpoint at the CURRENT address
-        // not the next one (pc already got incremented above)
+        // Format value like: [B] $15FB: CD 2C 16   call $162C (init_screen)
         std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
-        ss << StringHelper::Format("[%s] $%s: %-11s   %s%s", breakpointMarker.c_str(), pcAddress.c_str(), hex.c_str(), command.c_str(),
-                                   runtime.c_str())
+        ss << StringHelper::Format("[%s] $%s: %-11s   %s%s%s%s",
+            breakpointMarker.c_str(), 
+            pcAddress.c_str(), 
+            hex.c_str(), 
+            command.c_str(),
+            runtime.c_str(),
+            labelInfo.c_str(),
+            symbolicLabelInfo.c_str())
            << std::endl;
     }
 
     std::string value = ss.str();
     m_disassemblyTextEdit->setPlainText(value.c_str());
-
-    // DEBUG info (keep this as it might be useful)
-    uint8_t z80Bank = 0;
-    size_t read = memory.GetZ80BankReadAccessCount(z80Bank);
-    size_t write = memory.GetZ80BankWriteAccessCount(z80Bank);
-    size_t execute = memory.GetZ80BankExecuteAccessCount(z80Bank);
-    std::string accessedValue = StringHelper::Format("%s\nBank 1:  read: %d\n         write: %d\n         execute: %d",
-                                                     value.c_str(), read, write, execute);
-    m_disassemblyTextEdit->setPlainText(accessedValue.c_str());
 
     // Highlight the current PC instruction and any breakpoints
     highlightCurrentPC();

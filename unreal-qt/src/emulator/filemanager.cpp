@@ -24,6 +24,9 @@ PatternCategoryMap FileManager::_extensions =
     { "zip", SupportedFileCategoriesEnum::FileArchive },
     { "rar", SupportedFileCategoriesEnum::FileArchive },
     { "7z", SupportedFileCategoriesEnum::FileArchive },
+
+    { "map", SupportedFileCategoriesEnum::FileSymbol },
+    { "sym", SupportedFileCategoriesEnum::FileSymbol }
 };
 
 /// Detect file type/category based on its extension
