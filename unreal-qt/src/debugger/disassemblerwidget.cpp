@@ -34,15 +34,17 @@ DisassemblerWidget::~DisassemblerWidget()
 
 void DisassemblerWidget::initializeTable()
 {
-    // Create and set the model
-    m_model = new DisassemblerTableModel(m_emulator, this);
+    qDebug() << "Initializing disassembler table...";
 
     // Get the table view from UI
     QTableView* tableView = ui->disassemblyTable;
 
-    // Set the model
+    // Create and set the model
+    m_model = new DisassemblerTableModel(m_emulator, this);
+
+    // Set the model first
     tableView->setModel(m_model);
-    
+
     // Configure the view
     tableView->setEditTriggers(QAbstractItemView::NoEditTriggers);
     tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -52,7 +54,7 @@ void DisassemblerWidget::initializeTable()
 
     // Configure header
     QHeaderView* header = tableView->horizontalHeader();
-    
+
     // Set resize modes for each column
     header->setSectionResizeMode(0, QHeaderView::Interactive);  // Address (16-bit hex $XXXX)
     header->setSectionResizeMode(1, QHeaderView::Interactive);  // Opcode (1-4 bytes hex)
@@ -62,13 +64,13 @@ void DisassemblerWidget::initializeTable()
     header->setSectionResizeMode(5, QHeaderView::Stretch);      // Comment (text)
 
     // Set initial column widths
-    tableView->setColumnWidth(0, 80);   // Address (fixed width for 16-bit hex)
-    tableView->setColumnWidth(1, 120);  // Opcode (fixed width for 1-4 bytes hex)
-    tableView->setColumnWidth(2, 150);  // Label (text, allow room for longer labels)
-    tableView->setColumnWidth(3, 200);  // Mnemonic (text, needs most space)
-    tableView->setColumnWidth(4, 150);  // Annotation (text, allow room for annotations)
-    // Comment column will take remaining space
-
+    tableView->setColumnWidth(0, 64);   // Address (fixed width for 16-bit hex)
+    tableView->setColumnWidth(1, 112);  // Opcode (fixed width for 1-4 bytes hex)
+    tableView->setColumnWidth(2, 112);  // Label (text, allow room for longer labels)
+    tableView->setColumnWidth(3, 112);  // Mnemonic (text, needs most space)
+    tableView->setColumnWidth(4, 112);  // Annotation (text, allow room for annotations)
+    // Comments column will take remaining space
+    
     // Configure table properties
     tableView->setAlternatingRowColors(true);
     tableView->setShowGrid(true);
@@ -89,16 +91,16 @@ void DisassemblerWidget::initializeTable()
     vHeader->setMinimumSectionSize(1);
 
     // Connect signals
-    connect(tableView->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
-            &DisassemblerWidget::onCurrentRowChanged);
-    
-    // Force the view to update its geometry
-    tableView->resizeColumnsToContents();
-    
+    connect(tableView->selectionModel(), &QItemSelectionModel::currentRowChanged, this, &DisassemblerWidget::onCurrentRowChanged);
+
     qDebug() << "Table initialization complete, visible columns:" << tableView->horizontalHeader()->count();
 
-    // Initial load
-    updateVisibleRange();
+    // If we have an emulator, update the view
+    if (m_emulator)
+    {
+        qDebug() << "Initial update for emulator";
+        updateVisibleRange();
+    }
 }
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
@@ -106,10 +108,11 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     // Validate input and state
     if (pc >= MAX_ADDRESS || !m_model || !ui || !ui->disassemblyTable)
     {
+        qDebug() << "Invalid parameters in setDisassemblerAddress";
         return;
     }
 
-    qDebug() << "setDisassemblerAddress:" << QString("0x%1").arg(pc, 4, 16, QChar('0'));
+    qDebug() << "setDisassemblerAddress: 0x" << QString::number(pc, 16);
 
     // Update the current PC
     m_currentPC = pc;
@@ -122,15 +125,15 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         // Update the model's current PC
         m_model->setCurrentPC(pc);
 
-        // Load a range around the PC if not already loaded
-        const int range = 20;  // Number of instructions to load before/after
-        uint16_t start = (pc > range) ? (pc - range) : 0;
-        uint16_t end = (pc < (0xFFFF - range)) ? (pc + range) : 0xFFFF;
+        // Calculate a range around the PC
+        const uint16_t rangeSize = 0x100;  // 256 bytes range
+        uint16_t start = (pc > rangeSize / 2) ? (pc - rangeSize / 2) : 0;
+        uint16_t end = (pc < (0xFFFF - rangeSize / 2)) ? (pc + rangeSize / 2) : 0xFFFF;
 
-        qDebug() << "Loading disassembly range for PC:" << QString("0x%1 - 0x%2").arg(start, 4, 16, QChar('0')) << "to"
-                 << QString("0x%1").arg(end, 4, 16, QChar('0'));
+        qDebug() << "Setting visible range to: 0x" << QString::number(start, 16) << " - 0x" << QString::number(end, 16);
 
-        m_model->loadDisassemblyRange(start, end);
+        // Set the visible range in the model
+        m_model->setVisibleRange(start, end);
 
         // Find the row that contains the PC
         int targetRow = -1;
@@ -154,24 +157,32 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             QItemSelectionModel* selectionModel = ui->disassemblyTable->selectionModel();
             if (selectionModel)
             {
-                selectionModel->select(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                selectionModel->select(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows |
+                                                QItemSelectionModel::Current);
+
+                // Make sure the current index is set
+                ui->disassemblyTable->setCurrentIndex(idx);
             }
 
             // Scroll to the address
             ui->disassemblyTable->scrollTo(idx, QAbstractItemView::PositionAtCenter);
-            qDebug() << "Scrolled to row" << targetRow << "for PC" << QString("0x%1").arg(pc, 4, 16, QChar('0'));
+            qDebug() << "Scrolled to row" << targetRow << "for PC 0x" << QString::number(pc, 16);
         }
         else
         {
-            qDebug() << "Could not find row for PC" << QString("0x%1").arg(pc, 4, 16, QChar('0'));
+            qDebug() << "Could not find row for PC 0x" << QString::number(pc, 16);
+            // If we couldn't find the PC, just refresh the view
+            m_model->refresh();
         }
 
         // Force an update of the view
         ui->disassemblyTable->viewport()->update();
+
+        // Notify any connected components about the address change
+        emit addressSelected(pc);
     }
     catch (const std::exception& e)
     {
-        // Log the error if needed
         qWarning() << "Error in setDisassemblerAddress:" << e.what();
     }
     catch (...)
@@ -181,9 +192,6 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
     // Restore signal blocking state
     ui->disassemblyTable->blockSignals(oldState);
-
-    // Dump model state for debugging
-    m_model->dumpState();
 }
 
 void DisassemblerWidget::reset()
@@ -197,7 +205,8 @@ void DisassemblerWidget::reset()
 
 void DisassemblerWidget::refresh()
 {
-    if (!m_emulator || !m_model) {
+    if (!m_emulator || !m_model)
+    {
         return;
     }
     qDebug() << "Refreshing disassembler widget";
@@ -212,18 +221,16 @@ void DisassemblerWidget::refresh()
     // Force a full view update
     tableView->viewport()->update();
     tableView->updateGeometry();
-    
-    // Make sure all columns are visible
-    tableView->resizeColumnsToContents();
-    
+
     // Restore the scroll position
     tableView->verticalScrollBar()->setValue(scrollValue);
 
     // Ensure the current PC is visible
-    if (m_currentPC != 0) {
+    if (m_currentPC != 0)
+    {
         setDisassemblerAddress(m_currentPC);
     }
-    
+
     qDebug() << "Refresh complete, column count:" << tableView->model()->columnCount();
 }
 
@@ -291,51 +298,64 @@ void DisassemblerWidget::updateVisibleRange()
 {
     if (!m_model || m_updatingView || !m_emulator || !ui->disassemblyTable)
     {
+        qDebug() << "Cannot update visible range - missing model, emulator, or table";
         return;
     }
 
     m_updatingView = true;
-
     QTableView* tableView = ui->disassemblyTable;
-    QRect viewportRect = tableView->viewport()->rect();
 
-    // Get the visible rows with some margin for smoother scrolling
-    QModelIndex topLeft = tableView->indexAt(viewportRect.topLeft());
-    QModelIndex bottomRight = tableView->indexAt(viewportRect.bottomRight());
-
-    if (topLeft.isValid() && bottomRight.isValid())
+    try
     {
-        // Get the addresses corresponding to visible rows
-        QVariant topData = m_model->data(topLeft, Qt::UserRole);
-        QVariant bottomData = m_model->data(bottomRight, Qt::UserRole);
+        // Calculate the range to show - centered around current PC
+        const uint16_t rangeSize = 0x100;  // Show 256 bytes by default
+        uint16_t startAddr = (m_currentPC > rangeSize / 2) ? (m_currentPC - rangeSize / 2) : 0x0000;
+        uint16_t endAddr = (m_currentPC < (0xFFFF - rangeSize / 2)) ? (m_currentPC + rangeSize / 2) : 0xFFFF;
 
-        if (topData.isValid() && bottomData.isValid())
+        qDebug() << "Updating visible range to:" << QString("0x%1").arg(startAddr, 4, 16, QChar('0')) << "-"
+                 << QString("0x%1").arg(endAddr, 4, 16, QChar('0')) << "(PC: 0x" << QString::number(m_currentPC, 16)
+                 << ")";
+
+        // Set the visible range in the model
+        m_model->setVisibleRange(startAddr, endAddr);
+
+        // Force the view to update
+        tableView->viewport()->update();
+
+        // Ensure the PC is visible and centered
+        // Find the row with the current PC
+        int pcRow = -1;
+        for (int i = 0; i < m_model->rowCount(); ++i)
         {
-            uint16_t firstVisibleAddr = topData.toUInt();
-            uint16_t lastVisibleAddr = bottomData.toUInt();
-
-            // Add some margin for smoother scrolling (in bytes, not rows)
-            const uint16_t margin = 0x20;
-            firstVisibleAddr = (firstVisibleAddr > margin) ? (firstVisibleAddr - margin) : 0;
-            lastVisibleAddr = (lastVisibleAddr < (0xFFFF - margin)) ? (lastVisibleAddr + margin) : 0xFFFF;
-
-            qDebug() << "Loading disassembly range:" << QString("0x%1 - 0x%2").arg(firstVisibleAddr, 4, 16, QChar('0'))
-                     << "to" << QString("0x%1").arg(lastVisibleAddr, 4, 16, QChar('0'));
-
-            // Only update if we have a valid range
-            if (firstVisibleAddr <= lastVisibleAddr)
+            QModelIndex idx = m_model->index(i, 0);
+            QVariant addrData = m_model->data(idx, Qt::UserRole);
+            if (addrData.isValid() && addrData.toUInt() == m_currentPC)
             {
-                m_model->loadDisassemblyRange(firstVisibleAddr, lastVisibleAddr);
-
-                // Force an update of the viewport to ensure any new data is displayed
-                tableView->viewport()->update();
+                pcRow = i;
+                break;
             }
         }
+
+        if (pcRow >= 0)
+        {
+            // Scroll to the PC and select it
+            QModelIndex pcIndex = m_model->index(pcRow, 0);
+            tableView->scrollTo(pcIndex, QAbstractItemView::PositionAtCenter);
+            tableView->setCurrentIndex(pcIndex);
+            qDebug() << "Scrolled to PC at row:" << pcRow;
+        }
+        else
+        {
+            qDebug() << "Could not find PC in current disassembly";
+        }
     }
-    else if (m_currentPC != 0)
+    catch (const std::exception& e)
     {
-        // If no rows are visible but we have a current PC, try to center on it
-        setDisassemblerAddress(m_currentPC);
+        qWarning() << "Error in updateVisibleRange:" << e.what();
+    }
+    catch (...)
+    {
+        qWarning() << "Unknown error in updateVisibleRange";
     }
 
     m_updatingView = false;
@@ -346,12 +366,6 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
     if (m_emulator == emulator)
     {
         return;  // No change
-    }
-
-    // Disconnect from previous emulator signals if any
-    if (m_emulator)
-    {
-        // Disconnect any signals connected to the old emulator
     }
 
     m_emulator = emulator;
@@ -375,17 +389,8 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
         if (hasEmulator)
         {
             // If we have a current PC, make sure it's visible
-            if (m_currentPC != 0)
-            {
-                qDebug() << "Setting disassembler address to current PC:" << QString::number(m_currentPC, 16);
-                setDisassemblerAddress(m_currentPC);
-            }
-            else
-            {
-                // If no current PC but we have an emulator, show address 0
-                qDebug() << "Setting disassembler address to 0";
-                setDisassemblerAddress(0);
-            }
+            qDebug() << "Setting disassembler address to current PC:" << QString::number(m_currentPC, 16);
+            setDisassemblerAddress(m_currentPC);
         }
         else
         {
@@ -393,12 +398,6 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
             ui->disassemblyTable->clearSelection();
             ui->disassemblyTable->setDisabled(true);
         }
-    }
-
-    // Connect to new emulator signals if needed
-    if (m_emulator)
-    {
-        // Connect to any signals from the new emulator
     }
 }
 

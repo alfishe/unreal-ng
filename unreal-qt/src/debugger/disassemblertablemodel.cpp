@@ -22,22 +22,49 @@ DisassemblerTableModel::DisassemblerTableModel(Emulator* emulator, QObject* pare
       m_visibleStart(0),
       m_visibleEnd(0x1FF)
 {
+    // Initialize headers
     m_headers << "Address" << "Opcode" << "Label" << "Mnemonic" << "Annotation" << "Comment";
-
+    
+    // Notify the view that the model has been reset
+    beginResetModel();
+    
     // Load initial range if we have an emulator
     if (m_emulator)
     {
         setVisibleRange(m_visibleStart, m_visibleEnd);
     }
+    
+    endResetModel();
+    
+    qDebug() << "DisassemblerTableModel initialized with" << m_headers.size() << "columns";
+}
+
+void DisassemblerTableModel::refresh()
+{
+    if (!m_emulator)
+    {
+        beginResetModel();
+        m_instructions.clear();
+        endResetModel();
+        return;
+    }
+    setVisibleRange(m_visibleStart, m_visibleEnd);
 }
 
 void DisassemblerTableModel::setEmulator(Emulator* emulator)
 {
+    // If setting to the same emulator, do nothing
+    if (m_emulator == emulator)
+    {
+        return;
+    }
+
     qDebug() << "setEmulator called with emulator:" << (emulator != nullptr);
 
     beginResetModel();
-    m_emulator = emulator;
+    // Clear existing data before changing the emulator
     m_instructions.clear();
+    m_emulator = emulator;
     m_currentPC = 0;
     endResetModel();
 
@@ -50,12 +77,26 @@ void DisassemblerTableModel::setEmulator(Emulator* emulator)
     }
 
     // If we have a valid emulator, load the initial range
-    qDebug() << "Setting initial visible range:" << QString::number(m_startAddress, 16) << "to"
-             << QString::number(m_endAddress, 16);
-    setVisibleRange(m_startAddress, m_endAddress);
+    if (m_emulator->GetContext() && m_emulator->GetContext()->pDebugManager)
+    {
+        qDebug() << "Setting initial visible range:" << QString::number(m_visibleStart, 16) << "to"
+                 << QString::number(m_visibleEnd, 16);
+        setVisibleRange(m_visibleStart, m_visibleEnd);
+    }
+    else
+    {
+        qWarning() << "Emulator context or debug manager not available";
+        // Still need to set the visible range to update the view
+        emit dataChanged(createIndex(0, 0), createIndex(rowCount() - 1, columnCount() - 1));
+    }
 }
 
-DisassemblerTableModel::~DisassemblerTableModel() {}
+DisassemblerTableModel::~DisassemblerTableModel()
+{
+    // Clear the emulator reference to prevent any access during destruction
+    m_emulator = nullptr;
+    m_instructions.clear();
+}
 
 int DisassemblerTableModel::rowCount(const QModelIndex&) const
 {
@@ -69,14 +110,22 @@ int DisassemblerTableModel::columnCount(const QModelIndex&) const
 
 QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) const
 {
-    if (!index.isValid() || !m_emulator)
+    if (!index.isValid())
     {
+        qDebug() << "Invalid index requested";
+        return QVariant();
+    }
+    
+    if (!m_emulator)
+    {
+        qDebug() << "No emulator available for data request";
         return QVariant();
     }
 
     // Get the instruction for this row
-    if (index.row() >= m_instructions.size() || index.row() < 0)
+    if (index.row() < 0 || index.row() >= m_instructions.size())
     {
+        qDebug() << "Row out of range:" << index.row() << "size:" << m_instructions.size();
         return QVariant();
     }
 
@@ -85,6 +134,7 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
     std::advance(it, index.row());
     if (it == m_instructions.end())
     {
+        qDebug() << "Failed to get instruction for row:" << index.row();
         return QVariant();
     }
 
@@ -96,12 +146,14 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
         // Return the raw address for internal use
         return addr;
     }
-    else if (role == Qt::DisplayRole)
+    else if (role == Qt::DisplayRole || role == Qt::EditRole)
     {
+        QString result;
         switch (index.column())
         {
             case 0:  // Address
-                return QString("%1").arg(addr, 4, 16, QChar('0')).toUpper();
+                result = QString("%1").arg(addr, 4, 16, QChar('0')).toUpper();
+                break;
 
             case 1:  // Opcode
             {
@@ -112,22 +164,37 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
                         oss << " ";
                     oss << StringHelper::ToHex(instr.instructionBytes[i], true);
                 }
-                return QString::fromStdString(oss.str());
+                result = QString::fromStdString(oss.str());
+                break;
             }
-            break;
 
             case 2:  // Label
-                return QString::fromStdString(instr.label);
-
+                result = QString::fromStdString(instr.label);
+                break;
+                
             case 3:  // Mnemonic
-                return QString::fromStdString(instr.mnemonic);
+                result = QString::fromStdString(instr.mnemonic);
+                break;
 
             case 4:  // Annotation
-                return QString::fromStdString(instr.annotation);
+                result = QString::fromStdString(instr.annotation);
+                break;
 
             case 5:  // Comment
-                return QString::fromStdString(instr.comment);
+                result = QString::fromStdString(instr.comment);
+                break;
+                
+            default:
+                qDebug() << "Invalid column requested:" << index.column();
+                return QVariant();
         }
+        
+        qDebug() << "Data requested for row:" << index.row() 
+                 << "col:" << index.column() 
+                 << "addr:" << QString("0x%1").arg(addr, 4, 16, QChar('0'))
+                 << "value:" << result;
+        
+        return result;
     }
     else if (role == Qt::TextAlignmentRole)
     {
@@ -219,6 +286,13 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
 
     // Notify views that the data has changed
     emit dataChanged(createIndex(0, 0), createIndex(rowCount() - 1, columnCount() - 1));
+    
+    // Force a layout change to ensure the view updates
+    emit layoutChanged();
+    
+    qDebug() << "setVisibleRange completed. Loaded" << m_instructions.size() 
+             << "instructions in range" << QString::number(start, 16) 
+             << "to" << QString::number(end, 16);
 }
 
 void DisassemblerTableModel::setCurrentPC(uint16_t pc)
@@ -276,13 +350,6 @@ void DisassemblerTableModel::setCurrentPC(uint16_t pc)
         uint16_t newStart = (m_currentPC > halfVisible) ? m_currentPC - halfVisible : 0;
         setVisibleRange(newStart, newStart + (m_visibleEnd - m_visibleStart));
     }
-}
-
-void DisassemblerTableModel::refresh()
-{
-    beginResetModel();
-    endResetModel();
-    ensureRangeLoaded(m_startAddress, m_endAddress);
 }
 
 void DisassemblerTableModel::reset()
@@ -394,9 +461,19 @@ void DisassemblerTableModel::loadDisassemblyRange(uint16_t start, uint16_t end)
         return;
     }
 
-    // Get the disassembler from the emulator
+    // Safely get the disassembler and memory
+    if (!m_emulator || !m_emulator->GetContext() || !m_emulator->GetContext()->pDebugManager) {
+        qWarning() << "Cannot access disassembler - emulator or debug manager not available";
+        return;
+    }
+    
     auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
     auto* memory = m_emulator->GetMemory();
+    
+    if (!disassembler || !memory) {
+        qWarning() << "Disassembler or memory not available";
+        return;
+    }
 
     // Determine the actual range to load (expand by a few instructions for context)
     const int context = 4;  // Number of instructions to load before/after
@@ -408,10 +485,19 @@ void DisassemblerTableModel::loadDisassemblyRange(uint16_t start, uint16_t end)
     size_t instructionCount = 0;
     uint16_t prevAddr = 0xFFFF;  // Track previous address to detect infinite loops
 
+    qDebug() << "Starting disassembly from" << QString::number(loadStart, 16) 
+             << "to" << QString::number(loadEnd, 16) 
+             << "(range: " << (loadEnd - loadStart + 1) << " bytes)";
+
     // Load disassembly for the range
     uint16_t addr = loadStart;
     while (addr <= loadEnd && addr >= loadStart && instructionCount < MAX_INSTRUCTIONS)
     {
+        if (instructionCount % 100 == 0)
+        {
+            qDebug() << "Disassembled" << instructionCount << "instructions, current address:" 
+                     << QString::number(addr, 16);
+        }
         // Check for infinite loop (same address twice in a row)
         if (addr == prevAddr)
         {
