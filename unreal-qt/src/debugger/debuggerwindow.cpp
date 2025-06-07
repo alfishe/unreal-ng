@@ -166,6 +166,12 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 
         // Update the full state which will set the correct button states
         updateState();
+
+        // Set the emulator for the disassembler widget
+        if (ui && ui->disassemblerWidget)
+        {
+            ui->disassemblerWidget->setEmulator(emulator);
+        }
     }
     else
     {
@@ -456,6 +462,12 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is paused:
                 // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(true, false, true, true, true, true);
+                
+                // Scroll to current PC when pausing
+                if (_emulator && _emulator->GetZ80State()) {
+                    uint16_t pc = _emulator->GetZ80State()->pc;
+                    ui->disassemblerWidget->goToAddress(pc);
+                }
                 break;
         }
 
@@ -567,16 +579,16 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
 void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
 {
-    qDebug() << "DebuggerWindow::handleCPUStepMessage()";
-
-    if (_emulator && _emulator->IsPaused())
+    dispatchToMainThread([this]()
     {
-        // Update debugger state in the main thread
-        dispatchToMainThread([this]()
-        {
-            updateState();
-        });
-    }
+        updateState();
+        
+        // After stepping, ensure we're showing the current PC
+        if (_emulator && _emulator->GetZ80State()) {
+            uint16_t pc = _emulator->GetZ80State()->pc;
+            ui->disassemblerWidget->goToAddress(pc);
+        }
+    });
 }
 
 void DebuggerWindow::continueExecution()
