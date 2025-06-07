@@ -104,6 +104,9 @@ void LabelDialog::setupUI()
     _okButton = new QPushButton(tr("OK"));
     _cancelButton = new QPushButton(tr("Cancel"));
 
+    // Set default button
+    _okButton->setDefault(true);
+
     connect(_okButton, &QPushButton::clicked, this, &LabelDialog::onAccept);
     connect(_cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 
@@ -118,9 +121,21 @@ void LabelDialog::setupUI()
     buttonBox->addButton(_okButton, QDialogButtonBox::AcceptRole);
     buttonBox->addButton(_cancelButton, QDialogButtonBox::RejectRole);
 
+    // Create status label for showing label count
+    _statusLabel = new QLabel(this);
+    _statusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    _statusLabel->setStyleSheet("color: #666666; font-style: italic;");
+    updateStatusLabel(0);
+
+    // Create a container for the status label
+    QHBoxLayout* statusLayout = new QHBoxLayout();
+    statusLayout->addStretch();
+    statusLayout->addWidget(_statusLabel);
+
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->addLayout(formLayout);
     mainLayout->addWidget(_validationLabel);
+    mainLayout->addLayout(statusLayout);
     mainLayout->addWidget(buttonBox);
 
     setLayout(mainLayout);
@@ -242,6 +257,14 @@ void LabelDialog::applyUIDataToLabel()
     }
     _label.active = _activeCheck->isChecked();
     // Physical address will be recalculated by LabelManager if necessary upon adding/updating.
+}
+
+void LabelDialog::updateStatusLabel(int count)
+{
+    if (!_statusLabel)
+        return;
+        
+    _statusLabel->setText(tr("Total labels: %1").arg(count));
 }
 
 void LabelDialog::validateInput()
