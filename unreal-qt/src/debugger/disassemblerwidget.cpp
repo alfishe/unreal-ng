@@ -4,9 +4,9 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QVBoxLayout>
 #include <QMouseEvent>
 #include <QTextBlock>
+#include <QVBoxLayout>
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -36,7 +36,7 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     DisassemblyTextEdit* customTextEdit = new DisassemblyTextEdit(this);
     customTextEdit->setReadOnly(true);
     customTextEdit->setLineWrapMode(QTextEdit::NoWrap);
-    
+
     // Set a monospace font for the disassembler
     QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     font.setStyleHint(QFont::TypeWriter);
@@ -56,8 +56,8 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     m_pcHighlightFormat.setForeground(QColor(0, 0, 0));           // Black text
 
     // Setup breakpoint highlight format
-    m_breakpointFormat.setBackground(QColor(255, 0, 0, 100));     // Light red background
-    m_breakpointFormat.setForeground(QColor(0, 0, 0));           // Black text
+    m_breakpointFormat.setBackground(QColor(255, 0, 0, 100));  // Light red background
+    m_breakpointFormat.setForeground(QColor(0, 0, 0));         // Black text
 
     // Create scroll mode indicator label
     m_scrollModeIndicator = new QLabel(this);
@@ -110,7 +110,8 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::keyDownPressed, this, &DisassemblerWidget::navigateDown);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::enterPressed, this, &DisassemblerWidget::returnToCurrentPC);
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::toggleScrollMode, this, &DisassemblerWidget::toggleScrollMode);
-    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this, &DisassemblerWidget::showGoToAddressDialog);
+    connect(m_disassemblyTextEdit, &DisassemblyTextEdit::goToAddressRequested, this,
+            &DisassemblerWidget::showGoToAddressDialog);
 
     // Connect signals for mouse wheel navigation
     connect(m_disassemblyTextEdit, &DisassemblyTextEdit::wheelScrollUp, this, &DisassemblerWidget::navigateUp);
@@ -171,7 +172,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     m_addressMap.clear();
 
     // Store the starting address to help with debugging
-    int baseLineNumber = 0; // First line in the disassembly view
+    int baseLineNumber = 0;  // First line in the disassembly view
 
     // Store the current PC and display address
     m_currentPC = registers->pc;
@@ -220,7 +221,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         if (decoded.hasJump || decoded.hasRelativeJump)
         {
             uint16_t targetAddr = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-            std::shared_ptr<Label> targetLabel = labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
+            std::shared_ptr<Label> targetLabel =
+                labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
             if (targetLabel)
             {
                 // Add label name in parentheses after the address
@@ -235,7 +237,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         else if (decoded.hasWordOperand)
         {
             // Check for labels in word operands (e.g., LD HL,addr)
-            std::shared_ptr<Label> targetLabel = labelManager ? labelManager->GetLabelByZ80Address(decoded.wordOperand) : nullptr;
+            std::shared_ptr<Label> targetLabel =
+                labelManager ? labelManager->GetLabelByZ80Address(decoded.wordOperand) : nullptr;
             if (targetLabel)
             {
                 // Add label name in parentheses after the address
@@ -251,7 +254,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         {
             // Check for labels in indexed addressing (e.g., LD (IX+disp),A)
             uint16_t targetAddr = (pc + decoded.displacement) & 0xFFFF;
-            std::shared_ptr<Label> targetLabel = labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
+            std::shared_ptr<Label> targetLabel =
+                labelManager ? labelManager->GetLabelByZ80Address(targetAddr) : nullptr;
             if (targetLabel)
             {
                 labelInfo = StringHelper::Format(" ; %s", targetLabel->name.c_str());
@@ -263,48 +267,59 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
         // Format value like: [B] $15FB: CD 2C 16   LABEL:    call $162C (init_screen)
         std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
-        
+
         // Extract label from symbolicLabelInfo if present (format: "; LABEL:")
         std::string labelColumn = "";
-        if (!symbolicLabelInfo.empty() && symbolicLabelInfo.size() > 2) {
+        if (!symbolicLabelInfo.empty() && symbolicLabelInfo.size() > 2)
+        {
             // Remove the "; " prefix and ":" suffix
             labelColumn = symbolicLabelInfo.substr(2, symbolicLabelInfo.size() - 3);
         }
-        
-        // Format: [B] $ADDR: BYTECODE   LABEL:    MNEMONIC
+
+        // Get annotation for the instruction if available
+        std::string annotation;
+        if (decoded.hasRuntime && registers)
+        {
+            annotation = disassembler.getCommandAnnotation(decoded, registers);
+            if (!annotation.empty())
+            {
+                annotation = " <span style='color:gray;'>" + annotation + "</span>";
+            }
+        }
+
+        // Format: [B] $ADDR: BYTECODE   LABEL:    MNEMONIC [ANNOTATION]
         if (!labelColumn.empty())
         {
             // Pre-format the label with blue color
-            std::string formattedLabel = StringHelper::Format("<span style='color:blue;'>%-12s</span>", labelColumn.c_str());
-            
-            ss << StringHelper::Format(
-                "[%s] $%s: %-11s %s%s%s%s",
-                breakpointMarker.c_str(), 
-                pcAddress.c_str(), 
-                hex.c_str(),
-                formattedLabel.c_str(),
-                command.c_str(),
-                runtime.c_str(),
-                labelInfo.c_str()
-            ) << std::endl;
-        } else {
+            std::string formattedLabel =
+                StringHelper::Format("<span style='color:blue;'>%-12s</span>", labelColumn.c_str());
+
+            // Format the disassembly line with all components
+            ss << '[' << breakpointMarker << "] $" << pcAddress << ": " << std::left << std::setw(11) << hex << ' ';
+            ss << formattedLabel;
+            ss << command;
+            ss << annotation;
+            ss << runtime;
+            ss << labelInfo;
+            ss << std::endl;
+        }
+        else
+        {
             // No label, use regular formatting
-            ss << StringHelper::Format("[%s] $%s: %-11s %-12s%s%s%s",
-                breakpointMarker.c_str(), 
-                pcAddress.c_str(), 
-                hex.c_str(),
-                "",  // Empty label column
-                command.c_str(),
-                runtime.c_str(),
-                labelInfo.c_str())
-               << std::endl;
+            // Format the disassembly line without label
+            ss << '[' << breakpointMarker << "] $" << pcAddress << ": " << std::left << std::setw(11) << hex << ' ';
+            ss << std::setw(12) << "";  // Empty label column for alignment
+            ss << command;
+            ss << annotation;
+            ss << runtime;
+            ss << labelInfo;
+            ss << std::endl;
         }
     }
 
     std::string value = ss.str();
     // Convert to QString and enable HTML formatting
-    QString htmlContent = QString("<pre style='font-family:monospace; white-space:pre;'>%1</pre>")
-        .arg(QString::fromStdString(value));
+    QString htmlContent = QString("<pre style='font-family:monospace; white-space:pre;'>%1</pre>").arg(QString::fromStdString(value));
     m_disassemblyTextEdit->setHtml(htmlContent);
 
     // Highlight the current PC instruction and any breakpoints
@@ -605,11 +620,11 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
         // Use different methods based on address range
         if (address >= 0x8000 && address < 0xA000)
         {
-            ramPage = 2; // Common convention for this range
+            ramPage = 2;  // Common convention for this range
         }
         else if (address >= 0xA000 && address < 0xC000)
         {
-            ramPage = 3; // Common convention for this range
+            ramPage = 3;  // Common convention for this range
         }
 
         bankName = "RAM " + std::to_string(ramPage);
@@ -683,10 +698,7 @@ bool DisassemblerWidget::hasBreakpointAtAddress(uint16_t address) const
     for (const auto& pair : allBreakpoints)
     {
         const BreakpointDescriptor* bp = pair.second;
-        if (bp->type == BRK_MEMORY &&
-            (bp->memoryType & BRK_MEM_EXECUTE) &&
-            bp->z80address == address &&
-            bp->active)
+        if (bp->type == BRK_MEMORY && (bp->memoryType & BRK_MEM_EXECUTE) && bp->z80address == address && bp->active)
         {
             return true;
         }
@@ -701,7 +713,8 @@ void DisassemblerWidget::updateBreakpointHighlighting()
 
     // Get the document and iterate through its blocks (lines) safely
     QTextDocument* doc = m_disassemblyTextEdit->document();
-    if (!doc) return;
+    if (!doc)
+        return;
 
     for (QTextBlock block = doc->begin(); block.isValid(); block = block.next())
     {
@@ -747,9 +760,7 @@ void DisassemblerWidget::toggleBreakpointAtAddress(uint16_t address)
         for (const auto& pair : allBreakpoints)
         {
             const BreakpointDescriptor* bp = pair.second;
-            if (bp->type == BRK_MEMORY &&
-                (bp->memoryType & BRK_MEM_EXECUTE) &&
-                bp->z80address == address)
+            if (bp->type == BRK_MEMORY && (bp->memoryType & BRK_MEM_EXECUTE) && bp->z80address == address)
             {
                 bpManager->RemoveBreakpointByID(bp->breakpointID);
                 break;
@@ -798,9 +809,10 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
             }
         }
 
-        if (closestLine >= 0 && minDistance <= 1) // Only use if very close
+        if (closestLine >= 0 && minDistance <= 1)  // Only use if very close
         {
-            qDebug() << "Using closest line:" << closestLine << "with address:" << QString::number(m_addressMap[closestLine], 16);
+            qDebug() << "Using closest line:" << closestLine
+                     << "with address:" << QString::number(m_addressMap[closestLine], 16);
             toggleBreakpointAtAddress(m_addressMap[closestLine]);
         }
     }
@@ -809,9 +821,9 @@ void DisassemblerWidget::handleBreakpointClick(int lineNumber)
 void DisassemblerWidget::showGoToAddressDialog()
 {
     bool ok;
-    QString text = QInputDialog::getText(this, tr("Go to Address"),
-                                         tr("Enter address (decimal or hex with 0x, $, or # prefix):"),
-                                         QLineEdit::Normal, QString(), &ok);
+    QString text =
+        QInputDialog::getText(this, tr("Go to Address"), tr("Enter address (decimal or hex with 0x, $, or # prefix):"),
+                              QLineEdit::Normal, QString(), &ok);
     if (ok && !text.isEmpty())
     {
         uint16_t address = parseAddressInput(text);
@@ -826,9 +838,7 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
     uint16_t address = 0;
 
     // Check for hex format with various prefixes
-    if (trimmed.startsWith("0x", Qt::CaseInsensitive) ||
-        trimmed.startsWith("$") ||
-        trimmed.startsWith("#"))
+    if (trimmed.startsWith("0x", Qt::CaseInsensitive) || trimmed.startsWith("$") || trimmed.startsWith("#"))
     {
         // Remove the prefix
         if (trimmed.startsWith("0x", Qt::CaseInsensitive))
@@ -886,7 +896,7 @@ bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
             // Toggle breakpoint at this line
             handleBreakpointClick(lineNumber);
 
-            return true; // Event handled
+            return true;  // Event handled
         }
     }
 
