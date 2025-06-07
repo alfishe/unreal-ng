@@ -16,6 +16,7 @@
 #include <QStatusBar>
 #include <QMenuBar>
 #include <QToolButton>
+#include <QLabel>
 #include <string>
 #include <cstdint>
 #include <vector>
@@ -85,6 +86,9 @@ private:
     
     // Helper to get a label from a table row
     std::shared_ptr<Label> getLabelFromRow(int row) const;
+    
+    // Update the total labels count display
+    void updateTotalLabelsCount(int count);
 
     LabelManager* _labelManager = nullptr;
 
@@ -97,6 +101,9 @@ private:
     QPushButton* _deleteButton = nullptr;
     QPushButton* _closeButton = nullptr;
 
+    // Label count display
+    QLabel* _totalLabelsLabel = nullptr;
+    
     // Future: Filter UI elements
     // QLineEdit* _searchField = nullptr;
     // QComboBox* _typeFilter = nullptr;

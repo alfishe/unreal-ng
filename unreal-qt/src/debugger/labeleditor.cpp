@@ -14,7 +14,7 @@
 
 // File format filters
 static const QString LABEL_FILTERS =
-    "All Supported Files (*.map *.sym *.vice *.sna *.sna.z80 *.z80 *.sna.zxst *.zxst);;"
+    "All Supported Files (*.map *.sym *.vice);;"
     "Linker Map Files (*.map);;"
     "Symbol Files (*.sym);;"
     "VICE Symbol Files (*.vice);;"
@@ -169,12 +169,17 @@ void LabelEditor::setupUI()
     _deleteButton = new QPushButton(tr("&Delete"), this);
     _closeButton = new QPushButton(tr("&Close"), this);
 
+    // Create label for total count
+    _totalLabelsLabel = new QLabel(this);
+    updateTotalLabelsCount(0);
+
     // Button layout
     QHBoxLayout* buttonLayout = new QHBoxLayout();
     buttonLayout->addWidget(_addButton);
     buttonLayout->addWidget(_editButton);
     buttonLayout->addWidget(_deleteButton);
     buttonLayout->addStretch();
+    buttonLayout->addWidget(_totalLabelsLabel);
     buttonLayout->addWidget(_closeButton);
 
     // Assemble main layout
@@ -414,6 +419,11 @@ void LabelEditor::openRecentFile(QAction* action)
     }
 }
 
+void LabelEditor::updateTotalLabelsCount(int count)
+{
+    _totalLabelsLabel->setText(QString("Total: %1").arg(count));
+}
+
 void LabelEditor::populateLabelTable()
 {
     if (!_labelManager || !_labelTable)
@@ -426,6 +436,7 @@ void LabelEditor::populateLabelTable()
         // Disable sorting while updating to prevent visual glitches
         _labelTable->setSortingEnabled(false);
         _labelTable->setRowCount(0);
+        updateTotalLabelsCount(0);
 
         // Get all labels from the manager
         auto labels = _labelManager->GetAllLabels();
@@ -489,6 +500,7 @@ void LabelEditor::populateLabelTable()
 
         // Re-enable sorting
         _labelTable->setSortingEnabled(true);
+        updateTotalLabelsCount(_labelTable->rowCount());
     }
     catch (const std::exception& e)
     {
@@ -599,6 +611,7 @@ void LabelEditor::addLabel()
                                     newLabel.module, newLabel.comment, newLabel.active);
 
             refreshLabelList();
+            updateTotalLabelsCount(_labelTable->rowCount());
             _statusBar->showMessage(tr("Added new label: %1").arg(QString::fromStdString(newLabel.name)), 3000);
         }
     }
@@ -637,7 +650,7 @@ void LabelEditor::editLabel()
     {
         // Create a copy of the label to edit
         Label editedLabel = *originalLabel;
-        
+
         // Ensure bank and bankOffset are properly initialized if they were not set before
         if (editedLabel.bank == 0xFFFF)
             editedLabel.bank = UINT16_MAX;
@@ -651,18 +664,17 @@ void LabelEditor::editLabel()
         {
             // Get the edited label from the dialog
             Label updatedLabel = dialog.getLabel();
-            
+
             // Check if name was changed and if the new name conflicts with an existing label
-            if (originalLabel->name != updatedLabel.name && 
-                _labelManager->GetLabelByName(updatedLabel.name))
+            if (originalLabel->name != updatedLabel.name && _labelManager->GetLabelByName(updatedLabel.name))
             {
-                QString errorMsg = tr("A label with the name '%1' already exists")
-                                    .arg(QString::fromStdString(updatedLabel.name));
+                QString errorMsg =
+                    tr("A label with the name '%1' already exists").arg(QString::fromStdString(updatedLabel.name));
                 _statusBar->showMessage(errorMsg, 3000);
                 QMessageBox::warning(this, tr("Edit Label Failed"), errorMsg);
                 return;
             }
-            
+
             // Update the label in the label manager
             if (_labelManager->UpdateLabel(updatedLabel))
             {
@@ -673,10 +685,9 @@ void LabelEditor::editLabel()
             else
             {
                 _statusBar->showMessage(tr("Failed to update label"), 3000);
-                QMessageBox::warning(this, tr("Edit Label Failed"), 
-                                   tr("Failed to update the label in the label manager."));
+                QMessageBox::warning(this, tr("Edit Label Failed"),
+                                     tr("Failed to update the label in the label manager."));
             }
-
         }
     }
     catch (const std::exception& e)
