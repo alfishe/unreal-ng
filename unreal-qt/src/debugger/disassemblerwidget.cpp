@@ -1,5 +1,12 @@
 #include "disassemblerwidget.h"
 
+// Column widths for disassembly output
+constexpr int BREAKPOINT_COL_WIDTH = 3;      // [ ]
+constexpr int ADDRESS_COL_WIDTH = 5;        // $XXXX
+constexpr int BYTECODE_COL_WIDTH = 11;       // XX XX XX XX XX
+constexpr int LABEL_COL_WIDTH = 15;          // LABEL_NAME:
+constexpr int MNEMONIC_COL_WIDTH = 24;       // Instruction mnemonic
+
 #include <QApplication>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -268,43 +275,65 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         std::string labelColumn = "";
         if (!symbolicLabelInfo.empty() && symbolicLabelInfo.size() > 2) {
             // Remove the "; " prefix and ":" suffix
-            labelColumn = symbolicLabelInfo.substr(2, symbolicLabelInfo.size() - 3);
+            labelColumn = symbolicLabelInfo.substr(2, symbolicLabelInfo.size() - 3) + ":";
         }
         
-        // Format: [B] $ADDR: BYTECODE   LABEL:    MNEMONIC
-        if (!labelColumn.empty())
-        {
-            // Pre-format the label with blue color
-            std::string formattedLabel = StringHelper::Format("<span style='color:blue;'>%-12s</span>", labelColumn.c_str());
-            
-            ss << StringHelper::Format(
-                "[%s] $%s: %-11s %s%s%s%s",
-                breakpointMarker.c_str(), 
-                pcAddress.c_str(), 
-                hex.c_str(),
-                formattedLabel.c_str(),
-                command.c_str(),
-                runtime.c_str(),
-                labelInfo.c_str()
-            ) << std::endl;
-        } else {
-            // No label, use regular formatting
-            ss << StringHelper::Format("[%s] $%s: %-11s %-12s%s%s%s",
-                breakpointMarker.c_str(), 
-                pcAddress.c_str(), 
-                hex.c_str(),
-                "",  // Empty label column
-                command.c_str(),
-                runtime.c_str(),
-                labelInfo.c_str())
-               << std::endl;
+        // Ensure address is 4 digits with leading zeros
+        std::string formattedAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc - decoded.fullCommandLen, ""));
+        if (formattedAddress.length() < 4) {
+            formattedAddress = std::string(4 - formattedAddress.length(), '0') + formattedAddress;
         }
+        
+        // Truncate long mnemonics to fit in the column
+        std::string truncatedCommand = command;
+        if (truncatedCommand.length() > MNEMONIC_COL_WIDTH) {
+            truncatedCommand = truncatedCommand.substr(0, MNEMONIC_COL_WIDTH - 3) + "...";
+        }
+        
+        // Format with fixed-width columns and CSS classes
+        ss << StringHelper::Format(
+            "<span class='breakpoint'>[%s]</span> "
+            "<span class='address'>$%s</span>: "
+            "<span class='bytes'>%-*s</span> ",
+            breakpointMarker.c_str(),
+            formattedAddress.c_str(),
+            BYTECODE_COL_WIDTH, hex.c_str()
+        );
+
+        // Add label column if present
+        if (!labelColumn.empty()) {
+            ss << StringHelper::Format(
+                "<span class='label'>%-*s</span> ",
+                LABEL_COL_WIDTH, labelColumn.c_str()
+            );
+        } else {
+            // Empty label column to maintain alignment
+            ss << StringHelper::Format("%-*s", LABEL_COL_WIDTH + 1, " ");
+        }
+
+        // Add mnemonic and comments
+        ss << StringHelper::Format(
+            "<span class='mnemonic'>%-*s</span>"
+            "<span class='comment'>%s%s</span>",
+            MNEMONIC_COL_WIDTH, truncatedCommand.c_str(),
+            runtime.c_str(),
+            labelInfo.c_str()
+        ) << std::endl;
     }
 
     std::string value = ss.str();
-    // Convert to QString and enable HTML formatting
-    QString htmlContent = QString("<pre style='font-family:monospace; white-space:pre;'>%1</pre>")
-        .arg(QString::fromStdString(value));
+    // Convert to QString and enable HTML formatting with fixed-width font
+    QString htmlContent = QString(
+        "<html><head><style>"
+        "pre { font-family: 'Courier New', monospace; white-space: pre; tab-size: 24; }"
+        ".breakpoint { color: red; }"
+        ".address { color: #008000; }"  // Dark green for addresses
+        ".bytes { color: #0000FF; }"    // Blue for byte codes
+        ".label { color: #8A2BE2; }"    // Blue violet for labels
+        ".mnemonic { color: #000000; }"  // Black for mnemonics
+        ".comment { color: #808080; }"   // Gray for comments
+        "</style></head><body><pre>%1</pre></body></html>"
+    ).arg(QString::fromStdString(value));
     m_disassemblyTextEdit->setHtml(htmlContent);
 
     // Highlight the current PC instruction and any breakpoints
