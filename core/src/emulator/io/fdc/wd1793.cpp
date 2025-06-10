@@ -645,6 +645,9 @@ uint8_t WD1793::getStatusRegister()
 
     // BUSY (bit 0) is driven by an FDC state machine and set directly during command processing
 
+    if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister > 0 && _trackRegister == _dataRegister && _selectedDrive->isTrack00())
+        (void)_statusRegister;
+
     return _statusRegister;
 }
 
@@ -868,6 +871,9 @@ void WD1793::processWD93Command(uint8_t value)
 
     if (command < sizeof(commandTable) / sizeof(commandTable[0]))
     {
+        // Register call in a collection
+        _collector->recordCommandStart(*this, value);
+
         const CommandHandler& handler = commandTable[command];
         bool isBusy = _statusRegister & WDS_BUSY;
 
@@ -1414,6 +1420,9 @@ void WD1793::endCommand()
     _statusRegister &= ~WDS_BUSY;  // Reset BUSY flag
     raiseIntrq();                  // INTRQ must be set at a completion of any command
 
+    // Notify collector about command completion
+    _collector->recordCommandEnd(*this);
+
     // Clear FIFO
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
@@ -1517,12 +1526,21 @@ void WD1793::processStep()
         raiseIntrq();
 
         transitionFSM(WD1793::S_END_COMMAND);
+        return;
     }
     else
     {
         _stepCounter++;
     }
     /// endregion </Check for step limits>
+
+    // We've reached head target position
+    if (_trackRegister == _dataRegister)
+    {
+        _selectedDrive->setTrack(_trackRegister);
+        type1CommandVerify();
+        return;
+    }
 
     /// region <Make head step>
     int8_t stepCorrection = _stepDirectionIn ? 1 : -1;
@@ -1543,9 +1561,7 @@ void WD1793::processStep()
     else if (_lastDecodedCmd == WD_CMD_SEEK && _dataRegister == _trackRegister)  // SEEK command finished
     {
         // Apply track change to selected FDD
-        uint8_t driveTrack = _selectedDrive->getTrack();
-        driveTrack += stepCorrection;
-        _selectedDrive->setTrack(driveTrack);
+        _selectedDrive->setTrack(_trackRegister);
 
         // Check if position verification was requested
         type1CommandVerify();

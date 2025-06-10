@@ -44,7 +44,6 @@ protected:
     bool _headLoad = false;             // Activate head load solenoid
 
     // Output signals
-    bool _track00 = false;
     bool _index = false;
     bool _ready = false;
     bool _writeProtect = false;
@@ -95,9 +94,9 @@ public:
     };
 
     int8_t getTrack() { return _track; };
-    void setTrack(int8_t track) { _track = track; _track00 = _track == 0; };
+    void setTrack(int8_t track) { _track = track; };
 
-    bool isTrack00() { return _track00; }
+    bool isTrack00() { return _track == 0; }
     bool isIndex() { return _index; }
     bool isWriteProtect() { return _writeProtect; }
     bool isReady() { return _ready; }

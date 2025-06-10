@@ -28,6 +28,7 @@ constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";     // Request to open a file or file dialog
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";     // Notification that breakpoints have been added, removed, or modified
+constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                   // Notification that a label has been added, removed, or modified
 
 /// endregion </Notification center events>
 
