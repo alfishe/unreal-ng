@@ -1,6 +1,14 @@
 #include "disassemblerwidget.h"
 
+// Column widths for disassembly output
+constexpr int BREAKPOINT_COL_WIDTH = 3;      // [ ]
+constexpr int ADDRESS_COL_WIDTH = 5;        // $XXXX
+constexpr int BYTECODE_COL_WIDTH = 11;       // XX XX XX XX XX
+constexpr int LABEL_COL_WIDTH = 15;          // LABEL_NAME:
+constexpr int MNEMONIC_COL_WIDTH = 24;       // Instruction mnemonic
+
 #include <QApplication>
+#include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -34,8 +42,14 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(ne
     // Create a custom DisassemblyTextEdit and replace the default one
     DisassemblyTextEdit* customTextEdit = new DisassemblyTextEdit(this);
     customTextEdit->setReadOnly(true);
-    customTextEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
-    customTextEdit->setFont(ui->disassemblyTextEdit->font());
+    customTextEdit->setLineWrapMode(QTextEdit::NoWrap);
+    
+    // Set a monospace font for the disassembler
+    QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    font.setStyleHint(QFont::TypeWriter);
+    int newSize = 12;  // Default is usually 9 points
+    font.setPointSize(newSize);
+    customTextEdit->setFont(font);
 
     // Replace the original text edit with our custom one
     QLayout* layout = ui->disassemblyTextEdit->parentWidget()->layout();
@@ -152,21 +166,13 @@ BreakpointManager* DisassemblerWidget::getBreakpointManager() const
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
+    // Number of instructions to disassemble
+    static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
+
     Memory& memory = *getMemory();
     Z80Registers* registers = getZ80Registers();
     Z80Disassembler& disassembler = *getDisassembler();
     LabelManager* labelManager = getEmulator()->GetDebugManager()->GetLabelManager();
-
-    // Debug output for label loading
-    if (labelManager)
-    {
-        qDebug() << "Label count:" << labelManager->GetLabelCount();
-        auto allLabels = labelManager->GetAllLabels();
-        for (const auto& label : allLabels)
-        {
-            qDebug() << "Label:" << QString::fromStdString(label->name) << "at" << QString::number(label->address, 16);
-        }
-    }
 
     // Clear the address map before generating new disassembly
     m_addressMap.clear();
@@ -186,8 +192,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     DecodedInstruction decoded;
     std::stringstream ss;
 
-    // Disassemble 10 instructions instead of just 4 to provide more context
-    for (size_t i = 0; i < 10; i++)
+    // Disassemble instructions to provide more context
+    for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE; i++)
     {
         std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
         std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
@@ -262,21 +268,73 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         pcPhysicalAddress += decoded.fullCommandLen;
         pc += decoded.fullCommandLen;
 
-        // Format value like: [B] $15FB: CD 2C 16   call $162C (init_screen)
+        // Format value like: [B] $15FB: CD 2C 16   LABEL:    call $162C (init_screen)
         std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
-        ss << StringHelper::Format("[%s] $%s: %-11s   %s%s%s%s",
-            breakpointMarker.c_str(), 
-            pcAddress.c_str(), 
-            hex.c_str(), 
-            command.c_str(),
+        
+        // Extract label from symbolicLabelInfo if present (format: "; LABEL:")
+        std::string labelColumn = "";
+        if (!symbolicLabelInfo.empty() && symbolicLabelInfo.size() > 2) {
+            // Remove the "; " prefix and ":" suffix
+            labelColumn = symbolicLabelInfo.substr(2, symbolicLabelInfo.size() - 3) + ":";
+        }
+        
+        // Ensure address is 4 digits with leading zeros
+        std::string formattedAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc - decoded.fullCommandLen, ""));
+        if (formattedAddress.length() < 4) {
+            formattedAddress = std::string(4 - formattedAddress.length(), '0') + formattedAddress;
+        }
+        
+        // Truncate long mnemonics to fit in the column
+        std::string truncatedCommand = command;
+        if (truncatedCommand.length() > MNEMONIC_COL_WIDTH) {
+            truncatedCommand = truncatedCommand.substr(0, MNEMONIC_COL_WIDTH - 3) + "...";
+        }
+        
+        // Format with fixed-width columns and CSS classes
+        ss << StringHelper::Format(
+            "<span class='breakpoint'>[%s]</span> "
+            "<span class='address'>$%s</span>: "
+            "<span class='bytes'>%-*s</span> ",
+            breakpointMarker.c_str(),
+            formattedAddress.c_str(),
+            BYTECODE_COL_WIDTH, hex.c_str()
+        );
+
+        // Add label column if present
+        if (!labelColumn.empty()) {
+            ss << StringHelper::Format(
+                "<span class='label'>%-*s</span> ",
+                LABEL_COL_WIDTH, labelColumn.c_str()
+            );
+        } else {
+            // Empty label column to maintain alignment
+            ss << StringHelper::Format("%-*s", LABEL_COL_WIDTH + 1, " ");
+        }
+
+        // Add mnemonic and comments
+        ss << StringHelper::Format(
+            "<span class='mnemonic'>%-*s</span>"
+            "<span class='comment'>%s%s</span>",
+            MNEMONIC_COL_WIDTH, truncatedCommand.c_str(),
             runtime.c_str(),
-            labelInfo.c_str(),
-            symbolicLabelInfo.c_str())
-           << std::endl;
+            labelInfo.c_str()
+        ) << std::endl;
     }
 
     std::string value = ss.str();
-    m_disassemblyTextEdit->setPlainText(value.c_str());
+    // Convert to QString and enable HTML formatting with fixed-width font
+    QString htmlContent = QString(
+        "<html><head><style>"
+        "pre { font-family: 'Courier New', monospace; white-space: pre; tab-size: 24; }"
+        ".breakpoint { color: red; }"
+        ".address { color: #008000; }"  // Dark green for addresses
+        ".bytes { color: #0000FF; }"    // Blue for byte codes
+        ".label { color: #8A2BE2; }"    // Blue violet for labels
+        ".mnemonic { color: #000000; }"  // Black for mnemonics
+        ".comment { color: #808080; }"   // Gray for comments
+        "</style></head><body><pre>%1</pre></body></html>"
+    ).arg(QString::fromStdString(value));
+    m_disassemblyTextEdit->setHtml(htmlContent);
 
     // Highlight the current PC instruction and any breakpoints
     highlightCurrentPC();

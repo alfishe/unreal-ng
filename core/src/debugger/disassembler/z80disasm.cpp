@@ -2032,7 +2032,30 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
         // Generate annotation if we have runtime context
         if (registers != nullptr)
         {
-            decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
+            bool isCurrentInstruction = (decodedInstruction.instructionAddr == registers->pc);
+            
+            // For current instruction, always show the command annotation
+            // For other instructions, only show if it's not a conditional jump/call
+            if (isCurrentInstruction || 
+                !((decodedInstruction.hasJump || decodedInstruction.hasRelativeJump) && decodedInstruction.hasCondition))
+            {
+                decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
+            }
+            // For non-current conditional jumps, show a simpler annotation if needed
+            else if (!isCurrentInstruction && 
+                    (decodedInstruction.hasJump || decodedInstruction.hasRelativeJump) && 
+                    decodedInstruction.hasCondition)
+            {
+                // Show just the target address without the condition evaluation
+                if (decodedInstruction.hasJump)
+                {
+                    decodedInstruction.annotation = StringHelper::Format("Target: #%04X", decodedInstruction.jumpAddr);
+                }
+                else if (decodedInstruction.hasRelativeJump)
+                {
+                    decodedInstruction.annotation = StringHelper::Format("Target: #%04X", decodedInstruction.relJumpAddr);
+                }
+            }
         }
 
         // Populate 'decoded' output param if available
@@ -2201,11 +2224,12 @@ std::string Z80Disassembler::getRuntimeHints(DecodedInstruction& decoded)
 
     std::string result;
 
-    if (decoded.hasJump)
+    // Only show jump targets if they're not already shown in the annotation
+    if (decoded.hasJump && !(decoded.hasCondition && !decoded.annotation.empty()))
     {
         result += StringHelper::Format("Jump to: #%04X", decoded.jumpAddr);
     }
-    else if (decoded.hasRelativeJump)
+    else if (decoded.hasRelativeJump && !(decoded.hasCondition && !decoded.annotation.empty()))
     {
         result += StringHelper::Format("Jump to: #%04X", decoded.relJumpAddr);
     }

@@ -6,7 +6,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QObject>
-#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QTextCharFormat>
 #include <QWidget>
 #include <QInputDialog>
@@ -27,11 +27,11 @@ QT_END_NAMESPACE
 class DebuggerWindow;
 
 // Custom QPlainTextEdit to handle keyboard navigation in disassembly view
-class DisassemblyTextEdit : public QPlainTextEdit
+class DisassemblyTextEdit : public QTextEdit
 {
     Q_OBJECT
 public:
-    explicit DisassemblyTextEdit(QWidget* parent = nullptr) : QPlainTextEdit(parent) {}
+    explicit DisassemblyTextEdit(QWidget* parent = nullptr) : QTextEdit(parent) {}
 
 signals:
     void keyUpPressed();
@@ -75,7 +75,7 @@ protected:
         }
         else
         {
-            QPlainTextEdit::keyPressEvent(event);
+            QTextEdit::keyPressEvent(event);
         }
     }
     
@@ -100,7 +100,7 @@ protected:
         else
         {
             // Pass horizontal scrolling to the parent class
-            QPlainTextEdit::wheelEvent(event);
+            QTextEdit::wheelEvent(event);
         }
     }
 };

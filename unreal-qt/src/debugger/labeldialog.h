@@ -39,6 +39,7 @@ private:
     bool isAddressValid(const QString& addressStr, uint16_t& addressValue);
     bool isBankValid(const QString& bankStr, uint16_t& bankValue);
     bool isBankAddressValid(const QString& bankAddrStr, uint16_t& bankAddrValue, bool anyBank = false);
+    void updateStatusLabel(int count);
 
     LabelManager* _labelManager = nullptr;
     Mode _mode;
@@ -59,4 +60,5 @@ private:
     QPushButton* _okButton = nullptr;
     QPushButton* _cancelButton = nullptr;
     QLabel* _validationLabel = nullptr;
+    QLabel* _statusLabel = nullptr;
 };
