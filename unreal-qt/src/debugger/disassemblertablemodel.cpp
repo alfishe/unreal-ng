@@ -189,17 +189,31 @@ QVariant DisassemblerTableModel::data(const QModelIndex& index, int role) const
         return QVariant();
     }
 
-    // Protection against empty cache
-    if (m_decodedInstructionsCache.isEmpty())
+    // Protection against empty cache or invalid row
+    if (m_decodedInstructionsCache.isEmpty() || index.row() < 0 || index.row() >= m_decodedInstructionsCache.size())
     {
+        qDebug() << "Invalid cache access - empty or row out of range. Row:" << index.row() 
+                 << "Cache size:" << m_decodedInstructionsCache.size();
         return QVariant();
     }
 
     // Get the instruction at the current row
     auto it = m_decodedInstructionsCache.begin();
-    std::advance(it, index.row());
-    if (it == m_decodedInstructionsCache.end())
+    try 
+    {
+        std::advance(it, index.row());
+        if (it == m_decodedInstructionsCache.end())
+        {
+            qDebug() << "Failed to advance iterator to row:" << index.row();
+            return QVariant();
+        }
+    }
+    catch (const std::exception& e)
+    {
+        qCritical() << "Exception advancing iterator:" << e.what() << "Row:" << index.row() 
+                   << "Cache size:" << m_decodedInstructionsCache.size();
         return QVariant();
+    }
 
     const uint16_t addr = it.key();
     const auto& instr = it.value();
