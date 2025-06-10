@@ -93,6 +93,8 @@ protected:
     
     // Fields
     Emulator* _emulator = nullptr;
+    bool _isAttached = false;
+    uint16_t _lastDisassembledPC = 0xFFFF;  // Track last disassembled PC to avoid redundant updates
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
     size_t _curPageOffset;  // Currently displayed in hex view memory page offset
