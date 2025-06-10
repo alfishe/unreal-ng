@@ -10,6 +10,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 // @file labelmanager.cpp
 // @brief Implementation of the LabelManager class for managing debug symbols and labels
@@ -104,6 +105,10 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16
     }
     _labelsByName[name] = label;
 
+    // Notify about the new label
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+
     return true;
 }
 
@@ -129,6 +134,10 @@ bool LabelManager::RemoveLabel(const std::string& name)
     }
     _labelsByName.erase(it);
 
+    // Notify about the removed label
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+
     return true;
 }
 
@@ -137,9 +146,19 @@ bool LabelManager::RemoveLabel(const std::string& name)
 // Clears all internal data structures and frees all allocated resources.
 void LabelManager::ClearAllLabels()
 {
+    // Check if we have any labels before clearing
+    bool hadLabels = !_labelsByName.empty();
+    
     _labelsByZ80Address.clear();
     _labelsByPhysicalAddress.clear();
     _labelsByName.clear();
+    
+    // Notify about clearing all labels if there were any
+    if (hadLabels)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_LABEL_CHANGED);
+    }
 }
 
 // @brief Find a label by its Z80 address
@@ -194,7 +213,7 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
     if (it == _labelsByName.end())
     {
         // Label with this name does not exist, cannot update
-        if (_logger) _logger->Warning(_MODULE, _SUBMODULE, "UpdateLabel failed: Label '%s' not found.", updatedLabel.name.c_str());
+        _logger->Warning(_MODULE, _SUBMODULE, "UpdateLabel failed: Label '%s' not found.", updatedLabel.name.c_str());
         return false;
     }
 
@@ -223,7 +242,6 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
         _labelsByZ80Address[existingLabel->address] = existingLabel;
     }
 
-    // Update physical address map if physical address changed
     // Update physical address map if physical address changed or its validity changed
     if (existingLabel->physicalAddress != oldPhysicalAddress)
     {
@@ -236,7 +254,13 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
             _labelsByPhysicalAddress[existingLabel->physicalAddress] = existingLabel;
         }
     }
-    if (_logger) _logger->Debug(_MODULE, _SUBMODULE, "Label '%s' updated successfully.", existingLabel->name.c_str());
+
+    _logger->Debug(_MODULE, _SUBMODULE, "Label '%s' updated successfully.", existingLabel->name.c_str());
+
+    // Notify about the updated label
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+
     return true;
 }
 
