@@ -89,6 +89,28 @@ void DisassemblerWidget::initializeTable()
     vHeader->setVisible(false);  // Hide vertical header
     vHeader->setDefaultSectionSize(18);
     vHeader->setMinimumSectionSize(1);
+    
+    // Enable grid for the table
+    //tableView->setShowGrid(true);
+    //tableView->setGridStyle(Qt::SolidLine);
+    
+    // Style the header with borders
+    QString headerStyle =
+        "QHeaderView::section {"
+        "    background: transparent;"
+        "    border: none;"
+        "    border-right: 1px solid #c0c0c0;"
+        "    border-bottom: 1px solid #c0c0c0;"
+        "    padding: 4px;"
+        "    margin: 0;"
+        "}";
+    tableView->horizontalHeader()->setStyleSheet(headerStyle);
+
+    // Calculate header height based on font metrics
+    // We need to ensure the header is tall enough to show the text + border
+    QFontMetrics fm(tableView->font());
+    int headerHeight = fm.height() + 8;  // Add some padding
+    tableView->horizontalHeader()->setFixedHeight(headerHeight);
 
     // Connect signals
     connect(tableView->selectionModel(), &QItemSelectionModel::currentRowChanged, this,

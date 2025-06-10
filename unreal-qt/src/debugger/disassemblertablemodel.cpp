@@ -700,7 +700,7 @@ void DisassemblerTableModel::disassembleForward(uint16_t start, uint16_t end)
 
     auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
     auto* memory = m_emulator->GetMemory();
-    
+
     uint16_t addr = start;
 
     while (addr <= end && addr >= start)
