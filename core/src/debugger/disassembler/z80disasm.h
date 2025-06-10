@@ -265,14 +265,15 @@ class Memory;
 
 class Z80Disassembler
 {
-    /// Maximum length of a Z80 instruction in bytes (prefix + opcode + operands)
-    static constexpr size_t MAX_INSTRUCTION_LENGTH = 4;
-    
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISASSEMBLER;
     const uint16_t _SUBMODULE = PlatformDisassemblerSubmodulesEnum::SUBMODULE_DISASSEMBLER_CORE;
     /// endregion </ModuleLogger definitions for Module/Submodule>
+
+public:
+    /// Maximum length of a Z80 instruction in bytes (prefix + opcode + operands)
+    static constexpr size_t MAX_INSTRUCTION_LENGTH = 4;
 
     /// region <Static>
 protected:

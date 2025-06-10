@@ -239,7 +239,7 @@ void DebuggerWindow::updateState()
 
         // Update disassembler widget
         ui->disassemblerWidget->setDisassemblerAddress(state->Z80Registers::pc);
-        ui->disassemblerWidget->refresh();
+        //ui->disassemblerWidget->refresh();
 
         // Update memory banks widget
         ui->memorypagesWidget->refresh();

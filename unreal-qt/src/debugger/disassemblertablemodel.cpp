@@ -13,44 +13,101 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 
+/// @brief Constructs a DisassemblerTableModel with the given parent and emulator
+/// @param emulator Pointer to the emulator instance
+/// @param parent Parent QObject
 DisassemblerTableModel::DisassemblerTableModel(Emulator* emulator, QObject* parent)
-    : QAbstractTableModel(parent),
-      m_emulator(emulator),
-      m_startAddress(0),
-      m_endAddress(0xFFFF),
-      m_currentPC(0),
-      m_visibleStart(0),
-      m_visibleEnd(0x1FF)
+    : QAbstractTableModel(parent), m_emulator(emulator), m_currentPC(0), m_visibleStart(0), m_visibleEnd(0x1FF)
 {
     // Initialize headers
     m_headers << "Address" << "Opcode" << "Label" << "Mnemonic" << "Annotation" << "Comment";
-    
+
     // Notify the view that the model has been reset
     beginResetModel();
-    
+
     // Load initial range if we have an emulator
     if (m_emulator)
     {
         setVisibleRange(m_visibleStart, m_visibleEnd);
     }
-    
+
     endResetModel();
-    
+
     qDebug() << "DisassemblerTableModel initialized with" << m_headers.size() << "columns";
 }
 
+/// @brief Destroys the DisassemblerTableModel
+/// Cleans up any resources used by the model
+DisassemblerTableModel::~DisassemblerTableModel()
+{
+    // Clear the emulator reference to prevent any access during destruction
+    m_emulator = nullptr;
+    m_decodedInstructionsCache.clear();
+}
+
+/// @brief Resets the disassembly model
+/// Clears the cache and reloads the current visible range
+void DisassemblerTableModel::reset()
+{
+    beginResetModel();
+    m_decodedInstructionsCache.clear();
+    m_visibleStart = 0;
+    m_visibleEnd = 0x01FF;
+    m_currentPC = 0;
+    endResetModel();
+}
+
+/// @brief Refreshes the disassembly view by clearing and reloading the cache
+/// This method is called when the emulator state changes and we need to update the disassembly
 void DisassemblerTableModel::refresh()
 {
+    qDebug() << "DisassemblerTableModel::refresh() called";
+
     if (!m_emulator)
     {
         beginResetModel();
-        m_instructions.clear();
+        m_decodedInstructionsCache.clear();
         endResetModel();
         return;
     }
-    setVisibleRange(m_visibleStart, m_visibleEnd);
+
+    // Store current PC before refresh
+    uint16_t currentPC = m_currentPC;
+
+    // Calculate visible range centered on current PC
+    const uint16_t rangeHalfSize = 0x80;
+    uint16_t visibleStart = (currentPC >= rangeHalfSize) ? (currentPC - rangeHalfSize) : 0;
+    uint16_t visibleEnd = (currentPC <= (0xFFFF - rangeHalfSize)) ? (currentPC + rangeHalfSize) : 0xFFFF;
+
+    // Begin model reset
+    beginResetModel();
+
+    // Clear the instruction cache to force reloading
+    m_decodedInstructionsCache.clear();
+
+    // Update visible range and reload instructions
+    m_visibleStart = visibleStart;
+    m_visibleEnd = visibleEnd;
+
+    // Calculate range to load with padding
+    const uint16_t PADDING = 0x100;
+    uint16_t loadStart = (m_visibleStart > PADDING) ? (m_visibleStart - PADDING) : 0;
+    uint16_t loadEnd = (m_visibleEnd < (0xFFFF - PADDING)) ? (m_visibleEnd + PADDING) : 0xFFFF;
+
+    // Load disassembly for the range
+    loadDisassemblyRange(loadStart, loadEnd);
+
+    // End model reset
+    endResetModel();
+
+    qDebug() << "DisassemblerTableModel::refresh() completed with" << m_decodedInstructionsCache.size()
+             << "instructions. Visible range: 0x" << QString::number(m_visibleStart, 16) << " to 0x"
+             << QString::number(m_visibleEnd, 16);
 }
 
+/// @brief Sets the emulator instance to be used for disassembly
+/// @param emulator Pointer to the emulator instance
+/// This will clear the current cache and reload the disassembly for the new emulator
 void DisassemblerTableModel::setEmulator(Emulator* emulator)
 {
     // If setting to the same emulator, do nothing
@@ -63,7 +120,7 @@ void DisassemblerTableModel::setEmulator(Emulator* emulator)
 
     beginResetModel();
     // Clear existing data before changing the emulator
-    m_instructions.clear();
+    m_decodedInstructionsCache.clear();
     m_emulator = emulator;
     m_currentPC = 0;
     endResetModel();
@@ -91,31 +148,34 @@ void DisassemblerTableModel::setEmulator(Emulator* emulator)
     }
 }
 
-DisassemblerTableModel::~DisassemblerTableModel()
+/// @brief Returns the number of rows in the model
+/// @param parent Parent model index (unused)
+/// @return Number of rows in the visible range
+int DisassemblerTableModel::rowCount(const QModelIndex& /*parent*/) const
 {
-    // Clear the emulator reference to prevent any access during destruction
-    m_emulator = nullptr;
-    m_instructions.clear();
+    return m_decodedInstructionsCache.size();
 }
 
-int DisassemblerTableModel::rowCount(const QModelIndex&) const
-{
-    return m_instructions.size();
-}
-
-int DisassemblerTableModel::columnCount(const QModelIndex&) const
+/// @brief Returns the number of columns in the model
+/// @param parent Parent model index (unused)
+/// @return Number of columns (fixed at 6: Address, Opcode, Label, Mnemonic, Annotation, Comment)
+int DisassemblerTableModel::columnCount(const QModelIndex& /*parent*/) const
 {
     return m_headers.size();
 }
 
-QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) const
+/// @brief Returns the data for the given role at the specified index
+/// @param index Model index to get data for
+/// @param role Qt item data role
+/// @return QVariant containing the requested data
+QVariant DisassemblerTableModel::data(const QModelIndex& index, int role) const
 {
     if (!index.isValid())
     {
         qDebug() << "Invalid index requested";
         return QVariant();
     }
-    
+
     if (!m_emulator)
     {
         qDebug() << "No emulator available for data request";
@@ -123,28 +183,35 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
     }
 
     // Get the instruction for this row
-    if (index.row() < 0 || index.row() >= m_instructions.size())
+    if (index.row() < 0 || index.row() >= m_decodedInstructionsCache.size())
     {
-        qDebug() << "Row out of range:" << index.row() << "size:" << m_instructions.size();
+        qDebug() << "Row out of range:" << index.row() << "size:" << m_decodedInstructionsCache.size();
         return QVariant();
     }
 
-    // Get the address and instruction for this row
-    auto it = m_instructions.begin();
+    // Protection against empty cache
+    if (m_decodedInstructionsCache.isEmpty())
+    {
+        return QVariant();
+    }
+
+    // Get the instruction at the current row
+    auto it = m_decodedInstructionsCache.begin();
     std::advance(it, index.row());
-    if (it == m_instructions.end())
-    {
-        qDebug() << "Failed to get instruction for row:" << index.row();
+    if (it == m_decodedInstructionsCache.end())
         return QVariant();
-    }
 
-    uint16_t addr = it.key();
+    const uint16_t addr = it.key();
     const auto& instr = it.value();
 
     if (role == Qt::UserRole)
     {
-        // Return the raw address for internal use
-        return addr;
+        return addr;  // Return the address for internal use
+    }
+    else if (role == Qt::BackgroundRole)
+    {
+        // Highlight the current PC row with a light yellow background
+        return addr == m_currentPC ? QBrush(QColor(255, 255, 200)) : QVariant();
     }
     else if (role == Qt::DisplayRole || role == Qt::EditRole)
     {
@@ -171,7 +238,7 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
             case 2:  // Label
                 result = QString::fromStdString(instr.label);
                 break;
-                
+
             case 3:  // Mnemonic
                 result = QString::fromStdString(instr.mnemonic);
                 break;
@@ -183,17 +250,17 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
             case 5:  // Comment
                 result = QString::fromStdString(instr.comment);
                 break;
-                
+
             default:
                 qDebug() << "Invalid column requested:" << index.column();
                 return QVariant();
         }
-        
-        qDebug() << "Data requested for row:" << index.row() 
-                 << "col:" << index.column() 
-                 << "addr:" << QString("0x%1").arg(addr, 4, 16, QChar('0'))
-                 << "value:" << result;
-        
+
+        //        qDebug() << "Data requested for row:" << index.row()
+        //                 << "col:" << index.column()
+        //                 << "addr:" << QString("0x%1").arg(addr, 4, 16, QChar('0'))
+        //                 << "value:" << result;
+
         return result;
     }
     else if (role == Qt::TextAlignmentRole)
@@ -217,6 +284,11 @@ QVariant DisassemblerTableModel::data_impl(const QModelIndex& index, int role) c
     return QVariant();
 }
 
+/// @brief Returns the header data for the given section and orientation
+/// @param section Section (column) index
+/// @param orientation Header orientation (horizontal or vertical)
+/// @param role Qt item data role
+/// @return QVariant containing the header data
 QVariant DisassemblerTableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (orientation == Qt::Horizontal && role == Qt::DisplayRole)
@@ -230,6 +302,9 @@ QVariant DisassemblerTableModel::headerData(int section, Qt::Orientation orienta
     return QVariant();
 }
 
+/// @brief Returns the item flags for the given index
+/// @param index Model index to get flags for
+/// @return Qt::ItemFlags for the item
 Qt::ItemFlags DisassemblerTableModel::flags(const QModelIndex& index) const
 {
     if (!index.isValid())
@@ -238,386 +313,505 @@ Qt::ItemFlags DisassemblerTableModel::flags(const QModelIndex& index) const
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }
 
-void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
-{
-    qDebug() << "setVisibleRange called with start:" << QString::number(start, 16)
-             << "end:" << QString::number(end, 16);
-
-    // Don't do anything if the range hasn't changed
-    if (start == m_visibleStart && end == m_visibleEnd)
-    {
-        qDebug() << "Range unchanged, skipping";
-        return;
-    }
-
-    beginResetModel();
-
-    // Store the visible range
-    m_visibleStart = start;
-    m_visibleEnd = end;
-
-    // Calculate range to load with padding
-    const uint16_t PADDING = 0x100;
-    uint16_t loadStart = (start > PADDING) ? start - PADDING : 0;
-    uint16_t loadEnd = (end < 0xFFFF - PADDING) ? end + PADDING : 0xFFFF;
-
-    // Ensure the requested range is loaded
-    ensureRangeLoaded(loadStart, loadEnd);
-
-    // Clean up old instructions that are far outside the visible range
-    if (!m_instructions.isEmpty())
-    {
-        auto it = m_instructions.begin();
-        while (it != m_instructions.end())
-        {
-            uint16_t addr = it.key();
-            if (addr < loadStart - PADDING || addr > loadEnd + PADDING)
-            {
-                it = m_instructions.erase(it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
-    }
-
-    endResetModel();
-
-    // Notify views that the data has changed
-    emit dataChanged(createIndex(0, 0), createIndex(rowCount() - 1, columnCount() - 1));
-    
-    // Force a layout change to ensure the view updates
-    emit layoutChanged();
-    
-    qDebug() << "setVisibleRange completed. Loaded" << m_instructions.size() 
-             << "instructions in range" << QString::number(start, 16) 
-             << "to" << QString::number(end, 16);
-}
-
+/// @brief Updates the current program counter (PC) and ensures its visibility in the disassembly view
+/// @param pc The new program counter value to set
+///
+/// This method performs the following actions:
+/// 1. Updates the internal PC state if it has changed
+/// 2. Checks if the new PC is within the currently cached instructions
+/// 3. If PC is not in cache, triggers a reload of the disassembly range centered on the PC
+/// 4. If PC is near the edge of the current range, expands the visible range to keep PC centered
+/// 5. Updates the view to highlight the current instruction
+///
+/// Events triggered:
+/// - dataChanged(): When the old or new PC instructions need visual updates
+/// - currentPCChanged(pc): After PC is updated, with the new PC value
+/// - May trigger setVisibleRange() which emits layoutChanged() if the visible range changes
+///
+/// The method ensures smooth scrolling by maintaining a buffer of instructions around the PC
+/// and only reloading when necessary for performance.
 void DisassemblerTableModel::setCurrentPC(uint16_t pc)
 {
+    if (!m_emulator)
+        return;
     if (pc == m_currentPC)
-    {
-        return;  // No change
-    }
+        return;
 
-    // Store previous PC for updating the old row
     uint16_t oldPC = m_currentPC;
     m_currentPC = pc;
 
-    // Find the rows for the old and new PC
-    int oldRow = -1;
-    int newRow = -1;
+    // Find rows for old and new PC to update highlighting
+    int oldRow = findRowForAddress(oldPC);
+    int newRow = findRowForAddress(pc);
 
-    // Calculate rows by finding the instruction that contains the PC
-    for (auto it = m_instructions.begin(); it != m_instructions.end(); ++it)
+    // Check if new PC is in our cache
+    bool pcInCache = (newRow != -1);
+
+    if (!pcInCache)
     {
-        uint16_t addr = it.key();
-        const auto& instr = it.value();
-        uint16_t instrEnd = addr + instr.instructionBytes.size();
+        // PC not in cache, we need to reload
+        qDebug() << "PC address 0x" << QString::number(pc, 16) << " not found in cache. Refreshing cache.";
 
-        if (oldPC >= addr && oldPC < instrEnd)
+        // Calculate a new range centered around the PC
+        uint16_t rangeHalfSize = 0x100;
+        uint16_t visibleStart = (pc >= rangeHalfSize) ? (pc - rangeHalfSize) : 0;
+        uint16_t visibleEnd = (pc <= (0xFFFF - rangeHalfSize)) ? (pc + rangeHalfSize) : 0xFFFF;
+
+        // Set the new visible range - this will trigger loadDisassemblyRange
+        // which will load the new range into the cache
+        setVisibleRange(visibleStart, visibleEnd);
+
+        // Find the row again after the range is updated
+        newRow = findRowForAddress(pc);
+    }
+    else
+    {
+        // PC is in cache, check if we're close to the boundaries
+        uint16_t cacheStart = m_decodedInstructionsCache.firstKey();
+        uint16_t cacheEnd = m_decodedInstructionsCache.lastKey();
+
+        // Calculate the middle of the current cache
+        uint16_t cacheMid = cacheStart + (cacheEnd - cacheStart) / 2;
+
+        // If PC is in the first or last quarter of the cache, expand in that direction
+        if (pc < cacheStart + (cacheMid - cacheStart) / 2 || pc > cacheMid + (cacheEnd - cacheMid) / 2)
         {
-            oldRow = addr - m_visibleStart;
+            // Calculate how much to expand (half the current range)
+            uint16_t expandSize = (cacheEnd - cacheStart) / 2;
+            uint16_t newStart = (pc > expandSize) ? (pc - expandSize) : 0;
+            uint16_t newEnd = (pc < (0xFFFF - expandSize)) ? (pc + expandSize) : 0xFFFF;
+
+            qDebug() << "PC is near cache boundary, expanding range to center it";
+
+            // Update the visible range data in decoded instructions cache
+            setVisibleRange(newStart, newEnd);
         }
-        if (m_currentPC >= addr && m_currentPC < instrEnd)
+    }
+
+    // Update highlighting for old and new PC rows if they're visible
+    if (oldRow != -1)
+    {
+        emit dataChanged(index(oldRow, 0), index(oldRow, columnCount() - 1));
+    }
+
+    if (newRow != -1)
+    {
+        emit dataChanged(index(newRow, 0), index(newRow, columnCount() - 1));
+    }
+
+    // Emit a signal that the PC value itself has changed
+    emit currentPCChanged(pc);
+}
+
+/// @brief Sets the visible address range for the disassembly view
+/// @param start Starting address of the visible range
+/// @param end Ending address of the visible range
+/// This will trigger loading of the specified range into the cache
+void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
+{
+    qDebug() << "DisassemblerTableModel::setVisibleRange called with start: 0x" << QString::number(start, 16)
+             << " end: 0x" << QString::number(end, 16);
+    // Basic validation for the input range
+    if (start > end)
+    {
+        qWarning() << "setVisibleRange: start address 0x" << QString::number(start, 16)
+                   << " is greater than end address 0x" << QString::number(end, 16) << ". Clamping start to end.";
+        start = end;  // Or handle error appropriately, e.g., by returning or throwing.
+    }
+
+    // Calculate the middle of the range - likely to be the PC address we're interested in
+    uint16_t midPoint = start + (end - start) / 2;
+
+    // Optimization: If the requested visible range is identical to the current one,
+    // and the cache is not empty, we might avoid a full reset.
+    // However, we must ensure that the key addresses (especially the middle of the range) are in the cache
+    if (start == m_visibleStart && end == m_visibleEnd && !m_decodedInstructionsCache.isEmpty())
+    {
+        // Check if the middle address (likely the PC) is in the cache
+        if (m_decodedInstructionsCache.contains(midPoint))
         {
-            newRow = addr - m_visibleStart;
+            qDebug() << "DisassemblerTableModel::setVisibleRange: Range unchanged and cache contains key address 0x"
+                     << QString::number(midPoint, 16) << ". Skipping full reset.";
+            return;
         }
-
-        if (oldRow != -1 && newRow != -1)
+        else
         {
-            break;  // Found both rows
+            qDebug() << "DisassemblerTableModel::setVisibleRange: Range unchanged but key address 0x"
+                     << QString::number(midPoint, 16) << " not in cache. Forcing reload.";
         }
     }
 
-    // Update the view for the old and new PC rows
-    if (oldRow >= 0)
+    qDebug() << "DisassemblerTableModel: Updating visible range from 0x" << QString::number(m_visibleStart, 16) << "-0x"
+             << QString::number(m_visibleEnd, 16) << " to 0x" << QString::number(start, 16) << "-0x"
+             << QString::number(end, 16);
+
+    // --- Critical section for model update ---
+    beginResetModel();  // Signal views that the model is about to be drastically changed.
+
+    m_visibleStart = start;
+    m_visibleEnd = end;
+
+    // We'll only clear the cache if we actually need to load new instructions
+    // This prevents issues where we clear the cache but fail to populate it
+    bool shouldClearCache = true;
+
+    // If the PC is in the current range, make sure we don't lose it
+    if (m_decodedInstructionsCache.contains(m_currentPC))
     {
-        emit dataChanged(createIndex(oldRow, 0), createIndex(oldRow, columnCount() - 1));
-    }
-    if (newRow >= 0)
-    {
-        emit dataChanged(createIndex(newRow, 0), createIndex(newRow, columnCount() - 1));
+        qDebug() << "Current PC 0x" << QString::number(m_currentPC, 16) << " is in cache before range update";
     }
 
-    // Make sure the current PC is visible in the view
-    if (m_currentPC < m_visibleStart || m_currentPC > m_visibleEnd)
+    // Calculate the actual range to load into the cache, including padding.
+    // The padding helps with smoother scrolling as the user approaches the edges of the visible area.
+    // The user's previous code (from the diff) used a PADDING of 0x100.
+    const uint16_t PADDING = 0x100;
+    uint16_t loadStart = (m_visibleStart > PADDING) ? (m_visibleStart - PADDING) : 0;
+    uint16_t loadEnd = (m_visibleEnd < (0xFFFF - PADDING)) ? (m_visibleEnd + PADDING) : 0xFFFF;
+
+    // If the current PC is valid, ensure we load enough instructions around it
+    // to keep it centered in the visible area
+    if (m_currentPC != 0xFFFF)
     {
-        // Center the view around the PC
-        uint16_t halfVisible = (m_visibleEnd - m_visibleStart) / 2;
-        uint16_t newStart = (m_currentPC > halfVisible) ? m_currentPC - halfVisible : 0;
-        setVisibleRange(newStart, newStart + (m_visibleEnd - m_visibleStart));
+        // Calculate a range centered on the PC with enough padding for table height
+        uint16_t pcCenteredStart = (m_currentPC > PADDING) ? (m_currentPC - PADDING) : 0;
+        uint16_t pcCenteredEnd = (m_currentPC < (0xFFFF - PADDING)) ? (m_currentPC + PADDING) : 0xFFFF;
+
+        // Expand our load range to include the PC-centered range
+        loadStart = std::min(loadStart, pcCenteredStart);
+        loadEnd = std::max(loadEnd, pcCenteredEnd);
+
+        qDebug() << "Expanded load range to center PC 0x" << QString::number(m_currentPC, 16) << ": 0x"
+                 << QString::number(loadStart, 16) << " - 0x" << QString::number(loadEnd, 16);
     }
+
+    // Sanity check for padding calculation
+    if (loadStart > loadEnd)
+    {
+        qWarning() << "setVisibleRange: loadStart 0x" << QString::number(loadStart, 16) << " is greater than loadEnd 0x"
+                   << QString::number(loadEnd, 16) << ". Clamping loadStart.";
+        loadStart = loadEnd;
+    }
+
+    qDebug() << "DisassemblerTableModel: Loading disassembly range 0x" << QString::number(loadStart, 16) << " - 0x"
+             << QString::number(loadEnd, 16);
+
+    if (m_emulator)
+    {  // Only attempt to load if emulator is valid
+        // Only clear the cache right before loading, not earlier
+        if (shouldClearCache)
+        {
+            // Clear the cache before loading new data
+            m_decodedInstructionsCache.clear();
+            m_visibleStart = loadStart;
+            m_visibleEnd = loadEnd;
+        }
+
+        // This will populate m_decodedInstructionsCache
+        loadDisassemblyRange(loadStart, loadEnd);
+
+        // Verify the cache was populated
+        if (m_decodedInstructionsCache.isEmpty())
+        {
+            qWarning() << "Cache is still empty after loadDisassemblyRange (" << loadStart << " - " << loadEnd
+                       << "). Trying direct disassembly.";
+        }
+        // If after loading, the cache is still empty or has too few instructions, try direct disassembly
+        if (m_decodedInstructionsCache.isEmpty() || m_decodedInstructionsCache.size() < 30)
+        {
+            qDebug() << "Cache has too few instructions (" << m_decodedInstructionsCache.size()
+                     << ") after loadDisassemblyRange. Trying direct disassembly.";
+            loadDisassemblyRange(loadStart, loadEnd);
+        }
+
+        // If the PC should be in range but isn't in the cache, force add it
+        if (m_currentPC >= loadStart && m_currentPC <= loadEnd && !m_decodedInstructionsCache.contains(m_currentPC))
+        {
+            qDebug() << "PC 0x" << QString::number(m_currentPC, 16)
+                     << " should be in range but isn't in cache. Forcing add.";
+
+            // Create a special instruction for the PC
+            DecodedInstruction pcInstr;
+            pcInstr.isValid = true;
+            pcInstr.instructionAddr = m_currentPC;
+            pcInstr.fullCommandLen = 1;
+
+            // Try to read the byte at PC
+            try
+            {
+                if (m_emulator && m_emulator->GetContext() && m_emulator->GetContext()->pMemory)
+                {
+                    uint8_t byte = m_emulator->GetContext()->pMemory->DirectReadFromZ80Memory(m_currentPC);
+                    pcInstr.instructionBytes.push_back(byte);
+                    pcInstr.mnemonic = "db " + StringHelper::ToHex(byte, true) + " (forced PC)";
+                }
+                else
+                {
+                    pcInstr.mnemonic = "??? (forced PC)";
+                }
+            }
+            catch (...)
+            {
+                pcInstr.mnemonic = "??? (forced PC)";
+            }
+
+            // Add to cache
+            m_decodedInstructionsCache[m_currentPC] = pcInstr;
+        }
+    }
+    else
+    {
+        qWarning() << "DisassemblerTableModel::setVisibleRange: Emulator is null, cannot load disassembly range.";
+        // The cache is already cleared, and endResetModel() will be called, resulting in an empty view.
+    }
+
+    endResetModel();  // Signal views that the model has been reset and they should refetch all data.
+    // --- End critical section ---
+
+    qDebug() << "DisassemblerTableModel::setVisibleRange completed. Cache size:" << m_decodedInstructionsCache.size()
+             << ". Visible range: 0x" << QString::number(m_visibleStart, 16) << " to 0x"
+             << QString::number(m_visibleEnd, 16);
+
+    // The calls to dataChanged and layoutChanged that were previously here:
+    // emit dataChanged(createIndex(0, 0), createIndex(rowCount() - 1, columnCount() - 1));
+    // emit layoutChanged();
+    // are no longer needed, as beginResetModel()/endResetModel() correctly notify the view of a full reset.
 }
 
-void DisassemblerTableModel::reset()
+/// @brief Maps a memory address to its corresponding row in the disassembly view
+/// @param address The memory address to locate in the disassembly
+/// @return The row number (0-based) if found, or -1 if the address is not in the visible range
+///
+/// This method performs a fast lookup to find which instruction in the disassembly
+/// corresponds to the given memory address. It handles several cases:
+/// 1. Exact match: The address is the start of an instruction
+/// 2. Contained within: The address falls within a multi-byte instruction
+/// 3. Not found: The address is not part of any disassembled instruction
+///
+/// The search uses a binary search (O(log n) complexity) through the cached instructions.
+/// The method is optimized for performance as it's called frequently during stepping
+/// and scrolling operations.
+///
+/// Note: The returned row number corresponds to the position in the current
+/// visible range, not the absolute instruction address. Use getRowForAbsoluteAddress()
+/// if you need to map between view rows and instruction addresses.
+int DisassemblerTableModel::findRowForAddress(uint16_t address) const
 {
-    beginResetModel();
-    m_instructions.clear();
-    m_startAddress = 0;
-    m_endAddress = 0xFFFF;
-    m_currentPC = 0;
-    endResetModel();
-}
+    int result = -1;
 
-void DisassemblerTableModel::setHorizontalHeaderLabels(const QStringList& headers)
-{
-    qDebug() << "Setting header labels:" << headers;
-
-    // Only update if the headers have actually changed
-    if (m_headers != headers)
+    if (!m_decodedInstructionsCache.isEmpty())
     {
-        beginResetModel();
-        m_headers = headers.toVector();
-        endResetModel();
+        // Find the first instruction that starts at or after our target address
+        auto it = m_decodedInstructionsCache.lowerBound(address);
 
-        // Emit headerDataChanged for all columns
-        emit headerDataChanged(Qt::Horizontal, 0, m_headers.size() - 1);
+        // Check for exact match
+        if (it != m_decodedInstructionsCache.constEnd() && it.key() == address)
+        {
+            result = std::distance(m_decodedInstructionsCache.constBegin(), it);
+        }
+        // Handle case when address is before the first instruction
+        else if (it == m_decodedInstructionsCache.constBegin())
+        {
+            result = (it.key() == address) ? 0 : -1;
+        }
+        // Check if address is within the previous instruction's range
+        else
+        {
+            --it;  // Move to the previous instruction
+            uint16_t instrStart = it.key();
+            uint16_t instrSize = it.value().instructionBytes.size();
+            instrSize = (instrSize == 0) ? 1 : instrSize;  // Minimum instruction size
 
-        qDebug() << "Header labels updated, column count:" << m_headers.size();
+            if (address >= instrStart && address < instrStart + instrSize)
+            {
+                result = std::distance(m_decodedInstructionsCache.constBegin(), it);
+            }
+        }
     }
+
+    return result;
 }
 
-void DisassemblerTableModel::dumpState() const
+/// @brief Loads and disassembles the specified memory range if needed
+/// @param start Starting address of the range to disassemble (inclusive)
+/// @param end Ending address of the range to disassemble (inclusive)
+///
+/// This method performs the actual disassembly of the specified memory range
+/// and populates the instruction cache with the results. It first checks if the
+/// range is already loaded in the cache and only performs disassembly if needed.
+///
+/// The method handles edge cases including:
+/// - Invalid or reversed address ranges
+/// - Memory access errors during disassembly
+/// - Cache population and management
+void DisassemblerTableModel::loadDisassemblyRange(uint16_t start, uint16_t end, std::optional<uint16_t> pc)
 {
-    qDebug() << "=== DisassemblerTableModel State ===";
-    qDebug() << "Emulator:" << (m_emulator ? "Valid" : "Null");
-    qDebug() << "Instructions count:" << m_instructions.size();
-    qDebug() << "Visible range:" << QString("0x%1 - 0x%2").arg(m_visibleStart, 4, 16, QChar('0'))
-             << "(size:" << (m_visibleEnd - m_visibleStart + 1) << ")";
-    qDebug() << "Current PC: 0x" << QString::number(m_currentPC, 16);
-
-    // Dump first few instructions
-    int count = 0;
-    qDebug() << "First 5 instructions:";
-    for (auto it = m_instructions.begin(); it != m_instructions.end() && count < 5; ++it, ++count)
+    if (start > end)
     {
-        const auto& instr = it.value();
-        qDebug() << "  0x" << QString::number(it.key(), 16) << ":" << QString::fromStdString(instr.mnemonic)
-                 << QString::fromStdString(instr.annotation) << "(bytes:" << instr.instructionBytes.size() << ")";
-    }
-    qDebug() << "===============================";
-}
-
-void DisassemblerTableModel::ensureRangeLoaded(uint16_t start, uint16_t end)
-{
-    if (!m_emulator || start > end)
-    {
+        qWarning() << "loadDisassemblyRange: Invalid range: start > end";
         return;
     }
 
-    // Check if we need to load more data
-    bool needLoad = false;
-    uint16_t addr = start;
-    while (addr <= end)
-    {
-        if (!m_instructions.contains(addr))
-        {
-            needLoad = true;
-            break;
-        }
-        // Move to next instruction
-        const auto& instr = m_instructions[addr];
-        uint16_t instructionLength = instr.instructionBytes.empty() ? 1 : instr.instructionBytes.size();
-        addr += instructionLength;
-
-        // Safety check for invalid instruction length
-        if (addr <= start)
-        {
-            addr++;  // Prevent infinite loop
-        }
-    }
-
-    if (needLoad)
-    {
-        // Load with some padding for better performance
-        const int padding = 8;
-        uint16_t loadStart = start > padding ? start - padding : 0;
-        uint16_t loadEnd = (end < 0xFFFF - padding) ? end + padding : 0xFFFF;
-        loadDisassemblyRange(loadStart, loadEnd);
-    }
-}
-
-void DisassemblerTableModel::loadDisassemblyRange(uint16_t start, uint16_t end)
-{
-    qDebug() << "loadDisassemblyRange called with start:" << QString::number(start, 16)
-             << "end:" << QString::number(end, 16);
+    qDebug() << "loadDisassemblyRange called with start: 0x" << StringHelper::Format("%04X", start).c_str() << "end: 0x"
+             << StringHelper::Format("%04X", end).c_str() << "(range size: " << (end - start + 1) << " bytes)";
 
     // Clear existing instructions if no emulator is available
     if (!m_emulator)
     {
         qDebug() << "No emulator available, clearing disassembly";
         beginResetModel();
-        m_instructions.clear();
+        m_decodedInstructionsCache.clear();
         endResetModel();
         return;
     }
 
-    if (start > end)
+    // If PC is provided and within range, we'll handle it specially
+    if (pc && *pc > start && *pc <= end)
     {
-        qDebug() << "Invalid range: start > end";
-        return;
+        // First disassemble from PC forward till end address
+        disassembleForward(*pc, end);
+        // Then disassemble backward from PC to start address
+        disassembleBackward(*pc, start);
+    }
+    else
+    {
+        // Just disassemble the full range normally
+        disassembleForward(start, end);
     }
 
-    // Safely get the disassembler and memory
-    if (!m_emulator || !m_emulator->GetContext() || !m_emulator->GetContext()->pDebugManager) {
-        qWarning() << "Cannot access disassembler - emulator or debug manager not available";
-        return;
-    }
-    
+    // Update the visible range to include the newly disassembled area
+    m_visibleStart = std::min(m_visibleStart, start);
+    m_visibleEnd = std::max(m_visibleEnd, end);
+
+    qDebug() << StringHelper::Format("Disassembly complete. Cache size: %d, Visible range: 0x%04X-0x%04X",
+                                     m_decodedInstructionsCache.size(), m_visibleStart, m_visibleEnd)
+                    .c_str();
+}
+
+/// @brief Disassembles a range of memory addresses
+/// @param start The starting address of the range to disassemble (inclusive)
+/// @param end The ending address of the range to disassemble (inclusive)
+///
+/// @note start must be < end
+void DisassemblerTableModel::disassembleForward(uint16_t start, uint16_t end)
+{
+    assert(start < end);
+
+    qDebug() << StringHelper::Format("Disassembling forward from 0x%04X to 0x%04X", start, end).c_str();
+
     auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
     auto* memory = m_emulator->GetMemory();
     
-    if (!disassembler || !memory) {
-        qWarning() << "Disassembler or memory not available";
-        return;
-    }
+    uint16_t addr = start;
 
-    // Determine the actual range to load (expand by a few instructions for context)
-    const int context = 4;  // Number of instructions to load before/after
-    uint16_t loadStart = start > context ? start - context : 0;
-    uint16_t loadEnd = (end < 0xFFFF - context) ? end + context : 0xFFFF;
-
-    // Safety check to prevent infinite loops
-    const size_t MAX_INSTRUCTIONS = 50;  // Maximum number of instructions to disassemble in one go
-    size_t instructionCount = 0;
-    uint16_t prevAddr = 0xFFFF;  // Track previous address to detect infinite loops
-
-    qDebug() << "Starting disassembly from" << QString::number(loadStart, 16) 
-             << "to" << QString::number(loadEnd, 16) 
-             << "(range: " << (loadEnd - loadStart + 1) << " bytes)";
-
-    // Load disassembly for the range
-    uint16_t addr = loadStart;
-    while (addr <= loadEnd && addr >= loadStart && instructionCount < MAX_INSTRUCTIONS)
+    while (addr <= end && addr >= start)
     {
-        if (instructionCount % 100 == 0)
+        DecodedInstruction decodedInstruction = disassembleAt(addr, disassembler, memory);
+        addr += decodedInstruction.fullCommandLen;
+    }
+}
+
+/// @brief Disassembles instructions backward from the given PC address
+/// @param pc The PC address to start disassembling from (exclusive)
+/// @param end The ending address to stop disassembling at (inclusive)
+///
+/// This method disassembles instructions backward from PC-1 until it reaches the end address.
+/// It handles multi-byte instructions by moving back by the instruction length after each disassembly.
+void DisassemblerTableModel::disassembleBackward(uint16_t pc, uint16_t end)
+{
+    assert(pc > end);
+
+    auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
+    auto* memory = m_emulator->GetMemory();
+
+    qDebug() << StringHelper::Format("Disassembling backward from PC=0x%04X to 0x%04X", pc - 1, end).c_str();
+
+    uint16_t addr = pc - 1;           // Start from the byte before PC
+    while (addr >= end && addr < pc)  // Stop when we hit the end address or wrap around
+    {
+        DecodedInstruction decodedInstruction = disassembleAt(addr, disassembler, memory);
+        addr -= decodedInstruction.fullCommandLen;
+
+        // Protection against falling out of the address range
+        addr = max(addr, end);
+    }
+}
+
+DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disassembler* disassembler, Memory* memory)
+{
+    uint8_t buffer[Z80Disassembler::MAX_INSTRUCTION_LENGTH] = {0};
+    size_t bytesToRead = std::min(static_cast<size_t>(Z80Disassembler::MAX_INSTRUCTION_LENGTH), (size_t)(0x10000 - addr));
+
+    try
+    {
+        // Read bytes from memory
+        for (size_t i = 0; i < bytesToRead; i++)
         {
-            qDebug() << "Disassembled" << instructionCount << "instructions, current address:" 
-                     << QString::number(addr, 16);
-        }
-        // Check for infinite loop (same address twice in a row)
-        if (addr == prevAddr)
-        {
-            qWarning() << "Infinite loop detected at address:" << QString("%1").arg(addr, 4, 16, QChar('0'));
-            break;
-        }
-        prevAddr = addr;
-
-        // Check if we've already processed this address
-        if (m_instructions.contains(addr))
-        {
-            // Move to next instruction
-            const auto& existingInstr = m_instructions[addr];
-            uint16_t nextAddr =
-                addr + (existingInstr.instructionBytes.empty() ? 1 : existingInstr.instructionBytes.size());
-
-            // Prevent getting stuck on invalid instructions
-            if (nextAddr <= addr)
-            {
-                qWarning() << "Invalid instruction size at address:" << QString("%1").arg(addr, 4, 16, QChar('0'));
-                nextAddr = addr + 1;
-            }
-
-            addr = nextAddr;
-            instructionCount++;
-            continue;
-        }
-
-        // Read up to 4 bytes for the instruction
-        uint8_t buffer[4] = {0};
-        size_t bytesToRead = std::min(static_cast<size_t>(4), static_cast<size_t>(0x10000 - addr));
-
-        try
-        {
-            // Read bytes from memory
-            for (size_t i = 0; i < bytesToRead; i++)
-            {
-                buffer[i] = memory->DirectReadFromZ80Memory(addr + i);
-            }
-
-            // Disassemble the instruction
-            uint8_t commandLen = 0;
-            DecodedInstruction instr;
-
-            // Disassemble with the correct method signature
-            std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer,          // buffer
-                                                                                   sizeof(buffer),  // bufferSize
-                                                                                   &commandLen,     // commandLen (out)
-                                                                                   nullptr,         // pSymbolsProvider
-                                                                                   memory,          // memory
-                                                                                   &instr  // pInstruction (out)
-            );
-
-            // If we got a valid instruction
-            if (commandLen > 0 && commandLen <= 4)
-            {
-                // Copy the actual bytes for display
-                instr.instructionBytes.assign(buffer, buffer + commandLen);
-                instr.mnemonic = disasm;
-
-                // Add to our map
-                m_instructions[addr] = instr;
-
-                qDebug() << "Disassembled at" << QString("%1").arg(addr, 4, 16, QChar('0')) << ":"
-                         << QString::fromStdString(instr.mnemonic) << "\"" << QString::fromStdString(instr.annotation)
-                         << "\"";
-
-                // Move to next instruction
-                addr += commandLen;
-                instructionCount++;
-            }
-            else
-            {
-                // Handle failed disassembly
-                qWarning() << "Failed to disassemble at" << QString("%1").arg(addr, 4, 16, QChar('0')) << "(byte: 0x"
-                           << QString::number(buffer[0], 16) << ")";
-
-                // Create a DB instruction for the first byte
-                DecodedInstruction byteInstr;
-                byteInstr.isValid = true;
-                byteInstr.instructionBytes.push_back(buffer[0]);
-                byteInstr.fullCommandLen = 1;
-                byteInstr.instructionAddr = addr;
-                byteInstr.mnemonic = "db " + StringHelper::ToHex(buffer[0], true);
-
-                m_instructions[addr] = byteInstr;
-                addr++;
-                instructionCount++;
-            }
-
-            // Additional safety checks
-            if (addr == 0xFFFF)
-            {
-                qDebug() << "Reached end of memory";
-                break;
-            }
-        }
-        catch (const std::exception& e)
-        {
-            qCritical() << "Exception during disassembly at" << QString("%1").arg(addr, 4, 16, QChar('0')) << ":"
-                        << e.what();
-            addr++;  // Move to next byte to prevent infinite loop
-            instructionCount++;
+            buffer[i] = memory->DirectReadFromZ80Memory(addr + i);
         }
 
-        // Safety check to prevent address wrap-around or excessive instructions
-        if (addr < loadStart || instructionCount >= MAX_INSTRUCTIONS)
+        // Disassemble the instruction
+        uint8_t commandLen = 0;
+        DecodedInstruction decodedInstruction;
+
+        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, sizeof(buffer), &commandLen,
+                                                                               nullptr, memory, &decodedInstruction);
+
+        if (commandLen > 0 && commandLen <= Z80Disassembler::MAX_INSTRUCTION_LENGTH)
         {
-            if (instructionCount >= MAX_INSTRUCTIONS)
-            {
-                qWarning() << "Reached maximum instruction limit, stopping disassembly";
-            }
-            else if (addr < loadStart)
-            {
-                qWarning() << "Address wrap-around detected, stopping disassembly";
-            }
-            break;
+            decodedInstruction.instructionBytes.assign(buffer, buffer + commandLen);
+            decodedInstruction.mnemonic = disasm;
+            decodedInstruction.instructionAddr = addr;
+            decodedInstruction.fullCommandLen = commandLen;
+            decodedInstruction.isValid = true;
+
+            // Cache the instruction
+            m_decodedInstructionsCache[addr] = decodedInstruction;
+            qDebug() << StringHelper::Format("Disassembled at 0x%04X: %s", addr, decodedInstruction.mnemonic.c_str()).c_str();
+            return decodedInstruction;
         }
     }
+    catch (const std::exception& e)
+    {
+        qCritical() << "Exception during disassembly at 0x" << StringHelper::Format("%04X", addr).c_str() << ":"
+                    << e.what();
+    }
 
-    // Notify views that data has changed
-    emit dataChanged(index(start, 0), index(end, columnCount() - 1));
+    // If we get here, disassembly failed - create a DB instruction
+    DecodedInstruction byteInstruction;
+    byteInstruction.isValid = true;
+    byteInstruction.instructionBytes.push_back(buffer[0]);
+    byteInstruction.fullCommandLen = 1;
+    byteInstruction.instructionAddr = addr;
+    byteInstruction.mnemonic = StringHelper::Format("db 0x%02X", buffer[0]);
+
+    m_decodedInstructionsCache[addr] = byteInstruction;
+    return byteInstruction;
+}
+
+/// @brief Dumps the current state of the disassembly model to the debug output
+/// Shows all cached instructions with their addresses and mnemonics
+///
+/// This method is useful for debugging purposes, allowing developers to inspect
+/// the current state of the disassembly model.
+void DisassemblerTableModel::dumpState() const
+{
+    qDebug() << "=== DisassemblerTableModel State ===";
+    qDebug() << "Emulator:" << (m_emulator ? "Valid" : "Null");
+    qDebug() << "Instructions count:" << m_decodedInstructionsCache.size();
+    qDebug() << "Visible range:" << QString("0x%1 - 0x%2").arg(m_visibleStart, 4, 16, QChar('0'))
+             << "(size:" << (m_visibleEnd - m_visibleStart + 1) << ")";
+    qDebug() << "Current PC: 0x" << QString::number(m_currentPC, 16);
+
+    // Dump first few instructions
+    int count = 0;
+    qDebug() << "Last 5 instructions:";
+    for (auto it = m_decodedInstructionsCache.end(); it != m_decodedInstructionsCache.begin() && count < 5;)
+    {
+        --it;
+        const auto& instr = it.value();
+        qDebug() << "  0x" << QString::number(it.key(), 16) << ":" << QString::fromStdString(instr.mnemonic) << "("
+                 << QString::fromStdString(instr.annotation) << ")";
+        count++;
+    }
+    qDebug() << "===============================";
 }

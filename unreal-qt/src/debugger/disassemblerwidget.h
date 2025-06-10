@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QAbstractItemView>
+#include <QStyledItemDelegate>
 #include <unordered_map>
 #include "disassemblertablemodel.h"
 
@@ -26,6 +27,9 @@ public:
     // Virtual table interface
     void setDisassemblerAddress(uint16_t pc);
     void setEmulator(Emulator* emulator);
+    
+    // Getter for current PC
+    uint16_t getCurrentPC() const { return m_currentPC; }
 
 public slots:
     void reset();

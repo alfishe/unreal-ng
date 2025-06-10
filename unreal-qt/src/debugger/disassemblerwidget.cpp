@@ -69,8 +69,8 @@ void DisassemblerWidget::initializeTable()
     tableView->setColumnWidth(2, 112);  // Label (text, allow room for longer labels)
     tableView->setColumnWidth(3, 112);  // Mnemonic (text, needs most space)
     tableView->setColumnWidth(4, 112);  // Annotation (text, allow room for annotations)
-    // Comments column will take remaining space
-    
+    // Comments column will take the remaining space
+
     // Configure table properties
     tableView->setAlternatingRowColors(true);
     tableView->setShowGrid(true);
@@ -91,7 +91,8 @@ void DisassemblerWidget::initializeTable()
     vHeader->setMinimumSectionSize(1);
 
     // Connect signals
-    connect(tableView->selectionModel(), &QItemSelectionModel::currentRowChanged, this, &DisassemblerWidget::onCurrentRowChanged);
+    connect(tableView->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+            &DisassemblerWidget::onCurrentRowChanged);
 
     qDebug() << "Table initialization complete, visible columns:" << tableView->horizontalHeader()->count();
 
@@ -118,72 +119,53 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     m_currentPC = pc;
 
     // Block signals temporarily to prevent recursive updates
-    bool oldState = ui->disassemblyTable->blockSignals(true);
+    if (!m_model || !ui->disassemblyTable)
+    {
+        qDebug() << "DisassemblerWidget::setDisassemblerAddress - model or table UI not set.";
+        return;
+    }
+
+    bool oldSignalState = ui->disassemblyTable->blockSignals(true);
 
     try
     {
-        // Update the model's current PC
+        // 1. Inform the model of the new PC.
+        // Model will do all the work to update the visible range and highlight the new PC.
         m_model->setCurrentPC(pc);
 
-        // Calculate a range around the PC
-        const uint16_t rangeSize = 0x100;  // 256 bytes range
-        uint16_t start = (pc > rangeSize / 2) ? (pc - rangeSize / 2) : 0;
-        uint16_t end = (pc < (0xFFFF - rangeSize / 2)) ? (pc + rangeSize / 2) : 0xFFFF;
+        // Now, find the row for the PC in the new dataset.
+        int targetRow = m_model->findRowForAddress(pc);
+        qDebug() << "DisassemblerWidget: PC 0x" << QString::number(pc, 16) << "found at model row:" << targetRow;
 
-        qDebug() << "Setting visible range to: 0x" << QString::number(start, 16) << " - 0x" << QString::number(end, 16);
-
-        // Set the visible range in the model
-        m_model->setVisibleRange(start, end);
-
-        // Find the row that contains the PC
-        int targetRow = -1;
-        for (int row = 0; row < m_model->rowCount(); ++row)
+        if (targetRow != -1)
         {
-            QModelIndex idx = m_model->index(row, 0);
-            QVariant addrData = m_model->data(idx, Qt::UserRole);
-            if (addrData.isValid() && addrData.toUInt() == pc)
+            QModelIndex pcIndex = m_model->index(targetRow, 0);
+            if (pcIndex.isValid())
             {
-                targetRow = row;
-                break;
+                ui->disassemblyTable->scrollTo(pcIndex, QAbstractItemView::PositionAtCenter);
+                ui->disassemblyTable->setCurrentIndex(pcIndex);  // Sets the current item for keyboard navigation
+                if (ui->disassemblyTable->selectionModel())
+                {  // Ensure selection model is valid
+                    ui->disassemblyTable->selectionModel()->select(
+                        pcIndex,
+                        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);  // Selects the entire row
+                }
             }
-        }
-
-        // If we found the row, scroll to it
-        if (targetRow >= 0)
-        {
-            QModelIndex idx = m_model->index(targetRow, 0);
-
-            // Update the selection
-            QItemSelectionModel* selectionModel = ui->disassemblyTable->selectionModel();
-            if (selectionModel)
+            else
             {
-                selectionModel->select(idx, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows |
-                                                QItemSelectionModel::Current);
-
-                // Make sure the current index is set
-                ui->disassemblyTable->setCurrentIndex(idx);
+                qDebug() << "DisassemblerWidget: PC 0x" << QString::number(pc, 16) << "found at row" << targetRow
+                         << "but model index is invalid.";
             }
-
-            // Scroll to the address
-            ui->disassemblyTable->scrollTo(idx, QAbstractItemView::PositionAtCenter);
-            qDebug() << "Scrolled to row" << targetRow << "for PC 0x" << QString::number(pc, 16);
         }
         else
         {
-            qDebug() << "Could not find row for PC 0x" << QString::number(pc, 16);
-            // If we couldn't find the PC, just refresh the view
-            m_model->refresh();
+            qDebug() << "DisassemblerWidget: PC 0x" << QString::number(pc, 16)
+                     << "not found in model after range update.";
         }
-
-        // Force an update of the view
-        ui->disassemblyTable->viewport()->update();
-
-        // Notify any connected components about the address change
-        emit addressSelected(pc);
     }
     catch (const std::exception& e)
     {
-        qWarning() << "Error in setDisassemblerAddress:" << e.what();
+        qCritical() << "Exception in setDisassemblerAddress:" << e.what();
     }
     catch (...)
     {
@@ -191,7 +173,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     }
 
     // Restore signal blocking state
-    ui->disassemblyTable->blockSignals(oldState);
+    ui->disassemblyTable->blockSignals(oldSignalState);
 }
 
 void DisassemblerWidget::reset()
@@ -215,7 +197,7 @@ void DisassemblerWidget::refresh()
     QTableView* tableView = ui->disassemblyTable;
     int scrollValue = tableView->verticalScrollBar()->value();
 
-    // Refresh the model
+    // Refresh the model - this will reset the model and reload instructions
     m_model->refresh();
 
     // Force a full view update
@@ -225,10 +207,26 @@ void DisassemblerWidget::refresh()
     // Restore the scroll position
     tableView->verticalScrollBar()->setValue(scrollValue);
 
-    // Ensure the current PC is visible
+    // Ensure the current PC is visible without triggering another full range update
     if (m_currentPC != 0)
     {
-        setDisassemblerAddress(m_currentPC);
+        // Find the row for the current PC
+        int pcRow = m_model->findRowForAddress(m_currentPC);
+        if (pcRow != -1)
+        {
+            QModelIndex pcIndex = m_model->index(pcRow, 0);
+            if (pcIndex.isValid())
+            {
+                // Scroll to PC and select it
+                tableView->scrollTo(pcIndex, QAbstractItemView::PositionAtCenter);
+                tableView->setCurrentIndex(pcIndex);
+                if (tableView->selectionModel())
+                {
+                    tableView->selectionModel()->select(
+                        pcIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                }
+            }
+        }
     }
 
     qDebug() << "Refresh complete, column count:" << tableView->model()->columnCount();
@@ -307,34 +305,29 @@ void DisassemblerWidget::updateVisibleRange()
 
     try
     {
-        // Calculate the range to show - centered around current PC
-        const uint16_t rangeSize = 0x100;  // Show 256 bytes by default
-        uint16_t startAddr = (m_currentPC > rangeSize / 2) ? (m_currentPC - rangeSize / 2) : 0x0000;
-        uint16_t endAddr = (m_currentPC < (0xFFFF - rangeSize / 2)) ? (m_currentPC + rangeSize / 2) : 0xFFFF;
+        // The model's setVisibleRange method now centers around the PC with 256 bytes in each direction
+        // We just need to trigger it with any range, and it will automatically center on PC
 
-        qDebug() << "Updating visible range to:" << QString("0x%1").arg(startAddr, 4, 16, QChar('0')) << "-"
-                 << QString("0x%1").arg(endAddr, 4, 16, QChar('0')) << "(PC: 0x" << QString::number(m_currentPC, 16)
-                 << ")";
+        // For logging purposes, calculate how many rows are visible in the table
+        int visibleRows = tableView->height() / tableView->rowHeight(0);
+        if (visibleRows <= 0)
+            visibleRows = 20;  // Fallback if calculation fails
 
-        // Set the visible range in the model
-        m_model->setVisibleRange(startAddr, endAddr);
+        qDebug() << "Table height:" << tableView->height() << "Row height:" << tableView->rowHeight(0)
+                 << "Visible rows:" << visibleRows;
+
+        qDebug() << "Updating disassembly with PC at:" << QString::number(m_currentPC, 16);
+
+        // Trigger the model to update its range centered on PC
+        // The actual range values don't matter as the model will override them
+        // to center around the PC with 256 bytes in each direction
+        m_model->setVisibleRange(0, 0);
 
         // Force the view to update
         tableView->viewport()->update();
 
-        // Ensure the PC is visible and centered
-        // Find the row with the current PC
-        int pcRow = -1;
-        for (int i = 0; i < m_model->rowCount(); ++i)
-        {
-            QModelIndex idx = m_model->index(i, 0);
-            QVariant addrData = m_model->data(idx, Qt::UserRole);
-            if (addrData.isValid() && addrData.toUInt() == m_currentPC)
-            {
-                pcRow = i;
-                break;
-            }
-        }
+        // Use the model's findRowForAddress method to find the PC row
+        int pcRow = m_model->findRowForAddress(m_currentPC);
 
         if (pcRow >= 0)
         {
@@ -342,11 +335,44 @@ void DisassemblerWidget::updateVisibleRange()
             QModelIndex pcIndex = m_model->index(pcRow, 0);
             tableView->scrollTo(pcIndex, QAbstractItemView::PositionAtCenter);
             tableView->setCurrentIndex(pcIndex);
-            qDebug() << "Scrolled to PC at row:" << pcRow;
+
+            // Also select the row to highlight it
+            if (tableView->selectionModel())
+            {
+                tableView->selectionModel()->select(pcIndex,
+                                                    QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            }
+
+            qDebug() << "Scrolled to PC at row:" << pcRow << "with address 0x" << QString::number(m_currentPC, 16);
         }
         else
         {
-            qDebug() << "Could not find PC in current disassembly";
+            qDebug() << "Could not find PC 0x" << QString::number(m_currentPC, 16) << " in current disassembly";
+
+            // If PC not found, force a model refresh which will rebuild the cache
+            qDebug() << "PC not found in cache, forcing model refresh";
+            m_model->refresh();
+
+            // Try to find PC again after refresh
+            pcRow = m_model->findRowForAddress(m_currentPC);
+            if (pcRow >= 0)
+            {
+                QModelIndex pcIndex = m_model->index(pcRow, 0);
+                tableView->scrollTo(pcIndex, QAbstractItemView::PositionAtCenter);
+                tableView->setCurrentIndex(pcIndex);
+
+                if (tableView->selectionModel())
+                {
+                    tableView->selectionModel()->select(
+                        pcIndex, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                }
+
+                qDebug() << "Found PC after model refresh at row:" << pcRow;
+            }
+            else
+            {
+                qDebug() << "Still could not find PC after model refresh";
+            }
         }
     }
     catch (const std::exception& e)
