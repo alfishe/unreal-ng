@@ -42,34 +42,6 @@ LabelManager::~LabelManager()
 
 /// region <Label management>
 
-// @brief Add a new label to the manager
-// @param name Unique name of the label
-// @param z80Address Z80 address of the label
-// @param physicalAddress Physical memory address (optional, 0 if not used)
-// @param type Type of the label (e.g., "code", "data", "bss")
-// @param module Module name this label belongs to (optional)
-// @param comment Optional comment for the label
-// @return true if the label was added successfully
-// @return false if the label name is empty or a label with this name already exists
-// Static helper function to calculate physical address
-// This is a simplified calculation. A real implementation might need more context from EmulatorContext/MemoryMapper.
-static uint32_t CalculateLabelPhysicalAddress(uint16_t /*z80Addr*/, uint8_t bank, uint16_t bankAddrInPage, EmulatorContext* /*context*/)
-{
-    if (bank == 0xFF) // Label is Z80-address-specific, bank-agnostic.
-    {
-        // This type of label does not map to a single, fixed physical address.
-        // Its "physicality" is resolved at runtime based on the currently paged bank.
-        // Return a sentinel value.
-        return UINT32_MAX; 
-    }
-
-    // Label is specific to a bank and an offset within that bank.
-    // TODO: Ideally, use EmulatorContext to get page size and perform mapping if a memory mapper exists.
-    // For now, using a common 16KB page size (0x4000).
-    const uint32_t BANK_PAGE_SIZE = 0x4000; // Assuming 16KB pages
-    return (static_cast<uint32_t>(bank) * BANK_PAGE_SIZE) + bankAddrInPage;
-}
-
 bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16_t bank, uint16_t bankOffset,
                            const std::string& type, const std::string& module, const std::string& comment, bool active)
 {
@@ -89,20 +61,14 @@ bool LabelManager::AddLabel(const std::string& name, uint16_t z80Address, uint16
     label->comment = comment;
     label->active = active;
     
-    // If address is in ROM area (below 0x4000) and bank is not specified, set bank type to ROM
-    if (z80Address < 0x4000 && bank == UINT16_MAX)
+    // If address is in ROM area (below 0x4000)
+    if (z80Address < 0x4000)
     {
         label->setBankTypeROM();
     }
     
-    label->physicalAddress = CalculateLabelPhysicalAddress(label->address, label->bank, label->bankOffset, _context);
-
     // Add to all lookup maps
     _labelsByZ80Address[z80Address] = label;
-    if (label->physicalAddress != UINT32_MAX) 
-    {
-        _labelsByPhysicalAddress[label->physicalAddress] = label;
-    }
     _labelsByName[name] = label;
 
     // Notify about the new label
@@ -128,10 +94,6 @@ bool LabelManager::RemoveLabel(const std::string& name)
     
     // Remove from all maps
     _labelsByZ80Address.erase(label->address);
-    if (label->physicalAddress != UINT32_MAX)
-    {
-        _labelsByPhysicalAddress.erase(label->physicalAddress);
-    }
     _labelsByName.erase(it);
 
     // Notify about the removed label
@@ -150,7 +112,6 @@ void LabelManager::ClearAllLabels()
     bool hadLabels = !_labelsByName.empty();
     
     _labelsByZ80Address.clear();
-    _labelsByPhysicalAddress.clear();
     _labelsByName.clear();
     
     // Notify about clearing all labels if there were any
@@ -168,15 +129,6 @@ std::shared_ptr<Label> LabelManager::GetLabelByZ80Address(uint16_t address) cons
 {
     auto it = _labelsByZ80Address.find(address);
     return it != _labelsByZ80Address.end() ? it->second : nullptr;
-}
-
-// @brief Find a label by its physical memory address
-// @param address Physical memory address to search for
-// @return std::shared_ptr<Label> Pointer to the label if found, nullptr otherwise
-std::shared_ptr<Label> LabelManager::GetLabelByPhysicalAddress(uint32_t address) const
-{
-    auto it = _labelsByPhysicalAddress.find(address);
-    return it != _labelsByPhysicalAddress.end() ? it->second : nullptr;
 }
 
 // @brief Find a label by its name
@@ -221,7 +173,6 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
 
     // Store old addresses for map updates
     uint16_t oldZ80Address = existingLabel->address;
-    uint32_t oldPhysicalAddress = existingLabel->physicalAddress;
 
     // Update label properties (name is the key, so it's not changed here)
     existingLabel->address = updatedLabel.address;
@@ -232,27 +183,12 @@ bool LabelManager::UpdateLabel(const Label& updatedLabel)
     existingLabel->comment = updatedLabel.comment;
     existingLabel->active = updatedLabel.active;
 
-    // Recalculate physical address
-    existingLabel->physicalAddress = CalculateLabelPhysicalAddress(existingLabel->address, existingLabel->bank, existingLabel->bankOffset, _context);
 
     // Update Z80 address map if address changed
     if (existingLabel->address != oldZ80Address)
     {
         _labelsByZ80Address.erase(oldZ80Address);
         _labelsByZ80Address[existingLabel->address] = existingLabel;
-    }
-
-    // Update physical address map if physical address changed or its validity changed
-    if (existingLabel->physicalAddress != oldPhysicalAddress)
-    {
-        if (oldPhysicalAddress != UINT32_MAX) // If old physical address was valid, remove it
-        {
-            _labelsByPhysicalAddress.erase(oldPhysicalAddress);
-        }
-        if (existingLabel->physicalAddress != UINT32_MAX) // If new physical address is valid, add it
-        {
-            _labelsByPhysicalAddress[existingLabel->physicalAddress] = existingLabel;
-        }
     }
 
     _logger->Debug(_MODULE, _SUBMODULE, "Label '%s' updated successfully.", existingLabel->name.c_str());

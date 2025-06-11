@@ -122,6 +122,10 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     // Subscribe to CPU step messages
     ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
     messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
+    
+    // Subscribe to label change notifications
+    ObserverCallbackMethod labelChangedCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
+    messageCenter.AddObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
 
     /// endregion </Subscribe to events>
 }
@@ -145,6 +149,10 @@ DebuggerWindow::~DebuggerWindow()
     // Unsubscribe from CPU step messages
     ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
     messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
+    
+    // Unsubscribe from label change notifications
+    ObserverCallbackMethod labelChangedCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
+    messageCenter.RemoveObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
 
     delete ui;
 }
@@ -579,6 +587,16 @@ void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
     }
 }
 
+void DebuggerWindow::handleLabelChanged(int id, Message* message)
+{
+    qDebug() << "DebuggerWindow::handleLabelChanged() - Refreshing disassembler view due to label changes";
+    
+    // Forward the refresh to the disassembler widget on the main thread
+    dispatchToMainThread([this]() {
+        ui->disassemblerWidget->refresh();
+    });
+}
+
 void DebuggerWindow::continueExecution()
 {
     qDebug() << "DebuggerWindow::continueExecution()";
@@ -649,7 +667,7 @@ uint16_t DebuggerWindow::getNextInstructionAddress(uint16_t address)
     // Disassemble the current instruction to get its length
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
-    disassembler->disassembleSingleCommand(buffer, sizeof(buffer), &instructionLength, &decoded);
+    disassembler->disassembleSingleCommand(buffer, sizeof(buffer), address, &instructionLength, &decoded);
 
     // Calculate the next address by adding the instruction length
     return (address + decoded.fullCommandLen) & 0xFFFF;

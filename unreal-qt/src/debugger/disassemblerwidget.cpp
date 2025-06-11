@@ -195,8 +195,9 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     // Disassemble instructions to provide more context
     for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE; i++)
     {
+        uint16_t instructionAddress = pc - m_displayAddress;
         std::string pcAddress = StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc, ""));
-        std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
+        std::string command = disassembler.disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, instructionAddress, &commandLen,
                                                                                registers, &memory, &decoded);
         std::string hex = DumpHelper::HexDumpBuffer(pcPhysicalAddress, commandLen);
         std::string runtime;
@@ -459,7 +460,7 @@ uint16_t DisassemblerWidget::getNextCommandAddress(uint16_t currentAddress)
     // Disassemble the current instruction to get its length
     uint8_t commandLen = 0;
     DecodedInstruction decoded;
-    disassembler.disassembleSingleCommand(physicalAddress, 6, &commandLen, &decoded);
+    disassembler.disassembleSingleCommand(physicalAddress, 6, currentAddress, &commandLen, &decoded);
 
     // Calculate the next address by adding the command length
     return (currentAddress + decoded.fullCommandLen) & 0xFFFF;

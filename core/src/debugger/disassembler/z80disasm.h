@@ -4,8 +4,14 @@
 #include <regex>
 #include <vector>
 #include "emulator/platform.h"
-#include "debugger/labels/labelmanager.h"
 #include "emulator/emulatorcontext.h"
+
+// Forward declarations
+class ModuleLogger;
+class DebugManager;
+class LabelManager;
+struct Z80Registers;
+class Memory;
 
 /// region <Types>
 
@@ -259,9 +265,7 @@ namespace OpFlags
 
 /// endregion </Types>
 
-class ModuleLogger;
-struct Z80Registers;
-class Memory;
+
 
 class Z80Disassembler
 {
@@ -292,18 +296,16 @@ protected:
 protected:
     ModuleLogger* _logger;
     EmulatorContext* _context;
-    std::unique_ptr<LabelManager> _labelManager;
     /// endregion </Fields>
 
 public:
-    explicit Z80Disassembler(EmulatorContext* context) : _logger(nullptr), _context(context), _labelManager(std::make_unique<LabelManager>(context)) {}
+    explicit Z80Disassembler(EmulatorContext* context);
     virtual ~Z80Disassembler() = default;
 
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
-    LabelManager* GetLabelManager() { return _labelManager.get(); }
     
-    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
-    std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
 
     std::string getRuntimeHints(DecodedInstruction& decoded);
     
@@ -317,10 +319,10 @@ public:
         uint16_t currentPC, Memory* memory, int maxDepth = 5);
     
     /// @brief Generate a runtime annotation for a decoded instruction
-    /// @param decoded The decoded instruction
+    /// @param decodedInstruction The decoded instruction
     /// @param registers CPU registers for runtime state evaluation
     /// @return String containing the annotation or empty string if not applicable
-    std::string getCommandAnnotation(const DecodedInstruction& decoded, Z80Registers* registers);
+    std::string getCommandAnnotation(const DecodedInstruction& decodedInstruction, Z80Registers* registers);
 
     /// region <Helper methods>
 protected:
@@ -328,7 +330,7 @@ protected:
     uint16_t getWord();
     int getRelativeOffset();
 
-    DecodedInstruction decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers = nullptr, Memory* memory = nullptr);
+    DecodedInstruction decodeInstruction(const uint8_t* buffer, size_t len, uint16_t instructionAddr = 0, Z80Registers* registers = nullptr, Memory* memory = nullptr);
     OpCode getOpcode(uint16_t prefix, uint8_t fetchByte);
     uint8_t hasOperands(OpCode& opcode);
     std::string formatMnemonic(const DecodedInstruction& decoded);
