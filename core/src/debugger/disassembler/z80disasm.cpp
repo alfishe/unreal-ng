@@ -8,6 +8,8 @@
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "debugger/debugmanager.h"
+#include "debugger/labels/labelmanager.h"
 #include <cstring>
 #include <queue>
 
@@ -19,6 +21,10 @@
 // See: http://www.z80.info/z80undoc3.txt
 
 /// endregion </Information>
+
+Z80Disassembler::Z80Disassembler(EmulatorContext* context) : _logger(nullptr), _context(context)
+{
+}
 
 /// region <Static>
 
@@ -2001,14 +2007,20 @@ std::regex Z80Disassembler::regexOpcodeOperands(":\\d+");
 
 /// endregion </Static>
 
-std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen, DecodedInstruction* decoded)
+std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen, DecodedInstruction* decoded)
 {
-    std::string result = disassembleSingleCommandWithRuntime(buffer, len, commandLen, nullptr, nullptr, decoded);
+    std::string result = disassembleSingleCommandWithRuntime(buffer, len, instructionAddr, commandLen, nullptr, nullptr, decoded);
+    
+    // Update the instruction address in the decoded instruction if provided
+    if (decoded)
+    {
+        decoded->instructionAddr = instructionAddr;
+    }
 
     return result;
 }
 
-std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded)
+std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded)
 {
     std::string result;
 
@@ -2021,7 +2033,9 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
     }
     /// endregion </Sanity check>
 
-    DecodedInstruction decodedInstruction = decodeInstruction(buffer, len, registers, memory);
+    // Pass 0 as instruction address since we don't have the actual address here
+    // The caller should update the instruction address after decoding if needed
+    DecodedInstruction decodedInstruction = decodeInstruction(buffer, len, instructionAddr, registers, memory);
     if (decodedInstruction.isValid)
     {
         result = decodedInstruction.mnemonic;
@@ -2032,29 +2046,17 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
         // Generate annotation if we have runtime context
         if (registers != nullptr)
         {
-            bool isCurrentInstruction = (decodedInstruction.instructionAddr == registers->pc);
-            
-            // For current instruction, always show the command annotation
-            // For other instructions, only show if it's not a conditional jump/call
-            if (isCurrentInstruction || 
-                !((decodedInstruction.hasJump || decodedInstruction.hasRelativeJump) && decodedInstruction.hasCondition))
+            decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
+        }
+
+        // Look up and set label for this instruction if available
+        auto labelManager = _context->pDebugManager->GetLabelManager();
+        if (labelManager)
+        {
+            std::shared_ptr<Label> label = labelManager->GetLabelByZ80Address(decodedInstruction.instructionAddr);
+            if (label && !label->name.empty())
             {
-                decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
-            }
-            // For non-current conditional jumps, show a simpler annotation if needed
-            else if (!isCurrentInstruction && 
-                    (decodedInstruction.hasJump || decodedInstruction.hasRelativeJump) && 
-                    decodedInstruction.hasCondition)
-            {
-                // Show just the target address without the condition evaluation
-                if (decodedInstruction.hasJump)
-                {
-                    decodedInstruction.annotation = StringHelper::Format("Target: #%04X", decodedInstruction.jumpAddr);
-                }
-                else if (decodedInstruction.hasRelativeJump)
-                {
-                    decodedInstruction.annotation = StringHelper::Format("Target: #%04X", decodedInstruction.relJumpAddr);
-                }
+                decodedInstruction.label = label->name;
             }
         }
 
@@ -2069,22 +2071,30 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
     return result;
 }
 
-std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& decoded, Z80Registers* registers)
+std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& decodedInstruction, Z80Registers* registers)
 {
-    if (!decoded.hasRuntime || !registers)
-    {
-        return "";
-    }
-
     std::string annotation;
-    
-    // Handle conditional jumps and calls
-    if ((decoded.hasJump || decoded.hasRelativeJump) && decoded.hasCondition)
+
+    if (!registers)
+        return annotation;
+
+    // Calculate flags
+    bool isCurrentInstruction = decodedInstruction.instructionAddr == registers->pc;
+    bool hasJump = decodedInstruction.hasJump || decodedInstruction.hasRelativeJump || decodedInstruction.hasReturn;
+    bool hasUnconditionalJump = !decodedInstruction.hasCondition && hasJump;
+    bool hasConditionalJump = decodedInstruction.hasCondition && hasJump;
+
+
+    if (hasUnconditionalJump)
+    {
+        annotation = StringHelper::Format("Will jump to 0x%04X", decodedInstruction.jumpAddr);
+    }
+    else if (hasConditionalJump)  // Handle conditional jumps and calls
     {
         bool conditionMet = false;
         
         // Check condition based on the instruction
-        switch (decoded.command & 0xF8)  // Mask to get the condition bits
+        switch (decodedInstruction.command & 0xF8)  // Mask to get the condition bits
         {
             // NZ (not zero)
             case 0xC0: // RET NZ
@@ -2146,27 +2156,37 @@ std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& deco
                 conditionMet = (registers->f & SF) != 0; // SF = 0x80
                 break;
         }
-        
-        if (decoded.hasJump)
+
+        if (isCurrentInstruction)
         {
-            annotation = StringHelper::Format("%s to #%04X", 
-                conditionMet ? "Will jump" : "Won't jump", 
-                decoded.jumpAddr);
+            string conditionStr;
+            uint16_t jumpAddr = 0xFFFF;
+            if (decodedInstruction.hasJump)
+            {
+                conditionStr = conditionMet ? "Will jump" : "Won't jump";
+                jumpAddr = decodedInstruction.jumpAddr;
+            }
+            else if (decodedInstruction.hasRelativeJump)
+            {
+                conditionStr = conditionMet ? "Will jump" : "Won't jump";
+                jumpAddr = decodedInstruction.relJumpAddr;
+            }
+
+            annotation = StringHelper::Format("%s to #%04X", conditionStr.c_str(), jumpAddr);
         }
-        else if (decoded.hasRelativeJump)
+        else if (decodedInstruction.hasRelativeJump)
         {
-            annotation = StringHelper::Format("%s to #%04X", 
-                conditionMet ? "Will jump" : "Won't jump", 
-                decoded.relJumpAddr);
+            annotation = StringHelper::Format("May jump to #%04X", decodedInstruction.relJumpAddr);
         }
+
     }
     // Handle DJNZ
-    else if (decoded.isDjnz)
+    else if (decodedInstruction.isDjnz && isCurrentInstruction)
     {
         uint8_t b = registers->b - 1;  // B is already decremented in the emulator
         if (b != 0)
         {
-            annotation = StringHelper::Format("Looping, B=%d", b);
+            annotation = StringHelper::Format("Looping to $%04X, B=%d", decodedInstruction.jumpAddr, b);
         }
         else
         {
@@ -2174,7 +2194,7 @@ std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& deco
         }
     }
     // Handle block operations
-    else if (decoded.isBlockOp)
+    else if (decodedInstruction.isBlockOp && isCurrentInstruction)
     {
         // For block operations, show the current BC counter
         if (registers->bc != 0)
@@ -2187,31 +2207,31 @@ std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& deco
         }
     }
     // Handle calls and returns
-    else if (decoded.hasJump && !decoded.hasCondition)
+    else if (decodedInstruction.hasJump && !decodedInstruction.hasCondition)
     {
         // Check for RST instructions
-        if (decoded.isRst)
+        if (decodedInstruction.isRst)
         {
-            annotation = StringHelper::Format("Calling RST #%02X", decoded.jumpAddr & 0x38);
+            annotation = StringHelper::Format("Calling RST #%02X", decodedInstruction.jumpAddr & 0x38);
         }
         else
         {
-            annotation = StringHelper::Format("Calling #%04X", decoded.jumpAddr);
+            annotation = StringHelper::Format("Calling #%04X", decodedInstruction.jumpAddr);
         }
     }
-    else if (decoded.hasReturn && !decoded.hasCondition)
+    else if (decodedInstruction.hasReturn && !decodedInstruction.hasCondition)
     {
-        annotation = StringHelper::Format("Returning to #%04X", decoded.returnAddr);
+        annotation = StringHelper::Format("Returning to #%04X", decodedInstruction.returnAddr);
     }
     // Handle relative jumps without condition (JR e)
-    else if (decoded.hasRelativeJump && !decoded.hasCondition)
+    else if (decodedInstruction.hasRelativeJump && !decodedInstruction.hasCondition)
     {
-        annotation = StringHelper::Format("Jumping to #%04X", decoded.relJumpAddr);
+        annotation = StringHelper::Format("Jumping to #%04X", decodedInstruction.relJumpAddr);
     }
     // Handle indexed operations with displacement
-    else if (decoded.hasDisplacement)
+    else if (decodedInstruction.hasDisplacement)
     {
-        annotation = StringHelper::Format("Effective address: #%04X", decoded.displacementAddr);
+        annotation = StringHelper::Format("Effective address: #%04X", decodedInstruction.displacementAddr);
     }
     
     return annotation;
@@ -2270,7 +2290,7 @@ bool Z80Disassembler::shouldStepOver(const uint8_t* buffer, size_t len)
     // Decode the instruction
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
-    disassembleSingleCommand(buffer, len, &instructionLength, &decoded);
+    disassembleSingleCommand(buffer, len, 0, &instructionLength, &decoded);
 
     // Check if this is an instruction we should step over
     uint32_t flags = decoded.opcode.flags;
@@ -2297,7 +2317,7 @@ uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Mem
     // Disassemble the current instruction to get its length
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
-    disassembleSingleCommand(buffer, sizeof(buffer), &instructionLength, &decoded);
+    disassembleSingleCommand(buffer, sizeof(buffer), 0, &instructionLength, &decoded);
 
     // Calculate the next address by adding the instruction length
     return (currentAddress + decoded.fullCommandLen) & 0xFFFF;
@@ -2305,8 +2325,8 @@ uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Mem
 
 /// region <Helper methods>
 
-DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers,
-                                                      Memory* memory)
+DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len, uint16_t instructionAddr,
+                                                     Z80Registers* registers, Memory* memory)
 {
     DecodedInstruction result;
 
@@ -2320,6 +2340,9 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         return result;
     }
     /// endregion </Input parameters validation>
+    
+    // Set the instruction address in the result
+    result.instructionAddr = instructionAddr;
 
     int pos = 0;
     uint16_t prefix = 0x0000;
@@ -2479,7 +2502,9 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
 
     if (hasWordArgument)
     {
-        result.wordOperand = (result.operandBytes[0] << 8) | result.operandBytes[1];
+        uint8_t loByte = result.operandBytes[0];
+        uint8_t hiByte = result.operandBytes[1];
+        result.wordOperand = (hiByte << 8) | loByte;
     }
 
     if (hasRelativeJump)
@@ -2509,7 +2534,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         else if (hasDisplacement)
         {
             // Displacement is signed 8-bit integer [-128..+127]
-            result.displacement = static_cast<int8_t>(result.byteOperand);
+            result.displacement = (int8_t)result.byteOperand;
 
             uint16_t baseAddr = 0x0000;
 
@@ -2871,8 +2896,8 @@ std::vector<std::pair<uint16_t, uint16_t>> Z80Disassembler::getStepOverExclusion
     for (size_t i = 0; i < MAX_INSTRUCTION_LENGTH; i++)
         buffer[i] = memory->DirectReadFromZ80Memory(currentPC + i);
 
-    // Decode the instruction
-    DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer));
+    // Decode the instruction with the current PC as the instruction address
+    DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer), currentPC);
     if (!decoded.isValid)
         return result;
 
@@ -3034,8 +3059,8 @@ void Z80Disassembler::analyzeCalledFunction(uint16_t functionAddress, Memory* me
         for (size_t i = 0; i < MAX_INSTRUCTION_LENGTH; i++)
             buffer[i] = memory->DirectReadFromZ80Memory(currentAddress + i);
 
-        // Decode the instruction
-        DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer));
+        // Decode the instruction with the current address as the instruction address
+        DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer), currentAddress);
         if (!decoded.isValid)
             continue;
 

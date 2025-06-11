@@ -23,7 +23,6 @@ struct Label
     uint16_t bank = UINT16_MAX;    // Memory bank number (0-254, 0xFFFF = any bank)
     uint16_t bankOffset = UINT16_MAX;  // Address within memory bank (0x0000-0x4000)
     MemoryBankModeEnum bankType = BANK_RAM; // Type of bank (RAM or ROM)
-    uint32_t physicalAddress = 0;  // Physical memory address (absolute in emulated system)
     std::string type;              // Symbol type ("code", "data", "const")
     std::string module;            // Module/segment name this label belongs to
     std::string comment;           // Optional comment or description
@@ -55,7 +54,6 @@ protected:
     
     // Maps for quick lookup in both directions
     std::map<uint16_t, std::shared_ptr<Label>> _labelsByZ80Address;
-    std::map<uint32_t, std::shared_ptr<Label>> _labelsByPhysicalAddress;
     std::map<std::string, std::shared_ptr<Label>> _labelsByName;
     
     // File format detection and parsing helpers
@@ -90,7 +88,6 @@ public:
     
     // Label lookup
     std::shared_ptr<Label> GetLabelByZ80Address(uint16_t address) const;
-    std::shared_ptr<Label> GetLabelByPhysicalAddress(uint32_t address) const;
     std::shared_ptr<Label> GetLabelByName(const std::string& name) const;
     
     // File operations

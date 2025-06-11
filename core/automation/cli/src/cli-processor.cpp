@@ -689,7 +689,7 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     // Disassemble the instruction that's about to be executed
     uint8_t commandLen = 0;
     DecodedInstruction decodedBefore;
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, initialPC, &commandLen,
                                                                                       z80State, memory, &decodedBefore);
 
     // Execute the requested number of CPU cycles
@@ -718,7 +718,7 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     // Disassemble the next instruction to be executed
     commandLen = 0;
     DecodedInstruction decodedAfter;
-    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
+    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, newPC, &commandLen,
                                                                                      z80State, memory, &decodedAfter);
 
     // Format response with CPU state information
