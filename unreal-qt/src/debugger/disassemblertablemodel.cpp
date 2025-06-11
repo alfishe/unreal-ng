@@ -74,28 +74,31 @@ void DisassemblerTableModel::refresh()
     // Store current PC before refresh
     uint16_t currentPC = m_currentPC;
 
-    // Calculate visible range centered on current PC
-    const uint16_t rangeHalfSize = 0x80;
-    uint16_t visibleStart = (currentPC >= rangeHalfSize) ? (currentPC - rangeHalfSize) : 0;
-    uint16_t visibleEnd = (currentPC <= (0xFFFF - rangeHalfSize)) ? (currentPC + rangeHalfSize) : 0xFFFF;
-
-    // Begin model reset
+    // Clear the cache and reset the model
     beginResetModel();
+    m_decodedInstructionsCache.clear();
+    endResetModel();
 
-    // Clear the instruction cache to force reloading
+    // If we don't have a valid PC yet, just return
+    if (currentPC == 0xFFFF)
+    {
+        qDebug() << "No valid PC set, skipping disassembly";
+        return;
+    }
+
+    // Force a full reload by clearing the cache
     m_decodedInstructionsCache.clear();
 
-    // Update visible range and reload instructions
-    m_visibleStart = visibleStart;
-    m_visibleEnd = visibleEnd;
+    // Calculate the range to load - centered around the current PC
+    const uint16_t RANGE = 0x100;  // 256 bytes before and after PC
+    uint16_t loadStart = (currentPC > RANGE) ? (currentPC - RANGE) : 0;
+    uint16_t loadEnd = (currentPC < (0xFFFF - RANGE)) ? (currentPC + RANGE) : 0xFFFF;
 
-    // Calculate range to load with padding
-    const uint16_t PADDING = 0x100;
-    uint16_t loadStart = (m_visibleStart > PADDING) ? (m_visibleStart - PADDING) : 0;
-    uint16_t loadEnd = (m_visibleEnd < (0xFFFF - PADDING)) ? (m_visibleEnd + PADDING) : 0xFFFF;
-
+    // Begin model reset for the actual data loading
+    beginResetModel();
+    
     // Load disassembly for the range
-    loadDisassemblyRange(loadStart, loadEnd);
+    loadDisassemblyRange(loadStart, loadEnd, currentPC);
 
     // End model reset
     endResetModel();
@@ -752,8 +755,10 @@ void DisassemblerTableModel::disassembleBackward(uint16_t pc, uint16_t end)
 
 DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disassembler* disassembler, Memory* memory)
 {
+    Z80Registers* registers = m_emulator->GetContext()->pCore->GetZ80();
+
     uint8_t buffer[Z80Disassembler::MAX_INSTRUCTION_LENGTH] = {0};
-    size_t bytesToRead = std::min(static_cast<size_t>(Z80Disassembler::MAX_INSTRUCTION_LENGTH), (size_t)(0x10000 - addr));
+    size_t bytesToRead = std::min((size_t)(Z80Disassembler::MAX_INSTRUCTION_LENGTH), (size_t)(0x10000 - addr));
 
     try
     {
@@ -767,8 +772,8 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
         uint8_t commandLen = 0;
         DecodedInstruction decodedInstruction;
 
-        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, sizeof(buffer), &commandLen,
-                                                                               nullptr, memory, &decodedInstruction);
+        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, sizeof(buffer), addr, &commandLen,
+                                                                               registers, memory, &decodedInstruction);
 
         if (commandLen > 0 && commandLen <= Z80Disassembler::MAX_INSTRUCTION_LENGTH)
         {
@@ -780,7 +785,11 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
 
             // Cache the instruction
             m_decodedInstructionsCache[addr] = decodedInstruction;
-            qDebug() << StringHelper::Format("Disassembled at 0x%04X: %s", addr, decodedInstruction.mnemonic.c_str()).c_str();
+            qDebug() << StringHelper::Format("Disassembled at 0x%04X: %s %s | %s | %s",
+                addr, 
+                decodedInstruction.label.empty() ? "" : "[" + decodedInstruction.label + "[",
+                decodedInstruction.mnemonic.c_str(),
+                decodedInstruction.annotation.empty() ? "" : decodedInstruction.annotation.c_str()).c_str();
             return decodedInstruction;
         }
     }
