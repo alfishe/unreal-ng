@@ -292,6 +292,11 @@ QVariant DisassemblerTableModel::data(const QModelIndex& index, int role) const
         font.setStyleHint(QFont::TypeWriter);
         return font;
     }
+    else if (role == Qt::ForegroundRole && index.column() == 2)  // Label column
+    {
+        // Return a softer navy blue color for labels
+        return QVariant(QBrush(QColor(0, 0, 180)));  // Softer navy blue
+    }
     else if (role == Qt::BackgroundRole && addr == m_currentPC)
     {
         // Highlight the current PC row
