@@ -622,16 +622,6 @@ void DebuggerWindow::handleLabelChanged(int id, Message* message)
     });
 }
 
-void DebuggerWindow::handleLabelChanged(int id, Message* message)
-{
-    qDebug() << "DebuggerWindow::handleLabelChanged() - Refreshing disassembler view due to label changes";
-    
-    // Forward the refresh to the disassembler widget on the main thread
-    dispatchToMainThread([this]() {
-        ui->disassemblerWidget->refresh();
-    });
-}
-
 void DebuggerWindow::continueExecution()
 {
     qDebug() << "DebuggerWindow::continueExecution()";
