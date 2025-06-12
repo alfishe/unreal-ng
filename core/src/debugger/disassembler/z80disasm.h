@@ -4,8 +4,14 @@
 #include <regex>
 #include <vector>
 #include "emulator/platform.h"
-#include "debugger/labels/labelmanager.h"
 #include "emulator/emulatorcontext.h"
+
+// Forward declarations
+class ModuleLogger;
+class DebugManager;
+class LabelManager;
+struct Z80Registers;
+class Memory;
 
 /// region <Types>
 
@@ -40,6 +46,7 @@ struct DecodedInstruction
     bool hasJump = false;
     bool hasRelativeJump = false;
     bool hasDisplacement = false;
+    bool hasIndirect = false;
     bool hasReturn = false;
     bool hasByteOperand = false;
     bool hasWordOperand = false;
@@ -129,6 +136,7 @@ constexpr uint32_t OF_BLOCK = (1UL << 15);          // Block operations (LDI, LD
 constexpr uint32_t OF_IO = (1UL << 16);             // I/O operations (IN, OUT)
 constexpr uint32_t OF_INTERRUPT = (1UL << 17);      // Interrupt-related (EI, DI, IM)
 constexpr uint32_t OF_DJNZ = (1UL << 18);           // DJNZ instruction
+constexpr uint32_t OF_INDIRECT = (1UL << 19);       // Command uses indirect addressing (via one register pairs)
 
 namespace OpFlags
 {
@@ -259,20 +267,19 @@ namespace OpFlags
 
 /// endregion </Types>
 
-class ModuleLogger;
-struct Z80Registers;
-class Memory;
+
 
 class Z80Disassembler
 {
-    /// Maximum length of a Z80 instruction in bytes (prefix + opcode + operands)
-    static constexpr size_t MAX_INSTRUCTION_LENGTH = 4;
-    
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISASSEMBLER;
     const uint16_t _SUBMODULE = PlatformDisassemblerSubmodulesEnum::SUBMODULE_DISASSEMBLER_CORE;
     /// endregion </ModuleLogger definitions for Module/Submodule>
+
+public:
+    /// Maximum length of a Z80 instruction in bytes (prefix + opcode + operands)
+    static constexpr size_t MAX_INSTRUCTION_LENGTH = 4;
 
     /// region <Static>
 protected:
@@ -288,27 +295,27 @@ protected:
 
     /// endregion </Static>
 
+
+
     /// region <Fields>
 protected:
     ModuleLogger* _logger;
     EmulatorContext* _context;
-    std::unique_ptr<LabelManager> _labelManager;
     /// endregion </Fields>
 
 public:
-    explicit Z80Disassembler(EmulatorContext* context) : _logger(nullptr), _context(context), _labelManager(std::make_unique<LabelManager>(context)) {}
+    explicit Z80Disassembler(EmulatorContext* context);
     virtual ~Z80Disassembler() = default;
 
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
-    LabelManager* GetLabelManager() { return _labelManager.get(); }
     
-    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
-    std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
 
     std::string getRuntimeHints(DecodedInstruction& decoded);
     
     // Helper methods for debugger step functionality
-    bool shouldStepOver(const uint8_t* buffer, size_t len);
+    bool shouldStepOver(const std::vector<uint8_t>& buffer);
     uint16_t getNextInstructionAddress(uint16_t currentAddress, Memory* memory);
         
     // Get address ranges that should be excluded from breakpoint triggering during step-over
@@ -317,10 +324,10 @@ public:
         uint16_t currentPC, Memory* memory, int maxDepth = 5);
     
     /// @brief Generate a runtime annotation for a decoded instruction
-    /// @param decoded The decoded instruction
+    /// @param decodedInstruction The decoded instruction
     /// @param registers CPU registers for runtime state evaluation
     /// @return String containing the annotation or empty string if not applicable
-    std::string getCommandAnnotation(const DecodedInstruction& decoded, Z80Registers* registers);
+    std::string getCommandAnnotation(const DecodedInstruction& decodedInstruction, Z80Registers* registers);
 
     /// region <Helper methods>
 protected:
@@ -328,7 +335,7 @@ protected:
     uint16_t getWord();
     int getRelativeOffset();
 
-    DecodedInstruction decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers = nullptr, Memory* memory = nullptr);
+    DecodedInstruction decodeInstruction(const std::vector<uint8_t>& buffer, uint16_t instructionAddr = 0, Z80Registers* registers = nullptr, Memory* memory = nullptr);
     OpCode getOpcode(uint16_t prefix, uint8_t fetchByte);
     uint8_t hasOperands(OpCode& opcode);
     std::string formatMnemonic(const DecodedInstruction& decoded);

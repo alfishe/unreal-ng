@@ -634,7 +634,7 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
         return;
     }
 
-    // Check if emulator is paused
+    // Check if the emulator is paused
     if (!emulator->IsPaused())
     {
         session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
@@ -678,19 +678,15 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     // Store the current PC to show what's about to be executed
     uint16_t initialPC = z80State->pc;
 
-    // Get physical address for the PC
-    uint8_t* pcPhysicalAddress = memory->MapZ80AddressToPhysicalAddress(initialPC);
-    if (!pcPhysicalAddress)
-    {
-        session.SendResponse("Error: Unable to get physical address for PC.");
-        return;
-    }
-
     // Disassemble the instruction that's about to be executed
     uint8_t commandLen = 0;
     DecodedInstruction decodedBefore;
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
-                                                                                      z80State, memory, &decodedBefore);
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (int i = 0; i < buffer.size(); i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
+    }
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen, z80State, memory, &decodedBefore);
 
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
@@ -708,18 +704,16 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
 
     // Get the new PC and disassemble the next instruction to be executed
     uint16_t newPC = z80State->pc;
-    pcPhysicalAddress = memory->MapZ80AddressToPhysicalAddress(newPC);
-    if (!pcPhysicalAddress)
-    {
-        session.SendResponse("Error: Unable to get physical address for new PC.");
-        return;
-    }
 
     // Disassemble the next instruction to be executed
-    commandLen = 0;
+    for (int i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(newPC + i);
+    }
+
     DecodedInstruction decodedAfter;
-    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(pcPhysicalAddress, 6, &commandLen,
-                                                                                     z80State, memory, &decodedAfter);
+    commandLen = 0;
+    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(buffer, newPC, &commandLen, z80State, memory, &decodedAfter);
 
     // Format response with CPU state information
     std::stringstream ss;
