@@ -8,6 +8,7 @@
 #include <QWheelEvent>
 #include <QAbstractItemView>
 #include <QStyledItemDelegate>
+#include <QTimer>
 #include <unordered_map>
 #include "disassemblertablemodel.h"
 
@@ -53,6 +54,7 @@ private:
     void initializeTable();
     void updateVisibleRange();
     QString formatAddress(uint16_t address) const;
+    void onResizeTimer();
     
     Ui::DisassemblerWidget* ui;
     DisassemblerTableModel* m_model;
@@ -62,6 +64,10 @@ private:
     bool m_updatingView;
     bool m_isDragging;
     QPoint m_dragStartPos;
+    
+    // Resize optimization
+    QTimer m_resizeTimer;
+    QSize m_lastSize;
     
     enum class ScrollMode
     {

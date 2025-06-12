@@ -21,10 +21,12 @@ DisassemblerWidget::DisassemblerWidget(QWidget* parent)
       m_currentPC(0),
       m_updatingView(false),
       m_isDragging(false),
-      m_scrollMode(ScrollMode::Command)
+      m_scrollMode(ScrollMode::Command),
+      m_resizeTimer(this)
 {
     ui->setupUi(this);
     initializeTable();
+    connect(&m_resizeTimer, &QTimer::timeout, this, &DisassemblerWidget::onResizeTimer);
 }
 
 DisassemblerWidget::~DisassemblerWidget()
@@ -44,6 +46,9 @@ void DisassemblerWidget::initializeTable()
 
     // Set the model first
     tableView->setModel(m_model);
+
+    // Force the view to update its layout
+    tableView->doItemsLayout();  // This triggers row height calculation
 
     // Configure the view
     tableView->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -302,7 +307,38 @@ void DisassemblerWidget::mouseReleaseEvent(QMouseEvent* event)
 void DisassemblerWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    updateVisibleRange();
+    
+    // Get the row height to calculate how many rows fit in the visible area
+    int rowHeight = ui->disassemblyTable->rowHeight(0);
+    if (rowHeight <= 0)
+    {
+        rowHeight = ui->disassemblyTable->verticalHeader()->defaultSectionSize();
+    }
+    
+    // Calculate how many rows would be shown with the new size
+    int currentRows = m_lastSize.isValid() ? m_lastSize.height() / rowHeight : 0;
+    int newRows = event->size().height() / rowHeight;
+    
+    // Only update if we can show at least 10 more rows than before
+    // or if we've never updated before (m_lastSize is invalid)
+    if (!m_lastSize.isValid() || abs(newRows - currentRows) >= 10)
+    {
+        // Restart the timer - this will delay the update until resizing stops
+        m_resizeTimer.stop();
+        m_resizeTimer.setSingleShot(true);
+        m_resizeTimer.start(100); // 100ms delay
+    }
+    
+    m_lastSize = event->size();
+}
+
+void DisassemblerWidget::onResizeTimer()
+{
+    // Only update if we have a valid model and the widget is visible
+    if (m_model && isVisible())
+    {
+        updateVisibleRange();
+    }
 }
 
 void DisassemblerWidget::onCurrentRowChanged(const QModelIndex& current, const QModelIndex& previous)
@@ -331,12 +367,15 @@ void DisassemblerWidget::updateVisibleRange()
         // We just need to trigger it with any range, and it will automatically center on PC
 
         // For logging purposes, calculate how many rows are visible in the table
-        int tableViewHeight = tableView->height();
+        int tableHeight = tableView->height();
         int rowHeight = tableView->rowHeight(0);
-        if (rowHeight == 0)
-            rowHeight = 16;
+        if (rowHeight <= 0)
+        {
+            // Fallback if still is not calculated
+            rowHeight = tableView->verticalHeader()->defaultSectionSize();
+        }
 
-        int visibleRows = tableViewHeight / rowHeight;
+        int visibleRows = tableHeight / rowHeight;
         if (visibleRows <= 0)
             visibleRows = 20;  // Fallback if calculation fails
 
