@@ -295,6 +295,8 @@ protected:
 
     /// endregion </Static>
 
+
+
     /// region <Fields>
 protected:
     ModuleLogger* _logger;
