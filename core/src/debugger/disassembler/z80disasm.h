@@ -307,13 +307,13 @@ public:
 
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
     
-    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
-    std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
 
     std::string getRuntimeHints(DecodedInstruction& decoded);
     
     // Helper methods for debugger step functionality
-    bool shouldStepOver(const uint8_t* buffer, size_t len);
+    bool shouldStepOver(const std::vector<uint8_t>& buffer);
     uint16_t getNextInstructionAddress(uint16_t currentAddress, Memory* memory);
         
     // Get address ranges that should be excluded from breakpoint triggering during step-over
@@ -333,7 +333,7 @@ protected:
     uint16_t getWord();
     int getRelativeOffset();
 
-    DecodedInstruction decodeInstruction(const uint8_t* buffer, size_t len, uint16_t instructionAddr = 0, Z80Registers* registers = nullptr, Memory* memory = nullptr);
+    DecodedInstruction decodeInstruction(const std::vector<uint8_t>& buffer, uint16_t instructionAddr = 0, Z80Registers* registers = nullptr, Memory* memory = nullptr);
     OpCode getOpcode(uint16_t prefix, uint8_t fetchByte);
     uint8_t hasOperands(OpCode& opcode);
     std::string formatMnemonic(const DecodedInstruction& decoded);

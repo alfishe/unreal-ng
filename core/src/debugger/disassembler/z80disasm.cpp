@@ -2007,9 +2007,9 @@ std::regex Z80Disassembler::regexOpcodeOperands(":\\d+");
 
 /// endregion </Static>
 
-std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen, DecodedInstruction* decoded)
+std::string Z80Disassembler::disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, DecodedInstruction* decoded)
 {
-    std::string result = disassembleSingleCommandWithRuntime(buffer, len, instructionAddr, commandLen, nullptr, nullptr, decoded);
+    std::string result = disassembleSingleCommandWithRuntime(buffer, instructionAddr, commandLen, nullptr, nullptr, decoded);
     
     // Update the instruction address in the decoded instruction if provided
     if (decoded)
@@ -2020,22 +2020,20 @@ std::string Z80Disassembler::disassembleSingleCommand(const uint8_t* buffer, siz
     return result;
 }
 
-std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded)
+std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded)
 {
     std::string result;
 
-    /// region <Sanity check>
-    if (buffer == nullptr || len == 0)
+    if (buffer.empty())
     {
-        MLOGWARNING("Z80Disassembler::disassembleSingleCommand - invalid arguments");
-
+        MLOGWARNING("Z80Disassembler::disassembleSingleCommand - empty buffer");
         return result;
     }
     /// endregion </Sanity check>
 
     // Pass 0 as an instruction address since we don't have the actual address here
     // The caller should update the instruction address after decoding if needed
-    DecodedInstruction decodedInstruction = decodeInstruction(buffer, len, instructionAddr, registers, memory);
+    DecodedInstruction decodedInstruction = decodeInstruction(buffer, instructionAddr, registers, memory);
     if (decodedInstruction.isValid)
     {
         result = decodedInstruction.mnemonic;
@@ -2293,17 +2291,17 @@ std::string Z80Disassembler::getRuntimeHints(DecodedInstruction& decoded)
 /// @note The opcode flags are defined in z80disasm.h as part of the OpCode structure.
 ///       The flags are stored in the 'flags' field of the DecodedInstruction.opcode member.
 ///       The actual opcode tables are defined as static arrays in the Z80Disassembler class.
-bool Z80Disassembler::shouldStepOver(const uint8_t* buffer, size_t len)
+bool Z80Disassembler::shouldStepOver(const std::vector<uint8_t>& buffer)
 {
     bool result = false;
 
-    if (!buffer || len == 0)
+    if (buffer.empty())
         return result;
 
     // Decode the instruction
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
-    disassembleSingleCommand(buffer, len, 0, &instructionLength, &decoded);
+    disassembleSingleCommand(buffer, 0, &instructionLength, &decoded);
 
     // Check if this is an instruction we should step over
     uint32_t flags = decoded.opcode.flags;
@@ -2323,14 +2321,14 @@ uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Mem
         return (currentAddress + 1) & 0xFFFF;
 
     // Read instruction bytes
-    uint8_t buffer[MAX_INSTRUCTION_LENGTH];
-    for (size_t i = 0; i < sizeof(buffer); i++)
+    std::vector<uint8_t> buffer(MAX_INSTRUCTION_LENGTH);
+    for (size_t i = 0; i < buffer.size(); i++)
         buffer[i] = memory->DirectReadFromZ80Memory(currentAddress + i);
 
     // Disassemble the current instruction to get its length
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
-    disassembleSingleCommand(buffer, sizeof(buffer), 0, &instructionLength, &decoded);
+    disassembleSingleCommand(buffer, 0, &instructionLength, &decoded);
 
     // Calculate the next address by adding the instruction length
     return (currentAddress + decoded.fullCommandLen) & 0xFFFF;
@@ -2338,18 +2336,16 @@ uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Mem
 
 /// region <Helper methods>
 
-DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, size_t len, uint16_t instructionAddr,
+DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>& buffer, uint16_t instructionAddr,
                                                      Z80Registers* registers, Memory* memory)
 {
     DecodedInstruction result;
 
     /// region <Input parameters validation>
-    if (buffer == nullptr || len == 0)
+    if (buffer.empty())
     {
         result.isValid = false;
-
-        MLOGWARNING("Z80Disassembler::decodeInstruction - invalid arguments");
-
+        MLOGWARNING("Z80Disassembler::decodeInstruction - empty buffer");
         return result;
     }
     /// endregion </Input parameters validation>
@@ -2381,7 +2377,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     // Fetch longest possible prefixed command
     do
     {
-        uint8_t fetchByte = *(buffer + pos++);
+        uint8_t fetchByte = buffer[pos++];
         result.instructionBytes.push_back(fetchByte);
 
         // Decode current byte
@@ -2423,7 +2419,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                     {
                         for (int i = 0; i < operandsLen; i++)
                         {
-                            uint8_t curByte = *(buffer + pos++);
+                            uint8_t curByte = buffer[pos++];
                             result.instructionBytes.push_back(curByte);
                             result.operandBytes.push_back(curByte);
                         }
@@ -2442,7 +2438,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                     {
                         for (int i = 0; i < operandsLen; i++)
                         {
-                            uint8_t curByte = *(buffer + pos++);
+                            uint8_t curByte = buffer[pos++];
                             result.instructionBytes.push_back(curByte);
                             result.operandBytes.push_back(curByte);
                         }
@@ -2458,7 +2454,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
                     result.displacement = displacement;
                     result.operandBytes.push_back(displacement);
 
-                    command = *(buffer + pos++);
+                    command = buffer[pos++];
                     result.command = command;
                     opcode = getOpcode(prefix, command);
                     result.instructionBytes.push_back(command);
@@ -2905,12 +2901,12 @@ std::vector<std::pair<uint16_t, uint16_t>> Z80Disassembler::getStepOverExclusion
         return result;
 
     // Read instruction bytes at current PC
-    uint8_t buffer[MAX_INSTRUCTION_LENGTH];  // Buffer for instruction bytes
-    for (size_t i = 0; i < MAX_INSTRUCTION_LENGTH; i++)
+    std::vector<uint8_t> buffer(MAX_INSTRUCTION_LENGTH);  // Buffer for instruction bytes
+    for (size_t i = 0; i < buffer.size(); i++)
         buffer[i] = memory->DirectReadFromZ80Memory(currentPC + i);
 
     // Decode the instruction with the current PC as the instruction address
-    DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer), currentPC);
+    DecodedInstruction decoded = decodeInstruction(buffer, currentPC);
     if (!decoded.isValid)
         return result;
 
@@ -3067,13 +3063,13 @@ void Z80Disassembler::analyzeCalledFunction(uint16_t functionAddress, Memory* me
         functionStart = std::min(functionStart, currentAddress);
         functionEnd = std::max(functionEnd, currentAddress);
 
-        // Read instruction bytes
-        uint8_t buffer[MAX_INSTRUCTION_LENGTH];
-        for (size_t i = 0; i < MAX_INSTRUCTION_LENGTH; i++)
+        // Read instruction bytes directly from Z80 memory
+        std::vector<uint8_t> buffer(MAX_INSTRUCTION_LENGTH);
+        for (size_t i = 0; i < buffer.size(); i++)
             buffer[i] = memory->DirectReadFromZ80Memory(currentAddress + i);
 
         // Decode the instruction with the current address as the instruction address
-        DecodedInstruction decoded = decodeInstruction(buffer, sizeof(buffer), currentAddress);
+        DecodedInstruction decoded = decodeInstruction(buffer, currentAddress);
         if (!decoded.isValid)
             continue;
 
