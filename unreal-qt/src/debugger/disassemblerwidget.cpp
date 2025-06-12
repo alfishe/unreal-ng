@@ -331,7 +331,12 @@ void DisassemblerWidget::updateVisibleRange()
         // We just need to trigger it with any range, and it will automatically center on PC
 
         // For logging purposes, calculate how many rows are visible in the table
-        int visibleRows = tableView->height() / tableView->rowHeight(0);
+        int tableViewHeight = tableView->height();
+        int rowHeight = tableView->rowHeight(0);
+        if (rowHeight == 0)
+            rowHeight = 16;
+
+        int visibleRows = tableViewHeight / rowHeight;
         if (visibleRows <= 0)
             visibleRows = 20;  // Fallback if calculation fails
 
