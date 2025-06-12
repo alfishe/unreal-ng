@@ -5,6 +5,7 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QtGui/QColor>
+#include <QMutexLocker>
 #include <iomanip>
 #include <sstream>
 
@@ -186,23 +187,18 @@ QVariant DisassemblerTableModel::data(const QModelIndex& index, int role) const
     }
 
     // Get the instruction for this row
-    if (index.row() < 0 || index.row() >= m_decodedInstructionsCache.size())
+    std::map<uint16_t, DecodedInstruction>::const_iterator it;
+    int cacheSize = m_decodedInstructionsCache.size();
+
+    // Find row data in a disassembled instruction cache
+    if (index.row() < 0 || index.row() >= cacheSize)
     {
-        qDebug() << "Row out of range:" << index.row() << "size:" << m_decodedInstructionsCache.size();
+        qDebug() << "Row out of range:" << index.row() << "size:" << cacheSize;
         return QVariant();
     }
 
-    // Protection against empty cache or invalid row
-    if (m_decodedInstructionsCache.isEmpty() || index.row() < 0 || index.row() >= m_decodedInstructionsCache.size())
-    {
-        qDebug() << "Invalid cache access - empty or row out of range. Row:" << index.row() 
-                 << "Cache size:" << m_decodedInstructionsCache.size();
-        return QVariant();
-    }
-
-    // Get the instruction at the current row
-    auto it = m_decodedInstructionsCache.begin();
-    try 
+    it = m_decodedInstructionsCache.begin();
+    try
     {
         std::advance(it, index.row());
         if (it == m_decodedInstructionsCache.end())
@@ -213,13 +209,13 @@ QVariant DisassemblerTableModel::data(const QModelIndex& index, int role) const
     }
     catch (const std::exception& e)
     {
-        qCritical() << "Exception advancing iterator:" << e.what() << "Row:" << index.row() 
-                   << "Cache size:" << m_decodedInstructionsCache.size();
+        qCritical() << "Exception advancing iterator:" << e.what() 
+                    << "Row:" << index.row() << "Cache size:" << cacheSize;
         return QVariant();
     }
 
-    const uint16_t addr = it.key();
-    const auto& instr = it.value();
+    const uint16_t addr = it->first;
+    const auto& instr = it->second;
 
     if (role == Qt::UserRole)
     {
@@ -375,13 +371,16 @@ void DisassemblerTableModel::setCurrentPC(uint16_t pc)
         qDebug() << "PC address 0x" << QString::number(pc, 16) << " not found in cache. Refreshing cache.";
 
         // Calculate a new range centered around the PC
-        uint16_t rangeHalfSize = 0x100;
-        uint16_t visibleStart = (pc >= rangeHalfSize) ? (pc - rangeHalfSize) : 0;
-        uint16_t visibleEnd = (pc <= (0xFFFF - rangeHalfSize)) ? (pc + rangeHalfSize) : 0xFFFF;
+        const uint16_t rangeHalfSize = DISASSEMBLY_RANGE;
+        const uint16_t rangeStart = (pc >= rangeHalfSize) ? (pc - rangeHalfSize) : 0;
+        const uint16_t rangeEnd = (pc <= (0xFFFF - rangeHalfSize)) ? (pc + rangeHalfSize) : 0xFFFF;
+
+        // We need to be sure that the disassembly range is under control
+        assert(rangeEnd - rangeStart <= DISASSEMBLY_RANGE * 2);
 
         // Set the new visible range - this will trigger loadDisassemblyRange
         // which will load the new range into the cache
-        setVisibleRange(visibleStart, visibleEnd);
+        setVisibleRange(rangeStart, rangeEnd);
 
         // Find the row again after the range is updated
         newRow = findRowForAddress(pc);
@@ -389,23 +388,32 @@ void DisassemblerTableModel::setCurrentPC(uint16_t pc)
     else
     {
         // PC is in cache, check if we're close to the boundaries
-        uint16_t cacheStart = m_decodedInstructionsCache.firstKey();
-        uint16_t cacheEnd = m_decodedInstructionsCache.lastKey();
+        const auto& firstCacheEntry = *m_decodedInstructionsCache.begin();
+        const auto& lastCacheEntry = *std::prev(m_decodedInstructionsCache.end());
+
+        const uint16_t cacheStartAddr = firstCacheEntry.first;
+        const uint16_t cacheEndAddr = lastCacheEntry.first;
 
         // Calculate the middle of the current cache
-        uint16_t cacheMid = cacheStart + (cacheEnd - cacheStart) / 2;
+        const uint16_t cacheMid = cacheStartAddr + (cacheEndAddr - cacheStartAddr) / 2;
 
         // If PC is in the first or last quarter of the cache, expand in that direction
-        if (pc < cacheStart + (cacheMid - cacheStart) / 2 || pc > cacheMid + (cacheEnd - cacheMid) / 2)
+        const uint16_t firstQuarter = cacheStartAddr + (cacheMid - cacheStartAddr) / 2;
+        const uint16_t thirdQuarter = cacheMid + (cacheEndAddr - cacheMid) / 2;
+
+        if (pc < firstQuarter || pc > thirdQuarter)
         {
             // Calculate how much to expand (half the current range)
-            uint16_t expandSize = (cacheEnd - cacheStart) / 2;
-            uint16_t newStart = (pc > expandSize) ? (pc - expandSize) : 0;
-            uint16_t newEnd = (pc < (0xFFFF - expandSize)) ? (pc + expandSize) : 0xFFFF;
+            const uint16_t expandSize = (cacheEndAddr - cacheStartAddr) / 2;
+            const uint16_t newStart = (pc > expandSize) ? (pc - expandSize) : 0;
+            const uint16_t newEnd = (pc < (0xFFFF - expandSize)) ? (pc + expandSize) : 0xFFFF;
 
             qDebug() << "PC is near cache boundary, expanding range to center it";
 
-            // Update the visible range data in decoded instructions cache
+            // We need to be sure that the disassembly range is under control
+            assert(newEnd - newStart <= DISASSEMBLY_RANGE * 2);
+
+            // Update the visible range data in the decoded instructions cache
             setVisibleRange(newStart, newEnd);
         }
     }
@@ -447,10 +455,10 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
     // Optimization: If the requested visible range is identical to the current one,
     // and the cache is not empty, we might avoid a full reset.
     // However, we must ensure that the key addresses (especially the middle of the range) are in the cache
-    if (start == m_visibleStart && end == m_visibleEnd && !m_decodedInstructionsCache.isEmpty())
+    if (start == m_visibleStart && end == m_visibleEnd && !m_decodedInstructionsCache.empty())
     {
         // Check if the middle address (likely the PC) is in the cache
-        if (m_decodedInstructionsCache.contains(midPoint))
+        if (m_decodedInstructionsCache.find(midPoint) != m_decodedInstructionsCache.end())
         {
             qDebug() << "DisassemblerTableModel::setVisibleRange: Range unchanged and cache contains key address 0x"
                      << QString::number(midPoint, 16) << ". Skipping full reset.";
@@ -478,7 +486,7 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
     bool shouldClearCache = true;
 
     // If the PC is in the current range, make sure we don't lose it
-    if (m_decodedInstructionsCache.contains(m_currentPC))
+    if (m_decodedInstructionsCache.find(m_currentPC) != m_decodedInstructionsCache.end())
     {
         qDebug() << "Current PC 0x" << QString::number(m_currentPC, 16) << " is in cache before range update";
     }
@@ -532,13 +540,13 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
         loadDisassemblyRange(loadStart, loadEnd);
 
         // Verify the cache was populated
-        if (m_decodedInstructionsCache.isEmpty())
+        if (m_decodedInstructionsCache.empty())
         {
             qWarning() << "Cache is still empty after loadDisassemblyRange (" << loadStart << " - " << loadEnd
                        << "). Trying direct disassembly.";
         }
         // If after loading, the cache is still empty or has too few instructions, try direct disassembly
-        if (m_decodedInstructionsCache.isEmpty() || m_decodedInstructionsCache.size() < 30)
+        if (m_decodedInstructionsCache.empty() || m_decodedInstructionsCache.size() < 30)
         {
             qDebug() << "Cache has too few instructions (" << m_decodedInstructionsCache.size()
                      << ") after loadDisassemblyRange. Trying direct disassembly.";
@@ -546,7 +554,7 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
         }
 
         // If the PC should be in range but isn't in the cache, force add it
-        if (m_currentPC >= loadStart && m_currentPC <= loadEnd && !m_decodedInstructionsCache.contains(m_currentPC))
+        if (m_currentPC >= loadStart && m_currentPC <= loadEnd && m_decodedInstructionsCache.find(m_currentPC) == m_decodedInstructionsCache.end())
         {
             qDebug() << "PC 0x" << QString::number(m_currentPC, 16)
                      << " should be in range but isn't in cache. Forcing add.";
@@ -620,32 +628,32 @@ int DisassemblerTableModel::findRowForAddress(uint16_t address) const
 {
     int result = -1;
 
-    if (!m_decodedInstructionsCache.isEmpty())
+    if (!m_decodedInstructionsCache.empty())
     {
         // Find the first instruction that starts at or after our target address
-        auto it = m_decodedInstructionsCache.lowerBound(address);
+        auto it = m_decodedInstructionsCache.lower_bound(address);
 
         // Check for exact match
-        if (it != m_decodedInstructionsCache.constEnd() && it.key() == address)
+        if (it != m_decodedInstructionsCache.end() && it->first == address)
         {
-            result = std::distance(m_decodedInstructionsCache.constBegin(), it);
+            result = std::distance(m_decodedInstructionsCache.begin(), it);
         }
         // Handle case when address is before the first instruction
-        else if (it == m_decodedInstructionsCache.constBegin())
+        else if (it == m_decodedInstructionsCache.begin())
         {
-            result = (it.key() == address) ? 0 : -1;
+            result = (it->first == address) ? 0 : -1;
         }
         // Check if address is within the previous instruction's range
         else
         {
             --it;  // Move to the previous instruction
-            uint16_t instrStart = it.key();
-            uint16_t instrSize = it.value().instructionBytes.size();
+            uint16_t instrStart = it->first;
+            uint16_t instrSize = it->second.instructionBytes.size();
             instrSize = (instrSize == 0) ? 1 : instrSize;  // Minimum instruction size
 
             if (address >= instrStart && address < instrStart + instrSize)
             {
-                result = std::distance(m_decodedInstructionsCache.constBegin(), it);
+                result = std::distance(m_decodedInstructionsCache.begin(), it);
             }
         }
     }
@@ -728,6 +736,8 @@ void DisassemblerTableModel::disassembleForward(uint16_t start, uint16_t end)
     while (addr <= end && addr >= start)
     {
         DecodedInstruction decodedInstruction = disassembleAt(addr, disassembler, memory);
+        m_decodedInstructionsCache[addr] = decodedInstruction;
+
         addr += decodedInstruction.fullCommandLen;
     }
 }
@@ -740,21 +750,57 @@ void DisassemblerTableModel::disassembleForward(uint16_t start, uint16_t end)
 /// It handles multi-byte instructions by moving back by the instruction length after each disassembly.
 void DisassemblerTableModel::disassembleBackward(uint16_t pc, uint16_t end)
 {
-    assert(pc > end);
+    assert(pc > end && "End address must be less than PC");
 
     auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
     auto* memory = m_emulator->GetMemory();
+    std::set<uint16_t> processedAddresses;  // To avoid processing the same address multiple times
 
     qDebug() << StringHelper::Format("Disassembling backward from PC=0x%04X to 0x%04X", pc - 1, end).c_str();
 
-    uint16_t addr = pc - 1;           // Start from the byte before PC
-    while (addr >= end && addr < pc)  // Stop when we hit the end address or wrap around
-    {
-        DecodedInstruction decodedInstruction = disassembleAt(addr, disassembler, memory);
-        addr -= decodedInstruction.fullCommandLen;
+    // Start from the byte before PC
+    uint16_t currentAddr = pc - 1;
+    uint16_t addressLimit = pc;
 
-        // Protection against falling out of the address range
-        addr = max(addr, end);
+    // We'll try to find valid instructions by looking back from the current address
+    while (currentAddr >= end)
+    {
+        // If we've already processed this address, move back
+        if (processedAddresses.find(currentAddr) != processedAddresses.end())
+        {
+            currentAddr--;
+            continue;
+        }
+
+        // Try to disassemble at the current address
+        DecodedInstruction decodedInstruction = disassembleAt(currentAddr, disassembler, memory);
+
+        // If we got a valid instruction that doesn't exceed our starting PC
+        if (decodedInstruction.isValid && (currentAddr + decodedInstruction.fullCommandLen) <= addressLimit)
+        {
+            // Add this instruction to our model
+            m_decodedInstructionsCache[currentAddr] = decodedInstruction;
+
+            // Mark all bytes of this instruction as processed
+            for (uint16_t i = 0; i < decodedInstruction.fullCommandLen && currentAddr + i < pc; i++)
+            {
+                processedAddresses.insert(currentAddr + i);
+            }
+
+            // Move back by the instruction length
+            if (currentAddr < decodedInstruction.fullCommandLen)
+                break;  // Prevent underflow
+
+            currentAddr -= decodedInstruction.fullCommandLen;
+            addressLimit -= decodedInstruction.fullCommandLen;
+        }
+        else
+        {
+            // If we can't find a valid instruction starting here, try one byte back
+            if (currentAddr == 0)
+                break;  // Prevent underflow
+            currentAddr--;
+        }
     }
 }
 
@@ -762,13 +808,14 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
 {
     Z80Registers* registers = m_emulator->GetContext()->pCore->GetZ80();
 
-    uint8_t buffer[Z80Disassembler::MAX_INSTRUCTION_LENGTH] = {0};
-    size_t bytesToRead = std::min((size_t)(Z80Disassembler::MAX_INSTRUCTION_LENGTH), (size_t)(0x10000 - addr));
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    size_t bytesToRead = std::min(static_cast<size_t>(Z80Disassembler::MAX_INSTRUCTION_LENGTH), 
+                                 static_cast<size_t>(0x10000 - addr));
 
     try
     {
         // Read bytes from memory
-        for (size_t i = 0; i < bytesToRead; i++)
+        for (int i = 0; i < bytesToRead; i++)
         {
             buffer[i] = memory->DirectReadFromZ80Memory(addr + i);
         }
@@ -777,19 +824,19 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
         uint8_t commandLen = 0;
         DecodedInstruction decodedInstruction;
 
-        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, sizeof(buffer), addr, &commandLen,
+        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, addr, &commandLen,
                                                                                registers, memory, &decodedInstruction);
 
         if (commandLen > 0 && commandLen <= Z80Disassembler::MAX_INSTRUCTION_LENGTH)
         {
-            decodedInstruction.instructionBytes.assign(buffer, buffer + commandLen);
+            decodedInstruction.instructionBytes.assign(buffer.begin(), buffer.begin() + commandLen);
             decodedInstruction.mnemonic = disasm;
             decodedInstruction.instructionAddr = addr;
             decodedInstruction.fullCommandLen = commandLen;
             decodedInstruction.isValid = true;
 
-            // Cache the instruction
             m_decodedInstructionsCache[addr] = decodedInstruction;
+            
             qDebug() << StringHelper::Format("Disassembled at 0x%04X: %s %s | %s | %s",
                 addr, 
                 decodedInstruction.label.empty() ? "" : "[" + decodedInstruction.label + "[",
@@ -830,14 +877,14 @@ void DisassemblerTableModel::dumpState() const
              << "(size:" << (m_visibleEnd - m_visibleStart + 1) << ")";
     qDebug() << "Current PC: 0x" << QString::number(m_currentPC, 16);
 
-    // Dump first few instructions
+    // Dump last few instructions
     int count = 0;
     qDebug() << "Last 5 instructions:";
-    for (auto it = m_decodedInstructionsCache.end(); it != m_decodedInstructionsCache.begin() && count < 5;)
+    for (auto it = m_decodedInstructionsCache.rbegin(); it != m_decodedInstructionsCache.rend() && count < 5; ++it)
     {
-        --it;
-        const auto& instr = it.value();
-        qDebug() << "  0x" << QString::number(it.key(), 16) << ":" << QString::fromStdString(instr.mnemonic) << "("
+        const auto& [addr, instr] = *it;
+        qDebug() << "  0x" << QString::number(addr, 16) << ":" 
+                 << QString::fromStdString(instr.mnemonic) << "("
                  << QString::fromStdString(instr.annotation) << ")";
         count++;
     }

@@ -685,14 +685,14 @@ uint16_t DebuggerWindow::getNextInstructionAddress(uint16_t address)
     Z80Disassembler* disassembler = _emulator->GetContext()->pDebugManager->GetDisassembler().get();
 
     // Read instruction bytes
-    uint8_t buffer[4];  // Max instruction length for Z80 is 4 bytes
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     for (int i = 0; i < sizeof(buffer); i++)
         buffer[i] = memory->DirectReadFromZ80Memory(address + i);
 
     // Disassemble the current instruction to get its length
     DecodedInstruction decoded;
     uint8_t instructionLength = 0;
-    disassembler->disassembleSingleCommand(buffer, sizeof(buffer), address, &instructionLength, &decoded);
+    disassembler->disassembleSingleCommand(buffer, address, &instructionLength, &decoded);
 
     // Calculate the next address by adding the instruction length
     return (address + decoded.fullCommandLen) & 0xFFFF;
@@ -707,13 +707,13 @@ bool DebuggerWindow::shouldStepOver(uint16_t address)
     Memory* memory = _emulator->GetMemory();
 
     // Read instruction bytes
-    uint8_t buffer[4];  // Max instruction length for Z80 is 4 bytes
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     for (int i = 0; i < sizeof(buffer); i++)
         buffer[i] = memory->DirectReadFromZ80Memory(address + i);
 
     // Use the disassembler's helper method to determine if we should step over
     Z80Disassembler* disassembler = _emulator->GetContext()->pDebugManager->GetDisassembler().get();
-    return disassembler->shouldStepOver(buffer, sizeof(buffer));
+    return disassembler->shouldStepOver(buffer);
 }
 
 void DebuggerWindow::stepOver()

@@ -58,7 +58,7 @@ private:
     DecodedInstruction disassembleAt(uint16_t addr, class Z80Disassembler* disassembler, class Memory* memory);
 
     Emulator* m_emulator;
-    QMap<uint16_t, DecodedInstruction> m_decodedInstructionsCache;
+    std::map<uint16_t, DecodedInstruction> m_decodedInstructionsCache;
     uint16_t m_currentPC;
     uint16_t m_visibleStart;
     uint16_t m_visibleEnd;
