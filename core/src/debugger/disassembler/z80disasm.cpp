@@ -56,7 +56,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
 {
     { OF_NONE,   4, 0, 0, "nop" },                                  // 0x00
     { OF_MWORD, 10, 0, 0, "ld bc,:2" },                             // 0x01
-    { OF_NONE,   7, 0, 0, "ld bc,(a)" },                            // 0x02
+    { OF_NONE,   7, 0, 0, "ld (bc),a" },                            // 0x02
     { OF_NONE,   6, 0, 0, "inc bc" },                               // 0x03
     { OF_NONE,   4, 0, 0, "inc b" },                                // 0x04
     { OF_NONE,   4, 0, 0, "dec b" },                                // 0x05
@@ -64,16 +64,16 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "rlca" },                                 // 0x07
     { OF_NONE,   4, 0, 0, "ex af,af'" },                            // 0x08
     { OF_NONE,  11, 0, 0, "add hl,bc" },                            // 0x09
-    { OF_NONE,   7, 0, 0, "ld a,(bc)" },                            // 0x0A
+    { OF_INDIRECT,   7, 0, 0, "ld a,(bc)" },                        // 0x0A
     { OF_NONE,   6, 0, 0, "dec bc" },                               // 0x0B
     { OF_NONE,   4, 0, 0, "inc c" },                                // 0x0C
     { OF_NONE,   4, 0, 0, "dec c" },                                // 0x0D
     { OF_MBYTE,  7, 0, 0, "ld c,:1" },                              // 0x0E
     { OF_NONE,   4, 0, 0, "rrca" },                                 // 0x0F
     
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE | OF_DJNZ, 0, 13, 8, "djnz :1" },  // 0x10
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE | OF_DJNZ, 0, 13, 8, "djnz :1" }, // 0x10
     { OF_MWORD, 10, 0, 0, "ld de,:2" },                             // 0x11
-    { OF_MWORD,  7, 0, 0, "ld (de),:2" },                           // 0x12
+    { OF_INDIRECT | OF_MWORD,  7, 0, 0, "ld (de),:2" },             // 0x12
     { OF_NONE,   6, 0, 0, "inc de" },                               // 0x13
     { OF_NONE,   4, 0, 0, "inc d" },                                // 0x14
     { OF_NONE,   4, 0, 0, "dec d" },                                // 0x15
@@ -81,14 +81,14 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "rla" },                                  // 0x17
     { OF_RELJUMP | OF_MBYTE, 12, 0, 0, "jr :1" },                   // 0x18
     { OF_NONE,  11, 0, 0, "add hl,de" },                            // 0x19
-    { OF_NONE,   7, 0, 0, "ld a,(de)" },                            // 0x1A
+    { OF_INDIRECT,   7, 0, 0, "ld a,(de)" },                        // 0x1A
     { OF_NONE,   6, 0, 0, "dec de" },                               // 0x1B
     { OF_NONE,   4, 0, 0, "inc e" },                                // 0x1C
     { OF_NONE,   4, 0, 0, "dec e" },                                // 0x1D
     { OF_MBYTE,  7, 0, 0, "ld e,:1" },                              // 0x1E
     { OF_NONE,   4, 0, 0, "rra" },                                  // 0x1F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr nz,:1" }, // 0x20
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr nz,:1" }, // 0x20
     { OF_MWORD, 10, 0, 0, "ld hl,:2" },                             // 0x21
     { OF_MWORD, 16, 0, 0, "ld (:2),hl" },                           // 0x22
     { OF_NONE,   6, 0, 0, "inc hl" },                               // 0x23
@@ -96,7 +96,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "dec h" },                                // 0x25
     { OF_MBYTE,  7, 0, 0, "ld h,:1" },                              // 0x26
     { OF_NONE,   4, 0, 0, "daa" },                                  // 0x27
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr z,:1" },  // 0x28
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr z,:1" },  // 0x28
     { OF_NONE,  11, 0, 0, "add hl,hl" },                            // 0x29
     { OF_MWORD, 16, 0, 0, "ld hl,(:2)" },                           // 0x2A
     { OF_NONE,   6, 0, 0, "dec hl" },                               // 0x2B
@@ -105,15 +105,15 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_MBYTE,  7, 0, 0, "ld l,:1" },                              // 0x2E
     { OF_NONE,   4, 0, 0, "cpl" },                                  // 0x2F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr nc,:1" }, // 0x30
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr nc,:1" }, // 0x30
     { OF_MWORD, 10, 0, 0, "ld sp,:2" },                             // 0x31
     { OF_MWORD, 13, 0, 0, "ld (:2),a" },                            // 0x32
     { OF_NONE,   6, 0, 0, "inc sp" },                               // 0x33
-    { OF_NONE,  11, 0, 0, "inc (hl)" },                             // 0x34
-    { OF_NONE,  11, 0, 0, "dec (hl)" },                             // 0x35
-    { OF_MBYTE,  7, 0, 0, "ld (hl),:1" },                           // 0x36
+    { OF_INDIRECT,  11, 0, 0, "inc (hl)" },                         // 0x34
+    { OF_INDIRECT,  11, 0, 0, "dec (hl)" },                         // 0x35
+    { OF_INDIRECT | OF_MBYTE,  7, 0, 0, "ld (hl),:1" },             // 0x36
     { OF_NONE,   4, 0, 0, "scf" },                                  // 0x37
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 12, 7, "jr c,:1" },  // 0x38
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 12, 7, "jr c,:1" },  // 0x38
     { OF_NONE,  11, 0, 0, "add hl,sp" },                            // 0x39
     { OF_MWORD, 13, 0, 0, "ld a,(:2)" },                            // 0x3A
     { OF_NONE,   6, 0, 0, "dec sp" },                               // 0x3B
@@ -128,7 +128,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "ld b,e" },                               // 0x43
     { OF_NONE,   4, 0, 0, "ld b,h" },                               // 0x44
     { OF_NONE,   4, 0, 0, "ld b,l" },                               // 0x45
-    { OF_NONE,   7, 0, 0, "ld b,(hl)" },                            // 0x46
+    { OF_INDIRECT,   7, 0, 0, "ld b,(hl)" },                        // 0x46
     { OF_NONE,   4, 0, 0, "ld b,a" },                               // 0x47
     { OF_NONE,   4, 0, 0, "ld c,b" },                               // 0x48
     { OF_NONE,   4, 0, 0, "ld c,c" },                               // 0x49
@@ -136,7 +136,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,   4, 0, 0, "ld c,e" },                               // 0x4B
     { OF_NONE,   4, 0, 0, "ld c,h" },                               // 0x4C
     { OF_NONE,   4, 0, 0, "ld c,l" },                               // 0x4D
-    { OF_NONE,   7, 0, 0, "ld c,(hl)" },                            // 0x4E
+    { OF_INDIRECT,   7, 0, 0, "ld c,(hl)" },                        // 0x4E
     { OF_NONE,   4, 0, 0, "ld c,a" },                               // 0x4F
 
     { OF_NONE,  4, 0, 0, "ld d,b" },                                // 0x50
@@ -145,7 +145,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,  4, 0, 0, "ld d,e" },                                // 0x53
     { OF_NONE,  4, 0, 0, "ld d,h" },                                // 0x54
     { OF_NONE,  4, 0, 0, "ld d,l" },                                // 0x55
-    { OF_NONE,  7, 0, 0, "ld d,(hl)" },                             // 0x56
+    { OF_INDIRECT,  7, 0, 0, "ld d,(hl)" },                         // 0x56
     { OF_NONE,  4, 0, 0, "ld d,a" },                                // 0x57
     { OF_NONE,  4, 0, 0, "ld e,b" },                                // 0x58
     { OF_NONE,  4, 0, 0, "ld e,c" },                                // 0x59
@@ -153,7 +153,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE,  4, 0, 0, "ld e,e" },                                // 0x5B
     { OF_NONE,  4, 0, 0, "ld e,h" },                                // 0x5C
     { OF_NONE,  4, 0, 0, "ld e,l" },                                // 0x5D
-    { OF_NONE,  7, 0, 0, "ld e,(hl)" },                             // 0x5E
+    { OF_INDIRECT,  7, 0, 0, "ld e,(hl)" },                         // 0x5E
     { OF_NONE,  4, 0, 0, "ld e,a" },                                // 0x5F
 
     { OF_NONE, 4, 0, 0, "ld h,b" },                                 // 0x60
@@ -162,7 +162,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "ld h,e" },                                 // 0x63
     { OF_NONE, 4, 0, 0, "ld h,h" },                                 // 0x64
     { OF_NONE, 4, 0, 0, "ld h,l" },                                 // 0x65
-    { OF_NONE, 7, 0, 0, "ld h,(hl)" },                              // 0x66
+    { OF_INDIRECT, 7, 0, 0, "ld h,(hl)" },                          // 0x66
     { OF_NONE, 4, 0, 0, "ld h,a" },                                 // 0x67
     { OF_NONE, 4, 0, 0, "ld l,b" },                                 // 0x68
     { OF_NONE, 4, 0, 0, "ld l,c" },                                 // 0x69
@@ -170,24 +170,24 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "ld l,e" },                                 // 0x6B
     { OF_NONE, 4, 0, 0, "ld l,h" },                                 // 0x6C
     { OF_NONE, 4, 0, 0, "ld l,l" },                                 // 0x6D
-    { OF_NONE, 7, 0, 0, "ld l,(hl)" },                              // 0x6E
+    { OF_INDIRECT, 7, 0, 0, "ld l,(hl)" },                          // 0x6E
     { OF_NONE, 4, 0, 0, "ld l,a" },                                 // 0x6F
 
-    { OF_NONE, 7, 0, 0, "ld (hl),b" },                              // 0x70
-    { OF_NONE, 7, 0, 0, "ld (hl),c" },                              // 0x71
-    { OF_NONE, 7, 0, 0, "ld (hl),d" },                              // 0x72
-    { OF_NONE, 7, 0, 0, "ld (hl),e" },                              // 0x73
-    { OF_NONE, 7, 0, 0, "ld (hl),h" },                              // 0x74
-    { OF_NONE, 7, 0, 0, "ld (hl),l" },                              // 0x75
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),b" },                          // 0x70
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),c" },                          // 0x71
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),d" },                          // 0x72
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),e" },                          // 0x73
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),h" },                          // 0x74
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),l" },                          // 0x75
     { OF_NONE, 4, 0, 0, "halt" },                                   // 0x76
-    { OF_NONE, 7, 0, 0, "ld (hl),a" },                              // 0x77
+    { OF_INDIRECT, 7, 0, 0, "ld (hl),a" },                          // 0x77
     { OF_NONE, 4, 0, 0, "ld a,b" },                                 // 0x78
     { OF_NONE, 4, 0, 0, "ld a,c" },                                 // 0x79
     { OF_NONE, 4, 0, 0, "ld a,d" },                                 // 0x7A
     { OF_NONE, 4, 0, 0, "ld a,e" },                                 // 0x7B
     { OF_NONE, 4, 0, 0, "ld a,h" },                                 // 0x7C
     { OF_NONE, 4, 0, 0, "ld a,l" },                                 // 0x7D
-    { OF_NONE, 7, 0, 0, "ld a,(hl)" },                              // 0x7E
+    { OF_INDIRECT, 7, 0, 0, "ld a,(hl)" },                          // 0x7E
     { OF_NONE, 4, 0, 0, "ld a,a" },                                 // 0x7F
 
     { OF_NONE, 4, 0, 0, "add a,b" },                                // 0x80
@@ -196,7 +196,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "add a,e" },                                // 0x83
     { OF_NONE, 4, 0, 0, "add a,h" },                                // 0x84
     { OF_NONE, 4, 0, 0, "add a,l" },                                // 0x85
-    { OF_NONE, 7, 0, 0, "add a,(hl)" },                             // 0x86
+    { OF_INDIRECT, 7, 0, 0, "add a,(hl)" },                         // 0x86
     { OF_NONE, 4, 0, 0, "add a,a" },                                // 0x87
     { OF_NONE, 4, 0, 0, "adc a,b" },                                // 0x88
     { OF_NONE, 4, 0, 0, "adc a,c" },                                // 0x89
@@ -204,7 +204,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "adc a,e" },                                // 0x8B
     { OF_NONE, 4, 0, 0, "adc a,h" },                                // 0x8C
     { OF_NONE, 4, 0, 0, "adc a,l" },                                // 0x8D
-    { OF_NONE, 7, 0, 0, "adc a,(hl)" },                             // 0x8E
+    { OF_INDIRECT, 7, 0, 0, "adc a,(hl)" },                         // 0x8E
     { OF_NONE, 4, 0, 0, "adc a,a" },                                // 0x8F
 
     { OF_NONE, 4, 0, 0, "sub b" },                                  // 0x90
@@ -213,7 +213,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "sub e" },                                  // 0x93
     { OF_NONE, 4, 0, 0, "sub h" },                                  // 0x94
     { OF_NONE, 4, 0, 0, "sub l" },                                  // 0x95
-    { OF_NONE, 7, 0, 0, "sub (hl)" },                               // 0x96
+    { OF_INDIRECT, 7, 0, 0, "sub (hl)" },                           // 0x96
     { OF_NONE, 4, 0, 0, "sub a" },                                  // 0x97
     { OF_NONE, 4, 0, 0, "sbc a,b" },                                // 0x98
     { OF_NONE, 4, 0, 0, "sbc a,c" },                                // 0x99
@@ -221,7 +221,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "sbc a,e" },                                // 0x9B
     { OF_NONE, 4, 0, 0, "sbc a,h" },                                // 0x9C
     { OF_NONE, 4, 0, 0, "sbc a,l" },                                // 0x9D
-    { OF_NONE, 7, 0, 0, "sbc (hl)" },                               // 0x9E
+    { OF_INDIRECT, 7, 0, 0, "sbc (hl)" },                           // 0x9E
     { OF_NONE, 4, 0, 0, "sbc a,a" },                                // 0x9F
 
     { OF_NONE, 4, 0, 0, "and b" },                                  // 0xA0
@@ -230,7 +230,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "and e" },                                  // 0xA3
     { OF_NONE, 4, 0, 0, "and h" },                                  // 0xA4
     { OF_NONE, 4, 0, 0, "and l" },                                  // 0xA5
-    { OF_NONE, 7, 0, 0, "and (hl)" },                               // 0xA6
+    { OF_INDIRECT, 7, 0, 0, "and (hl)" },                           // 0xA6
     { OF_NONE, 4, 0, 0, "and a" },                                  // 0xA7
     { OF_NONE, 4, 0, 0, "xor b" },                                  // 0xA8
     { OF_NONE, 4, 0, 0, "xor c" },                                  // 0xA9
@@ -238,7 +238,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "xor e" },                                  // 0xAB
     { OF_NONE, 4, 0, 0, "xor h" },                                  // 0xAC
     { OF_NONE, 4, 0, 0, "xor l" },                                  // 0xAD
-    { OF_NONE, 7, 0, 0, "xor (hl)" },                               // 0xAE
+    { OF_INDIRECT, 7, 0, 0, "xor (hl)" },                           // 0xAE
     { OF_NONE, 4, 0, 0, "xor a" },                                  // 0xAF
 
     { OF_NONE, 4, 0, 0, "or b" },                                   // 0xB0
@@ -247,7 +247,7 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 4, 0, 0, "or e" },                                   // 0xB3
     { OF_NONE, 4, 0, 0, "or h" },                                   // 0xB4
     { OF_NONE, 4, 0, 0, "or l" },                                   // 0xB5
-    { OF_NONE, 7, 0, 0, "or (hl)" },                                // 0xB6
+    { OF_INDIRECT, 7, 0, 0, "or (hl)" },                            // 0xB6
     { OF_NONE, 4, 0, 0, "or a" },                                   // 0xB7
     { OF_NONE, 4, 0, 0, "cp b" },                                   // 0xB8
     { OF_NONE, 4, 0, 0, "cp c" },                                   // 0xB9
@@ -258,72 +258,72 @@ OpCode Z80Disassembler::noprefixOpcodes[256] =
     { OF_NONE, 7, 0, 0, "cp (hl)" },                                // 0xBE
     { OF_NONE, 4, 0, 0, "cp a" },                                   // 0xBF
 
-    { OF_CONDITION | OF_RET,  0, 11, 5, "ret nz" },                 // 0xC0
+    { OF_RET | OF_CONDITION,  0, 11, 5, "ret nz" },                 // 0xC0
     { OF_NONE, 10, 0, 0, "pop bc" },                                // 0xC1
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp nz,:2" },   // 0xC2
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp nz,:2" },   // 0xC2
     { OF_MWORD | OF_JUMP, 10, 0, 0, "jp.:2" },                      // 0xC3
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call nz,:2" }, // 0xC4
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call nz,:2" }, // 0xC4
     { OF_NONE, 11, 0, 0, "push bc" },                               // 0xC5
     { OF_MBYTE,  7, 0, 0, "add a,:1" },                             // 0xC6
     { OF_RST | OF_JUMP, 11, 0, 0, "rst #00" },                      // 0xC7
-    { OF_CONDITION | OF_RET, 0, 11, 5, "ret z" },                   // 0xC8
-    { OF_NONE | OF_RET, 10, 0, 0, "ret" },                          // 0xC9
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp z,:2" },    // 0xCA
+    { OF_RET | OF_CONDITION, 0, 11, 5, "ret z" },                   // 0xC8
+    { OF_RET, 10, 0, 0, "ret" },                                    // 0xC9
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp z,:2" },    // 0xCA
     { OF_PREFIX,  4, 0, 0, "#CB" },                                 // 0xCB - Prefix
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call z,:2" },  // 0xCC
-    { OF_MWORD | OF_JUMP, 17, 0, 0, "call :2" },                    // 0xCD
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call z,:2" },  // 0xCC
+    { OF_JUMP | OF_MWORD, 17, 0, 0, "call :2" },                    // 0xCD
     { OF_MBYTE,  7, 0, 0, "adc a,:1" },                             // 0xCE
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #08" },                      // 0xCF
-    { OF_CONDITION | OF_RET,  0, 11, 5, "ret nc" },                 // 0xD0
+    { OF_RST, 11, 0, 0, "rst #08" },                                // 0xCF
+    { OF_RET | OF_CONDITION,  0, 11, 5, "ret nc" },                 // 0xD0
     { OF_NONE, 10, 0, 0, "pop de" },                                // 0xD1
-    { OF_CONDITION | OF_MWORD | OF_JUMP,  0, 10, 10, "jp nc,:2" },  // 0xD2
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 10, 10, "jp nc,:2" },  // 0xD2
     { OF_MBYTE, 11, 0, 0, "out (:1),a" },                           // 0xD3
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call nc,:2" }, // 0xD4
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call nc,:2" }, // 0xD4
     { OF_NONE, 11, 0, 0, "push de" },                               // 0xD5
     { OF_MBYTE,  7, 0, 0, "sub :1" },                               // 0xD6
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #10" },                      // 0xD7
-    { OF_CONDITION | OF_RET,  0, 11, 5, "ret c" },                  // 0xD8
+    { OF_RST, 11, 0, 0, "rst #10" },                                // 0xD7
+    { OF_RET | OF_CONDITION,  0, 11, 5, "ret c" },                  // 0xD8
     { OF_NONE,  4, 0, 0, "exx" },                                   // 0xD9
-    { OF_CONDITION | OF_MWORD | OF_JUMP,  0, 10, 10, "jp c,:2" },   // 0xDA
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 10, 10, "jp c,:2" },   // 0xDA
     { OF_MBYTE, 11, 0, 0, "in a,(:1)" },                            // 0xDB
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call c,:2" },  // 0xDC
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call c,:2" },  // 0xDC
     { OF_PREFIX, 4, 0, 0, "#DD" },                                  // 0xDD - Prefix
     { OF_MBYTE,  7, 0, 0, "sbc a,:1" },                             // 0xDE
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #18" },                      // 0xDF
+    { OF_RST, 11, 0, 0, "rst #18" },                                // 0xDF
 
-    { OF_CONDITION | OF_RET,  0, 11, 5, "ret po" },                 // 0xE0
+    { OF_RET | OF_CONDITION,  0, 11, 5, "ret po" },                 // 0xE0
     { OF_NONE, 10, 0, 0, "pop hl" },                                // 0xE1
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp po,:2" },   // 0xE2
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp po,:2" },   // 0xE2
     { OF_NONE, 19, 0, 0, "ex (sp),hl" },                            // 0xE3
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call po,:2" }, // 0xE4
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call po,:2" }, // 0xE4
     { OF_NONE, 11, 0, 0, "push hl" },                               // 0xE5
     { OF_MBYTE,  7, 0, 0, "and :1" },                               // 0xE6
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #20" },                      // 0xE7
-    { OF_CONDITION | OF_RET,  0, 11, 5, "ret pe" },                 // 0xE8
-    { OF_JUMP, 4, 0, 0, "jp (hl)" },                                // 0xE9
-    { OF_CONDITION | OF_MWORD | OF_JUMP,  0, 10, 10, "jp pe,:2" },  // 0xEA
+    { OF_RST, 11, 0, 0, "rst #20" },                                // 0xE7
+    { OF_RET | OF_CONDITION,  0, 11, 5, "ret pe" },                 // 0xE8
+    { OF_JUMP | OF_INDIRECT, 4, 0, 0, "jp (hl)" },                  // 0xE9
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 10, 10, "jp pe,:2" },  // 0xEA
     { OF_NONE, 4, 0, 0, "ex de,hl" },                               // 0xEB
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call pe,:2" }, // 0xEC
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" }, // 0xEC
     { OF_PREFIX, 4, 0, 0, "#ED" },                                  // 0xED - Prefix
     { OF_MBYTE,  7, 0, 0, "xor :1" },                               // 0xEE
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #28" },                      // 0xEF
+    { OF_RST, 11, 0, 0, "rst #28" },                                // 0xEF
 
-    { OF_CONDITION | OF_RET, 0, 11, 5, "ret p" },                   // 0xF0
+    { OF_RET | OF_CONDITION, 0, 11, 5, "ret p" },                   // 0xF0
     { OF_NONE, 10, 0, 0, "pop af" },                                // 0xF1
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp p,:2" },    // 0xF2
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp p,:2" },    // 0xF2
     { OF_NONE,  4, 0, 0, "di" },                                    // 0xF3
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call p,:2" },  // 0xF4
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call p,:2" },  // 0xF4
     { OF_NONE, 11, 0, 0, "push af" },                               // 0xF5
     { OF_MBYTE,  7, 0, 0, "or :1" },                                // 0xF6
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #30" },                      // 0xF7
-    { OF_CONDITION | OF_RET,  0, 11, 5, "ret m" },                  // 0xF8
+    { OF_RST, 11, 0, 0, "rst #30" },                                // 0xF7
+    { OF_RET | OF_CONDITION,  0, 11, 5, "ret m" },                  // 0xF8
     { OF_NONE,  6, 0, 0, "ld sp,hl" },                              // 0xF9
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 10, 10, "jp m,:2" },    // 0xFA
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 10, 10, "jp m,:2" },    // 0xFA
     { OF_NONE,  4, 0, 0, "ei" },                                    // 0xFB
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 17, 10, "call m,:2" },  // 0xFC
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call m,:2" },  // 0xFC
     { OF_PREFIX,  4, 0, 0, "#FD" },                                 // 0xFD - Prefix
     { OF_MBYTE,  7, 0, 0, "cp :1" },                                // 0xFE
-    { OF_RST | OF_JUMP, 11, 0, 0, "rst #38" },                      // 0xFF
+    { OF_RST, 11, 0, 0, "rst #38" },                                // 0xFF
 };
 
 /// endregion </No prefix opcodes>
@@ -628,9 +628,9 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld c,:1" },                      // 0x0E
     { OF_NONE,  8, 0, 0, "rrca" },                          // 0x0F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE | OF_DJNZ, 0, 17, 12, "djnz :1" },    // 0x10
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE | OF_DJNZ, 0, 17, 12, "djnz :1" },   // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                     // 0x11
-    { OF_MWORD, 11, 0, 0, "ld (de),:2" },                   // 0x12
+    { OF_DISP | OF_MWORD, 11, 0, 0, "ld (de),:2" },                             // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                        // 0x13
     { OF_NONE,  8, 0, 0, "inc d" },                         // 0x14
     { OF_NONE,  8, 0, 0, "dec d" },                         // 0x15
@@ -645,7 +645,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE,  11, 0, 0, "ld e,:1" },                     // 0x1E
     { OF_NONE,   8, 0, 0, "rra" },                          // 0x1F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nz,:1" },   // 0x20
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr nz,:1" },   // 0x20
     { OF_MWORD, 18, 0, 0, "ld ix,:2" },                     // 0x21
     { OF_MWORD, 24, 0, 0, "ld (:2),ix" },                   // 0x22
     { OF_NONE, 14, 0, 0, "inc ix" },                        // 0x23
@@ -653,7 +653,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "dec hx" },                        // 0x25
     { OF_MBYTE, 11, 0, 0, "ld hx,:1" },                     // 0x26
     { OF_NONE,  8, 0, 0, "daa" },                           // 0x27
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr z,:1" },    // 0x28
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr z,:1" },    // 0x28
     { OF_NONE, 15, 0, 0, "add ix,ix" },                     // 0x29
     { OF_MWORD, 20, 0, 0, "ld ix,(:2)" },                   // 0x2A
     { OF_NONE, 14, 0, 0, "dec ix" },                        // 0x2B
@@ -662,7 +662,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_MBYTE, 11, 0, 0, "ld lx,:1" },                     // 0x2E
     { OF_NONE,  8, 0, 0, "cpl" },                           // 0x2F
 
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr nc,:1" },   // 0x30
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr nc,:1" },   // 0x30
     { OF_MWORD, 11, 0, 0, "ld sp,:2" },                     // 0x31
     { OF_MWORD, 17, 0, 0, "ld (:2),a" },                    // 0x32
     { OF_NONE, 10, 0, 0, "inc sp" },                        // 0x33
@@ -670,7 +670,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_DISP, 19, 0, 0, "dec (ix+:1)" },                   // 0x35
     { OF_DISP | OF_MBYTE, 15, 0, 0, "ld (ix+:1),:1" },      // 0x36
     { OF_NONE,  8, 0, 0, "scf" },                           // 0x37
-    { OF_CONDITION | OF_RELJUMP | OF_MBYTE, 0, 16, 11, "jr c,:1" },    // 0x38
+    { OF_RELJUMP | OF_CONDITION | OF_MBYTE, 0, 16, 11, "jr c,:1" },    // 0x38
     { OF_NONE, 15, 0, 0, "add ix,sp" },                     // 0x39
     { OF_MWORD, 17, 0, 0, "ld a,(:2)" },                    // 0x3A
     { OF_NONE, 10, 0, 0, "dec sp" },                        // 0x3B
@@ -815,73 +815,73 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_DISP, 19, 0, 0, "cp (ix+:1)" },                    // 0xBE
     { OF_NONE,  8, 0, 0, "cp a" },                          // 0xBF
 
-    { OF_CONDITION,  0, 15, 9, "ret nz" },                  // 0xC0
-    { OF_NONE, 14, 0, 0, "pop bc" },                        // 0xC1
-    { OF_CONDITION | OF_MWORD,  0, 14, 14, "jp nz,:2" },    // 0xC2
-    { OF_MWORD, 14, 0, 0, "jp.:2" },                        // 0xC3
-    { OF_CONDITION |  OF_MWORD, 0, 21, 14, "call nz,:2" },  // 0xC4
-    { OF_NONE, 15, 0, 0, "push bc" },                       // 0xC5
-    { OF_MBYTE,  11, 0, 0, "add a,:1" },                    // 0xC6
-    { OF_NONE, 15, 0, 0, "rst #00" },                       // 0xC7
-    { OF_CONDITION, 0, 15, 9, "ret z" },                    // 0xC8
-    { OF_NONE, 14, 0, 0, "ret" },                           // 0xC9
-    { OF_CONDITION |  OF_MWORD, 0, 14, 14, "jp z,:2" },     // 0xCA
-    { OF_PREFIX,  8, 0, 0, "#CB" },                         // 0xCB - Prefix
-    { OF_CONDITION | OF_MWORD | OF_JUMP, 0, 21, 14, "call z,:2" },    // 0xCC
-    { OF_MWORD, 21, 0, 0, "call :2" },                      // 0xCD
-    { OF_MBYTE, 11, 0, 0, "adc a,:1" },                     // 0xCE
-    { OF_NONE, 15, 0, 0, "rst #08" },                       // 0xCF
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret nz" },                  // 0xC0
+    { OF_NONE, 14, 0, 0, "pop bc" },                                 // 0xC1
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp nz,:2" },   // 0xC2
+    { OF_JUMP | OF_MWORD, 14, 0, 0, "jp :2" },                       // 0xC3
+    { OF_JUMP | OF_CONDITION |  OF_MWORD, 0, 21, 14, "call nz,:2" }, // 0xC4
+    { OF_NONE, 15, 0, 0, "push bc" },                                // 0xC5
+    { OF_MBYTE,  11, 0, 0, "add a,:1" },                             // 0xC6
+    { OF_RST, 15, 0, 0, "rst #00" },                                 // 0xC7
+    { OF_RET | OF_CONDITION, 0, 15, 9, "ret z" },                    // 0xC8
+    { OF_RET, 14, 0, 0, "ret" },                                     // 0xC9
+    { OF_JUMP | OF_CONDITION |  OF_MWORD, 0, 14, 14, "jp z,:2" },    // 0xCA
+    { OF_PREFIX,  8, 0, 0, "#CB" },                                  // 0xCB - Prefix
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 21, 14, "call z,:2" },   // 0xCC
+    { OF_JUMP | OF_MWORD, 21, 0, 0, "call :2" },                     // 0xCD
+    { OF_MBYTE, 11, 0, 0, "adc a,:1" },                              // 0xCE
+    { OF_RST, 15, 0, 0, "rst #08" },                                 // 0xCF
 
-    { OF_CONDITION,  0, 15, 9, "ret nc" },                  // 0xD0
-    { OF_NONE, 14, 0, 0, "pop de" },                        // 0xD1
-    { OF_CONDITION | OF_MWORD,  0, 14, 14, "jp nc,:2" },    // 0xD2
-    { OF_MBYTE, 15, 0, 0, "out (:1),a" },                   // 0xD3
-    { OF_CONDITION | OF_MWORD, 0, 21, 14, "call nc,:2" },   // 0xD4
-    { OF_NONE, 15, 0, 0, "push de" },                       // 0xD5
-    { OF_MBYTE, 11, 0, 0, "sub :1" },                       // 0xD6
-    { OF_NONE, 15, 0, 0, "rst #10" },                       // 0xD7
-    { OF_CONDITION,  0, 15, 9, "ret c" },                   // 0xD8
-    { OF_NONE,  8, 0, 0, "exx" },                           // 0xD9
-    { OF_CONDITION | OF_MWORD,  0, 14, 14, "jp c,:2" },     // 0xDA
-    { OF_MBYTE, 15, 0, 0, "in a,(:1)" },                    // 0xDB
-    { OF_CONDITION |  OF_MWORD, 0, 21, 14, "call c,:2" },   // 0xDC
-    { OF_PREFIX, 8, 0, 0, "#DD" },                          // 0xDD - Prefix
-    { OF_MBYTE, 11, 0, 0, "sbc a,:1" },                     // 0xDE
-    { OF_NONE, 15, 0, 0, "rst #18" },                       // 0xDF
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret nc" },                  // 0xD0
+    { OF_NONE, 14, 0, 0, "pop de" },                                 // 0xD1
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp nc,:2" },   // 0xD2
+    { OF_MBYTE, 15, 0, 0, "out (:1),a" },                            // 0xD3
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 21, 14, "call nc,:2" },  // 0xD4
+    { OF_NONE, 15, 0, 0, "push de" },                                // 0xD5
+    { OF_MBYTE, 11, 0, 0, "sub :1" },                                // 0xD6
+    { OF_RST, 15, 0, 0, "rst #10" },                                 // 0xD7
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret c" },                   // 0xD8
+    { OF_NONE,  8, 0, 0, "exx" },                                    // 0xD9
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp c,:2" },    // 0xDA
+    { OF_MBYTE, 15, 0, 0, "in a,(:1)" },                             // 0xDB
+    { OF_JUMP | OF_CONDITION |  OF_MWORD, 0, 21, 14, "call c,:2" },  // 0xDC
+    { OF_PREFIX, 8, 0, 0, "#DD" },                                   // 0xDD - Prefix
+    { OF_MBYTE, 11, 0, 0, "sbc a,:1" },                              // 0xDE
+    { OF_RST, 15, 0, 0, "rst #18" },                                 // 0xDF
 
-    { OF_CONDITION,  0, 15, 9, "ret po" },                  // 0xE0
-    { OF_NONE, 14, 0, 0, "pop ix" },                        // 0xE1
-    { OF_CONDITION | OF_MWORD,  0, 14, 14, "jp po,:2" },    // 0xE2
-    { OF_NONE, 23, 0, 0, "ex (sp),ix" },                    // 0xE3
-    { OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" },  // 0xE4
-    { OF_NONE, 15, 0, 0, "push ix" },                       // 0xE5
-    { OF_MBYTE,  8, 0, 0, "and :1" },                       // 0xE6
-    { OF_NONE, 15, 0, 0, "rst #20" },                       // 0xE7
-    { OF_CONDITION,  0, 15, 9, "ret pe" },                  // 0xE8
-    { OF_NONE,  8, 0, 0, "jp (ix)" },                       // 0xE9
-    { OF_CONDITION | OF_MWORD,  0, 14, 14, "jp pe,:2" },    // 0xEA
-    { OF_NONE,  4, 0, 0, "ex de,hl" },                      // 0xEB
-    { OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },   // 0xEC
-    { OF_PREFIX,  4, 0, 0, "#ED" },                         // 0xED - Prefix
-    { OF_MBYTE,  7, 0, 0, "xor :1" },                       // 0xEE
-    { OF_NONE, 11, 0, 0, "rst #28" },                       // 0xEF
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret po" },                  // 0xE0
+    { OF_NONE, 14, 0, 0, "pop ix" },                                 // 0xE1
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp po,:2" },   // 0xE2
+    { OF_DISP, 23, 0, 0, "ex (sp),ix" },                             // 0xE3
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" }, // 0xE4
+    { OF_NONE, 15, 0, 0, "push ix" },                                // 0xE5
+    { OF_MBYTE,  8, 0, 0, "and :1" },                                // 0xE6
+    { OF_RST, 15, 0, 0, "rst #20" },                                 // 0xE7
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret pe" },                  // 0xE8
+    { OF_JUMP | OF_DISP,  8, 0, 0, "jp (ix)" },                      // 0xE9
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp pe,:2" },   // 0xEA
+    { OF_NONE,  4, 0, 0, "ex de,hl" },                               // 0xEB
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },  // 0xEC
+    { OF_PREFIX,  4, 0, 0, "#ED" },                                  // 0xED - Prefix
+    { OF_MBYTE,  7, 0, 0, "xor :1" },                                // 0xEE
+    { OF_NONE, 11, 0, 0, "rst #28" },                                // 0xEF
 
-    { OF_CONDITION,  0, 15, 9, "ret p" },                   // 0xF0
-    { OF_NONE, 14, 0, 0, "pop af" },                        // 0xF1
-    { OF_CONDITION | OF_MWORD,  0, 14, 14, "jp p,:2" },     // 0xF2
-    { OF_NONE,  8, 0, 0, "di" },                            // 0xF3
-    { OF_CONDITION | OF_MWORD,  0, 21, 14, "call p,:2" },   // 0xF4
-    { OF_NONE, 15, 0, 0, "push af" },                       // 0xF5
-    { OF_MBYTE, 11, 0, 0, "or :1" },                        // 0xF6
-    { OF_NONE, 15, 0, 0, "rst #30" },                       // 0xF7
-    { OF_CONDITION,  0, 15, 9, "ret m" },                   // 0xF8
-    { OF_NONE, 10, 0, 0, "ld sp,ix" },                      // 0xF9
-    { OF_CONDITION | OF_MWORD, 0, 14, 14, "jp m,:2"},       // 0xFA
-    { OF_NONE,  8, 0, 0, "ei" },                            // 0xFB
-    { OF_MWORD,  0, 21, 15, "call m,:2" },                  // 0xFC
-    { OF_PREFIX,  8, 0, 0, "#FD" },                         // 0xFD - Prefix
-    { OF_MBYTE, 11, 0, 0, "cp :1" },                        // 0xFE
-    { OF_NONE, 15, 0, 0, "rst #38" },                       // 0xFF
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret p" },                   // 0xF0
+    { OF_NONE, 14, 0, 0, "pop af" },                                 // 0xF1
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp p,:2" },    // 0xF2
+    { OF_NONE,  8, 0, 0, "di" },                                     // 0xF3
+    { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 21, 14, "call p,:2" },  // 0xF4
+    { OF_NONE, 15, 0, 0, "push af" },                                // 0xF5
+    { OF_MBYTE, 11, 0, 0, "or :1" },                                 // 0xF6
+    { OF_RST, 15, 0, 0, "rst #30" },                                 // 0xF7
+    { OF_RET | OF_CONDITION,  0, 15, 9, "ret m" },                   // 0xF8
+    { OF_NONE, 10, 0, 0, "ld sp,ix" },                               // 0xF9
+    { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 14, 14, "jp m,:2"},      // 0xFA
+    { OF_NONE,  8, 0, 0, "ei" },                                     // 0xFB
+    { OF_JUMP | OF_MWORD,  0, 21, 15, "call m,:2" },                 // 0xFC
+    { OF_PREFIX,  8, 0, 0, "#FD" },                                  // 0xFD - Prefix
+    { OF_MBYTE, 11, 0, 0, "cp :1" },                                 // 0xFE
+    { OF_RST, 15, 0, 0, "rst #38" },                                 // 0xFF
 };
 
 /// endregion </#DD prefix opcodes>
@@ -2033,7 +2033,7 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
     }
     /// endregion </Sanity check>
 
-    // Pass 0 as instruction address since we don't have the actual address here
+    // Pass 0 as an instruction address since we don't have the actual address here
     // The caller should update the instruction address after decoding if needed
     DecodedInstruction decodedInstruction = decodeInstruction(buffer, len, instructionAddr, registers, memory);
     if (decodedInstruction.isValid)
@@ -2049,7 +2049,7 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const uint8_t* 
             decodedInstruction.annotation = getCommandAnnotation(decodedInstruction, registers);
         }
 
-        // Look up and set label for this instruction if available
+        // Look up and set a label for this instruction if available
         auto labelManager = _context->pDebugManager->GetLabelManager();
         if (labelManager)
         {
@@ -2080,14 +2080,16 @@ std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& deco
 
     // Calculate flags
     bool isCurrentInstruction = decodedInstruction.instructionAddr == registers->pc;
-    bool hasJump = decodedInstruction.hasJump || decodedInstruction.hasRelativeJump || decodedInstruction.hasReturn;
+    bool hasJump = (decodedInstruction.hasJump || decodedInstruction.hasRelativeJump) &&
+                   !decodedInstruction.isRst && !decodedInstruction.isDjnz &&
+                   !decodedInstruction.hasReturn && !decodedInstruction.hasDisplacement;
     bool hasUnconditionalJump = !decodedInstruction.hasCondition && hasJump;
     bool hasConditionalJump = decodedInstruction.hasCondition && hasJump;
 
 
     if (hasUnconditionalJump)
     {
-        annotation = StringHelper::Format("Will jump to 0x%04X", decodedInstruction.jumpAddr);
+        annotation = StringHelper::Format("Will jump to $%04X", decodedInstruction.jumpAddr);
     }
     else if (hasConditionalJump)  // Handle conditional jumps and calls
     {
@@ -2172,25 +2174,32 @@ std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& deco
                 jumpAddr = decodedInstruction.relJumpAddr;
             }
 
-            annotation = StringHelper::Format("%s to #%04X", conditionStr.c_str(), jumpAddr);
+            annotation = StringHelper::Format("%s to $%04X", conditionStr.c_str(), jumpAddr);
         }
         else if (decodedInstruction.hasRelativeJump)
         {
-            annotation = StringHelper::Format("May jump to #%04X", decodedInstruction.relJumpAddr);
+            annotation = StringHelper::Format("May jump to $%04X", decodedInstruction.relJumpAddr);
         }
 
     }
     // Handle DJNZ
-    else if (decodedInstruction.isDjnz && isCurrentInstruction)
+    else if (decodedInstruction.isDjnz)
     {
-        uint8_t b = registers->b - 1;  // B is already decremented in the emulator
-        if (b != 0)
+        if (isCurrentInstruction)
         {
-            annotation = StringHelper::Format("Looping to $%04X, B=%d", decodedInstruction.jumpAddr, b);
+            uint8_t b = registers->b - 1;  // B is already decremented in the emulator
+            if (b != 0)
+            {
+                annotation = StringHelper::Format("Looping to $%04X, B=%d", decodedInstruction.jumpAddr, b);
+            }
+            else
+            {
+                annotation = "Loop done";
+            }
         }
         else
         {
-            annotation = "Loop done";
+            annotation = StringHelper::Format("Looping to $%04X", decodedInstruction.jumpAddr);
         }
     }
     // Handle block operations
@@ -2212,26 +2221,30 @@ std::string Z80Disassembler::getCommandAnnotation(const DecodedInstruction& deco
         // Check for RST instructions
         if (decodedInstruction.isRst)
         {
-            annotation = StringHelper::Format("Calling RST #%02X", decodedInstruction.jumpAddr & 0x38);
+            annotation = StringHelper::Format("Calling RST $%02X", decodedInstruction.jumpAddr & 0x38);
         }
         else
         {
-            annotation = StringHelper::Format("Calling #%04X", decodedInstruction.jumpAddr);
+            annotation = StringHelper::Format("Calling $%04X", decodedInstruction.jumpAddr);
         }
     }
-    else if (decodedInstruction.hasReturn && !decodedInstruction.hasCondition)
+    else if (decodedInstruction.hasReturn && !decodedInstruction.hasCondition && isCurrentInstruction)
     {
-        annotation = StringHelper::Format("Returning to #%04X", decodedInstruction.returnAddr);
+        annotation = StringHelper::Format("Returning to $%04X", decodedInstruction.returnAddr);
     }
     // Handle relative jumps without condition (JR e)
     else if (decodedInstruction.hasRelativeJump && !decodedInstruction.hasCondition)
     {
-        annotation = StringHelper::Format("Jumping to #%04X", decodedInstruction.relJumpAddr);
+        annotation = StringHelper::Format("Jumping to $%04X", decodedInstruction.relJumpAddr);
     }
     // Handle indexed operations with displacement
     else if (decodedInstruction.hasDisplacement)
     {
-        annotation = StringHelper::Format("Effective address: #%04X", decodedInstruction.displacementAddr);
+        annotation = StringHelper::Format("Effective address: $%04X", decodedInstruction.displacementAddr);
+    }
+    else if (decodedInstruction.hasIndirect)
+    {
+        annotation = "Indirect";
     }
     
     return annotation;
@@ -2361,6 +2374,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     bool hasJump = false;
     bool hasRelativeJump = false;
     bool hasReturn = false;
+    bool hasIndirect = false;
     bool hasByteArgument = false;
     bool hasWordArgument = false;
 
@@ -2377,6 +2391,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         hasJump = opcode.flags & OF_JUMP;
         hasRelativeJump = opcode.flags & OF_RELJUMP;
         hasReturn = opcode.flags & OF_RET;
+        hasIndirect = opcode.flags & OF_INDIRECT;
         hasByteArgument = opcode.flags & OF_MBYTE;
         hasWordArgument = opcode.flags & OF_MWORD;
 
@@ -2473,6 +2488,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     result.hasWordOperand = hasWordArgument;
     result.hasCondition = (opcode.flags & OF_CONDITION) != 0;
     result.hasDisplacement = hasDisplacement;
+    result.hasIndirect = hasIndirect;
     result.hasVariableCycles = (opcode.flags & OF_VAR_T) != 0;  // For instructions like DJNZ where cycles depend on a counter
     
     // Set additional instruction type flags
@@ -2507,9 +2523,18 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
         result.wordOperand = (hiByte << 8) | loByte;
     }
 
+    // Populate information for jumps / calls (both conditional and unconditional)
+    if (hasJump)
+    {
+        result.jumpAddr = result.wordOperand;
+    }
+
+    // Relative jumps (both conditional and unconditional)
     if (hasRelativeJump)
     {
         result.relJumpOffset = result.operandBytes[0];
+        result.relJumpAddr = (instructionAddr + result.relJumpOffset + 2) & 0xFFFF;
+        result.jumpAddr = result.relJumpAddr;
     }
     /// endregion </Actualize values according flags>
 
@@ -2518,20 +2543,8 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const uint8_t* buffer, siz
     {
         result.hasRuntime = true;
 
-        // Populate information for jumps / calls (trivial)
-        if (hasJump)
-        {
-            result.jumpAddr = result.wordOperand;
-        }
-        // Populate runtime information for relative jumps (JR e; JR z, xx; JR c, xx; JR nz, xx; JR c, xx)
-        else if (hasRelativeJump)
-        {
-            // Offset is signed 8-bit integer [-128..+127]. Calculated from next instruction after JR ...
-            result.instructionAddr = registers->pc;
-            result.relJumpAddr = result.instructionAddr + result.relJumpOffset + 2;
-        }
         // Populate runtime information for displacement operation
-        else if (hasDisplacement)
+        if (hasDisplacement)
         {
             // Displacement is signed 8-bit integer [-128..+127]
             result.displacement = (int8_t)result.byteOperand;

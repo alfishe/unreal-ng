@@ -46,6 +46,7 @@ struct DecodedInstruction
     bool hasJump = false;
     bool hasRelativeJump = false;
     bool hasDisplacement = false;
+    bool hasIndirect = false;
     bool hasReturn = false;
     bool hasByteOperand = false;
     bool hasWordOperand = false;
@@ -135,6 +136,7 @@ constexpr uint32_t OF_BLOCK = (1UL << 15);          // Block operations (LDI, LD
 constexpr uint32_t OF_IO = (1UL << 16);             // I/O operations (IN, OUT)
 constexpr uint32_t OF_INTERRUPT = (1UL << 17);      // Interrupt-related (EI, DI, IM)
 constexpr uint32_t OF_DJNZ = (1UL << 18);           // DJNZ instruction
+constexpr uint32_t OF_INDIRECT = (1UL << 19);       // Command uses indirect addressing (via one register pairs)
 
 namespace OpFlags
 {
