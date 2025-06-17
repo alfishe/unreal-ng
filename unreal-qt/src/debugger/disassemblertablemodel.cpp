@@ -492,19 +492,70 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
     }
 
     // Calculate the actual range to load into the cache, including padding.
-    // The padding helps with smoother scrolling as the user approaches the edges of the visible area.
-    // The user's previous code (from the diff) used a PADDING of 0x100.
-    const uint16_t PADDING = 0x100;
-    uint16_t loadStart = (m_visibleStart > PADDING) ? (m_visibleStart - PADDING) : 0;
-    uint16_t loadEnd = (m_visibleEnd < (0xFFFF - PADDING)) ? (m_visibleEnd + PADDING) : 0xFFFF;
+    const uint16_t MAX_RANGE = DISASSEMBLY_RANGE * 2;  // Maximum allowed range
+
+    uint16_t loadStart = (m_visibleStart > DISASSEMBLY_RANGE) ? (m_visibleStart - DISASSEMBLY_RANGE) : 0;
+    uint16_t loadEnd = (m_visibleEnd < (0xFFFF - DISASSEMBLY_RANGE)) ? (m_visibleEnd + DISASSEMBLY_RANGE) : 0xFFFF;
+
+    // Ensure the range isn't too large
+    if (loadEnd - loadStart > MAX_RANGE)
+    {
+        // If the range is too large, center it around the PC if possible
+        if (m_currentPC != 0xFFFF)
+        {
+            // Calculate start centered around PC, but ensure it doesn't go below 0
+            loadStart = (m_currentPC > MAX_RANGE/2) ? (m_currentPC - MAX_RANGE/2) : 0;
+            // Calculate end based on start, ensuring we don't exceed MAX_RANGE
+            loadEnd = loadStart + MAX_RANGE;
+            
+            // If we go beyond address space, adjust both start and end
+            if (loadEnd > 0xFFFF)
+            {
+                loadEnd = 0xFFFF;
+                loadStart = (loadEnd > MAX_RANGE) ? (loadEnd - MAX_RANGE) : 0;
+            }
+            // Ensure we didn't make the range too small
+            if (loadEnd - loadStart < MAX_RANGE/2)
+            {
+                loadStart = 0;
+                loadEnd = MAX_RANGE > 0xFFFF ? 0xFFFF : MAX_RANGE;
+            }
+
+            qDebug() << "Adjusted disassembly range to center around PC:" 
+                     << QString("0x%1 - 0x%2").arg(loadStart, 4, 16, QChar('0')).arg(loadEnd, 4, 16, QChar('0'));
+        }
+        else
+        {
+            // If no PC, just clamp the range to MAX_RANGE
+            if (loadEnd - loadStart > MAX_RANGE)
+            {
+                loadEnd = loadStart + MAX_RANGE;
+                if (loadEnd > 0xFFFF)
+                {
+                    loadEnd = 0xFFFF;
+                    loadStart = (loadEnd > MAX_RANGE) ? (loadEnd - MAX_RANGE) : 0;
+                }
+            }
+            qDebug() << "Clamped disassembly range to:" 
+                     << QString("0x%1 - 0x%2").arg(loadStart, 4, 16, QChar('0')).arg(loadEnd, 4, 16, QChar('0'));
+        }
+        
+        // Final sanity check to ensure we don't exceed MAX_RANGE
+        if (loadEnd - loadStart > MAX_RANGE)
+        {
+            qWarning() << "Range still too large after adjustment, forcing to MAX_RANGE";
+            loadEnd = loadStart + MAX_RANGE;
+            if (loadEnd > 0xFFFF) loadEnd = 0xFFFF;
+        }
+    }
 
     // If the current PC is valid, ensure we load enough instructions around it
     // to keep it centered in the visible area
     if (m_currentPC != 0xFFFF)
     {
         // Calculate a range centered on the PC with enough padding for table height
-        uint16_t pcCenteredStart = (m_currentPC > PADDING) ? (m_currentPC - PADDING) : 0;
-        uint16_t pcCenteredEnd = (m_currentPC < (0xFFFF - PADDING)) ? (m_currentPC + PADDING) : 0xFFFF;
+        uint16_t pcCenteredStart = (m_currentPC > DISASSEMBLY_RANGE) ? (m_currentPC - DISASSEMBLY_RANGE) : 0;
+        uint16_t pcCenteredEnd = (m_currentPC < (0xFFFF - DISASSEMBLY_RANGE)) ? (m_currentPC + DISASSEMBLY_RANGE) : 0xFFFF;
 
         // Expand our load range to include the PC-centered range
         loadStart = std::min(loadStart, pcCenteredStart);
