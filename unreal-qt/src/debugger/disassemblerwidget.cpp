@@ -288,12 +288,15 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             }
         }
 
+        // Store the instruction address before updating currentAddress
+        uint16_t instructionAddress = currentAddress;
+        
         // Update current address for next iteration
         currentAddress += commandLen;
         pcPhysicalAddress += commandLen;
 
         // Format value like: [B] $15FB: CD 2C 16   LABEL:    call $162C (init_screen)
-        std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
+        std::string breakpointMarker = hasBreakpointAtAddress(instructionAddress) ? "●" : " ";
 
         // Extract label from symbolicLabelInfo if present (format: "; LABEL:")
         std::string labelColumn = "";
@@ -305,7 +308,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
         // Ensure address is 4 digits with leading zeros
         std::string formattedAddress =
-            StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc - decoded.fullCommandLen, ""));
+            StringHelper::ToUpper(StringHelper::ToHexWithPrefix(instructionAddress, ""));
         if (formattedAddress.length() < 4)
         {
             formattedAddress = std::string(4 - formattedAddress.length(), '0') + formattedAddress;
