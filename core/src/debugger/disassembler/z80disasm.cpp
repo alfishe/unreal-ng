@@ -2007,6 +2007,14 @@ std::regex Z80Disassembler::regexOpcodeOperands(":\\d+");
 
 /// endregion </Static>
 
+
+// @brief Disassembles a single Z80 instruction from the provided buffer
+// @param buffer The buffer containing the instruction bytes to disassemble
+// @param instructionAddr The address where this instruction is located in Z80 address space
+// @param[out] commandLen Pointer to store the length of the disassembled instruction (can be nullptr)
+// @param[out] decoded Optional pointer to store detailed information about the decoded instruction
+// @return A string containing the disassembled instruction in human-readable format
+// @note This is a convenience wrapper around disassembleSingleCommandWithRuntime that doesn't require runtime state
 std::string Z80Disassembler::disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, DecodedInstruction* decoded)
 {
     std::string result = disassembleSingleCommandWithRuntime(buffer, instructionAddr, commandLen, nullptr, nullptr, decoded);
@@ -2020,6 +2028,14 @@ std::string Z80Disassembler::disassembleSingleCommand(const std::vector<uint8_t>
     return result;
 }
 
+/// @brief Disassembles a single Z80 instruction from the provided buffer with runtime state
+/// @param buffer The buffer containing the instruction bytes to disassemble
+/// @param instructionAddr The address where this instruction is located in Z80 address space
+/// @param[out] commandLen Pointer to store the length of the disassembled instruction (can be nullptr)
+/// @param registers Optional pointer to Z80Registers for runtime state (can be nullptr)
+/// @param memory Optional pointer to Memory for runtime state (can be nullptr)
+/// @param[out] decoded Optional pointer to store detailed information about the decoded instruction
+/// @return A string containing the disassembled instruction in human-readable format
 std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded)
 {
     std::string result;
@@ -2336,6 +2352,12 @@ uint16_t Z80Disassembler::getNextInstructionAddress(uint16_t currentAddress, Mem
 
 /// region <Helper methods>
 
+/// @brief Decodes a single Z80 instruction from the provided buffer
+/// @param buffer The buffer containing the instruction bytes to decode
+/// @param instructionAddr The address where this instruction is located in Z80 address space
+/// @param registers Optional pointer to Z80Registers for runtime state (can be nullptr)
+/// @param memory Optional pointer to Memory for runtime state (can be nullptr)
+/// @return A DecodedInstruction containing the decoded instruction information
 DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>& buffer, uint16_t instructionAddr,
                                                      Z80Registers* registers, Memory* memory)
 {
