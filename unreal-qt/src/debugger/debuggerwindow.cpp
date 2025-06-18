@@ -1,6 +1,6 @@
 #include "debuggerwindow.h"
-
 #include "ui_debuggerwindow.h"
+#include "debugvisualizationwindow.h"
 
 #include <Qt>
 #include <QBoxLayout>
@@ -68,11 +68,14 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     frameStepAction = toolBar->addAction("Frame step");
     waitInterruptAction = toolBar->addAction("Wait INT");
-    resetAction = toolBar->addAction("Reset");
-    toolBar->addWidget(spacer);
+    // Create toolbar actions
+    resetAction = new QAction("Reset", this);
+    breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
+    visualizationAction = new QAction("Visualization", this);
     toolBar->addAction(labelsAction);
     breakpointsAction = toolBar->addAction("Breakpoints");
+    toolBar->addAction(visualizationAction);
 
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
@@ -81,6 +84,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
+    connect(visualizationAction, &QAction::triggered, this, &DebuggerWindow::showVisualizationWindow);
 
     // Subscribe to events leading to MemoryView changes
     connect(ui->registersWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
@@ -1026,6 +1030,36 @@ void DebuggerWindow::showLabelManager()
 
     // Update debugger state after dialog closes (if needed)
     updateState(); // Refresh in case labels changed that affect disassembly, etc.
+}
+
+void DebuggerWindow::showVisualizationWindow()
+{
+    qDebug() << "DebuggerWindow::showVisualizationWindow()";
+
+    if (!_emulator)
+    {
+        QMessageBox::warning(this, "Warning", "No emulator selected");
+        return;
+    }
+
+    // Create visualization window if it doesn't exist yet
+    if (!_visualizationWindow)
+    {
+        _visualizationWindow = new DebugVisualizationWindow(_emulator);
+        // Set window flags to stay on top of the debugger window
+        _visualizationWindow->setWindowFlags(_visualizationWindow->windowFlags() | Qt::Window);
+        
+        // Connect window closed signal to reset our pointer
+        connect(_visualizationWindow, &QObject::destroyed, [this]()
+        {
+            _visualizationWindow = nullptr;
+        });
+    }
+
+    // Show and activate the window
+    _visualizationWindow->show();
+    _visualizationWindow->activateWindow();
+    _visualizationWindow->raise();
 }
 
 /// endregion </Event handlers / Slots>
