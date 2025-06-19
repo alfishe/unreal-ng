@@ -1941,17 +1941,29 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
     ss << "Total Executes: " << StringHelper::Format("%'llu", totalExecutes) << NEWLINE;
     ss << "Total Accesses: " << StringHelper::Format("%'llu", totalAccesses) << NEWLINE << NEWLINE;
 
-    // Always show Z80 memory page (bank) counters
-    ss << "Z80 Memory Pages (16KB each):" << NEWLINE;
+    // Always show Z80 memory page (bank) counters with physical page mapping
+    ss << "Z80 Memory Banks (16KB each):" << NEWLINE;
     ss << "----------------------------" << NEWLINE;
     
-    const char* bankNames[4] = {"ROM0 (0x0000-0x3FFF)", "ROM1 (0x4000-0x7FFF)", 
-                                "RAM0 (0x8000-0xBFFF)", "RAM1 (0xC000-0xFFFF)"};
-    
+    const char* bankNames[4] = {"0x0000-0x3FFF", "0x4000-0x7FFF", 
+                                "0x8000-0xBFFF", "0xC000-0xFFFF"};
+
+    // Process each bank
     for (int bank = 0; bank < 4; bank++)
     {
         uint64_t bankTotal = bankReads[bank] + bankWrites[bank] + bankExecutes[bank];
-        ss << StringHelper::Format("Bank %d (%s):", bank, bankNames[bank]) << NEWLINE;
+        
+        // Get bank info using helper methods
+        bool isROM = (bank < 2) ? 
+            (bank == 0 ? memory->IsBank0ROM() : memory->GetMemoryBankMode(bank) == BANK_ROM) : 
+            false; // Banks 2-3 are always RAM
+            
+        uint16_t page = memory->GetPageForBank(bank);
+        const char* type = isROM ? "ROM" : "RAM";
+        std::string bankName = memory->GetCurrentBankName(bank);
+        
+        // Format the output
+        ss << StringHelper::Format("Bank %d (%s) -> %s page: %s", bank, bankNames[bank], type, bankName.c_str()) << NEWLINE;
         ss << StringHelper::Format("  Reads:    %'llu", bankReads[bank]) << NEWLINE;
         ss << StringHelper::Format("  Writes:   %'llu", bankWrites[bank]) << NEWLINE;
         ss << StringHelper::Format("  Executes: %'llu", bankExecutes[bank]) << NEWLINE;
