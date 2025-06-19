@@ -1,5 +1,8 @@
 #include "cli-processor.h"
 
+#include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/platform.h"
+
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
 #include <debugger/breakpoints/breakpointmanager.h>
@@ -58,7 +61,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
                         {"quit", &CLIProcessor::HandleExit},
-                        {"dummy", &CLIProcessor::HandleDummy}};
+                        {"dummy", &CLIProcessor::HandleDummy},
+                        {"memcounters", &CLIProcessor::HandleMemCounters},
+                        {"memstats", &CLIProcessor::HandleMemCounters}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -1876,5 +1881,150 @@ void CLIProcessor::HandleDebugMode(const ClientSession& session, const std::vect
         bool isDebugMode = emulator->GetContext()->pCore->GetZ80()->isDebugMode;
         std::string currentMode = isDebugMode ? "on" : "off";
         session.SendResponse("Debug mode is now " + currentMode + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
+        return;
+    }
+
+    // Parse command line arguments
+    bool showAll = false;
+    bool resetAfter = false;
+    
+    for (const auto& arg : args)
+    {
+        if (arg == "all")
+            showAll = true;
+        else if (arg == "reset")
+            resetAfter = true;
+    }
+
+    // Get the memory access tracker
+    auto* memory = emulator->GetContext()->pMemory;
+    auto& tracker = memory->GetAccessTracker();
+    
+    // Get the current counters by summing up all banks
+    uint64_t totalReads = 0;
+    uint64_t totalWrites = 0;
+    uint64_t totalExecutes = 0;
+    
+    // Get per-Z80 bank (4 banks of 16KB each)
+    uint64_t bankReads[4] = {0};
+    uint64_t bankWrites[4] = {0};
+    uint64_t bankExecutes[4] = {0};
+    
+    for (int bank = 0; bank < 4; bank++)
+    {
+        bankReads[bank] = tracker.GetZ80BankReadAccessCount(bank);
+        bankWrites[bank] = tracker.GetZ80BankWriteAccessCount(bank);
+        bankExecutes[bank] = tracker.GetZ80BankExecuteAccessCount(bank);
+        
+        totalReads += bankReads[bank];
+        totalWrites += bankWrites[bank];
+        totalExecutes += bankExecutes[bank];
+    }
+    
+    uint64_t totalAccesses = totalReads + totalWrites + totalExecutes;
+
+    // Format the output
+    std::stringstream ss;
+    ss << "Memory Access Counters" << NEWLINE;
+    ss << "=====================" << NEWLINE;
+    ss << "Total Reads:    " << StringHelper::Format("%'llu", totalReads) << NEWLINE;
+    ss << "Total Writes:   " << StringHelper::Format("%'llu", totalWrites) << NEWLINE;
+    ss << "Total Executes: " << StringHelper::Format("%'llu", totalExecutes) << NEWLINE;
+    ss << "Total Accesses: " << StringHelper::Format("%'llu", totalAccesses) << NEWLINE << NEWLINE;
+
+    // Always show Z80 memory page (bank) counters
+    ss << "Z80 Memory Pages (16KB each):" << NEWLINE;
+    ss << "----------------------------" << NEWLINE;
+    
+    const char* bankNames[4] = {"ROM0 (0x0000-0x3FFF)", "ROM1 (0x4000-0x7FFF)", 
+                                "RAM0 (0x8000-0xBFFF)", "RAM1 (0xC000-0xFFFF)"};
+    
+    for (int bank = 0; bank < 4; bank++)
+    {
+        uint64_t bankTotal = bankReads[bank] + bankWrites[bank] + bankExecutes[bank];
+        ss << StringHelper::Format("Bank %d (%s):", bank, bankNames[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Reads:    %'llu", bankReads[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Writes:   %'llu", bankWrites[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Executes: %'llu", bankExecutes[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Total:    %'llu", bankTotal) << NEWLINE << NEWLINE;
+    }
+
+    // Show all physical pages if requested
+    if (showAll)
+    {
+        ss << "Physical Memory Pages with Activity:" << NEWLINE;
+        ss << "-----------------------------------" << NEWLINE;
+        
+        bool foundActivity = false;
+        
+        // Check RAM pages (0-255)
+        for (uint16_t page = 0; page < MAX_RAM_PAGES; page++)
+        {
+            uint32_t reads = tracker.GetPageReadAccessCount(page);
+            uint32_t writes = tracker.GetPageWriteAccessCount(page);
+            uint32_t executes = tracker.GetPageExecuteAccessCount(page);
+            
+            if (reads > 0 || writes > 0 || executes > 0)
+            {
+                foundActivity = true;
+                ss << StringHelper::Format("RAM Page %d:", page) << NEWLINE;
+                ss << StringHelper::Format("  Reads:    %'u", reads) << NEWLINE;
+                ss << StringHelper::Format("  Writes:   %'u", writes) << NEWLINE;
+                ss << StringHelper::Format("  Executes: %'u", executes) << NEWLINE;
+                ss << StringHelper::Format("  Total:    %'u", reads + writes + executes) << NEWLINE << NEWLINE;
+            }
+        }
+        
+        // Check ROM pages (start after RAM, cache, and misc pages)
+        const uint16_t FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+        for (uint16_t page = 0; page < MAX_ROM_PAGES; page++)
+        {
+            uint16_t physicalPage = FIRST_ROM_PAGE + page;
+            uint32_t reads = tracker.GetPageReadAccessCount(physicalPage);
+            uint32_t writes = tracker.GetPageWriteAccessCount(physicalPage);
+            uint32_t executes = tracker.GetPageExecuteAccessCount(physicalPage);
+            
+            if (reads > 0 || writes > 0 || executes > 0)
+            {
+                foundActivity = true;
+                ss << StringHelper::Format("ROM Page %d:", page) << NEWLINE;
+                ss << StringHelper::Format("  Reads:    %'u", reads) << NEWLINE;
+                ss << StringHelper::Format("  Writes:   %'u", writes) << NEWLINE;
+                ss << StringHelper::Format("  Executes: %'u", executes) << NEWLINE;
+                ss << StringHelper::Format("  Total:    %'u", reads + writes + executes) << NEWLINE << NEWLINE;
+            }
+        }
+        
+        if (!foundActivity)
+        {
+            ss << "No memory access activity detected in any physical page." << NEWLINE;
+        }
+    }
+    
+    // Show usage if no arguments provided
+    if (args.empty())
+    {
+        ss << "Usage: memcounters [all] [reset]" << NEWLINE;
+        ss << "  all   - Show all physical pages with activity" << NEWLINE;
+        ss << "  reset - Reset counters after displaying" << NEWLINE;
+    }
+    
+    // Send the response
+    session.SendResponse(ss.str());
+    
+    // Reset counters if requested
+    if (resetAfter)
+    {
+        tracker.ResetCounters();
+        session.SendResponse("Memory counters have been reset." + std::string(NEWLINE));
     }
 }
