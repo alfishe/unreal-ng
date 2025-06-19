@@ -297,62 +297,33 @@ bool LabelManager::SaveLabels(const std::string& path, FileFormat format) const
     file << "; Labels exported by UnrealNG Emulator" << std::endl;
     file << "; Format: " << (format == FileFormat::SYM ? "Simple Symbol" : "Map") << std::endl << std::endl;
 
-    // Export all labels
-    for (const auto& pair : _labelsByName)
+    // Export all labels in a format that ParseSymFile can read
+    for (const auto& pair : _labelsByZ80Address)
     {
         const auto& label = pair.second;
 
-        switch (format)
+        // Format: ADDR NAME [TYPE] [; COMMENT]
+        // Example: 1234 main code ; Entry point
+        
+        // Write address (4 hex digits)
+        file << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << label->address << " ";
+        
+        // Write name
+        file << label->name;
+        
+        // Write type if not empty
+        if (!label->type.empty())
         {
-            case FileFormat::SYM:
-                // For SYM format, include bank information in the address if available
-                if (label->bank != UINT16_MAX)
-                {
-                    file << (label->isROM() ? "ROM" : "RAM") << label->bank << ":";
-                }
-                file << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << label->address << " "
-                     << label->name << " " << label->type;
-                if (!label->comment.empty())
-                {
-                    file << " ; " << label->comment;
-                }
-                file << std::endl;
-                break;
-
-            case FileFormat::MAP:
-                // For MAP format, include bank information in the address if available
-                if (label->bank != UINT16_MAX)
-                {
-                    file << (label->isROM() ? "ROM" : "RAM") << label->bank << ":";
-                }
-                else
-                {
-                    file << std::hex << std::uppercase << std::setw(4) << std::setfill('0');
-                }
-                file << label->address << " " << label->type << " " << label->name;
-
-                // Add bank information as a comment if available
-                if (label->bank != UINT16_MAX)
-                {
-                    file << " ; bank=" << (label->isROM() ? "ROM" : "RAM") << label->bank;
-                    if (label->bankOffset != UINT16_MAX)
-                    {
-                        file << " offset=0x" << std::hex << std::uppercase << label->bankOffset;
-                    }
-                }
-
-                if (!label->comment.empty())
-                {
-                    file << " ; " << label->comment;
-                }
-                file << std::endl;
-                break;
-
-            default:
-                // Default to simple format
-                file << label->name << " = 0x" << std::hex << std::uppercase << label->address << "\n";
-                break;
+            file << " (" << label->type << ")";
         }
+        
+        // Write comment if present
+        if (!label->comment.empty())
+        {
+            file << " ; " << label->comment;
+        }
+        
+        file << std::endl;
     }
 
     file.close();
