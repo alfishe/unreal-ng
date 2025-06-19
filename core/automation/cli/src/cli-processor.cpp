@@ -41,6 +41,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"step", &CLIProcessor::HandleStep},
                         {"memory", &CLIProcessor::HandleMemory},
                         {"registers", &CLIProcessor::HandleRegisters},
+                        {"debugmode", &CLIProcessor::HandleDebugMode},
 
                         // Breakpoint commands
                         {"bp", &CLIProcessor::HandleBreakpoint},          // Set execution breakpoint
@@ -284,10 +285,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bport <port> <type> - Set port breakpoint (i/o/io)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
-    oss << "  bpgroup       - Manage breakpoint groups" << NEWLINE;
-    oss << "  bpon          - Activate breakpoints" << NEWLINE;
-    oss << "  bpoff         - Deactivate breakpoints" << NEWLINE;
-    oss << NEWLINE << "Other commands:" << NEWLINE;
+    oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups\n"
+        "  bpon <all|group <name>|id <id>>        - Activate breakpoints\n"
+        "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints\n"
+        "  memory <hex address> [length]          - Dump memory contents\n"
+        "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)\n" << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
     oss << NEWLINE << "Type any command followed by -h or --help for more information.";
@@ -1822,5 +1824,57 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         // Send the filepath in the message payload using the existing SimpleTextPayload
         session.SendResponse("Requesting to open file: " + filepath);
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
+    }
+}
+
+void CLIProcessor::HandleDebugMode(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
+        return;
+    }
+
+    if (args.size() < 1)
+    {
+        // Show current mode
+        bool isDebugMode = emulator->GetContext()->pCore->GetZ80()->isDebugMode;
+        std::string mode = isDebugMode ? "on" : "off";
+        session.SendResponse("Debug mode is currently " + mode + NEWLINE);
+        session.SendResponse("Usage: debugmode <on|off>" + std::string(NEWLINE));
+        return;
+    }
+
+    const std::string& mode = args[0];
+    Core* core = emulator->GetContext()->pCore;
+    bool success = true;
+    std::string response;
+
+    if (mode == "on")
+    {
+        core->UseDebugMemoryInterface();
+        core->GetZ80()->isDebugMode = true;
+        response = "Debug mode enabled (slower, with breakpoint support)" + std::string(NEWLINE);
+    }
+    else if (mode == "off")
+    {
+        core->UseFastMemoryInterface();
+        core->GetZ80()->isDebugMode = false;
+        response = "Debug mode disabled (faster, no breakpoints)" + std::string(NEWLINE);
+    }
+    else
+    {
+        success = false;
+        response = "Error: Invalid parameter. Use 'on' or 'off'" + std::string(NEWLINE);
+    }
+
+    session.SendResponse(response);
+    if (success)
+    {
+        // Also show the current mode after changing it
+        bool isDebugMode = emulator->GetContext()->pCore->GetZ80()->isDebugMode;
+        std::string currentMode = isDebugMode ? "on" : "off";
+        session.SendResponse("Debug mode is now " + currentMode + NEWLINE);
     }
 }
