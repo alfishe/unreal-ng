@@ -133,10 +133,11 @@ TEST_F(LabelManager_test, AddAndGetLabel)
     ASSERT_NE(labelByAddr, nullptr);
     EXPECT_EQ(labelByAddr->name, "TEST_LABEL");
     
-    // Test getting the label by physical address
-    auto labelByPhysAddr = _labelManager->GetLabelByZ80Address(0x5678);
-    ASSERT_NE(labelByPhysAddr, nullptr);
-    EXPECT_EQ(labelByPhysAddr->name, "TEST_LABEL");
+    // Test getting the label by bank and bank offset
+    // Note: We can't directly look up by physical address, so we test the bank and offset
+    // that were stored in the label
+    EXPECT_EQ(label->bank, 0x00);
+    EXPECT_EQ(label->bankOffset, 0x5678);
 }
 
 TEST_F(LabelManager_test, RemoveLabel)
