@@ -252,12 +252,11 @@ TEST_F(Disassembler_Test, disassembleSingleCommand)
     int i = 0;
     for (auto& cmd : testData)
     {
-        uint8_t* command = cmd.data();
-        std::string hexCommand = DumpHelper::HexDumpBuffer(command, cmd.size());
+        std::string hexCommand = DumpHelper::HexDumpBuffer(cmd.data(), cmd.size());
         std::string referenceResult = referenceValues[i];
 
         // Probe method under test and get result
-        std::string result = _disasm->disassembleSingleCommand(command, cmd.size());
+        std::string result = _disasm->disassembleSingleCommand(cmd, 0);
 
         if (result != referenceResult)
         {
@@ -348,17 +347,14 @@ TEST_F(Disassembler_Test, commandType)
     for (size_t i = 0; i < testCases.size(); i++)
     {
         const auto& test = testCases[i];
-        const uint8_t* bytes = test.bytes.data();
-        const size_t len = test.bytes.size();
-
-        DecodedInstruction decoded = _disasm->decodeInstruction(bytes, len);
+        DecodedInstruction decoded = _disasm->decodeInstruction(test.bytes, 0);
 
         // Convert the bytes to a hex string and get mnemonic for error messages
         std::string hexBytes;
         for (uint8_t byte : test.bytes)
             hexBytes += StringHelper::Format("%02X ", byte);
         
-        std::string mnemonic = _disasm->disassembleSingleCommand(bytes, len);
+        std::string mnemonic = _disasm->disassembleSingleCommand(test.bytes, 0);
         std::string errorPrefix = StringHelper::Format("Test case %zu [%s] '%s': ", i, hexBytes.c_str(), mnemonic.c_str());
 
         EXPECT_EQ(decoded.hasJump, test.hasJump)

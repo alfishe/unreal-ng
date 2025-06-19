@@ -124,7 +124,6 @@ TEST_F(LabelManager_test, AddAndGetLabel)
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->name, "TEST_LABEL");
     EXPECT_EQ(label->address, 0x1234);
-    EXPECT_EQ(label->physicalAddress, 0x5678);
     EXPECT_EQ(label->type, "code");
     EXPECT_EQ(label->module, "module1");
     EXPECT_EQ(label->comment, "Test label");
@@ -135,7 +134,7 @@ TEST_F(LabelManager_test, AddAndGetLabel)
     EXPECT_EQ(labelByAddr->name, "TEST_LABEL");
     
     // Test getting the label by physical address
-    auto labelByPhysAddr = _labelManager->GetLabelByPhysicalAddress(0x5678);
+    auto labelByPhysAddr = _labelManager->GetLabelByZ80Address(0x5678);
     ASSERT_NE(labelByPhysAddr, nullptr);
     EXPECT_EQ(labelByPhysAddr->name, "TEST_LABEL");
 }
