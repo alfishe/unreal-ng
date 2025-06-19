@@ -36,39 +36,40 @@ TEST_F(Disassembler_Opcode_Test, TestAllNoPrefixOpCodes)
         const OpCode& op = _disasm->getOpcode(0, opcode); // 0 prefix means no prefix
         const std::string mnemonic = op.mnem;
 
-        // Create a buffer with the opcode and random parameters
-        uint8_t buffer[4] = { (uint8_t)opcode }; // Start with opcode
-        size_t bufferLen = 1; // Start with default opcode length
+        // Create a vector with the opcode and random parameters
+        std::vector<uint8_t> command = { (uint8_t)opcode }; // Start with opcode
 
-        // Generate random parameters based on opcode flags
+        // Handle special cases with additional bytes
         if (op.flags & OF_MBYTE) // Has byte operand
         {
-            buffer[1] = (uint8_t)(rand() % 256);
-            bufferLen = 2;
+            command.push_back((uint8_t)(rand() % 256));
         }
         else if (op.flags & OF_MWORD) // Has word operand
         {
-            buffer[1] = (uint8_t)(rand() % 256);
-            buffer[2] = (uint8_t)(rand() % 256);
-            bufferLen = 3;
+            command.push_back((uint8_t)(rand() % 256));
+            command.push_back((uint8_t)(rand() % 256));
+        }
+        else if (op.flags & OF_JUMP) // Has jump displacement
+        {
+            command.push_back((uint8_t)(rand() % 256));
         }
 
         // Disassemble the command
-        std::string result = _disasm->disassembleSingleCommand(buffer, bufferLen);
+        std::string result = _disasm->disassembleSingleCommand(command, 0);
 
         // Get expected result using the opcode mnemonic
         std::string referenceResult = mnemonic;
 
         // Format expected result with random values
-        uint8_t commandLength = bufferLen;
+        uint8_t commandLength = command.size();
         if (op.flags & OF_MBYTE)
         {
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":1"), string("%s"));
-            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(buffer[1], "#", true));
+            referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(command[1], "#", true));
         }
         else if (op.flags & OF_MWORD)
         {
-            uint16_t word = (buffer[2] << 8) | buffer[1];
+            uint16_t word = (command[2] << 8) | command[1];
 
             referenceResult = StringHelper::ReplaceAll(referenceResult, string(":2"), string("%s"));
             referenceResult = StringHelper::Format(referenceResult, StringHelper::ToHexWithPrefix(word, "#", true));
@@ -98,8 +99,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
         if (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD)
             continue;
 
-        uint8_t command[4] = {0xED, (uint8_t)opcode, 0, 0};
-        size_t commandLen = 2;
+        std::vector<uint8_t> command = {0xED, (uint8_t)opcode};
         std::string hexCommand;
 
         // Get the opcode structure using getOpcode with DD prefix
@@ -111,8 +111,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
         if ((op.flags & OF_DISP)) // 1-byte displacement
         {
             uint8_t val = (uint8_t)(rand() % 256);
-            command[commandLen] = val;
-            commandLen += 1;
+            command.push_back(val);
 
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
@@ -127,9 +126,9 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
         {
             uint8_t lo = (uint8_t)(rand() % 256);
             uint8_t hi = (uint8_t)(rand() % 256);
-            command[commandLen] = lo;
-            command[commandLen + 1] = hi;
-            commandLen += 2;
+            command.push_back(lo);
+            command.push_back(hi);
+
             size_t pos;
 
             if ((pos = referenceResult.find(":2")) != std::string::npos)
@@ -142,8 +141,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
         else if ((op.flags & OF_MBYTE))// 1-byte operand
         {
             uint8_t val = (uint8_t)(rand() % 256);
-            command[commandLen] = val;
-            commandLen += 1;
+            command.push_back(val);
 
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
@@ -154,8 +152,8 @@ TEST_F(Disassembler_Opcode_Test, TestAllEDOpCodes)
             }
         }
 
-        hexCommand = DumpHelper::HexDumpBuffer(command, commandLen);
-        std::string result = _disasm->disassembleSingleCommand(command, commandLen);
+        hexCommand = DumpHelper::HexDumpBuffer(command.data(), command.size());
+        std::string result = _disasm->disassembleSingleCommand(command, 0);
 
         // Compare mnemonic
         if (result != referenceResult)
@@ -206,8 +204,8 @@ TEST_F(Disassembler_Opcode_Test, TestAllCBOpCodes)
         std::string registerName = registers[opcode % 8];
         int bitNumber = (opcode >> 3) & 0b0000'0111;
 
-        uint8_t command[2] = {0xCB, (uint8_t)opcode};
-        std::string hexCommand = DumpHelper::HexDumpBuffer(command, sizeof(command));
+        std::vector<uint8_t> command = {0xCB, (uint8_t)opcode};
+        std::string hexCommand = DumpHelper::HexDumpBuffer(command.data(), command.size());
 
         std::string referenceResult;
         switch (operationIndex)
@@ -252,8 +250,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
         if (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD)
             continue;
 
-        uint8_t command[4] = {0xDD, (uint8_t)opcode, 0, 0};
-        size_t commandLen = 2;
+        std::vector<uint8_t> command = {0xDD, (uint8_t)opcode};
         std::string hexCommand;
 
         // Get the opcode structure using getOpcode with DD prefix
@@ -265,8 +262,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
         if ((op.flags & OF_DISP)) // 1-byte displacement
         {
             uint8_t val = (uint8_t)(rand() % 256);
-            command[commandLen] = val;
-            commandLen += 1;
+            command.push_back(val);
 
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
@@ -281,11 +277,10 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
         {
             uint8_t lo = (uint8_t)(rand() % 256);
             uint8_t hi = (uint8_t)(rand() % 256);
-            command[commandLen] = lo;
-            command[commandLen + 1] = hi;
-            commandLen += 2;
-            size_t pos;
+            command.push_back(lo);
+            command.push_back(hi);
 
+            size_t pos;
             if ((pos = referenceResult.find(":2")) != std::string::npos)
             {
                 char hexWord[8];
@@ -296,8 +291,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
         else if ((op.flags & OF_MBYTE))// 1-byte operand
         {
             uint8_t val = (uint8_t)(rand() % 256);
-            command[commandLen] = val;
-            commandLen += 1;
+            command.push_back(val);
 
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
@@ -308,8 +302,8 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDOpCodes)
             }
         }
 
-        hexCommand = DumpHelper::HexDumpBuffer(command, commandLen);
-        std::string result = _disasm->disassembleSingleCommand(command, commandLen);
+        hexCommand = DumpHelper::HexDumpBuffer(command.data(), command.size());
+        std::string result = _disasm->disassembleSingleCommand(command, 0);
 
         // Compare mnemonic
         if (result != referenceResult)
@@ -365,8 +359,8 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDCBOpCodes)
             std::string registerName = registers[opcode % 8];
             int bitNumber = (opcode >> 3) & 0b0000'0111;
 
-            uint8_t command[4] = {0xDD, 0xCB, (uint8_t)disp, (uint8_t)opcode};
-            std::string hexCommand = DumpHelper::HexDumpBuffer(command, sizeof(command));
+            std::vector<uint8_t> command = {0xDD, 0xCB, (uint8_t)disp, (uint8_t)opcode};
+            std::string hexCommand = DumpHelper::HexDumpBuffer(command.data(), command.size());
 
             // Generate reference result
             std::string referenceResult;
@@ -409,7 +403,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllDDCBOpCodes)
             }
 
             // Probe method under test and get result
-            std::string result = _disasm->disassembleSingleCommand(command, sizeof(command));
+            std::string result = _disasm->disassembleSingleCommand(command, 0);
 
             if (result != referenceResult)
             {
@@ -439,11 +433,10 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
         if (opcode == 0xCB || opcode == 0xDD || opcode == 0xED || opcode == 0xFD)
             continue;
 
-        uint8_t command[4] = {0xFD, (uint8_t)opcode, 0, 0};
-        size_t commandLen = 2;
+        std::vector<uint8_t> command = {0xFD, (uint8_t)opcode};
         std::string hexCommand;
 
-        // Get the opcode structure using getOpcode with DD prefix
+        // Get the opcode structure using getOpcode with FD prefix
         const OpCode& op = _disasm->getOpcode(0xFD, opcode);
         std::string referenceResult = std::string(op.mnem);
 
@@ -452,8 +445,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
         if ((op.flags & OF_DISP)) // 1-byte displacement
         {
             uint8_t val = (uint8_t)(rand() % 256);
-            command[commandLen] = val;
-            commandLen += 1;
+            command.push_back(val);
 
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
@@ -468,11 +460,10 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
         {
             uint8_t lo = (uint8_t)(rand() % 256);
             uint8_t hi = (uint8_t)(rand() % 256);
-            command[commandLen] = lo;
-            command[commandLen + 1] = hi;
-            commandLen += 2;
-            size_t pos;
+            command.push_back(lo);
+            command.push_back(hi);
 
+            size_t pos;
             if ((pos = referenceResult.find(":2")) != std::string::npos)
             {
                 char hexWord[8];
@@ -483,8 +474,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
         else if ((op.flags & OF_MBYTE))// 1-byte operand
         {
             uint8_t val = (uint8_t)(rand() % 256);
-            command[commandLen] = val;
-            commandLen += 1;
+            command.push_back(val);
 
             size_t pos;
             if ((pos = referenceResult.find(":1")) != std::string::npos)
@@ -495,8 +485,8 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDOpCodes)
             }
         }
 
-        hexCommand = DumpHelper::HexDumpBuffer(command, commandLen);
-        std::string result = _disasm->disassembleSingleCommand(command, commandLen);
+        hexCommand = DumpHelper::HexDumpBuffer(command.data(), command.size());
+        std::string result = _disasm->disassembleSingleCommand(command, 0);
 
         // Compare mnemonic
         if (result != referenceResult)
@@ -552,8 +542,8 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDCBOpCodes)
             std::string registerName = registers[opcode % 8];
             int bitNumber = (opcode >> 3) & 0b0000'0111;
 
-            uint8_t command[4] = {0xFD, 0xCB, (uint8_t)disp, (uint8_t)opcode};
-            std::string hexCommand = DumpHelper::HexDumpBuffer(command, sizeof(command));
+            std::vector<uint8_t> command = {0xFD, 0xCB, (uint8_t)disp, (uint8_t)opcode};
+            std::string hexCommand = DumpHelper::HexDumpBuffer(command.data(), command.size());
 
             // Generate reference result
             std::string referenceResult;
@@ -596,7 +586,7 @@ TEST_F(Disassembler_Opcode_Test, TestAllFDCBOpCodes)
             }
 
             // Probe method under test and get result
-            std::string result = _disasm->disassembleSingleCommand(command, sizeof(command));
+            std::string result = _disasm->disassembleSingleCommand(command, 0);
 
             if (result != referenceResult)
             {
