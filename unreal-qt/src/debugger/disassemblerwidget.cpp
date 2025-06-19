@@ -14,6 +14,7 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include <QMouseEvent>
 #include <QTextBlock>
 #include <QVBoxLayout>
+#include <QThread>
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -193,25 +194,28 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     for (size_t i = 0; i < INSTRUCTIONS_TO_DISASSEMBLE && currentAddress < 0xFFFF; i++)
     {
         // Read memory for current instruction
-        for (size_t j = 0; j < buffer.size(); j++) {
+        for (size_t j = 0; j < buffer.size(); j++)
+        {
             buffer[j] = memory.DirectReadFromZ80Memory(currentAddress + j);
         }
 
         uint8_t commandLen = 0;
         DecodedInstruction decoded;
-        
+
         // Get physical address for memory access
         uint8_t* pcPhysicalAddress = memory.MapZ80AddressToPhysicalAddress(currentAddress);
-        if (!pcPhysicalAddress) {
+        if (!pcPhysicalAddress)
+        {
             break;  // Invalid address
         }
 
         // Disassemble the instruction
-        std::string command = disassembler.disassembleSingleCommandWithRuntime(
-            buffer, currentAddress, &commandLen, registers, &memory, &decoded);
+        std::string command = disassembler.disassembleSingleCommandWithRuntime(buffer, currentAddress, &commandLen,
+                                                                               registers, &memory, &decoded);
 
         // If we couldn't determine command length, use a safe default
-        if (commandLen == 0) {
+        if (commandLen == 0)
+        {
             commandLen = 1;
         }
 
@@ -284,12 +288,15 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
             }
         }
 
+        // Store the instruction address before updating currentAddress
+        uint16_t instructionAddress = currentAddress;
+        
         // Update current address for next iteration
         currentAddress += commandLen;
         pcPhysicalAddress += commandLen;
 
         // Format value like: [B] $15FB: CD 2C 16   LABEL:    call $162C (init_screen)
-        std::string breakpointMarker = hasBreakpointAtAddress(pc - decoded.fullCommandLen) ? "●" : " ";
+        std::string breakpointMarker = hasBreakpointAtAddress(instructionAddress) ? "●" : " ";
 
         // Extract label from symbolicLabelInfo if present (format: "; LABEL:")
         std::string labelColumn = "";
@@ -301,7 +308,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
         // Ensure address is 4 digits with leading zeros
         std::string formattedAddress =
-            StringHelper::ToUpper(StringHelper::ToHexWithPrefix(pc - decoded.fullCommandLen, ""));
+            StringHelper::ToUpper(StringHelper::ToHexWithPrefix(instructionAddress, ""));
         if (formattedAddress.length() < 4)
         {
             formattedAddress = std::string(4 - formattedAddress.length(), '0') + formattedAddress;
@@ -341,23 +348,69 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     }
 
     std::string value = ss.str();
-    // Convert to QString and enable HTML formatting with fixed-width font
-    QString htmlContent = QString(
-                              "<html><head><style>"
-                              "pre { font-family: 'Courier New', monospace; white-space: pre; tab-size: 24; }"
-                              ".breakpoint { color: red; }"
-                              ".address { color: #008000; }"   // Dark green for addresses
-                              ".bytes { color: #0000FF; }"     // Blue for byte codes
-                              ".label { color: #8A2BE2; }"     // Blue violet for labels
-                              ".mnemonic { color: #000000; }"  // Black for mnemonics
-                              ".comment { color: #808080; }"   // Gray for comments
-                              "</style></head><body><pre>%1</pre></body></html>")
-                              .arg(QString::fromStdString(value));
-    m_disassemblyTextEdit->setHtml(htmlContent);
 
-    // Highlight the current PC instruction and any breakpoints
-    highlightCurrentPC();
-    updateBreakpointHighlighting();
+    // Check if we're in the main thread and the widget is still valid
+    if (QThread::currentThread() != QCoreApplication::instance()->thread()) {
+        qWarning() << "setDisassemblerAddress called from non-main thread";
+        // Schedule the update to happen in the main thread
+        QMetaObject::invokeMethod(this, [this, value]() {
+            setDisassemblerAddress(m_displayAddress);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
+    // Check if the text edit widget is valid and not being destroyed
+    QPointer<DisassemblyTextEdit> textEdit = m_disassemblyTextEdit;
+    if (!textEdit)
+    {
+        qWarning() << "m_disassemblyTextEdit is null in setDisassemblerAddress";
+        return;
+    }
+
+    try {
+        // Convert to QString and enable HTML formatting with fixed-width font
+        QString htmlContent = QString(
+                                  "<html><head><style>"
+                                  "pre { font-family: 'Courier New', monospace; white-space: pre; tab-size: 24; }"
+                                  ".breakpoint { color: red; }"
+                                  ".address { color: #008000; }"   // Dark green for addresses
+                                  ".bytes { color: #0000FF; }"     // Blue for byte codes
+                                  ".label { color: #8A2BE2; }"     // Blue violet for labels
+                                  ".mnemonic { color: #000000; }"  // Black for mnemonics
+                                  ".comment { color: #808080; }"   // Gray for comments
+                                  "</style></head><body><pre>%1</pre></body></html>")
+                                  .arg(QString::fromStdString(value));
+
+        // Double-check the widget is still valid
+        if (!textEdit)
+        {
+            qWarning() << "m_disassemblyTextEdit became null before setHtml";
+            return;
+        }
+
+        // Set the HTML content
+        textEdit->setHtml(htmlContent);
+
+        // Highlight the current PC instruction and any breakpoints
+        highlightCurrentPC();
+        updateBreakpointHighlighting();
+    }
+    catch (const std::exception& e)
+    {
+        qCritical() << "Exception in setDisassemblerAddress:" << e.what();
+        if (textEdit)
+        {
+            textEdit->setPlainText("Error: Failed to update disassembly view");
+        }
+    }
+    catch (...)
+    {
+        qCritical() << "Unknown exception in setDisassemblerAddress";
+        if (textEdit)
+        {
+            textEdit->setPlainText("Error: Unknown error in disassembly view");
+        }
+    }
 }
 
 void DisassemblerWidget::highlightCurrentPC()

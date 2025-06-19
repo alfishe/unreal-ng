@@ -116,6 +116,19 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     }
 
     /// endregion </Port In breakpoint logic>
+    
+    // Get the result from the peripheral device
+    result = PeripheralPortIn(addr);
+    
+    // Track port read access if memory access tracker is available
+    if (_memory && _memory->_memoryAccessTracker)
+    {
+        // Get the current PC as caller address
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        
+        // Track port read access
+        _memory->_memoryAccessTracker->TrackPortRead(addr, result, callerAddress);
+    }
 
     return result;
 }
@@ -146,6 +159,19 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     }
 
     /// endregion </Port Out breakpoint logic>
+    
+    // Forward the port write to the peripheral device
+    PeripheralPortOut(addr, value);
+    
+    // Track port write access if memory access tracker is available
+    if (_memory && _memory->_memoryAccessTracker)
+    {
+        // Get the current PC as caller address
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        
+        // Track port write access
+        _memory->_memoryAccessTracker->TrackPortWrite(addr, value, callerAddress);
+    }
 }
 
 /// Keyboard ports:
