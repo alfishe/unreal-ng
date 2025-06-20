@@ -613,7 +613,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 {
     { OF_NONE,  8, 0, 0, "nop" },                           // 0x00
     { OF_MWORD, 14, 0, 0, "ld bc,:2" },                     // 0x01
-    { OF_NONE, 11, 0, 0, "ld bc,(a)" },                     // 0x02
+    { OF_NONE, 11, 0, 0, "ld (bc),a" },                     // 0x02
     { OF_NONE, 10, 0, 0, "inc bc" },                        // 0x03
     { OF_NONE,  8, 0, 0, "inc b" },                         // 0x04
     { OF_NONE,  8, 0, 0, "dec b" },                         // 0x05
@@ -621,7 +621,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "rlca" },                          // 0x07
     { OF_NONE,  8, 0, 0, "ex af,af'" },                     // 0x08
     { OF_NONE, 15, 0, 0, "add ix,bc" },                     // 0x09
-    { OF_NONE, 11, 0, 0, "ld a,(bc)" },                     // 0x0A
+    { OF_INDIRECT, 11, 0, 0, "ld a,(bc)" },                 // 0x0A
     { OF_NONE, 10, 0, 0, "dec bc" },                        // 0x0B
     { OF_NONE,  8, 0, 0, "inc c" },                         // 0x0C
     { OF_NONE,  8, 0, 0, "dec c" },                         // 0x0D
@@ -638,7 +638,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "rla" },                           // 0x17
     { OF_RELJUMP | OF_MBYTE,  16, 0, 0, "jr :1" },          // 0x18
     { OF_NONE,  15, 0, 0, "add ix,de" },                    // 0x19
-    { OF_NONE,  11, 0, 0, "ld a,(de)" },                    // 0x1A
+    { OF_INDIRECT,  11, 0, 0, "ld a,(de)" },                // 0x1A
     { OF_NONE,  10, 0, 0, "dec de" },                       // 0x1B
     { OF_NONE,   8, 0, 0, "inc e" },                        // 0x1C
     { OF_NONE,   8, 0, 0, "dec e" },                        // 0x1D
@@ -864,7 +864,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },  // 0xEC
     { OF_PREFIX,  4, 0, 0, "#ED" },                                  // 0xED - Prefix
     { OF_MBYTE,  7, 0, 0, "xor :1" },                                // 0xEE
-    { OF_NONE, 11, 0, 0, "rst #28" },                                // 0xEF
+    { OF_RST, 11, 0, 0, "rst #28" },                                 // 0xEF
 
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret p" },                   // 0xF0
     { OF_NONE, 14, 0, 0, "pop af" },                                 // 0xF1
