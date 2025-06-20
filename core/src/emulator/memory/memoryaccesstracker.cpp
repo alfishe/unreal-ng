@@ -5,6 +5,8 @@
 #include "filesystem"
 #include "memory.h"
 #include "stdafx.h"
+#include "emulator/cpu/core.h"
+#include "emulator/memory/rom.h"
 
 // Constructor
 MemoryAccessTracker::MemoryAccessTracker(Memory* memory, EmulatorContext* context) : _memory(memory), _context(context)
@@ -1179,57 +1181,44 @@ void MemoryAccessTracker::SaveMemoryLayout(std::ostream& out)
 void MemoryAccessTracker::SavePageSummaries(std::ostream& out, const std::vector<std::string>& filterPages)
 {
     out << "page_summaries:" << std::endl;
-
+    
     // Save RAM pages
     for (uint16_t page = 0; page < MAX_RAM_PAGES; page++)
     {
         std::string pageName = "RAM " + std::to_string(page);
         if (!filterPages.empty() && std::find(filterPages.begin(), filterPages.end(), pageName) == filterPages.end())
-        {
             continue;
-        }
-
-        uint32_t reads = GetPageReadAccessCount(page);
-        uint32_t writes = GetPageWriteAccessCount(page);
-        uint32_t executes = GetPageExecuteAccessCount(page);
-
-        // Skip pages with zero counters for all access types
-        if (reads == 0 && writes == 0 && executes == 0)
+        if (GetPageTotalAccessCount(page) > 0)
         {
-            continue;
+            out << "  \"" << pageName << "\":" << std::endl;
+            out << "    reads: " << GetPageReadAccessCount(page) << std::endl;
+            out << "    writes: " << GetPageWriteAccessCount(page) << std::endl;
+            out << "    executes: " << GetPageExecuteAccessCount(page) << std::endl;
         }
-
-        out << "  \"" << pageName << "\":" << std::endl;
-        out << "    reads: " << reads << std::endl;
-        out << "    writes: " << writes << std::endl;
-        out << "    executes: " << executes << std::endl;
     }
-
     // Save ROM pages (start after RAM, cache, and misc pages)
     const uint16_t FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+    ROM* rom = (_context && _context->pCore) ? _context->pCore->GetROM() : nullptr;
+    uint8_t* romBase = _memory ? _memory->ROMBase() : nullptr;
     for (uint16_t page = 0; page < MAX_ROM_PAGES; page++)
     {
         std::string pageName = "ROM " + std::to_string(page);
         if (!filterPages.empty() && std::find(filterPages.begin(), filterPages.end(), pageName) == filterPages.end())
-        {
             continue;
-        }
-
         uint16_t physicalPage = FIRST_ROM_PAGE + page;
-        uint32_t reads = GetPageReadAccessCount(physicalPage);
-        uint32_t writes = 0;  // ROM is write-protected
-        uint32_t executes = GetPageExecuteAccessCount(physicalPage);
-
-        // Skip pages with zero counters for all access types
-        if (reads == 0 && writes == 0 && executes == 0)
+        if (GetPageTotalAccessCount(physicalPage) > 0)
         {
-            continue;
+            std::string hash, title;
+            if (rom && romBase)
+            {
+                hash = rom->CalculateSignature(romBase + page * PAGE_SIZE, PAGE_SIZE);
+                title = rom->GetROMTitle(hash);
+            }
+            out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title) << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
+            out << "    reads: " << GetPageReadAccessCount(physicalPage) << std::endl;
+            out << "    writes: 0" << std::endl;
+            out << "    executes: " << GetPageExecuteAccessCount(physicalPage) << std::endl;
         }
-
-        out << "  \"" << pageName << "\":" << std::endl;
-        out << "    reads: " << reads << std::endl;
-        out << "    writes: " << writes << std::endl;
-        out << "    executes: " << executes << std::endl;
     }
 }
 
@@ -1314,19 +1303,18 @@ void MemoryAccessTracker::SaveDetailedAccessData(std::ostream& out, const std::v
         {
             continue;
         }
-
-        // Skip pages with no activity
         if (GetPageTotalAccessCount(page) > 0)
         {
             out << "  \"" << pageName << "\":" << std::endl;
             out << "    accessed_addresses:" << std::endl;
-
             SaveSinglePageAccessData(out, page, "      ");
         }
     }
 
     // Save ROM pages (start after RAM, cache, and misc pages)
     const uint16_t FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+    ROM* rom = (_context && _context->pCore) ? _context->pCore->GetROM() : nullptr;
+    uint8_t* romBase = _memory ? _memory->ROMBase() : nullptr;
     for (uint16_t page = 0; page < MAX_ROM_PAGES; page++)
     {
         std::string pageName = "ROM " + std::to_string(page);
@@ -1336,13 +1324,19 @@ void MemoryAccessTracker::SaveDetailedAccessData(std::ostream& out, const std::v
         }
 
         uint16_t physicalPage = FIRST_ROM_PAGE + page;
-
-        // Skip pages with no activity
         if (GetPageTotalAccessCount(physicalPage) > 0)
         {
-            out << "  \"" << pageName << "\":" << std::endl;
-            out << "    accessed_addresses:" << std::endl;
+            std::string hash;
+            std::string title;
 
+            if (rom && romBase)
+            {
+                hash = rom->CalculateSignature(romBase + page * PAGE_SIZE, PAGE_SIZE);
+                title = rom->GetROMTitle(hash);
+            }
+
+            out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title) << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
+            out << "    accessed_addresses:" << std::endl;
             SaveSinglePageAccessData(out, physicalPage, "      ");
         }
     }
