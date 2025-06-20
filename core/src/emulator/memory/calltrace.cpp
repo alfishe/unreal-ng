@@ -418,6 +418,112 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
     return true;
 }
 
+/// @brief Fast check to determine if an instruction might be a control flow instruction
+/// @param buffer Instruction bytes
+/// @return true if the instruction could be a control flow instruction
+static bool IsPotentialControlFlowInstruction(const std::vector<uint8_t>& buffer)
+{
+    if (buffer.empty())
+        return false;
+    
+    uint8_t opcode = buffer[0];
+    
+    // Check for DD/FD prefixes first
+    if (opcode == 0xDD || opcode == 0xFD)
+    {
+        if (buffer.size() < 2)
+            return false;
+        
+        uint8_t second_byte = buffer[1];
+        
+        // DD/FD prefixed control flow instructions
+        switch (second_byte)
+        {
+            // JP instructions
+            case 0xC2: case 0xC3: case 0xCA: case 0xCB: case 0xD2: case 0xD3: case 0xDA: case 0xDB:
+            case 0xE2: case 0xE3: case 0xEA: case 0xEB: case 0xF2: case 0xF3: case 0xFA: case 0xFB:
+            
+            // JR instructions  
+            case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:
+            
+            // CALL instructions
+            case 0xC4: case 0xC5: case 0xCC: case 0xCD: case 0xD4: case 0xD5: case 0xDC: case 0xDD:
+            case 0xE4: case 0xE5: case 0xEC: case 0xED: case 0xF4: case 0xF5: case 0xFC: case 0xFD:
+            
+            // RET instructions
+            case 0xC0: case 0xC8: case 0xC9: case 0xD0: case 0xD8: case 0xE0: case 0xE8: case 0xF0: case 0xF8:
+            
+            // RST instructions
+            case 0xC7: case 0xCF: case 0xD7: case 0xDF: case 0xE7: case 0xEF: case 0xF7: case 0xFF:
+            
+            // DJNZ
+            case 0x10:
+            
+            // JP (IX) / JP (IY)
+            case 0xE9:
+                return true;
+                
+            default:
+                return false;
+        }
+    }
+    
+    // Check for ED prefix
+    if (opcode == 0xED)
+    {
+        if (buffer.size() < 2)
+            return false;
+        
+        uint8_t second_byte = buffer[1];
+        
+        // ED prefixed control flow instructions
+        switch (second_byte)
+        {
+            // RETI, RETN and undocumented RETN variants
+            case 0x4D: case 0x45: case 0x55: case 0x5D: case 0x65: case 0x6D: case 0x75: case 0x7D:
+            
+            // Block transfer instructions that can loop (LDIR, LDDR, CPIR, CPDR, INIR, INDR, OTIR, OTDR)
+            // Disable for now since they do not change PC / use stack
+            // case 0xB0: case 0xB8: case 0xB1: case 0xB9: case 0xB2: case 0xBA: case 0xB3: case 0xBB:
+            //    return true;
+                
+            default:
+                return false;
+        }
+    }
+    
+    // Non-prefixed control flow instructions
+    switch (opcode)
+    {
+        // JP instructions
+        case 0xC2: case 0xC3: case 0xCA: case 0xCB: case 0xD2: case 0xD3: case 0xDA: case 0xDB:
+        case 0xE2: case 0xE3: case 0xEA: case 0xEB: case 0xF2: case 0xF3: case 0xFA: case 0xFB:
+        
+        // JP (HL)
+        case 0xE9:
+        
+        // JR instructions  
+        case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:
+        
+        // CALL instructions
+        case 0xC4: case 0xC5: case 0xCC: case 0xCD: case 0xD4: case 0xD5: case 0xDC: case 0xDD:
+        case 0xE4: case 0xE5: case 0xEC: case 0xED: case 0xF4: case 0xF5: case 0xFC: case 0xFD:
+        
+        // RET instructions
+        case 0xC0: case 0xC8: case 0xC9: case 0xD0: case 0xD8: case 0xE0: case 0xE8: case 0xF0: case 0xF8:
+        
+        // RST instructions
+        case 0xC7: case 0xCF: case 0xD7: case 0xDF: case 0xE7: case 0xEF: case 0xF7: case 0xFF:
+        
+        // DJNZ
+        case 0x10:
+            return true;
+            
+        default:
+            return false;
+    }
+}
+
 /// @brief Disassembles and logs a control flow event if the instruction at the given address is a taken control flow
 /// instruction.
 /// @param context EmulatorContext for access to CPU, disassembler, etc.
@@ -449,6 +555,10 @@ bool CallTraceBuffer::LogIfControlFlow(EmulatorContext* context, Memory* memory,
     std::vector<uint8_t> buffer_bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     for (size_t i = 0; i < buffer_bytes.size(); ++i)
         buffer_bytes[i] = memory->DirectReadFromZ80Memory(address + i);
+
+    // Fast-path check: if this doesn't look like a control flow instruction, skip expensive disassembly
+    if (!IsPotentialControlFlowInstruction(buffer_bytes))
+        return false;
 
     // Disassemble the instruction
     DecodedInstruction decoded;
