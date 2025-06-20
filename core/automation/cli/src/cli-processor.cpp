@@ -2249,50 +2249,12 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
             ss << "calltrace_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S") << ".yaml";
             filename = ss.str();
         }
-        // Save as YAML
-        std::ofstream out(filename);
-        if (!out)
+        
+        // Use CallTraceBuffer's SaveToFile method
+        if (!callTrace->SaveToFile(filename))
         {
             session.SendResponse("Failed to create call trace file: " + filename + NEWLINE);
             return;
-        }
-        // Write YAML header
-        out << "calltrace:" << NEWLINE;
-        auto events = callTrace->GetAll();
-        for (size_t i = 0; i < events.size(); ++i)
-        {
-            const auto& ev = events[i];
-            out << StringHelper::Format("  - idx: %d", (int)i) << NEWLINE;
-            out << StringHelper::Format("    m1_pc: 0x%04X", ev.m1_pc) << NEWLINE;
-            out << StringHelper::Format("    type: %d", (int)ev.type) << NEWLINE;
-            out << StringHelper::Format("    target: 0x%04X", ev.target_addr) << NEWLINE;
-            out << StringHelper::Format("    flags: 0x%02X", ev.flags) << NEWLINE;
-            out << StringHelper::Format("    sp: 0x%04X", ev.sp) << NEWLINE;
-            out << "    opcodes: [";
-            for (size_t j = 0; j < ev.opcode_bytes.size(); ++j)
-            {
-                out << StringHelper::Format("0x%02X", (int)ev.opcode_bytes[j]);
-                if (j + 1 < ev.opcode_bytes.size())
-                    out << ", ";
-            }
-            out << "]" << NEWLINE;
-            out << "    banks: [";
-            for (int b = 0; b < 4; ++b)
-            {
-                out << StringHelper::Format("{is_rom: %s, page: %d}", ev.banks[b].is_rom ? "true" : "false",
-                                            (int)ev.banks[b].page_num);
-                if (b < 3)
-                    out << ", ";
-            }
-            out << "]" << NEWLINE;
-            out << "    stack_top: [";
-            for (int s = 0; s < 3; ++s)
-            {
-                out << StringHelper::Format("0x%04X", ev.stack_top[s]);
-                if (s < 2)
-                    out << ", ";
-            }
-            out << "]" << NEWLINE;
         }
         session.SendResponse("Call trace saved to " + filename + NEWLINE);
         return;
@@ -2311,7 +2273,8 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         size_t hot_capacity = callTrace->HotCapacity();
         size_t cold_bytes = cold_count * sizeof(Z80ControlFlowEvent);
         size_t hot_bytes = hot_count * sizeof(HotEvent);
-        auto format_bytes = [](size_t bytes) -> std::string {
+        auto format_bytes = [](size_t bytes) -> std::string
+        {
             char buf[32];
             if (bytes >= 1024 * 1024)
                 snprintf(buf, sizeof(buf), "%.2f MB", bytes / 1024.0 / 1024.0);
@@ -2321,12 +2284,34 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 snprintf(buf, sizeof(buf), "%zu B", bytes);
             return buf;
         };
+
         std::ostringstream oss;
         oss << "CallTraceBuffer stats:" << NEWLINE;
         oss << "  Cold buffer: " << cold_count << " / " << cold_capacity << "  (" << format_bytes(cold_bytes) << ")"
             << NEWLINE;
         oss << "  Hot buffer:  " << hot_count << " / " << hot_capacity << "  (" << format_bytes(hot_bytes) << ")"
             << NEWLINE;
+
+        // Add was_hot and top 5 loop_count info
+        auto allCold = callTrace->GetAll();
+        size_t was_hot_count = 0;
+        std::vector<uint32_t> loop_counts;
+        for (const auto& ev : allCold)
+        {
+            if (ev.was_hot) was_hot_count++;
+            loop_counts.push_back(ev.loop_count);
+        }
+
+        std::sort(loop_counts.begin(), loop_counts.end(), std::greater<uint32_t>());
+        oss << "  Cold buffer: " << was_hot_count << " events were previously hot (was_hot=true)" << NEWLINE;
+        oss << "  Top 5 loop_count values in cold buffer: ";
+        for (size_t i = 0; i < std::min<size_t>(5, loop_counts.size()); ++i)
+        {
+            oss << loop_counts[i];
+            if (i + 1 < std::min<size_t>(5, loop_counts.size())) oss << ", ";
+        }
+        oss << NEWLINE;
+
         session.SendResponse(oss.str());
         return;
     }

@@ -12,6 +12,8 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <list>
 
 
 // Enum for control flow instruction types
@@ -71,7 +73,8 @@ struct Z80ControlFlowEvent
     uint16_t sp;                        // Stack pointer after execution of the instruction
     std::array<uint16_t, 3> stack_top;  // For RET/RETI: top 3 values on the stack after return (SP, SP+2, SP+4); zeroed
                                         // for other instructions
-    uint32_t loop_count = 1;            ///< Number of consecutive times this event occurred (for loop compression)
+    uint32_t loop_count = 1;            // Number of consecutive times this event occurred (for loop compression)
+    bool was_hot = false;               // True if this event was ever in the hot buffer (never saved to file)
 
     /// @brief Comparison operator for loop compression (ignores flags and loop_count)
     bool operator==(const Z80ControlFlowEvent& rhs) const
@@ -92,6 +95,43 @@ struct HotEvent
 // Maximum initial and maximum buffer sizes
 constexpr size_t CALLTRACE_INITIAL_SIZE = 1'000'000;                               // 1M events
 constexpr size_t CALLTRACE_MAX_SIZE = (1ull << 30) / sizeof(Z80ControlFlowEvent);  // 1GiB worth of events
+
+// Helper struct for fast cold buffer lookup (only fields that allow to determine it's the same instruction doing the same jump iteratively)
+struct EventKey
+{
+    uint16_t m1_pc;
+    uint16_t target_addr;
+    std::vector<uint8_t> opcode_bytes;
+    Z80CFType type;
+    std::array<Z80BankInfo, 4> banks;
+    bool operator==(const EventKey& rhs) const
+    {
+        return m1_pc == rhs.m1_pc && target_addr == rhs.target_addr && opcode_bytes == rhs.opcode_bytes &&
+               type == rhs.type && banks == rhs.banks;
+    }
+};
+
+namespace std
+{
+    template<>
+    struct hash<EventKey>
+    {
+        size_t operator()(const EventKey& k) const
+        {
+            size_t h = 0;
+            h ^= std::hash<uint16_t>()(k.m1_pc);
+            h ^= std::hash<uint16_t>()(k.target_addr) << 1;
+            for (auto b : k.opcode_bytes) h ^= std::hash<uint8_t>()(b) << 2;
+            h ^= std::hash<int>()(static_cast<int>(k.type)) << 3;
+            for (const auto& bank : k.banks)
+            {
+                h ^= std::hash<bool>()(bank.is_rom) << 4;
+                h ^= std::hash<uint8_t>()(bank.page_num) << 5;
+            }
+            return h;
+        }
+    };
+}
 
 /// @brief Main class for call trace buffering with hot/cold segmentation and time-based pinning.
 class CallTraceBuffer
@@ -127,7 +167,27 @@ private:
     mutable std::mutex _mutex;
     std::optional<size_t> findInHotBuffer(const Z80ControlFlowEvent& event);
     void moveToHotBuffer(const Z80ControlFlowEvent& event, uint64_t current_frame);
-    void logToColdBuffer(const Z80ControlFlowEvent& event);
+    void logToColdBuffer(const Z80ControlFlowEvent& event, uint64_t current_frame);
     void evictExpiredHotEvents(uint64_t current_frame);
     void Grow();
+
+    // Fast lookup for cold buffer compression (LRU limited)
+    static constexpr size_t kColdMapLimit = 100;
+    std::unordered_map<EventKey, std::pair<size_t, std::list<EventKey>::iterator>> _coldMap;
+    std::list<EventKey> _coldLRU;
+
+    static const char* Z80CFTypeToString(Z80CFType type)
+    {
+        switch (type)
+        {
+            case Z80CFType::JP:   return "JP";
+            case Z80CFType::JR:   return "JR";
+            case Z80CFType::CALL: return "CALL";
+            case Z80CFType::RST:  return "RST";
+            case Z80CFType::RET:  return "RET";
+            case Z80CFType::RETI: return "RETI";
+            case Z80CFType::DJNZ: return "DJNZ";
+            default:              return "UNKNOWN";
+        }
+    }
 };

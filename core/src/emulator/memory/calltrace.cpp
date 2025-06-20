@@ -74,6 +74,88 @@ std::optional<size_t> CallTraceBuffer::findInHotBuffer(const Z80ControlFlowEvent
     return std::nullopt;
 }
 
+/// @brief Helper to create EventKey from Z80ControlFlowEvent
+static EventKey MakeEventKey(const Z80ControlFlowEvent& ev)
+{
+    return EventKey{ ev.m1_pc, ev.target_addr, ev.opcode_bytes, ev.type, ev.banks };
+}
+
+/// @brief Add or update an event in the cold buffer (with loop compression).
+/// @param event The event to log.
+/// @param current_frame The current emulation frame.
+void CallTraceBuffer::logToColdBuffer(const Z80ControlFlowEvent& event, uint64_t current_frame)
+{
+    EventKey key = MakeEventKey(event);
+    auto it = _coldMap.find(key);
+    if (it != _coldMap.end())
+    {
+        // Event exists: increment loop_count, update flags, move to front of LRU
+        size_t idx = it->second.first;
+        _coldBuffer[idx].loop_count++;
+        _coldBuffer[idx].flags = event.flags;
+    
+        // LRU update
+        _coldLRU.erase(it->second.second);
+        _coldLRU.push_front(key);
+        it->second.second = _coldLRU.begin();
+    
+        // Promote to hot if needed
+        if (_coldBuffer[idx].loop_count > _hotThreshold && !_coldBuffer[idx].was_hot)
+        {
+            moveToHotBuffer(_coldBuffer[idx], current_frame);
+        }
+        return;
+    }
+
+    // New event: evict LRU if needed
+    if (_coldMap.size() >= kColdMapLimit)
+    {
+        // Evict LRU
+        const EventKey& lru_key = _coldLRU.back();
+        auto lru_it = _coldMap.find(lru_key);
+        if (lru_it != _coldMap.end())
+        {
+            size_t lru_idx = lru_it->second.first;
+
+            // Remove from cold buffer by shifting
+            for (size_t j = lru_idx; j + 1 < _coldSize; ++j)
+            {
+                size_t from = (_coldStart + j + 1) % _coldCapacity;
+                size_t to = (_coldStart + j) % _coldCapacity;
+                _coldBuffer[to] = _coldBuffer[from];
+
+                // Update map indices for shifted events
+                EventKey shifted_key = MakeEventKey(_coldBuffer[to]);
+                auto shifted_it = _coldMap.find(shifted_key);
+                if (shifted_it != _coldMap.end())
+                    shifted_it->second.first = to;
+            }
+
+            _coldEnd = (_coldEnd + _coldCapacity - 1) % _coldCapacity;
+            --_coldSize;
+            _coldMap.erase(lru_it);
+        }
+
+        _coldLRU.pop_back();
+    }
+
+    // Insert new event
+    _coldBuffer[_coldEnd] = event;
+    size_t new_idx = _coldEnd;
+    _coldEnd = (_coldEnd + 1) % _coldCapacity;
+    if (_coldSize < _coldCapacity)
+    {
+        ++_coldSize;
+    }
+    else
+    {
+        _coldStart = (_coldStart + 1) % _coldCapacity;
+    }
+    
+    _coldLRU.push_front(key);
+    _coldMap[key] = std::make_pair(new_idx, _coldLRU.begin());
+}
+
 /// @brief Move an event from cold buffer to hot buffer.
 /// @param event The event to promote.
 /// @param current_frame The current emulation frame.
@@ -83,14 +165,12 @@ void CallTraceBuffer::moveToHotBuffer(const Z80ControlFlowEvent& event, uint64_t
     if (_hotBuffer.size() >= _hotCapacity)
     {
         evictExpiredHotEvents(current_frame);
-
         if (_hotBuffer.size() >= _hotCapacity)
         {
             // Still full, evict the oldest (least recently seen)
             auto oldest = std::min_element(
                 _hotBuffer.begin(), _hotBuffer.end(),
                 [](const HotEvent& a, const HotEvent& b) { return a.last_seen_frame < b.last_seen_frame; });
-
             if (oldest != _hotBuffer.end())
             {
                 _hotBuffer.erase(oldest);
@@ -98,38 +178,36 @@ void CallTraceBuffer::moveToHotBuffer(const Z80ControlFlowEvent& event, uint64_t
         }
     }
 
-    // Add new hot event
-    _hotBuffer.push_back({event, event.loop_count, current_frame});
-}
+    // Set was_hot = true for the event being promoted
+    Z80ControlFlowEvent hotEvent = event;
+    hotEvent.was_hot = true;
+    // Add new hot event (preserve loop_count and was_hot)
+    _hotBuffer.push_back({hotEvent, hotEvent.loop_count, current_frame});
 
-/// @brief Add or update an event in the cold buffer (with loop compression).
-/// @param event The event to log.
-void CallTraceBuffer::logToColdBuffer(const Z80ControlFlowEvent& event)
-{
-    if (_coldSize > 0)
+    // Remove from cold map and LRU
+    EventKey key = MakeEventKey(event);
+    auto it = _coldMap.find(key);
+    if (it != _coldMap.end())
     {
-        size_t last_idx = (_coldEnd == 0) ? (_coldCapacity - 1) : (_coldEnd - 1);
-        auto& last_event = _coldBuffer[last_idx];
-
-        if (event == last_event)
+        size_t idx = it->second.first;
+        // Remove from cold buffer by shifting
+        for (size_t j = idx; j + 1 < _coldSize; ++j)
         {
-            last_event.loop_count++;
-            last_event.flags = event.flags;
-            return;
+            size_t from = (_coldStart + j + 1) % _coldCapacity;
+            size_t to = (_coldStart + j) % _coldCapacity;
+            _coldBuffer[to] = _coldBuffer[from];
+            // Update map indices for shifted events
+            EventKey shifted_key = MakeEventKey(_coldBuffer[to]);
+            auto shifted_it = _coldMap.find(shifted_key);
+            if (shifted_it != _coldMap.end())
+                shifted_it->second.first = to;
         }
-    }
 
-    // Insert new event
-    _coldBuffer[_coldEnd] = event;
-    _coldEnd = (_coldEnd + 1) % _coldCapacity;
+        _coldEnd = (_coldEnd + _coldCapacity - 1) % _coldCapacity;
+        --_coldSize;
 
-    if (_coldSize < _coldCapacity)
-    {
-        ++_coldSize;
-    }
-    else
-    {
-        _coldStart = (_coldStart + 1) % _coldCapacity;
+        _coldLRU.erase(it->second.second);
+        _coldMap.erase(it);
     }
 }
 
@@ -149,15 +227,8 @@ void CallTraceBuffer::LogEvent(const Z80ControlFlowEvent& event, uint64_t curren
         return;
     }
 
-    // 2. Promote to hot buffer if threshold exceeded
-    if (event.loop_count > _hotThreshold)
-    {
-        moveToHotBuffer(event, current_frame);
-        return;
-    }
-
-    // 3. Otherwise, log to cold buffer
-    logToColdBuffer(event);
+    // 2. Always log to cold buffer (handles compression and promotion internally)
+    logToColdBuffer(event, current_frame);
 }
 
 /// @brief Flush hot buffer events that have expired (not seen for hot_timeout_frames).
@@ -176,6 +247,11 @@ void CallTraceBuffer::evictExpiredHotEvents(uint64_t current_frame)
     {
         if (current_frame - it->last_seen_frame > _hotTimeoutFrames)
         {
+            // Transfer expired hot event back to cold buffer, preserve was_hot and loop_count
+            Z80ControlFlowEvent ev = it->event;
+            ev.loop_count = it->loop_count;
+            ev.was_hot = true;
+            logToColdBuffer(ev, current_frame);
             it = _hotBuffer.erase(it);
         }
         else
@@ -250,19 +326,22 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
     if (!out)
         return false;
     out << "calltrace:" << std::endl;
+
     // Save cold buffer events
     for (size_t i = 0; i < _coldSize; ++i)
     {
         const auto& ev = _coldBuffer[(_coldStart + i) % _coldCapacity];
         out << StringHelper::Format("  - idx: %d", (int)i) << std::endl;
         out << StringHelper::Format("    m1_pc: 0x%04X", ev.m1_pc) << std::endl;
-        out << StringHelper::Format("    type: %d", (int)ev.type) << std::endl;
+        out << StringHelper::Format("    type: %s", Z80CFTypeToString(ev.type)) << std::endl;
         out << StringHelper::Format("    target: 0x%04X", ev.target_addr) << std::endl;
         out << StringHelper::Format("    flags: 0x%02X", ev.flags) << std::endl;
+
         if (ev.loop_count > 1)
         {
             out << StringHelper::Format("    loop_count: %u", ev.loop_count) << std::endl;
         }
+        
         out << StringHelper::Format("    sp: 0x%04X", ev.sp) << std::endl;
         out << "    opcodes: [";
         for (size_t j = 0; j < ev.opcode_bytes.size(); ++j)
@@ -290,6 +369,7 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
         }
         out << "]" << std::endl;
     }
+    
     // Save hot buffer events at the end
     for (size_t i = 0; i < _hotBuffer.size(); ++i)
     {
@@ -297,7 +377,7 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
         const auto& ev = hot.event;
         out << StringHelper::Format("  - idx: hot_%d", (int)i) << std::endl;
         out << StringHelper::Format("    m1_pc: 0x%04X", ev.m1_pc) << std::endl;
-        out << StringHelper::Format("    type: %d", (int)ev.type) << std::endl;
+        out << StringHelper::Format("    type: %s", Z80CFTypeToString(ev.type)) << std::endl;
         out << StringHelper::Format("    target: 0x%04X", ev.target_addr) << std::endl;
         out << StringHelper::Format("    flags: 0x%02X", ev.flags) << std::endl;
         if (hot.loop_count > 1)
