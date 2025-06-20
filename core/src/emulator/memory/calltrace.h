@@ -101,13 +101,14 @@ struct EventKey
 {
     uint16_t m1_pc;
     uint16_t target_addr;
-    std::vector<uint8_t> opcode_bytes;
+    uint32_t opcode_bytes_packed = 0;
+    uint8_t opcode_len = 0;
     Z80CFType type;
     std::array<Z80BankInfo, 4> banks;
     bool operator==(const EventKey& rhs) const
     {
-        return m1_pc == rhs.m1_pc && target_addr == rhs.target_addr && opcode_bytes == rhs.opcode_bytes &&
-               type == rhs.type && banks == rhs.banks;
+        return m1_pc == rhs.m1_pc && target_addr == rhs.target_addr && opcode_len == rhs.opcode_len &&
+               opcode_bytes_packed == rhs.opcode_bytes_packed && type == rhs.type && banks == rhs.banks;
     }
 };
 
@@ -119,14 +120,15 @@ namespace std
         size_t operator()(const EventKey& k) const
         {
             size_t h = 0;
-            h ^= std::hash<uint16_t>()(k.m1_pc);
-            h ^= std::hash<uint16_t>()(k.target_addr) << 1;
-            for (auto b : k.opcode_bytes) h ^= std::hash<uint8_t>()(b) << 2;
-            h ^= std::hash<int>()(static_cast<int>(k.type)) << 3;
+            h ^= std::hash<uint16_t>()(k.m1_pc) << 1;
+            h ^= std::hash<uint16_t>()(k.target_addr) << 2;
+            h ^= std::hash<uint32_t>()(k.opcode_bytes_packed) << 3;
+            h ^= std::hash<uint8_t>()(k.opcode_len) << 4;
+            h ^= std::hash<int>()(static_cast<int>(k.type)) << 5;
             for (const auto& bank : k.banks)
             {
-                h ^= std::hash<bool>()(bank.is_rom) << 4;
-                h ^= std::hash<uint8_t>()(bank.page_num) << 5;
+                h ^= std::hash<bool>()(bank.is_rom) << 6;
+                h ^= std::hash<uint8_t>()(bank.page_num) << 7;
             }
             return h;
         }

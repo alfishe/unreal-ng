@@ -77,7 +77,20 @@ std::optional<size_t> CallTraceBuffer::findInHotBuffer(const Z80ControlFlowEvent
 /// @brief Helper to create EventKey from Z80ControlFlowEvent
 static EventKey MakeEventKey(const Z80ControlFlowEvent& ev)
 {
-    return EventKey{ ev.m1_pc, ev.target_addr, ev.opcode_bytes, ev.type, ev.banks };
+    EventKey key{};
+    key.m1_pc = ev.m1_pc;
+    key.target_addr = ev.target_addr;
+    key.type = ev.type;
+    key.banks = ev.banks;
+
+    key.opcode_len = ev.opcode_bytes.size();
+    if (key.opcode_len > 0)
+    {
+        memcpy(&key.opcode_bytes_packed, ev.opcode_bytes.data(),
+               std::min<size_t>(key.opcode_len, sizeof(key.opcode_bytes_packed)));
+    }
+
+    return key;
 }
 
 /// @brief Add or update an event in the cold buffer (with loop compression).
@@ -552,8 +565,8 @@ bool CallTraceBuffer::LogIfControlFlow(EmulatorContext* context, Memory* memory,
         return false;
 
     // Read instruction bytes from memory at the given address
-    std::vector<uint8_t> buffer_bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (size_t i = 0; i < buffer_bytes.size(); ++i)
+    static thread_local std::vector<uint8_t> buffer_bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (size_t i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; ++i)
         buffer_bytes[i] = memory->DirectReadFromZ80Memory(address + i);
 
     // Fast-path check: if this doesn't look like a control flow instruction, skip expensive disassembly
