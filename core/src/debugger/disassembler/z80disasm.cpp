@@ -2729,71 +2729,65 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
     return result;
 }
 
+// Parse operands from mnemonic string and calculate total bytes needed for operands
+// @param mnemonic - Input string containing mnemonic with operand placeholders (e.g., "LD A,:1" for 1-byte operand)
+// @param expectedOperandsLen - Optional output parameter to store total bytes needed for all operands
+// @return Vector of operand sizes in bytes (e.g., {1, 2} for one byte and one word operand)
 std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic, uint8_t* expectedOperandsLen)
 {
-    std::vector<uint8_t> result;
-    uint8_t bytesNeeded = 0;
+    std::vector<uint8_t> result;  // Will store sizes of each operand
+    uint8_t bytesNeeded = 0;      // Total bytes needed for all operands
 
-    if (mnemonic.size() > 0)
+    if (!mnemonic.empty())
     {
-        try
+        // Scan through mnemonic string looking for operand placeholders (e.g., ":1", ":2")
+        for (size_t i = 0; i < mnemonic.size(); ++i)
         {
-            std::sregex_iterator next(mnemonic.begin(), mnemonic.end(), regexOpcodeOperands);
-            std::sregex_iterator end;
-            while (next != end)
+            // Look for ':' which marks the start of an operand size specifier
+            if (mnemonic[i] == ':' && i + 1 < mnemonic.size())
             {
-                std::smatch match = *next;
+                char c = mnemonic[i + 1];
+                // Only process if the next character is a digit (0-9)
+                if (c < '0' || c > '9')
+                    continue; // skip non-digit
 
-                // Get match string like ':2'
-                std::string value = match.str();
-
-                /// region <Sanity checks>
-                if (value.size() < 2)
-                {
-                    throw std::logic_error("Invalid regex to parse operands. Should produce at least 2 symbols like ':1', ':2'");
-                }
-                /// endregion </Sanity checks>
-
-                // Remove leading ':' => '2'
-                value = value.substr(1);
-
-                // Convert from std::string to int
-                uint8_t operandSize = std::stoi(value);
-                bytesNeeded += operandSize;
-
+                // Convert digit character to actual number (e.g., '1' -> 1)
+                uint8_t operandSize = c - '0';
 
                 /// region <Sanity checks>
                 if (operandSize > 2)
                 {
-                    std::string message = StringHelper::Format("Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                    std::string message = StringHelper::Format(
+                        "Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d",
+                        mnemonic.c_str(), operandSize);
                     throw std::logic_error(message);
                 }
 
                 if (operandSize == 0)
                 {
-                    std::string message = StringHelper::Format("Z80 cannot have operand with 0 bytes. In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                    std::string message = StringHelper::Format(
+                        "Z80 cannot have operand with 0 bytes. In '%s' detected: %d",
+                        mnemonic.c_str(), operandSize);
                     throw std::logic_error(message);
                 }
 
                 /// endregion </Sanity checks>
 
+                // Update total bytes needed and store this operand's size
+                bytesNeeded += operandSize;
                 result.push_back(operandSize);
-
-                next++;
+                ++i; // skip the digit we just processed
             }
-        }
-        catch (std::regex_error& e)
-        {
-            // Syntax error in the regular expression
         }
     }
 
+    // If caller provided a pointer for the total length, update it
     if (expectedOperandsLen)
     {
         *expectedOperandsLen = bytesNeeded;
     }
 
-    return result;
+    return result;  // Return vector of operand sizes
 }
 
 std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic, std::vector<uint16_t>& values)
