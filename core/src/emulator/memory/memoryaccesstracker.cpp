@@ -466,7 +466,7 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
     // --- Call trace integration ---
     if (_callTraceBuffer)
     {
-        //_callTraceBuffer->LogIfControlFlow(_context, _memory, address);
+        _callTraceBuffer->LogIfControlFlow(_context, _memory, address, _context->emulatorState.frame_counter);
     }
     // --- End call trace integration ---
 }
@@ -1415,6 +1415,6 @@ void MemoryAccessTracker::LogControlFlowEvent(const Z80ControlFlowEvent& event)
 {
     if (_callTraceBuffer)
     {
-        _callTraceBuffer->LogEvent(event);
+        _callTraceBuffer->LogEvent(event, _context->emulatorState.frame_counter);
     }
 }

@@ -2139,36 +2139,94 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
             {
             }
         }
-        auto events = callTrace->GetLatest(count);
+        auto events = callTrace->GetLatestCold(count);
+        auto hotEvents = callTrace->GetLatestHot(count);
         std::ostringstream oss;
-        oss << "Latest " << events.size() << " control flow events:" << NEWLINE;
-        oss << "Idx  m1_pc  type   target   flags  sp     opcodes      bank0  bank1  bank2  bank3  stack_top"
-            << NEWLINE;
-        for (size_t i = 0; i < events.size(); ++i)
+        if (!events.empty())
         {
-            const auto& ev = events[i];
-            oss << StringHelper::Format("%4d  %04X  ", (int)i, ev.m1_pc);
-            // type
-            const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
-            oss << StringHelper::Format("%-5s  ", typenames[static_cast<int>(ev.type)]);
-            oss << StringHelper::Format("%06X   ", ev.target_addr);
-            oss << StringHelper::Format("%02X    ", (int)ev.flags);
-            oss << StringHelper::Format("%04X   ", ev.sp);
-            // opcodes
-            for (auto b : ev.opcode_bytes)
-                oss << StringHelper::Format("%02X", (int)b);
-            oss << "      ";
-            // banks
-            for (int b = 0; b < 4; ++b)
+            oss << "Latest " << events.size() << " cold control flow events:" << NEWLINE;
+            oss << "Idx   m1_pc   type    target    flags   sp      opcodes        bank0    bank1    bank2    bank3    "
+                   "stack_top         loop_count"
+                << NEWLINE;
+            for (size_t i = 0; i < events.size(); ++i)
             {
-                oss << StringHelper::Format("%s%d  ", ev.banks[b].is_rom ? "ROM" : "RAM", (int)ev.banks[b].page_num);
+                const auto& ev = events[i];
+                oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
+
+                // type
+                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+                oss << StringHelper::Format("%-6s   ", typenames[static_cast<int>(ev.type)]);
+                oss << StringHelper::Format("%04X     ", ev.target_addr);
+                oss << StringHelper::Format("%02X      ", (int)ev.flags);
+                oss << StringHelper::Format("%04X    ", ev.sp);
+                // opcodes
+                for (auto b : ev.opcode_bytes)
+                    oss << StringHelper::Format("%02X ", (int)b);
+                oss << std::string(12 - ev.opcode_bytes.size() * 3, ' ');
+                oss << "   ";
+
+                // banks
+                for (int b = 0; b < 4; ++b)
+                {
+                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
+                                                (int)ev.banks[b].page_num);
+                }
+
+                // stack top
+                for (int s = 0; s < 3; ++s)
+                {
+                    if (ev.stack_top[s])
+                        oss << StringHelper::Format("%04X ", ev.stack_top[s]);
+                    else
+                        oss << "     ";
+                }
+
+                oss << std::string(18 - 5 * 3, ' ');
+                oss << StringHelper::Format("   %u", ev.loop_count);
+                oss << NEWLINE;
             }
-            // stack top
-            oss << "  ";
-            for (int s = 0; s < 3; ++s)
+            oss << NEWLINE;
+        }
+        if (!hotEvents.empty())
+        {
+            oss << "Latest " << hotEvents.size() << " hot control flow events:" << NEWLINE;
+            oss << "Idx   m1_pc   type    target    flags   sp      opcodes        bank0    bank1    bank2    bank3    "
+                   "stack_top         loop_count   last_seen_frame"
+                << NEWLINE;
+            for (size_t i = 0; i < hotEvents.size(); ++i)
             {
-                if (ev.stack_top[s])
-                    oss << StringHelper::Format("%04X ", ev.stack_top[s]);
+                const auto& hot = hotEvents[i];
+                const auto& ev = hot.event;
+                oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
+                // type
+                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+                oss << StringHelper::Format("%-6s ", typenames[static_cast<int>(ev.type)]);
+                oss << StringHelper::Format("%04X     ", ev.target_addr);
+                oss << StringHelper::Format("%02X     ", (int)ev.flags);
+                oss << StringHelper::Format("%04X    ", ev.sp);
+
+                // opcodes
+                for (auto b : ev.opcode_bytes)
+                    oss << StringHelper::Format("%02X ", (int)b);
+                oss << std::string(12 - ev.opcode_bytes.size() * 3, ' ');
+                oss << "   ";
+                // banks
+                for (int b = 0; b < 4; ++b)
+                {
+                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
+                                                (int)ev.banks[b].page_num);
+                }
+                // stack top
+                for (int s = 0; s < 3; ++s)
+                {
+                    if (ev.stack_top[s])
+                        oss << StringHelper::Format("%04X ", ev.stack_top[s]);
+                    else
+                        oss << "     ";
+                }
+                oss << std::string(18 - 5 * 3, ' ');
+                oss << StringHelper::Format("   %u   %llu", hot.loop_count, hot.last_seen_frame);
+                oss << NEWLINE;
             }
             oss << NEWLINE;
         }
@@ -2214,21 +2272,25 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
             for (size_t j = 0; j < ev.opcode_bytes.size(); ++j)
             {
                 out << StringHelper::Format("0x%02X", (int)ev.opcode_bytes[j]);
-                if (j + 1 < ev.opcode_bytes.size()) out << ", ";
+                if (j + 1 < ev.opcode_bytes.size())
+                    out << ", ";
             }
             out << "]" << NEWLINE;
             out << "    banks: [";
             for (int b = 0; b < 4; ++b)
             {
-                out << StringHelper::Format("{is_rom: %s, page: %d}", ev.banks[b].is_rom ? "true" : "false", (int)ev.banks[b].page_num);
-                if (b < 3) out << ", ";
+                out << StringHelper::Format("{is_rom: %s, page: %d}", ev.banks[b].is_rom ? "true" : "false",
+                                            (int)ev.banks[b].page_num);
+                if (b < 3)
+                    out << ", ";
             }
             out << "]" << NEWLINE;
             out << "    stack_top: [";
             for (int s = 0; s < 3; ++s)
             {
                 out << StringHelper::Format("0x%04X", ev.stack_top[s]);
-                if (s < 2) out << ", ";
+                if (s < 2)
+                    out << ", ";
             }
             out << "]" << NEWLINE;
         }
@@ -2239,6 +2301,33 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
     {
         callTrace->Reset();
         session.SendResponse("Call trace buffer reset." + std::string(NEWLINE));
+        return;
+    }
+    if (args[0] == "stats")
+    {
+        size_t cold_count = callTrace->ColdSize();
+        size_t cold_capacity = callTrace->ColdCapacity();
+        size_t hot_count = callTrace->HotSize();
+        size_t hot_capacity = callTrace->HotCapacity();
+        size_t cold_bytes = cold_count * sizeof(Z80ControlFlowEvent);
+        size_t hot_bytes = hot_count * sizeof(HotEvent);
+        auto format_bytes = [](size_t bytes) -> std::string {
+            char buf[32];
+            if (bytes >= 1024 * 1024)
+                snprintf(buf, sizeof(buf), "%.2f MB", bytes / 1024.0 / 1024.0);
+            else if (bytes >= 1024)
+                snprintf(buf, sizeof(buf), "%.2f KB", bytes / 1024.0);
+            else
+                snprintf(buf, sizeof(buf), "%zu B", bytes);
+            return buf;
+        };
+        std::ostringstream oss;
+        oss << "CallTraceBuffer stats:" << NEWLINE;
+        oss << "  Cold buffer: " << cold_count << " / " << cold_capacity << "  (" << format_bytes(cold_bytes) << ")"
+            << NEWLINE;
+        oss << "  Hot buffer:  " << hot_count << " / " << hot_capacity << "  (" << format_bytes(hot_bytes) << ")"
+            << NEWLINE;
+        session.SendResponse(oss.str());
         return;
     }
     session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
