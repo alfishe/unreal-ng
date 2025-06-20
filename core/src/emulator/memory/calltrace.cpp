@@ -361,13 +361,6 @@ bool CallTraceBuffer::LogIfControlFlow(EmulatorContext* context, Memory* memory,
     {
         disasm = context->pDebugManager->GetDisassembler().get();
     }
-    if (!disasm)
-    {
-        // fallback: create your own, thread-local disassembler
-        static thread_local std::unique_ptr<Z80Disassembler> disasm;
-        if (!disasm)
-            disasm = std::make_unique<Z80Disassembler>(context);
-    }
 
     if (!z80 || !disasm || !memory)
         return false;
