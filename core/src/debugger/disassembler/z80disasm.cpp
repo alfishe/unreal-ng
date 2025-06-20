@@ -630,7 +630,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE | OF_DJNZ, 0, 17, 12, "djnz :1" },   // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                     // 0x11
-    { OF_DISP | OF_MWORD, 11, 0, 0, "ld (de),:2" },                             // 0x12
+    { OF_INDIRECT, 11, 0, 0, "ld (de),a" },                 // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                        // 0x13
     { OF_NONE,  8, 0, 0, "inc d" },                         // 0x14
     { OF_NONE,  8, 0, 0, "dec d" },                         // 0x15
