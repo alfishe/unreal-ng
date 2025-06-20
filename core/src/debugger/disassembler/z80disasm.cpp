@@ -2831,9 +2831,9 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
                 case 1:
                     // For relative jumps, format as signed
                     if (decoded.hasRelativeJump)
-                        operand = StringHelper::ToHexWithPrefix(static_cast<int8_t>(values[i]), HEX_PREFIX);
+                        operand = StringHelper::ToHexWithPrefix((int8_t)(values[i]), HEX_PREFIX);
                     else
-                        operand = StringHelper::ToHexWithPrefix(static_cast<uint8_t>(values[i]), HEX_PREFIX);
+                        operand = StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX);
                     break;
                 case 2:
                     operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
