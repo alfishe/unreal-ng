@@ -9,6 +9,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/cpu/core.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/sound/beeper.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_profi.h"

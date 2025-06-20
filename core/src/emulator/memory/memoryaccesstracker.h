@@ -3,6 +3,16 @@
 
 #include "emulator/platform.h"
 #include "emulator/emulatorcontext.h"
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
+#include <algorithm>
+#include "memory.h"  // For Memory class and constants
 
 class Z80;
 
@@ -261,6 +271,17 @@ public:
     // @return True if any access was detected in the range
     bool HasActivity(uint16_t start, uint16_t end) const;
     
+    /// Save memory access data
+    /// @param outputPath Output file or directory path
+    /// @param format Output format ("yaml" only supported for now)
+    /// @param singleFile If true, saves everything in one file; if false, uses separate files in a subfolder
+    /// @param filterPages Optional list of specific pages to include (empty = all)
+    /// @return true if successful, false on error
+    bool SaveAccessData(const std::string& outputPath,
+                       const std::string& format = "yaml",
+                       bool singleFile = false,
+                       const std::vector<std::string>& filterPages = {});
+    
     /// endregion </Statistics and Reporting>
     
     /// region <Helper Methods>
@@ -288,5 +309,13 @@ private:
     
     // Add a caller to the caller tracking map with limit enforcement
     void AddToCallerMap(std::unordered_map<uint16_t, uint32_t>& map, uint16_t callerAddress, uint32_t maxEntries);
+    
+    // Helper methods for saving access data
+    void SaveMemoryLayout(std::ostream& out);
+    void SavePageSummaries(std::ostream& out, const std::vector<std::string>& filterPages);
+    bool SaveDetailedAccessData(const std::filesystem::path& dirPath, const std::vector<std::string>& filterPages);
+    void SaveDetailedAccessData(std::ostream& out, const std::vector<std::string>& filterPages);
+    void SaveSinglePageAccessData(std::ostream& out, uint16_t page, const std::string& indent = "");
+    std::string GetBankPageName(uint8_t bank) const;
     /// endregion </Helper Methods>
 };

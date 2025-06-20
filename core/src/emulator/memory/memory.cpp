@@ -11,6 +11,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/platform.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/ports/portdecoder.h"
 #include <cassert>
 
