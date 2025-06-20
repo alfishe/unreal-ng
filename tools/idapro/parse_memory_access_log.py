@@ -87,7 +87,6 @@ def find_code_segments(access_data):
     Analyzes access data to find contiguous blocks of executed code.
     Returns a list of (start, end) tuples for each code segment.
     """
-    # Get all addresses with a non-zero execute count
     code_addrs = sorted([addr for addr, counts in access_data.items() if counts['e'] > 0])
     
     if not code_addrs:
@@ -97,26 +96,20 @@ def find_code_segments(access_data):
     seg_start = code_addrs[0]
     
     for i in range(1, len(code_addrs)):
-        # If the current address is not contiguous with the previous one, end the segment
         if code_addrs[i] != code_addrs[i-1] + 1:
             segments.append((seg_start, code_addrs[i-1]))
             seg_start = code_addrs[i]
             
-    # Add the last segment
     segments.append((seg_start, code_addrs[-1]))
-    
     return segments
-
 
 def main():
     """Main function to run the analysis."""
-    # 1. Get file path from user
     filepath = ida_kernwin.ask_file(0, "*.yaml;*.txt", "Select the memory access YAML file")
     if not filepath:
         print("Analysis cancelled: No file selected.")
         return
 
-    # 2. Parse the file
     print(f"Parsing access data from {filepath}...")
     access_data = parse_access_file(filepath)
     if not access_data:
@@ -125,15 +118,13 @@ def main():
         
     print(f"Successfully parsed {len(access_data)} addresses.")
 
-    # Find all contiguous code segments first
     print("\nIdentifying code segments...")
     code_segments = find_code_segments(access_data)
     print(f"Found {len(code_segments)} code segments.")
-    for start, end in code_segments:
-        print(f"  -> Code segment: {start:#06x} - {end:#06x}")
 
     # --- Pass 1: Define Code in Segments ---
-    # This pass iterates through the identified segments and defines instructions.
+    # This pass iterates through the identified segments, defines instructions,
+    # and adds access counters as an inline comment for each instruction.
     print("\n--- Pass 1: Defining Code from Segments ---")
     total_insn_count = 0
     for start, end in code_segments:
@@ -147,20 +138,28 @@ def main():
             
             if ida_ua.create_insn(current_addr):
                 total_insn_count += 1
+                
+                # Add an inline comment with the access counts for the instruction's start address
+                if current_addr in access_data:
+                    counts = access_data[current_addr]
+                    comment = f"R={counts['r']}, W={counts['w']}, E={counts['e']}"
+                    ida_bytes.set_cmt(current_addr, comment, 1) # '1' for repeatable (inline) comment
+
                 # Move to the next instruction
                 insn_size = ida_bytes.get_item_size(current_addr)
                 current_addr += max(1, insn_size) # max(1,...) to prevent infinite loops on failure
             else:
-                # If we fail to create an instruction, mark as byte and move on
+                # If we fail to create an instruction, mark as byte and move on.
+                # It will be commented in Pass 2 if it's in the access_data.
                 print(f"Warning: Failed to create instruction at {current_addr:#06x}. Marking as data.")
                 ida_bytes.create_byte(current_addr, 1)
                 current_addr += 1
 
-    print(f"Defined {total_insn_count} instructions across all segments.")
+    print(f"Defined {total_insn_count} instructions and added inline comments.")
     
     # --- Pass 2: Define Data and Add Comments ---
-    # This pass adds comments and defines simple data bytes for addresses
-    # that were only read/written and are not already part of an instruction.
+    # This pass adds comments to DATA locations and defines them as bytes if they are unknown.
+    # Code locations are skipped as they were already commented in Pass 1.
     print("\n--- Pass 2: Defining Data and Adding Comments ---")
     data_count = 0
     comment_count = 0
@@ -170,23 +169,27 @@ def main():
         if not ida_bytes.is_loaded(address):
             continue
             
+        # Skip any address that is part of a code instruction.
+        # Code comments are handled in Pass 1.
+        flags = ida_bytes.get_flags(address)
+        if ida_bytes.is_code(flags):
+            continue
+        
         counts = access_data[address]
         r, w, e = counts['r'], counts['w'], counts['e']
         
-        # Add a comment with the access counts
+        # Add a regular (anterior) comment with the access counts for this data byte
         comment = f"R={r}, W={w}, E={e}"
         ida_bytes.set_cmt(address, comment, 0)
         comment_count += 1
         
-        # If not executed, but read/written, and is currently undefined,
-        # mark it as a data byte.
+        # If it's a data-like access and currently undefined, mark as a byte.
         if e == 0 and (r > 0 or w > 0):
-            flags = ida_bytes.get_flags(address)
             if ida_bytes.is_unknown(flags):
                 ida_bytes.create_byte(address, 1)
                 data_count += 1
                 
-    print(f"Added {comment_count} access count comments.")
+    print(f"Added {comment_count} comments to data locations.")
     print(f"Defined {data_count} bytes as data for non-executed locations.")
     
     # --- Pass 3: Coalesce Data Bytes into Words ---
@@ -205,7 +208,6 @@ def main():
             addr_idx += 1
             continue
 
-        # Check if addresses are consecutive
         if addr2 != addr1 + 1:
             addr_idx += 1
             continue
@@ -213,22 +215,19 @@ def main():
         counts1 = access_data.get(addr1)
         counts2 = access_data.get(addr2)
         
-        # Heuristic: both are pure data, have same non-zero read count
         if (counts1 and counts2 and
             counts1['e'] == 0 and counts2['e'] == 0 and
             counts1['r'] > 0 and counts1['r'] == counts2['r']):
             
-            # Check if they are currently defined as single bytes in IDA
             flags1 = ida_bytes.get_flags(addr1)
             flags2 = ida_bytes.get_flags(addr2)
             if ida_bytes.is_byte(flags1) and ida_bytes.is_byte(flags2):
                 ida_bytes.del_items(addr1, 0, 2)
                 if ida_bytes.create_word(addr1, 2):
                     word_count += 1
-                    addr_idx += 2  # Skip the next address since we formed a word
+                    addr_idx += 2
                     continue
                 else:
-                    # If creation fails, restore them as bytes to be safe
                     ida_bytes.create_byte(addr1, 1)
                     ida_bytes.create_byte(addr2, 1)
                     print(f"Warning: Failed to create word at {addr1:#06x}, restored bytes.")
@@ -239,7 +238,6 @@ def main():
     
     print("\n---- Analysis Complete ----")
     ida_kernwin.info("Analysis based on access counts is complete!")
-
 
 if __name__ == "__main__":
     main()
