@@ -3,6 +3,9 @@
 
 #include "emulator/platform.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
+#include "emulator/memory/calltrace.h"
+#include "debugger/disassembler/z80disasm.h"
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -12,12 +15,8 @@
 #include <sstream>
 #include <chrono>
 #include <algorithm>
-#include "memory.h"  // For Memory class and constants
 
 class Z80;
-
-// Forward declaration
-class Memory;
 
 // Access types for memory regions
 enum class AccessType : uint8_t
@@ -96,6 +95,8 @@ struct TrackingSegment
     std::unordered_map<std::string, AccessStats> portStats;    // port name -> stats
 };
 
+class CallTraceBuffer;
+
 // Class to track memory and port accesses
 class MemoryAccessTracker
 {
@@ -147,6 +148,9 @@ private:
     std::vector<uint8_t> _pageReadMarks;        // Size: MAX_PAGES / 8
     std::vector<uint8_t> _pageWriteMarks;       // Size: MAX_PAGES / 8
     std::vector<uint8_t> _pageExecuteMarks;     // Size: MAX_PAGES / 8
+    
+    std::unique_ptr<CallTraceBuffer> _callTraceBuffer;
+    std::unique_ptr<Z80Disassembler> _disassembler;
     /// endregion </Fields>
     
     /// region <Constructors / Destructors>
@@ -318,4 +322,9 @@ private:
     void SaveSinglePageAccessData(std::ostream& out, uint16_t page, const std::string& indent = "");
     std::string GetBankPageName(uint8_t bank) const;
     /// endregion </Helper Methods>
+
+public:
+    // Call trace API
+    CallTraceBuffer* GetCallTraceBuffer();
+    void LogControlFlowEvent(const Z80ControlFlowEvent& event);
 };

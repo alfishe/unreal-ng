@@ -1,12 +1,13 @@
 #include "memoryaccesstracker.h"
-
+#include "calltrace.h"
 #include "common/logger.h"
 #include "common/stringhelper.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "emulator/cpu/core.h"
+#include "emulator/memory/rom.h"
 #include "filesystem"
 #include "memory.h"
 #include "stdafx.h"
-#include "emulator/cpu/core.h"
-#include "emulator/memory/rom.h"
 
 // Constructor
 MemoryAccessTracker::MemoryAccessTracker(Memory* memory, EmulatorContext* context) : _memory(memory), _context(context)
@@ -27,6 +28,9 @@ MemoryAccessTracker::MemoryAccessTracker(Memory* memory, EmulatorContext* contex
     _pageReadMarks.resize(MAX_PAGES / 8, 0);     // Page access flags
     _pageWriteMarks.resize(MAX_PAGES / 8, 0);    // Page access flags
     _pageExecuteMarks.resize(MAX_PAGES / 8, 0);  // Page access flags
+
+    _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+    _disassembler = std::make_unique<Z80Disassembler>(context);
 }
 
 // Destructor
@@ -458,6 +462,13 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
 
     // Update region statistics (no value for execute)
     UpdateRegionStats(address, 0, callerAddress, AccessType::Execute);
+
+    // --- Call trace integration ---
+    if (_callTraceBuffer)
+    {
+        //_callTraceBuffer->LogIfControlFlow(_context, _memory, address);
+    }
+    // --- End call trace integration ---
 }
 
 // Track port read access
@@ -1181,7 +1192,7 @@ void MemoryAccessTracker::SaveMemoryLayout(std::ostream& out)
 void MemoryAccessTracker::SavePageSummaries(std::ostream& out, const std::vector<std::string>& filterPages)
 {
     out << "page_summaries:" << std::endl;
-    
+
     // Save RAM pages
     for (uint16_t page = 0; page < MAX_RAM_PAGES; page++)
     {
@@ -1214,7 +1225,8 @@ void MemoryAccessTracker::SavePageSummaries(std::ostream& out, const std::vector
                 hash = rom->CalculateSignature(romBase + page * PAGE_SIZE, PAGE_SIZE);
                 title = rom->GetROMTitle(hash);
             }
-            out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title) << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
+            out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title)
+                << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
             out << "    reads: " << GetPageReadAccessCount(physicalPage) << std::endl;
             out << "    writes: 0" << std::endl;
             out << "    executes: " << GetPageExecuteAccessCount(physicalPage) << std::endl;
@@ -1335,7 +1347,8 @@ void MemoryAccessTracker::SaveDetailedAccessData(std::ostream& out, const std::v
                 title = rom->GetROMTitle(hash);
             }
 
-            out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title) << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
+            out << "  \"" << pageName << "\": # " << (title.empty() ? "Unknown ROM" : title)
+                << " - hash: " << (hash.empty() ? "?" : hash) << std::endl;
             out << "    accessed_addresses:" << std::endl;
             SaveSinglePageAccessData(out, physicalPage, "      ");
         }
@@ -1353,8 +1366,9 @@ void MemoryAccessTracker::SaveSinglePageAccessData(std::ostream& out, uint16_t p
 
         if (reads > 0 || writes > 0 || executes > 0)
         {
-            out << StringHelper::Format("%s0x%04X: {reads: %d, writes: %d, executes: %d}", 
-                indent.c_str(), offset, reads, writes, executes) << std::endl;
+            out << StringHelper::Format("%s0x%04X: {reads: %d, writes: %d, executes: %d}", indent.c_str(), offset,
+                                        reads, writes, executes)
+                << std::endl;
         }
     }
 }
@@ -1389,5 +1403,18 @@ std::string MemoryAccessTracker::GetBankPageName(uint8_t bank) const
     else
     {
         return "RAM " + std::to_string(page);
+    }
+}
+
+CallTraceBuffer* MemoryAccessTracker::GetCallTraceBuffer()
+{
+    return _callTraceBuffer.get();
+}
+
+void MemoryAccessTracker::LogControlFlowEvent(const Z80ControlFlowEvent& event)
+{
+    if (_callTraceBuffer)
+    {
+        _callTraceBuffer->LogEvent(event);
     }
 }

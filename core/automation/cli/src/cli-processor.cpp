@@ -62,7 +62,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"quit", &CLIProcessor::HandleExit},
                         {"dummy", &CLIProcessor::HandleDummy},
                         {"memcounters", &CLIProcessor::HandleMemCounters},
-                        {"memstats", &CLIProcessor::HandleMemCounters}};
+                        {"memstats", &CLIProcessor::HandleMemCounters},
+                        {"calltrace", &CLIProcessor::HandleCallTrace}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -2092,4 +2093,153 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
         tracker.ResetCounters();
         session.SendResponse("Memory counters have been reset." + std::string(NEWLINE));
     }
+}
+
+void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
+        return;
+    }
+    auto* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        session.SendResponse("Error: Memory not available" + std::string(NEWLINE));
+        return;
+    }
+    auto& tracker = memory->GetAccessTracker();
+    auto* callTrace = tracker.GetCallTraceBuffer();
+    if (!callTrace)
+    {
+        session.SendResponse("Error: Call trace buffer not available" + std::string(NEWLINE));
+        return;
+    }
+    if (args.empty() || args[0] == "help")
+    {
+        std::ostringstream oss;
+        oss << "calltrace latest [N]   - Show latest N control flow events (default 10)" << NEWLINE;
+        oss << "calltrace save <file> - Save full call trace history to file (binary)" << NEWLINE;
+        oss << "calltrace reset       - Reset call trace buffer" << NEWLINE;
+        oss << "calltrace help        - Show this help message" << NEWLINE;
+        session.SendResponse(oss.str());
+        return;
+    }
+    if (args[0] == "latest")
+    {
+        size_t count = 10;
+        if (args.size() > 1)
+        {
+            try
+            {
+                count = std::stoul(args[1]);
+            }
+            catch (...)
+            {
+            }
+        }
+        auto events = callTrace->GetLatest(count);
+        std::ostringstream oss;
+        oss << "Latest " << events.size() << " control flow events:" << NEWLINE;
+        oss << "Idx  m1_pc  type   target   flags  sp     opcodes      bank0  bank1  bank2  bank3  stack_top"
+            << NEWLINE;
+        for (size_t i = 0; i < events.size(); ++i)
+        {
+            const auto& ev = events[i];
+            oss << StringHelper::Format("%4d  %04X  ", (int)i, ev.m1_pc);
+            // type
+            const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+            oss << StringHelper::Format("%-5s  ", typenames[static_cast<int>(ev.type)]);
+            oss << StringHelper::Format("%06X   ", ev.target_addr);
+            oss << StringHelper::Format("%02X    ", (int)ev.flags);
+            oss << StringHelper::Format("%04X   ", ev.sp);
+            // opcodes
+            for (auto b : ev.opcode_bytes)
+                oss << StringHelper::Format("%02X", (int)b);
+            oss << "      ";
+            // banks
+            for (int b = 0; b < 4; ++b)
+            {
+                oss << StringHelper::Format("%s%d  ", ev.banks[b].is_rom ? "ROM" : "RAM", (int)ev.banks[b].page_num);
+            }
+            // stack top
+            oss << "  ";
+            for (int s = 0; s < 3; ++s)
+            {
+                if (ev.stack_top[s])
+                    oss << StringHelper::Format("%04X ", ev.stack_top[s]);
+            }
+            oss << NEWLINE;
+        }
+        session.SendResponse(oss.str());
+        return;
+    }
+    if (args[0] == "save")
+    {
+        // Generate a unique filename with timestamp if not provided
+        std::string filename;
+        if (args.size() > 1)
+        {
+            filename = args[1];
+        }
+        else
+        {
+            auto now = std::chrono::system_clock::now();
+            auto in_time_t = std::chrono::system_clock::to_time_t(now);
+            std::stringstream ss;
+            ss << "calltrace_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S") << ".yaml";
+            filename = ss.str();
+        }
+        // Save as YAML
+        std::ofstream out(filename);
+        if (!out)
+        {
+            session.SendResponse("Failed to create call trace file: " + filename + NEWLINE);
+            return;
+        }
+        // Write YAML header
+        out << "calltrace:" << NEWLINE;
+        auto events = callTrace->GetAll();
+        for (size_t i = 0; i < events.size(); ++i)
+        {
+            const auto& ev = events[i];
+            out << StringHelper::Format("  - idx: %d", (int)i) << NEWLINE;
+            out << StringHelper::Format("    m1_pc: 0x%04X", ev.m1_pc) << NEWLINE;
+            out << StringHelper::Format("    type: %d", (int)ev.type) << NEWLINE;
+            out << StringHelper::Format("    target: 0x%04X", ev.target_addr) << NEWLINE;
+            out << StringHelper::Format("    flags: 0x%02X", ev.flags) << NEWLINE;
+            out << StringHelper::Format("    sp: 0x%04X", ev.sp) << NEWLINE;
+            out << "    opcodes: [";
+            for (size_t j = 0; j < ev.opcode_bytes.size(); ++j)
+            {
+                out << StringHelper::Format("0x%02X", (int)ev.opcode_bytes[j]);
+                if (j + 1 < ev.opcode_bytes.size()) out << ", ";
+            }
+            out << "]" << NEWLINE;
+            out << "    banks: [";
+            for (int b = 0; b < 4; ++b)
+            {
+                out << StringHelper::Format("{is_rom: %s, page: %d}", ev.banks[b].is_rom ? "true" : "false", (int)ev.banks[b].page_num);
+                if (b < 3) out << ", ";
+            }
+            out << "]" << NEWLINE;
+            out << "    stack_top: [";
+            for (int s = 0; s < 3; ++s)
+            {
+                out << StringHelper::Format("0x%04X", ev.stack_top[s]);
+                if (s < 2) out << ", ";
+            }
+            out << "]" << NEWLINE;
+        }
+        session.SendResponse("Call trace saved to " + filename + NEWLINE);
+        return;
+    }
+    if (args[0] == "reset")
+    {
+        callTrace->Reset();
+        session.SendResponse("Call trace buffer reset." + std::string(NEWLINE));
+        return;
+    }
+    session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
 }
