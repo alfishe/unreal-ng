@@ -20,9 +20,9 @@ void DumpHelper::SaveHexDumpToFile(std::wstring& filePath, uint8_t* buffer, size
 
 /// Saves hex dump of the buffer to specified file
 /// Note!: whole text buffer is pre-allocated. Streaming method should be used for real large blocks of memory to be dumped
-/// \param filePath Path to the file
-/// \param buffer Memory buffer with data to make dump from
-/// \param size Size of data buffer
+/// @param filePath Path to the file
+/// @param buffer Memory buffer with data to make dump from
+/// @param size Size of data buffer
 void DumpHelper::SaveHexDumpToFile(std::string& filePath, uint8_t* buffer, size_t size)
 {
     if (buffer == nullptr || size == 0)
@@ -35,27 +35,29 @@ void DumpHelper::SaveHexDumpToFile(std::string& filePath, uint8_t* buffer, size_
         // Print hex dump to memory buffer
         DumpHelper::HexDumpBuffer(outBuffer, outSize, buffer, size);
 
-        // Save the whole buffer to specified file
+        // Save the whole buffer to a specified file
         FileHelper::SaveBufferToFile(filePath, (uint8_t *)outBuffer, outSize);
 
         delete[] outBuffer;
     }
 }
 
-///
-/// \param buffer
-/// \param size
-/// \return
+/// @brief Converts a buffer to a hex dump string with optional delimiter and prefix.
+/// @param buffer Pointer to the buffer to dump.
+/// @param size Size of the buffer in bytes.
+/// @param delimiter String to insert between bytes (default: " ").
+/// @param prefix String to prepend to each byte (default: "").
+/// @return Hexadecimal string representation of the buffer.
 std::string DumpHelper::HexDumpBuffer(uint8_t* buffer, size_t size, const std::string& delimiter, const std::string& prefix)
 {
     std::string result;
 
-    // Preallocate memory for output string
-    const int bufferSize = size * (2 + delimiter.size() + prefix.size()); // Byte of data printed as hex with spaces between and line feeds takes more 2 x symbols per each data byte + delimiters + prefixes
+    // Preallocate memory for the output string
+    const size_t bufferSize = size * (2 + delimiter.size() + prefix.size());
     result.resize(bufferSize);
 
     size_t realDumpLen = DumpHelper::HexDumpBuffer(result.data(), result.length(), buffer, size, delimiter, prefix);
-    if (realDumpLen <= static_cast<size_t>(bufferSize))
+    if (realDumpLen <= bufferSize)
     {
         result.resize(realDumpLen);
     }
@@ -63,72 +65,56 @@ std::string DumpHelper::HexDumpBuffer(uint8_t* buffer, size_t size, const std::s
     return result;
 }
 
-///
-/// \param outBuffer
-/// \param outSize
-/// \param buffer
-/// \param size
-/// \param delimiter
-/// \param prefix
-/// \return
+/// @brief Writes a hex dump of a buffer into an output buffer with optional delimiter and prefix.
+/// @param outBuffer Output buffer to write the hex dump string.
+/// @param outSize Size of the output buffer.
+/// @param buffer Pointer to the buffer to dump.
+/// @param size Size of the buffer in bytes.
+/// @param delimiter String to insert between bytes (default: " ").
+/// @param prefix String to prepend to each byte (default: "").
+/// @return Number of characters written to outBuffer (excluding null terminator).
 size_t DumpHelper::HexDumpBuffer(char* outBuffer, size_t outSize, uint8_t* buffer, size_t size, const std::string& delimiter, const std::string& prefix)
 {
-    size_t result = 0;
+    static const char hex[] = "0123456789ABCDEF";
+    size_t outPos = 0;
+    const int lineWidth = width;
+    const bool delimiterEnabled = !delimiter.empty();
+    const bool prefixEnabled = !prefix.empty();
 
-    int outPos = 0;
-    int symbolsPrinted = 0;
-    int fullLines = size / width;
-    int remainder = size % width;
-    bool delimiterEnabled = delimiter.size() > 0;
-    bool prefixEnabled = prefix.size() > 0;
-
-    if (remainder > 0)
+    for (size_t i = 0; i < size; ++i)
     {
-        fullLines += 1;
-    }
-
-    // Full lines
-    for (int line = 0; line < fullLines; line++)
-    {
-        bool lastLine = line == fullLines - 1;
-
-        for (int column = 0; column < width; column++)
+        // Add prefix if needed
+        if (prefixEnabled)
         {
-            bool lastColumn = (column == width - 1) || (remainder > 0 && lastLine && column == remainder - 1);
-
-            // Stop on data end
-            if (lastLine && remainder > 0 && column == remainder)
-                break;
-
-            if (prefixEnabled)
-            {
-                symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%s%02X", prefix.c_str(), buffer[line * width + column]);
-            }
-            else
-            {
-                symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%02X", buffer[line * width + column]);
-            }
-
-            if (symbolsPrinted > 0)
-            {
-                outPos += symbolsPrinted;
-
-                if (delimiterEnabled && !lastColumn && static_cast<size_t>(outPos) < outSize)
-                {
-                    symbolsPrinted = snprintf(outBuffer + outPos, outSize - outPos, "%s", delimiter.c_str());
-                    outPos += symbolsPrinted;
-                }
-            }
+            size_t prefixLen = prefix.size();
+            if (outPos + prefixLen >= outSize) break;
+            memcpy(outBuffer + outPos, prefix.data(), prefixLen);
+            outPos += prefixLen;
         }
 
-        if (!lastLine && static_cast<size_t>(outPos) < outSize)
+        // Add hex byte
+        if (outPos + 2 >= outSize) break;
+        outBuffer[outPos++] = hex[(buffer[i] >> 4) & 0xF];
+        outBuffer[outPos++] = hex[buffer[i] & 0xF];
+
+        // Add a delimiter if needed (not after the last byte in line or last byte overall)
+        bool lastInLine = ((i + 1) % lineWidth == 0);
+        bool lastByte = (i == size - 1);
+        if (!lastInLine && !lastByte && delimiterEnabled)
         {
-            *(outBuffer + outPos) = '\n';
-            outPos++;
+            size_t delimLen = delimiter.size();
+            if (outPos + delimLen >= outSize) break;
+            memcpy(outBuffer + outPos, delimiter.data(), delimLen);
+            outPos += delimLen;
         }
 
-        result = outPos;
+        // Add a newline character at the end of the line (except the last line)
+        if (lastInLine && !lastByte)
+        {
+            if (outPos + 1 >= outSize) break;
+            outBuffer[outPos++] = '\n';
+        }
     }
 
-    return result;
+    return outPos;
 }
