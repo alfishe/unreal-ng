@@ -2790,63 +2790,46 @@ std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic, uint8
     return result;  // Return vector of operand sizes
 }
 
-std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic, std::vector<uint16_t>& values)
+/// @brief Formats a Z80 mnemonic string by replacing operand placeholders (":1", ":2") with their actual values.
+/// @param decoded   The decoded instruction, used for context (e.g., relative jump formatting).
+/// @param mnemonic  The mnemonic string containing operand placeholders (e.g., "ld a,:1").
+/// @param values    The operand values to substitute into the mnemonic (order matches placeholders).
+/// @return          The formatted mnemonic string with operands replaced by their hex values.
+std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic,
+                                                 std::vector<uint16_t>& values)
 {
     static const char* HEX_PREFIX = "#";
-
     std::string result;
-    std::stringstream ss;
+    result.reserve(mnemonic.size() + 8 * values.size());  // Preallocate for efficiency
 
-    try
+    size_t i = 0;    // Index into values
+    size_t pos = 0;  // Current position in mnemonic
+    const size_t len = mnemonic.size();
+
+    while (pos < len)
     {
-        int i = 0;
-        int startPos = 0;
-
-        std::sregex_iterator next(mnemonic.begin(), mnemonic.end(), regexOpcodeOperands);
-        std::sregex_iterator end;
-        while (next != end)
+        // Look for operand placeholder
+        if (mnemonic[pos] == ':' && (pos + 1 < len) && (mnemonic[pos + 1] == '1' || mnemonic[pos + 1] == '2'))
         {
-            std::smatch match = *next;
-
-            // Get match string like ':2'
-            std::string value = match.str();
+            uint8_t operandSize = mnemonic[pos + 1] - '0';
 
             /// region <Sanity checks>
-            if (value.size() < 2)
+            if (operandSize == 0 || operandSize > 2)
             {
-                throw std::logic_error("Invalid regex to parse operands. Should produce at least 2 symbols like ':1', ':2'");
+                throw std::logic_error("Z80Disassembler::formatOperandString - invalid operand size");
+            }
+            if (i >= values.size())
+            {
+                throw std::logic_error("Z80Disassembler::formatOperandString - not enough operand values");
             }
             /// endregion </Sanity checks>
 
-            // Remove leading ':' => '2'
-            value = value.substr(1);
-
-            // Convert from std::string to int
-            uint8_t operandSize = std::stoi(value);
-
-            /// region <Sanity checks>
-            if (operandSize > 2)
-            {
-                std::string message = StringHelper::Format("Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d", mnemonic.c_str(), operandSize);
-                throw std::logic_error(message);
-            }
-
-            if (operandSize == 0)
-            {
-                std::string message = StringHelper::Format("Z80 cannot have operand with 0 bytes. In '%s' detected: %d", mnemonic.c_str(), operandSize);
-                throw std::logic_error(message);
-            }
-
-            /// endregion </Sanity checks>
-
-            // Print mnemonic fragment till operand placeholder
-            ss << mnemonic.substr(startPos, match.position() - startPos);
-
-            // Print operand value
+            // Format operand value
             std::string operand;
             switch (operandSize)
             {
                 case 1:
+                    // For relative jumps, format as signed
                     if (decoded.hasRelativeJump)
                         operand = StringHelper::ToHexWithPrefix(static_cast<int8_t>(values[i]), HEX_PREFIX);
                     else
@@ -2855,27 +2838,27 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
                 case 2:
                     operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
                     break;
-                default:
-                    throw std::logic_error("Invalid operand size");
             }
 
-            ss << StringHelper::ToUpper(operand);
+            // Uppercase the operand and append
+            for (char& c : operand)
+                c = toupper(c);
 
-            startPos = match.position() + match.length();
-            i++;
-            next++;
+            result += operand;
+            pos += 2;  // Skip ":N"
+            ++i;
         }
-
-        // Print mnemonic leftover after last operand
-        ss << mnemonic.substr(startPos);
-
-        result = ss.str();
+        else
+        {
+            // Copy regular character
+            result += mnemonic[pos++];
+        }
     }
-    catch (std::regex_error& e)
+    // Sanity check: all values should be used
+    if (i != values.size())
     {
-        // Syntax error in the regular expression
+        throw std::logic_error("Z80Disassembler::formatOperandString - unused operand values");
     }
-
     return result;
 }
 
