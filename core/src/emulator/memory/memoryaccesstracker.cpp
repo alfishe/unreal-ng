@@ -1074,7 +1074,7 @@ std::string MemoryAccessTracker::GenerateSegmentReport() const
     return ss.str();
 }
 
-bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const std::string& format, bool singleFile,
+std::string MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const std::string& format, bool singleFile,
                                          const std::vector<std::string>& filterPages)
 {
     namespace fs = std::filesystem;
@@ -1090,7 +1090,7 @@ bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const st
         if (format != "yaml")
         {
             LOGERROR("Only YAML format is currently supported");
-            return false;
+            return "";
         }
 
         if (singleFile)
@@ -1108,7 +1108,7 @@ bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const st
             if (!out)
             {
                 LOGERROR("Failed to create output file: %s", filePath.string().c_str());
-                return false;
+                return "";
             }
 
             SaveMemoryLayout(out);
@@ -1118,6 +1118,7 @@ bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const st
             SaveDetailedAccessData(out, filterPages);
 
             LOGDEBUG("Saved memory access data to single file: %s", filePath.string().c_str());
+            return filePath.string();
         }
         else
         {
@@ -1141,7 +1142,7 @@ bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const st
                 if (!out)
                 {
                     LOGERROR("Failed to create memory layout file");
-                    return false;
+                    return "";
                 }
                 SaveMemoryLayout(out);
             }
@@ -1152,7 +1153,7 @@ bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const st
                 if (!out)
                 {
                     LOGERROR("Failed to create page summary file");
-                    return false;
+                    return "";
                 }
                 SavePageSummaries(out, filterPages);
             }
@@ -1162,18 +1163,17 @@ bool MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const st
             fs::create_directories(accessDir);
             if (!SaveDetailedAccessData(accessDir, filterPages))
             {
-                return false;
+                return "";
             }
 
             LOGDEBUG("Saved memory access data to directory: %s", sessionDir.string().c_str());
+            return sessionDir.string();
         }
-
-        return true;
     }
     catch (const std::exception& e)
     {
         LOGERROR("Failed to save memory access data: %s", e.what());
-        return false;
+        return "";
     }
 }
 

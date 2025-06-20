@@ -284,21 +284,32 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  step [count]  - Execute one or more CPU instructions" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
-    oss << NEWLINE << "Breakpoint commands:" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Breakpoint commands:" << NEWLINE;
     oss << "  bp <addr>     - Set execution breakpoint at address" << NEWLINE;
     oss << "  wp <addr> <type> - Set memory watchpoint (r/w/rw)" << NEWLINE;
     oss << "  bport <port> <type> - Set port breakpoint (i/o/io)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
-    oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups\n"
-           "  bpon <all|group <name>|id <id>>        - Activate breakpoints\n"
-           "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints\n"
-           "  memory <hex address> [length]          - Dump memory contents\n"
-           "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)\n"
-        << NEWLINE;
+    oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;
+    oss << "  bpon <all|group <name>|id <id>>        - Activate breakpoints" << NEWLINE;
+    oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
+    oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
+    oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Memory Access Tracking:" << NEWLINE;
+    oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;
+    oss << "  memcounters save [opts] - Save memory access data to file" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Call Trace:" << NEWLINE;
+    oss << "  calltrace [latest [N]] - Show latest N call trace events" << NEWLINE;
+    oss << "  calltrace stats        - Show call trace buffer statistics" << NEWLINE;
+    oss << "  calltrace save [file]  - Save call trace to file" << NEWLINE;
+    oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
-    oss << NEWLINE << "Type any command followed by -h or --help for more information.";
+    oss << NEWLINE;
+    oss << "Type any command followed by -h or --help for more information.";
 
     session.SendResponse(oss.str());
 }
@@ -1932,9 +1943,10 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
         auto* memory = emulator->GetContext()->pMemory;
         auto& tracker = memory->GetAccessTracker();
 
-        if (tracker.SaveAccessData(outputPath, "yaml", singleFile, filterPages))
+        std::string savedPath = tracker.SaveAccessData(outputPath, "yaml", singleFile, filterPages);
+        if (!savedPath.empty())
         {
-            session.SendResponse("Memory access data saved successfully" + std::string(NEWLINE));
+            session.SendResponse("Memory access data saved successfully to " + savedPath + NEWLINE);
         }
         else
         {

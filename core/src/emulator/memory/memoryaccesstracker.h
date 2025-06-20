@@ -281,7 +281,7 @@ public:
     /// @param singleFile If true, saves everything in one file; if false, uses separate files in a subfolder
     /// @param filterPages Optional list of specific pages to include (empty = all)
     /// @return true if successful, false on error
-    bool SaveAccessData(const std::string& outputPath,
+    std::string SaveAccessData(const std::string& outputPath,
                        const std::string& format = "yaml",
                        bool singleFile = false,
                        const std::vector<std::string>& filterPages = {});
