@@ -1659,7 +1659,7 @@ void WD1793::processSearchID()
         _sectorSize = 128 << (idAddressMark->sector_size & 0x03);
 
         // Set pointers to Address Mark record and to sector data
-        _idamData = (uint8_t*)track->getIDForSector(_sectorRegister);
+        _idamData = (uint8_t*)track->getIDForSector(_sectorRegister) + 1; // We need to skip id_address_mark = 0xFE
         _sectorData = track->getDataForSector(_sectorRegister);
 
         // TODO: apply the delay related to disk rotation so searching for ID Address Mark may take up to a full disk
