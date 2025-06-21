@@ -1123,7 +1123,7 @@ uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor
     uint16_t result = BRK_INVALID;
 
     BreakpointAddressMatchEnum matchType = descriptor->matchType;
-    uint32_t key;
+    uint32_t key = 0;
 
     switch (matchType)
     {
