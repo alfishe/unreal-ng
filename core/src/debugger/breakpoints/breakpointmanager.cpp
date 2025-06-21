@@ -129,7 +129,7 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
             break;
     }
 
-    // Remove from ID map and delete the descriptor
+    // Remove from the ID map and delete the descriptor
     _breakpointMapByID.erase(it);
     delete breakpoint;
 
@@ -1169,10 +1169,11 @@ uint16_t BreakpointManager::AddPortBreakpoint(BreakpointDescriptor* descriptor)
     uint16_t result = BRK_INVALID;
 
     uint16_t key = descriptor->z80address;
-    if (key_exists(_breakpointMapByAddress, key))
+    auto it = _breakpointMapByPort.find(key);
+    if (it != _breakpointMapByPort.end())
     {
         // Such breakpoint already exist, returning it's ID
-        BreakpointDescriptor* existing = _breakpointMapByAddress[key];
+        BreakpointDescriptor* existing = it->second;
         result = existing->breakpointID;
     }
     else
@@ -1206,14 +1207,19 @@ BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
     uint32_t wildcardKey = 0xFFFF'0000 | address;
 
     // Try to match address in specified memory page first
-    if (key_exists(_breakpointMapByAddress, fullKey))
+    auto it = _breakpointMapByAddress.find(fullKey);
+    if (it != _breakpointMapByAddress.end())
     {
-        result = _breakpointMapByAddress[fullKey];
+        result = it->second;
     }
     // Address in any bank matching
-    else if (key_exists(_breakpointMapByAddress, wildcardKey))
+    else
     {
-        result = _breakpointMapByAddress[wildcardKey];
+        it = _breakpointMapByAddress.find(wildcardKey);
+        if (it != _breakpointMapByAddress.end())
+        {
+            result = it->second;
+        }
     }
 
     return result;
@@ -1230,9 +1236,10 @@ BreakpointDescriptor* BreakpointManager::FindPortBreakpoint(uint16_t port)
 {
     BreakpointDescriptor* result = nullptr;
 
-    if (key_exists(_breakpointMapByPort, port))
+    auto it = _breakpointMapByPort.find(port);
+    if (it != _breakpointMapByPort.end())
     {
-        result = _breakpointMapByPort[port];
+        result = it->second;
     }
 
     return result;

@@ -14,13 +14,14 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "3rdparty/message-center/eventqueue.h"
+#include "common/dockingmanager.h"
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
-#include "3rdparty/message-center/eventqueue.h"
 #include "emulator/soundmanager.h"
 #include "ui_mainwindow.h"
 
@@ -84,6 +85,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     debuggerWindow->reset();
     debuggerWindow->show();
 
+    _dockingManager = new DockingManager(this);
+    _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
+    _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
+
     // Bring application windows to foreground
     debuggerWindow->raise();
     this->raise();
@@ -112,8 +117,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Delay automation modules start, so the main thread is not blocked, and automation is fully initialized
     // Otherwise race conditions
     // TODO: implement proper waiting until automation is fully initialized
-    QTimer::singleShot(300, this, [this]()
-    {
+    QTimer::singleShot(300, this, [this]() {
         if (_automation)
         {
             _automation->start();
@@ -142,7 +146,7 @@ void MainWindow::cleanupAutomation()
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
-    
+
     // Clean up automation resources first
     cleanupAutomation();
 
@@ -156,12 +160,14 @@ MainWindow::~MainWindow()
 
     if (debuggerWindow != nullptr)
     {
+        _dockingManager->removeDockableWindow(debuggerWindow);
         debuggerWindow->hide();
         delete debuggerWindow;
     }
 
     if (logWindow != nullptr)
     {
+        _dockingManager->removeDockableWindow(logWindow);
         logWindow->hide();
         delete logWindow;
     }
@@ -211,6 +217,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Close debugger
     if (debuggerWindow)
     {
+        _dockingManager->removeDockableWindow(debuggerWindow);
         debuggerWindow->hide();
         delete debuggerWindow;
         debuggerWindow = nullptr;
@@ -219,6 +226,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     // Close LogViewer
     if (logWindow)
     {
+        _dockingManager->removeDockableWindow(logWindow);
         logWindow->hide();
         delete logWindow;
         logWindow = nullptr;
@@ -248,6 +256,9 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     // Update normal geometry
     _normalGeometry = normalGeometry();
 
+    // Notify docked child windows
+    _dockingManager->updateDockedWindows();
+
     QWidget::resizeEvent(event);
 }
 
@@ -255,8 +266,9 @@ void MainWindow::moveEvent(QMoveEvent* event)
 {
     QWidget::moveEvent(event);
 
-    // arrangeWindows();
-    adjust(nullptr);
+    // Notify docked child windows
+    if (_dockingManager)
+        _dockingManager->updateDockedWindows();
 
     // Update normal geometry
     _normalGeometry = normalGeometry();
@@ -758,9 +770,25 @@ void MainWindow::initializePlatformLinux()
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // Handle main window dragging state for docking manager
+    if (watched == this)
+    {
+        if (event->type() == QEvent::NonClientAreaMouseButtonPress)
+        {
+            if (_dockingManager)
+                _dockingManager->setSnappingLocked(true);
+        }
+        else if (event->type() == QEvent::NonClientAreaMouseButtonRelease)
+        {
+            if (_dockingManager)
+                _dockingManager->setSnappingLocked(false);
+        }
+    }
+
     switch (event->type())
     {
-        case QEvent::KeyPress: {
+        case QEvent::KeyPress:
+        {
             QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
             QString keyName = QKeySequence(keyEvent->key()).toString();
             QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
@@ -786,7 +814,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             deviceScreen->handleExternalKeyPress(keyEvent);
         }
         break;
-        case QEvent::KeyRelease: {
+        case QEvent::KeyRelease:
+        {
             QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
             QString keyName = QKeySequence(keyEvent->key()).toString();
             QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
@@ -803,20 +832,24 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
             break;
         case QEvent::Resize:
         case QEvent::Show:
-            adjust(event);
+            _dockingManager->updateDockedWindows();
             break;
 
         case QEvent::NonClientAreaMouseButtonPress:
             _lastCursorPos = QCursor::pos();
             break;
         case QEvent::NonClientAreaMouseButtonRelease:
-            adjust(event);
+            _dockingManager->updateDockedWindows();
             break;
-        case QEvent::NonClientAreaMouseMove: {
-            if (static_cast<QMouseEvent*>(event)->buttons() == Qt::LeftButton)
+        case QEvent::NonClientAreaMouseMove:
+        {
+            if (watched == this && static_cast<QMouseEvent*>(event)->buttons() == Qt::LeftButton)
             {
-                QPoint delta = QCursor::pos() - _lastCursorPos;
-                adjust(event, delta);
+                QPoint currentPos = QCursor::pos();
+                QPoint delta = currentPos - _lastCursorPos;
+                _dockingManager->moveDockedWindows(delta);
+
+                _lastCursorPos = currentPos;
             }
         }
         break;
@@ -830,44 +863,6 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     QApplication::sendEvent(_fullScreenShortcut, event);
 
     return QMainWindow::eventFilter(watched, event);
-}
-
-void MainWindow::arrangeWindows()
-{
-    QRect mainWindowRect = this->geometry();
-
-    if (this->debuggerWindow)
-    {
-        QRect debuggerWindowRect = this->debuggerWindow->rect();
-
-        debuggerWindowRect.moveLeft(mainWindowRect.left() - debuggerWindowRect.width());
-        debuggerWindowRect.moveTop(mainWindowRect.top());
-        debuggerWindow->setGeometry(debuggerWindowRect);
-    }
-
-    if (this->logWindow)
-    {
-        QRect logWindowRect = this->logWindow->rect();
-
-        logWindowRect.moveLeft(mainWindowRect.right());
-        logWindowRect.moveTop(mainWindowRect.top());
-        logWindow->setGeometry(logWindowRect);
-    }
-}
-
-void MainWindow::adjust(QEvent* event, const QPoint& delta)
-{
-    if (debuggerWindow)
-    {
-        const QPoint offsetDebugger(-debuggerWindow->geometry().width(), 0);
-        debuggerWindow->move(this->geometry().topLeft() + offsetDebugger + delta);
-    }
-
-    if (logWindow)
-    {
-        QPoint targetPoint = this->geometry().topRight() + delta;
-        logWindow->move(targetPoint);
-    }
 }
 
 /// endregion </Protected members>
@@ -1072,6 +1067,8 @@ void MainWindow::handleFullScreenShortcutWindows()
 {
     if (windowState() & Qt::WindowFullScreen)
     {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+
         // Always restore palette and frame before leaving fullscreen
         setPalette(_originalPalette);
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
@@ -1091,20 +1088,34 @@ void MainWindow::handleFullScreenShortcutWindows()
             // Restore to normal state with saved geometry
             setGeometry(_normalGeometry);
         }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager) {
+                _dockingManager->onExitFullscreen();
+
+                QTimer::singleShot(100, this, [this](){
+                    if (_dockingManager) _dockingManager->setSnappingLocked(false);
+                });
+            }
+        });
     }
     else
     {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        if (_dockingManager) _dockingManager->onEnterFullscreen();
+
         // Store state and geometry before entering fullscreen
         bool wasMaximized = (windowState() & Qt::WindowMaximized) && !(windowFlags() & Qt::FramelessWindowHint);
         _preFullScreenState = wasMaximized ? Qt::WindowMaximized : Qt::WindowNoState;
-        
+
         // Always store the current geometry
         if (wasMaximized)
         {
             // If maximized, store both the current (maximized) state and the normal geometry
             _maximizedGeometry = geometry();
             qDebug() << "Storing maximized geometry:" << _maximizedGeometry;
-            
+
             // Store the normal geometry if we have it, otherwise use current geometry as fallback
             if (!_normalGeometry.isValid())
             {
@@ -1127,6 +1138,10 @@ void MainWindow::handleFullScreenShortcutWindows()
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         setWindowState(Qt::WindowNoState);
         showFullScreen();
+
+        QTimer::singleShot(100, this, [this](){
+            if (_dockingManager) _dockingManager->setSnappingLocked(false);
+        });
     }
 }
 
@@ -1134,6 +1149,8 @@ void MainWindow::handleFullScreenShortcutMacOS()
 {
     if (windowState() & Qt::WindowFullScreen)
     {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+
         setWindowFlags(Qt::Window);  // Prevent horizontal transition from full screen to system desktop
         // Restore previous state and geometry
         if (_preFullScreenState & Qt::WindowMaximized)
@@ -1148,9 +1165,23 @@ void MainWindow::handleFullScreenShortcutMacOS()
                 setGeometry(_normalGeometry);
             showNormal();
         }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager) {
+                _dockingManager->onExitFullscreen();
+
+                QTimer::singleShot(100, this, [this](){
+                    if (_dockingManager) _dockingManager->setSnappingLocked(false);
+                });
+            }
+        });
     }
     else
     {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        if (_dockingManager) _dockingManager->onEnterFullscreen();
+
         // Store state and geometry before entering fullscreen
         if (windowState() & Qt::WindowMaximized)
         {
@@ -1163,6 +1194,9 @@ void MainWindow::handleFullScreenShortcutMacOS()
             _normalGeometry = geometry();
         }
         showFullScreen();
+        QTimer::singleShot(100, this, [this](){
+            if (_dockingManager) _dockingManager->setSnappingLocked(false);
+        });
     }
 }
 
@@ -1170,6 +1204,8 @@ void MainWindow::handleFullScreenShortcutLinux()
 {
     if (windowState() & Qt::WindowFullScreen)
     {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        
         // Restore previous state and geometry
         if (_preFullScreenState & Qt::WindowMaximized)
         {
@@ -1183,9 +1219,23 @@ void MainWindow::handleFullScreenShortcutLinux()
                 setGeometry(_normalGeometry);
             showNormal();
         }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager) {
+                _dockingManager->onExitFullscreen();
+
+                QTimer::singleShot(100, this, [this](){
+                    if (_dockingManager) _dockingManager->setSnappingLocked(false);
+                });
+            }
+        });
     }
     else
     {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        if (_dockingManager) _dockingManager->onEnterFullscreen();
+
         // Store state and geometry before entering fullscreen
         if (windowState() & Qt::WindowMaximized)
         {
@@ -1198,6 +1248,9 @@ void MainWindow::handleFullScreenShortcutLinux()
             _normalGeometry = geometry();
         }
         showFullScreen();
+        QTimer::singleShot(100, this, [this](){
+            if (_dockingManager) _dockingManager->setSnappingLocked(false);
+        });
     }
 }
 

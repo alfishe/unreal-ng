@@ -91,6 +91,9 @@ private:
     void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDummy(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDebugMode(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);

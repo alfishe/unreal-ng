@@ -15,6 +15,8 @@
 #include <string>
 #include <vector>
 
+#include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/platform.h"
 #include "platform-sockets.h"
 
 // ClientSession implementation
@@ -41,6 +43,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"step", &CLIProcessor::HandleStep},
                         {"memory", &CLIProcessor::HandleMemory},
                         {"registers", &CLIProcessor::HandleRegisters},
+                        {"debugmode", &CLIProcessor::HandleDebugMode},
 
                         // Breakpoint commands
                         {"bp", &CLIProcessor::HandleBreakpoint},          // Set execution breakpoint
@@ -57,7 +60,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
                         {"quit", &CLIProcessor::HandleExit},
-                        {"dummy", &CLIProcessor::HandleDummy}};
+                        {"dummy", &CLIProcessor::HandleDummy},
+                        {"memcounters", &CLIProcessor::HandleMemCounters},
+                        {"memstats", &CLIProcessor::HandleMemCounters},
+                        {"calltrace", &CLIProcessor::HandleCallTrace}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -278,19 +284,32 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  step [count]  - Execute one or more CPU instructions" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
-    oss << NEWLINE << "Breakpoint commands:" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Breakpoint commands:" << NEWLINE;
     oss << "  bp <addr>     - Set execution breakpoint at address" << NEWLINE;
     oss << "  wp <addr> <type> - Set memory watchpoint (r/w/rw)" << NEWLINE;
     oss << "  bport <port> <type> - Set port breakpoint (i/o/io)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
-    oss << "  bpgroup       - Manage breakpoint groups" << NEWLINE;
-    oss << "  bpon          - Activate breakpoints" << NEWLINE;
-    oss << "  bpoff         - Deactivate breakpoints" << NEWLINE;
-    oss << NEWLINE << "Other commands:" << NEWLINE;
+    oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;
+    oss << "  bpon <all|group <name>|id <id>>        - Activate breakpoints" << NEWLINE;
+    oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
+    oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
+    oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Memory Access Tracking:" << NEWLINE;
+    oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;
+    oss << "  memcounters save [opts] - Save memory access data to file" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Call Trace:" << NEWLINE;
+    oss << "  calltrace [latest [N]] - Show latest N call trace events" << NEWLINE;
+    oss << "  calltrace stats        - Show call trace buffer statistics" << NEWLINE;
+    oss << "  calltrace save [file]  - Save call trace to file" << NEWLINE;
+    oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
-    oss << NEWLINE << "Type any command followed by -h or --help for more information.";
+    oss << NEWLINE;
+    oss << "Type any command followed by -h or --help for more information.";
 
     session.SendResponse(oss.str());
 }
@@ -686,7 +705,8 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen, z80State, memory, &decodedBefore);
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
 
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
@@ -713,7 +733,8 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
 
     DecodedInstruction decodedAfter;
     commandLen = 0;
-    std::string instructionAfter = disassembler->disassembleSingleCommandWithRuntime(buffer, newPC, &commandLen, z80State, memory, &decodedAfter);
+    std::string instructionAfter =
+        disassembler->disassembleSingleCommandWithRuntime(buffer, newPC, &commandLen, z80State, memory, &decodedAfter);
 
     // Format response with CPU state information
     std::stringstream ss;
@@ -822,7 +843,8 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
     }
 
     std::ostringstream oss;
-    oss << "Memory at 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << address << ":" << NEWLINE;
+    oss << "Memory at 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << address << ":"
+        << NEWLINE;
 
     // Display 8 rows of 16 bytes each
     for (int row = 0; row < 8; ++row)
@@ -883,22 +905,26 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
     ss << "  AF: " << std::setw(4) << z80State->af << "  (A: " << std::setw(2) << static_cast<int>(z80State->a)
        << ", F: " << std::setw(2) << static_cast<int>(z80State->f) << ")";
     ss << "           AF': " << std::setw(4) << z80State->alt.af << "  (A': " << std::setw(2)
-       << static_cast<int>(z80State->alt.a) << ", F': " << std::setw(2) << static_cast<int>(z80State->alt.f) << ")" << NEWLINE;
+       << static_cast<int>(z80State->alt.a) << ", F': " << std::setw(2) << static_cast<int>(z80State->alt.f) << ")"
+       << NEWLINE;
 
     ss << "  BC: " << std::setw(4) << z80State->bc << "  (B: " << std::setw(2) << static_cast<int>(z80State->b)
        << ", C: " << std::setw(2) << static_cast<int>(z80State->c) << ")";
     ss << "           BC': " << std::setw(4) << z80State->alt.bc << "  (B': " << std::setw(2)
-       << static_cast<int>(z80State->alt.b) << ", C': " << std::setw(2) << static_cast<int>(z80State->alt.c) << ")" << NEWLINE;
+       << static_cast<int>(z80State->alt.b) << ", C': " << std::setw(2) << static_cast<int>(z80State->alt.c) << ")"
+       << NEWLINE;
 
     ss << "  DE: " << std::setw(4) << z80State->de << "  (D: " << std::setw(2) << static_cast<int>(z80State->d)
        << ", E: " << std::setw(2) << static_cast<int>(z80State->e) << ")";
     ss << "           DE': " << std::setw(4) << z80State->alt.de << "  (D': " << std::setw(2)
-       << static_cast<int>(z80State->alt.d) << ", E': " << std::setw(2) << static_cast<int>(z80State->alt.e) << ")" << NEWLINE;
+       << static_cast<int>(z80State->alt.d) << ", E': " << std::setw(2) << static_cast<int>(z80State->alt.e) << ")"
+       << NEWLINE;
 
     ss << "  HL: " << std::setw(4) << z80State->hl << "  (H: " << std::setw(2) << static_cast<int>(z80State->h)
        << ", L: " << std::setw(2) << static_cast<int>(z80State->l) << ")";
     ss << "           HL': " << std::setw(4) << z80State->alt.hl << "  (H': " << std::setw(2)
-       << static_cast<int>(z80State->alt.h) << ", L': " << std::setw(2) << static_cast<int>(z80State->alt.l) << ")" << NEWLINE;
+       << static_cast<int>(z80State->alt.h) << ", L': " << std::setw(2) << static_cast<int>(z80State->alt.l) << ")"
+       << NEWLINE;
 
     ss << NEWLINE;
 
@@ -914,7 +940,8 @@ void CLIProcessor::HandleRegisters(const ClientSession& session, const std::vect
 
     // Empty line for IR and first line of flags
     ss << "                                     IR: " << std::setw(4) << z80State->ir_ << "  (I: " << std::setw(2)
-       << static_cast<int>(z80State->i) << ", R: " << std::setw(2) << static_cast<int>(z80State->r_low) << ")" << NEWLINE;
+       << static_cast<int>(z80State->i) << ", R: " << std::setw(2) << static_cast<int>(z80State->r_low) << ")"
+       << NEWLINE;
     ss << NEWLINE;
 
     // Flags and interrupt state in two columns
@@ -951,15 +978,12 @@ void CLIProcessor::HandleBreakpoint(const ClientSession& session, const std::vec
     if (args.empty())
     {
         stringstream ss;
-        ss << "Usage: bp <address> [note]" << NEWLINE
-           << "Sets an execution breakpoint at the specified address." << NEWLINE
-           << "Examples:" << NEWLINE
-           << "  bp 0x1234       - Set breakpoint at address 0x1234" << NEWLINE
+        ss << "Usage: bp <address> [note]" << NEWLINE << "Sets an execution breakpoint at the specified address."
+           << NEWLINE << "Examples:" << NEWLINE << "  bp 0x1234       - Set breakpoint at address 0x1234" << NEWLINE
            << "  bp $1234        - Set breakpoint at address $1234 (hex)" << NEWLINE
            << "  bp #1234        - Set breakpoint at address #1234 (hex)" << NEWLINE
            << "  bp 1234         - Set breakpoint at address 1234 (decimal)" << NEWLINE
-           << "  bp 1234 Main loop - Set breakpoint with a note" << NEWLINE
-           << "Use 'bplist' to view all breakpoints";
+           << "  bp 1234 Main loop - Set breakpoint with a note" << NEWLINE << "Use 'bplist' to view all breakpoints";
         session.SendResponse(ss.str());
 
         return;
@@ -1061,14 +1085,10 @@ void CLIProcessor::HandleWatchpoint(const ClientSession& session, const std::vec
     if (args.empty() || args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: wp <address> <type> [note]" << NEWLINE
-           << "Sets a memory watchpoint at the specified address." << NEWLINE
-           << "Types:" << NEWLINE
-           << "  r    - Watch for memory reads" << NEWLINE
-           << "  w    - Watch for memory writes" << NEWLINE
-           << "  rw   - Watch for both reads and writes" << NEWLINE
-           << "Examples:" << NEWLINE
-           << "  wp 0x1234 r     - Watch for reads at address 0x1234" << NEWLINE
+        ss << "Usage: wp <address> <type> [note]" << NEWLINE << "Sets a memory watchpoint at the specified address."
+           << NEWLINE << "Types:" << NEWLINE << "  r    - Watch for memory reads" << NEWLINE
+           << "  w    - Watch for memory writes" << NEWLINE << "  rw   - Watch for both reads and writes" << NEWLINE
+           << "Examples:" << NEWLINE << "  wp 0x1234 r     - Watch for reads at address 0x1234" << NEWLINE
            << "  wp $4000 w      - Watch for writes at address $4000 (hex)" << NEWLINE
            << "  wp #8000 rw     - Watch for reads/writes at address #8000 (hex)" << NEWLINE
            << "  wp 49152 rw Stack pointer - Watch for reads/writes with a note";
@@ -1161,15 +1181,11 @@ void CLIProcessor::HandlePortBreakpoint(const ClientSession& session, const std:
     if (args.empty() || args.size() < 2)
     {
         std::stringstream ss;
-        ss << "Usage: bport <port> <type> [note]" << NEWLINE
-           << "Sets a port breakpoint at the specified port address." << NEWLINE
-           << "Types:" << NEWLINE
-           << "  i    - Watch for port IN operations" << NEWLINE
-           << "  o    - Watch for port OUT operations" << NEWLINE
-           << "  io   - Watch for both IN and OUT operations" << NEWLINE
-           << "Examples:" << NEWLINE
-           << "  bport 0x1234 i     - Watch for IN operations at port 0x1234" << NEWLINE
-           << "  bport $FE o        - Watch for OUT operations at port $FE (hex)" << NEWLINE
+        ss << "Usage: bport <port> <type> [note]" << NEWLINE << "Sets a port breakpoint at the specified port address."
+           << NEWLINE << "Types:" << NEWLINE << "  i    - Watch for port IN operations" << NEWLINE
+           << "  o    - Watch for port OUT operations" << NEWLINE << "  io   - Watch for both IN and OUT operations"
+           << NEWLINE << "Examples:" << NEWLINE << "  bport 0x1234 i     - Watch for IN operations at port 0x1234"
+           << NEWLINE << "  bport $FE o        - Watch for OUT operations at port $FE (hex)" << NEWLINE
            << "  bport #A0 io       - Watch for IN/OUT at port #A0 (hex)" << NEWLINE
            << "  bport 254 io Keyboard port - Watch for IN/OUT with a note";
         session.SendResponse(ss.str());
@@ -1270,20 +1286,16 @@ void CLIProcessor::HandleBPClear(const ClientSession& session, const std::vector
     if (args.empty())
     {
         std::stringstream ss;
-        ss << "Usage: bpclear <option>" << NEWLINE
-           << "Options:" << NEWLINE
-           << "  all       - Clear all breakpoints" << NEWLINE
-           << "  <id>      - Clear breakpoint with specific ID" << NEWLINE
+        ss << "Usage: bpclear <option>" << NEWLINE << "Options:" << NEWLINE << "  all       - Clear all breakpoints"
+           << NEWLINE << "  <id>      - Clear breakpoint with specific ID" << NEWLINE
            << "  addr <addr> - Clear breakpoint at specific address" << NEWLINE
            << "  port <port> - Clear breakpoint at specific port" << NEWLINE
-           << "  mem       - Clear all memory breakpoints" << NEWLINE
-           << "  port      - Clear all port breakpoints" << NEWLINE
-           << "  read      - Clear all memory read breakpoints" << NEWLINE
+           << "  mem       - Clear all memory breakpoints" << NEWLINE << "  port      - Clear all port breakpoints"
+           << NEWLINE << "  read      - Clear all memory read breakpoints" << NEWLINE
            << "  write     - Clear all memory write breakpoints" << NEWLINE
            << "  exec      - Clear all execution breakpoints" << NEWLINE
-           << "  in        - Clear all port IN breakpoints" << NEWLINE
-           << "  out       - Clear all port OUT breakpoints" << NEWLINE
-           << "  group <name> - Clear all breakpoints in a group";
+           << "  in        - Clear all port IN breakpoints" << NEWLINE << "  out       - Clear all port OUT breakpoints"
+           << NEWLINE << "  group <name> - Clear all breakpoints in a group";
         session.SendResponse(ss.str());
 
         return;
@@ -1448,8 +1460,7 @@ void CLIProcessor::HandleBPGroup(const ClientSession& session, const std::vector
     if (args.empty())
     {
         std::stringstream ss;
-        ss << "Usage: bpgroup <command> [parameters]" << NEWLINE
-           << "Commands:" << NEWLINE
+        ss << "Usage: bpgroup <command> [parameters]" << NEWLINE << "Commands:" << NEWLINE
            << "  list             - List all breakpoint groups" << NEWLINE
            << "  show <name>      - Show breakpoints in a specific group" << NEWLINE
            << "  set <id> <name>  - Assign a breakpoint to a group" << NEWLINE
@@ -1553,10 +1564,8 @@ void CLIProcessor::HandleBPActivate(const ClientSession& session, const std::vec
     if (args.empty())
     {
         std::stringstream ss;
-        ss << "Usage: bpon <option>" << NEWLINE
-           << "Options:" << NEWLINE
-           << "  all       - Activate all breakpoints" << NEWLINE
-           << "  <id>      - Activate breakpoint with specific ID" << NEWLINE
+        ss << "Usage: bpon <option>" << NEWLINE << "Options:" << NEWLINE << "  all       - Activate all breakpoints"
+           << NEWLINE << "  <id>      - Activate breakpoint with specific ID" << NEWLINE
            << "  mem       - Activate all memory breakpoints" << NEWLINE
            << "  port      - Activate all port breakpoints" << NEWLINE
            << "  read      - Activate all memory read breakpoints" << NEWLINE
@@ -1688,10 +1697,8 @@ void CLIProcessor::HandleBPDeactivate(const ClientSession& session, const std::v
     if (args.empty())
     {
         std::stringstream ss;
-        ss << "Usage: bpoff <option>" << NEWLINE
-           << "Options:" << NEWLINE
-           << "  all       - Deactivate all breakpoints" << NEWLINE
-           << "  <id>      - Deactivate breakpoint with specific ID" << NEWLINE
+        ss << "Usage: bpoff <option>" << NEWLINE << "Options:" << NEWLINE << "  all       - Deactivate all breakpoints"
+           << NEWLINE << "  <id>      - Deactivate breakpoint with specific ID" << NEWLINE
            << "  mem       - Deactivate all memory breakpoints" << NEWLINE
            << "  port      - Deactivate all port breakpoints" << NEWLINE
            << "  read      - Deactivate all memory read breakpoints" << NEWLINE
@@ -1823,4 +1830,502 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         session.SendResponse("Requesting to open file: " + filepath);
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
+}
+
+void CLIProcessor::HandleDebugMode(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
+        return;
+    }
+
+    if (args.size() < 1)
+    {
+        // Show current mode
+        bool isDebugMode = emulator->GetContext()->pCore->GetZ80()->isDebugMode;
+        std::string mode = isDebugMode ? "on" : "off";
+        session.SendResponse("Debug mode is currently " + mode + NEWLINE);
+        session.SendResponse("Usage: debugmode <on|off>" + std::string(NEWLINE));
+        return;
+    }
+
+    const std::string& mode = args[0];
+    Core* core = emulator->GetContext()->pCore;
+    bool success = true;
+    std::string response;
+
+    if (mode == "on")
+    {
+        core->UseDebugMemoryInterface();
+        core->GetZ80()->isDebugMode = true;
+        response = "Debug mode enabled (slower, with breakpoint support)" + std::string(NEWLINE);
+    }
+    else if (mode == "off")
+    {
+        core->UseFastMemoryInterface();
+        core->GetZ80()->isDebugMode = false;
+        response = "Debug mode disabled (faster, no breakpoints)" + std::string(NEWLINE);
+    }
+    else
+    {
+        success = false;
+        response = "Error: Invalid parameter. Use 'on' or 'off'" + std::string(NEWLINE);
+    }
+
+    session.SendResponse(response);
+    if (success)
+    {
+        // Also show the current mode after changing it
+        bool isDebugMode = emulator->GetContext()->pCore->GetZ80()->isDebugMode;
+        std::string currentMode = isDebugMode ? "on" : "off";
+        session.SendResponse("Debug mode is now " + currentMode + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
+        return;
+    }
+
+    // Check for save command first
+    if (!args.empty() && args[0] == "save")
+    {
+        std::string outputPath = "";
+        bool singleFile = false;
+        std::vector<std::string> filterPages;
+
+        // Parse options
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            if (args[i] == "--single-file" || args[i] == "-s")
+            {
+                singleFile = true;
+            }
+            else if (args[i] == "--output" || args[i] == "-o")
+            {
+                if (i + 1 < args.size())
+                {
+                    outputPath = args[++i];
+                }
+                else
+                {
+                    session.SendResponse("Error: Missing output path" + std::string(NEWLINE));
+                    return;
+                }
+            }
+            else if (args[i] == "--page" || args[i] == "-p")
+            {
+                if (i + 1 < args.size())
+                {
+                    filterPages.push_back(args[++i]);
+                }
+                else
+                {
+                    session.SendResponse("Error: Missing page specification" + std::string(NEWLINE));
+                    return;
+                }
+            }
+        }
+
+        // Set the subfolder name
+        if (!singleFile)
+        {
+            outputPath = "memory_logs";
+        }
+
+        // Get the memory access tracker
+        auto* memory = emulator->GetContext()->pMemory;
+        auto& tracker = memory->GetAccessTracker();
+
+        std::string savedPath = tracker.SaveAccessData(outputPath, "yaml", singleFile, filterPages);
+        if (!savedPath.empty())
+        {
+            session.SendResponse("Memory access data saved successfully to " + savedPath + NEWLINE);
+        }
+        else
+        {
+            session.SendResponse("Failed to save memory access data" + std::string(NEWLINE));
+        }
+        return;
+    }
+
+    // Parse command line arguments
+    bool showAll = false;
+    bool resetAfter = false;
+
+    for (const auto& arg : args)
+    {
+        if (arg == "all")
+            showAll = true;
+        else if (arg == "reset")
+            resetAfter = true;
+    }
+
+    // Get the memory access tracker
+    auto* memory = emulator->GetContext()->pMemory;
+    auto& tracker = memory->GetAccessTracker();
+
+    // Get the current counters by summing up all banks
+    uint64_t totalReads = 0;
+    uint64_t totalWrites = 0;
+    uint64_t totalExecutes = 0;
+
+    // Get per-Z80 bank (4 banks of 16KB each)
+    uint64_t bankReads[4] = {0};
+    uint64_t bankWrites[4] = {0};
+    uint64_t bankExecutes[4] = {0};
+
+    for (int bank = 0; bank < 4; bank++)
+    {
+        bankReads[bank] = tracker.GetZ80BankReadAccessCount(bank);
+        bankWrites[bank] = tracker.GetZ80BankWriteAccessCount(bank);
+        bankExecutes[bank] = tracker.GetZ80BankExecuteAccessCount(bank);
+
+        totalReads += bankReads[bank];
+        totalWrites += bankWrites[bank];
+        totalExecutes += bankExecutes[bank];
+    }
+
+    uint64_t totalAccesses = totalReads + totalWrites + totalExecutes;
+
+    // Format the output
+    std::stringstream ss;
+    ss << "Memory Access Counters" << NEWLINE;
+    ss << "=====================" << NEWLINE;
+    ss << "Total Reads:    " << StringHelper::Format("%'llu", totalReads) << NEWLINE;
+    ss << "Total Writes:   " << StringHelper::Format("%'llu", totalWrites) << NEWLINE;
+    ss << "Total Executes: " << StringHelper::Format("%'llu", totalExecutes) << NEWLINE;
+    ss << "Total Accesses: " << StringHelper::Format("%'llu", totalAccesses) << NEWLINE << NEWLINE;
+
+    // Always show Z80 memory page (bank) counters with physical page mapping
+    ss << "Z80 Memory Banks (16KB each):" << NEWLINE;
+    ss << "----------------------------" << NEWLINE;
+
+    const char* bankNames[4] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+
+    // Process each bank
+    for (int bank = 0; bank < 4; bank++)
+    {
+        uint64_t bankTotal = bankReads[bank] + bankWrites[bank] + bankExecutes[bank];
+
+        // Get bank info using helper methods
+        bool isROM = (bank < 2) ? (bank == 0 ? memory->IsBank0ROM() : memory->GetMemoryBankMode(bank) == BANK_ROM)
+                                : false;  // Banks 2-3 are always RAM
+
+        uint16_t page = memory->GetPageForBank(bank);
+        const char* type = isROM ? "ROM" : "RAM";
+        std::string bankName = memory->GetCurrentBankName(bank);
+
+        // Format the output
+        ss << StringHelper::Format("Bank %d (%s) -> %s page: %s", bank, bankNames[bank], type, bankName.c_str())
+           << NEWLINE;
+        ss << StringHelper::Format("  Reads:    %'llu", bankReads[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Writes:   %'llu", bankWrites[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Executes: %'llu", bankExecutes[bank]) << NEWLINE;
+        ss << StringHelper::Format("  Total:    %'llu", bankTotal) << NEWLINE << NEWLINE;
+    }
+
+    // Show all physical pages if requested
+    if (showAll)
+    {
+        ss << "Physical Memory Pages with Activity:" << NEWLINE;
+        ss << "-----------------------------------" << NEWLINE;
+
+        bool foundActivity = false;
+
+        // Check RAM pages (0-255)
+        for (uint16_t page = 0; page < MAX_RAM_PAGES; page++)
+        {
+            uint32_t reads = tracker.GetPageReadAccessCount(page);
+            uint32_t writes = tracker.GetPageWriteAccessCount(page);
+            uint32_t executes = tracker.GetPageExecuteAccessCount(page);
+
+            if (reads > 0 || writes > 0 || executes > 0)
+            {
+                foundActivity = true;
+                ss << StringHelper::Format("RAM Page %d:", page) << NEWLINE;
+                ss << StringHelper::Format("  Reads:    %'u", reads) << NEWLINE;
+                ss << StringHelper::Format("  Writes:   %'u", writes) << NEWLINE;
+                ss << StringHelper::Format("  Executes: %'u", executes) << NEWLINE;
+                ss << StringHelper::Format("  Total:    %'u", reads + writes + executes) << NEWLINE << NEWLINE;
+            }
+        }
+
+        // Check ROM pages (start after RAM, cache, and misc pages)
+        const uint16_t FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+        for (uint16_t page = 0; page < MAX_ROM_PAGES; page++)
+        {
+            uint16_t physicalPage = FIRST_ROM_PAGE + page;
+            uint32_t reads = tracker.GetPageReadAccessCount(physicalPage);
+            uint32_t writes = tracker.GetPageWriteAccessCount(physicalPage);
+            uint32_t executes = tracker.GetPageExecuteAccessCount(physicalPage);
+
+            if (reads > 0 || writes > 0 || executes > 0)
+            {
+                foundActivity = true;
+                ss << StringHelper::Format("ROM Page %d:", page) << NEWLINE;
+                ss << StringHelper::Format("  Reads:    %'u", reads) << NEWLINE;
+                ss << StringHelper::Format("  Writes:   %'u", writes) << NEWLINE;
+                ss << StringHelper::Format("  Executes: %'u", executes) << NEWLINE;
+                ss << StringHelper::Format("  Total:    %'u", reads + writes + executes) << NEWLINE << NEWLINE;
+            }
+        }
+
+        if (!foundActivity)
+        {
+            ss << "No memory access activity detected in any physical page." << NEWLINE;
+        }
+    }
+
+    // Show usage if no arguments provided
+    if (args.empty())
+    {
+        ss << "Usage: memcounters [all] [reset] | save [options]" << NEWLINE;
+        ss << "  all   - Show all physical pages with activity" << NEWLINE;
+        ss << "  reset - Reset counters after displaying" << NEWLINE;
+        ss << "  save  - Save memory access data to files" << NEWLINE;
+        ss << "    Options:" << NEWLINE;
+        ss << "      --single-file, -s     Save to single file" << NEWLINE;
+        ss << "      --output <path>, -o   Output path (default: memory_logs)" << NEWLINE;
+        ss << "      --page <name>, -p     Filter specific pages (e.g., 'RAM 0', 'ROM 2')" << NEWLINE;
+    }
+
+    // Send the response
+    session.SendResponse(ss.str());
+
+    // Reset counters if requested
+    if (resetAfter)
+    {
+        tracker.ResetCounters();
+        session.SendResponse("Memory counters have been reset." + std::string(NEWLINE));
+    }
+}
+
+void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("Error: No emulator selected" + std::string(NEWLINE));
+        return;
+    }
+    auto* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        session.SendResponse("Error: Memory not available" + std::string(NEWLINE));
+        return;
+    }
+    auto& tracker = memory->GetAccessTracker();
+    auto* callTrace = tracker.GetCallTraceBuffer();
+    if (!callTrace)
+    {
+        session.SendResponse("Error: Call trace buffer not available" + std::string(NEWLINE));
+        return;
+    }
+    if (args.empty() || args[0] == "help")
+    {
+        std::ostringstream oss;
+        oss << "calltrace latest [N]   - Show latest N control flow events (default 10)" << NEWLINE;
+        oss << "calltrace save <file> - Save full call trace history to file (binary)" << NEWLINE;
+        oss << "calltrace reset       - Reset call trace buffer" << NEWLINE;
+        oss << "calltrace help        - Show this help message" << NEWLINE;
+        session.SendResponse(oss.str());
+        return;
+    }
+    if (args[0] == "latest")
+    {
+        size_t count = 10;
+        if (args.size() > 1)
+        {
+            try
+            {
+                count = std::stoul(args[1]);
+            }
+            catch (...)
+            {
+            }
+        }
+        auto events = callTrace->GetLatestCold(count);
+        auto hotEvents = callTrace->GetLatestHot(count);
+        std::ostringstream oss;
+        if (!events.empty())
+        {
+            oss << "Latest " << events.size() << " cold control flow events:" << NEWLINE;
+            oss << "Idx   m1_pc   type    target    flags   sp      opcodes        bank0    bank1    bank2    bank3    "
+                   "stack_top         loop_count"
+                << NEWLINE;
+            for (size_t i = 0; i < events.size(); ++i)
+            {
+                const auto& ev = events[i];
+                oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
+
+                // type
+                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+                oss << StringHelper::Format("%-6s   ", typenames[static_cast<int>(ev.type)]);
+                oss << StringHelper::Format("%04X     ", ev.target_addr);
+                oss << StringHelper::Format("%02X      ", (int)ev.flags);
+                oss << StringHelper::Format("%04X    ", ev.sp);
+                // opcodes
+                for (auto b : ev.opcode_bytes)
+                    oss << StringHelper::Format("%02X ", (int)b);
+                oss << std::string(12 - ev.opcode_bytes.size() * 3, ' ');
+                oss << "   ";
+
+                // banks
+                for (int b = 0; b < 4; ++b)
+                {
+                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
+                                                (int)ev.banks[b].page_num);
+                }
+
+                // stack top
+                for (int s = 0; s < 3; ++s)
+                {
+                    if (ev.stack_top[s])
+                        oss << StringHelper::Format("%04X ", ev.stack_top[s]);
+                    else
+                        oss << "     ";
+                }
+
+                oss << std::string(18 - 5 * 3, ' ');
+                oss << StringHelper::Format("   %u", ev.loop_count);
+                oss << NEWLINE;
+            }
+            oss << NEWLINE;
+        }
+        if (!hotEvents.empty())
+        {
+            oss << "Latest " << hotEvents.size() << " hot control flow events:" << NEWLINE;
+            oss << "Idx   m1_pc   type    target    flags   sp      opcodes        bank0    bank1    bank2    bank3    "
+                   "stack_top         loop_count   last_seen_frame"
+                << NEWLINE;
+            for (size_t i = 0; i < hotEvents.size(); ++i)
+            {
+                const auto& hot = hotEvents[i];
+                const auto& ev = hot.event;
+                oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
+                // type
+                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+                oss << StringHelper::Format("%-6s ", typenames[static_cast<int>(ev.type)]);
+                oss << StringHelper::Format("%04X     ", ev.target_addr);
+                oss << StringHelper::Format("%02X     ", (int)ev.flags);
+                oss << StringHelper::Format("%04X    ", ev.sp);
+
+                // opcodes
+                for (auto b : ev.opcode_bytes)
+                    oss << StringHelper::Format("%02X ", (int)b);
+                oss << std::string(12 - ev.opcode_bytes.size() * 3, ' ');
+                oss << "   ";
+                // banks
+                for (int b = 0; b < 4; ++b)
+                {
+                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
+                                                (int)ev.banks[b].page_num);
+                }
+                // stack top
+                for (int s = 0; s < 3; ++s)
+                {
+                    if (ev.stack_top[s])
+                        oss << StringHelper::Format("%04X ", ev.stack_top[s]);
+                    else
+                        oss << "     ";
+                }
+                oss << std::string(18 - 5 * 3, ' ');
+                oss << StringHelper::Format("   %u   %llu", hot.loop_count, hot.last_seen_frame);
+                oss << NEWLINE;
+            }
+            oss << NEWLINE;
+        }
+        session.SendResponse(oss.str());
+        return;
+    }
+    if (args[0] == "save")
+    {
+        // Generate a unique filename with timestamp if not provided
+        std::string filename;
+        if (args.size() > 1)
+        {
+            filename = args[1];
+        }
+        else
+        {
+            auto now = std::chrono::system_clock::now();
+            auto in_time_t = std::chrono::system_clock::to_time_t(now);
+            std::stringstream ss;
+            ss << "calltrace_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S") << ".yaml";
+            filename = ss.str();
+        }
+        
+        // Use CallTraceBuffer's SaveToFile method
+        if (!callTrace->SaveToFile(filename))
+        {
+            session.SendResponse("Failed to create call trace file: " + filename + NEWLINE);
+            return;
+        }
+        session.SendResponse("Call trace saved to " + filename + NEWLINE);
+        return;
+    }
+    if (args[0] == "reset")
+    {
+        callTrace->Reset();
+        session.SendResponse("Call trace buffer reset." + std::string(NEWLINE));
+        return;
+    }
+    if (args[0] == "stats")
+    {
+        size_t cold_count = callTrace->ColdSize();
+        size_t cold_capacity = callTrace->ColdCapacity();
+        size_t hot_count = callTrace->HotSize();
+        size_t hot_capacity = callTrace->HotCapacity();
+        size_t cold_bytes = cold_count * sizeof(Z80ControlFlowEvent);
+        size_t hot_bytes = hot_count * sizeof(HotEvent);
+        auto format_bytes = [](size_t bytes) -> std::string
+        {
+            char buf[32];
+            if (bytes >= 1024 * 1024)
+                snprintf(buf, sizeof(buf), "%.2f MB", bytes / 1024.0 / 1024.0);
+            else if (bytes >= 1024)
+                snprintf(buf, sizeof(buf), "%.2f KB", bytes / 1024.0);
+            else
+                snprintf(buf, sizeof(buf), "%zu B", bytes);
+            return buf;
+        };
+
+        std::ostringstream oss;
+        oss << "CallTraceBuffer stats:" << NEWLINE;
+        oss << "  Cold buffer: " << cold_count << " / " << cold_capacity << "  (" << format_bytes(cold_bytes) << ")"
+            << NEWLINE;
+        oss << "  Hot buffer:  " << hot_count << " / " << hot_capacity << "  (" << format_bytes(hot_bytes) << ")"
+            << NEWLINE;
+
+        // Add was_hot and top 5 loop_count info
+        auto allCold = callTrace->GetAll();
+        size_t was_hot_count = 0;
+        std::vector<uint32_t> loop_counts;
+        for (const auto& ev : allCold)
+        {
+            if (ev.was_hot) was_hot_count++;
+            loop_counts.push_back(ev.loop_count);
+        }
+
+        std::sort(loop_counts.begin(), loop_counts.end(), std::greater<uint32_t>());
+        oss << "  Cold buffer: " << was_hot_count << " events were previously hot (was_hot=true)" << NEWLINE;
+        oss << "  Top 5 loop_count values in cold buffer: ";
+        for (size_t i = 0; i < std::min<size_t>(5, loop_counts.size()); ++i)
+        {
+            oss << loop_counts[i];
+            if (i + 1 < std::min<size_t>(5, loop_counts.size())) oss << ", ";
+        }
+        oss << NEWLINE;
+
+        session.SendResponse(oss.str());
+        return;
+    }
+    session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
 }

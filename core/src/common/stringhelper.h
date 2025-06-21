@@ -34,43 +34,167 @@ public:
     static std::string ToUpper(const std::string& str);
     static std::string ToLower(const std::string& str);
 
+    /// @brief Convert an integer to a hex string (zero-padded, no prefix).
+    /// Fast path for 8/16/32/64-bit integers, falls back to stringstream for other types.
+    /// @tparam T Integer type (uint8_t, int8_t, uint16_t, int16_t, uint32_t, int32_t, uint64_t, int64_t, etc.)
+    /// @param n Value to convert.
+    /// @param upperCase If true, use uppercase hex digits (default false).
+    /// @return std::string Hex string (zero-padded, no prefix).
     template <typename T>
     static std::string ToHex(T n, bool upperCase = false)
     {
-        std::stringstream ss;
-
-        ss << std::setfill('0') << std::setw(sizeof(T) * 2) << std::hex;
-
-        if (upperCase)
+        const char* hex = upperCase ? "0123456789ABCDEF" : "0123456789abcdef";
+        if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
         {
-            ss << std::uppercase;
+            char buf[3];
+            uint8_t val = static_cast<uint8_t>(n);
+            buf[0] = hex[(val >> 4) & 0xF];
+            buf[1] = hex[val & 0xF];
+            buf[2] = 0;
+            return std::string(buf);
         }
-
-        // char, unsigned char and derived types (like int8_t and uint8_t are not by default treated as numbers by stringstream
-        if (typeid(T) == typeid(char) || typeid(T) == typeid(unsigned char) || sizeof(T) == 1)
+        else if constexpr (std::is_same_v<T, uint16_t> || std::is_same_v<T, int16_t>)
         {
-            ss << static_cast<int>(n & 0xFF);
+            char buf[5];
+            uint16_t val = static_cast<uint16_t>(n);
+            buf[0] = hex[(val >> 12) & 0xF];
+            buf[1] = hex[(val >> 8) & 0xF];
+            buf[2] = hex[(val >> 4) & 0xF];
+            buf[3] = hex[val & 0xF];
+            buf[4] = 0;
+            return std::string(buf);
+        }
+        else if constexpr (std::is_same_v<T, uint32_t> || std::is_same_v<T, int32_t>)
+        {
+            char buf[9];
+            uint32_t val = static_cast<uint32_t>(n);
+            buf[0] = hex[(val >> 28) & 0xF];
+            buf[1] = hex[(val >> 24) & 0xF];
+            buf[2] = hex[(val >> 20) & 0xF];
+            buf[3] = hex[(val >> 16) & 0xF];
+            buf[4] = hex[(val >> 12) & 0xF];
+            buf[5] = hex[(val >> 8) & 0xF];
+            buf[6] = hex[(val >> 4) & 0xF];
+            buf[7] = hex[val & 0xF];
+            buf[8] = 0;
+            return std::string(buf);
+        }
+        else if constexpr (std::is_same_v<T, uint64_t> || std::is_same_v<T, int64_t>)
+        {
+            char buf[17];
+            uint64_t val = static_cast<uint64_t>(n);
+            buf[0]  = hex[(val >> 60) & 0xF];
+            buf[1]  = hex[(val >> 56) & 0xF];
+            buf[2]  = hex[(val >> 52) & 0xF];
+            buf[3]  = hex[(val >> 48) & 0xF];
+            buf[4]  = hex[(val >> 44) & 0xF];
+            buf[5]  = hex[(val >> 40) & 0xF];
+            buf[6]  = hex[(val >> 36) & 0xF];
+            buf[7]  = hex[(val >> 32) & 0xF];
+            buf[8]  = hex[(val >> 28) & 0xF];
+            buf[9]  = hex[(val >> 24) & 0xF];
+            buf[10] = hex[(val >> 20) & 0xF];
+            buf[11] = hex[(val >> 16) & 0xF];
+            buf[12] = hex[(val >> 12) & 0xF];
+            buf[13] = hex[(val >> 8) & 0xF];
+            buf[14] = hex[(val >> 4) & 0xF];
+            buf[15] = hex[val & 0xF];
+            buf[16] = 0;
+            return std::string(buf);
         }
         else
         {
-            ss << n;
+            // Slow but universal fallback
+            std::stringstream ss;
+            ss << std::setfill('0') << std::setw(sizeof(T) * 2) << std::hex;
+            if (upperCase)
+                ss << std::uppercase;
+            ss << static_cast<typename std::make_unsigned<T>::type>(n);
+            return ss.str();
         }
-
-        std::string result = ss.str();
-
-        return result;
     }
 
+    /// @brief Convert an integer to a hex string with a prefix (e.g., "#FF", "#1234").
+    ///
+    /// Fast path for 8/16/32/64-bit integers, falls back to stringstream for other types.
+    ///
+    /// @tparam T Integer type (uint8_t, int8_t, uint16_t, int16_t, uint32_t, int32_t, uint64_t, int64_t, etc.)
+    /// @param n Value to convert.
+    /// @param prefix Prefix string (default "#").
+    /// @param upperCase If true, use uppercase hex digits (default true).
+    /// @return std::string Hex string with prefix.
     template <typename T>
-    static std::string ToHexWithPrefix(T n, const char* prefix = "0x", bool upperCase = true)
+    static std::string ToHexWithPrefix(T n, const char* prefix = "#", bool upperCase = true)
     {
-        std::stringstream ss;
-
-        ss << prefix << ToHex(n, upperCase);
-
-        std::string result = ss.str();
-
-        return result;
+        const char* hex = upperCase ? "0123456789ABCDEF" : "0123456789abcdef";
+        if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
+        {
+            char buf[4];
+            buf[0] = prefix[0];
+            uint8_t val = static_cast<uint8_t>(n);
+            buf[1] = hex[(val >> 4) & 0xF];
+            buf[2] = hex[val & 0xF];
+            buf[3] = 0;
+            return std::string(buf);
+        }
+        else if constexpr (std::is_same_v<T, uint16_t> || std::is_same_v<T, int16_t>)
+        {
+            char buf[6];
+            buf[0] = prefix[0];
+            uint16_t val = static_cast<uint16_t>(n);
+            buf[1] = hex[(val >> 12) & 0xF];
+            buf[2] = hex[(val >> 8) & 0xF];
+            buf[3] = hex[(val >> 4) & 0xF];
+            buf[4] = hex[val & 0xF];
+            buf[5] = 0;
+            return std::string(buf);
+        }
+        else if constexpr (std::is_same_v<T, uint32_t> || std::is_same_v<T, int32_t>)
+        {
+            char buf[10];
+            buf[0] = prefix[0];
+            uint32_t val = static_cast<uint32_t>(n);
+            buf[1] = hex[(val >> 28) & 0xF];
+            buf[2] = hex[(val >> 24) & 0xF];
+            buf[3] = hex[(val >> 20) & 0xF];
+            buf[4] = hex[(val >> 16) & 0xF];
+            buf[5] = hex[(val >> 12) & 0xF];
+            buf[6] = hex[(val >> 8) & 0xF];
+            buf[7] = hex[(val >> 4) & 0xF];
+            buf[8] = hex[val & 0xF];
+            buf[9] = 0;
+            return std::string(buf);
+        }
+        else if constexpr (std::is_same_v<T, uint64_t> || std::is_same_v<T, int64_t>)
+        {
+            char buf[18];
+            buf[0] = prefix[0];
+            uint64_t val = static_cast<uint64_t>(n);
+            buf[1]  = hex[(val >> 60) & 0xF];
+            buf[2]  = hex[(val >> 56) & 0xF];
+            buf[3]  = hex[(val >> 52) & 0xF];
+            buf[4]  = hex[(val >> 48) & 0xF];
+            buf[5]  = hex[(val >> 44) & 0xF];
+            buf[6]  = hex[(val >> 40) & 0xF];
+            buf[7]  = hex[(val >> 36) & 0xF];
+            buf[8]  = hex[(val >> 32) & 0xF];
+            buf[9]  = hex[(val >> 28) & 0xF];
+            buf[10] = hex[(val >> 24) & 0xF];
+            buf[11] = hex[(val >> 20) & 0xF];
+            buf[12] = hex[(val >> 16) & 0xF];
+            buf[13] = hex[(val >> 12) & 0xF];
+            buf[14] = hex[(val >> 8) & 0xF];
+            buf[15] = hex[(val >> 4) & 0xF];
+            buf[16] = hex[val & 0xF];
+            buf[17] = 0;
+            return std::string(buf);
+        }
+        else
+        {
+            std::stringstream ss;
+            ss << prefix << ToHex(n, upperCase);
+            return ss.str();
+        }
     }
 
     static std::string FormatWithThousandsDelimiter(int64_t n);

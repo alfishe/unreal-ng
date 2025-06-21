@@ -4,6 +4,7 @@
 #include "emulator/platform.h"
 #include "emulator/emulatorcontext.h"
 
+class MemoryAccessTracker;
 class Z80;
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
@@ -37,10 +38,6 @@ enum MemoryBitsEnum : uint8_t
     MEMBITS_R = 0x01,		// Read
     MEMBITS_W = 0x02,		// Write
     MEMBITS_X = 0x04,		// Execute
-    MEMBITS_BPR = 0x10,		// Breakpoint Read
-    MEMBITS_BPW = 0x20,		// Breakpoint Write
-    MEMBITS_BPX = 0x40,		// Breakpoint Execute
-    MEMBITS_BPC = 0x80		// Breakpoint Conditional
 };
 
 struct MemoryPageDescriptor
@@ -74,6 +71,8 @@ struct MemoryInterface
 
 class Memory
 {
+    friend class PortDecoder; // Allow PortDecoder to access _memoryAccessTracker
+
     /// region <ModuleLogger definitions for Module/Submodule>
 protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_MEMORY;
@@ -110,27 +109,9 @@ protected:
     uint8_t* _bank_read[4];				// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
     uint8_t* _bank_write[4];			// Memory pointers to RAM/ROM/Cache 16k blocks mapped to four Z80 memory windows
 
-    // Access flags / Counters
-    size_t _memZ80ReadCounters[PAGE_SIZE * 4];              // Read access counters for each Z80 address
-    size_t _memZ80WriteCounters[PAGE_SIZE * 4];             // Write access counters for each Z80 address
-    size_t _memZ80ExecuteCounters[PAGE_SIZE * 4];           // Execute access counters for each Z80 address
-
-    size_t _memAccessReadCounters[PAGE_SIZE * MAX_PAGES];   // Read access counters for all memory available
-    size_t _memAccessWriteCounters[PAGE_SIZE * MAX_PAGES];  // Write access counters for all memory available
-    size_t _memAccessExecuteCounters[PAGE_SIZE * MAX_PAGES];// Execute access counters for all memory available
-
-    size_t _memPageReadCounters[MAX_PAGES];                 // Read access counters aggregated per each memory page
-    size_t _memPageWriteCounters[MAX_PAGES];                // Write access counters aggregated per each memory page
-    size_t _memPageExecuteCounters[MAX_PAGES];              // Execute access counters aggregated per each memory page
-
-    uint8_t _memZ80BankReadMarks;                           // Per-Z80-bank read access flags
-    uint8_t _memZ80BankWriteMarks;                          // Per-Z80-bank write access flags
-    uint8_t _memZ80BankExecuteMarks;                        // Per-Z80-bank execute access flags
-
-    uint8_t _memPageReadMarks[MAX_PAGES / 8];               // Per-page read access flags
-    uint8_t _memPageWriteMarks[MAX_PAGES / 8];              // Per-page write access flags
-    uint8_t _memPageExecuteMarks[MAX_PAGES / 8];            // Per-page execute access flags
-
+    // Memory access tracker
+    MemoryAccessTracker* _memoryAccessTracker = nullptr;     // Flexible memory access tracking system
+    
     bool _isPage0ROM48k;
     bool _isPage0ROM128k;
     bool _isPage0ROMDOS;
@@ -246,22 +227,6 @@ public:
 
     /// endregion  </Address helper methods>
 
-    /// region <Counters>
-public:
-    void ResetCounters();
-
-    size_t GetZ80BankTotalAccessCount(uint8_t bank);
-    size_t GetZ80BankReadAccessCount(uint8_t bank);
-    size_t GetZ80BankWriteAccessCount(uint8_t bank);
-    size_t GetZ80BankExecuteAccessCount(uint8_t bank);
-
-    size_t GetZ80BankTotalAccessCountExclScreen(uint8_t bank);
-    size_t GetZ80BankReadAccessCountExclScreen(uint8_t bank);
-    size_t GetZ80BankWriteAccessCountExclScreen(uint8_t bank);
-    size_t GetZ80BankExecuteAccessCountExclScreen(uint8_t bank);
-
-    /// endregion </Counters>
-
     // Atomic internal methods (but accessible for testing purposes)
 public:
     void DefaultBanksFor48k();
@@ -278,6 +243,10 @@ public:
     std::string DumpMemoryBankInfo();
     std::string DumpAllMemoryRegions();
     /// endregion <Debug methods>
+
+    /// region <Memory access tracking>
+    inline MemoryAccessTracker& GetAccessTracker() { return *_memoryAccessTracker; }
+    /// endregion </Memory access tracking>
 };
 
 //
@@ -296,5 +265,14 @@ public:
     using Memory::_cacheBase;
     using Memory::_miscBase;
     using Memory::_romBase;
+
+    using Memory::_memoryAccessTracker;
+    using Memory::_isPage0ROM48k;
+    using Memory::_isPage0ROM128k;
+    using Memory::_isPage0ROMDOS;
+    using Memory::_isPge0ROMService;
+    using Memory::_bank_mode;
+    using Memory::_bank_read;
+    using Memory::_bank_write;
 };
 #endif // _CODE_UNDER_TEST
