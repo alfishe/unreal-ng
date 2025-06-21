@@ -697,7 +697,7 @@ Z80OPCODE op_76(Z80 *cpu) { // halt
    if (!cpu->halted)
        cpu->haltpos = cpu->t;
 
-   cpu->pc = (cpu->pc - 1) & 0xFFFF;
+   cpu->pc--;  // Repeating execution until RESET, INT or NMI
    cpu->halted = 1;
    cpu->halt_cycle = 0;
 }

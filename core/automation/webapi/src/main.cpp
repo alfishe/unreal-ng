@@ -7,9 +7,12 @@ int main(int argc, char **argv)
     LOG_INFO << "WebSocket endpoint: ws://localhost:8090/api/v1/websocket";
 
 
-    // Note: Drogon automatically registers controllers like EmulatorWebSocket
-    // if they use macros like WS_PATH_ADD and linked.
-    drogon::app().setLogPath("./")
+    // Note: Drogon automatically register controllers like EmulatorWebSocket
+    // if they use macros like WS_PATH_ADD and .cpp file linked.
+    drogon::app()
+        // .setLogPath("./")
+        .setLogPath("") // Empty path disables logging
+        .setMaxFiles(5)
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
         .addListener("0.0.0.0", 8090)
         .setThreadNum(8)

@@ -1,9 +1,8 @@
 #pragma once
-#include "stdafx.h"
-
 #include "emulator/cpu/cpulogic.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "stdafx.h"
 
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
 extern uint8_t* direct_registers[8];
@@ -20,8 +19,8 @@ struct Z80Registers
         uint32_t tt;
         struct
         {
-                unsigned t_l : 8;
-                unsigned t : 24;
+            unsigned t_l : 8;
+            unsigned t : 24;
         };
     };
 
@@ -31,8 +30,8 @@ struct Z80Registers
         uint16_t pc;
         struct
         {
-                uint8_t pcl;
-                uint8_t pch;
+            uint8_t pcl;
+            uint8_t pch;
         };
     };
 
@@ -74,35 +73,35 @@ struct Z80Registers
     union
     {
         uint32_t int_flags;
-            struct
-            {
-                uint8_t r_hi;
-                uint8_t iff1;	// Interrupt enable flip-flop 1. Disables interrupts from being accepted
-                uint8_t iff2;	// Interrupt enable flip-flop 2. Temporary storage location for IFF1
-                uint8_t halted;	// CPU halted
-            };
-	};
+        struct
+        {
+            uint8_t r_hi;
+            uint8_t iff1;    // Interrupt enable flip-flop 1. Disables interrupts from being accepted
+            uint8_t iff2;    // Interrupt enable flip-flop 2. Temporary storage location for IFF1
+            uint8_t halted;  // CPU halted
+        };
+    };
 
     /*------------------------------*/
     union
     {
         uint16_t bc;
-            struct
-            {
-                uint8_t c;
-                uint8_t b;
-            };
-	};
+        struct
+        {
+            uint8_t c;
+            uint8_t b;
+        };
+    };
 
     union
     {
         uint16_t de;
-            struct
-            {
-                uint8_t e;
-                uint8_t d;
-            };
-	};
+        struct
+        {
+            uint8_t e;
+            uint8_t d;
+        };
+    };
 
     union
     {
@@ -128,12 +127,12 @@ struct Z80Registers
     union
     {
         uint16_t ix;
-            struct
-            {
-                uint8_t xl;
-                uint8_t xh;
-            };
-	};
+        struct
+        {
+            uint8_t xl;
+            uint8_t xh;
+        };
+    };
     union
     {
         uint16_t iy;
@@ -188,7 +187,7 @@ struct Z80Registers
 
     union
     {
-        uint16_t memptr; // undocumented register
+        uint16_t memptr;  // undocumented register
         struct
         {
             uint8_t meml;
@@ -196,14 +195,14 @@ struct Z80Registers
         };
     };
 
-    uint32_t cycle_count;       // Counter to track cycle accuracy
-    uint32_t tStatesPerFrame;   // How many t-states already spent during current frame
+    uint32_t cycle_count;      // Counter to track cycle accuracy
+    uint32_t tStatesPerFrame;  // How many t-states already spent during current frame
 
     uint16_t eipos;
     uint16_t haltpos;
 
     /*------------------------------*/
-    uint8_t im;				// Interrupt mode [IM0|IM1|IM2]
+    uint8_t im;  // Interrupt mode [IM0|IM1|IM2]
     bool nmi_in_progress;
 };
 
@@ -211,7 +210,7 @@ struct Z80Registers
 
 struct Z80DecodedOperation
 {
-    union                                           // Opcode prefix (if available)
+    union  // Opcode prefix (if available)
     {
         uint16_t prefix;
         struct
@@ -221,7 +220,7 @@ struct Z80DecodedOperation
         };
     };
 
-    uint8_t opcode;                                 // Opcode fetched during Z80 M1 cycle
+    uint8_t opcode;  // Opcode fetched during Z80 M1 cycle
 
     union
     {
@@ -236,17 +235,16 @@ struct Z80DecodedOperation
 
 struct Z80State : public Z80Registers, public Z80DecodedOperation
 {
-    uint32_t z80_index; 							// CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
+    uint32_t z80_index;  // CPU Enumeration index (for multiple Z80 in system, like Spectrum with GS/NGS)
 
-    uint64_t clock_count;                           // Monotonically increasing clock edge counter. Doesn't depend on any rates recalculation
+    uint64_t clock_count;  // Monotonically increasing clock edge counter. Doesn't depend on any rates recalculation
 
-    uint16_t prev_pc;                               // PC on previous cycle
-    uint16_t m1_pc;                                 // PC when M1 cycle started
+    uint16_t prev_pc;  // PC on previous cycle
+    uint16_t m1_pc;    // PC when M1 cycle started
 
-
-    unsigned rate;									// Rate for Z80 speed recalculations. 3.5MHz -> 256, 7MHz -> 128
-    bool vm1;										// Halt handling type (True - ...; False - ...)
-    uint8_t outc0;                                  // What to use when 'out (c), 0' is called
+    unsigned rate;  // Rate for Z80 speed recalculations. 3.5MHz -> 256, 7MHz -> 128
+    bool vm1;       // Halt handling type (True - ...; False - ...)
+    uint8_t outc0;  // What to use when 'out (c), 0' is called
 
     uint16_t last_branch;
     unsigned trace_curs, trace_top, trace_mode;
@@ -255,39 +253,23 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     uint16_t nextpc;
 
     // Debugger related
-    uint8_t isDebugMode;									// Active breakpoints
-    uint8_t dbgbreak;
-    unsigned dbg_stophere;
-    unsigned dbg_stopsp;
-    unsigned dbg_loop_r1;
-    unsigned dbg_loop_r2;
+    uint8_t isDebugMode;  // Active breakpoints
 
-    #define MAX_CBP 16								// Up to 16 conditional breakpoints
-    unsigned cbp[MAX_CBP][128];						// Conditional breakpoints data
-    unsigned cbpn;
-    int64_t debug_last_t;							// Used to find time delta
-
-    int cycles_to_capture = 0;                      // [NEW] Number of cycles to capture after trigger
-
+    int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 
     // Interrupts / HALT
-    bool int_pending;							    // INT pending
-    bool int_gate;									// External interrupts gate (True - enabled; False - disabled)
+    bool int_pending;  // INT pending
+    bool int_gate;     // External interrupts gate (True - enabled; False - disabled)
     unsigned halt_cycle;
 
     // CPU cycles counter
-    uint32_t tpi;									// Ticks per interrupt (CPU cycles per video frame)
+    uint32_t tpi;  // Ticks per interrupt (CPU cycles per video frame)
     uint32_t trpc[40];
 
     // Memory interfacing
-    const MemoryInterface* FastMemIf;				// Fast memory interface (max performance)
-    const MemoryInterface* DbgMemIf;				// Debug memory interface (supports memory access breakpoints)
-    const MemoryInterface* MemIf;					// Currently selected memory interface (Fast|Debug)
-
-    // TS-Conf specific
-    // TODO: move to appropriate module
-    uint32_t tscache_addr[TS_CACHE_SIZE];
-    uint8_t  tscache_data[TS_CACHE_SIZE];
+    const MemoryInterface* FastMemIf;  // Fast memory interface (max performance)
+    const MemoryInterface* DbgMemIf;   // Debug memory interface (supports memory access breakpoints)
+    const MemoryInterface* MemIf;      // Currently selected memory interface (Fast|Debug)
 };
 
 /// endregion </Structures>
@@ -306,7 +288,8 @@ protected:
     EmulatorContext* _context;
     Memory* _memory;
 
-    uint8_t _trashRegister;        // Redirect DDCB operation writes with no destination registers here (related to op_ddcb.cpp and direct_registers[6] unused pointer)
+    uint8_t _trashRegister;  // Redirect DDCB operation writes with no destination registers here (related to
+                             // op_ddcb.cpp and direct_registers[6] unused pointer)
 
     bool _pauseRequested = false;
 
@@ -321,8 +304,8 @@ public:
 
     /// region <Constructors / Destructors>
 public:
-    Z80() = delete;					// Disable default constructor. C++ 11 feature
-    Z80(EmulatorContext* context);	// Only constructor with context param is allowed
+    Z80() = delete;                 // Disable default constructor. C++ 11 feature
+    Z80(EmulatorContext* context);  // Only constructor with context param is allowed
     virtual ~Z80();
     /// endregion </Constructors / Destructors>
 
@@ -338,17 +321,16 @@ public:
     void wd(uint16_t addr, uint8_t val);
     /// endregion </Z80 lifecycle>
 
-
     // Direct memory access methods
-    uint8_t DirectRead(uint16_t addr);				// Direct emulated memory MemoryRead (For debugger use)
-    void DirectWrite(uint16_t addr, uint8_t val);	// Direct emulated memory MemoryWrite (For debugger use)
+    uint8_t DirectRead(uint16_t addr);             // Direct emulated memory MemoryRead (For debugger use)
+    void DirectWrite(uint16_t addr, uint8_t val);  // Direct emulated memory MemoryWrite (For debugger use)
 
     // Z80 CPU control methods
-    void Reset();		// Z80 chip reset
+    void Reset();  // Z80 chip reset
     void Pause();
     void Resume();
 
-    void Z80Step(bool skipBreakpoints = false);		// Single opcode execution
+    void Z80Step(bool skipBreakpoints = false);  // Single opcode execution
 
 public:
     void Z80FrameCycle();
@@ -357,28 +339,26 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
-    inline void ProcessInterrupts(bool int_occured,	// Take care about incoming interrupts
-    unsigned int_start,
-    unsigned int_end);
+    inline void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
+                                  unsigned int_start, unsigned int_end);
 
     // Event handlers
 public:
     void HandleNMI(ROMModeEnum mode);
     void HandleINT(uint8_t vector = 0xFF);
-    void OnCPUStep();			                // Trigger state updates after each CPU command cycle
-
+    void OnCPUStep();  // Trigger state updates after each CPU command cycle
 
     // Debugger interfacing
 public:
     void ProcessDebuggerEvents();
     void WaitUntilResumed();
-    void (*callbackM1_Prefetch)(); // Corrected function pointer declaration
-    void (*callbackM1_Postfetch)(); // Corrected function pointer declaration
+    void (*callbackM1_Prefetch)();   // Corrected function pointer declaration
+    void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 
-    void (*callbackCPUCycleFinished)(); // Corrected function pointer declaration
+    void (*callbackCPUCycleFinished)();  // Corrected function pointer declaration
 
 protected:
-    __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);	// Increment cycle counters
+    __forceinline void IncrementCPUCyclesCounter(uint8_t cycles);  // Increment cycle counters
 
     // TSConf specific
     // TODO: Move to plugin
@@ -388,7 +368,7 @@ protected:
     void ts_line_int(bool vdos);
     void ts_dma_int(bool vdos);
 
-	/// region <Debug methods>
+    /// region <Debug methods>
 public:
     void DumpCurrentState();
     std::string DumpZ80State();

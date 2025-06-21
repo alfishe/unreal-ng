@@ -3,11 +3,20 @@
 
 #include "emulator/platform.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
+#include "emulator/memory/calltrace.h"
+#include "debugger/disassembler/z80disasm.h"
+#include <string>
+#include <vector>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
+#include <algorithm>
 
 class Z80;
-
-// Forward declaration
-class Memory;
 
 // Access types for memory regions
 enum class AccessType : uint8_t
@@ -86,6 +95,8 @@ struct TrackingSegment
     std::unordered_map<std::string, AccessStats> portStats;    // port name -> stats
 };
 
+class CallTraceBuffer;
+
 // Class to track memory and port accesses
 class MemoryAccessTracker
 {
@@ -137,6 +148,14 @@ private:
     std::vector<uint8_t> _pageReadMarks;        // Size: MAX_PAGES / 8
     std::vector<uint8_t> _pageWriteMarks;       // Size: MAX_PAGES / 8
     std::vector<uint8_t> _pageExecuteMarks;     // Size: MAX_PAGES / 8
+    
+    std::unique_ptr<CallTraceBuffer> _callTraceBuffer;
+    std::unique_ptr<Z80Disassembler> _disassembler;
+    
+    // HALT detection fields
+    uint16_t _lastExecutedAddress = 0xFFFF;
+    uint32_t _haltExecutionCount = 0;
+    static constexpr uint32_t MAX_HALT_EXECUTIONS = 1;  // Only count the first HALT execution
     /// endregion </Fields>
     
     /// region <Constructors / Destructors>
@@ -202,6 +221,12 @@ public:
     const std::vector<TrackingSegment>& GetAllSegments() const;
     /// endregion </Segmented Tracking>
     
+    /// region <HALT Detection>
+public:
+    // Reset HALT detection when PC changes (called from Z80 when PC changes)
+    void ResetHaltDetection(uint16_t newPC);
+    /// endregion </HALT Detection>
+    
     /// region <Access Tracking>
 public:
     // Track memory read access
@@ -261,6 +286,17 @@ public:
     // @return True if any access was detected in the range
     bool HasActivity(uint16_t start, uint16_t end) const;
     
+    /// Save memory access data
+    /// @param outputPath Output file or directory path
+    /// @param format Output format ("yaml" only supported for now)
+    /// @param singleFile If true, saves everything in one file; if false, uses separate files in a subfolder
+    /// @param filterPages Optional list of specific pages to include (empty = all)
+    /// @return true if successful, false on error
+    std::string SaveAccessData(const std::string& outputPath,
+                       const std::string& format = "yaml",
+                       bool singleFile = false,
+                       const std::vector<std::string>& filterPages = {});
+    
     /// endregion </Statistics and Reporting>
     
     /// region <Helper Methods>
@@ -288,5 +324,18 @@ private:
     
     // Add a caller to the caller tracking map with limit enforcement
     void AddToCallerMap(std::unordered_map<uint16_t, uint32_t>& map, uint16_t callerAddress, uint32_t maxEntries);
+    
+    // Helper methods for saving access data
+    void SaveMemoryLayout(std::ostream& out);
+    void SavePageSummaries(std::ostream& out, const std::vector<std::string>& filterPages);
+    bool SaveDetailedAccessData(const std::filesystem::path& dirPath, const std::vector<std::string>& filterPages);
+    void SaveDetailedAccessData(std::ostream& out, const std::vector<std::string>& filterPages);
+    void SaveSinglePageAccessData(std::ostream& out, uint16_t page, const std::string& indent = "");
+    std::string GetBankPageName(uint8_t bank) const;
     /// endregion </Helper Methods>
+
+public:
+    // Call trace API
+    CallTraceBuffer* GetCallTraceBuffer();
+    void LogControlFlowEvent(const Z80ControlFlowEvent& event);
 };

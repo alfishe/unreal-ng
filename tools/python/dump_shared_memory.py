@@ -8,13 +8,12 @@ into separate files, organized by memory region type (ROM, RAM, CACHE, MISC).
 
 import os
 import sys
-import time
 import argparse
 import psutil
 import mmap
 import hashlib
-import subprocess
 import platform
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, BinaryIO
 
@@ -786,8 +785,11 @@ def dump_shared_memory(output_dir: str, shm: mmap.mmap, skip_empty: bool = True,
 
 def main() -> int:
     """Main function."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_folder = f"memory_dump_{timestamp}"
+
     parser = argparse.ArgumentParser(description='Dump ZX-Spectrum emulator memory to files')
-    parser.add_argument('-o', '--output', default='memory_dump',
+    parser.add_argument('-o', '--output', default=output_folder,
                       help='Output directory (default: memory_dump)')
     parser.add_argument('--no-screens', action='store_true',
                       help='Do not extract screen images')
