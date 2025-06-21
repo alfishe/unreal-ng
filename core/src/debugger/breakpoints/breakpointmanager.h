@@ -5,6 +5,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 #include <map>
+#include <unordered_map>
 
 /// region <Types>
 
@@ -95,10 +96,9 @@ struct BreakpointRangeDescription
     std::string note;                           // Annotation for the breakpoint
 };
 
-typedef std::map<uint32_t, BreakpointDescriptor*> BreakpointMapByAddress;
-typedef std::map<uint16_t, BreakpointDescriptor*> BreakpointMapByPort;
+typedef std::unordered_map<uint32_t, BreakpointDescriptor*> BreakpointMapByAddress;
+typedef std::unordered_map<uint16_t, BreakpointDescriptor*> BreakpointMapByPort;
 typedef std::map<uint16_t, BreakpointDescriptor*> BreakpointMapByID;
-
 typedef std::map<uint8_t, BreakpointMapByAddress> BreakpointMapByBank;
 
 /// endregion </Types>
