@@ -23,6 +23,7 @@
 #include "logviewer/logwindow.h"
 #include "widgets/devicescreen.h"
 #include "emulator/soundmanager.h"
+#include "ui_mainwindow.h"
 
 #ifdef ENABLE_AUTOMATION
     // Avoid name conflicts between Python and Qt "slot"
@@ -31,6 +32,7 @@
     #define slots Q_SLOTS
 #endif // ENABLE_AUTOMATION
 
+class DockingManager;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -138,5 +140,7 @@ private:
     
     // Last directory used for file operations
     QString _lastDirectory;
+
+    DockingManager* _dockingManager = nullptr;
 };
 

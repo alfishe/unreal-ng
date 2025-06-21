@@ -11,6 +11,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/platform.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/ports/portdecoder.h"
 #include <cassert>
 
@@ -168,6 +169,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     Emulator& emulator = *_context->pEmulator;
     Z80& z80 = *_context->pCore->GetZ80();
     BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    
     uint16_t breakpointID = brk.HandleMemoryRead(addr);
     if (breakpointID != BRK_INVALID)
     {
@@ -621,6 +623,12 @@ void Memory::UnmapMemory()
         _mappedMemoryFilepath.clear();
     }
 
+#else
+    if (_memory)
+    {
+        delete[] _memory;
+        _memory = nullptr;
+    }
 #endif // ENABLE_MEMORY_MAPPING
 }
 

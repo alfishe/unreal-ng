@@ -3,6 +3,7 @@
 #include <stdafx.h>
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/platform.h"
+#include "emulator/io/fdc/fdc.h"
 
 class EmulatorContext;
 class DiskImage;
@@ -94,7 +95,7 @@ public:
     };
 
     int8_t getTrack() { return _track; };
-    void setTrack(int8_t track) { _track = track; };
+    void setTrack(int8_t track) { _track = track > MAX_CYLINDERS ? MAX_CYLINDERS : track; };
 
     bool isTrack00() { return _track == 0; }
     bool isIndex() { return _index; }

@@ -307,8 +307,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         }
 
         // Ensure address is 4 digits with leading zeros
-        std::string formattedAddress =
-            StringHelper::ToUpper(StringHelper::ToHexWithPrefix(instructionAddress, ""));
+        std::string formattedAddress = StringHelper::ToUpper(StringHelper::ToHex(instructionAddress));
         if (formattedAddress.length() < 4)
         {
             formattedAddress = std::string(4 - formattedAddress.length(), '0') + formattedAddress;
@@ -367,7 +366,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
         return;
     }
 
-    try {
+    try
+    {
         // Convert to QString and enable HTML formatting with fixed-width font
         QString htmlContent = QString(
                                   "<html><head><style>"

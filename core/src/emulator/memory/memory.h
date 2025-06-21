@@ -3,8 +3,8 @@
 
 #include "emulator/platform.h"
 #include "emulator/emulatorcontext.h"
-#include "memoryaccesstracker.h"
 
+class MemoryAccessTracker;
 class Z80;
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf

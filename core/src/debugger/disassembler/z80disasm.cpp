@@ -613,7 +613,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 {
     { OF_NONE,  8, 0, 0, "nop" },                           // 0x00
     { OF_MWORD, 14, 0, 0, "ld bc,:2" },                     // 0x01
-    { OF_NONE, 11, 0, 0, "ld bc,(a)" },                     // 0x02
+    { OF_NONE, 11, 0, 0, "ld (bc),a" },                     // 0x02
     { OF_NONE, 10, 0, 0, "inc bc" },                        // 0x03
     { OF_NONE,  8, 0, 0, "inc b" },                         // 0x04
     { OF_NONE,  8, 0, 0, "dec b" },                         // 0x05
@@ -621,7 +621,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "rlca" },                          // 0x07
     { OF_NONE,  8, 0, 0, "ex af,af'" },                     // 0x08
     { OF_NONE, 15, 0, 0, "add ix,bc" },                     // 0x09
-    { OF_NONE, 11, 0, 0, "ld a,(bc)" },                     // 0x0A
+    { OF_INDIRECT, 11, 0, 0, "ld a,(bc)" },                 // 0x0A
     { OF_NONE, 10, 0, 0, "dec bc" },                        // 0x0B
     { OF_NONE,  8, 0, 0, "inc c" },                         // 0x0C
     { OF_NONE,  8, 0, 0, "dec c" },                         // 0x0D
@@ -630,7 +630,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
 
     { OF_RELJUMP | OF_CONDITION | OF_MBYTE | OF_DJNZ, 0, 17, 12, "djnz :1" },   // 0x10
     { OF_MWORD, 14, 0, 0, "ld de,:2" },                     // 0x11
-    { OF_DISP | OF_MWORD, 11, 0, 0, "ld (de),:2" },                             // 0x12
+    { OF_INDIRECT, 11, 0, 0, "ld (de),a" },                 // 0x12
     { OF_NONE, 10, 0, 0, "inc de" },                        // 0x13
     { OF_NONE,  8, 0, 0, "inc d" },                         // 0x14
     { OF_NONE,  8, 0, 0, "dec d" },                         // 0x15
@@ -638,7 +638,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_NONE,  8, 0, 0, "rla" },                           // 0x17
     { OF_RELJUMP | OF_MBYTE,  16, 0, 0, "jr :1" },          // 0x18
     { OF_NONE,  15, 0, 0, "add ix,de" },                    // 0x19
-    { OF_NONE,  11, 0, 0, "ld a,(de)" },                    // 0x1A
+    { OF_INDIRECT,  11, 0, 0, "ld a,(de)" },                // 0x1A
     { OF_NONE,  10, 0, 0, "dec de" },                       // 0x1B
     { OF_NONE,   8, 0, 0, "inc e" },                        // 0x1C
     { OF_NONE,   8, 0, 0, "dec e" },                        // 0x1D
@@ -864,7 +864,7 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_JUMP | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },  // 0xEC
     { OF_PREFIX,  4, 0, 0, "#ED" },                                  // 0xED - Prefix
     { OF_MBYTE,  7, 0, 0, "xor :1" },                                // 0xEE
-    { OF_NONE, 11, 0, 0, "rst #28" },                                // 0xEF
+    { OF_RST, 11, 0, 0, "rst #28" },                                 // 0xEF
 
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret p" },                   // 0xF0
     { OF_NONE, 14, 0, 0, "pop af" },                                 // 0xF1
@@ -2729,159 +2729,136 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
     return result;
 }
 
+// Parse operands from mnemonic string and calculate total bytes needed for operands
+// @param mnemonic - Input string containing mnemonic with operand placeholders (e.g., "LD A,:1" for 1-byte operand)
+// @param expectedOperandsLen - Optional output parameter to store total bytes needed for all operands
+// @return Vector of operand sizes in bytes (e.g., {1, 2} for one byte and one word operand)
 std::vector<uint8_t> Z80Disassembler::parseOperands(std::string& mnemonic, uint8_t* expectedOperandsLen)
 {
-    std::vector<uint8_t> result;
-    uint8_t bytesNeeded = 0;
+    std::vector<uint8_t> result;  // Will store sizes of each operand
+    uint8_t bytesNeeded = 0;      // Total bytes needed for all operands
 
-    if (mnemonic.size() > 0)
+    if (!mnemonic.empty())
     {
-        try
+        // Scan through mnemonic string looking for operand placeholders (e.g., ":1", ":2")
+        for (size_t i = 0; i < mnemonic.size(); ++i)
         {
-            std::sregex_iterator next(mnemonic.begin(), mnemonic.end(), regexOpcodeOperands);
-            std::sregex_iterator end;
-            while (next != end)
+            // Look for ':' which marks the start of an operand size specifier
+            if (mnemonic[i] == ':' && i + 1 < mnemonic.size())
             {
-                std::smatch match = *next;
+                char c = mnemonic[i + 1];
+                // Only process if the next character is a digit (0-9)
+                if (c < '0' || c > '9')
+                    continue; // skip non-digit
 
-                // Get match string like ':2'
-                std::string value = match.str();
-
-                /// region <Sanity checks>
-                if (value.size() < 2)
-                {
-                    throw std::logic_error("Invalid regex to parse operands. Should produce at least 2 symbols like ':1', ':2'");
-                }
-                /// endregion </Sanity checks>
-
-                // Remove leading ':' => '2'
-                value = value.substr(1);
-
-                // Convert from std::string to int
-                uint8_t operandSize = std::stoi(value);
-                bytesNeeded += operandSize;
-
+                // Convert digit character to actual number (e.g., '1' -> 1)
+                uint8_t operandSize = c - '0';
 
                 /// region <Sanity checks>
                 if (operandSize > 2)
                 {
-                    std::string message = StringHelper::Format("Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                    std::string message = StringHelper::Format(
+                        "Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d",
+                        mnemonic.c_str(), operandSize);
                     throw std::logic_error(message);
                 }
 
                 if (operandSize == 0)
                 {
-                    std::string message = StringHelper::Format("Z80 cannot have operand with 0 bytes. In '%s' detected: %d", mnemonic.c_str(), operandSize);
+                    std::string message = StringHelper::Format(
+                        "Z80 cannot have operand with 0 bytes. In '%s' detected: %d",
+                        mnemonic.c_str(), operandSize);
                     throw std::logic_error(message);
                 }
 
                 /// endregion </Sanity checks>
 
+                // Update total bytes needed and store this operand's size
+                bytesNeeded += operandSize;
                 result.push_back(operandSize);
-
-                next++;
+                ++i; // skip the digit we just processed
             }
-        }
-        catch (std::regex_error& e)
-        {
-            // Syntax error in the regular expression
         }
     }
 
+    // If caller provided a pointer for the total length, update it
     if (expectedOperandsLen)
     {
         *expectedOperandsLen = bytesNeeded;
     }
 
-    return result;
+    return result;  // Return vector of operand sizes
 }
 
-std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic, std::vector<uint16_t>& values)
+/// @brief Formats a Z80 mnemonic string by replacing operand placeholders (":1", ":2") with their actual values.
+/// @param decoded   The decoded instruction, used for context (e.g., relative jump formatting).
+/// @param mnemonic  The mnemonic string containing operand placeholders (e.g., "ld a,:1").
+/// @param values    The operand values to substitute into the mnemonic (order matches placeholders).
+/// @return          The formatted mnemonic string with operands replaced by their hex values.
+std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic,
+                                                 std::vector<uint16_t>& values)
 {
     static const char* HEX_PREFIX = "#";
-
     std::string result;
-    std::stringstream ss;
+    result.reserve(mnemonic.size() + 8 * values.size());  // Preallocate for efficiency
 
-    try
+    size_t i = 0;    // Index into values
+    size_t pos = 0;  // Current position in mnemonic
+    const size_t len = mnemonic.size();
+
+    while (pos < len)
     {
-        int i = 0;
-        int startPos = 0;
-
-        std::sregex_iterator next(mnemonic.begin(), mnemonic.end(), regexOpcodeOperands);
-        std::sregex_iterator end;
-        while (next != end)
+        // Look for operand placeholder
+        if (mnemonic[pos] == ':' && (pos + 1 < len) && (mnemonic[pos + 1] == '1' || mnemonic[pos + 1] == '2'))
         {
-            std::smatch match = *next;
-
-            // Get match string like ':2'
-            std::string value = match.str();
+            uint8_t operandSize = mnemonic[pos + 1] - '0';
 
             /// region <Sanity checks>
-            if (value.size() < 2)
+            if (operandSize == 0 || operandSize > 2)
             {
-                throw std::logic_error("Invalid regex to parse operands. Should produce at least 2 symbols like ':1', ':2'");
+                throw std::logic_error("Z80Disassembler::formatOperandString - invalid operand size");
+            }
+            if (i >= values.size())
+            {
+                throw std::logic_error("Z80Disassembler::formatOperandString - not enough operand values");
             }
             /// endregion </Sanity checks>
 
-            // Remove leading ':' => '2'
-            value = value.substr(1);
-
-            // Convert from std::string to int
-            uint8_t operandSize = std::stoi(value);
-
-            /// region <Sanity checks>
-            if (operandSize > 2)
-            {
-                std::string message = StringHelper::Format("Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d", mnemonic.c_str(), operandSize);
-                throw std::logic_error(message);
-            }
-
-            if (operandSize == 0)
-            {
-                std::string message = StringHelper::Format("Z80 cannot have operand with 0 bytes. In '%s' detected: %d", mnemonic.c_str(), operandSize);
-                throw std::logic_error(message);
-            }
-
-            /// endregion </Sanity checks>
-
-            // Print mnemonic fragment till operand placeholder
-            ss << mnemonic.substr(startPos, match.position() - startPos);
-
-            // Print operand value
+            // Format operand value
             std::string operand;
             switch (operandSize)
             {
                 case 1:
+                    // For relative jumps, format as signed
                     if (decoded.hasRelativeJump)
-                        operand = StringHelper::ToHexWithPrefix(static_cast<int8_t>(values[i]), HEX_PREFIX);
+                        operand = StringHelper::ToHexWithPrefix((int8_t)(values[i]), HEX_PREFIX);
                     else
-                        operand = StringHelper::ToHexWithPrefix(static_cast<uint8_t>(values[i]), HEX_PREFIX);
+                        operand = StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX);
                     break;
                 case 2:
                     operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
                     break;
-                default:
-                    throw std::logic_error("Invalid operand size");
             }
 
-            ss << StringHelper::ToUpper(operand);
+            // Uppercase the operand and append
+            for (char& c : operand)
+                c = toupper(c);
 
-            startPos = match.position() + match.length();
-            i++;
-            next++;
+            result += operand;
+            pos += 2;  // Skip ":N"
+            ++i;
         }
-
-        // Print mnemonic leftover after last operand
-        ss << mnemonic.substr(startPos);
-
-        result = ss.str();
+        else
+        {
+            // Copy regular character
+            result += mnemonic[pos++];
+        }
     }
-    catch (std::regex_error& e)
+    // Sanity check: all values should be used
+    if (i != values.size())
     {
-        // Syntax error in the regular expression
+        throw std::logic_error("Z80Disassembler::formatOperandString - unused operand values");
     }
-
     return result;
 }
 

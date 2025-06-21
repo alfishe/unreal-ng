@@ -665,13 +665,7 @@ public:
     void internalReset();
 
     void process();
-    void ejectDisk()
-    {
-        if (_selectedDrive)
-        {
-            _selectedDrive->ejectDisk();
-        }
-    }
+    void ejectDisk();
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -727,24 +721,7 @@ protected:
 
     /// region <State machine handlers>
 protected:
-    std::map<WDSTATE, FSMHandler> _stateHandlerMap =
-    {
-        { S_IDLE,           &WD1793::processIdle },
-        { S_WAIT,           &WD1793::processWait },
-        { S_FETCH_FIFO,     &WD1793::processFetchFIFO },
-        { S_STEP,           &WD1793::processStep },
-        { S_VERIFY,         &WD1793::processVerify },
-        { S_SEARCH_ID,      &WD1793::processSearchID },
-        { S_READ_SECTOR,    &WD1793::processReadSector },
-        { S_WRITE_SECTOR,   &WD1793::processWriteSector },
-        { S_READ_TRACK,     &WD1793::processReadTrack },
-        { S_WRITE_TRACK,    &WD1793::processWriteTrack },
-        { S_READ_BYTE,      &WD1793::processReadByte },
-        { S_WRITE_BYTE,     &WD1793::processWriteByte },
-        { S_READ_CRC,       &WD1793::processReadCRC },
-        { S_WRITE_CRC,      &WD1793::processWriteCRC },
-        { S_END_COMMAND,    &WD1793::processEndCommand },
-    };
+    std::vector<FSMHandler> _stateHandlers;
 
     void processIdle();
     void processWait();
