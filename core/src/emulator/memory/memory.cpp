@@ -623,6 +623,12 @@ void Memory::UnmapMemory()
         _mappedMemoryFilepath.clear();
     }
 
+#else
+    if (_memory)
+    {
+        delete[] _memory;
+        _memory = nullptr;
+    }
 #endif // ENABLE_MEMORY_MAPPING
 }
 
