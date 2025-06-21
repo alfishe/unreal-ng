@@ -16,6 +16,24 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _context = context;
     _logger = context->pModuleLogger;
 
+    _stateHandlers.resize(WDSTATE::WDSTATE_MAX);
+    _stateHandlers[S_IDLE] = &WD1793::processIdle;
+    _stateHandlers[S_WAIT] = &WD1793::processWait;
+    _stateHandlers[S_FETCH_FIFO] = &WD1793::processFetchFIFO;
+    _stateHandlers[S_STEP] = &WD1793::processStep;
+    _stateHandlers[S_VERIFY] = &WD1793::processVerify;
+    _stateHandlers[S_SEARCH_ID] = &WD1793::processSearchID;
+    _stateHandlers[S_READ_SECTOR] = &WD1793::processReadSector;
+    _stateHandlers[S_WRITE_SECTOR] = &WD1793::processWriteSector;
+    _stateHandlers[S_READ_TRACK] = &WD1793::processReadTrack;
+    _stateHandlers[S_WRITE_TRACK] = &WD1793::processWriteTrack;
+    _stateHandlers[S_READ_BYTE] = &WD1793::processReadByte;
+    _stateHandlers[S_WRITE_BYTE] = &WD1793::processWriteByte;
+    _stateHandlers[S_READ_CRC] = &WD1793::processReadCRC;
+    _stateHandlers[S_WRITE_CRC] = &WD1793::processWriteCRC;
+    _stateHandlers[S_END_COMMAND] = &WD1793::processEndCommand;
+    
+    // TODO: remove collector once WD1793 logic is fully implemented and tested
     _collector = new WD1793Collector();
 
     /// region <Create FDD instances
@@ -29,6 +47,8 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 
     // Set drive A: as default
     _selectedDrive = _context->coreState.diskDrives[0];
+
+    reset();
 }
 
 WD1793::~WD1793()
@@ -139,7 +159,7 @@ void WD1793::process()
     /// region <HandlerMap as the replacement for lengthy switch()>
 
     // Get the handler for State1
-    FSMHandler handler = _stateHandlerMap[_state];
+    FSMHandler handler = _stateHandlers[_state];
 
     if (handler)  // Handler found
     {
@@ -157,6 +177,14 @@ void WD1793::process()
 /// endregion </Methods>
 
 /// region <Helper methods>
+
+void WD1793::ejectDisk()
+{
+    if (_selectedDrive)
+    {
+        _selectedDrive->ejectDisk();
+    }
+}
 
 /// Handle Beta128 interface system controller commands
 /// @param value
