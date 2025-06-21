@@ -90,6 +90,10 @@ void MemoryAccessTracker::ResetCounters()
         _segments.clear();
         _currentSegment = nullptr;
     }
+
+    // Reset HALT detection
+    _lastExecutedAddress = 0xFFFF;
+    _haltExecutionCount = 0;
 }
 
 // Set the current tracking mode
@@ -422,6 +426,38 @@ void MemoryAccessTracker::TrackMemoryWrite(uint16_t address, uint8_t value, uint
 // Track memory execute access
 void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAddress)
 {
+    // HALT detection: explicitly check for 0x76 HALT opcode
+    // If this detection block is disabled - HALT will rapidly increment execution count
+    // for this address due to constantly doing pc-- after it's M1 cycle
+    if (_memory != nullptr)
+    {
+        uint8_t opcode = _memory->DirectReadFromZ80Memory(address);
+        if (opcode == 0x76)  // HALT instruction
+        {
+            if (address == _lastExecutedAddress)
+            {
+                _haltExecutionCount++;
+                if (_haltExecutionCount > MAX_HALT_EXECUTIONS)
+                {
+                    // Skip tracking this execution - it's a repeated HALT
+                    return;
+                }
+            }
+            else
+            {
+                // New HALT instruction, reset counter
+                _lastExecutedAddress = address;
+                _haltExecutionCount = 1;
+            }
+        }
+        else
+        {
+            // Not a HALT instruction, reset detection
+            _lastExecutedAddress = address;
+            _haltExecutionCount = 0;
+        }
+    }
+
     // Update Z80 address space counters if we're in Z80 mode or both modes
     if (_currentMode == TrackingMode::Z80AddressSpace)
     {
@@ -1416,5 +1452,15 @@ void MemoryAccessTracker::LogControlFlowEvent(const Z80ControlFlowEvent& event)
     if (_callTraceBuffer)
     {
         _callTraceBuffer->LogEvent(event, _context->emulatorState.frame_counter);
+    }
+}
+
+// Reset HALT detection when PC changes (called from Z80 when PC changes)
+void MemoryAccessTracker::ResetHaltDetection(uint16_t newPC)
+{
+    if (newPC != _lastExecutedAddress)
+    {
+        _lastExecutedAddress = newPC;
+        _haltExecutionCount = 0;
     }
 }

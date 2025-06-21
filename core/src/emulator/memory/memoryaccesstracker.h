@@ -151,6 +151,11 @@ private:
     
     std::unique_ptr<CallTraceBuffer> _callTraceBuffer;
     std::unique_ptr<Z80Disassembler> _disassembler;
+    
+    // HALT detection fields
+    uint16_t _lastExecutedAddress = 0xFFFF;
+    uint32_t _haltExecutionCount = 0;
+    static constexpr uint32_t MAX_HALT_EXECUTIONS = 1;  // Only count the first HALT execution
     /// endregion </Fields>
     
     /// region <Constructors / Destructors>
@@ -215,6 +220,12 @@ public:
     // Get all tracking segments
     const std::vector<TrackingSegment>& GetAllSegments() const;
     /// endregion </Segmented Tracking>
+    
+    /// region <HALT Detection>
+public:
+    // Reset HALT detection when PC changes (called from Z80 when PC changes)
+    void ResetHaltDetection(uint16_t newPC);
+    /// endregion </HALT Detection>
     
     /// region <Access Tracking>
 public:
