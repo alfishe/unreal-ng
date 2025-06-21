@@ -938,8 +938,7 @@ uint8_t WD1793::getPositioningRateForType1CommandMs(uint8_t command)
 /// @param value
 void WD1793::cmdRestore(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Restore: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message = StringHelper::Format("Command Restore: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType1Command();
@@ -982,8 +981,7 @@ void WD1793::cmdSeek(uint8_t value)
 /// @param value STEP command parameter bits
 void WD1793::cmdStep(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Step: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message = StringHelper::Format("Command Step: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType1Command();
@@ -995,8 +993,7 @@ void WD1793::cmdStep(uint8_t value)
 
 void WD1793::cmdStepIn(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Step In: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message = StringHelper::Format("Command Step In: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType1Command();
@@ -1011,8 +1008,7 @@ void WD1793::cmdStepIn(uint8_t value)
 
 void WD1793::cmdStepOut(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Step Out: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message = StringHelper::Format("Command Step Out: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType1Command();
@@ -1120,8 +1116,7 @@ void WD1793::cmdWriteSector(uint8_t value)
 /// and the Busy status bit is reset.
 void WD1793::cmdReadAddress(uint8_t value)
 {
-    std::string message =
-        StringHelper::Format("Command Read Address: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message =  StringHelper::Format("Command Read Address: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType3Command();
@@ -1575,6 +1570,12 @@ void WD1793::processStep()
 
     // Apply changes to the WD1793 Track Register
     _trackRegister += stepCorrection;
+
+    // Apply changes to FDD state
+    uint8_t fddTrack = _selectedDrive->getTrack();
+    fddTrack += stepCorrection;
+    _selectedDrive->setTrack(fddTrack);
+
     /// endregion </Make head step>
 
     // Check for track 0
@@ -1596,11 +1597,6 @@ void WD1793::processStep()
     }
     else
     {
-        // Apply track change to selected FDD
-        uint8_t driveTrack = _selectedDrive->getTrack();
-        driveTrack += stepCorrection;
-        _selectedDrive->setTrack(driveTrack);
-
         // Continue positioning if required
         if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK)
         {
@@ -1646,9 +1642,11 @@ void WD1793::processVerify()
 void WD1793::processSearchID()
 {
     DiskImage* diskImage = _selectedDrive->getDiskImage();
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp ? 1 : 0);
-    DiskImage::AddressMarkRecord* idAddressMark;
 
+    // Use the current FDD track, not WD1793 track register!
+    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp ? 1 : 0);
+
+    DiskImage::AddressMarkRecord* idAddressMark;
     if (track != nullptr && (idAddressMark = track->getIDForSector(_sectorRegister)) != nullptr)
     {
         // ID Address mark found
