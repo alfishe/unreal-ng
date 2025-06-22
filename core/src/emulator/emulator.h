@@ -13,6 +13,7 @@
 #include "emulator/cpu/core.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "base/featuremanager.h"
 
 #include <string>
 #include <mutex>
@@ -90,6 +91,7 @@ protected:
     MainLoop* _mainloop = nullptr;
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
+    FeatureManager* _featureManager = nullptr; // Feature toggle manager
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -191,6 +193,8 @@ public:
     // Counters method
     void ResetCountersAll();
     void ResetCounter();
+
+    FeatureManager* GetFeatureManager() const { return _featureManager; }
 };
 
 #endif

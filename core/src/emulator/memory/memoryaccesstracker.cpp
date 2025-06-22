@@ -1,13 +1,8 @@
 #include "memoryaccesstracker.h"
 #include "calltrace.h"
-#include "common/logger.h"
-#include "common/stringhelper.h"
-#include "debugger/disassembler/z80disasm.h"
-#include "emulator/cpu/core.h"
-#include "emulator/memory/rom.h"
 #include "filesystem"
 #include "memory.h"
-#include "stdafx.h"
+#include "base/featuremanager.h"
 
 // Constructor
 MemoryAccessTracker::MemoryAccessTracker(Memory* memory, EmulatorContext* context) : _memory(memory), _context(context)
@@ -29,7 +24,9 @@ MemoryAccessTracker::MemoryAccessTracker(Memory* memory, EmulatorContext* contex
     _pageWriteMarks.resize(MAX_PAGES / 8, 0);    // Page access flags
     _pageExecuteMarks.resize(MAX_PAGES / 8, 0);  // Page access flags
 
-    _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+    // Initialize feature cache - all boolean permission flags will be recalculated
+    UpdateFeatureCache();
+    
     _disassembler = std::make_unique<Z80Disassembler>(context);
 }
 
@@ -106,6 +103,29 @@ void MemoryAccessTracker::SetTrackingMode(TrackingMode mode)
 TrackingMode MemoryAccessTracker::GetTrackingMode() const
 {
     return _currentMode;
+}
+
+// Update feature cache (call when features change at runtime)
+void MemoryAccessTracker::UpdateFeatureCache()
+{
+    FeatureManager* fm = _context->pFeatureManager;
+    if (fm)
+    {
+        bool debugMode = fm->isEnabled(Features::kDebugMode);
+        _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
+        _feature_calltrace_enabled = debugMode && fm->isEnabled(Features::kCallTrace);
+        
+        // Create call trace buffer if needed
+        if (_feature_calltrace_enabled && !_callTraceBuffer)
+        {
+            _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+        }
+    }
+    else
+    {
+        _feature_memorytracking_enabled = false;
+        _feature_calltrace_enabled = false;
+    }
 }
 
 // Add a monitored memory region with the specified options
@@ -336,6 +356,12 @@ const std::vector<TrackingSegment>& MemoryAccessTracker::GetAllSegments() const
 // Track memory read access
 void MemoryAccessTracker::TrackMemoryRead(uint16_t address, uint8_t value, uint16_t callerAddress)
 {
+    // Early return if memory tracking is disabled
+    if (!_feature_memorytracking_enabled)
+    {
+        return;
+    }
+
     // Update Z80 address space counters if we're in Z80 mode or both modes
     if (_currentMode == TrackingMode::Z80AddressSpace)
     {
@@ -381,6 +407,12 @@ void MemoryAccessTracker::TrackMemoryRead(uint16_t address, uint8_t value, uint1
 // Track memory write access
 void MemoryAccessTracker::TrackMemoryWrite(uint16_t address, uint8_t value, uint16_t callerAddress)
 {
+    // Early return if memory tracking is disabled
+    if (!_feature_memorytracking_enabled)
+    {
+        return;
+    }
+
     // Update Z80 address space counters if we're in Z80 mode or both modes
     if (_currentMode == TrackingMode::Z80AddressSpace)
     {
@@ -426,6 +458,12 @@ void MemoryAccessTracker::TrackMemoryWrite(uint16_t address, uint8_t value, uint
 // Track memory execute access
 void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAddress)
 {
+    // Early return if memory tracking is disabled
+    if (!_feature_memorytracking_enabled)
+    {
+        return;
+    }
+
     // HALT detection: explicitly check for 0x76 HALT opcode
     // If this detection block is disabled - HALT will rapidly increment execution count
     // for this address due to constantly doing pc-- after it's M1 cycle
@@ -500,7 +538,7 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
     UpdateRegionStats(address, 0, callerAddress, AccessType::Execute);
 
     // --- Call trace integration ---
-    if (_callTraceBuffer)
+    if (_feature_calltrace_enabled && _callTraceBuffer)
     {
         _callTraceBuffer->LogIfControlFlow(_context, _memory, address, _context->emulatorState.frame_counter);
     }
@@ -510,6 +548,13 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
 // Track port read access
 void MemoryAccessTracker::TrackPortRead(uint16_t port, uint8_t value, uint16_t callerAddress)
 {
+    // Update feature cache and check if memory tracking is disabled
+    UpdateFeatureCache();
+    if (!_feature_memorytracking_enabled)
+    {
+        return;
+    }
+
     // Check if this port is monitored
     auto it = _portToIndexMap.find(port);
     if (it != _portToIndexMap.end())
@@ -546,6 +591,12 @@ void MemoryAccessTracker::TrackPortRead(uint16_t port, uint8_t value, uint16_t c
 // Track port write access
 void MemoryAccessTracker::TrackPortWrite(uint16_t port, uint8_t value, uint16_t callerAddress)
 {
+    // Early return if memory tracking is disabled
+    if (!_feature_memorytracking_enabled)
+    {
+        return;
+    }
+
     // Check if this port is monitored
     auto it = _portToIndexMap.find(port);
     if (it != _portToIndexMap.end())
