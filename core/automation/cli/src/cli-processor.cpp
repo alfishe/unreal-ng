@@ -63,7 +63,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"dummy", &CLIProcessor::HandleDummy},
                         {"memcounters", &CLIProcessor::HandleMemCounters},
                         {"memstats", &CLIProcessor::HandleMemCounters},
-                        {"calltrace", &CLIProcessor::HandleCallTrace}};
+                        {"calltrace", &CLIProcessor::HandleCallTrace},
+                        {"feature", &CLIProcessor::HandleFeature}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -296,6 +297,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
     oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
     oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Feature toggles:" << NEWLINE;
+    oss << "  feature                      - List all features and their states/modes" << NEWLINE;
+    oss << "  feature <name> on|off        - Enable or disable a feature" << NEWLINE;
+    oss << "  feature <name> mode <mode>   - Set mode for a feature" << NEWLINE;
+    oss << "  feature save                 - Save current feature settings to features.ini" << NEWLINE;
     oss << NEWLINE;
     oss << "Memory Access Tracking:" << NEWLINE;
     oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;
@@ -2328,4 +2335,79 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         return;
     }
     session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
+}
+
+void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    auto* featureManager = emulator->GetFeatureManager();
+    if (!featureManager)
+    {
+        session.SendResponse("FeatureManager not available for this emulator.");
+        return;
+    }
+
+    std::ostringstream out;
+
+    if (!args.empty() && args[0] == "save")
+    {
+        featureManager->saveToFile("features.ini");
+        out << "Feature settings saved to features.ini." << NEWLINE;
+        session.SendResponse(out.str());
+        return;
+    }
+    
+    // Feature command logic (moved from FeatureManager)
+    if (args.empty() || (args.size() == 1 && args[0].empty()))
+    {
+        // Print all features in a table
+        out << "Available Features:" << NEWLINE;
+        out << "---------------------------------------------------------" << NEWLINE;
+        out << "| Name           | State  | Mode     | Description" << NEWLINE;
+        out << "---------------------------------------------------------" << NEWLINE;
+        for (const auto& f : featureManager->listFeatures())
+        {
+            out << "| " << f.id << std::string(15 - f.id.size(), ' ')
+                << "| " << (f.enabled ? "on " : "off") << "   "
+                << "| " << f.mode << std::string(9 - f.mode.size(), ' ')
+                << "| " << f.description << NEWLINE;
+        }
+        out << "---------------------------------------------------------" << NEWLINE;
+       
+        session.SendResponse(out.str());
+        return;
+    }
+
+    if (args.size() >= 3)
+    {
+        std::string feature = args[1];
+        std::string cmd = args[2];
+        if (cmd == "on" || cmd == "off")
+        {
+            featureManager->setFeature(feature, cmd == "on");
+            out << "Feature '" << feature << "' set to " << cmd << NEWLINE;
+            session.SendResponse(out.str());
+            return;
+        }
+        else if (cmd == "mode" && args.size() >= 4)
+        {
+            featureManager->setMode(feature, args[3]);
+            out << "Feature '" << feature << "' mode set to '" << args[3] << "'" << NEWLINE;
+            session.SendResponse(out.str());
+            return;
+        }
+    }
+    
+    // Usage/help output
+    out << "Usage:" << NEWLINE
+        << "  feature <feature> on|off" << NEWLINE
+        << "  feature <feature> mode <mode>" << NEWLINE
+        << "  feature save" << NEWLINE
+        << "  feature" << NEWLINE;
+    session.SendResponse(out.str());
 }
