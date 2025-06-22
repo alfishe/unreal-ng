@@ -50,7 +50,7 @@ Z80::Z80(EmulatorContext* context) : Z80State {}
 
 	tpi = 0;
 	rate = (1 << 8);
-    isDebugMode = 0;
+    isDebugMode = false;
 	trace_curs = trace_top = (unsigned)-1;
 	trace_mode = 0;
 	mem_curs = mem_top = 0;

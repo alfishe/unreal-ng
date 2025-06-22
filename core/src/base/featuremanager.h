@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../3rdparty/simpleini/simpleini.h"
+#include "3rdparty/simpleini/simpleini.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -8,6 +8,41 @@
 
 // Forward declaration to avoid circular dependency
 class EmulatorContext;
+
+namespace
+{
+    // Feature settings filename
+    constexpr const char* kFeaturesIni = "features.ini";
+}
+
+namespace Features
+{
+    // Feature IDs
+    constexpr const char* const kDebugMode = "debugmode";
+    constexpr const char* const kMemoryTracking = "memorytracking";
+    constexpr const char* const kBreakpoints = "breakpoints";
+    constexpr const char* const kCallTrace = "calltrace";
+
+    // Feature Aliases
+    constexpr const char* const kDebugModeAlias = "dbg";
+    constexpr const char* const kMemoryTrackingAlias = "memtrack";
+    constexpr const char* const kBreakpointsAlias = "bp";
+    constexpr const char* const kCallTraceAlias = "ct";
+
+    // Feature Descriptions
+    constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
+    constexpr const char* const kMemoryTrackingDesc = "Collect memory access counters and statistics";
+    constexpr const char* const kBreakpointsDesc = "Enable or disable breakpoint handling";
+    constexpr const char* const kCallTraceDesc = "Collect call trace information for debugging";
+
+    // Categories
+    constexpr const char* const kCategoryDebug = "debug";
+    constexpr const char* const kCategoryAnalysis = "analysis";
+
+    // Feature States
+    constexpr const char* const kStateOn = "on";
+    constexpr const char* const kStateOff = "off";
+}
 
 /// @brief FeatureManager manages runtime togglable features for debugging, analysis, and performance.
 ///
@@ -40,8 +75,8 @@ public:
     void registerFeature(const FeatureInfo& info);
     void removeFeature(const std::string& idOrAlias);
     void clear();
-    void setFeature(const std::string& idOrAlias, bool enabled);
-    void setMode(const std::string& idOrAlias, const std::string& mode);
+    bool setFeature(const std::string& idOrAlias, bool enabled);
+    bool setMode(const std::string& idOrAlias, const std::string& mode);
     std::string getMode(const std::string& idOrAlias) const;
     bool isEnabled(const std::string& idOrAlias) const;
     std::vector<FeatureInfo> listFeatures() const;

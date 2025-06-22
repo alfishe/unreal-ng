@@ -6,6 +6,7 @@
 
 class MemoryAccessTracker;
 class Z80;
+class FeatureManager;
 
 // Max RAM size is 4MBytes. Each model has own limits. Max ram used for ZX-Evo / TSConf
 // MAX_RAM_PAGES and PAGE defined in platform.h
@@ -112,6 +113,10 @@ protected:
     // Memory access tracker
     MemoryAccessTracker* _memoryAccessTracker = nullptr;     // Flexible memory access tracking system
     
+    // Feature-gate flags
+    bool _feature_memorytracking_enabled = false;
+    bool _feature_breakpoints_enabled = false;
+
     bool _isPage0ROM48k;
     bool _isPage0ROM128k;
     bool _isPage0ROMDOS;
@@ -150,6 +155,9 @@ public:
     /// Unmap the memory from the filesystem
     void UnmapMemory();
     void SyncToDisk();
+    
+    // Update feature cache (call when features change at runtime)
+    void UpdateFeatureCache();
     /// endregion </Initialization>
 
     /// region <Emulation memory interface methods>

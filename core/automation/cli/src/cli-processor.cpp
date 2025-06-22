@@ -18,6 +18,10 @@
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/platform.h"
 #include "platform-sockets.h"
+#include "base/featuremanager.h"
+#include "common/stringhelper.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const
@@ -2366,44 +2370,117 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
     if (args.empty() || (args.size() == 1 && args[0].empty()))
     {
         // Print all features in a table
-        out << "Available Features:" << NEWLINE;
-        out << "---------------------------------------------------------" << NEWLINE;
-        out << "| Name           | State  | Mode     | Description" << NEWLINE;
-        out << "---------------------------------------------------------" << NEWLINE;
+        const int name_width = 15;
+        const int state_width = 7;
+        const int mode_width = 10;
+        const int desc_width = 60;
+        const std::string separator = "------------------------------------------------------------------------------------------------------------------";
+
+        out << separator << NEWLINE;
+        out << "| " << std::left << std::setw(name_width) << "Name"
+            << "| " << std::left << std::setw(state_width) << "State"
+            << "| " << std::left << std::setw(mode_width) << "Mode"
+            << "| " << std::left << "Description" << NEWLINE;
+        out << separator << NEWLINE;
+
         for (const auto& f : featureManager->listFeatures())
         {
-            out << "| " << f.id << std::string(15 - f.id.size(), ' ')
-                << "| " << (f.enabled ? "on " : "off") << "   "
-                << "| " << f.mode << std::string(9 - f.mode.size(), ' ')
-                << "| " << f.description << NEWLINE;
+            std::string state_str = f.enabled ? Features::kStateOn : Features::kStateOff;
+            std::string mode_str = f.mode.empty() ? "" : f.mode;
+
+            out << "| " << std::left << std::setw(name_width) << f.id
+                << "| " << std::left << std::setw(state_width) << state_str
+                << "| " << std::left << std::setw(mode_width) << mode_str
+                << "| " << std::left << f.description << NEWLINE;
         }
-        out << "---------------------------------------------------------" << NEWLINE;
+        out << separator << NEWLINE;
        
         session.SendResponse(out.str());
         return;
     }
-
-    if (args.size() >= 3)
+    else if (args.size() == 2)
     {
-        std::string feature = args[1];
-        std::string cmd = args[2];
-        if (cmd == "on" || cmd == "off")
+        const std::string& featureName = args[0];
+        const std::string& action = args[1];
+
+        if (action == Features::kStateOn)
         {
-            featureManager->setFeature(feature, cmd == "on");
-            out << "Feature '" << feature << "' set to " << cmd << NEWLINE;
+            if (featureManager->setFeature(featureName, true))
+            {
+                out << "Feature '" << featureName << "' enabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else
+            {
+                out << "Error: Unknown feature '" << featureName << "'." << NEWLINE;
+                out << "Available features:" << NEWLINE;
+                for (const auto& f : featureManager->listFeatures())
+                {
+                    out << "  " << f.id;
+                    if (!f.alias.empty())
+                    {
+                        out << " (alias: " << f.alias << ")";
+                    }
+                    out << NEWLINE;
+                }
+            }
+        }
+        else if (action == Features::kStateOff)
+        {
+            if (featureManager->setFeature(featureName, false))
+            {
+                out << "Feature '" << featureName << "' disabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else
+            {
+                out << "Error: Unknown feature '" << featureName << "'." << NEWLINE;
+                out << "Available features:" << NEWLINE;
+                for (const auto& f : featureManager->listFeatures())
+                {
+                    out << "  " << f.id;
+                    if (!f.alias.empty())
+                    {
+                        out << " (alias: " << f.alias << ")";
+                    }
+                    out << NEWLINE;
+                }
+            }
+        }
+        else
+        {
+            out << "Invalid action. Use 'on' or 'off'." << NEWLINE;
+        }
+    }
+    else if (args.size() == 3 && args[1] == "mode")
+    {
+        std::string feature = args[0];
+        std::string mode = args[2];
+        if (featureManager->setMode(feature, mode))
+        {
+            out << "Feature '" << feature << "' mode set to '" << mode << "'" << NEWLINE;
             session.SendResponse(out.str());
             return;
         }
-        else if (cmd == "mode" && args.size() >= 4)
+        else
         {
-            featureManager->setMode(feature, args[3]);
-            out << "Feature '" << feature << "' mode set to '" << args[3] << "'" << NEWLINE;
-            session.SendResponse(out.str());
-            return;
+            out << "Error: Unknown feature '" << feature << "'." << NEWLINE;
+            out << "Available features:" << NEWLINE;
+            for (const auto& f : featureManager->listFeatures())
+            {
+                out << "  " << f.id;
+                if (!f.alias.empty())
+                {
+                    out << " (alias: " << f.alias << ")";
+                }
+                out << NEWLINE;
+            }
         }
     }
     
-    // Usage/help output
+    // Usage/help output - only shown for errors or invalid commands
     out << "Usage:" << NEWLINE
         << "  feature <feature> on|off" << NEWLINE
         << "  feature <feature> mode <mode>" << NEWLINE

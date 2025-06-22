@@ -1,20 +1,12 @@
 #include "featuremanager.h"
-#include "../3rdparty/simpleini/simpleini.h"
 
+#include "3rdparty/simpleini/simpleini.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/cpu/core.h"
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <iostream>
-
-using namespace std;
-
-namespace
-{
-constexpr const char* kFeaturesIni = "features.ini";
-}
-
-// Forward declaration for explicit Entry type
-using SimpleIniEntry = CSimpleIniTempl<char,SI_NoCase<char>,SI_ConvertA<char>>::Entry;
 
 FeatureManager::FeatureManager(EmulatorContext* context)
     : _context(context)
@@ -57,7 +49,8 @@ void FeatureManager::clear()
 /// @brief Set feature enabled/disabled by id or alias.
 /// @param idOrAlias Unique identifier or alias of the feature
 /// @param enabled Whether to enable or disable the feature
-void FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
+/// @return true if the feature was found and updated, false if feature not found
+bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
     auto* f = findFeature(idOrAlias);
     if (f && f->enabled != enabled)
@@ -65,13 +58,25 @@ void FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         f->enabled = enabled;
         _dirty = true;
         onFeatureChanged();
+        return true;
+    }
+    else if (f)
+    {
+        // Feature found but no change needed
+        return true;
+    }
+    else
+    {
+        // Feature not found
+        return false;
     }
 }
 
 /// @brief Set mode for a feature by id or alias.
 /// @param idOrAlias Unique identifier or alias of the feature
 /// @param mode New mode to set for the feature
-void FeatureManager::setMode(const std::string& idOrAlias, const std::string& mode)
+/// @return true if the feature was found and updated, false if feature not found
+bool FeatureManager::setMode(const std::string& idOrAlias, const std::string& mode)
 {
     auto* f = findFeature(idOrAlias);
     if (f && f->mode != mode)
@@ -79,6 +84,17 @@ void FeatureManager::setMode(const std::string& idOrAlias, const std::string& mo
         f->mode = mode;
         _dirty = true;
         onFeatureChanged();
+        return true;
+    }
+    else if (f)
+    {
+        // Feature found but no change needed
+        return true;
+    }
+    else
+    {
+        // Feature not found
+        return false;
     }
 }
 
@@ -109,6 +125,7 @@ std::vector<FeatureManager::FeatureInfo> FeatureManager::listFeatures() const
     {
         out.push_back(kv.second);
     }
+
     return out;
 }
 
@@ -118,27 +135,34 @@ void FeatureManager::setDefaults()
 {
     // Example: register default features here. Extend as needed.
     clear();
-    registerFeature({"debugmode",
+    registerFeature({Features::kDebugMode,
+                     Features::kDebugModeAlias,
+                     Features::kDebugModeDesc,
+                     false,
                      "",
-                     "Master debug mode, disables all debug features for performance",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
+    registerFeature({Features::kMemoryTracking,
+                     Features::kMemoryTrackingAlias,
+                     Features::kMemoryTrackingDesc,
                      false,
-                     "off",
-                     {"off", "on", "fast"},
-                     "debug"});
-    registerFeature({"memorycounters",
-                     "memcnt",
-                     "Collect memory access counters",
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
+    registerFeature({Features::kBreakpoints,
+                     Features::kBreakpointsAlias,
+                     Features::kBreakpointsDesc,
                      false,
-                     "default",
-                     {"off", "on", "default"},
-                     "analysis"});
-    registerFeature({"calltrace",
-                     "ct",
-                     "Collect call trace information",
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryDebug});
+    registerFeature({Features::kCallTrace,
+                     Features::kCallTraceAlias,
+                     Features::kCallTraceDesc,
                      false,
-                     "default",
-                     {"off", "on", "minimal", "detailed"},
-                     "analysis"});
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
     _dirty = false;
 }
 
@@ -155,7 +179,7 @@ void FeatureManager::loadFromFile(const std::string& path)
     ini.SetUnicode(true);
     if (ini.LoadFile(path.c_str()) < 0)
     {
-        cerr << "Failed to load " << path << endl;
+        std::cerr << "Failed to load " << path << std::endl;
         return;
     }
 
@@ -175,7 +199,7 @@ void FeatureManager::loadFromFile(const std::string& path)
         {
             std::string s = state;
             std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-            f.enabled = (s == "on" || s == "true" || s == "1");
+            f.enabled = (s == Features::kStateOn || s == "true" || s == "1");
         }
 
         const char* mode = ini.GetValue(section, "mode", nullptr);
@@ -185,7 +209,11 @@ void FeatureManager::loadFromFile(const std::string& path)
         }
     }
 
+    // Features state fully match settings file
     _dirty = false;
+
+    // Recalculate all cached flags
+    onFeatureChanged();
 }
 
 /// @brief Save current feature states to features.ini (UTF-8).
@@ -197,13 +225,13 @@ void FeatureManager::saveToFile(const std::string& path) const
 
     for (const auto& [id, f] : _features)
     {
-        ini.SetValue(id.c_str(), "state", f.enabled ? "on" : "off");
+        ini.SetValue(id.c_str(), "state", f.enabled ? Features::kStateOn : Features::kStateOff);
         ini.SetValue(id.c_str(), "mode", f.mode.c_str());
     }
 
     if (ini.SaveFile(path.c_str()) < 0)
     {
-        cerr << "Failed to save " << path << endl;
+        std::cerr << "Failed to save " << path << std::endl;
     }
 
     _dirty = false;
@@ -213,6 +241,15 @@ void FeatureManager::saveToFile(const std::string& path) const
 /// Automatically saves to features.ini if any changes were made.
 void FeatureManager::onFeatureChanged()
 {
+    // Update feature cache in Memory class if it exists
+    if (_context && _context->pCore && _context->pCore->GetMemory())
+    {
+        _context->pCore->GetMemory()->UpdateFeatureCache();
+
+        // Synchronize master switch with feature changes
+        _context->pCore->GetZ80()->isDebugMode = _features[Features::kDebugMode].enabled;
+    }
+    
     if (_dirty)
     {
         saveToFile(kFeaturesIni);

@@ -17,6 +17,7 @@
 #include <algorithm>
 
 class Z80;
+class FeatureManager;
 
 // Access types for memory regions
 enum class AccessType : uint8_t
@@ -108,6 +109,10 @@ private:
     // Reference to emulator context
     EmulatorContext* _context = nullptr;
     
+    // Feature-gate flags
+    bool _feature_memorytracking_enabled = false;
+    bool _feature_calltrace_enabled = false;
+    
     // Tracking mode
     TrackingMode _currentMode = TrackingMode::Z80AddressSpace;
     
@@ -178,6 +183,9 @@ public:
     
     // Get the current tracking mode
     TrackingMode GetTrackingMode() const;
+    
+    // Update feature cache (call when features change at runtime)
+    void UpdateFeatureCache();
     /// endregion </Initialization>
     
     /// region <Region and Port Monitoring>
