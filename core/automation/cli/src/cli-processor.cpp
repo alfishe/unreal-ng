@@ -18,6 +18,10 @@
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/platform.h"
 #include "platform-sockets.h"
+#include "base/featuremanager.h"
+#include "common/stringhelper.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
 
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const
@@ -63,7 +67,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"dummy", &CLIProcessor::HandleDummy},
                         {"memcounters", &CLIProcessor::HandleMemCounters},
                         {"memstats", &CLIProcessor::HandleMemCounters},
-                        {"calltrace", &CLIProcessor::HandleCallTrace}};
+                        {"calltrace", &CLIProcessor::HandleCallTrace},
+                        {"feature", &CLIProcessor::HandleFeature}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -296,6 +301,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
     oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
     oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Feature toggles:" << NEWLINE;
+    oss << "  feature                      - List all features and their states/modes" << NEWLINE;
+    oss << "  feature <name> on|off        - Enable or disable a feature" << NEWLINE;
+    oss << "  feature <name> mode <mode>   - Set mode for a feature" << NEWLINE;
+    oss << "  feature save                 - Save current feature settings to features.ini" << NEWLINE;
     oss << NEWLINE;
     oss << "Memory Access Tracking:" << NEWLINE;
     oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;
@@ -2328,4 +2339,152 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         return;
     }
     session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
+}
+
+void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+    auto* featureManager = emulator->GetFeatureManager();
+    if (!featureManager)
+    {
+        session.SendResponse("FeatureManager not available for this emulator.");
+        return;
+    }
+
+    std::ostringstream out;
+
+    if (!args.empty() && args[0] == "save")
+    {
+        featureManager->saveToFile("features.ini");
+        out << "Feature settings saved to features.ini." << NEWLINE;
+        session.SendResponse(out.str());
+        return;
+    }
+    
+    // Feature command logic (moved from FeatureManager)
+    if (args.empty() || (args.size() == 1 && args[0].empty()))
+    {
+        // Print all features in a table
+        const int name_width = 15;
+        const int state_width = 7;
+        const int mode_width = 10;
+        const int desc_width = 60;
+        const std::string separator = "------------------------------------------------------------------------------------------------------------------";
+
+        out << separator << NEWLINE;
+        out << "| " << std::left << std::setw(name_width) << "Name"
+            << "| " << std::left << std::setw(state_width) << "State"
+            << "| " << std::left << std::setw(mode_width) << "Mode"
+            << "| " << std::left << "Description" << NEWLINE;
+        out << separator << NEWLINE;
+
+        for (const auto& f : featureManager->listFeatures())
+        {
+            std::string state_str = f.enabled ? Features::kStateOn : Features::kStateOff;
+            std::string mode_str = f.mode.empty() ? "" : f.mode;
+
+            out << "| " << std::left << std::setw(name_width) << f.id
+                << "| " << std::left << std::setw(state_width) << state_str
+                << "| " << std::left << std::setw(mode_width) << mode_str
+                << "| " << std::left << f.description << NEWLINE;
+        }
+        out << separator << NEWLINE;
+       
+        session.SendResponse(out.str());
+        return;
+    }
+    else if (args.size() == 2)
+    {
+        const std::string& featureName = args[0];
+        const std::string& action = args[1];
+
+        if (action == Features::kStateOn)
+        {
+            if (featureManager->setFeature(featureName, true))
+            {
+                out << "Feature '" << featureName << "' enabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else
+            {
+                out << "Error: Unknown feature '" << featureName << "'." << NEWLINE;
+                out << "Available features:" << NEWLINE;
+                for (const auto& f : featureManager->listFeatures())
+                {
+                    out << "  " << f.id;
+                    if (!f.alias.empty())
+                    {
+                        out << " (alias: " << f.alias << ")";
+                    }
+                    out << NEWLINE;
+                }
+            }
+        }
+        else if (action == Features::kStateOff)
+        {
+            if (featureManager->setFeature(featureName, false))
+            {
+                out << "Feature '" << featureName << "' disabled." << NEWLINE;
+                session.SendResponse(out.str());
+                return;
+            }
+            else
+            {
+                out << "Error: Unknown feature '" << featureName << "'." << NEWLINE;
+                out << "Available features:" << NEWLINE;
+                for (const auto& f : featureManager->listFeatures())
+                {
+                    out << "  " << f.id;
+                    if (!f.alias.empty())
+                    {
+                        out << " (alias: " << f.alias << ")";
+                    }
+                    out << NEWLINE;
+                }
+            }
+        }
+        else
+        {
+            out << "Invalid action. Use 'on' or 'off'." << NEWLINE;
+        }
+    }
+    else if (args.size() == 3 && args[1] == "mode")
+    {
+        std::string feature = args[0];
+        std::string mode = args[2];
+        if (featureManager->setMode(feature, mode))
+        {
+            out << "Feature '" << feature << "' mode set to '" << mode << "'" << NEWLINE;
+            session.SendResponse(out.str());
+            return;
+        }
+        else
+        {
+            out << "Error: Unknown feature '" << feature << "'." << NEWLINE;
+            out << "Available features:" << NEWLINE;
+            for (const auto& f : featureManager->listFeatures())
+            {
+                out << "  " << f.id;
+                if (!f.alias.empty())
+                {
+                    out << " (alias: " << f.alias << ")";
+                }
+                out << NEWLINE;
+            }
+        }
+    }
+    
+    // Usage/help output - only shown for errors or invalid commands
+    out << "Usage:" << NEWLINE
+        << "  feature <feature> on|off" << NEWLINE
+        << "  feature <feature> mode <mode>" << NEWLINE
+        << "  feature save" << NEWLINE
+        << "  feature" << NEWLINE;
+    session.SendResponse(out.str());
 }

@@ -13,6 +13,7 @@
 #include "emulator/platform.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/ports/portdecoder.h"
+#include "base/featuremanager.h"
 #include <cassert>
 
 // Platform-specific includes for memory mapping
@@ -40,6 +41,16 @@ Memory::Memory(EmulatorContext* context)
     _context = context;
     _state = &context->emulatorState;
     _logger = context->pModuleLogger;
+
+    // Update feature cache to see what's enabled
+    FeatureManager* fm = _context->pFeatureManager;
+    if (fm)
+    {
+        // It's probably better to have a master switch
+        bool debugMode = fm->isEnabled(Features::kDebugMode);
+        _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
+        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+    }
 
     // Allocate ZX-Spectrum memory and make it memory mapped to file for debugging
     AllocateAndExportMemoryToMmap();
@@ -74,13 +85,18 @@ Memory::Memory(EmulatorContext* context)
     _bank_mode[3] = BANK_RAM;
 
     /// region <Debug info>
-
-#ifdef _DEBUG
-    // Dump information about all memory regions
-    MLOGDEBUG(DumpAllMemoryRegions());
-#endif // _DEBUG
-
+    MLOGDEBUG("Memory::Memory() - Instance created");
+    MLOGDEBUG("Memory::Memory() - Memory size: %zu bytes", _memorySize);
+    MLOGDEBUG("Memory::Memory() - RAM base: %p", _ramBase);
+    MLOGDEBUG("Memory::Memory() - Cache base: %p", _cacheBase);
+    MLOGDEBUG("Memory::Memory() - Misc base: %p", _miscBase);
+    MLOGDEBUG("Memory::Memory() - ROM base: %p", _romBase);
     /// endregion </Debug info>
+
+    if (_memoryAccessTracker)
+    {
+        _memoryAccessTracker->ResetCounters();
+    }
 }
 
 Memory::~Memory()
@@ -165,34 +181,35 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     /// endregion </Memory access tracking>
 
     /// region <Read breakpoint logic>
-
-    Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCore->GetZ80();
-    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-    
-    uint16_t breakpointID = brk.HandleMemoryRead(addr);
-    if (breakpointID != BRK_INVALID)
+    if (_feature_breakpoints_enabled)
     {
-        // Request to pause emulator
-        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
-        emulator.Pause();
+        Emulator& emulator = *_context->pEmulator;
+        Z80& z80 = *_context->pCore->GetZ80();
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        // Broadcast notification - breakpoint triggered
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-        // Wait until emulator resumed externally (by debugger or scripting engine)
-        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-        if (z80.IsPaused())
+        uint16_t breakpointID = brk.HandleMemoryRead(addr);
+        if (breakpointID != BRK_INVALID)
         {
-            while (z80.IsPaused())
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
+
+            // Broadcast notification - breakpoint triggered
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+            if (z80.IsPaused())
             {
-                sleep_ms(20);
+                while (z80.IsPaused())
+                {
+                    sleep_ms(20);
+                }
             }
         }
     }
-
     /// endregion </Read breakpoint logic>
 
     return result;
@@ -230,7 +247,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     /// endregion </MemoryWriteFast functionality>
     
     // Track memory write if tracker is initialized
-    if (_memoryAccessTracker != nullptr)
+    if (_feature_memorytracking_enabled && _memoryAccessTracker != nullptr)
     {
         uint16_t pc = _context->pCore->GetZ80()->m1_pc;
         _memoryAccessTracker->TrackMemoryWrite(addr, value, pc);
@@ -243,27 +260,28 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     }
 
     /// region <Write breakpoint logic>
-
-    Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCore->GetZ80();
-    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-    uint16_t breakpointID = brk.HandleMemoryWrite(addr);
-    if (breakpointID != BRK_INVALID)
+    if (_feature_breakpoints_enabled)
     {
-        // Request to pause emulator
-        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
-        emulator.Pause();
+        Emulator& emulator = *_context->pEmulator;
+        Z80& z80 = *_context->pCore->GetZ80();
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandleMemoryWrite(addr);
+        if (breakpointID != BRK_INVALID)
+        {
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
 
-        // Broadcast notification - breakpoint triggered
-        MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+            // Broadcast notification - breakpoint triggered
+            MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-        // Wait until emulator resumed externally (by debugger or scripting engine)
-        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-        z80.WaitUntilResumed();
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+            z80.WaitUntilResumed();
+        }
     }
-
     /// endregion </Write breakpoint logic>
 }
 
@@ -281,7 +299,10 @@ void Memory::Reset()
     DefaultBanksFor48k();
 
     // Reset memory access counters
-    _memoryAccessTracker->ResetCounters();
+    if (_memoryAccessTracker)
+    {
+        _memoryAccessTracker->ResetCounters();
+    }
 }
 
 /// Fill whole physical RAM with random values
@@ -1477,3 +1498,26 @@ std::string Memory::DumpAllMemoryRegions()
 }
 
 /// endregion <Debug methods>
+
+// Update feature cache (call when features change at runtime)
+void Memory::UpdateFeatureCache()
+{
+    FeatureManager* fm = _context->pFeatureManager;
+    if (fm)
+    {
+        bool debugMode = fm->isEnabled(Features::kDebugMode);
+        _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
+        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        
+        // Update memory access tracker if it exists
+        if (_memoryAccessTracker)
+        {
+            _memoryAccessTracker->UpdateFeatureCache();
+        }
+    }
+    else
+    {
+        _feature_memorytracking_enabled = false;
+        _feature_breakpoints_enabled = false;
+    }
+}

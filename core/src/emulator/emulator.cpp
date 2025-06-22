@@ -4,19 +4,13 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
-#include "stdafx.h"
 
 #include "emulator.h"
 
-#include "3rdparty/message-center/messagecenter.h"
-#include "common/dumphelper.h"
 #include "common/filehelper.h"
-#include "common/modulelogger.h"
-#include "common/stringhelper.h"
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
 #include "debugger/debugmanager.h"
-#include "emulator/memory/memory.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "emulator/io/fdc/wd1793.h"
 
@@ -42,6 +36,10 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
         _logger = _context->pModuleLogger;
         _context->pEmulator = this;
 
+        // Create FeatureManager and assign to context
+        _featureManager = new FeatureManager(_context);
+        _context->pFeatureManager = _featureManager;
+
         MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", 
                  symbolicId.c_str(), level, _emulatorId.c_str());
         MLOGDEBUG("Emulator::Init - context created");
@@ -56,6 +54,11 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
+    if (_featureManager)
+    {
+        delete _featureManager;
+        _featureManager = nullptr;
+    }
 }
 
 /// endregion </Constructors / Destructors>

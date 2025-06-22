@@ -18,6 +18,7 @@ class Screen;
 class SoundManager;
 class DebugManager;
 class Z80Disassembler;
+class FeatureManager;
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -80,6 +81,9 @@ public:
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager;
+
+    // Feature toggle manager
+    FeatureManager* pFeatureManager = nullptr;
     /// endregion </Child object references>
 
     /// region <Parent object references>

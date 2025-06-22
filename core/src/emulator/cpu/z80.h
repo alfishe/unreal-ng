@@ -252,8 +252,8 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     unsigned pc_trflags;
     uint16_t nextpc;
 
-    // Debugger related
-    uint8_t isDebugMode;  // Active breakpoints
+    // Debugger related - master switch for all features
+    bool isDebugMode;
 
     int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 
