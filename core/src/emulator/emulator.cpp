@@ -4,6 +4,9 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <thread>
+#include <chrono>
+#include <functional>
 
 #include "emulator.h"
 
@@ -11,6 +14,10 @@
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "base/featuremanager.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "emulator/io/fdc/wd1793.h"
 
@@ -821,6 +828,141 @@ void Emulator::RunUntilInterrupt()
 void Emulator::RunUntilCondition()
 {
     throw std::logic_error("Not implemented");
+}
+
+void Emulator::StepOver()
+{
+    // Early exit if not initialized or no debug manager
+    if (!_initialized || !_debugManager)
+    {
+        MLOGERROR("Emulator::StepOver() - not initialized or no debug manager");
+        return;
+    }
+
+    // Get required components
+    Z80State* z80 = GetZ80State();
+    Memory* memory = GetMemory();
+    Z80Disassembler* disassembler = _debugManager->GetDisassembler().get();
+    BreakpointManager* bpManager = _breakpointManager;
+    FeatureManager* fm = GetFeatureManager();
+
+    if (!z80 || !memory || !disassembler || !bpManager || !fm)
+    {
+        MLOGERROR("Emulator::StepOver() - required components not available");
+        return;
+    }
+
+    uint16_t currentPC = z80->pc;
+
+    // Read instruction bytes to check if step-over is needed
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (size_t i = 0; i < buffer.size(); i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(currentPC + i);
+    }
+
+    if (!disassembler->shouldStepOver(buffer))
+    {
+        MLOGDEBUG("Emulator::StepOver() - instruction at 0x%04X doesn't need step-over, doing normal step", currentPC);
+        RunSingleCPUCycle(true);
+        return;
+    }
+
+    uint16_t nextInstructionAddress = disassembler->getNextInstructionAddress(currentPC, memory);
+    if (nextInstructionAddress == currentPC)
+    {
+        MLOGDEBUG("Emulator::StepOver() - couldn't determine next instruction address, doing normal step");
+        RunSingleCPUCycle(true);
+        return;
+    }
+
+    MLOGDEBUG("Emulator::StepOver() - instruction requires step-over, next instruction at 0x%04X", nextInstructionAddress);
+
+    // Deactivate breakpoints within the called function's scope
+    std::vector<std::pair<uint16_t, uint16_t>> exclusionRanges = disassembler->getStepOverExclusionRanges(currentPC, memory, 5);
+    std::vector<uint16_t> deactivatedBreakpoints;
+    const auto& allBreakpoints = bpManager->GetAllBreakpoints();
+    for (const auto& [bpId, bp] : allBreakpoints)
+    {
+        if (bp->active && (bp->type == BRK_MEMORY) && (bp->memoryType & BRK_MEM_EXECUTE))
+        {
+            for (const auto& range : exclusionRanges)
+            {
+                if (bp->z80address >= range.first && bp->z80address <= range.second)
+                {
+                    bpManager->DeactivateBreakpoint(bpId);
+                    deactivatedBreakpoints.push_back(bpId);
+                    MLOGDEBUG("Emulator::StepOver() - temporarily deactivated breakpoint at 0x%04X", bp->z80address);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Create a temporary breakpoint at the next instruction
+    BreakpointDescriptor* bpDesc = new BreakpointDescriptor();
+    bpDesc->type = BreakpointTypeEnum::BRK_MEMORY;
+    bpDesc->memoryType = BRK_MEM_EXECUTE;
+    bpDesc->z80address = nextInstructionAddress;
+    bpDesc->note = "StepOver";
+    uint16_t stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc);
+
+    if (stepOverBreakpointID == BRK_INVALID)
+    {
+        MLOGERROR("Emulator::StepOver() - failed to set breakpoint at 0x%04X", nextInstructionAddress);
+        // Restore any deactivated breakpoints before failing
+        for (uint16_t id : deactivatedBreakpoints) bpManager->ActivateBreakpoint(id);
+        RunSingleCPUCycle(true);
+        return;
+    }
+    bpManager->SetBreakpointGroup(stepOverBreakpointID, "TemporaryBreakpoints");
+
+    // Save original feature states
+    bool originalDebugMode = fm->isEnabled(Features::kDebugMode);
+    bool originalBreakpoints = fm->isEnabled(Features::kBreakpoints);
+    fm->setFeature(Features::kDebugMode, true);
+    fm->setFeature(Features::kBreakpoints, true);
+
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    std::function<void(int, Message*)> breakpoint_handler;
+
+    breakpoint_handler = 
+        [this, bpManager, stepOverBreakpointID, deactivatedBreakpoints, fm, originalDebugMode, originalBreakpoints](int /*id*/, Message* message) mutable
+        {
+            if (!message || !message->obj) return;
+
+            auto payload = static_cast<SimpleNumberPayload*>(message->obj);
+            uint16_t triggeredBreakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+
+            if (triggeredBreakpointID == stepOverBreakpointID)
+            {
+                MLOGDEBUG("Emulator::StepOver() - lambda cleanup started for breakpoint ID %d", stepOverBreakpointID);
+                bpManager->RemoveBreakpointByID(stepOverBreakpointID);
+                for (uint16_t deactivatedId : deactivatedBreakpoints)
+                {
+                    bpManager->ActivateBreakpoint(deactivatedId);
+                }
+                fm->setFeature(Features::kDebugMode, originalDebugMode);
+                fm->setFeature(Features::kBreakpoints, originalBreakpoints);
+                
+                // Signal the StepOver finalizer that processing is done and we cal wrap up
+                _stepOverSyncEvent.Signal();
+                MLOGDEBUG("Emulator::StepOver() - lambda finished.");
+            }
+        };
+
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
+
+    // Continue execution, then wait for the lambda to signal completion
+    MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit temporary breakpoint at 0x%04X", nextInstructionAddress);
+    Resume();
+
+    // We're waiting until breakpoint_handler lambda finishes
+    _stepOverSyncEvent.Wait();
+
+    // Now it's safe to remove the observer
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
+    MLOGDEBUG("Emulator::StepOver() - Operation complete, observer removed.");
 }
 
 /// Load ROM file (up to 64 banks to ROM area)

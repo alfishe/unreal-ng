@@ -14,6 +14,7 @@
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "base/featuremanager.h"
+#include "common/autoresetevent.h"
 
 #include <string>
 #include <mutex>
@@ -100,6 +101,9 @@ protected:
     volatile bool _isPaused = false;
     volatile bool _isRunning = false;
     volatile bool _isDebug = false;
+
+    // Step-over synchronization
+    AutoResetEvent _stepOverSyncEvent;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -166,6 +170,7 @@ public:
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunUntilInterrupt();
     void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
+    void StepOver();  // Execute instruction, skip calls and subroutines
 
     // Actions
     bool LoadROM(std::string path);

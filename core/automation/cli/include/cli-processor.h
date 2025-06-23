@@ -74,7 +74,9 @@ private:
     void HandleReset(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);
     void HandleResume(const ClientSession& session, const std::vector<std::string>& args);
-    void HandleStep(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleStepIn(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSteps(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
     

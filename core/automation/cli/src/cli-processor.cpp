@@ -44,7 +44,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"reset", &CLIProcessor::HandleReset},
                         {"pause", &CLIProcessor::HandlePause},
                         {"resume", &CLIProcessor::HandleResume},
-                        {"step", &CLIProcessor::HandleStep},
+                        {"step", &CLIProcessor::HandleStepIn},             // Always one instruction
+                        {"stepin", &CLIProcessor::HandleStepIn},           // Always one instruction
+                        {"steps", &CLIProcessor::HandleSteps},             // Execute 1...N instructions
+                        {"stepover", &CLIProcessor::HandleStepOver},       // Execute instruction, skip calls
                         {"memory", &CLIProcessor::HandleMemory},
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
@@ -286,7 +289,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  reset         - Reset the emulator" << NEWLINE;
     oss << "  pause         - Pause emulation" << NEWLINE;
     oss << "  resume        - Resume emulation" << NEWLINE;
-    oss << "  step [count]  - Execute one or more CPU instructions" << NEWLINE;
+    oss << "  step          - Execute single CPU instruction" << NEWLINE;
+    oss << "  stepin        - Execute single CPU instruction (alias for step)" << NEWLINE;
+    oss << "  steps <count> - Execute 1 to N CPU instructions" << NEWLINE;
+    oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;
@@ -654,7 +660,7 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
     session.SendResponse("Emulation resumed. Use 'pause' to suspend execution.");
 }
 
-void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
 
@@ -672,19 +678,12 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
     }
 
     // Parse step count argument
-    int stepCount = 1;
+    int stepCount = 1;  // stepin always executes one instruction
+    // Note: stepin ignores any count parameter - it always steps one instruction
     if (!args.empty())
     {
-        try
-        {
-            stepCount = std::stoi(args[0]);
-            if (stepCount < 1)
-                stepCount = 1;
-        }
-        catch (...)
-        {
-            // Use default step count of 1
-        }
+        // For stepin, we ignore the count parameter and always execute one instruction
+        // This makes stepin behavior consistent and predictable
     }
 
     // Get memory and disassembler for instruction info
@@ -813,6 +812,173 @@ void CLIProcessor::HandleStep(const ClientSession& session, const std::vector<st
 
     // Add note about viewing full register state
     ss << "\nUse 'registers' command to view full CPU state\n";
+
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    // Check if the emulator is paused
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    // Get memory and disassembler for instruction info
+    Memory* memory = emulator->GetMemory();
+    std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
+
+    if (!memory || !disassembler)
+    {
+        session.SendResponse("Error: Unable to access memory or disassembler.");
+        return;
+    }
+
+    // Get the current PC and disassemble the instruction that's about to be executed
+    Z80State* z80State = emulator->GetZ80State();
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state.");
+        return;
+    }
+
+    uint16_t initialPC = z80State->pc;
+
+    // Disassemble the instruction that's about to be executed
+    uint8_t commandLen = 0;
+    DecodedInstruction decodedBefore;
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (int i = 0; i < buffer.size(); i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
+    }
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
+
+    // Execute the step-over operation
+    emulator->StepOver();
+
+    // Get the updated Z80 state
+    z80State = emulator->GetZ80State();
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state after step-over.");
+        return;
+    }
+
+    uint16_t newPC = z80State->pc;
+
+    // Determine if this was a simple step or actual step-over
+    bool wasStepOver = (newPC != initialPC + decodedBefore.fullCommandLen);
+    std::string operationType = wasStepOver ? "Step-over" : "Step-in (instruction didn't require step-over)";
+
+    // Add instruction type information
+    std::string instructionType = "";
+    if (decodedBefore.hasJump && !decodedBefore.hasRelativeJump)
+    {
+        if (decodedBefore.isRst)
+            instructionType = " (RST instruction)";
+        else if (decodedBefore.opcode.mnem && strstr(decodedBefore.opcode.mnem, "call"))
+            instructionType = " (CALL instruction)";
+        else
+            instructionType = " (JUMP instruction)";
+    }
+    else if (decodedBefore.isDjnz)
+    {
+        instructionType = " (DJNZ instruction)";
+    }
+    else if (decodedBefore.isBlockOp)
+    {
+        instructionType = " (Block instruction)";
+    }
+    else if (decodedBefore.hasCondition)
+    {
+        instructionType = " (Conditional instruction)";
+    }
+
+    // Disassemble the next instruction to be executed
+    for (int i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(newPC + i);
+    }
+
+    DecodedInstruction decodedAfter;
+    commandLen = 0;
+    std::string instructionAfter =
+        disassembler->disassembleSingleCommandWithRuntime(buffer, newPC, &commandLen, z80State, memory, &decodedAfter);
+
+    // Format response with CPU state information
+    std::stringstream ss;
+    ss << operationType << instructionType << " completed" << NEWLINE;
+
+    // Show executed instruction
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << "Executed: [$" << std::setw(4) << initialPC << "] ";
+
+    // Add hex dump of the executed instruction
+    if (decodedBefore.instructionBytes.size() > 0)
+    {
+        for (uint8_t byte : decodedBefore.instructionBytes)
+        {
+            ss << std::setw(2) << static_cast<int>(byte) << " ";
+        }
+        // Add padding for alignment if needed
+        for (size_t i = decodedBefore.instructionBytes.size(); i < 4; i++)
+        {
+            ss << "   ";
+        }
+    }
+
+    ss << instructionBefore << NEWLINE;
+
+    // Show next instruction to be executed
+    ss << "Next:     [$" << std::setw(4) << newPC << "] ";
+
+    // Add hex dump of the next instruction
+    if (decodedAfter.instructionBytes.size() > 0)
+    {
+        for (uint8_t byte : decodedAfter.instructionBytes)
+        {
+            ss << std::setw(2) << static_cast<int>(byte) << " ";
+        }
+        // Add padding for alignment if needed
+        for (size_t i = decodedAfter.instructionBytes.size(); i < 4; i++)
+        {
+            ss << "   ";
+        }
+    }
+
+    ss << instructionAfter << NEWLINE;
+
+    // Show register state
+    ss << NEWLINE << "Registers:" << NEWLINE;
+    ss << "  PC: $" << std::setw(4) << z80State->pc << NEWLINE;
+    ss << "  AF: $" << std::setw(4) << z80State->af << NEWLINE;
+    ss << "  BC: $" << std::setw(4) << z80State->bc << NEWLINE;
+    ss << "  DE: $" << std::setw(4) << z80State->de << NEWLINE;
+    ss << "  HL: $" << std::setw(4) << z80State->hl << NEWLINE;
+    ss << "  SP: $" << std::setw(4) << z80State->sp << NEWLINE;
+    ss << "  IX: $" << std::setw(4) << z80State->ix << NEWLINE;
+    ss << "  IY: $" << std::setw(4) << z80State->iy << NEWLINE;
+    ss << "  Flags: ";
+    ss << (z80State->f & 0x80 ? "S" : "-");
+    ss << (z80State->f & 0x40 ? "Z" : "-");
+    ss << (z80State->f & 0x20 ? "5" : "-");
+    ss << (z80State->f & 0x10 ? "H" : "-");
+    ss << (z80State->f & 0x08 ? "3" : "-");
+    ss << (z80State->f & 0x04 ? "P" : "-");
+    ss << (z80State->f & 0x02 ? "N" : "-");
+    ss << (z80State->f & 0x01 ? "C" : "-");
+    ss << NEWLINE;
 
     session.SendResponse(ss.str());
 }
@@ -2487,4 +2653,179 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
         << "  feature save" << NEWLINE
         << "  feature" << NEWLINE;
     session.SendResponse(out.str());
+}
+
+void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    // Check if the emulator is paused
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    // Parse step count argument
+    int stepCount = 1;
+    if (args.empty())
+    {
+        session.SendResponse("Usage: steps <count> - Execute 1 to N CPU instructions");
+        return;
+    }
+
+    try
+    {
+        stepCount = std::stoi(args[0]);
+        if (stepCount < 1)
+        {
+            session.SendResponse("Error: Step count must be at least 1");
+            return;
+        }
+        if (stepCount > 1000)
+        {
+            session.SendResponse("Error: Step count cannot exceed 1000");
+            return;
+        }
+    }
+    catch (...)
+    {
+        session.SendResponse("Error: Invalid step count. Must be a number between 1 and 1000");
+        return;
+    }
+
+    // Get memory and disassembler for instruction info
+    Memory* memory = emulator->GetMemory();
+    std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
+
+    if (!memory || !disassembler)
+    {
+        session.SendResponse("Error: Unable to access memory or disassembler.");
+        return;
+    }
+
+    // Get the current PC and disassemble the instruction that's about to be executed
+    Z80State* z80State = emulator->GetZ80State();
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state.");
+        return;
+    }
+
+    // Store the current PC to show what's about to be executed
+    uint16_t initialPC = z80State->pc;
+
+    // Disassemble the instruction that's about to be executed
+    uint8_t commandLen = 0;
+    DecodedInstruction decodedBefore;
+    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
+    for (int i = 0; i < buffer.size(); i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
+    }
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
+
+    // Execute the requested number of CPU cycles
+    for (int i = 0; i < stepCount; ++i)
+    {
+        emulator->RunSingleCPUCycle(false);  // false = don't skip breakpoints
+    }
+
+    // Get the Z80 state after execution
+    z80State = emulator->GetZ80State();  // Refresh state after execution
+    if (!z80State)
+    {
+        session.SendResponse("Error: Unable to access Z80 state after execution.");
+        return;
+    }
+
+    // Get the new PC and disassemble the next instruction to be executed
+    uint16_t newPC = z80State->pc;
+
+    // Disassemble the next instruction to be executed
+    for (int i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; i++)
+    {
+        buffer[i] = memory->DirectReadFromZ80Memory(newPC + i);
+    }
+
+    DecodedInstruction decodedAfter;
+    commandLen = 0;
+    std::string instructionAfter =
+        disassembler->disassembleSingleCommandWithRuntime(buffer, newPC, &commandLen, z80State, memory, &decodedAfter);
+
+    // Format response with CPU state information
+    std::stringstream ss;
+    ss << "Executed " << stepCount << " instruction" << (stepCount != 1 ? "s" : "") << NEWLINE;
+
+    // Show executed instruction
+    ss << std::hex << std::uppercase << std::setfill('0');
+    ss << "Executed: [$" << std::setw(4) << initialPC << "] ";
+
+    // Add hex dump of the executed instruction
+    if (decodedBefore.instructionBytes.size() > 0)
+    {
+        for (uint8_t byte : decodedBefore.instructionBytes)
+        {
+            ss << std::setw(2) << static_cast<int>(byte) << " ";
+        }
+        // Add padding for alignment if needed
+        for (size_t i = decodedBefore.instructionBytes.size(); i < 4; i++)
+        {
+            ss << "   ";
+        }
+    }
+
+    ss << instructionBefore << NEWLINE;
+
+    // Show next instruction
+    ss << "Next:     [$" << std::setw(4) << newPC << "] ";
+
+    // Add hex dump of the next instruction
+    if (decodedAfter.instructionBytes.size() > 0)
+    {
+        for (uint8_t byte : decodedAfter.instructionBytes)
+        {
+            ss << std::setw(2) << static_cast<int>(byte) << " ";
+        }
+        // Add padding for alignment if needed
+        for (size_t i = decodedAfter.instructionBytes.size(); i < 4; i++)
+        {
+            ss << "   ";
+        }
+    }
+
+    ss << instructionAfter << "\n\n";
+
+    // Format current PC and registers
+    ss << "PC: $" << std::setw(4) << z80State->pc << "  ";
+
+    // Show main registers (compact format)
+    ss << "AF: $" << std::setw(4) << z80State->af << "  ";
+    ss << "BC: $" << std::setw(4) << z80State->bc << "  ";
+    ss << "DE: $" << std::setw(4) << z80State->de << "  ";
+    ss << "HL: $" << std::setw(4) << z80State->hl << NEWLINE;
+
+    // Show flags
+    ss << "Flags: ";
+    ss << (z80State->f & 0x80 ? "S" : "-");
+    ss << (z80State->f & 0x40 ? "Z" : "-");
+    ss << (z80State->f & 0x20 ? "5" : "-");
+    ss << (z80State->f & 0x10 ? "H" : "-");
+    ss << (z80State->f & 0x08 ? "3" : "-");
+    ss << (z80State->f & 0x04 ? "P" : "-");
+    ss << (z80State->f & 0x02 ? "N" : "-");
+    ss << (z80State->f & 0x01 ? "C" : "-");
+    ss << NEWLINE;
+
+    // Add note about viewing full register state
+    ss << "\nUse 'registers' command to view full CPU state\n";
+
+    session.SendResponse(ss.str());
 }

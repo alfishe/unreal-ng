@@ -354,27 +354,6 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     labelsAction->setEnabled(canManageLabels);
  }
 
- void DebuggerWindow::restoreDeactivatedBreakpoints()
-{
-    if (_deactivatedBreakpoints.empty() || !_emulator)
-        return;
-
-    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-    if (!bpManager)
-        return;
-
-    qDebug() << "Step Over: Restoring" << _deactivatedBreakpoints.size() << "temporarily deactivated breakpoints";
-
-    for (uint16_t id : _deactivatedBreakpoints)
-    {
-        bpManager->ActivateBreakpoint(id);
-        qDebug() << "Step Over: Restored breakpoint with ID:" << id;
-    }
-
-    _deactivatedBreakpoints.clear();
-    _inStepOverOperation = false;
-}
-
 /// endregion </Helper methods>
 
 /// region <QT Helper methods>
@@ -551,10 +530,9 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
     // Handle step over/out breakpoints
     if (breakpoint->note == STEP_OVER_NOTE)
     {
-        _inStepOverOperation = false;
+        // Step-over breakpoints are now handled by the core Emulator::StepOver() method
+        // Just remove the breakpoint and continue
         bpManager->RemoveBreakpointByID(breakpointID);
-        _stepOverBreakpointID = BRK_INVALID;
-        restoreDeactivatedBreakpoints();
     }
     else if (breakpoint->note == STEP_OUT_NOTE)
     {
@@ -651,46 +629,6 @@ void DebuggerWindow::stepIn()
     }
 }
 
-uint16_t DebuggerWindow::getNextInstructionAddress(uint16_t address)
-{
-    if (!_emulator)
-        return (address + 1) & 0xFFFF;
-
-    Memory* memory = _emulator->GetMemory();
-    Z80Disassembler* disassembler = _emulator->GetContext()->pDebugManager->GetDisassembler().get();
-
-    // Read instruction bytes
-    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (int i = 0; i < buffer.size(); i++)
-        buffer[i] = memory->DirectReadFromZ80Memory(address + i);
-
-    // Disassemble the current instruction to get its length
-    DecodedInstruction decoded;
-    uint8_t instructionLength = 0;
-    disassembler->disassembleSingleCommand(buffer, address, &instructionLength, &decoded);
-
-    // Calculate the next address by adding the instruction length
-    return (address + decoded.fullCommandLen) & 0xFFFF;
-}
-
-bool DebuggerWindow::shouldStepOver(uint16_t address)
-{
-    if (!_emulator)
-        return false;
-
-    // Get memory and Z80 state
-    Memory* memory = _emulator->GetMemory();
-
-    // Read instruction bytes
-    std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (int i = 0; i < buffer.size(); i++)
-        buffer[i] = memory->DirectReadFromZ80Memory(address + i);
-
-    // Use the disassembler's helper method to determine if we should step over
-    Z80Disassembler* disassembler = _emulator->GetContext()->pDebugManager->GetDisassembler().get();
-    return disassembler->shouldStepOver(buffer);
-}
-
 void DebuggerWindow::stepOver()
 {
     qDebug() << "DebuggerWindow::stepOver()";
@@ -700,93 +638,10 @@ void DebuggerWindow::stepOver()
     if (!_emulator)
         return;
 
-    // Get the current instruction address
-    Z80State* z80 = _emulator->GetZ80State();
-    uint16_t pc = z80->pc;
+    // Use the new core Emulator::StepOver() method
+    _emulator->StepOver();
 
-    // Determine if this is an instruction we should step over
-    if (shouldStepOver(pc))
-    {
-        // Get the disassembler
-        Z80Disassembler* disassembler = _emulator->GetContext()->pDebugManager->GetDisassembler().get();
-
-        // Get the address of the next instruction
-        uint16_t nextInstructionAddress = disassembler->getNextInstructionAddress(pc, _emulator->GetMemory());
-
-        // Get the exclusion ranges for step-over
-        std::vector<std::pair<uint16_t, uint16_t>> exclusionRanges =
-            disassembler->getStepOverExclusionRanges(pc, _emulator->GetMemory(), 5); // Max depth of 5 for nested calls
-
-        // Set a temporary breakpoint at the next instruction and continue execution until we reach it
-        BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-
-        // Store breakpoints that we'll need to restore later
-        _deactivatedBreakpoints.clear();
-
-        // Find all execution breakpoints within the exclusion ranges
-        const BreakpointMapByID& allBreakpoints = bpManager->GetAllBreakpoints();
-        for (const auto& [bpId, bp] : allBreakpoints)
-        {
-            // Only consider active execution breakpoints
-            if (bp->active && (bp->type == BRK_MEMORY) && (bp->memoryType & BRK_MEM_EXECUTE))
-            {
-                // Check if the breakpoint is within any exclusion range
-                for (const auto& range : exclusionRanges)
-                {
-                    if (bp->z80address >= range.first && bp->z80address <= range.second)
-                    {
-                        // Deactivate the breakpoint temporarily
-                        bpManager->DeactivateBreakpoint(bpId);
-                        _deactivatedBreakpoints.push_back(bpId);
-                        qDebug() << "Step Over: Temporarily deactivated breakpoint at address:"
-                                 << QString("0x%1").arg(bp->z80address, 4, 16, QLatin1Char('0')).toUpper();
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Create a breakpoint descriptor with the note field already set
-        BreakpointDescriptor* bpDesc = new BreakpointDescriptor();
-        bpDesc->type = BreakpointTypeEnum::BRK_MEMORY;
-        bpDesc->memoryType = BRK_MEM_EXECUTE;
-        bpDesc->z80address = nextInstructionAddress;
-        bpDesc->note = STEP_OVER_NOTE;
-
-        // Add the breakpoint and store its ID
-        _stepOverBreakpointID = bpManager->AddBreakpoint(bpDesc);
-
-        // Set its group if successfully added
-        if (_stepOverBreakpointID != BRK_INVALID)
-        {
-            bpManager->SetBreakpointGroup(_stepOverBreakpointID, TEMP_BREAKPOINT_GROUP);
-        }
-
-        if (_stepOverBreakpointID != BRK_INVALID)
-        {
-            // Set flag to indicate we're in a step-over operation
-            _inStepOverOperation = true;
-
-            // Continue execution until the breakpoint is hit
-            continueExecution();
-        }
-        else
-        {
-            qDebug() << "Step Over: Failed to set breakpoint at address:"
-                     << QString("0x%1").arg(nextInstructionAddress, 4, 16, QLatin1Char('0')).toUpper();
-
-            // Restore any deactivated breakpoints
-            restoreDeactivatedBreakpoints();
-
-            // If we couldn't set the breakpoint, just do a normal step
-            stepIn();
-        }
-    }
-    else
-    {
-        // If it's not a special instruction, just do a normal step
-        stepIn();
-    }
+    updateState();
 }
 
 void DebuggerWindow::stepOut()
