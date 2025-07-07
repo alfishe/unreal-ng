@@ -2809,6 +2809,7 @@ SRes LzmaEnc_CodeOneMemBlock(CLzmaEncHandle pp, BoolInt reInit,
   UInt64 nowPos64;
   SRes res;
   CLzmaEnc_SeqOutStreamBuf outStream;
+  ISeqOutStream *oldOutStream = p->rc.outStream; // Save old pointer
 
   outStream.vt.Write = SeqOutStreamBuf_Write;
   outStream.data = dest;
@@ -2827,16 +2828,21 @@ SRes LzmaEnc_CodeOneMemBlock(CLzmaEncHandle pp, BoolInt reInit,
   RangeEnc_Init(&p->rc);
   p->rc.outStream = &outStream.vt;
 
-  if (desiredPackSize == 0)
+  if (desiredPackSize == 0) {
+    p->rc.outStream = oldOutStream; // Restore before return
     return SZ_ERROR_OUTPUT_EOF;
+  }
 
   res = LzmaEnc_CodeOneBlock(p, desiredPackSize, *unpackSize);
   
   *unpackSize = (UInt32)(p->nowPos64 - nowPos64);
   *destLen -= outStream.rem;
-  if (outStream.overflow)
+  if (outStream.overflow) {
+    p->rc.outStream = oldOutStream; // Restore before return
     return SZ_ERROR_OUTPUT_EOF;
+  }
 
+  p->rc.outStream = oldOutStream; // Restore before return
   return res;
 }
 
