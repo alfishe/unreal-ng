@@ -35,7 +35,7 @@ machine:
     frame_counter: 54321
     flash_state: false
     screen_mode: SCREEN_NORMAL  # SCREEN_NORMAL or SCREEN_SHADOW
-    frane_t_states: 1234567     # Current T-state count within frame
+    frame_t_states: 1234567     # Current T-state count within frame
 
 # Memory layout and contents - individual pages stored as separate files.
 memory:
@@ -130,6 +130,15 @@ peripherals:
       R14: 0x00   # I/O Port A Data
       R15: 0x00   # I/O Port B Data
     selected_register: R14  # Currently selected register
+    # Internal state for perfect restoration
+    envelope:
+      phase: 3
+      step_counter: 7
+      current_volume: 12
+      direction: up
+    noise:
+      shift_register: 0x1F35
+      counter: 42
   psg1: # Programmable Sound Generator (AY1) - TurboSound configuration
     chip_type: YM2149F # Possible options: AY8910, AY8912, YM2149F
     registers:
@@ -161,6 +170,11 @@ peripherals:
     write_protect: false
     motor_timeout: 10240000 # T-states till motor off
     index_counter: 1024     # Counter for rotation phase / index punch
+    # Internal state for perfect restoration
+    state_machine:
+      phase: 2
+      timer: 12345
+      busy_counter: 8
   keyboard:
     matrix: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]  # Current keyboard matrix state
   joystick:
@@ -204,17 +218,26 @@ screenshots:
 
 # Optional debug information for developers.
 debug:
+  # Both embedded and file-based entries are supported. If both are present, the emulator MUST merge them, with embedded entries taking precedence in case of conflict.
   label_files:
     - "debug/labels.sym"
+  breakpoint_files:
+    - "debug/breakpoints.txt"
   embedded_labels:
-    0x4000: "GameLoopStart"
-    0x402A: "PlayerUpdate"
-    0x5B68: "CurrentPCPosition"
+    - { type: address, value: 0x4000, name: "GameLoopStart" }
+    - { type: address, value: 0x402A, name: "PlayerUpdate" }
+    - { type: address, value: 0x5B68, name: "CurrentPCPosition" }
+    - { type: physical, mem_type: RAM, page: 2, offset: 0x100, name: "Ram2Routine" }
+    - { type: physical, mem_type: ROM, page: 1, offset: 0x200, name: "Rom1Init" }
   breakpoints:
-    - { address: 0x5B6A, enabled: true, condition: "A == 0x1A" }
-    - { address: 0x4010, enabled: false }
+    - { type: address, value: 0x5B6A, enabled: true, condition: "A == 0x1A" }
+    - { type: address, value: 0x4010, enabled: false }
+    - { type: physical, mem_type: RAM, page: 5, offset: 0x123, enabled: true }
+    - { type: physical, mem_type: ROM, page: 0, offset: 0x456, enabled: false }
   watchpoints:
-    - { address: 0xC000, size: 2, read: true, write: true }
+    - { type: address, value: 0xC000, size: 2, read: true, write: true }
+    - { type: physical, mem_type: RAM, page: 2, offset: 0x200, size: 4, read: true, write: false }
+    - { type: physical, mem_type: ROM, page: 3, offset: 0x300, size: 1, read: false, write: true }
   call_stack:
     - 0x5B68
     - 0x402A
@@ -223,7 +246,8 @@ debug:
 # Emulator-specific configuration that was active during save.
 emulator_config:
   features:
-    
+    turbo_mode: true
+    magic_button_enabled: false
   debug_features:
     debug_mode: false
     memory_counters: true
@@ -240,3 +264,9 @@ emulator_config:
     mouse_type: KEMPSTON
     joystick_type: KEMPSTON
     keyboard_layout: default
+
+# Versioning and Compatibility Policy
+# - Unknown top-level keys MUST be ignored for forward compatibility.
+# - Breaking changes MUST increment the manifest_version. A changelog MUST be maintained.
+# - Older emulators encountering a newer version MAY warn or refuse to load, but MUST NOT crash.
+# - If a loader encounters an unknown field, it MUST ignore it unless it is required for correct operation in the current version.
