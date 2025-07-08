@@ -41,23 +41,23 @@ machine:
 memory:
   pages:
     # ROM pages (16KB each) - up to 64 ROM pages (0-63)
-    rom_0: { file: "memory/rom_0.bin", checksum: { algorithm: "crc32", value: "0x12345678" }, compression: "none" }
-    rom_1: { file: "memory/rom_1.bin", checksum: { algorithm: "crc32", value: "0x23456789" }, compression: "none" }
-    rom_2: { file: "memory/rom_2.bin", checksum: { algorithm: "crc32", value: "0x3456789A" }, compression: "none" }
-    rom_3: { file: "memory/rom_3.bin", checksum: { algorithm: "crc32", value: "0x456789AB" }, compression: "none" }
+    rom_0: { file: "memory/rom_0.bin", checksum: { algorithm: "crc32", value: "0x12345678" } }
+    rom_1: { file: "memory/rom_1.bin", checksum: { algorithm: "crc32", value: "0x23456789" } }
+    rom_2: { file: "memory/rom_2.bin", checksum: { algorithm: "crc32", value: "0x3456789A" } }
+    rom_3: { file: "memory/rom_3.bin", checksum: { algorithm: "crc32", value: "0x456789AB" } }
     # All other ROM pages skipped as empty / non-used
 
     # RAM pages (16KB each) - up to 256 RAM pages (0-255), only include pages that contain data
-    ram_0: { file: "memory/ram_0.bin", checksum: { algorithm: "crc32", value: "0x56789ABC" }, compression: "none" }
-    ram_2: { file: "memory/ram_2.bin", checksum: { algorithm: "crc32", value: "0x6789ABCD" }, compression: "none" }
-    ram_5: { file: "memory/ram_5.bin", checksum: { algorithm: "crc32", value: "0x789ABCDE" }, compression: "none" }
+    ram_0: { file: "memory/ram_0.bin", checksum: { algorithm: "crc32", value: "0x56789ABC" } }
+    ram_2: { file: "memory/ram_2.bin", checksum: { algorithm: "crc32", value: "0x6789ABCD" } }
+    ram_5: { file: "memory/ram_5.bin", checksum: { algorithm: "crc32", value: "0x789ABCDE" } }
     # All other RAM pages skipped as empty / non-used
        
     # MISC pages (special memory areas)
-    misc_0: { file: "memory/misc_0.bin", checksum: { algorithm: "crc32", value: "0xABCDEF01" }, compression: "none" }
+    misc_0: { file: "memory/misc_0.bin", checksum: { algorithm: "crc32", value: "0xABCDEF01" } }
     
     # CACHE pages (if cache is enabled)
-    cache_0: { file: "memory/cache_0.bin", checksum: { algorithm: "crc32", value: "0xBCDEF012" }, compression: "none" }
+    cache_0: { file: "memory/cache_0.bin", checksum: { algorithm: "crc32", value: "0xBCDEF012" } }
   
   memory_map:
     '0x0000': { type: ROM, bank: 0 }  # Slot 0: 0x0000 - 0x3FFF
