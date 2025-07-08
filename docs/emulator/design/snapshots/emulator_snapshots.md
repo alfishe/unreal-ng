@@ -168,6 +168,21 @@ peripherals:
       R14: 0x00
       R15: 0x00
     selected_register: R14
+    envelope:
+      phase: 3
+      step_counter: 7
+      current_volume: 12
+      direction: up
+    tone:
+      counter_a: 12345
+      counter_b: 23456
+      counter_c: 34567
+      output_a: 1
+      output_b: 0
+      output_c: 1
+    noise:
+      shift_register: 0x1F35
+      counter: 42
   psg1:
     chip_type: YM2149F
     registers:
@@ -672,8 +687,31 @@ All debug entries (labels, breakpoints, watchpoints) use a uniform object struct
 ### Peripheral State Completeness
 
 For perfect restoration, the snapshot must capture not only register values but also internal state for each peripheral. For example:
-- **AY/YM Sound Chip:** Envelope generator state (phase, step counter, current volume, direction), noise generator state (shift register, counter).
+- **AY/YM Sound Chip:** Envelope generator state (phase, step counter, current volume, direction), tone generator state (counter_a, counter_b, counter_c, output_a, output_b, output_c), noise generator state (shift register, counter).
 - **WD1793 FDC:** State machine phase, timers, busy counter, and any other internal counters required for precise command continuation.
+
+**Example YAML for PSG:**
+```yaml
+psg0:
+  chip_type: YM2149F
+  registers: { ... }
+  selected_register: R14
+  envelope:
+    phase: 3
+    step_counter: 7
+    current_volume: 12
+    direction: up
+  tone:
+    counter_a: 12345
+    counter_b: 23456
+    counter_c: 34567
+    output_a: 1
+    output_b: 0
+    output_c: 1
+  noise:
+    shift_register: 0x1F35
+    counter: 42
+```
 
 ---
 
@@ -695,414 +733,104 @@ features:
 - Older emulators encountering a newer version MAY warn or refuse to load, but MUST NOT crash.
 - If a loader encounters an unknown field, it MUST ignore it unless it is required for correct operation in the current version.
 
-## Memory Page Optimization
+## Inventory of Required Emulator Changes for Snapshot Compliance
 
-### Page Detection
+To fully comply with the new snapshot specification, the following changes and additions are required across the emulator codebase. **Note:** Instead of implementing the new snapshot logic in the `loaders` directory, a dedicated `SnapshotManager` module/class will be created in `/core/emulator/` to handle all snapshot save/load logic for the new YAML-based format.
 
-The snapshot system can detect which pages contain actual data:
+### 1. Snapshot Manager (New: `/core/emulator/SnapshotManager`)
+- Implement full YAML manifest parsing and writing (rapidyaml or similar).
+- Support for all new fields: metadata, machine, memory, z80, peripherals, media, screenshots, debug, emulator_config.
+- Handle both compressed and uncompressed memory pages, with per-page compression field.
+- Implement checksum verification for all memory/media files.
+- Implement merging of embedded and file-based debug data (labels, breakpoints, watchpoints).
+- Support for new debug entry structure: uniform objects with `type: address` or `type: physical, mem_type, page, offset`.
+- Handle versioning and unknown fields as per policy.
 
-```cpp
-bool IsPageUsed(uint8_t* pageData, size_t pageSize) {
-    // Check if page contains non-zero data
-    for (size_t i = 0; i < pageSize; i++) {
-        if (pageData[i] != 0) return true;
-    }
-    return false;
-}
-```
+### 2. Memory Subsystem (`Memory`, `MemoryManager`)
+- Support loading/saving individual RAM/ROM pages as files.
+- On load, initialize any unlisted RAM pages to all zero bytes (0x00).
+- On load, fail or prompt if a required ROM page is missing.
+- Support for memory map restoration from manifest.
+- Support for per-page compression and checksum verification.
 
-### Compression Decision
+### 3. CPU State (`Z80`, `Core`)
+- Save and restore all Z80 registers as per manifest.
+- Support for alternate/shadow registers, interrupt state, t-states, etc.
+- Ensure correct order and completeness of register restoration.
 
-The system can decide whether to compress a page based on content:
+### 4. Peripheral State
+- Save and restore all register and internal state for:
+  - AY/YM PSG: registers, envelope generator, noise generator, etc.
+  - WD1793 FDC: all registers, state machine phase, timers, counters.
+- Ensure all state required for perfect restoration is included.
 
-```cpp
-std::string ChooseCompression(uint8_t* pageData, size_t pageSize) {
-    // Check if page would benefit from compression
-    if (IsPageCompressible(pageData, pageSize)) {
-        return "gzip";
-    }
-    return "none";
-}
+### 5. Ports/IO
+- Save and restore all port values as per manifest.
+- Ensure correct mapping and restoration of paging and peripheral ports.
 
-bool IsPageCompressible(uint8_t* pageData, size_t pageSize) {
-    // Simple heuristic: check for repeated patterns or low entropy
-    // More sophisticated algorithms can be used
-    return CalculateEntropy(pageData, pageSize) < 0.8;
-}
-```
+### 6. Media Devices
+- Save and restore attached media state (file, position, write-protect, etc.).
+- Verify and store checksums for all media files.
+- Support for optional and missing devices.
 
-### Checksum Calculation
+### 7. Debugger/Breakpoints/Labels/Watchpoints
+- Support for new debug entry structure (uniform object, dual addressing).
+- Merge embedded and file-based debug data, with embedded taking precedence.
+- Save and restore call stack, breakpoints, watchpoints, and labels as per manifest.
 
-Each page includes a checksum for integrity verification:
+### 8. Emulator Configuration
+- Save and restore emulator features, debug features, video, sound, and input config as per manifest.
+- Support for boolean and enumerated feature flags.
 
-```cpp
-std::string CalculatePageChecksum(const std::string& algorithm, 
-                                 uint8_t* pageData, size_t pageSize) {
-    if (algorithm == "crc32") {
-        uint32_t crc = CalculateCRC32(pageData, pageSize);
-        return "0x" + std::format("{:08X}", crc);
-    } else if (algorithm == "sha1") {
-        return CalculateSHA1(pageData, pageSize);
-    }
-    // ... other algorithms
-    return "";
-}
-```
+### 9. Compression/Decompression Utilities
+- Implement per-page compression/decompression (gzip, none, etc.).
+- Support for future algorithms (7z, lz4, etc.) as needed.
 
-### Incremental Saves
+### 10. Versioning and Compatibility
+- Implement version check and compatibility policy.
+- Ignore unknown top-level keys, warn or refuse on version mismatch, never crash.
 
-The system can save only changed pages:
+### 11. UI/Frontend (Optional)
+- Update snapshot open/save dialogs to support new format and compressed archives.
+- Display snapshot metadata, warnings, and errors to the user.
 
-```cpp
-void SaveChangedPages() {
-    for (int bank = 0; bank < MAX_RAM_PAGES; bank++) {
-        if (IsPageDirty(bank)) {
-            std::string pageName = "ram_" + std::to_string(bank);
-            std::string compression = ChooseCompression(GetPageData(bank), PAGE_SIZE);
-            SaveMemoryPage(pageName, bank, compression);
-            ClearDirtyFlag(bank);
-        }
-    }
-}
-```
+### 12. Tests
+- Add/expand tests for all new snapshot features, including edge cases (missing pages, unknown fields, etc.).
 
-## Compression Implementation
+#### **Summary Table**
 
-### GZIP Compression
-
-GZIP compression is implemented using standard libraries:
-
-```cpp
-std::vector<uint8_t> CompressGzip(const uint8_t* data, size_t size) {
-    // Use zlib or system gzip utilities
-    // Implementation depends on available libraries
-    return CompressWithGzip(data, size);
-}
-
-std::vector<uint8_t> DecompressGzip(const std::string& fileName) {
-    // Read gzip file and decompress
-    // Implementation depends on available libraries
-    return DecompressGzipFile(fileName);
-}
-```
-
-### Compression Benefits
-
-- **RAM pages**: Typically 60-80% size reduction
-- **ROM pages**: Typically 40-60% size reduction (less compressible due to code)
-- **Overall snapshot**: 50-70% size reduction for typical snapshots
-
-### Future Compression Algorithms
-
-The format is designed to support additional compression algorithms:
-
-- **7z**: LZMA compression (higher compression ratio, slower)
-- **bzip2**: Burrows-Wheeler compression (good balance)
-- **lz4**: Fast compression/decompression
-- **zstd**: Modern compression with good ratio/speed balance
-
-## Error Handling
-
-The snapshot loader implements comprehensive error handling:
-
-1. **Validation**: Check manifest version and required fields
-2. **File existence**: Verify all referenced files exist
-3. **Size validation**: Ensure binary files match expected sizes
-4. **Checksum verification**: Verify page integrity
-5. **Compression validation**: Verify compressed files can be decompressed
-6. **Rollback**: If loading fails, restore previous emulator state
-
-## Future Extensions
-
-The format is designed to be extensible for future features:
-
-- **Multiple screenshots**: Support for multiple screenshots with timestamps
-- **Audio recording**: Include audio state or recordings
-- **Network state**: For emulated network interfaces
-- **Custom peripherals**: Support for user-defined hardware extensions
-- **Advanced compression**: Support for 7z, bzip2, lz4, zstd
-- **Differential snapshots**: Store only changes from a base snapshot
-
-## Version Compatibility
-
-- **Version 1.8**: Current format with per-page memory storage, flexible port structure, and compression support
-- **Version 1.0-1.7**: Legacy formats (backward compatibility maintained)
-- **Future versions**: Will maintain backward compatibility where possible
-
-## Security Considerations
-
-- **File validation**: All binary files are validated before loading
-- **Path sanitization**: File paths are sanitized to prevent directory traversal
-- **Size limits**: Maximum file sizes are enforced to prevent memory exhaustion
-- **Checksums**: Page-level checksums for file integrity verification
-- **Compression validation**: Compressed files are validated before decompression
-
-## Performance Considerations
-
-- **Lazy loading**: Large files (screenshots, debug data) are loaded on demand
-- **Memory mapping**: Large binary files can be memory-mapped for efficiency
-- **Page compression**: Individual pages can be compressed to reduce size
-- **Incremental saves**: Only changed memory pages are saved
-- **Parallel loading**: Multiple pages can be loaded in parallel
-- **Compression caching**: Decompressed pages can be cached for faster access
-
-### Debug Section Note
-
-**Breakpoints, Labels, and Watchpoints Addressing:**
-
-All debug entries (labels, breakpoints, watchpoints) use a uniform object structure for clarity and robust parsing. Each entry must specify its addressing mode:
-- `{ type: address, value: 0xXXXX, ... }` for Z80 address space
-- `{ type: physical, mem_type: RAM/ROM, page: N, offset: 0xYYY, ... }` for physical RAM/ROM page
-
-**Examples:**
-- Embedded label in Z80 address space: `{ type: address, value: 0x4000, name: "GameLoopStart" }`
-- Embedded label in RAM page: `{ type: physical, mem_type: RAM, page: 2, offset: 0x100, name: "Ram2Routine" }`
-- Breakpoint in Z80 address space: `{ type: address, value: 0x5B6A, enabled: true }`
-- Breakpoint in ROM page: `{ type: physical, mem_type: ROM, page: 1, offset: 0x200, enabled: true }`
-- Watchpoint in Z80 address space: `{ type: address, value: 0xC000, size: 2, read: true, write: true }`
-- Watchpoint in RAM page: `{ type: physical, mem_type: RAM, page: 2, offset: 0x200, size: 4, read: true, write: false }`
-
-**File-based and Embedded Debug Data:**
-- Both embedded and file-based entries (label_files, breakpoint_files) are supported.
-- If both are present, the emulator MUST merge them, with embedded entries taking precedence in case of conflict (e.g., same address/page).
+| Subsystem/Class                | Major Tasks                                                                 |
+|-------------------------------|-----------------------------------------------------------------------------|
+| SnapshotManager (new)         | Full new format support, merging, compression, versioning                   |
+| Memory                        | Per-page save/load, zeroing, map, compression, checksum                     |
+| CPU/Z80/Core                  | All register state, t-states, order                                         |
+| Peripherals (AY, WD1793, etc) | All registers + internal state                                              |
+| Ports/IO                      | All port values, mapping                                                    |
+| Media                         | State, checksums, optional/missing handling                                 |
+| Debugger/Breakpoints/Labels   | Uniform structure, merging, dual addressing, call stack                     |
+| Emulator Config               | Features, debug, video, sound, input                                        |
+| Compression Utils             | Per-page compression/decompression                                          |
+| Versioning/Compat             | Policy, unknown keys, version checks                                        |
+| UI/Frontend                   | Dialogs, metadata, error display                                            |
+| Tests                         | Coverage for all new/changed behaviors                                      |
 
 ---
 
-### Memory Section Note
-
-- Any RAM page not listed in `memory.pages` MUST be initialized to all zero bytes (0x00).
-- Unlisted ROM pages are a critical error and MUST cause the loader to fail or prompt for the missing ROM.
+If further breakdown or prioritization is needed, see each section above for details. 
 
 ---
 
-### Peripheral State Completeness
+## Unreal NG Snapshot File Format (.uns)
 
-For perfect restoration, the snapshot must capture not only register values but also internal state for each peripheral. For example:
-- **AY/YM Sound Chip:** Envelope generator state (phase, step counter, current volume, direction), noise generator state (shift register, counter).
-- **WD1793 FDC:** State machine phase, timers, busy counter, and any other internal counters required for precise command continuation.
+The official file extension for Unreal NG Snapshots is `.uns`. These files are simply `.7z`-compressed snapshot folders, containing the YAML manifest and all referenced files. This format is intended for easy distribution and archival of complete emulator state.
 
----
+- **.uns files**: Renamed `.7z` archives containing the full snapshot folder structure.
+- **Distribution**: The preferred way to share and store snapshots. Users and tools should use `.uns` for Unreal NG Snapshots.
+- **Frontend/UI support**: The emulator frontend (e.g., `mainwindow.cpp`) must recognize `.uns` files as snapshots. File dialogs and drag-and-drop logic should include `.uns` in the list of supported snapshot extensions.
+- **Dispatching**: When a `.uns` file is opened, it must be dispatched to the new `SnapshotManager` for loading, not to legacy SNA/Z80 loaders.
+- **File dialog filter example**:
+  ```
+  "All Supported Files (*.uns *.sna *.z80 *.tap ...);;Snapshots (*.uns *.sna *.z80);;..."
+  ```
 
-### emulator_config.features Example
-
-The `features` section under `emulator_config` is intended for boolean or enumerated feature flags. Example:
-```yaml
-features:
-  turbo_mode: true
-  magic_button_enabled: false
-```
-
----
-
-### Versioning and Compatibility Policy
-
-- Unknown top-level keys MUST be ignored for forward compatibility.
-- Breaking changes MUST increment the `manifest_version`. A changelog MUST be maintained.
-- Older emulators encountering a newer version MAY warn or refuse to load, but MUST NOT crash.
-- If a loader encounters an unknown field, it MUST ignore it unless it is required for correct operation in the current version.
-
-## Memory Page Optimization
-
-### Page Detection
-
-The snapshot system can detect which pages contain actual data:
-
-```cpp
-bool IsPageUsed(uint8_t* pageData, size_t pageSize) {
-    // Check if page contains non-zero data
-    for (size_t i = 0; i < pageSize; i++) {
-        if (pageData[i] != 0) return true;
-    }
-    return false;
-}
-```
-
-### Compression Decision
-
-The system can decide whether to compress a page based on content:
-
-```cpp
-std::string ChooseCompression(uint8_t* pageData, size_t pageSize) {
-    // Check if page would benefit from compression
-    if (IsPageCompressible(pageData, pageSize)) {
-        return "gzip";
-    }
-    return "none";
-}
-
-bool IsPageCompressible(uint8_t* pageData, size_t pageSize) {
-    // Simple heuristic: check for repeated patterns or low entropy
-    // More sophisticated algorithms can be used
-    return CalculateEntropy(pageData, pageSize) < 0.8;
-}
-```
-
-### Checksum Calculation
-
-Each page includes a checksum for integrity verification:
-
-```cpp
-std::string CalculatePageChecksum(const std::string& algorithm, 
-                                 uint8_t* pageData, size_t pageSize) {
-    if (algorithm == "crc32") {
-        uint32_t crc = CalculateCRC32(pageData, pageSize);
-        return "0x" + std::format("{:08X}", crc);
-    } else if (algorithm == "sha1") {
-        return CalculateSHA1(pageData, pageSize);
-    }
-    // ... other algorithms
-    return "";
-}
-```
-
-### Incremental Saves
-
-The system can save only changed pages:
-
-```cpp
-void SaveChangedPages() {
-    for (int bank = 0; bank < MAX_RAM_PAGES; bank++) {
-        if (IsPageDirty(bank)) {
-            std::string pageName = "ram_" + std::to_string(bank);
-            std::string compression = ChooseCompression(GetPageData(bank), PAGE_SIZE);
-            SaveMemoryPage(pageName, bank, compression);
-            ClearDirtyFlag(bank);
-        }
-    }
-}
-```
-
-## Compression Implementation
-
-### GZIP Compression
-
-GZIP compression is implemented using standard libraries:
-
-```cpp
-std::vector<uint8_t> CompressGzip(const uint8_t* data, size_t size) {
-    // Use zlib or system gzip utilities
-    // Implementation depends on available libraries
-    return CompressWithGzip(data, size);
-}
-
-std::vector<uint8_t> DecompressGzip(const std::string& fileName) {
-    // Read gzip file and decompress
-    // Implementation depends on available libraries
-    return DecompressGzipFile(fileName);
-}
-```
-
-### Compression Benefits
-
-- **RAM pages**: Typically 60-80% size reduction
-- **ROM pages**: Typically 40-60% size reduction (less compressible due to code)
-- **Overall snapshot**: 50-70% size reduction for typical snapshots
-
-### Future Compression Algorithms
-
-The format is designed to support additional compression algorithms:
-
-- **7z**: LZMA compression (higher compression ratio, slower)
-- **bzip2**: Burrows-Wheeler compression (good balance)
-- **lz4**: Fast compression/decompression
-- **zstd**: Modern compression with good ratio/speed balance
-
-## Error Handling
-
-The snapshot loader implements comprehensive error handling:
-
-1. **Validation**: Check manifest version and required fields
-2. **File existence**: Verify all referenced files exist
-3. **Size validation**: Ensure binary files match expected sizes
-4. **Checksum verification**: Verify page integrity
-5. **Compression validation**: Verify compressed files can be decompressed
-6. **Rollback**: If loading fails, restore previous emulator state
-
-## Future Extensions
-
-The format is designed to be extensible for future features:
-
-- **Multiple screenshots**: Support for multiple screenshots with timestamps
-- **Audio recording**: Include audio state or recordings
-- **Network state**: For emulated network interfaces
-- **Custom peripherals**: Support for user-defined hardware extensions
-- **Advanced compression**: Support for 7z, bzip2, lz4, zstd
-- **Differential snapshots**: Store only changes from a base snapshot
-
-## Version Compatibility
-
-- **Version 1.8**: Current format with per-page memory storage, flexible port structure, and compression support
-- **Version 1.0-1.7**: Legacy formats (backward compatibility maintained)
-- **Future versions**: Will maintain backward compatibility where possible
-
-## Security Considerations
-
-- **File validation**: All binary files are validated before loading
-- **Path sanitization**: File paths are sanitized to prevent directory traversal
-- **Size limits**: Maximum file sizes are enforced to prevent memory exhaustion
-- **Checksums**: Page-level checksums for file integrity verification
-- **Compression validation**: Compressed files are validated before decompression
-
-## Performance Considerations
-
-- **Lazy loading**: Large files (screenshots, debug data) are loaded on demand
-- **Memory mapping**: Large binary files can be memory-mapped for efficiency
-- **Page compression**: Individual pages can be compressed to reduce size
-- **Incremental saves**: Only changed memory pages are saved
-- **Parallel loading**: Multiple pages can be loaded in parallel
-- **Compression caching**: Decompressed pages can be cached for faster access
-
-### Debug Section Note
-
-**Breakpoints, Labels, and Watchpoints Addressing:**
-
-All debug entries (labels, breakpoints, watchpoints) use a uniform object structure for clarity and robust parsing. Each entry must specify its addressing mode:
-- `{ type: address, value: 0xXXXX, ... }` for Z80 address space
-- `{ type: physical, mem_type: RAM/ROM, page: N, offset: 0xYYY, ... }` for physical RAM/ROM page
-
-**Examples:**
-- Embedded label in Z80 address space: `{ type: address, value: 0x4000, name: "GameLoopStart" }`
-- Embedded label in RAM page: `{ type: physical, mem_type: RAM, page: 2, offset: 0x100, name: "Ram2Routine" }`
-- Breakpoint in Z80 address space: `{ type: address, value: 0x5B6A, enabled: true }`
-- Breakpoint in ROM page: `{ type: physical, mem_type: ROM, page: 1, offset: 0x200, enabled: true }`
-- Watchpoint in Z80 address space: `{ type: address, value: 0xC000, size: 2, read: true, write: true }`
-- Watchpoint in RAM page: `{ type: physical, mem_type: RAM, page: 2, offset: 0x200, size: 4, read: true, write: false }`
-
-**File-based and Embedded Debug Data:**
-- Both embedded and file-based entries (label_files, breakpoint_files) are supported.
-- If both are present, the emulator MUST merge them, with embedded entries taking precedence in case of conflict (e.g., same address/page).
-
----
-
-### Memory Section Note
-
-- Any RAM page not listed in `memory.pages` MUST be initialized to all zero bytes (0x00).
-- Unlisted ROM pages are a critical error and MUST cause the loader to fail or prompt for the missing ROM.
-
----
-
-### Peripheral State Completeness
-
-For perfect restoration, the snapshot must capture not only register values but also internal state for each peripheral. For example:
-- **AY/YM Sound Chip:** Envelope generator state (phase, step counter, current volume, direction), noise generator state (shift register, counter).
-- **WD1793 FDC:** State machine phase, timers, busy counter, and any other internal counters required for precise command continuation.
-
----
-
-### emulator_config.features Example
-
-The `features` section under `emulator_config` is intended for boolean or enumerated feature flags. Example:
-```yaml
-features:
-  turbo_mode: true
-  magic_button_enabled: false
-```
-
----
-
-### Versioning and Compatibility Policy
-
-- Unknown top-level keys MUST be ignored for forward compatibility.
-- Breaking changes MUST increment the `manifest_version`. A changelog MUST be maintained.
-- Older emulators encountering a newer version MAY warn or refuse to load, but MUST NOT crash.
-- If a loader encounters an unknown field, it MUST ignore it unless it is required for correct operation in the current version. 
+This ensures that Unreal NG Snapshots are handled consistently and robustly across the emulator and its user interface. 

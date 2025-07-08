@@ -130,12 +130,18 @@ peripherals:
       R14: 0x00   # I/O Port A Data
       R15: 0x00   # I/O Port B Data
     selected_register: R14  # Currently selected register
-    # Internal state for perfect restoration
     envelope:
       phase: 3
       step_counter: 7
       current_volume: 12
       direction: up
+    tone:
+      counter_a: 12345
+      counter_b: 23456
+      counter_c: 34567
+      output_a: 1
+      output_b: 0
+      output_c: 1
     noise:
       shift_register: 0x1F35
       counter: 42
@@ -159,6 +165,21 @@ peripherals:
       R14: 0x00   # I/O Port A Data
       R15: 0x00   # I/O Port B Data
     selected_register: R2  # Currently selected register
+    envelope:
+      phase: 2
+      step_counter: 5
+      current_volume: 8
+      direction: down
+    tone:
+      counter_a: 54321
+      counter_b: 65432
+      counter_c: 76543
+      output_a: 0
+      output_b: 1
+      output_c: 0
+    noise:
+      shift_register: 0x2A7B
+      counter: 99
   wd1793: # Floppy Disk Controller (Beta-Disk/TR-DOS)
     command: 0xD8       # Last command issued (Type III: SEEK)
     track:   0x1A         # Current/target track register (Track 26)
