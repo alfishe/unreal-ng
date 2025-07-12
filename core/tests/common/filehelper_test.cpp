@@ -33,7 +33,7 @@ TEST_F(FileHelper_Test, GetFileExtension)
     };
 
     std::vector<TestCase> cases =
-            {
+    {
         {"test.txt", "txt"},
         {"archive.tar.gz", "gz"},
         {"no_extension", ""},

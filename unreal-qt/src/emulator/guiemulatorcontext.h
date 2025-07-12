@@ -1,5 +1,4 @@
-#ifndef GUIEMULATORCONTEXT_H
-#define GUIEMULATORCONTEXT_H
+#pragma once
 
 class Emulator;
 class EmulatorContext;
@@ -16,5 +15,3 @@ public:
 
     LogViewer* logViewer = nullptr;
 };
-
-#endif // GUIEMULATORCONTEXT_H

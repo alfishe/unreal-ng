@@ -20,6 +20,8 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "loaders/snapshot/uns/loader_uns.h"
+#include "loaders/snapshot/uns/dto/snapshot_dto.h"
 
 /// region <Constructors / Destructors>
 
@@ -689,6 +691,21 @@ bool Emulator::LoadSnapshot(const std::string &path)
 
         /// endregion </Load Z80 snapshot>
     }
+    else if (ext == "uns")
+    {
+        // Unreal NG Snapshot (.uns)
+        LoaderUNS loaderUns(_context, path);
+        result = loaderUns.load();
+        if (result)
+        {
+            MLOGINFO("UNS file loaded successfully (DTO parsed). Emulator state restoration pending.");
+            // TODO: Restore emulator state from snapshot
+        }
+        else
+        {
+            MLOGERROR("Failed to load UNS file: %s", loaderUns.lastError().c_str());
+        }
+    }
 
     // Resume execution
     if (wasRunning)
@@ -936,7 +953,7 @@ void Emulator::StepOver()
 
             if (triggeredBreakpointID == stepOverBreakpointID)
             {
-                MLOGDEBUG("Emulator::StepOver() - lambda cleanup started for breakpoint ID %d", stepOverBreakpointID);
+                MLOGDEBUG("Emulator::StepOver() - lambda started for breakpoint ID %d", stepOverBreakpointID);
                 bpManager->RemoveBreakpointByID(stepOverBreakpointID);
                 for (uint16_t deactivatedId : deactivatedBreakpoints)
                 {

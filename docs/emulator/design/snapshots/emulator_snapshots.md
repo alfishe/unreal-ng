@@ -834,3 +834,31 @@ The official file extension for Unreal NG Snapshots is `.uns`. These files are s
   ```
 
 This ensures that Unreal NG Snapshots are handled consistently and robustly across the emulator and its user interface. 
+
+---
+
+## Snapshot DTOs (Data Transfer Objects) Design
+
+The snapshot manager uses a set of C++ DTOs (Data Transfer Objects) to represent all data that must be serialized or deserialized for a snapshot. Each DTO field is annotated with a one-line comment describing its purpose and mapping to the YAML manifest. These DTOs are pure data containers, designed for clarity, extensibility, and compatibility with any serialization backend (YAML, JSON, Protobuf, etc.).
+
+- **Field Annotations:** Every field in every DTO is documented with a concise one-line comment, making the header file a self-contained reference for the snapshot format.
+- **Extensibility:** New fields or sections can be added to the DTOs as the snapshot format evolves, with minimal impact on existing code.
+- **Serialization Agnostic:** The DTOs contain no logic and no dependencies on any particular serialization library. They can be used with any serializer implementing the common interface.
+- **Canonical Reference:** The annotated DTO header (`snapshot_dto.h`) is the canonical source of truth for all snapshot data structures and their mapping to the manifest.
+
+**Example excerpt:**
+```cpp
+struct MetadataDTO {
+    std::string manifest_version; // Manifest format version
+    std::string emulator_id;      // Emulator identifier
+    std::string emulator_version; // Emulator version
+    std::string host_platform;    // Host OS/platform
+    std::string emulated_platform;// Emulated machine/platform
+    std::string save_time;        // ISO8601 timestamp
+    std::string description;      // User description
+};
+```
+
+See `core/uns/dto/snapshot_dto.h` for the full, annotated DTO definitions.
+
+--- 

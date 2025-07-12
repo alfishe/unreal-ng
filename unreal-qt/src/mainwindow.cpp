@@ -1317,6 +1317,11 @@ void MainWindow::openSpecificFile(const QString& filepath)
         SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepathCopy);
         std::string file = filepath.toStdString();
 
+        if (fileInfo.suffix().toLower() == "uns") {
+            if (_emulator) _emulator->LoadSnapshot(file);
+            return;
+        }
+
         switch (category)
         {
             case FileROM:
@@ -1354,8 +1359,7 @@ void MainWindow::openFileDialog()
     // Show a file open dialog using the last directory
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Open File"), _lastDirectory,
-        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
-           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
+        tr("All Supported Files (*.uns *.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.uns *.sna *.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {
@@ -1366,6 +1370,12 @@ void MainWindow::openFileDialog()
         QString filePathCopy = filePath;  // Create a non-const copy for the method call
         SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
         std::string file = filePath.toStdString();
+
+        QFileInfo fileInfo(filePath);
+        if (fileInfo.suffix().toLower() == "uns") {
+            if (_emulator) _emulator->LoadSnapshot(file);
+            return;
+        }
 
         switch (category)
         {

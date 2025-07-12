@@ -1,0 +1,256 @@
+metadata:
+  manifest_version: "2.0"
+  emulator_id: "UnrealNG"
+  emulator_version: "1.2.3"
+  host_platform: "macOS"
+  emulated_platform: "ZX Spectrum 128K"
+  save_time: "2024-07-01T12:34:56Z"
+  description: "Full snapshot test fixture"
+machine:
+  model: "PENTAGON"
+  ram_size_kb: 1024
+  timing:
+    preset: "CUSTOM"
+    frame: 99999
+    line: 312
+    int: 60
+    intstart: 20
+    intlen: 40
+    total_t_states: 1234567890
+  config:
+    even_m1: 1
+    border_4t: 1
+    floatbus: 0
+    floatdos: 1
+    portff: 0
+  ula:
+    border_color: 2
+    frame_counter: 12345
+    flash_state: false
+    screen_mode: "SCREEN_TEST"
+    frame_t_states: 54321
+memory:
+  pages:
+    rom_0: { file: "rom_0.bin", checksum: { algorithm: "crc32", value: "0x01020304" } }
+    rom_1: { file: "rom_1.bin", checksum: { algorithm: "crc32", value: "0x11223344" } }
+    rom_2: { file: "rom_2.bin", checksum: { algorithm: "crc32", value: "0xA1B2C3D4" } }
+    rom_3: { file: "rom_3.bin", checksum: { algorithm: "crc32", value: "0x55667788" } }
+    ram_0: { file: "ram_0.bin", checksum: { algorithm: "crc32", value: "0x89ABCDEF" } }
+    ram_1: { file: "ram_1.bin", checksum: { algorithm: "crc32", value: "0x76543210" } }
+    ram_2: { file: "ram_2.bin", checksum: { algorithm: "crc32", value: "0xFEDCBA98" } }
+    ram_3: { file: "ram_3.bin", checksum: { algorithm: "crc32", value: "0x13579BDF" } }
+    ram_4: { file: "ram_4.bin", checksum: { algorithm: "crc32", value: "0x2468ACE0" } }
+    ram_5: { file: "ram_5.bin", checksum: { algorithm: "crc32", value: "0x10293847" } }
+    ram_6: { file: "ram_6.bin", checksum: { algorithm: "crc32", value: "0x56473829" } }
+    ram_7: { file: "ram_7.bin", checksum: { algorithm: "crc32", value: "0xABCDEF01" } }
+  memory_map:
+    '0x0000': { type: ROM, bank: 0 }
+    '0x4000': { type: RAM, bank: 5 }
+    '0x8000': { type: RAM, bank: 2 }
+    '0xC000': { type: RAM, bank: 0 }
+  ports:
+    "0xFE": 127
+    "0xFF": 255
+z80:
+  registers:
+    af: 0x1234
+    bc: 0x5678
+    de: 0x9ABC
+    hl: 0xDEF0
+    af_: 0xA1B2
+    bc_: 0xC3D4
+    de_: 0xE5F6
+    hl_: 0x1357
+    ix: 0x2468
+    iy: 0x369A
+    pc: 0x482B
+    sp: 0x5ACE
+    i: 0x99
+    r: 0xAA
+  interrupts:
+    im: 2
+    iff1: true
+    iff2: false
+    halted: false
+peripherals:
+  psg0:
+    chip_type: "AY-3-8910"
+    registers:
+      "A": 1
+      "B": 2
+      "C": 3
+    selected_register: "A"
+    envelope:
+      phase: 3
+      step_counter: 7
+      current_volume: 15
+      direction: "up"
+    tone:
+      counter_a: 100
+      counter_b: 200
+      counter_c: 300
+      output_a: 1
+      output_b: 0
+      output_c: 1
+    noise:
+      shift_register: 0xFFFF
+      counter: 42
+  psg1:
+    chip_type: "YM2149"
+    registers:
+      "A": 4
+      "B": 5
+      "C": 6
+    selected_register: "B"
+    envelope:
+      phase: 2
+      step_counter: 8
+      current_volume: 7
+      direction: "down"
+    tone:
+      counter_a: 400
+      counter_b: 500
+      counter_c: 600
+      output_a: 0
+      output_b: 1
+      output_c: 0
+    noise:
+      shift_register: 0xAAAA
+      counter: 24
+  wd1793:
+    command: 0xF0
+    track: 0x01
+    sector: 0x02
+    data: 0x03
+    status: 0x04
+    motor_on: true
+    head_loaded: false
+    write_protect: true
+    motor_timeout: 1000
+    index_counter: 5
+    state_machine:
+      phase: 2
+      timer: 10
+      busy_counter: 3
+media:
+  floppy_drives:
+    - drive_id: "A"
+      file: "disk_a.trd"
+      type: "TRD"
+      checksum:
+        algorithm: "crc32"
+        value: "0xCAFEBABE"
+      write_protected: false
+      motor_on: true
+      track_head_position: 40
+    - drive_id: "B"
+      file: "disk_b.trd"
+      type: "TRD"
+      checksum:
+        algorithm: "crc32"
+        value: "0xBABECAFE"
+      write_protected: true
+      motor_on: false
+      track_head_position: 80
+  tape_player:
+    file: "tape.tap"
+    checksum:
+      algorithm: "crc32"
+      value: "0x12345678"
+    position: 1234
+    playing: true
+    auto_start: false
+    traps_enabled: true
+  hard_disks:
+    - drive_id: 0
+      file: "hdd0.img"
+      type: "IDE"
+      checksum:
+        algorithm: "crc32"
+        value: "0x11111111"
+      size_mb: 512
+      read_only: false
+    - drive_id: 1
+      file: "hdd1.img"
+      type: "IDE"
+      checksum:
+        algorithm: "crc32"
+        value: "0x22222222"
+      size_mb: 1024
+      read_only: true
+debug:
+  label_files:
+    - "labels1.map"
+    - "labels2.map"
+  embedded_labels:
+    - type: "address"
+      value: 0x4000
+      name: "Start"
+      mem_type: "RAM"
+      page: 0
+      offset: 0
+    - type: "physical"
+      value: 0x8000
+      name: "ROMEntry"
+      mem_type: "ROM"
+      page: 1
+      offset: 16
+  breakpoint_files:
+    - "breaks1.bk"
+    - "breaks2.bk"
+  breakpoints:
+    - type: "address"
+      value: 0x1234
+      mem_type: "RAM"
+      page: 0
+      offset: 0
+      enabled: true
+      condition: "A==1"
+    - type: "physical"
+      value: 0x5678
+      mem_type: "ROM"
+      page: 1
+      offset: 8
+      enabled: false
+      condition: ""
+  watchpoints:
+    - type: "address"
+      value: 0x9ABC
+      mem_type: "RAM"
+      page: 2
+      offset: 4
+      size: 8
+      read: true
+      write: false
+    - type: "physical"
+      value: 0xDEF0
+      mem_type: "ROM"
+      page: 3
+      offset: 12
+      size: 16
+      read: false
+      write: true
+  call_stack:
+    - 0x1000
+    - 0x2000
+    - 0x3000
+emulator_config:
+  features:
+    turbo_mode: true
+    magic_button_enabled: false
+  debug_features:
+    debug_mode: true
+    memory_counters: false
+    call_trace: true
+  video:
+    filter: "CRT"
+    scanlines: 75
+    border_size: 16
+  sound:
+    enabled: true
+    sample_rate: 44100
+    buffer_size: 2048
+  input:
+    mouse_type: "KEMPSTON"
+    joystick_type: "SINCLAIR"
+    keyboard_layout: "EN-GB" 

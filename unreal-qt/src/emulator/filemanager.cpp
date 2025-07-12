@@ -10,6 +10,7 @@ PatternCategoryMap FileManager::_extensions =
 
     { "sna", SupportedFileCategoriesEnum::FileSnapshot },
     { "z80", SupportedFileCategoriesEnum::FileSnapshot },
+    { "uns", SupportedFileCategoriesEnum::FileSnapshot }, // Unreal NG Snapshot
 
     { "tap", SupportedFileCategoriesEnum::FileTape },
     { "tzx", SupportedFileCategoriesEnum::FileTape },
