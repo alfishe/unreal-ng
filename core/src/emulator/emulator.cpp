@@ -47,6 +47,12 @@ Emulator::Emulator(LoggerLevel level)
 Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
+    
+    // Ensure resources are released if Release() wasn't called explicitly
+    if (_initialized)
+    {
+        Release();
+    }
 }
 
 /// endregion </Constructors / Destructors>

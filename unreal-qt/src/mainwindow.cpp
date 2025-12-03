@@ -156,6 +156,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
      event->accept();
      qDebug() << "QCloseEvent : Closing application";
 
+     // Stop automation services first (before emulator shutdown)
+     // This ensures all network threads and sockets are closed before emulator resources are destroyed
+#ifdef ENABLE_AUTOMATION
+     automation.stop();
+     qDebug() << "Automation cleanup complete";
+#endif
+
      // Stop emulator
      if (_emulator)
      {

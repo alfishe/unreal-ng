@@ -38,8 +38,11 @@ MainLoop::~MainLoop()
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
     messageCenter.RemoveObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
-    // De-register mainloop from the context
-    _context->pMainLoop = nullptr;
+    // De-register mainloop from the context (if context still exists)
+    if (_context)
+    {
+        _context->pMainLoop = nullptr;
+    }
 
     _screen = nullptr;
 	_cpu = nullptr;
@@ -150,7 +153,15 @@ void MainLoop::Resume()
 void MainLoop::RunFrame()
 {
     /// region <Sanity checks>
+    // Check for null context - return early if context is destroyed (during shutdown)
+    if (!_context)
+        return;
+
+    if (!_context->pScreen)
+        return;
+
 #ifdef _DEBUG
+    // Additional debug-only validation
     if (!_context)
         throw std::logic_error("MainLoop::RunFrame - context undefined");
 
@@ -199,11 +210,14 @@ void MainLoop::RunFrame()
         //    screen.SaveZXSpectrumNativeScreen();
 
         // Save frame to GIF animation
-        Screen& screen = *_context->pScreen;
-        uint32_t* buffer;
-        size_t size;
-        screen.GetFramebufferData(&buffer, &size);
-        gifAnimationHelper.WriteFrame(buffer, size);
+        if (_context && _context->pScreen)
+        {
+            Screen& screen = *_context->pScreen;
+            uint32_t* buffer;
+            size_t size;
+            screen.GetFramebufferData(&buffer, &size);
+            gifAnimationHelper.WriteFrame(buffer, size);
+        }
     }
     i++;
 
@@ -219,6 +233,10 @@ void MainLoop::RunFrame()
 
 void MainLoop::OnFrameStart()
 {
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
     _screen->InitFrame();
@@ -226,6 +244,10 @@ void MainLoop::OnFrameStart()
 
 void MainLoop::OnCPUStep()
 {
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
     _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
 
     _context->pBetaDisk->handleStep();
@@ -234,6 +256,10 @@ void MainLoop::OnCPUStep()
 
 void MainLoop::OnFrameEnd()
 {
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
     // Update counters
     _context->emulatorState.t_states += _context->config.frame;
 
