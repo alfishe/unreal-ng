@@ -61,6 +61,13 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
+    
+    // Ensure resources are released if Release() wasn't called explicitly
+    if (_initialized.load(std::memory_order_acquire))
+    {
+        Release();
+    }
+    
     if (_featureManager)
     {
         delete _featureManager;
@@ -327,6 +334,10 @@ void Emulator::Release()
 
 void Emulator::ReleaseNoGuard()
 {
+    // Guard against null context (shouldn't happen, but be safe)
+    if (!_context)
+        return;
+    
     // Release debug manager (and related components)
     if (_context->pDebugManager)
     {
