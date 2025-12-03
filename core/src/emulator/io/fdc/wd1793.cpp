@@ -1,9 +1,13 @@
 #include "wd1793.h"
+#include "wd1793_collector.h"
 
+#include <sstream>
+
+#include "common/filehelper.h"
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
-#include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
 
 /// region <Constructors / destructors>
 
@@ -11,6 +15,26 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 {
     _context = context;
     _logger = context->pModuleLogger;
+
+    _stateHandlers.resize(WDSTATE::WDSTATE_MAX);
+    _stateHandlers[S_IDLE] = &WD1793::processIdle;
+    _stateHandlers[S_WAIT] = &WD1793::processWait;
+    _stateHandlers[S_FETCH_FIFO] = &WD1793::processFetchFIFO;
+    _stateHandlers[S_STEP] = &WD1793::processStep;
+    _stateHandlers[S_VERIFY] = &WD1793::processVerify;
+    _stateHandlers[S_SEARCH_ID] = &WD1793::processSearchID;
+    _stateHandlers[S_READ_SECTOR] = &WD1793::processReadSector;
+    _stateHandlers[S_WRITE_SECTOR] = &WD1793::processWriteSector;
+    _stateHandlers[S_READ_TRACK] = &WD1793::processReadTrack;
+    _stateHandlers[S_WRITE_TRACK] = &WD1793::processWriteTrack;
+    _stateHandlers[S_READ_BYTE] = &WD1793::processReadByte;
+    _stateHandlers[S_WRITE_BYTE] = &WD1793::processWriteByte;
+    _stateHandlers[S_READ_CRC] = &WD1793::processReadCRC;
+    _stateHandlers[S_WRITE_CRC] = &WD1793::processWriteCRC;
+    _stateHandlers[S_END_COMMAND] = &WD1793::processEndCommand;
+    
+    // TODO: remove collector once WD1793 logic is fully implemented and tested
+    _collector = new WD1793Collector();
 
     /// region <Create FDD instances
 
@@ -23,10 +47,19 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
 
     // Set drive A: as default
     _selectedDrive = _context->coreState.diskDrives[0];
+
+    reset();
 }
 
 WD1793::~WD1793()
 {
+    // Dump collected events file to disk
+    std::string filename = FileHelper::GetExecutablePath() + "/wd1793_events.csv";
+    _collector->dumpCollectedCommandInfo(filename);
+    
+    delete _collector;
+    _collector = nullptr;
+
     for (size_t i = 0; i < 4; i++)
     {
         FDD* diskDrive = _context->coreState.diskDrives[i];
@@ -71,19 +104,26 @@ void WD1793::internalReset()
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
-
     // In-place re-initialization
-    _wd93State =  WD93State();
+    _wd93State = WD93State();
 
     // Clear FDC state
     _state = S_IDLE;
     _state2 = S_IDLE;
     _statusRegister = 0;
     _trackRegister = 0;
-    _sectorRegister = 1; // As per datasheet. Sector is set to 1 after the RESTORE command
+    _sectorRegister = 1;  // As per datasheet. Sector is set to 1 after the RESTORE command
     _dataRegister = 0;
 
     _indexPulseCounter = 0;
+    _index = false;
+    _prevIndex = false;
+    _lastIndexPulseStartTime = 0;
+    _motorTimeoutTStates = 0;
+    _lastTime = 0;
+    _diffTime = 0;
+
+    _lastCmdValue = 0;
     _delayTStates = 0;
     _headLoaded = false;
 
@@ -103,11 +143,11 @@ void WD1793::process()
     // Timing synchronization between host and FDC (specific for software emulation)
     processClockTimings();
 
-    // Maintain FDD motor state
-    processFDDMotorState();
-
     // Emulate disk rotation and index strobe changes
     processFDDIndexStrobe();
+
+    // Maintain FDD motor state
+    processFDDMotorState();
 
     // Process counters and timeouts
     // - DRQ (Data Request) serving timeout
@@ -119,14 +159,14 @@ void WD1793::process()
     /// region <HandlerMap as the replacement for lengthy switch()>
 
     // Get the handler for State1
-    FSMHandler handler = _stateHandlerMap[_state];
+    FSMHandler handler = _stateHandlers[_state];
 
-    if (handler)    // Handler found
+    if (handler)  // Handler found
     {
         // Call the correspondent handler through the pointer or reference
         (this->*handler)();
     }
-    else            // Handler is not available
+    else  // Handler is not available
     {
         MLOGERROR("No handler available for the state %d (%s)", _state, WDSTATEToString(_state).c_str());
     }
@@ -137,6 +177,14 @@ void WD1793::process()
 /// endregion </Methods>
 
 /// region <Helper methods>
+
+void WD1793::ejectDisk()
+{
+    if (_selectedDrive)
+    {
+        _selectedDrive->ejectDisk();
+    }
+}
 
 /// Handle Beta128 interface system controller commands
 /// @param value
@@ -169,7 +217,7 @@ void WD1793::processBeta128(uint8_t value)
     else
     {
         uint8_t beta128ChangedBits = _beta128Register ^ value;
-        if (beta128ChangedBits & SYS_HLT) // When HLT signal positive edge (from 0 to 1) detected
+        if (beta128ChangedBits & SYS_HLT)  // When HLT signal positive edge (from 0 to 1) detected
         {
             // FIXME: index strobes should be set by disk rotation timings, not by HLT / BUSY edges
             if (!(_statusRegister & WDS_BUSY))
@@ -193,7 +241,7 @@ void WD1793::processFDDMotorState()
         // Motor timeout passed. Prepare to stop
         _motorTimeoutTStates = 0;
 
-        _statusRegister |= WDS_NOTRDY;              // Set NOT READY status bit
+        _statusRegister |= WDS_NOTRDY;  // Set NOT READY status bit
 
         // Unload head (and set all required flags)
         if (_headLoaded)
@@ -219,36 +267,70 @@ void WD1793::processFDDIndexStrobe()
     // - 300 revolutions per minute => 5 revolutions per second => 200ms or 1/5 second for single revolution
     // - base Z80 frequency 3.5MHz
     // We're getting 700'000 Z80 clock cycles period for each disk revolution / rotation
-    static constexpr const size_t DISK_ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
+    static constexpr const size_t INDEX_STROBE_DURATION_IN_TSTATES =
+        TSTATES_PER_MS * FDD::DISK_INDEX_STROBE_DURATION_MS;
 
-    // For 4ms index strobe and base Z80 frequency 3.5Mhz we're getting 14'000 Z80 clock cycles for 4ms index strobe duration
-    static constexpr const size_t INDEX_STROBE_DURATION_IN_TSTATES = TSTATES_PER_MS * FDD::DISK_INDEX_STROBE_DURATION_MS;
-
-    bool diskInserted = _selectedDrive->isDiskInserted();
-    bool motorOn = _selectedDrive->getMotor();
+    bool diskInserted = _selectedDrive && _selectedDrive->isDiskInserted();
+    bool motorOn = _motorTimeoutTStates > 0 && _selectedDrive->getMotor();
+    bool oldIndex = _index;
 
     if (diskInserted && motorOn)
     {
-        bool lastIndex = _index;
+        // Calculate the current position in the disk rotation
+        size_t diskRotationPhaseCounter = _time % DISK_ROTATION_PERIOD_TSTATES;
 
-        // Set new state for the INDEX flag based on rotating disk position
-        // Note: it is assumed that each disk revolution started with index strobe
-        size_t diskRotationPhaseCounter = (_time % DISK_ROTATION_PERIOD_TSTATES);
-        if (diskRotationPhaseCounter < INDEX_STROBE_DURATION_IN_TSTATES)
-        {
-            _index = true;
-        }
-        else
-        {
-            _index = false;
-        }
+        // Index pulse is active for the first few ms of each revolution
+        _index = (diskRotationPhaseCounter < INDEX_STROBE_DURATION_IN_TSTATES);
 
-        // Trigger on index pulse rising edge
-        if (!lastIndex && _index)
+        // Detect rising edge of index pulse (transition from low to high)
+        if (!_prevIndex && _index)
         {
             _indexPulseCounter++;
+
+            MLOGDEBUG("Index pulse #%u detected at T-state: %llu. Motor timeout remaining: %d T-states (%.2f ms)",
+                _indexPulseCounter,
+                 _time,
+                 _motorTimeoutTStates,
+                 _motorTimeoutTStates * 1000.0 / Z80_FREQUENCY
+            );
+        }
+
+        // Debug log for index pulse state changes
+        if (oldIndex != _index)
+        {
+            if (_index)
+            {
+                // Pulse started
+                _lastIndexPulseStartTime = _time;
+                MLOGDEBUG(">> Index pulse #%d started at T-state: %llu", _indexPulseCounter, _time);
+            }
+            else if (_lastIndexPulseStartTime > 0)
+            {
+                // Pulse ended - log duration
+                uint64_t pulseDurationTStates = _time - _lastIndexPulseStartTime;
+                double pulseDurationMs = pulseDurationTStates * 1000.0 / Z80_FREQUENCY;
+                std::string formattedTStates =
+                    StringHelper::FormatWithCustomThousandsDelimiter(pulseDurationTStates, '\'');
+
+                MLOGDEBUG("<< Index pulse #%d ended at T-state: %llu (duration: %s T-states, %.2f ms)",
+                          _indexPulseCounter,
+                          _time,
+                          formattedTStates.c_str(),
+                          pulseDurationMs);
+            }
+            else
+            {
+                MLOGDEBUG("Index pulse state changed at T-state: %llu (unknown duration)", _time);
+            }
         }
     }
+    else
+    {
+        _index = false;  // No index pulse when disk not inserted or motor off
+    }
+
+    // Update previous index state for edge detection in the next call
+    _prevIndex = _index;
 
     // Update status register for Type 1 commands
     if (isType1Command(_lastCmdValue))
@@ -262,6 +344,16 @@ void WD1793::processFDDIndexStrobe()
             _statusRegister &= ~WDS_INDEX;
         }
     }
+
+    // Debug: Log if we're not getting any index pulses
+    static uint64_t lastDebugLogTime = 0;
+    if (_time - lastDebugLogTime > Z80_FREQUENCY)  // Log once per second
+    {
+        lastDebugLogTime = _time;
+        double milliseconds = (static_cast<double>(_time) * 1000.0) / Z80_FREQUENCY;
+        MLOGDEBUG("Motor state: %s, Disk inserted: %s, Index pulses: %u, Time: %.2f ms (%llu T-states)", motorOn ? "ON" : "OFF",
+                  diskInserted ? "YES" : "NO", _indexPulseCounter, milliseconds, _time);
+    }
 }
 
 /// Process counters and timeouts
@@ -269,18 +361,23 @@ void WD1793::processFDDIndexStrobe()
 /// - RNF (Record Not Found)
 /// - Seek error
 /// - Index timeout
-void WD1793::processCountersAndTimeouts()
-{
-
-}
+void WD1793::processCountersAndTimeouts() {}
 
 /// Ensure FDD motor is spinning and set default stop timeout
+/// @details Condition for Timeout: The FDC is in an idle state (Busy status bit S0 = 0,
+/// meaning no command is currently being executed).
+/// Timeout Trigger: 15 Index Pulses (IP) have occurred while the FDC remains idle and the head is loaded (HLD is
+/// active). Action: After the 15th Index Pulse is detected under these conditions, the FDC automatically de-asserts the
+/// HLD (Head Load) signal, causing the R/W head to unload from the disk surface.
+///
+/// Since an Index Pulse occurs once per disk revolution:
+///   The timeout is 15 disk revolutions.
 void WD1793::prolongFDDMotorRotation()
 {
-    static constexpr const size_t MOTOR_STOP_TIMEOUT_TSTATES = 15 * Z80_FREQUENCY / FDD_RPS;
-
-    // Set motor timeout to 15 disk revolutions (3 seconds)
-    _motorTimeoutTStates = MOTOR_STOP_TIMEOUT_TSTATES;
+    // Set motor timeout to 15 disk revolutions (3 seconds at 5 RPS)
+    static constexpr const size_t REVOLUTIONS_FOR_TIMEOUT = 15;  // 15 revolutions at 5 RPS = 3 seconds
+    static constexpr const size_t TSTATES_PER_REVOLUTION = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
+    _motorTimeoutTStates = REVOLUTIONS_FOR_TIMEOUT * TSTATES_PER_REVOLUTION;
 
     // Start motor if not spinning yet
     if (!_selectedDrive->getMotor())
@@ -294,15 +391,32 @@ void WD1793::startFDDMotor()
 {
     _selectedDrive->setMotor(true);
 
-    MLOGINFO("FDD motor started: %d ms", _context->pCore->GetZ80());
+    double milliseconds = ((double)_time * 1000.0) / Z80_FREQUENCY;
+    MLOGINFO("FDD motor started: %.2f ms (T-states: %llu)", milliseconds, _time);
 }
 
 /// Stops FDD motor
 void WD1793::stopFDDMotor()
 {
     _selectedDrive->setMotor(false);
+    _motorTimeoutTStates = 0;
+    
+    // Reset index pulse counter and related state when motor is stopped
+    _index = false;
+    _prevIndex = false;
+    _lastIndexPulseStartTime = 0;
 
-    MLOGINFO("FDD motor stopped\n\n\n");
+    MLOGINFO("FDD motor stopped");
+
+#if defined (_DEBUG)
+    {
+        double milliseconds = ((double)_time * 1000.0) / Z80_FREQUENCY;
+        MLOGINFO("FDD motor stopped: %.2f ms (T-states: %llu)", milliseconds, _time);
+    }
+#endif // _DEBUG
+
+    MLOGEMPTY();
+    MLOGEMPTY();
 }
 
 /// Load head
@@ -331,7 +445,7 @@ void WD1793::unloadHead()
         _statusRegister &= ~WDS_HEADLOADED;
     }
 
-    _extStatus &= ~SIG_OUT_HLD;         // Unload read-write head
+    _extStatus &= ~SIG_OUT_HLD;  // Unload read-write head
     _headLoaded = false;
 
     MLOGINFO("< Head unloaded");
@@ -352,14 +466,61 @@ uint8_t WD1793::getStatusRegister()
         processFDDIndexStrobe();
 
         // Set Status Register bits specific for Type I commands
-        if (_selectedDrive->isWriteProtect()) { _statusRegister |= WDS_WRITEPROTECTED; } else { _statusRegister &= ~WDS_WRITEPROTECTED; };
+        if (_selectedDrive->isWriteProtect())
+        {
+            _statusRegister |= WDS_WRITEPROTECTED;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_WRITEPROTECTED;
+        };
+
         // Set head load state based on HLD and HLT signals
         uint8_t headStatus = ((_extStatus & SIG_OUT_HLD) && (_beta128Register & 0b0000'1000)) ? WDS_HEADLOADED : 0;
-        if (headStatus) { _statusRegister |= headStatus; } else { _statusRegister &= ~headStatus; };
-        if (_seek_error) { _statusRegister |= WDS_SEEKERR; } else { _statusRegister &= ~WDS_SEEKERR; };
-        if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
-        if (_selectedDrive->isTrack00()) { _statusRegister |= WDS_TRK00; } else { _statusRegister &= ~WDS_TRK00; };
-        if (_index) { _statusRegister |= WDS_INDEX; } else { _statusRegister &= ~WDS_INDEX; };
+        if (headStatus)
+        {
+            _statusRegister |= headStatus;
+        }
+        else
+        {
+            _statusRegister &= ~headStatus;
+        };
+
+        if (_seek_error)
+        {
+            _statusRegister |= WDS_SEEKERR;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_SEEKERR;
+        };
+
+        if (_crc_error)
+        {
+            _statusRegister |= WDS_CRCERR;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_CRCERR;
+        };
+
+        if (_selectedDrive->isTrack00())
+        {
+            _statusRegister |= WDS_TRK00;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_TRK00;
+        };
+
+        if (_index)
+        {
+            _statusRegister |= WDS_INDEX;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_INDEX;
+        };
 
         if (_index)
             _index = _index ? _index : false;
@@ -371,7 +532,8 @@ uint8_t WD1793::getStatusRegister()
         // Type II or III command specific status register bits
         // Main differences:
         // - Bit 1 means DRQ (Data Request)
-        // - Bit 2 means LOST DATA (CPU was unable to read or write the data from data register during 13us waiting period)
+        // - Bit 2 means LOST DATA (CPU was unable to read or write the data from data register during 13us waiting
+        // period)
         // - Bits 3 to 6 are specific for each command
         // - Bit 7 means NOT READY (FDC is not ready to accept commands)
 
@@ -379,36 +541,106 @@ uint8_t WD1793::getStatusRegister()
         switch (_lastDecodedCmd)
         {
             case WD_CMD_READ_ADDRESS:
-                _statusRegister &= 0b1001'1111; // Reset bit5 and bit6 as stated in the datasheet
+                _statusRegister &= 0b1001'1111;  // Reset bit5 and bit6 as stated in the datasheet
 
-                if (_record_not_found) { _statusRegister |= WDS_NOTFOUND; } else { _statusRegister &= ~WDS_NOTFOUND; };
-                if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
+                if (_record_not_found)
+                {
+                    _statusRegister |= WDS_NOTFOUND;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_NOTFOUND;
+                };
+                if (_crc_error)
+                {
+                    _statusRegister |= WDS_CRCERR;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_CRCERR;
+                };
                 break;
             case WD_CMD_READ_SECTOR:
-                _statusRegister &= 0b1011'1111; // Reset bit 6 as stated in the datasheet
+                _statusRegister &= 0b1011'1111;  // Reset bit 6 as stated in the datasheet
 
                 // TODO: set WDS_RECORDTYPE
-                if (_record_not_found) { _statusRegister |= WDS_NOTFOUND; } else { _statusRegister &= ~WDS_NOTFOUND; };
-                if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
+                if (_record_not_found)
+                {
+                    _statusRegister |= WDS_NOTFOUND;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_NOTFOUND;
+                };
+                if (_crc_error)
+                {
+                    _statusRegister |= WDS_CRCERR;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_CRCERR;
+                };
                 break;
             case WD_CMD_WRITE_SECTOR:
                 // No bits reset => All bits are used for the Write Sector command
 
-                if (_write_protect) { _statusRegister |= WDS_WRITEPROTECTED; } else { _statusRegister &= ~WDS_WRITEPROTECTED; };
-                if (_write_fault) { _statusRegister |= WDS_WRITEFAULT; } else { _statusRegister &= ~WDS_WRITEFAULT; };
-                if (_record_not_found) { _statusRegister |= WDS_NOTFOUND; } else { _statusRegister &= ~WDS_NOTFOUND; };
-                if (_crc_error) { _statusRegister |= WDS_CRCERR; } else { _statusRegister &= ~WDS_CRCERR; };
+                if (_write_protect)
+                {
+                    _statusRegister |= WDS_WRITEPROTECTED;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_WRITEPROTECTED;
+                };
+                if (_write_fault)
+                {
+                    _statusRegister |= WDS_WRITEFAULT;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_WRITEFAULT;
+                };
+                if (_record_not_found)
+                {
+                    _statusRegister |= WDS_NOTFOUND;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_NOTFOUND;
+                };
+                if (_crc_error)
+                {
+                    _statusRegister |= WDS_CRCERR;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_CRCERR;
+                };
                 break;
             case WD_CMD_READ_TRACK:
-                _statusRegister &= 0b1000'0111; // Reset bits 3 to 6 as stated in the datasheet
+                _statusRegister &= 0b1000'0111;  // Reset bits 3 to 6 as stated in the datasheet
 
                 // DRQ bit means that a raw data byte, including gaps and sync marks, is placed into the Data Register
                 break;
             case WD_CMD_WRITE_TRACK:
-                _statusRegister &= 0b1110'0111; // Reset bit3 and bit4 as stated in the datasheet
+                _statusRegister &= 0b1110'0111;  // Reset bit3 and bit4 as stated in the datasheet
 
-                if (_write_protect) { _statusRegister |= WDS_WRITEPROTECTED; } else { _statusRegister &= ~WDS_WRITEPROTECTED; };
-                if (_write_fault) { _statusRegister |= WDS_WRITEFAULT; } else { _statusRegister &= ~WDS_WRITEFAULT; };
+                if (_write_protect)
+                {
+                    _statusRegister |= WDS_WRITEPROTECTED;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_WRITEPROTECTED;
+                };
+                if (_write_fault)
+                {
+                    _statusRegister |= WDS_WRITEFAULT;
+                }
+                else
+                {
+                    _statusRegister &= ~WDS_WRITEFAULT;
+                };
                 break;
             default:
                 throw std::logic_error("Unknown FDC command");
@@ -425,13 +657,24 @@ uint8_t WD1793::getStatusRegister()
             _statusRegister |= WDS_NOTRDY;
         }
 
-        if (_lost_data) _statusRegister |= WDS_LOSTDATA;
+        if (_lost_data)
+            _statusRegister |= WDS_LOSTDATA;
         // DRQ (bit 1) for all Type II and III commands is driven by an FDC state machine
         // But since beta128 register is used to hold chip DRQ output signal - get it from there
-        if (_beta128Register & DRQ) { _statusRegister |= WDS_DRQ; } else { _statusRegister &= ~WDS_DRQ; };
+        if (_beta128Register & DRQ)
+        {
+            _statusRegister |= WDS_DRQ;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_DRQ;
+        };
     }
 
     // BUSY (bit 0) is driven by an FDC state machine and set directly during command processing
+
+    if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister > 0 && _trackRegister == _dataRegister && _selectedDrive->isTrack00())
+        (void)_statusRegister;
 
     return _statusRegister;
 }
@@ -447,7 +690,6 @@ bool WD1793::isReady()
 /// endregion </Helper methods>
 
 /// region <Command handling>
-
 
 /// Detect Type1 command (RESTORE, SEEK, STEP, STEP IN, STEP OUT)
 /// @param command
@@ -533,14 +775,17 @@ WD1793::WD_COMMANDS WD1793::decodeWD93Command(uint8_t value)
     // All 11 WD1793 commands supported
     // - Restore: This command is used to move the read/write head to the outermost track (track 0).
     // - Seek: The seek command is used to move the read/write head to a specified track on the floppy disk.
-    // - Step: The step command moves the read/write head in the direction previously specified (inwards or outwards) by the "step in" or "step out" command.
+    // - Step: The step command moves the read/write head in the direction previously specified (inwards or outwards) by
+    // the "step in" or "step out" command.
     // - Step In: This command moves the read/write head one track towards the center of the disk.
     // - Step Out: This command moves the read/write head one track away from the center of the disk.
     // - Read Sector: This command allows you to read a single sector from the current track.
     // - Write Sector: The write sector command enables you to write data to a specified sector on the current track.
-    // - Read Address: This command reads the address field (track number, side number, sector number) of the current sector.
+    // - Read Address: This command reads the address field (track number, side number, sector number) of the current
+    // sector.
     // - Read Track: This command is used to read the entire contents of a track into the FDC's internal buffer.
-    // - Write Track: The write track command allows you to write an entire track worth of data from the FDC's internal buffer to the floppy disk.
+    // - Write Track: The write track command allows you to write an entire track worth of data from the FDC's internal
+    // buffer to the floppy disk.
     // - Force Interrupt: This command forces an interrupt to occur, regardless of the current state of the FDC.
     // ╔═════════╤═════════════════╤═══════════════════════════════════════════════╗
     // ║ Command │     Command     │                     Bits                      ║
@@ -561,20 +806,19 @@ WD1793::WD_COMMANDS WD1793::decodeWD93Command(uint8_t value)
     // ╟─────────┼─────────────────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────╢
     // ║    4    │ Force Interrupt │  1  │  1  │  0  │  1  │  J3 │  J2 │  J3 │  J0 ║
     // ╚═════════╧═════════════════╧═════╧═════╧═════╧═════╧═════╧═════╧═════╧═════╝
-    static constexpr uint8_t commandMasksMatches[WD93_COMMAND_COUNT][2] =
-    {
+    static constexpr uint8_t commandMasksMatches[WD93_COMMAND_COUNT][2] = {
         //    Mask   ,   Match
-        { 0b1111'0000, 0b0000'0000 },   // [ 0] Restore          Match value: (  0, 0x00)
-        { 0b1111'0000, 0b0001'0000 },   // [ 1] Seek             Match value: ( 16, 0x10)
-        { 0b1110'0000, 0b0010'0000 },   // [ 2] Step             Match value: ( 32, 0x20)
-        { 0b1110'0000, 0b0100'0000 },   // [ 3] Step In          Match value: ( 64, 0x40)
-        { 0b1110'0000, 0b0110'0000 },   // [ 4] Step Out         Match value: ( 96, 0x60)
-        { 0b1110'0000, 0b1000'0000 },   // [ 5] Read Sector      Match value: (128, 0x80)
-        { 0b1110'0000, 0b1010'0000 },   // [ 6] Write Sector     Match value: (160, 0xA0)
-        { 0b1111'0000, 0b1100'0000 },   // [ 7] Read Address     Match value: (192, 0xC0)
-        { 0b1111'0000, 0b1110'0000 },   // [ 8] Read Track       Match value: (224, 0xE0)
-        { 0b1111'0000, 0b1111'0000 },   // [ 9] Write Track      Match value: (240, 0xF0)
-        { 0b1111'0000, 0b1101'0000 }    // [10] Force Interrupt. Match value: (208, 0xD0)
+        {0b1111'0000, 0b0000'0000},  // [ 0] Restore          Match value: (  0, 0x00)
+        {0b1111'0000, 0b0001'0000},  // [ 1] Seek             Match value: ( 16, 0x10)
+        {0b1110'0000, 0b0010'0000},  // [ 2] Step             Match value: ( 32, 0x20)
+        {0b1110'0000, 0b0100'0000},  // [ 3] Step In          Match value: ( 64, 0x40)
+        {0b1110'0000, 0b0110'0000},  // [ 4] Step Out         Match value: ( 96, 0x60)
+        {0b1110'0000, 0b1000'0000},  // [ 5] Read Sector      Match value: (128, 0x80)
+        {0b1110'0000, 0b1010'0000},  // [ 6] Write Sector     Match value: (160, 0xA0)
+        {0b1111'0000, 0b1100'0000},  // [ 7] Read Address     Match value: (192, 0xC0)
+        {0b1111'0000, 0b1110'0000},  // [ 8] Read Track       Match value: (224, 0xE0)
+        {0b1111'0000, 0b1111'0000},  // [ 9] Write Track      Match value: (240, 0xF0)
+        {0b1111'0000, 0b1101'0000}   // [10] Force Interrupt. Match value: (208, 0xD0)
     };
 
     WD1793::WD_COMMANDS result = WD_CMD_RESTORE;
@@ -600,20 +844,19 @@ WD1793::WD_COMMANDS WD1793::decodeWD93Command(uint8_t value)
 
 uint8_t WD1793::getWD93CommandValue(WD1793::WD_COMMANDS command, uint8_t value)
 {
-    static constexpr uint8_t commandMaskValues[WD93_COMMAND_COUNT] =
-    {
+    static constexpr uint8_t commandMaskValues[WD93_COMMAND_COUNT] = {
         //    Mask
-        0b0000'1111,   // [ 0] Restore
-        0b0000'1111,   // [ 1] Seek
-        0b0001'1111,   // [ 2] Step
-        0b0001'1111,   // [ 3] Step In
-        0b0001'1111,   // [ 4] Step Out
-        0b0001'1110,   // [ 5] Read Sector
-        0b0001'1111,   // [ 6] Write Sector
-        0b0000'0100,   // [ 7] Read Address
-        0b0000'0100,   // [ 8] Read Track
-        0b0000'0100,   // [ 9] Write Track
-        0b0000'1111,   // [10] Force Interrupt
+        0b0000'1111,  // [ 0] Restore
+        0b0000'1111,  // [ 1] Seek
+        0b0001'1111,  // [ 2] Step
+        0b0001'1111,  // [ 3] Step In
+        0b0001'1111,  // [ 4] Step Out
+        0b0001'1110,  // [ 5] Read Sector
+        0b0001'1111,  // [ 6] Write Sector
+        0b0000'0100,  // [ 7] Read Address
+        0b0000'0100,  // [ 8] Read Track
+        0b0000'0100,  // [ 9] Write Track
+        0b0000'1111,  // [10] Force Interrupt
     };
 
     uint8_t result = 0x00;
@@ -656,15 +899,18 @@ void WD1793::processWD93Command(uint8_t value)
 
     if (command < sizeof(commandTable) / sizeof(commandTable[0]))
     {
+        // Register call in a collection
+        _collector->recordCommandStart(*this, value);
+
         const CommandHandler& handler = commandTable[command];
         bool isBusy = _statusRegister & WDS_BUSY;
 
-        if (command == WD_CMD_FORCE_INTERRUPT)          // Force interrupt command executes in any state
+        if (command == WD_CMD_FORCE_INTERRUPT)  // Force interrupt command executes in any state
         {
             // Call the corresponding command method
             (this->*handler)(commandValue);
         }
-        else if (!isBusy)                               // All other commands are ignored if controller is busy
+        else if (!isBusy)  // All other commands are ignored if controller is busy
         {
             _commandRegister = value;
             _statusRegister |= WDS_BUSY;
@@ -687,7 +933,6 @@ uint8_t WD1793::getPositioningRateForType1CommandMs(uint8_t command)
 
     return result;
 }
-
 
 /// Restore (Seek track 0)
 /// @param value
@@ -801,7 +1046,8 @@ void WD1793::cmdStepOut(uint8_t value)
 ///   0xA0 (10100000b) - Multi-sector read, side 1
 void WD1793::cmdReadSector(uint8_t value)
 {
-    std::string message = StringHelper::Format("Command Read Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message =
+        StringHelper::Format("Command Read Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType2Command();
@@ -815,16 +1061,15 @@ void WD1793::cmdReadSector(uint8_t value)
     */
 
     // Step 2: start sector reading (queue correspondent command to the FIFO)
-    FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]()
-        {
-            // Position to the sector requested
-            DiskImage* diskImage = this->_selectedDrive->getDiskImage();
-            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-            uint8_t sectorIndex = this->_sectorRegister - 1;
-            this->_sectorData = track->getDataForSector(sectorIndex);
-            this->_rawDataBuffer = this->_sectorData;
-            this->_bytesToRead = this->_sectorSize;
-        });
+    FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]() {
+        // Position to the sector requested
+        DiskImage* diskImage = this->_selectedDrive->getDiskImage();
+        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+        uint8_t sectorIndex = this->_sectorRegister - 1;
+        this->_sectorData = track->getDataForSector(sectorIndex);
+        this->_rawDataBuffer = this->_sectorData;
+        this->_bytesToRead = this->_sectorSize;
+    });
     _operationFIFO.push(readSector);
 
     // Start FSM playback using FIFO queue
@@ -833,7 +1078,8 @@ void WD1793::cmdReadSector(uint8_t value)
 
 void WD1793::cmdWriteSector(uint8_t value)
 {
-    std::string message = StringHelper::Format("Command Write Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message =
+        StringHelper::Format("Command Write Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType2Command();
@@ -847,14 +1093,13 @@ void WD1793::cmdWriteSector(uint8_t value)
     */
 
     // Step 2: start sector writing (queue correspondent command to the FIFO)
-    FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]()
-        {
-            // Position to the sector requested
-            DiskImage* diskImage = this->_selectedDrive->getDiskImage();
-            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-            this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
-            this->_rawDataBuffer = this->_sectorData;
-        });
+    FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]() {
+        // Position to the sector requested
+        DiskImage* diskImage = this->_selectedDrive->getDiskImage();
+        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+        this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
+        this->_rawDataBuffer = this->_sectorData;
+    });
     _operationFIFO.push(writeSector);
 
     // Start FSM playback using FIFO queue
@@ -871,24 +1116,20 @@ void WD1793::cmdWriteSector(uint8_t value)
 /// and the Busy status bit is reset.
 void WD1793::cmdReadAddress(uint8_t value)
 {
-    std::string message = StringHelper::Format("Command Read Address: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message =  StringHelper::Format("Command Read Address: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType3Command();
 
     // Step 1: search for ID address mark
-    FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID,
-                        []() {}
-    );
+    FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID, []() {});
     _operationFIFO.push(searchIDAM);
 
     // Step 2: start IDAM read (6 bytes)
-    FSMEvent readIDAM(WDSTATE::S_READ_BYTE, [this]()
-        {
-            this->_bytesToRead = 6;
-            this->_rawDataBuffer = this->_idamData;
-        }
-    );
+    FSMEvent readIDAM(WDSTATE::S_READ_BYTE, [this]() {
+        this->_bytesToRead = 6;
+        this->_rawDataBuffer = this->_idamData;
+    });
     _operationFIFO.push(readIDAM);
 
     // Start FSM playback using FIFO queue
@@ -897,7 +1138,8 @@ void WD1793::cmdReadAddress(uint8_t value)
 
 void WD1793::cmdReadTrack(uint8_t value)
 {
-    std::string message = StringHelper::Format("Command Read Track: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    std::string message =
+        StringHelper::Format("Command Read Track: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
 
     startType3Command();
@@ -906,7 +1148,7 @@ void WD1793::cmdReadTrack(uint8_t value)
     DiskImage* diskImage = _selectedDrive->getDiskImage();
     DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp);
     uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
-    
+
     if (!rawTrackData)
     {
         // Handle error - invalid track
@@ -916,16 +1158,15 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    FSMEvent readTrack(WDSTATE::S_READ_TRACK, [this]()
-        {
-            // Position to the track requested
-            DiskImage* diskImage = _selectedDrive->getDiskImage();
-            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-            uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
+    FSMEvent readTrack(WDSTATE::S_READ_TRACK, [this]() {
+        // Position to the track requested
+        DiskImage* diskImage = _selectedDrive->getDiskImage();
+        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+        uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
 
-            _bytesToRead = DiskImage::RawTrack::RAW_TRACK_SIZE; // 6250 bytes
-            _rawDataBuffer = rawTrackData;
-        });
+        _bytesToRead = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
+        _rawDataBuffer = rawTrackData;
+    });
     _operationFIFO.push(readTrack);
 
     // Start FSM playback using FIFO queue
@@ -964,12 +1205,11 @@ void WD1793::cmdWriteTrack(uint8_t value)
 /// If the Force Interrupt Command is received when there is a current command under execution,
 /// the Busy status bit is reset, and the rest of the status bits are unchanged.
 ///
-/// If the Force Interrupt command is received when there is not a current command under execution, the Busy Status bit is
-/// reset and the rest of the status bits are updated or cleared. In this case, Status reflects the Type I commands.
+/// If the Force Interrupt command is received when there is not a current command under execution, the Busy Status bit
+/// is reset and the rest of the status bits are updated or cleared. In this case, Status reflects the Type I commands.
 void WD1793::cmdForceInterrupt(uint8_t value)
 {
-    std::string message = StringHelper::Format("Command Force Interrupt: %d | %s", value, StringHelper::FormatBinary(value).c_str());
-    MLOGINFO(message.c_str());
+    MLOGINFO("Command Force Interrupt: 0x%02X | %s", value, StringHelper::FormatBinary(value).c_str());
 
     bool noCommandExecuted = _state == S_IDLE;
     WDSTATE prevState = _state;
@@ -981,7 +1221,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     {
         // Handling interrupts in decreasing priority
 
-        if (value & WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT) // Bit3 (J3) - Immediate interrupt
+        if (value & WD_FORCE_INTERRUPT_IMMEDIATE)  // Bit3 (J3) - Immediate interrupt
         {
             _state = S_IDLE;
             _state2 = S_IDLE;
@@ -992,19 +1232,7 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             clearDrq();
         }
 
-        if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)         // Bit2 (J2) - Every index pulse
-        {
-            // Not fully implemented
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_READY)               // Bit1 (J1) - Ready to Not-Ready transition
+        if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)  // Bit2 (J2) - Every index pulse
         {
             // Not fully implemented
             _state = S_IDLE;
@@ -1016,7 +1244,19 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             clearDrq();
         }
 
-        if (value & WD_FORCE_INTERRUPT_NOT_READY)           // Bit0 (J0) - Not-Ready to Ready transition
+        if (value & WD_FORCE_INTERRUPT_READY)  // Bit1 (J1) - Ready to Not-Ready transition
+        {
+            // Not fully implemented
+            _state = S_IDLE;
+            _state2 = S_IDLE;
+            _delayTStates = 0;
+
+            _statusRegister &= ~WDS_BUSY;
+            raiseIntrq();
+            clearDrq();
+        }
+
+        if (value & WD_FORCE_INTERRUPT_NOT_READY)  // Bit0 (J0) - Not-Ready to Ready transition
         {
             _state = S_IDLE;
             _state2 = S_IDLE;
@@ -1027,14 +1267,14 @@ void WD1793::cmdForceInterrupt(uint8_t value)
             clearDrq();
         }
     }
-    else    // Terminate with no interrupt
+    else  // Terminate with no interrupt
     {
         // Currently executed command is terminated and a BUSY flag is reset
         _state = S_IDLE;
         _state2 = S_IDLE;
         _delayTStates = 0;
 
-        _statusRegister &= ~WDS_BUSY;       // Deactivate a busy flag
+        _statusRegister &= ~WDS_BUSY;  // Deactivate a busy flag
         raiseIntrq();
     }
 
@@ -1050,13 +1290,26 @@ void WD1793::cmdForceInterrupt(uint8_t value)
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
 
         _statusRegister |= _selectedDrive->getTrack() == 0 ? WDS_TRK00 : 0x00;
-        if (_index) { _statusRegister |= WDS_INDEX; } else { _statusRegister &= ~WDS_INDEX; };
+        if (_index)
+        {
+            _statusRegister |= WDS_INDEX;
+        }
+        else
+        {
+            _statusRegister &= ~WDS_INDEX;
+        };
 
-        MLOGINFO("<<== FORCE_INTERRUPT, no active command status: %s, beta128: %s", StringHelper::FormatBinary(_statusRegister).c_str(), StringHelper::FormatBinary(_beta128status).c_str());
+        MLOGINFO("<<== FORCE_INTERRUPT, no active command");
+        MLOGINFO("  Status: %s", StringHelper::FormatBinary(_statusRegister).c_str());
+        MLOGINFO("  Beta128: %s\n", StringHelper::FormatBinary(_beta128status).c_str());
     }
     else
     {
-        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted. cmd: %s state: %s state2: %s", getWD_COMMANDName(_lastDecodedCmd), WDSTATEToString(prevState).c_str(), WDSTATEToString(prevState2).c_str());
+        MLOGINFO("<<== FORCE_INTERRUPT, command interrupted");
+        MLOGINFO("  Command: %s", getWD_COMMANDName(_lastDecodedCmd));
+        MLOGINFO("  State: %s, State2: %s\n", 
+                WDSTATEToString(prevState).c_str(),
+                WDSTATEToString(prevState2).c_str());
     }
 }
 
@@ -1064,8 +1317,8 @@ void WD1793::startType1Command()
 {
     MLOGINFO("==>> Start Type 1 command (%s)", getWD_COMMANDName(_lastDecodedCmd));
 
-    _statusRegister |= WDS_BUSY;                    // Set BUSY flag
-    _statusRegister &= ~(WDS_SEEKERR | WDS_CRCERR); // Clear positioning and CRC errors
+    _statusRegister |= WDS_BUSY;                     // Set BUSY flag
+    _statusRegister &= ~(WDS_SEEKERR | WDS_CRCERR);  // Clear positioning and CRC errors
 
     // Clear Data Request and Interrupt request bits before starting command processing
     clearDrq();
@@ -1187,19 +1440,23 @@ void WD1793::startType3Command()
 /// Each WD1793 command finishes with resetting BUSY flag
 void WD1793::endCommand()
 {
-    _statusRegister &= ~WDS_BUSY;   // Reset BUSY flag
-    raiseIntrq();                   // INTRQ must be set at a completion of any command
+    _statusRegister &= ~WDS_BUSY;  // Reset BUSY flag
+    raiseIntrq();                  // INTRQ must be set at a completion of any command
+
+    // Notify collector about command completion
+    _collector->recordCommandEnd(*this);
 
     // Clear FIFO
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
     // Debug logging
-    MLOGINFO("<<== End command (%s). status: %s beta128: %s", getWD_COMMANDName(_lastDecodedCmd), StringHelper::FormatBinary(_statusRegister).c_str(), StringHelper::FormatBinary(_beta128status).c_str());
+    MLOGINFO("<<== End command (%s). status: %s beta128: %s", getWD_COMMANDName(_lastDecodedCmd),
+             StringHelper::FormatBinary(_statusRegister).c_str(), StringHelper::FormatBinary(_beta128status).c_str());
 }
 
 /// Helper for Type1 command states to execute VERIFY using unified approach
-void  WD1793::type1CommandVerify()
+void WD1793::type1CommandVerify()
 {
     if (_verifySeek)
     {
@@ -1222,15 +1479,13 @@ void  WD1793::type1CommandVerify()
 
 /// region <State machine handlers>
 
-
 /// @brief Processes idle state in the WD1793 controller FSM
 /// @details Clears the busy flag in the status register when the controller
 ///          is in idle state and not executing any commands
 void WD1793::processIdle()
 {
-    _statusRegister &= ~WDS_BUSY;   // Remove busy flag
+    _statusRegister &= ~WDS_BUSY;  // Remove busy flag
 }
-
 
 /// @brief Processes wait state in the WD1793 controller FSM
 /// @details Handles timing delays in the controller state machine by decreasing the
@@ -1294,6 +1549,7 @@ void WD1793::processStep()
         raiseIntrq();
 
         transitionFSM(WD1793::S_END_COMMAND);
+        return;
     }
     else
     {
@@ -1301,15 +1557,29 @@ void WD1793::processStep()
     }
     /// endregion </Check for step limits>
 
+    // We've reached head target position
+    if (_trackRegister == _dataRegister)
+    {
+        _selectedDrive->setTrack(_trackRegister);
+        type1CommandVerify();
+        return;
+    }
+
     /// region <Make head step>
     int8_t stepCorrection = _stepDirectionIn ? 1 : -1;
 
     // Apply changes to the WD1793 Track Register
     _trackRegister += stepCorrection;
+
+    // Apply changes to FDD state
+    uint8_t fddTrack = _selectedDrive->getTrack();
+    fddTrack += stepCorrection;
+    _selectedDrive->setTrack(fddTrack);
+
     /// endregion </Make head step>
 
     // Check for track 0
-    if (!_stepDirectionIn && _selectedDrive->isTrack00())                       // RESTORE or SEEK 0 command finished
+    if (!_stepDirectionIn && _selectedDrive->isTrack00())  // RESTORE or SEEK 0 command finished
     {
         // We've reach Track 0. No further movements
         _trackRegister = 0;
@@ -1317,38 +1587,32 @@ void WD1793::processStep()
         // Check if position verification was requested
         type1CommandVerify();
     }
-    else if (_lastDecodedCmd == WD_CMD_SEEK && _dataRegister == _trackRegister)   // SEEK command finished
+    else if (_lastDecodedCmd == WD_CMD_SEEK && _dataRegister == _trackRegister)  // SEEK command finished
     {
         // Apply track change to selected FDD
-        uint8_t driveTrack = _selectedDrive->getTrack();
-        driveTrack += stepCorrection;
-        _selectedDrive->setTrack(driveTrack);
+        _selectedDrive->setTrack(_trackRegister);
 
         // Check if position verification was requested
         type1CommandVerify();
     }
     else
     {
-        // Apply track change to selected FDD
-        uint8_t driveTrack = _selectedDrive->getTrack();
-        driveTrack += stepCorrection;
-        _selectedDrive->setTrack(driveTrack);
-
         // Continue positioning if required
         if (_lastDecodedCmd == WD_CMD_RESTORE || _lastDecodedCmd == WD_CMD_SEEK)
         {
             // Schedule next step according currently selected stepping motor rate
             transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
         }
-        else if (_lastDecodedCmd == WD_CMD_STEP || _lastDecodedCmd == WD_CMD_STEP_IN || _lastDecodedCmd == WD_CMD_STEP_OUT)
+        else if (_lastDecodedCmd == WD_CMD_STEP || _lastDecodedCmd == WD_CMD_STEP_IN ||
+                 _lastDecodedCmd == WD_CMD_STEP_OUT)
         {
             // Check if position verification was requested
             type1CommandVerify();
         }
         else
         {
-            //int a = a;
-            //throw std::logic_error("Only Type 1 commands can have S_STEP state");
+            // int a = a;
+            // throw std::logic_error("Only Type 1 commands can have S_STEP state");
         }
     }
 
@@ -1378,9 +1642,11 @@ void WD1793::processVerify()
 void WD1793::processSearchID()
 {
     DiskImage* diskImage = _selectedDrive->getDiskImage();
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp ? 1 : 0);
-    DiskImage::AddressMarkRecord* idAddressMark;
 
+    // Use the current FDD track, not WD1793 track register!
+    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_selectedDrive->getTrack(), _sideUp ? 1 : 0);
+
+    DiskImage::AddressMarkRecord* idAddressMark;
     if (track != nullptr && (idAddressMark = track->getIDForSector(_sectorRegister)) != nullptr)
     {
         // ID Address mark found
@@ -1393,10 +1659,11 @@ void WD1793::processSearchID()
         _sectorSize = 128 << (idAddressMark->sector_size & 0x03);
 
         // Set pointers to Address Mark record and to sector data
-        _idamData = (uint8_t*)track->getIDForSector(_sectorRegister);
+        _idamData = (uint8_t*)track->getIDForSector(_sectorRegister) + 1; // We need to skip id_address_mark = 0xFE
         _sectorData = track->getDataForSector(_sectorRegister);
 
-        // TODO: apply the delay related to disk rotation so searching for ID Address Mark may take up to a full disk revolution
+        // TODO: apply the delay related to disk rotation so searching for ID Address Mark may take up to a full disk
+        // revolution
 
         // Transition to a next state registered in FIFO queue
         transitionFSM(WDSTATE::S_FETCH_FIFO);
@@ -1427,29 +1694,26 @@ void WD1793::processReadSector()
     if (_commandRegister & CMD_MULTIPLE && _sectorRegister < DiskImage::RawTrack::SECTORS_PER_TRACK - 1)
     {
         // Register one more READ_SECTOR operation. Lambda will be executed just before FSM state switch
-        FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]()
+        FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]() {
+            // Increase sector number for reading
+            this->_sectorRegister += 1;
+
+            // Re-position to new sector
+            DiskImage* diskImage = this->_selectedDrive->getDiskImage();
+            if (diskImage)
             {
-                // Increase sector number for reading
-                this->_sectorRegister += 1;
+                DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+                this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
 
-                // Re-position to new sector
-                DiskImage* diskImage = this->_selectedDrive->getDiskImage();
-                if (diskImage)
-                {
-
-                    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-                    this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
-
-                    this->_rawDataBuffer = this->_sectorData;
-                    this->_bytesToRead = this->_sectorSize;
-                }
-                else
-                {
-                    // Image missing / dismounted
-                    // TODO: generate an error, terminate the command
-                }
+                this->_rawDataBuffer = this->_sectorData;
+                this->_bytesToRead = this->_sectorSize;
             }
-        );
+            else
+            {
+                // Image missing / dismounted
+                // TODO: generate an error, terminate the command
+            }
+        });
 
         _operationFIFO.push(readSector);
     }
@@ -1507,28 +1771,26 @@ void WD1793::processWriteSector()
     if (_commandRegister & CMD_MULTIPLE && _sectorRegister < DiskImage::RawTrack::SECTORS_PER_TRACK - 1)
     {
         // Register one more WRITE_SECTOR operation. Lambda will be executed just before FSM state switch
-        FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]()
+        FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]() {
+            // Increase sector number for writing
+            this->_sectorRegister += 1;
+
+            // Re-position to new sector
+            DiskImage* diskImage = this->_selectedDrive->getDiskImage();
+            if (diskImage)
             {
-                // Increase sector number for writing
-                this->_sectorRegister += 1;
+                DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
+                this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
 
-                // Re-position to new sector
-                DiskImage* diskImage = this->_selectedDrive->getDiskImage();
-                if (diskImage)
-                {
-                    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-                    this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
-
-                    this->_rawDataBuffer = this->_sectorData;
-                    this->_bytesToWrite = this->_sectorSize;
-                }
-                else
-                {
-                    // Image missing / dismounted
-                    // TODO: generate an error, terminate the command
-                }
+                this->_rawDataBuffer = this->_sectorData;
+                this->_bytesToWrite = this->_sectorSize;
             }
-        );
+            else
+            {
+                // Image missing / dismounted
+                // TODO: generate an error, terminate the command
+            }
+        });
 
         _operationFIFO.push(writeSector);
     }
@@ -1628,7 +1890,8 @@ void WD1793::processWriteCRC()
     _bytesToWrite = 2;
 
     // Make delay for 2 bytes transfer and end command execution
-    transitionFSMWithDelay(WD1793::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE * _bytesToWrite);;
+    transitionFSMWithDelay(WD1793::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE * _bytesToWrite);
+    ;
 }
 
 void WD1793::processEndCommand()
@@ -1649,7 +1912,8 @@ void WD1793::handleFrameStart()
 
 void WD1793::handleStep()
 {
-    // We need better precision to read data from the disk at 112 t-states per byte rate, so update FSM state after each CPU command execution
+    // We need better precision to read data from the disk at 112 t-states per byte rate, so update FSM state after each
+    // CPU command execution
     process();
 }
 
@@ -1671,7 +1935,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     [[maybe_unused]] uint16_t pc = _context->pCore->GetZ80()->m1_pc;
     std::string memBankName = _context->pMemory->GetCurrentBankName(0);
 
-    //MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName.c_str());
+    // MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName.c_str());
 
     /// endregion </Debug print>
 
@@ -1681,32 +1945,55 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     // Handle FDC ports
     switch (port)
     {
-        case PORT_1F:   // Return status register value
+        case PORT_1F:  // Return status register value
             result = getStatusRegister();
 
-            // TODO: remove debug
-            MLOGINFO("In #1F - 0x%02X - %s", result, dumpStatusRegister(_lastDecodedCmd).c_str());
+            {
+                std::string statusInfo = dumpStatusRegister(_lastDecodedCmd);
+                // Replace newlines with spaces for cleaner log output
+                std::replace(statusInfo.begin(), statusInfo.end(), '\n', ' ');
+                // Remove any double spaces that might have been created
+                std::string::size_type pos;
+                while ((pos = statusInfo.find("  ")) != std::string::npos)
+                {
+                    statusInfo.replace(pos, 2, " ");
+                }
+                // Trim trailing space
+                if (!statusInfo.empty() && statusInfo.back() == ' ')
+                {
+                    statusInfo.pop_back();
+                }
+                MLOGDEBUG("In #1F (Get Status Register) - 0x%02X - %s, pc: 0x%04X bank: %s", 
+                         result, statusInfo.c_str(), pc, memBankName.c_str());
+            }
 
             // Reset INTRQ (Interrupt request) flag - status register is read
             clearIntrq();
             break;
-        case PORT_3F:   // Return the current track number
+        case PORT_3F:  // Return the current track number
             result = _trackRegister;
+
+            MLOGDEBUG("In #3F (Get Track Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
             break;
-        case PORT_5F:   // Return current sector number
+        case PORT_5F:  // Return current sector number
             result = _sectorRegister;
+
+            MLOGDEBUG("In #5F (Get Sector Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
             break;
-        case PORT_7F:   // Return data byte and update internal state
+        case PORT_7F:  // Return data byte and update internal state
             // Read Data Register
             result = readDataRegister();
 
             // Reset DRQ (Data Request) flag
             clearDrq();
+
+            MLOGDEBUG("In #7F (Get Data Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName.c_str());
             break;
-        case PORT_FF:   // Handle Beta128 system port (#FF)
+        case PORT_FF:  // Handle Beta128 system port (#FF)
             // Only bits 6 and 7 are used
             result = _beta128status | (_beta128Register & 0x3F);
-            //MLOGINFO("In #FF Beta128: %s pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc, memBankName.c_str());
+
+            MLOGDEBUG("In #FF Beta128: %s, pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc, memBankName.c_str());
             break;
         default:
             break;
@@ -1732,19 +2019,18 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     // Handle FDC ports
     switch (port)
     {
-        case PORT_1F:   // Write to Command Register
-            //TODO: remove debug
+        case PORT_1F:  // Write to Command Register
+            // TODO: remove debug
             /// region <Debug logging>
             {
                 WD_COMMANDS cmd = decodeWD93Command(value);
-                const char *cmdName = getWD_COMMANDName(cmd);
-                MLOGINFO(StringHelper::Format("  #1F - Set command: 0x%02X (%s). status: %s, beta128: %s",
-                                              value,
-                                              cmdName,
-                                              StringHelper::FormatBinary(_statusRegister).c_str(),
-                                              StringHelper::FormatBinary(_beta128status).c_str()
-                                              ).c_str());
+                const char* cmdName = getWD_COMMANDName(cmd);
+                MLOGINFO(StringHelper::Format("  #1F - Set command: 0x%02X (%s). status: %s, beta128: %s", value,
+                                              cmdName, StringHelper::FormatBinary(_statusRegister).c_str(),
+                                              StringHelper::FormatBinary(_beta128status).c_str())
+                             .c_str());
             }
+
             /// endregion </Debug logging>
 
             // Reset INTRQ (Interrupt request) flag - command register is written to
@@ -1754,10 +2040,10 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             processWD93Command(value);
 
             break;
-        case PORT_3F:   // Write to Track Register
+        case PORT_3F:  // Write to Track Register
             _trackRegister = value;
 
-            //TODO: remove debug
+            // TODO: remove debug
             if (_trackRegister >= MAX_CYLINDERS)
             {
                 //_trackRegister = _trackRegister;
@@ -1766,10 +2052,10 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             }
             MLOGINFO(StringHelper::Format("  #3F - Set track: 0x%02X", _trackRegister).c_str());
             break;
-        case PORT_5F:   // Write to Sector Register
+        case PORT_5F:  // Write to Sector Register
             _sectorRegister = value;
 
-            //TODO: remove debug
+            // TODO: remove debug
             if (_sectorRegister == 0 || _sectorRegister > 16)
             {
                 //_sectorRegister = _sectorRegister;
@@ -1778,7 +2064,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             }
             MLOGINFO(StringHelper::Format("  #5F - Set sector: 0x%02X", _sectorRegister).c_str());
             break;
-        case PORT_7F:   // Write to Data Register
+        case PORT_7F:  // Write to Data Register
             // Write and mark that Data Register was accessed (for Type 2 and Type 3 operations)
             writeDataRegister(value);
 
@@ -1798,12 +2084,13 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
                 }
             }
 
-            //TODO: remove debug
+            // TODO: remove debug
             MLOGINFO(StringHelper::Format("  #7F - Set data: 0x%02X", _dataRegister).c_str());
             break;
-        case PORT_FF:   // Write to Beta128 system register
+        case PORT_FF:  // Write to Beta128 system register
             processBeta128(value);
-            MLOGINFO(StringHelper::Format("  #FF - Set beta128: 0x%02X", value).c_str());;
+            MLOGINFO(StringHelper::Format("  #FF - Set beta128: 0x%02X", value).c_str());
+            ;
             break;
         default:
             break;
@@ -1818,13 +2105,12 @@ bool WD1793::attachToPorts()
 {
     bool result = false;
 
-    
     PortDecoder* decoder = _context->pPortDecoder;
     if (decoder)
     {
         _portDecoder = decoder;
 
-        result  = decoder->RegisterPortHandler(0x001F, this);
+        result = decoder->RegisterPortHandler(0x001F, this);
         result &= decoder->RegisterPortHandler(0x003F, this);
         result &= decoder->RegisterPortHandler(0x005F, this);
         result &= decoder->RegisterPortHandler(0x007F, this);
@@ -1858,31 +2144,31 @@ void WD1793::detachFromPorts()
 /// region <Debug methods>
 std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
 {
-    static constexpr const char *STATUS_REGISTER_FLAGS[][8] =
+    static constexpr const char* STATUS_REGISTER_FLAGS[][8] =
     {
-        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // RESTORE
-        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // SEEK
-        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
-        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
-        {"BUSY", "INDEX", "TRACK 0",   "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
-        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "RECORD TYPE", "ZERO6",         "NOT READY"},  // READ SECTOR
-        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE SECTOR
-        {"BUSY", "DRQ",   "LOST DATA", "CRC ERROR", "RNF",        "ZERO5",       "ZERO6",         "NOT READY"},  // READ ADDRESS
-        {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "ZERO5",       "ZERO6",         "NOT READY"},  // READ TRACK
-        {"BUSY", "DRQ",   "LOST DATA", "ZERO3",     "ZERO4",      "WRITE FAULT", "WRITE PROTECT", "NOT READY"},  // WRITE TRACK
-        // FORCE INTERRUPT doesn't have its own status bits. Bits from the previous / ongoing command to be shown instead
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // RESTORE
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // SEEK
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP IN
+        {"BUSY", "INDEX", "TRACK 0", "CRC ERROR", "SEEK ERROR", "HEAD LOADED", "WRITE PROTECT", "NOT READY"},  // STEP OUT
+        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "RECORD TYPE", "ZERO6", "NOT READY"},                 // READ SECTOR
+        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "WRITE FAULT", "WRITE PROTECT", "NOT READY"},         // WRITE SECTOR
+        {"BUSY", "DRQ", "LOST DATA", "CRC ERROR", "RNF", "ZERO5", "ZERO6", "NOT READY"},                       // READ ADDRESS
+        {"BUSY", "DRQ", "LOST DATA", "ZERO3", "ZERO4", "ZERO5", "ZERO6", "NOT READY"},                         // READ TRACK
+        {"BUSY", "DRQ", "LOST DATA", "ZERO3", "ZERO4", "WRITE FAULT", "WRITE PROTECT", "NOT READY"},           // WRITE TRACK
+        // FORCE INTERRUPT doesn't have its own status bits. Bits from the previous / ongoing command to be shown
+        // instead
     };
 
     std::stringstream ss;
     uint8_t status = _statusRegister;
 
-    ss << StringHelper::Format("Command: %s. Status: 0x%02X", getWD_COMMANDName(command), status) << std::endl;
-    ss << "  ";
+    ss << StringHelper::Format("Command: %s. Status: 0x%02X. ", getWD_COMMANDName(command), status);
 
     switch (command)
     {
         case WD_CMD_FORCE_INTERRUPT:
-            ss << "Force interrupt" << std::endl;
+            ss << "Force interrupt";
             break;
         default:
         {
@@ -1900,12 +2186,9 @@ std::string WD1793::dumpStatusRegister(WD_COMMANDS command)
                 status >>= 1;
             }
         }
-            break;
+        break;
     }
-    ss << std::endl;
-
     std::string result = ss.str();
-
     return result;
 }
 
@@ -1916,18 +2199,15 @@ std::string WD1793::dumpBeta128Register()
     ss << StringHelper::Format("Beta128 status: 0x%02X", _beta128status) << std::endl;
 
     // Define bit positions and their meanings
-    static const std::pair<uint8_t, std::string> bitDescriptions[] =
-    {
-        {(uint8_t)BETA_STATUS_BITS::DRQ, "DRQ"},
-        {(uint8_t)BETA_STATUS_BITS::INTRQ, "INTRQ"}
-    };
+    static const std::pair<uint8_t, std::string> bitDescriptions[] = {{(uint8_t)BETA_STATUS_BITS::DRQ, "DRQ"},
+                                                                      {(uint8_t)BETA_STATUS_BITS::INTRQ, "INTRQ"}};
 
     // Print bits horizontally
     ss << "  ";
     for (uint8_t bit = 0; bit < 8; bit++)
     {
         bool isSet = (_beta128status & (1 << bit)) != 0;
-        
+
         std::string description = isSet ? "1" : "0";
         for (const auto& [descBit, desc] : bitDescriptions)
         {
@@ -1947,7 +2227,7 @@ std::string WD1793::dumpBeta128Register()
     return result;
 }
 
-std::string WD1793::dumpCommand(uint8_t value)
+std::string WD1793::dumpCommand(uint8_t value) const
 {
     std::stringstream ss;
 
@@ -1996,8 +2276,7 @@ std::string WD1793::dumpFullState()
     ss << dumpStatusRegister((WD_COMMANDS)_lastDecodedCmd) << std::endl;
     ss << dumpBeta128Register() << std::endl;
 
-    
-// Add additional state information
+    // Add additional state information
     ss << StringHelper::Format("State: %s", WDSTATEToString(_state)) << std::endl;
     ss << StringHelper::Format("State2: %s", WDSTATEToString(_state2)) << std::endl;
     ss << StringHelper::Format("DRQ served: %s", _drq_served ? "YES" : "NO") << std::endl;
@@ -2010,6 +2289,104 @@ std::string WD1793::dumpFullState()
     std::string result = ss.str();
 
     return result;
+}
+
+std::string WD1793::dumpIndexStrobeData(bool skipNoTransitions)
+{
+    static constexpr const size_t LOG_UPDATE_INTERVAL_TSTATES =
+        Z80_FREQUENCY / MILLISECONDS_PER_SECOND;  // Log updates every 1ms
+
+    std::stringstream ss;
+
+    // Get disk and motor state first as it affects other calculations
+    bool diskInserted = _selectedDrive && _selectedDrive->isDiskInserted();
+    bool motorOn = _motorTimeoutTStates > 0;
+
+    if (!diskInserted)
+        return "Disk not inserted => No rotation => No index strobe";
+    if (!motorOn)
+        return "Motor not on => No rotation => No index strobe";
+
+    // Calculate timing values based on current state
+    size_t tStateInRevolution = _time % DISK_ROTATION_PERIOD_TSTATES;
+
+    // Calculate current revolution using the index pulse counter and current position
+    // Each index pulse corresponds to one full revolution
+    size_t currentRevolution = _indexPulseCounter;
+
+    // Calculate disk rotation phase (0-360 degrees, scaled to 256 for 8-bit)
+    size_t diskRotationPhaseCounter = (tStateInRevolution * 256) / DISK_ROTATION_PERIOD_TSTATES;
+
+    // Detect edge transitions
+    bool isFallingEdge = _prevIndex && !_index;
+    bool isRisingEdge = !_prevIndex && _index;
+
+    // Do not spam if not needed
+    if (skipNoTransitions && !isFallingEdge && !isRisingEdge)
+        return "";
+
+    // Add transition state information
+    ss << "Index pulse state: " << (_index ? "HIGH" : "LOW") << " | ";
+    if (isRisingEdge)
+    {
+        ss << "RISING EDGE DETECTED | ";
+    }
+    else if (isFallingEdge)
+    {
+        ss << "FALLING EDGE DETECTED | ";
+    }
+    else
+    {
+        ss << "NO TRANSITION | ";
+    }
+    ss << std::endl;
+
+    // Pre-calculate common values with thousands separators
+    const std::string revStr = StringHelper::FormatWithCustomThousandsDelimiter(currentRevolution, '\'');
+    const std::string tStateStr = StringHelper::FormatWithCustomThousandsDelimiter(tStateInRevolution, '\'');
+    const std::string periodStr = StringHelper::FormatWithCustomThousandsDelimiter(DISK_ROTATION_PERIOD_TSTATES, '\'');
+    const std::string phaseStr = StringHelper::FormatWithCustomThousandsDelimiter(diskRotationPhaseCounter, '\'');
+    const std::string durationStr =
+        StringHelper::FormatWithCustomThousandsDelimiter(INDEX_STROBE_DURATION_TSTATES, '\'');
+    const std::string timeStr = StringHelper::FormatWithCustomThousandsDelimiter(_time, '\'');
+    const std::string diffTimeStr = StringHelper::FormatWithCustomThousandsDelimiter(_diffTime, '\'');
+
+    // Pre-calculate percentages
+    const float tStatePercent = (tStateInRevolution * 100.0f) / DISK_ROTATION_PERIOD_TSTATES;
+    const float phasePercent = (diskRotationPhaseCounter * 100.0f) / INDEX_STROBE_DURATION_TSTATES;
+
+    // Pre-format time values
+    std::stringstream timeSs;
+    timeSs << std::fixed << std::setprecision(2) << (tStateInRevolution * 1000.0f) / Z80_FREQUENCY << "ms ("
+           << (tStateInRevolution * 1000000.0f) / Z80_FREQUENCY << "us)";
+    const std::string timeFormatted = timeSs.str();
+
+    // Always show detailed timing information
+    ss << "Revolution=" << revStr << ", T-state in rev=" << tStateStr << "/" << periodStr
+       << StringHelper::Format(" (%.2f%%), ", tStatePercent) << "time=" << timeFormatted
+       << ", phaseCounter=" << phaseStr << "/" << durationStr
+       << StringHelper::Format(" (%.2f%%), _time=%s, _diffTime=%s", phasePercent, timeStr.c_str(), diffTimeStr.c_str());
+
+    // Log regular state changes less frequently to avoid log spam
+    if (_time % LOG_UPDATE_INTERVAL_TSTATES == 0)  // Log approximately every 100ms
+    {
+        if (_index)
+        {
+            ss << "Index pulse active. "
+               << "Revolution=" << revStr << ", T-state in rev=" << tStateStr << "/" << periodStr
+               << StringHelper::Format(" (%.2f%%), ", tStatePercent) << "time=" << timeFormatted
+               << ", phaseCounter=" << phaseStr << "/" << durationStr
+               << StringHelper::Format(" (%.2f%%)", phasePercent);
+        }
+        else
+        {
+            ss << "No index pulse. "
+               << "Revolution=" << revStr << ", T-state in rev=" << tStateStr << "/" << periodStr
+               << StringHelper::Format(" (%.2f%%), ", tStatePercent) << "time=" << timeFormatted;
+        }
+    }
+
+    return ss.str();
 }
 
 /// endregion </Debug methods>

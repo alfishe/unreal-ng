@@ -1,0 +1,1118 @@
+--- STANDARD 48K SPECTRUM ROM ---
+; ----------------------------------------------
+; Address  Label      Type          Comments
+;-----------------------------------------------------------------------------------------------------------------------
+0000       START      (CODE)       ; ROM Reset Entry Point / Start of ROM
+0008       ERROR-1    (CODE)       ; Error Restart Point 1 (often after report code set)
+0010       PRINT-A-1  (CODE)       ; Print character in A (preserved), HL points to next char loc
+0018       GET-CHAR   (CODE)       ; Get next character from BASIC line into A, advance CH_ADD
+001C       TEST-CHAR  (CODE)       ; Test char in A: skip spaces, check for digit/alpha, set flags
+0020       NEXT-CHAR  (CODE)       ; Get next char from BASIC line into A (like GET-CHAR but CH_ADD not advanced)
+0028       FP-CALC    (CODE)       ; Floating Point Calculator entry point (DE points to op, HL to address)
+0030       BC-SPACES  (CODE)       ; Output BC spaces to current channel
+0038       MASK-INT   (CODE)       ; Maskable Interrupt Service Routine (IM 2 vector points here)
+0048       KEY-INT    (CODE)       ; Part of interrupt routine: keyboard scan and DEBOUNCE
+0053       ERROR-2    (CODE)       ; Error Restart Point 2
+0055       ERROR-3    (CODE)       ; Error Restart Point 3
+0066       RESET      (CODE)       ; Cold Reset routine: initialize system variables, clear screen
+0070       NO-RESET   (CODE)       ; Warm Reset: preserve some state, e.g., after BREAK
+0074       CH-ADD+1   (CODE)       ; Points to CH_ADD+1 (used to get next char without advancing pointer)
+0077       TEMP-PTR1  (CODE)       ; Temporary pointer manipulation (e.g., DE <-> HL)
+0078       TEMP-PTR2  (CODE)       ; Temporary pointer manipulation
+007D       SKIP-OVER  (CODE)       ; Skip a BASIC statement (e.g., after IF condition false)
+0090       SKIPS      (CODE)       ; Skip spaces and colons
+0095       TKN-TABLE  (DATA)       ; Table of BASIC tokens (keywords)
+0205       MAIN-KEYS  (CODE)       ; Main keyboard routine: process key presses
+022C       E-UNSHIFT  (CODE)       ; Keyboard: Handle unshifted extended mode keys
+0246       EXT-SHIFT  (CODE)       ; Keyboard: Handle shifted extended mode keys
+0260       CTL-CODES  (DATA)       ; Table of control codes (INK, PAPER, etc.) for keyboard
+026A       SYM-CODES  (DATA)       ; Table of symbol shift codes for keyboard
+0284       E-DIGITS   (CODE)       ; Keyboard: Handle digits in extended mode
+028E       KEY-SCAN   (CODE)       ; Scan keyboard matrix, return key code in HL
+0296       KEY-LINE   (CODE)       ; Keyboard: Read a specific line of the keyboard matrix
+029F       KEY-3KEYS  (CODE)       ; Keyboard: Check for 3-key combinations (e.g., CAPS SHIFT + SYMBOL SHIFT + key)
+02A1       KEY-BITS   (CODE)       ; Keyboard: Decode key bits from half-row scan
+02AB       KEY-DONE   (CODE)       ; Keyboard: Finish key processing, update LASTK
+02BF       KEYBOARD   (CODE)       ; Main routine to scan keyboard and get a debounced key press
+02C6       K-ST-LOOP  (CODE)       ; Keyboard input state machine loop
+02D1       K-CH-SET   (CODE)       ; Keyboard: Set character set (K, L, C, G, E modes)
+02F1       K-NEW      (CODE)       ; Keyboard: Handle new key press
+0308       K-END      (CODE)       ; Keyboard: End of key processing branch
+0310       K-REPEAT   (CODE)       ; Keyboard: Handle key repeat logic
+031E       K-TEST     (CODE)       ; Keyboard: Test key state for repeat or new press
+032C       K-MAIN     (CODE)       ; Keyboard: Main decoding logic for key presses
+0333       K-DECODE   (CODE)       ; Keyboard: Decode key value to character or token
+033E       addit      (CODE)       ; Keyboard: Local routine, possibly "add it to buffer" or part of token logic
+0341       K-E-LET    (CODE)       ; Keyboard: Handle letter keys in Extended mode
+034A       K-LOOK-UP  (CODE)       ; Keyboard: Look up key in code tables
+034F       K-KLC-LET  (CODE)       ; Keyboard: Handle letters in K, L, C modes
+0364       K-TOKENS   (CODE)       ; Keyboard: Handle token generation from key presses
+0367       K-DIGIT    (CODE)       ; Keyboard: Handle digit key presses
+0382       K-8-&-9    (CODE)       ; Keyboard: Special handling for 8 & 9 (graphics/control)
+0389       K-GRA-DGT  (CODE)       ; Keyboard: Handle graphics digits (1-8 for UDG)
+039D       K-KLC-DGT  (CODE)       ; Keyboard: Handle digits in K, L, C modes
+03B2       K-@-CHAR   (CODE)       ; Keyboard: Handle '@' character (often part of INKEY$)
+03B5       BEEPER     (CODE)       ; Sound generation routine (used by BEEP command)
+03D1       BE-IX+3    (CODE)       ; Beeper: Parameter access (IX+3) - pitch high byte
+03D2       BE-IX+2    (CODE)       ; Beeper: Parameter access (IX+2) - pitch low byte
+03D3       BE-IX+1    (CODE)       ; Beeper: Parameter access (IX+1) - duration high byte
+03D4       BE-IX+0    (CODE)       ; Beeper: Parameter access (IX+0) - duration low byte
+03D6       BE-H&L-LP  (CODE)       ; Beeper: Main sound generation loop
+03F2       BE-AGAIN   (CODE)       ; Beeper: Loop for duration
+03F6       BE-END     (CODE)       ; Beeper: End of sound generation
+03F8       beep       (CODE)       ; Beeper: Alias or internal entry for BEEPER
+0425       BE-i-OK    (CODE)       ; Beeper: Internal check or setup
+0427       BE-OCTAVE  (CODE)       ; Beeper: Octave calculation or adjustment
+046C       REPORT-B   (CODE)       ; Error Report: "Nonsense in BASIC" or "Invalid argument"
+046E       semi-tone  (CODE)       ; Beeper: Semitone calculation for pitch
+04AA       zx81-name  (DATA)       ; Possibly related to ZX81 compatibility filename/header check, or unused data "ZX81"
+04C2       SA-BYTES   (CODE)       ; Tape SAVE: Save a block of bytes (header or data)
+04D0       SA-FLAG    (CODE)       ; Tape SAVE: Save flag byte (A) with parity
+04D8       SA-LEADER  (CODE)       ; Tape SAVE: Output leader tone
+04EA       SA-SYNC-1  (CODE)       ; Tape SAVE: Output first sync pulse
+04F2       SA-SYNC-2  (CODE)       ; Tape SAVE: Output second sync pulse
+04FE       SA-LOOP    (CODE)       ; Tape SAVE: Main byte saving loop
+0505       SA-LOOP-P  (CODE)       ; Tape SAVE: Loop for saving bits with parity
+0507       SA-START   (CODE)       ; Tape SAVE: Start saving a byte
+050E       SA-PARITY  (CODE)       ; Tape SAVE: Calculate and add parity bit
+0511       SA-BIT-2   (CODE)       ; Tape SAVE: Output '0' bit
+0514       SA-BIT-1   (CODE)       ; Tape SAVE: Output '1' bit
+051A       SA-SET     (CODE)       ; Tape SAVE: Set EAR output level
+051C       SA-OUT     (CODE)       ; Tape SAVE: Output pulse to EAR
+0525       SA-8-BITS  (CODE)       ; Tape SAVE: Loop for 8 bits of a byte
+053C       SA-DELAY   (CODE)       ; Tape SAVE: Delay routine
+053F       SA/LD-RET  (CODE)       ; Tape SAVE/LOAD: Common return point
+0552       REPORT-Da  (CODE)       ; Error Report: "Tape loading error" (D - R Tape loading error)
+0554       SA/LD-END  (CODE)       ; Tape SAVE/LOAD: Common end routine, disable interrupts
+0556       LD-BYTES   (CODE)       ; Tape LOAD: Load a block of bytes (header or data)
+056B       LD-BREAK   (CODE)       ; Tape LOAD: Check for BREAK key
+056C       LD-START   (CODE)       ; Tape LOAD: Start loading process, find leader
+0574       LD-WAIT    (CODE)       ; Tape LOAD: Wait for EAR signal edge
+0580       LD-LEADER  (CODE)       ; Tape LOAD: Detect leader tone
+058F       LD-SYNC    (CODE)       ; Tape LOAD: Detect sync pulses
+05A9       LD-LOOP    (CODE)       ; Tape LOAD: Main byte loading loop
+05B3       LD-FLAG    (CODE)       ; Tape LOAD: Load flag byte with parity check
+05BD       LD-VERIFY  (CODE)       ; Tape LOAD: Verify byte against memory
+05C2       LD-NEXT    (CODE)       ; Tape LOAD: Get next byte
+05C4       LD-DEC     (CODE)       ; Tape LOAD: Decrement byte counter
+05C8       LD-MARKER  (CODE)       ; Tape LOAD: Check for block type marker
+05CA       LD-8-BITS  (CODE)       ; Tape LOAD: Loop for 8 bits of a byte
+05E3       LD-EDGE-2  (CODE)       ; Tape LOAD: Detect second edge of a bit pulse
+05E7       LD-EDGE-1  (CODE)       ; Tape LOAD: Detect first edge of a bit pulse
+05E9       LD-DELAY   (CODE)       ; Tape LOAD: Delay for bit timing
+05ED       LD-SAMPLE  (CODE)       ; Tape LOAD: Sample EAR input level
+0605       SAVE-ETC   (CODE)       ; SAVE command main routine
+0621       SA-SPACE   (CODE)       ; SAVE: Check for filename space
+0629       SA-BLANK   (CODE)       ; SAVE: Handle blank filename (not allowed)
+0642       REPORT-Fa  (CODE)       ; Error Report: "Tape saving error" (F - Tape saving error)
+0644       SA-NULL    (CODE)       ; SAVE: Handle null characters in filename
+064B       SA-NAME    (CODE)       ; SAVE: Process filename from BASIC
+0652       SA-DATA    (CODE)       ; SAVE: Save data block (variables, array, code)
+0670       REPORT-2a  (CODE)       ; Error Report: "Variable not found" (2 - Variable not found) - during SAVE data
+0672       SA-V-OLD   (CODE)       ; SAVE: Handle old variable format (unused)
+0685       SA-V-NEW   (CODE)       ; SAVE: Handle new variable format
+068F       SA-V-TYPE  (CODE)       ; SAVE: Determine variable type for saving
+0692       SA-DATA-1  (CODE)       ; SAVE: Prepare data for saving
+06A0       SA-SCR$    (CODE)       ; SAVE SCREEN$ internal routine
+06C3       SA-CODE    (CODE)       ; SAVE CODE command routine
+06E1       SA-CODE-1  (CODE)       ; SAVE CODE: Get parameters (start address, length)
+06F0       SA-CODE-2  (CODE)       ; SAVE CODE: Prepare header
+06F5       SA-CODE-3  (CODE)       ; SAVE CODE: Save header
+06F9       SA-CODE-4  (CODE)       ; SAVE CODE: Save data block
+0710       SA-TYPE-3  (CODE)       ; SAVE: Type 3 (CODE block)
+0716       SA-LINE    (CODE)       ; SAVE: Handle LINE parameter for auto-start
+0723       SA-LINE-1  (CODE)       ; SAVE: Get LINE number
+073A       SA-TYPE-0  (CODE)       ; SAVE: Type 0 (Program block)
+075A       SA-ALL     (CODE)       ; SAVE: Common routine for saving header and data
+0767       LD-LOOK-H  (CODE)       ; LOAD/VERIFY/MERGE: Look for header on tape
+078A       LD-TYPE    (CODE)       ; LOAD/VERIFY/MERGE: Check block type from header
+07A6       LD-NAME    (CODE)       ; LOAD/VERIFY/MERGE: Compare filename from tape with expected
+07AD       LD-CH-PR   (CODE)       ; LOAD/VERIFY/MERGE: Check program/code compatibility
+07CB       VR-CONTROL (CODE)       ; VERIFY command main routine
+07E9       VR-CONT-1  (CODE)       ; VERIFY: Load header
+07F4       VR-CONT-2  (CODE)       ; VERIFY: Check header details
+0800       VR-CONT-3  (CODE)       ; VERIFY: Load and verify data block
+0802       LD-BLOCK   (CODE)       ; LOAD/VERIFY/MERGE: Load a data block from tape
+0806       REPORT-R   (CODE)       ; Error Report: "R Tape loading error"
+0808       LD-CONTRL  (CODE)       ; LOAD command main routine
+0819       LD-CONT-1  (CODE)       ; LOAD: Load header
+0825       LD-CONT-2  (CODE)       ; LOAD: Check header details
+082E       LD-DATA    (CODE)       ; LOAD: Load data block based on type
+084C       LD-DATA-1  (CODE)       ; LOAD: Load data into memory
+0873       LD-PROG    (CODE)       ; LOAD: Load BASIC program, re-linking variables
+08AD       LD-PROG-1  (CODE)       ; LOAD: Adjust program variables pointer (VARS)
+08B6       ME-CONTRL  (CODE)       ; MERGE command main routine
+08D2       ME-NEW-LP  (CODE)       ; MERGE: Process new program lines
+08D7       ME-OLD-LP  (CODE)       ; MERGE: Process old program lines
+08DF       ME-OLD-L1  (CODE)       ; MERGE: Compare old and new line numbers
+08EB       ME-NEW-L2  (CODE)       ; MERGE: Insert new line
+08F0       ME-VAR-LP  (CODE)       ; MERGE: Merge variables
+08F9       ME-OLD-VP  (CODE)       ; MERGE: Process old variables
+0901       ME-OLD-V1  (CODE)       ; MERGE: Find matching variable in existing program
+0909       ME-OLD-V2  (CODE)       ; MERGE: Handle non-matching variable
+0912       ME-OLD-V3  (CODE)       ; MERGE: Update variable value
+091E       ME-OLD-V4  (CODE)       ; MERGE: Add new variable
+0921       ME-VAR-L1  (CODE)       ; MERGE: Variable loop control
+0923       ME-VAR-L2  (CODE)       ; MERGE: Get next variable from tape
+092C       ME-ENTER   (CODE)       ; MERGE: Integrate merged program
+093E       ME-ENT-1   (CODE)       ; MERGE: Adjust program pointers
+0955       ME-ENT-2   (CODE)       ; MERGE: Set new program end
+0958       ME-ENT-3   (CODE)       ; MERGE: Finalize merge, clear stack
+0970       SA-CONTRL  (CODE)       ; SAVE: Control routine for different save types
+0991       SA-1-SEC   (CODE)       ; SAVE: Delay for 1 second (approx)
+09A1       tape-msgs  (DATA)       ; Table of tape operation messages (Start tape, Program:, etc.)
+09F4       PRINT-OUT  (CODE)       ; Main print routine for characters to screen/printer
+0A11       ctlchrtab  (DATA)       ; Table of control characters and their actions
+0A23       PO-BACK-1  (CODE)       ; Print Output: Handle backspace character (CH_ADD-1)
+0A38       PO-BACK-2  (CODE)       ; Print Output: Handle backspace (actual screen update)
+0A3A       PO-BACK-3  (CODE)       ; Print Output: Backspace character logic
+0A3D       PO-RIGHT   (CODE)       ; Print Output: Move cursor right
+0A4F       PO-ENTER   (CODE)       ; Print Output: Handle ENTER (newline)
+0A5F       PO-COMMA   (CODE)       ; Print Output: Handle comma (tab to next print zone)
+0A69       PO-QUEST   (CODE)       ; Print Output: Handle '?' (prints as keyword)
+0A6D       PO-TV-2    (CODE)       ; Print Output: TV output specific logic
+0A75       PO-2-OPER  (CODE)       ; Print Output: Output character using current stream (2 operands)
+0A7A       PO-1-OPER  (CODE)       ; Print Output: Output character using current stream (1 operand)
+0A7D       PO-TV-1    (CODE)       ; Print Output: TV output main entry
+0A80       PO-CHANGE  (CODE)       ; Print Output: Change print position
+0A87       PO-CONT    (CODE)       ; Print Output: Continue printing after attribute/control
+0AAC       PO-AT-ERR  (CODE)       ; Print Output: AT command error (invalid coordinates)
+0ABF       PO-AT-SET  (CODE)       ; Print Output: Set print position for AT command
+0AC2       PO-TAB     (CODE)       ; Print Output: Handle TAB command
+0AC3       PO-FILL    (CODE)       ; Print Output: Fill with spaces (for TAB)
+0AD0       PO-SPACE   (CODE)       ; Print Output: Print a space character
+0AD9       PO-ABLE    (CODE)       ; Print Output: Check if printing is enabled for current channel
+0ADC       PO-STORE   (CODE)       ; Print Output: Store character in display file
+0AF0       PO-ST-E    (CODE)       ; Print Output: Store character and advance edit line cursor
+0AFC       PO-ST-PR   (CODE)       ; Print Output: Store character and advance printer cursor
+0B03       PO-FETCH   (CODE)       ; Print Output: Fetch character from display file
+0B1D       PO-F-PR    (CODE)       ; Print Output: Fetch character for printer
+0B24       PO-ANY     (CODE)       ; Print Output: Print any character (control or printable)
+0B38       PO-GR-1    (CODE)       ; Print Output: Graphics character part 1
+0B3E       PO-GR-2    (CODE)       ; Print Output: Graphics character part 2
+0B4C       PO-GR-3    (CODE)       ; Print Output: Graphics character part 3 (UDG)
+0B52       PO-T&UDG   (CODE)       ; Print Output: Handle text and UDG characters
+0B5F       PO-T       (CODE)       ; Print Output: Text character
+0B65       PO-CHAR    (CODE)       ; Print Output: Print a single character from A
+0B6A       PO-CHAR-2  (CODE)       ; Print Output: Character output sub-routine
+0B76       PO-CHAR-3  (CODE)       ; Print Output: Calculate screen address for character
+0B7F       PR-ALL     (CODE)       ; Print item (general routine for PRINT statement)
+0B93       PR-ALL-1   (CODE)       ; Print item: String
+0BA4       PR-ALL-2   (CODE)       ; Print item: Number
+0BB6       PR-ALL-3   (CODE)       ; Print item: TAB or AT
+0BB7       PR-ALL-4   (CODE)       ; Print item: Attributes (INK, PAPER etc)
+0BC1       PR-ALL-5   (CODE)       ; Print item: Finished processing item
+0BD3       PR-ALL-6   (CODE)       ; Print item: Check for comma or semicolon
+0BDB       PO-ATTR    (CODE)       ; Print Output: Set new permanent attributes
+0BFA       PO-ATTR-1  (CODE)       ; Print Output: Apply attribute changes
+0C08       PO-ATTR-2  (CODE)       ; Print Output: Update ATTR_P, MASK_P
+0C0A       PO-MSG     (CODE)       ; Print Output: Print a system message (HL points to string)
+0C10       PO-TOKENS  (CODE)       ; Print Output: Print tokenized keyword
+0C14       PO-TABLE   (CODE)       ; Print Output: Look up token in table
+0C22       PO-EACH    (CODE)       ; Print Output: Print each character of a token
+0C35       PO-TR-SP   (CODE)       ; Print Output: Trailing space after keyword
+0C3B       PO-SAVE    (CODE)       ; Print Output: Save print parameters
+0C41       PO-SEARCH  (CODE)       ; Print Output: Search for character in display file
+0C44       PO-STEP    (CODE)       ; Print Output: Step to next print position
+0C55       PO-SCR     (CODE)       ; Print Output: Scroll screen if necessary
+0C86       REPORT-5   (CODE)       ; Error Report: "Screen full" or "Invalid in PRINT AT/TAB"
+0C88       PO-SCR-2   (CODE)       ; Print Output: Scroll screen up one line
+0CD2       PO-SCR-3   (CODE)       ; Print Output: Scroll main screen area
+0CF0       PO-SCR-3A  (CODE)       ; Print Output: Scroll, copy attributes
+0CF8       scrl-mssg  (DATA)       ; "scroll?" message string
+0D00       REPORT-D   (CODE)       ; Error Report: "Tape loading error" (also "Out of screen")
+0D02       PO-SCR-4   (CODE)       ; Print Output: Display "scroll?" prompt and wait
+0D1C       PO-SCR-4A  (CODE)       ; Print Output: Handle response to "scroll?"
+0D2D       PO-SCR-4B  (CODE)       ; Print Output: Continue after "scroll?"
+0D4D       TEMPS      (CODE)       ; Set temporary attributes for PRINT items
+0D5B       TEMPS-1    (CODE)       ; TEMPS: Apply temporary attributes
+0D65       TEMPS-2    (CODE)       ; TEMPS: Restore permanent attributes
+0D6B       CLS        (CODE)       ; CLS command: Clear screen
+0D6E       CLS-LOWER  (CODE)       ; CLS: Clear lower part of screen (input area)
+0D87       CLS-1      (CODE)       ; CLS: Clear display file
+0D89       CLS-2      (CODE)       ; CLS: Clear attribute file
+0D8E       CLS-3      (CODE)       ; CLS: Reset print position variables
+0D94       CL-CHAN    (CODE)       ; Channel I/O: Clear channel information
+0DA0       CL-CHAN-A  (CODE)       ; Channel I/O: Clear a specific channel
+0DAF       CL-ALL     (CODE)       ; Channel I/O: Clear all channels
+0DD9       CL-SET     (CODE)       ; Set paper/ink/border etc from system variables
+0DEE       CL-SET-1   (CODE)       ; Set screen attributes based on ATTR_P
+0DF4       CL-SET-2   (CODE)       ; Set border color from BORDCR
+0DFE       CL-SC-ALL  (CODE)       ; Clear entire screen (display and attributes)
+0E00       CL-SCROLL  (CODE)       ; Scroll screen area
+0E05       CL-SCR-1   (CODE)       ; Scroll: Calculate addresses
+0E0D       CL-SCR-2   (CODE)       ; Scroll: Copy display file lines
+0E19       CL-SCR-3   (CODE)       ; Scroll: Copy attribute file lines
+0E44       CL-LINE    (CODE)       ; Clear a line in the display file
+0E4A       CL-LINE-1  (CODE)       ; Clear line: display part
+0E4D       CL-LINE-2  (CODE)       ; Clear line: attribute part
+0E80       CL-LINE-3  (CODE)       ; Clear line: fill with spaces/attributes
+0E88       CL-ATTR    (CODE)       ; Set attribute byte for current INK/PAPER etc.
+0E9B       CL-ADDR    (CODE)       ; Calculate screen address from Y,X coordinates
+0EAC       COPY       (CODE)       ; COPY command: Print screen to printer
+0EB2       COPY-1     (CODE)       ; COPY: Initialize printer
+0EC9       COPY-2     (CODE)       ; COPY: Loop through screen lines
+0ECD       COPY-BUFF  (CODE)       ; COPY: Send printer buffer
+0ED3       COPY-3     (CODE)       ; COPY: Process one screen line for printer
+0EDA       COPY-END   (CODE)       ; COPY: Finish printing, reset printer
+0EDF       CLEAR-PRB  (CODE)       ; Clear printer buffer
+0EE7       PRB-BYTES  (CODE)       ; Send bytes from printer buffer
+0EF4       COPY-LINE  (CODE)       ; COPY: Convert screen line to printer codes
+0EFD       COPY-L-1   (CODE)       ; COPY: Get pixels for one character row
+0F0A       REPORT-Dc  (CODE)       ; Error Report: "No room for line" (D - Out of memory, can also be printer error)
+0F0C       COPY-L-2   (CODE)       ; COPY: Add pixels to printer buffer
+0F14       COPY-L-3   (CODE)       ; COPY: Handle end of printer line
+0F18       COPY-L-4   (CODE)       ; COPY: Check for printer buffer full
+0F1E       COPY-L-5   (CODE)       ; COPY: Loop for character rows
+0F2C       EDITOR     (CODE)       ; Main BASIC line editor
+0F30       ED-AGAIN   (CODE)       ; Editor: Re-enter editor loop
+0F38       ED-LOOP    (CODE)       ; Editor: Main input and editing loop
+0F6C       ED-CONTR   (CODE)       ; Editor: Handle control key presses (cursor, delete etc)
+0F81       ADD-CHAR   (CODE)       ; Editor: Add character to current line buffer
+0F8B       ADD-CH-1   (CODE)       ; Editor: Make space for character
+0F92       ED-KEYS    (CODE)       ; Editor: Process normal character keys
+0FA0       ed-keys-t  (DATA)       ; Editor: Table for key handling (cursor, edit etc.)
+0FA9       ED-EDIT    (CODE)       ; Editor: Edit existing line or input new line
+0FF3       ED-DOWN    (CODE)       ; Editor: Cursor Down
+1001       ED-STOP    (CODE)       ; Editor: Handle BREAK or STOP condition
+1007       ED-LEFT    (CODE)       ; Editor: Cursor Left
+100C       ED-RIGHT   (CODE)       ; Editor: Cursor Right
+1011       ED-CUR     (CODE)       ; Editor: Update cursor position
+1015       ED-DELETE  (CODE)       ; Editor: Delete character under cursor
+101E       ED-IGNORE  (CODE)       ; Editor: Ignore current key press
+1024       ED-ENTER   (CODE)       ; Editor: Handle ENTER key (tokenize and execute/store line)
+1026       ED-END     (CODE)       ; Editor: End of editing, process line
+1031       ED-EDGE    (CODE)       ; Editor: Check for screen edge collision
+103E       ED-EDGE-1  (CODE)       ; Editor: Screen edge for X coordinate
+1051       ED-EDGE-2  (CODE)       ; Editor: Screen edge for Y coordinate
+1059       ED-UP      (CODE)       ; Editor: Cursor Up
+106E       ED-LIST    (CODE)       ; Editor: List current line (auto-list)
+1076       ED-SYMBOL  (CODE)       ; Editor: Symbol Shift mode
+107C       ED-GRAPH   (CODE)       ; Editor: Graphics mode
+107F       ED-ERROR   (CODE)       ; Editor: Handle error during input (e.g. line too long)
+1097       CLEAR-SP   (CODE)       ; Clear spare part of BASIC area (above STKEND)
+10A8       KEY-INPUT  (CODE)       ; Input a line from keyboard (used by INPUT command)
+10DB       KEY-M-CL   (CODE)       ; KEY-INPUT: Clear message line
+10E6       KEY-MODE   (CODE)       ; KEY-INPUT: Set input mode (K, L, C)
+10F4       KEY-FLAG   (CODE)       ; KEY-INPUT: Set input flags
+10FA       KEY-CONTR  (CODE)       ; KEY-INPUT: Handle control characters
+1105       KEY-DATA   (CODE)       ; KEY-INPUT: Get data from keyboard
+110D       KEY-NEXT   (CODE)       ; KEY-INPUT: Get next character
+1113       KEY-CHAN   (CODE)       ; KEY-INPUT: Set input channel to K
+111B       KEY-DONE   (CODE)       ; KEY-INPUT: Finish inputting line
+111D       ED-COPY    (CODE)       ; Editor: COPY (screen dump) invoked from edit mode (Spectrum+)
+1150       ED-BLANK   (CODE)       ; Editor: Insert blank space / clear to end of line
+115E       ED-SPACES  (CODE)       ; Editor: Output spaces in editor
+1167       ED-FULL    (CODE)       ; Editor: Check if edit buffer is full
+117C       ED-C-DONE  (CODE)       ; Editor: Line input complete, tokenise
+117E       ED-C-END   (CODE)       ; Editor: End of command line input processing
+1190       SET-HL     (CODE)       ; Set HL from stack (POP HL)
+1195       SET-DE     (CODE)       ; Set DE from stack (POP DE)
+11A7       REMOVE-FP  (CODE)       ; Remove floating point number from calculator stack
+11B7       NEW        (CODE)       ; NEW command: Initialize BASIC system
+11CB       START-NEW  (CODE)       ; NEW: Start of BASIC initialization process
+11DA       ram-check  (CODE)       ; NEW: Check RAM from RAMTOP downwards
+11DC       RAM-FILL   (CODE)       ; NEW: Fill RAM with pattern
+11E2       RAM-READ   (CODE)       ; NEW: Read RAM pattern and verify
+11EF       RAM-DONE   (CODE)       ; NEW: RAM check complete, set RAMTOP
+1219       RAM-SET    (CODE)       ; NEW: Set system variables after RAM check
+12A2       MAIN-EXEC  (CODE)       ; Main BASIC execution loop (statement dispatcher)
+12A9       MAIN-1     (CODE)       ; Main loop: Get next statement
+12AC       MAIN-2     (CODE)       ; Main loop: Check for BREAK, execute statement
+12CF       MAIN-3     (CODE)       ; Main loop: Handle errors, automatic listing
+1303       MAIN-4     (CODE)       ; Main loop: Fetch line number for error reporting
+1313       MAIN-G     (CODE)       ; Main loop: Handle GOTO, GOSUB, RETURN
+133C       MAIN-5     (CODE)       ; Main loop: Continue to next statement or line
+1373       MAIN-6     (CODE)       ; Main loop: Update PPC, SUBPPC
+1376       MAIN-7     (CODE)       ; Main loop: Handle end of program
+1384       MAIN-8     (CODE)       ; Main loop: Error reporting setup
+1386       MAIN-9     (CODE)       ; Main loop: Check for STOP statement
+1391       rpt-mesgs  (DATA)       ; Table of error messages
+1555       REPORT-G   (CODE)       ; Error Report: "No FN for DEF FN" or "Argument error in DEF FN"
+155D       MAIN-ADD   (CODE)       ; Add line to BASIC program area (from editor/LOAD)
+157D       MAIN-ADD1  (CODE)       ; MAIN-ADD: Make room for new line
+15AB       MAIN-ADD2  (CODE)       ; MAIN-ADD: Insert line, update pointers
+15AF       init-chan  (CODE)       ; Initialize stream and channel data
+15C4       REPORT-J   (CODE)       ; Error Report: "Invalid I/O device"
+15C6       init-strm  (CODE)       ; Initialize stream data (for S, K, P channels)
+15D4       WAIT-KEY   (CODE)       ; Wait for a key press
+15DE       WAIT-KEY1  (CODE)       ; WAIT-KEY: Loop until key pressed
+15E4       REPORT-8   (CODE)       ; Error Report: "FN without DEF FN"
+15E6       INPUT-AD   (CODE)       ; Get address for INPUT variable
+15EF       OUT-CODE   (CODE)       ; Output a byte in A to port in C
+15F2       PRINT-A-2  (CODE)       ; Print char in A, preserve other regs, update print pos
+15F7       CALL-SUB   (CODE)       ; Call subroutine in ROM, manage stack
+1601       CHAN-OPEN  (CODE)       ; Open a channel
+160E       REPORT-Oa  (CODE)       ; Error Report: "Channel already open" (O - Channel open)
+1610       CHAN-OP-1  (CODE)       ; CHAN-OPEN: Find free channel slot
+1615       CHAN-FLAG  (CODE)       ; Set channel flags
+162C       CALL-JUMP  (CODE)       ; Indirect jump via address in HL
+162D       chn-cd-lu  (DATA)       ; Channel code look-up table (for 'K', 'S', 'P')
+1634       CHAN-K     (CODE)       ; Open channel K (Keyboard/Screen)
+1642       CHAN-S     (CODE)       ; Open channel S (Screen)
+1646       CHAN-S-1   (CODE)       ; CHAN-S: Set screen channel data
+164D       CHAN-P     (CODE)       ; Open channel P (Printer)
+1652       ONE-SPACE  (CODE)       ; Output one space character
+1655       MAKE-ROOM  (CODE)       ; Make BC bytes of room at HL in BASIC area
+1664       POINTERS   (CODE)       ; Re-establish system pointers (VARS, E_LINE etc) after memory shift
+166B       PTR-NEXT   (CODE)       ; POINTERS: Update next pointer in list
+167F       PTR-DONE   (CODE)       ; POINTERS: Finished updating
+168F       LINE-ZERO  (CODE)       ; Check if line number is zero
+1691       LINE-NO-A  (CODE)       ; Get line number (from current line) into A register (high byte)
+1695       LINE-NO    (CODE)       ; Get line number (from current line) into BC
+169E       RESERVE    (CODE)       ; Reserve memory space (at STKEND)
+16B0       SET-MIN    (CODE)       ; Set system variable S_TOP to current program line
+16BF       SET-WORK   (CODE)       ; Set WORKSP to current E_LINE
+16C5       SET-STK    (CODE)       ; Set STKBOT, STKEND
+16D4       REC-EDIT   (CODE)       ; Recover edit line after memory full error
+16DB       INDEXER-1  (CODE)       ; Index into stream data table
+16DC       INDEXER    (CODE)       ; Find stream data address for a given stream number
+16E5       CLOSE      (CODE)       ; CLOSE # command
+16FC       CLOSE-1    (CODE)       ; CLOSE: Get stream number
+1701       CLOSE-2    (CODE)       ; CLOSE: Find and clear stream data
+1716       cl-str-lu  (CODE)       ; CLOSE: Stream look-up for closing
+171C       CLOSE-STR  (CODE)       ; Close a specific stream
+171E       STR-DATA   (CODE)       ; Get stream data pointer
+1725       REPORT-Ob  (CODE)       ; Error Report: "Invalid channel" (O - Channel open can also mean this)
+1727       STR-DATA1  (CODE)       ; STR-DATA: Validate stream number
+1736       OPEN       (CODE)       ; OPEN # command
+1756       OPEN-1     (CODE)       ; OPEN: Get parameters (stream, device, channel)
+175D       OPEN-2     (CODE)       ; OPEN: Find free stream slot
+1765       REPORT-F   (CODE)       ; Error Report: "Tape saving error" (also file operation errors)
+1767       OPEN-3     (CODE)       ; OPEN: Set up stream data
+177A       op-str-lu  (CODE)       ; OPEN: Stream look-up for opening
+1781       OPEN-K     (CODE)       ; Open stream for K channel
+1785       OPEN-S     (CODE)       ; Open stream for S channel
+1789       OPEN-P     (CODE)       ; Open stream for P channel
+178B       OPEN-END   (CODE)       ; OPEN: Finish stream setup
+1793       CAT-ETC    (CODE)       ; CAT, ERASE, FORMAT, MOVE command dispatcher (Interface 1)
+1795       AUTO-LIST  (CODE)       ; Automatic listing of current line after execution or error
+17CE       AUTO-L-1   (CODE)       ; AUTO-LIST: Check if auto-listing is enabled
+17E1       AUTO-L-2   (CODE)       ; AUTO-LIST: Set line number to list
+17E4       AUTO-L-3   (CODE)       ; AUTO-LIST: Call LIST routine
+17ED       AUTO-L-4   (CODE)       ; AUTO-LIST: Error during auto-list
+17F5       LLIST      (CODE)       ; LLIST command
+17F9       LIST       (CODE)       ; LIST command
+17FB       LIST-1     (CODE)       ; LIST/LLIST: Get optional line number parameter
+1814       LIST-2     (CODE)       ; LIST/LLIST: Find starting line
+181A       LIST-3     (CODE)       ; LIST/LLIST: Loop through lines
+181F       LIST-4     (CODE)       ; LIST/LLIST: Check for BREAK key
+1822       LIST-5     (CODE)       ; LIST/LLIST: Output line number and content
+1833       LIST-ALL   (CODE)       ; List all lines from current or specified
+1835       LIST-ALL1  (CODE)       ; LIST-ALL: Main listing loop
+1855       OUT-LINE   (CODE)       ; Output a tokenized BASIC line
+1865       OUT-LINE1  (CODE)       ; OUT-LINE: Output line number
+187D       OUT-LINE2  (CODE)       ; OUT-LINE: Loop through tokens in line
+1881       OUT-LINE3  (CODE)       ; OUT-LINE: Output token (keyword or char)
+1894       OUT-LINE4  (CODE)       ; OUT-LINE: Output number
+18A1       OUT-LINE5  (CODE)       ; OUT-LINE: Output string
+18B4       OUT-LINE6  (CODE)       ; OUT-LINE: Handle REM statement
+18B6       NUMBER     (CODE)       ; Output number in BC in decimal
+18C1       OUT-FLASH  (CODE)       ; Output character with flashing attribute
+18E1       OUT-CURS   (CODE)       ; Output cursor character (K, L, C, E, G)
+18F3       OUT-C-1    (CODE)       ; OUT-CURS: Get cursor character based on MODE
+1909       OUT-C-2    (CODE)       ; OUT-CURS: Print the cursor character
+190F       LN-FETCH   (CODE)       ; Fetch line address for given line number
+191C       LN-STORE   (CODE)       ; Store line address for current line (during renumbering)
+1925       OUT-SP-2   (CODE)       ; Output N spaces (N in B)
+192A       OUT-SP-NO  (CODE)       ; Output N spaces (N in A)
+192B       OUT-SP-1   (CODE)       ; Output N spaces (N in C)
+1937       OUT-CHAR   (CODE)       ; Output character in A to current channel (handles control codes)
+195A       OUT-CH-1   (CODE)       ; OUT-CHAR: Handle printable characters
+1968       OUT-CH-2   (CODE)       ; OUT-CHAR: Handle control codes via table
+196C       OUT-CH-3   (CODE)       ; OUT-CHAR: Raw character output (no control code processing)
+196E       LINE-ADDR  (CODE)       ; Get address of current BASIC line (PPC)
+1974       LINE-AD-1  (CODE)       ; Get address of BASIC line number in DE
+1980       CP-LINES   (CODE)       ; Compare two BASIC lines for merging
+1988       not-used   (----)       ; Unused ROM space or NOPs
+198B       EACH-STMT  (CODE)       ; Execute each statement in a BASIC line
+1990       EACH-S-1   (CODE)       ; EACH-STMT: Get next token
+1998       EACH-S-2   (CODE)       ; EACH-STMT: Dispatch to statement handler
+199A       EACH-S-3   (CODE)       ; EACH-STMT: Check for end of line
+19A5       EACH-S-4   (CODE)       ; EACH-STMT: Handle colon separator
+19AD       EACH-S-5   (CODE)       ; EACH-STMT: Error if unexpected token
+19B1       EACH-S-6   (CODE)       ; EACH-STMT: After statement execution
+19B8       NEXT-ONE   (CODE)       ; Find next item (variable, token, etc.)
+19C7       NEXT-O-1   (CODE)       ; NEXT-ONE: Skip spaces
+19CE       NEXT-O-2   (CODE)       ; NEXT-ONE: Check for specific character
+19D5       NEXT-O-3   (CODE)       ; NEXT-O-3: End of line check
+19D6       NEXT-O-4   (CODE)       ; NEXT-O-4: Get character
+19DB       NEXT-O-5   (CODE)       ; NEXT-O-5: Advance pointer
+19DD       DIFFER     (CODE)       ; Compare HL with DE (sets flags)
+19E5       RECLAIM-1  (CODE)       ; Reclaim memory (e.g. after deleting a line) - part 1
+19E8       RECLAIM-2  (CODE)       ; Reclaim memory - part 2, update pointers
+19FB       E-LINE-NO  (CODE)       ; Get line number from editable E_LINE buffer
+1A15       E-L-1      (CODE)       ; E-LINE-NO: Convert ASCII digits to binary
+1A1B       OUT-NUM-1  (CODE)       ; Output number in HL as decimal
+1A28       OUT-NUM-2  (CODE)       ; OUT-NUM-1: Division by 10 loop
+1A30       OUT-NUM-3  (CODE)       ; OUT-NUM-1: Convert digit to ASCII and print
+1A42       OUT-NUM-4  (CODE)       ; OUT-NUM-1: Handle leading zeros
+1A48       offst-tbl  (DATA)       ; Table of offsets for command parsing/execution
+1A7A       P-LET      (CODE)       ; Parse/Execute LET command
+1A7D       P-GO-TO    (CODE)       ; Parse/Execute GOTO command
+1A81       P-IF       (CODE)       ; Parse/Execute IF command
+1A86       P-GO-SUB   (CODE)       ; Parse/Execute GOSUB command
+1A8A       P-STOP     (CODE)       ; Parse/Execute STOP command
+1A8D       P-RETURN   (CODE)       ; Parse/Execute RETURN command
+1A90       P-FOR      (CODE)       ; Parse/Execute FOR command
+1A98       P-NEXT     (CODE)       ; Parse/Execute NEXT command
+1A9C       P-PRINT    (CODE)       ; Parse/Execute PRINT command
+1A9F       P-INPUT    (CODE)       ; Parse/Execute INPUT command
+1AA2       P-DIM      (CODE)       ; Parse/Execute DIM command
+1AA5       P-REM      (CODE)       ; Parse/Execute REM command
+1AA8       P-NEW      (CODE)       ; Parse/Execute NEW command
+1AAB       P-RUN      (CODE)       ; Parse/Execute RUN command
+1AAE       P-LIST     (CODE)       ; Parse/Execute LIST command
+1AB1       P-POKE     (CODE)       ; Parse/Execute POKE command
+1AB5       P-RANDOM   (CODE)       ; Parse/Execute RANDOMIZE command
+1AB8       P-CONT     (CODE)       ; Parse/Execute CONTINUE command
+1ABB       P-CLEAR    (CODE)       ; Parse/Execute CLEAR command
+1ABE       P-CLS      (CODE)       ; Parse/Execute CLS command
+1AC1       P-PLOT     (CODE)       ; Parse/Execute PLOT command
+1AC5       P-PAUSE    (CODE)       ; Parse/Execute PAUSE command
+1AC9       P-READ     (CODE)       ; Parse/Execute READ command
+1ACC       P-DATA     (CODE)       ; Parse/Execute DATA command
+1ACF       P-RESTORE  (CODE)       ; Parse/Execute RESTORE command
+1AD2       P-DRAW     (CODE)       ; Parse/Execute DRAW command
+1AD6       P-COPY     (CODE)       ; Parse/Execute COPY command
+1AD9       P-LPRINT   (CODE)       ; Parse/Execute LPRINT command
+1ADC       P-LLIST    (CODE)       ; Parse/Execute LLIST command
+1ADF       P-SAVE     (CODE)       ; Parse/Execute SAVE command
+1AE0       P-LOAD     (CODE)       ; Parse/Execute LOAD command
+1AE1       P-VERIFY   (CODE)       ; Parse/Execute VERIFY command
+1AE2       P-MERGE    (CODE)       ; Parse/Execute MERGE command
+1AE3       P-BEEP     (CODE)       ; Parse/Execute BEEP command
+1AE7       P-CIRCLE   (CODE)       ; Parse/Execute CIRCLE command
+1AEB       P-INK      (CODE)       ; Parse/Execute INK command
+1AEC       P-PAPER    (CODE)       ; Parse/Execute PAPER command
+1AED       P-FLASH    (CODE)       ; Parse/Execute FLASH command
+1AEE       P-BRIGHT   (CODE)       ; Parse/Execute BRIGHT command
+1AEF       P-INVERSE  (CODE)       ; Parse/Execute INVERSE command
+1AF0       P-OVER     (CODE)       ; Parse/Execute OVER command
+1AF1       P-OUT      (CODE)       ; Parse/Execute OUT command
+1AF5       P-BORDER   (CODE)       ; Parse/Execute BORDER command
+1AF9       P-DEF-FN   (CODE)       ; Parse/Execute DEF FN command
+1AFC       P-OPEN     (CODE)       ; Parse/Execute OPEN # command
+1B02       P-CLOSE    (CODE)       ; Parse/Execute CLOSE # command
+1B06       P-FORMAT   (CODE)       ; Parse/Execute FORMAT command (Interface 1)
+1B0A       P-MOVE     (CODE)       ; Parse/Execute MOVE command (Interface 1)
+1B10       P-ERASE    (CODE)       ; Parse/Execute ERASE command (Interface 1)
+1B14       P-CAT      (CODE)       ; Parse/Execute CAT command (Interface 1)
+1B17       LINE-SCAN  (CODE)       ; Scan current BASIC line for syntax, set CH_ADD
+1B28       STMT-LOOP  (CODE)       ; Main statement execution loop within a line
+1B29       STMT-L-1   (CODE)       ; STMT-LOOP: Get command token
+1B52       SCAN-LOOP  (CODE)       ; Expression scanning loop
+1B55       GET-PARAM  (CODE)       ; Get a parameter (numeric or string expression) from BASIC line
+1B6F       SEPARATOR  (CODE)       ; Check for comma or other separator
+1B76       STMT-RET   (CODE)       ; Return from statement execution
+1B7B       REPORT-L   (CODE)       ; Error Report: "Invalid FOR variable" or other loop errors
+1B7D       STMT-R-1   (CODE)       ; Error handling during statement execution
+1B8A       LINE-RUN   (CODE)       ; Execute a BASIC line from specified address
+1B9E       LINE-NEW   (CODE)       ; Tokenize and add a new line from E_LINE to program
+1BB0       REPORT-0   (CODE)       ; Error Report: "OK" or successful completion
+1BB2       REM        (CODE)       ; REM command: Skip to end of line
+1BB3       LINE-END   (CODE)       ; Check for end of BASIC line (0Dh)
+1BBF       LINE-USE   (CODE)       ; Find line number in DE, set PPC to it
+1BD1       NEXT-LINE  (CODE)       ; Advance PPC to the next line in the program
+1BEC       REPORT-N   (CODE)       ; Error Report: "NEXT without FOR"
+1BEE       CHECK-END  (CODE)       ; Check for end of program or BREAK key
+1BF4       STMT-NEXT  (CODE)       ; Go to next statement (after colon or end of line)
+1C01       class-tbl  (DATA)       ; Table of token classes (operator, function, variable, etc.)
+1C0D       CLASS-03   (CODE)       ; Token class 3: String variable
+1C10       CLASS-00   (CODE)       ; Token class 0: Numeric variable
+1C11       CLASS-05   (CODE)       ; Token class 5: Array variable
+1C1F       CLASS-01   (CODE)       ; Token class 1: Number
+1C22       VAR-A-1    (CODE)       ; Find or create simple variable (numeric or string)
+1C2E       REPORT-2   (CODE)       ; Error Report: "Variable not found"
+1C30       VAR-A-2    (CODE)       ; VAR-A-1: Search for existing variable
+1C46       VAR-A-3    (CODE)       ; VAR-A-1: Create new variable
+1C4E       CLASS-02   (CODE)       ; Token class 2: Operator
+1C56       VAL-FET-1  (CODE)       ; Fetch value of numeric variable
+1C59       VAL-FET-2  (CODE)       ; Fetch value of string variable
+1C6C       CLASS-04   (CODE)       ; Token class 4: Function
+1C79       NEXT-2NUM  (CODE)       ; Expect two numeric parameters on stack
+1C7A       EXPT-2NUM  (CODE)       ; Expect two numeric parameters
+1C82       EXPT-1NUM  (CODE)       ; Expect one numeric parameter
+1C8A       REPORT-C   (CODE)       ; Error Report: "Nonsense in BASIC" / "Syntax Error"
+1C8C       EXPT-EXP   (CODE)       ; Expect expression
+1C96       CLASS-07   (CODE)       ; Token class 7: Reserved words (e.g. TO, STEP, THEN)
+1CBE       CLASS-09   (CODE)       ; Token class 9: Special system variables (e.g. ATTR, SCREEN$)
+1CD6       CL-09-1    (CODE)       ; CLASS-09: Handle special variable
+1CDB       CLASS-0B   (CODE)       ; Token class 0B: Delimiters like comma, semicolon
+1CDE       FETCH-NUM  (CODE)       ; Fetch a number from BASIC line to calculator stack
+1CE6       USE-ZERO   (CODE)       ; Push zero onto calculator stack
+1CEE       REPORT-9   (CODE)       ; Error Report: "Out of memory" (also for subscript out of range)
+1CF0       IF         (CODE)       ; IF command execution
+1D00       IF-1       (CODE)       ; IF: Evaluate condition, skip statement if false
+1D03       FOR        (CODE)       ; FOR command execution
+1D10       F-USE-1    (CODE)       ; FOR: Get loop variable, initial, TO, and STEP values
+1D16       F-REORDER  (CODE)       ; FOR: Reorder FOR loop parameters on stack
+1D34       F-L-S      (CODE)       ; FOR: Store loop parameters
+1D64       F-LOOP     (CODE)       ; FOR: Check loop condition, increment variable
+1D7C       F-FOUND    (CODE)       ; FOR: Found existing FOR loop entry
+1D84       REPORT-I   (CODE)       ; Error Report: "FOR without NEXT" or "NEXT without FOR" related
+1D86       LOOK-PROG  (CODE)       ; Search for specific token in program (e.g. DATA)
+1D8B       LOOK-P-1   (CODE)       ; LOOK-PROG: Main search loop
+1DA3       LOOK-P-2   (CODE)       ; LOOK-PROG: Token found
+1DAB       NEXT       (CODE)       ; NEXT command execution
+1DD8       REPORT-1   (CODE)       ; Error Report: "NEXT without FOR"
+1DDA       NEXT-LOOP  (CODE)       ; NEXT: Find corresponding FOR loop data
+1DE2       NEXT-1     (CODE)       ; NEXT: Get loop variable
+1DE9       NEXT-2     (CODE)       ; NEXT: Increment and test loop variable
+1DEC       READ-3     (CODE)       ; READ: Assign value to variable
+1DED       READ       (CODE)       ; READ command execution
+1E08       REPORT-E   (CODE)       ; Error Report: "Out of DATA"
+1E0A       READ-1     (CODE)       ; READ: Get variable to assign to
+1E1E       READ-2     (CODE)       ; READ: Find next DATA item
+1E27       DATA       (CODE)       ; DATA command: Skip data items (no execution)
+1E2C       DATA-1     (CODE)       ; DATA: Skip to next comma or end of line
+1E37       DATA-2     (CODE)       ; DATA: Skip string data
+1E39       PASS-BY    (CODE)       ; Skip current DATA item pointed to by DATADD
+1E42       RESTORE    (CODE)       ; RESTORE command execution
+1E45       REST-RUN   (CODE)       ; RESTORE: Find line number, set DATADD
+1E4F       RANDOMIZE  (CODE)       ; RANDOMIZE command execution
+1E5A       RAND-1     (CODE)       ; RANDOMIZE: Get seed value or use FRAMES
+1E5F       CONTINUE   (CODE)       ; CONTINUE command execution
+1E67       GO-TO      (CODE)       ; GOTO command execution
+1E73       GO-TO-2    (CODE)       ; GOTO: Find line and jump
+1E7A       OUT        (CODE)       ; OUT command execution
+1E80       POKE       (CODE)       ; POKE command execution
+1E85       TWO-PARAM  (CODE)       ; Get two numeric parameters for POKE/OUT
+1E8E       TWO-P-1    (CODE)       ; TWO-PARAM: Get first parameter (address/port)
+1E94       FIND-INT1  (CODE)       ; Convert FP to 16-bit integer in DE
+1E99       FIND-INT2  (CODE)       ; Convert FP to 8-bit integer in A
+1E9C       FIND-I-1   (CODE)       ; Integer conversion sub-routine
+1E9F       REPORT-Bb  (CODE)       ; Error Report: "Integer out of range" (B - Integer out of range)
+1EA1       RUN        (CODE)       ; RUN command execution
+1EAC       CLEAR      (CODE)       ; CLEAR command execution
+1EAF       CLEAR-RUN  (CODE)       ; CLEAR: Optional address parameter for RAMTOP
+1EB7       CLEAR-1    (CODE)       ; CLEAR: Initialize variables area, stack, etc.
+1EDA       REPORT-M   (CODE)       ; Error Report: "RAMTOP too small" (M - RAMTOP too small)
+1EDC       CLEAR-2    (CODE)       ; CLEAR: Reset system variables
+1EED       GO-SUB     (CODE)       ; GOSUB command execution
+1F05       TEST-ROOM  (CODE)       ; Test if BC bytes of stack space are available
+1F15       REPORT-4   (CODE)       ; Error Report: "Out of memory" (stack collision)
+1F1A       free-mem   (CODE)       ; Calculate free memory (STKEND - STKBOT)
+1F23       RETURN     (CODE)       ; RETURN command execution
+1F36       REPORT-7   (CODE)       ; Error Report: "RETURN without GOSUB"
+1F3A       PAUSE      (CODE)       ; PAUSE command execution
+1F3D       PAUSE-1    (CODE)       ; PAUSE: Get duration parameter
+1F49       PAUSE-2    (CODE)       ; PAUSE: Loop for specified duration or until key press
+1F4F       PAUSE-END  (CODE)       ; PAUSE: End of pause
+1F54       BREAK-KEY  (CODE)       ; Check for BREAK key (SHIFT + SPACE)
+1F60       DEF-FN     (CODE)       ; DEF FN command execution
+1F6A       DEF-FN-1   (CODE)       ; DEF FN: Get function name and parameters
+1F7D       DEF-FN-2   (CODE)       ; DEF FN: Store function definition
+1F86       DEF-FN-3   (CODE)       ; DEF FN: Check for existing definition
+1F89       DEF-FN-4   (CODE)       ; DEF FN: Allocate space for definition
+1F94       DEF-FN-5   (CODE)       ; DEF FN: Copy definition to VARS area
+1FA6       DEF-FN-6   (CODE)       ; DEF FN: Handle errors
+1FBD       DEF-FN-7   (CODE)       ; DEF FN: Complete definition
+1FC3       UNSTACK-Z  (CODE)       ; Unstack zero from calculator stack
+1FC9       LPRINT     (CODE)       ; LPRINT command execution
+1FCD       PRINT      (CODE)       ; PRINT command execution
+1FCF       PRINT-1    (CODE)       ; PRINT/LPRINT: Set current channel
+1FDF       PRINT-2    (CODE)       ; PRINT/LPRINT: Main loop for printing items
+1FE5       PRINT-3    (CODE)       ; PRINT/LPRINT: Handle separators (comma, semicolon)
+1FF2       PRINT-4    (CODE)       ; PRINT/LPRINT: End of statement, print newline if needed
+1FF5       PRINT-CR   (CODE)       ; Print Carriage Return / Newline
+1FFC       PR-ITEM-1  (CODE)       ; Print item: Evaluate expression
+200E       PR-ITEM-2  (CODE)       ; Print item: Dispatch to string or number printing
+201E       PR-AT-TAB  (CODE)       ; Print item: Handle AT or TAB
+2024       PR-ITEM-3  (CODE)       ; Print item: Handle INK, PAPER etc.
+203C       PR-STRING  (CODE)       ; Print a string from calculator stack
+2045       PR-END-Z   (CODE)       ; Print: End of printing, restore channel
+2048       PR-ST-END  (CODE)       ; Print: Check for end of statement
+204E       PR-POSN-1  (CODE)       ; Print: Handle AT (line, column)
+2061       PR-POSN-2  (CODE)       ; Print: Handle TAB (column)
+2067       PR-POSN-3  (CODE)       ; Print: Set print position
+206E       PR-POSN-4  (CODE)       ; Print: Check for valid screen coordinates
+2070       STR-ALTER  (CODE)       ; Alter string variable (e.g. A$(5) = "X")
+2089       INPUT      (CODE)       ; INPUT command execution
+2096       INPUT-1    (CODE)       ; INPUT: Handle prompt string
+20AD       INPUT-2    (CODE)       ; INPUT: Main loop for inputting items
+20C1       IN-ITEM-1  (CODE)       ; INPUT: Get variable to assign to
+20D8       IN-ITEM-2  (CODE)       ; INPUT: Read line from keyboard
+20ED       IN-ITEM-3  (CODE)       ; INPUT: Parse input line and assign to variable
+20FA       IN-PROMPT  (CODE)       ; INPUT: Print prompt string
+211A       IN-PR-1    (CODE)       ; INPUT: Print "? " prompt if no custom prompt
+211C       IN-PR-2    (CODE)       ; INPUT: Display prompt
+2129       IN-PR-3    (CODE)       ; INPUT: Handle LINE INPUT
+213A       IN-VAR-1   (CODE)       ; INPUT: Assign numeric value
+2148       IN-VAR-2   (CODE)       ; INPUT: Assign string value
+215E       IN-VAR-3   (CODE)       ; INPUT: Check for type mismatch
+2161       IN-VAR-4   (CODE)       ; INPUT: Handle errors during assignment
+2174       IN-VAR-5   (CODE)       ; INPUT: Check for comma separator
+219B       IN-VAR-6   (CODE)       ; INPUT: Finished with current variable
+21AF       IN-NEXT-1  (CODE)       ; INPUT: Move to next item in input line
+21B2       IN-NEXT-2  (CODE)       ; INPUT: Check for end of input line
+21B9       IN-ASSIGN  (CODE)       ; INPUT: Assign value from stack to variable
+21CE       REPORT-Cb  (CODE)       ; Error Report: "Invalid input" (C - Nonsense in BASIC often from INPUT)
+21D0       IN-STOP    (CODE)       ; INPUT: Handle STOP requested during input
+21D4       REPORT-H   (CODE)       ; Error Report: "STOP in INPUT"
+21D6       IN-CHAN-K  (CODE)       ; INPUT: Ensure input is from channel K
+21E1       CO-TEMP-1  (CODE)       ; Color command (INK, PAPER, etc.) parameter parsing
+21E2       CO-TEMP-2  (CODE)       ; Color: Get color value
+21F2       CO-TEMP-3  (CODE)       ; Color: Apply INK
+21FC       CO-TEMP-4  (CODE)       ; Color: Apply PAPER
+2211       CO-TEMP-5  (CODE)       ; Color: Apply FLASH
+2228       CO-TEMP-6  (CODE)       ; Color: Apply BRIGHT
+2234       CO-TEMP-7  (CODE)       ; Color: Apply INVERSE
+223E       CO-TEMP-8  (CODE)       ; Color: Apply OVER
+2244       REPORT-K   (CODE)       ; Error Report: "Invalid colour, FLASH, BRIGHT, INVERSE or OVER"
+2246       CO-TEMP-9  (CODE)       ; Color: Parameter validation
+2257       CO-TEMP-A  (CODE)       ; Color: Update attribute system variables
+2258       CO-TEMP-B  (CODE)       ; Color: Set temporary or permanent attributes
+226C       CO-CHANGE  (CODE)       ; Color: Change attribute byte in ATTR_T/ATTR_P
+2273       CO-TEMP-C  (CODE)       ; Color: Common routine for attribute commands
+227D       CO-TEMP-D  (CODE)       ; Color: End of color command processing
+2287       CO-TEMP-E  (CODE)       ; Color: Fetch current attribute settings
+2294       BORDER     (CODE)       ; BORDER command execution
+22A6       BORDER-1   (CODE)       ; BORDER: Get color parameter and set border
+22AA       PIXEL-ADD  (CODE)       ; Calculate pixel address in display file (HL) and bit mask (A) for (Y,X)
+22CB       POINT-SUB  (CODE)       ; Subroutine for POINT function (test pixel state)
+22D4       POINT-LP   (CODE)       ; POINT: Loop for coordinates
+22DC       PLOT       (CODE)       ; PLOT command execution
+22E5       PLOT-SUB   (CODE)       ; PLOT: Set a pixel
+22F0       PLOT-LOOP  (CODE)       ; PLOT: Get X,Y coordinates
+22FD       PL-TST-IN  (CODE)       ; PLOT: Test if INK/PAPER/etc. parameters follow
+2303       PLOT-END   (CODE)       ; PLOT: End of PLOT command
+2307       STK-TO-BC  (CODE)       ; Pop value from calculator stack to BC (integer)
+2314       STK-TO-A   (CODE)       ; Pop value from calculator stack to A (integer)
+2320       CIRCLE     (CODE)       ; CIRCLE command execution
+233B       C-R-GRE-1  (CODE)       ; CIRCLE: Radius greater than 1 specific calculation
+235A       C-ARC-GE1  (CODE)       ; CIRCLE: Arc segment calculation for radius >= 1
+2382       DRAW       (CODE)       ; DRAW command execution
+238D       DR-3-PRMS  (CODE)       ; DRAW: Get 3 parameters (X, Y, Angle) for arc
+23A3       DR-SIN-NZ  (CODE)       ; DRAW: Calculate sine for non-zero angle
+23C1       DR-PRMS    (CODE)       ; DRAW: Get parameters (X, Y displacement; optional angle)
+2420       DRW-STEPS  (CODE)       ; DRAW: Calculate steps for line/arc
+2425       ARC-LOOP   (CODE)       ; DRAW: Loop for drawing arc segments
+2439       ARC-START  (CODE)       ; DRAW: Start drawing an arc
+245F       ARC-END    (CODE)       ; DRAW: End of arc drawing
+2477       LINE-DRAW  (CODE)       ; Draw a line segment (used by DRAW and PLOT)
+247D       CD-PRMS1   (CODE)       ; CIRCLE/DRAW: Get common parameters (center X, Y)
+2495       USE-252    (CODE)       ; Use fixed value 252 (related to scaling?)
+2497       DRAW-SAVE  (CODE)       ; DRAW: Save current coordinates
+24B7       DRAW-LINE  (CODE)       ; Draw line using Bresenham's algorithm variant
+24C4       DL-X-GE-Y  (CODE)       ; DRAW-LINE: Delta X greater than or equal to Delta Y
+24CB       DL-LARGER  (CODE)       ; DRAW-LINE: Swap deltas if dy > dx
+24CE       D-L-LOOP   (CODE)       ; DRAW-LINE: Main plotting loop
+24D4       D-L-DIAG   (CODE)       ; DRAW-LINE: Diagonal step
+24DB       D-L-HR-VT  (CODE)       ; DRAW-LINE: Horizontal/Vertical step
+24DF       D-L-STEP   (CODE)       ; DRAW-LINE: Increment coordinates
+24EC       D-L-PLOT   (CODE)       ; DRAW-LINE: Plot current point
+24F7       D-L-RANGE  (CODE)       ; DRAW-LINE: Check if coordinates are in range
+24F9       REPORT-Bc  (CODE)       ; Error Report: "Coordinates out of range" (B - Integer out of range)
+24FB       SCANNING   (CODE)       ; Main expression evaluation routine (scanner)
+24FF       S-LOOP-1   (CODE)       ; SCANNING: Main loop, get token
+250F       S-QUOTE-S  (CODE)       ; SCANNING: Handle quoted string
+2522       S-2-COORD  (CODE)       ; SCANNING: Expect two coordinates (e.g., for AT)
+252D       S-RPORT-C  (CODE)       ; SCANNING: Report syntax error
+2530       SYNTAX-Z   (CODE)       ; Check syntax, expects specific token or end of expression
+2535       S-SCRN$-S  (CODE)       ; SCANNING: Handle SCREEN$ function
+254F       S-SCRN-LP  (CODE)       ; SCREEN$: Loop through screen characters
+255A       S-SC-MTCH  (CODE)       ; SCREEN$: Character match
+255D       S-SC-ROWS  (CODE)       ; SCREEN$: Row processing for SCREEN$
+2573       S-SCR-NXT  (CODE)       ; SCREEN$: Next character
+257D       S-SCR-STO  (CODE)       ; SCREEN$: Store result
+2580       S-ATTR-S   (CODE)       ; SCANNING: Handle ATTR function
+2596       scan-func  (CODE)       ; SCANNING: Dispatch to specific function handler
+25AF       S-U-PLUS   (CODE)       ; SCANNING: Handle unary plus
+25B3       S-QUOTE    (CODE)       ; SCANNING: Expect opening quote
+25BE       S-Q-AGAIN  (CODE)       ; SCANNING: Get characters within quotes
+25CB       S-Q-COPY   (CODE)       ; SCANNING: Copy string to workspace
+25D9       S-Q-PRMS   (CODE)       ; SCANNING: String parameters (e.g. for VAL$)
+25DB       S-STRING   (CODE)       ; SCANNING: Process string literal or variable
+25E8       S-BRACKET  (CODE)       ; SCANNING: Expect opening bracket '('
+25F5       S-FN       (CODE)       ; SCANNING: Handle user-defined function FN
+25F8       S-RND      (CODE)       ; SCANNING: Handle RND function
+2625       S-RND-END  (CODE)       ; RND: End of RND processing
+2627       S-PI       (CODE)       ; SCANNING: Handle PI constant
+2630       S-PI-END   (CODE)       ; PI: End of PI processing
+2634       S-INKEY$   (CODE)       ; SCANNING: Handle INKEY$ function (non-empty string means key pressed)
+2660       S-IK$-STK  (CODE)       ; INKEY$: Stack result string
+2665       S-INK$-EN  (CODE)       ; INKEY$: End of INKEY$ processing
+2668       S-SCREEN$  (CODE)       ; Execute SCREEN$ function (entry point)
+2672       S-ATTR     (CODE)       ; Execute ATTR function (entry point)
+267B       S-POINT    (CODE)       ; Execute POINT function (entry point)
+2684       S-ALPHNUM  (CODE)       ; SCANNING: Check for alphanumeric character
+268D       S-DECIMAL  (CODE)       ; SCANNING: Check for decimal point
+26B5       S-STK-DEC  (CODE)       ; SCANNING: Stack decimal number
+26B6       S-SD-SKIP  (CODE)       ; SCANNING: Skip non-numeric part
+26C3       S-NUMERIC  (CODE)       ; SCANNING: Process numeric literal or variable
+26C9       S-LETTER   (CODE)       ; SCANNING: Check for letter (variable name start)
+26DD       S-CONT-1   (CODE)       ; SCANNING: Continue after operand
+26DF       S-NEGATE   (CODE)       ; SCANNING: Handle unary minus
+2707       S-NO-TO-$  (CODE)       ; SCANNING: Ensure numeric operand, not string
+270D       S-PUSH-PO  (CODE)       ; SCANNING: Push operator onto stack
+2712       S-CONT-2   (CODE)       ; SCANNING: Continue after operator
+2713       S-CONT-3   (CODE)       ; SCANNING: Expression evaluation main logic
+2723       S-OPERTR   (CODE)       ; SCANNING: Process operator (AND, OR, +, -, *, / etc.)
+2734       S-LOOP     (CODE)       ; SCANNING: Operator precedence loop (shunting-yard)
+274C       S-STK-LST  (CODE)       ; SCANNING: Stack last operator
+275B       S-SYNTEST  (CODE)       ; SCANNING: Syntax test for valid expression
+2761       S-RPORT-C  (CODE)       ; SCANNING: Report syntax error C
+2764       S-RUNTEST  (CODE)       ; SCANNING: Runtime test (e.g. for type compatibility)
+2770       S-LOOPEND  (CODE)       ; SCANNING: End of operator loop
+2773       S-TIGHTER  (CODE)       ; SCANNING: Check operator precedence
+2788       S-NOT-AND  (CODE)       ; SCANNING: Handle NOT and AND operators
+2790       S-NEXT     (CODE)       ; SCANNING: Get next token in expression
+2795       tbl-of-ops (DATA)       ; Table of operators and their properties (precedence, routine)
+27B0       tbl-priors (DATA)       ; Table of operator precedences
+27BD       S-FN-SBRN  (CODE)       ; SCANNING: Subroutine for FN (user defined function) call
+27D0       SF-BRKT-1  (CODE)       ; FN: Expect opening bracket for arguments
+27D9       SF-ARGMTS  (CODE)       ; FN: Process arguments
+27E4       SF-BRKT-2  (CODE)       ; FN: Expect closing bracket
+27E6       SF-RPRT-C  (CODE)       ; FN: Report syntax error
+27E9       SF-FLAG-6  (CODE)       ; FN: Set flag for function evaluation
+27F4       SF-SYN-EN  (CODE)       ; FN: Syntax check end
+27F7       SF-RUN     (CODE)       ; FN: Execute user defined function
+2802       SF-ARGMT1  (CODE)       ; FN: Get first argument
+2808       SF-FND-DF  (CODE)       ; FN: Find DEF FN definition
+2812       REPORT-P   (CODE)       ; Error Report: "Invalid FN call" (P - FN without DEF FN or wrong args)
+2814       SF-CP-DEF  (CODE)       ; FN: Copy DEF FN parameters and expression
+2825       SF-NOT-FD  (CODE)       ; FN: DEF FN not found
+2831       SF-VALUES  (CODE)       ; FN: Substitute argument values
+2843       SF-ARG-LP  (CODE)       ; FN: Argument substitution loop
+2852       SF-ARG-VL  (CODE)       ; FN: Evaluate argument value
+2885       SF-R-BR-2  (CODE)       ; FN: Check for closing bracket after args
+288B       REPORT-Q   (CODE)       ; Error Report: "Parameter error" (e.g. wrong number of args for FN)
+288D       SF-VALUE   (CODE)       ; FN: Evaluate the function's expression
+28AB       FN-SKPOVR  (CODE)       ; FN: Skip over DEF FN definition during execution
+28B2       LOOK-VARS  (CODE)       ; Find a variable in the variables area (VARS)
+28D4       V-CHAR     (CODE)       ; LOOK-VARS: Get variable name character
+28DE       V-STR-VAR  (CODE)       ; LOOK-VARS: Handle string variable name ($)
+28E3       V-TEST-FN  (CODE)       ; LOOK-VARS: Test if variable is a FN definition
+28EF       V-RUN/SYN  (CODE)       ; LOOK-VARS: Differentiate runtime vs syntax time lookup
+28FD       V-RUN      (CODE)       ; LOOK-VARS: Runtime lookup
+2900       V-EACH     (CODE)       ; LOOK-VARS: Loop through each variable
+2912       V-MATCHES  (CODE)       ; LOOK-VARS: Name matches
+2913       V-SPACES   (CODE)       ; LOOK-VARS: Skip spaces (unused in clean VARS)
+2929       V-GET-PTR  (CODE)       ; LOOK-VARS: Get pointer to variable data
+292A       V-NEXT     (CODE)       ; LOOK-VARS: Go to next variable entry
+2932       V-80-BYTE  (CODE)       ; LOOK-VARS: Check for 80h (end of simple vars)
+2934       V-SYNTAX   (CODE)       ; LOOK-VARS: Syntax time lookup (for LET, INPUT, DIM)
+293E       V-FOUND-1  (CODE)       ; LOOK-VARS: Variable found (numeric)
+293F       V-FOUND-2  (CODE)       ; LOOK-VARS: Variable found (string)
+2943       V-PASS     (CODE)       ; LOOK-VARS: Variable found, return pointer
+294B       V-END      (CODE)       ; LOOK-VARS: End of search, variable not found
+2951       STK-F-ARG  (CODE)       ; Stack function argument (numeric or string)
+295A       SFA-LOOP   (CODE)       ; STK-F-ARG: Loop for arguments
+296B       SFA-CP-VR  (CODE)       ; STK-F-ARG: Copy variable value to stack
+2981       SFA-MATCH  (CODE)       ; STK-F-ARG: Matched argument
+2991       SFA-END    (CODE)       ; STK-F-ARG: End of arguments
+2996       STK-VAR    (CODE)       ; Stack variable's value (numeric or string descriptor)
+29A1       SV-SIMPLE$ (CODE)       ; STK-VAR: Handle simple string variable
+29AE       SV-ARRAYS  (CODE)       ; STK-VAR: Handle array variable (numeric or string)
+29C0       SV-PTR     (CODE)       ; STK-VAR: Get pointer to array data
+29C3       SV-COMMA   (CODE)       ; STK-VAR: Expect comma for array subscript
+29D8       SV-CLOSE   (CODE)       ; STK-VAR: Expect closing bracket for array subscript
+29E0       SV-CH-ADD  (CODE)       ; STK-VAR: Update CH_ADD after parsing subscript
+29E7       SV-COUNT   (CODE)       ; STK-VAR: Count array dimensions
+29EA       SV-LOOP    (CODE)       ; STK-VAR: Loop for array subscripts
+29FB       SV-MULT    (CODE)       ; STK-VAR: Calculate array element offset
+2A12       SV-RPT-C   (CODE)       ; STK-VAR: Report syntax error in subscript
+2A20       REPORT-3   (CODE)       ; Error Report: "Subscript out of range"
+2A22       SV-NUMBER  (CODE)       ; STK-VAR: Handle numeric array element
+2A2C       SV-ELEM$   (CODE)       ; STK-VAR: Handle string array element
+2A45       SV-SLICE   (CODE)       ; STK-VAR: Handle string array slicing A$(n TO m)
+2A48       SV-DIM     (CODE)       ; STK-VAR: Get array dimensions
+2A49       SV-SLICE?  (CODE)       ; STK-VAR: Check for slice "TO" syntax
+2A52       SLICING    (CODE)       ; Perform string slicing
+2A7A       SL-RPT-C   (CODE)       ; SLICING: Report error in slice parameters
+2A81       SL-SECOND  (CODE)       ; SLICING: Get second slice parameter (TO m)
+2A94       SL-DEFINE  (CODE)       ; SLICING: Define slice parameters
+2AA8       SL-OVER    (CODE)       ; SLICING: Handle slice exceeding string length
+2AAD       SL-STORE   (CODE)       ; SLICING: Store sliced string descriptor on stack
+2AB1       STK-ST-0   (CODE)       ; Store zero on calculator stack (for LET X=0)
+2AB2       STK-STO-$  (CODE)       ; Store string from calculator stack to variable
+2AB6       STK-STORE  (CODE)       ; Store numeric value from calculator stack to variable
+2ACC       INT-EXP1   (CODE)       ; Integer exponentiation part 1 (e.g. 2^N)
+2ACD       INT-EXP2   (CODE)       ; Integer exponentiation part 2
+2AE8       I-CARRY    (CODE)       ; Integer arithmetic: handle carry
+2AEB       I-RESTORE  (CODE)       ; Integer arithmetic: restore registers
+2AEE       DE,(DE+1)  (CODE)       ; DE = (DE) + 1 (16-bit increment pointed to by DE)
+2AF4       GET-HL*DE  (CODE)       ; Multiply HL by DE (16-bit multiplication)
+2AFF       LET        (CODE)       ; LET command execution
+2B0B       L-EACH-CH  (CODE)       ; LET: Check each character of variable name
+2B0C       L-NO-SP    (CODE)       ; LET: No space allowed in variable name
+2B1F       L-TEST-CH  (CODE)       ; LET: Test character for validity in name
+2B29       L-SPACES   (CODE)       ; LET: Skip spaces after variable name
+2B3E       L-CHAR     (CODE)       ; LET: Get variable name character
+2B4F       L-SINGLE   (CODE)       ; LET: Handle single letter numeric variable
+2B59       L-NUMERIC  (CODE)       ; LET: Assign to numeric variable
+2B66       L-EXISTS   (CODE)       ; LET: Check if variable already exists
+2B72       L-DELETE$  (CODE)       ; LET: Delete old string value before assigning new
+2B9B       L-LENGTH   (CODE)       ; LET: Get length of string to be assigned
+2BA3       L-IN-W/S   (CODE)       ; LET: Check if string is in workspace (needs copying)
+2BA6       L-ENTER    (CODE)       ; LET: Store new variable or update existing
+2BAF       L-ADD$     (CODE)       ; LET: Add new string to variables area
+2BC0       L-NEW$     (CODE)       ; LET: Create new string variable
+2BC6       L-STRING   (CODE)       ; LET: Assign to string variable
+2BEA       L-FIRST    (CODE)       ; LET: Get first character of variable name
+2BF1       STK-FETCH  (CODE)       ; Fetch numeric or string value from variable to calculator stack
+2C02       DIM        (CODE)       ; DIM command execution
+2C05       D-RPORT-C  (CODE)       ; DIM: Report error in DIM statement
+2C15       D-RUN      (CODE)       ; DIM: Process one dimensioned variable
+2C1F       D-LETTER   (CODE)       ; DIM: Get variable name
+2C2D       D-SIZE     (CODE)       ; DIM: Get dimension sizes
+2C2E       D-NO-LOOP  (CODE)       ; DIM: Array already dimensioned error path
+2C7C       DIM-CLEAR  (CODE)       ; DIM: Clear space for new array
+2C7F       DIM-SIZES  (CODE)       ; DIM: Store dimension sizes
+2C88       ALPHANUM   (CODE)       ; Test if A is alphanumeric
+2C8D       ALPHA      (CODE)       ; Test if A is alphabetic
+2C9B       DEC-TO-FP  (CODE)       ; Convert decimal string (pointed by HL) to floating point on stack
+2CA2       BIN-DIGIT  (CODE)       ; Convert binary digit to FP
+2CB3       BIN-END    (CODE)       ; End of binary to FP conversion
+2CB8       NOT-BIN    (CODE)       ; Not a binary digit
+2CCB       DECIMAL    (CODE)       ; Convert decimal string (from CH_ADD) to FP
+2CCF       DEC-RPT-C  (CODE)       ; DECIMAL: Report error in number format
+2CD5       DEC-STO-1  (CODE)       ; DECIMAL: Store digit
+2CDA       NXT-DGT-1  (CODE)       ; Get next digit for FP conversion
+2CEB       E-FORMAT   (CODE)       ; Handle E-notation in numbers (e.g. 1.23E4)
+2CF2       SIGN-FLAG  (CODE)       ; Set sign flag for FP number
+2CFE       SIGN-DONE  (CODE)       ; Sign processing finished
+2CFF       ST-E-PART  (CODE)       ; Store exponent part of FP number
+2D18       E-FP-JUMP  (CODE)       ; Jump for E-format FP conversion
+2D1B       NUMERIC    (CODE)       ; Check if current char is part of a number
+2D22       STK-DIGIT  (CODE)       ; Stack a single digit as FP number
+2D28       STACK-A    (CODE)       ; Push A onto calculator stack (as byte)
+2D2B       STACK-BC   (CODE)       ; Push BC onto calculator stack (as 2 bytes)
+2D3B       INT-TO-FP  (CODE)       ; Convert integer in BC to floating point on stack
+2D40       NXT-DGT-2  (CODE)       ; Get next digit for INT-TO-FP
+2D4F       E-TO-FP    (CODE)       ; Convert E-format exponent to FP adjustment
+2D55       E-SAVE     (CODE)       ; Save E-format exponent value
+2D60       E-LOOP     (CODE)       ; E-format exponent calculation loop
+2D6D       E-DIVSN    (CODE)       ; E-format division for exponent
+2D6E       E-FETCH    (CODE)       ; Fetch E-format digit
+2D71       E-TST-END  (CODE)       ; Test for end of E-format exponent
+2D7B       E-END      (CODE)       ; End of E-format processing
+2D7F       INT-FETCH  (CODE)       ; Fetch integer from BASIC line to BC
+2D8C       p-int-sto  (CODE)       ; Store integer (part of INT-STORE)
+2D8E       INT-STORE  (CODE)       ; Store integer from BC into BASIC line (as string)
+2DA2       FP-TO-BC   (CODE)       ; Convert FP number on stack to 16-bit integer in BC
+2DAD       FP-DELETE  (CODE)       ; Delete FP number from calculator stack (DE points to it)
+2DC1       LOG(2^A)   (CODE)       ; Calculate log base e of 2^A
+2DD5       FP-TO-A    (CODE)       ; Convert FP number on stack to 8-bit integer in A
+2DE1       FP-A-END   (CODE)       ; End of FP-TO-A conversion
+2DE3       PRINT-FP   (CODE)       ; Print floating point number from calculator stack
+2DF2       PF-NEGTVE  (CODE)       ; PRINT-FP: Handle negative number
+2DF8       PF-POSTVE  (CODE)       ; PRINT-FP: Handle positive number
+2E01       PF-LOOP    (CODE)       ; PRINT-FP: Main printing loop
+2E1E       PF-SAVE    (CODE)       ; PRINT-FP: Save intermediate values
+2E24       PF-SMALL   (CODE)       ; PRINT-FP: Handle very small numbers (scientific notation)
+2E56       PF-LARGE   (CODE)       ; PRINT-FP: Handle very large numbers (scientific notation)
+2E6F       PF-MEDIUM  (CODE)       ; PRINT-FP: Handle numbers in standard decimal format
+2E7B       PF-BITS    (CODE)       ; PRINT-FP: Extract bits for conversion
+2E8A       PF-BYTES   (CODE)       ; PRINT-FP: Convert bytes to digits
+2EA1       PF-DIGITS  (CODE)       ; PRINT-FP: Output digits
+2EA9       PF-INSERT  (CODE)       ; PRINT-FP: Insert decimal point
+2EB3       PF-TEST-2  (CODE)       ; PRINT-FP: Test number magnitude
+2EB8       PF-ALL-9   (CODE)       ; PRINT-FP: Handle strings of 9s (rounding)
+2ECB       PF-MORE    (CODE)       ; PRINT-FP: More digits to print
+2ECF       PF-FRACTN  (CODE)       ; PRINT-FP: Print fractional part
+2EDF       PF-FRN-LP  (CODE)       ; PRINT-FP: Fractional part loop
+2EEC       PF-FR-DGT  (CODE)       ; PRINT-FP: Get fractional digit
+2EEF       PF-FR-EXX  (CODE)       ; PRINT-FP: Fractional exponent handling
+2F0C       PF-ROUND   (CODE)       ; PRINT-FP: Round number
+2F18       PF-RND-LP  (CODE)       ; PRINT-FP: Rounding loop
+2F25       PF-R-BACK  (CODE)       ; PRINT-FP: Backtrack for rounding
+2F2D       PF-COUNT   (CODE)       ; PRINT-FP: Count digits printed
+2F46       PF-NOT-E   (CODE)       ; PRINT-FP: Not using E-format
+2F4A       PF-E-SBRN  (CODE)       ; PRINT-FP: Subroutine for E-format printing
+2F52       PF-OUT-LP  (CODE)       ; PRINT-FP: Output loop for digits
+2F59       PF-OUT-DT  (CODE)       ; PRINT-FP: Output digit
+2F5E       PF-DC-OUT  (CODE)       ; PRINT-FP: Output decimal point
+2F64       PF-DEC-0$  (CODE)       ; PRINT-FP: Output '0' character
+2F6C       PF-E-FRMT  (CODE)       ; PRINT-FP: Print in E-format (scientific notation)
+2F83       PF-E-POS   (CODE)       ; PRINT-FP: E-format positive exponent
+2F85       PF-E-SIGN  (CODE)       ; PRINT-FP: E-format exponent sign
+2F8B       CA-10*A+C  (CODE)       ; Calculate (A*10)+C (used in FP conversion)
+2F9B       PREP-ADD   (CODE)       ; Floating Point: Prepare for addition/subtraction (align exponents)
+2FAF       NEG-BYTE   (CODE)       ; Floating Point: Negate byte (2's complement)
+2FBA       FETCH-TWO  (CODE)       ; Floating Point: Fetch two operands from calculator stack
+2FDD       SHIFT-FP   (CODE)       ; Floating Point: Shift mantissa (left or right)
+2FE5       ONE-SHIFT  (CODE)       ; Floating Point: Shift mantissa by one bit
+2FF9       ADDEND-0   (CODE)       ; Floating Point: Check if addend is zero
+2FFB       ZEROS-4/5  (CODE)       ; Floating Point: Zero 4 or 5 bytes of mantissa
+3004       ADD-BACK   (CODE)       ; Floating Point: Add mantissas (from LSB)
+300D       ALL-ADDED  (CODE)       ; Floating Point: Addition complete
+300F       subtract   (CODE)       ; Floating Point: Subtraction (negate second operand then add)
+3014       addition   (CODE)       ; Floating Point: Addition
+303C       ADDN-OFLW  (CODE)       ; Floating Point: Addition overflow check
+303E       FULL-ADDN  (CODE)       ; Floating Point: Full mantissa addition
+3055       SHIFT-LEN  (CODE)       ; Floating Point: Shift mantissa by length in B
+307C       TEST-NEG   (CODE)       ; Floating Point: Test if number is negative
+309F       ADD-REP-6  (CODE)       ; Floating Point: Addition report 6 (Out of memory/number too big)
+30A3       END-COMPL  (CODE)       ; Floating Point: End of 2's complement
+30A5       GO-NC-MLT  (CODE)       ; Floating Point: Go to multiplication (no carry)
+30A9       HL-HL*DE   (CODE)       ; Integer multiply: HL = HL * DE (16-bit result in HLDE)
+30B1       HL-LOOP    (CODE)       ; Integer multiply loop
+30BC       HL-AGAIN   (CODE)       ; Integer multiply loop continue
+30BE       HL-END     (CODE)       ; Integer multiply end
+30C0       PREP-M/D   (CODE)       ; Floating Point: Prepare for multiplication/division
+30CA       multiply   (CODE)       ; Floating Point: Multiplication
+30EA       MULT-RSLT  (CODE)       ; Floating Point: Store multiplication result
+30EF       MULT-OFLW  (CODE)       ; Floating Point: Multiplication overflow
+30F0       MULT-LONG  (CODE)       ; Floating Point: Long multiplication of mantissas
+3114       MLT-LOOP   (CODE)       ; Floating Point: Multiplication loop
+311B       NO-ADD     (CODE)       ; Floating Point: Skip addition in multiplication
+3125       STRT-MLT   (CODE)       ; Floating Point: Start multiplication
+313B       MAKE-EXPT  (CODE)       ; Floating Point: Create exponent for multiplication result
+313D       DIVN-EXPT  (CODE)       ; Floating Point: Create exponent for division result
+3146       OFLW1-CLR  (CODE)       ; Floating Point: Clear overflow flag 1
+3151       OFLW2-CLR  (CODE)       ; Floating Point: Clear overflow flag 2
+3155       TEST-NORM  (CODE)       ; Floating Point: Test if normalization is needed
+3159       NEAR-ZERO  (CODE)       ; Floating Point: Handle result very near zero
+315D       ZERO-RSLT  (CODE)       ; Floating Point: Set result to zero
+315E       SKIP-ZERO  (CODE)       ; Floating Point: Skip if operand is zero
+316C       NORMALISE  (CODE)       ; Floating Point: Normalize mantissa (MSB set)
+316E       SHIFT-ONE  (CODE)       ; Floating Point: Shift mantissa one bit left for normalization
+3186       NORML-NOW  (CODE)       ; Floating Point: Normalization complete
+3195       OFLOW-CLR  (CODE)       ; Floating Point: Clear overflow status
+31AD       REPORT-6   (CODE)       ; Error Report: "Number too big" or "Out of Memory for FP calc"
+31AF       division   (CODE)       ; Floating Point: Division
+31D2       DIV-LOOP   (CODE)       ; Floating Point: Division loop
+31DB       div-34th   (CODE)       ; Floating Point: Division specific calculation (34th bit?)
+31E2       DIV-START  (CODE)       ; Floating Point: Start division
+31F2       SUBN-ONLY  (CODE)       ; Floating Point: Subtract only (part of division)
+31F9       NO-RSTORE  (CODE)       ; Floating Point: No restore needed
+31FA       COUNT-ONE  (CODE)       ; Floating Point: Count one bit set
+3214       truncate   (CODE)       ; Floating Point: Truncate to integer (INT function)
+3221       T-GR-ZERO  (CODE)       ; Truncate: Greater than zero
+3233       T-FIRST    (CODE)       ; Truncate: First part of truncation
+323F       T-SMALL    (CODE)       ; Truncate: Number is small (less than 1)
+3252       T-NUMERIC  (CODE)       ; Truncate: Numeric specific path
+325E       T-TEST     (CODE)       ; Truncate: Test exponent
+3261       T-SHIFT    (CODE)       ; Truncate: Shift mantissa
+3267       T-STORE    (CODE)       ; Truncate: Store result
+326C       T-EXPNENT  (CODE)       ; Truncate: Exponent handling
+326D       X-LARGE    (CODE)       ; Floating Point: Exponent too large
+3272       NIL-BYTES  (CODE)       ; Floating Point: Zero out bytes of mantissa
+327E       BYTE-ZERO  (CODE)       ; Floating Point: Zero one byte
+3283       BITS-ZERO  (CODE)       ; Floating Point: Zero bits in mantissa
+328A       LESS-MASK  (CODE)       ; Floating Point: Mask for less significant bits
+3290       IX-END     (CODE)       ; Floating Point: IX related end
+3293       RE-ST-TWO  (CODE)       ; Floating Point: Re-stack two numbers
+3296       RESTK-SUB  (CODE)       ; Floating Point: Re-stack subroutine
+3297       re-stack   (CODE)       ; Floating Point: Re-stack calculator operands
+32B1       RS-NRMLSE  (CODE)       ; Re-stack and normalize
+32B2       RSTK-LOOP  (CODE)       ; Re-stack loop
+32BD       RS-STORE   (CODE)       ; Re-stack store
+32C5       (stk-zero) (DATA)       ; Floating Point constant: 0
+32C8       (stk-one)  (DATA)       ; Floating Point constant: 1
+32CC       (stk-half) (DATA)       ; Floating Point constant: 0.5
+32CE       (stk-pi/2) (DATA)       ; Floating Point constant: PI/2
+32D3       (stk-ten)  (DATA)       ; Floating Point constant: 10
+32D7       tbl-addrs  (DATA)       ; Table of addresses for arithmetic/logical operations
+335B       CALCULATE  (CODE)       ; Main entry for expression calculation (from FP-CALC)
+335E       GEN-ENT-1  (CODE)       ; Calculator: General entry point 1
+3362       GEN-ENT-2  (CODE)       ; Calculator: General entry point 2
+3365       RE-ENTRY   (CODE)       ; Calculator: Re-entry point after operation
+336C       SCAN-ENT   (CODE)       ; Calculator: Entry from SCANNING routine
+3380       FIRST-3D   (CODE)       ; Calculator: Handle first 3D token (obsolete?)
+338C       DOUBLE-A   (CODE)       ; Calculator: Double A (A = A*2)
+338E       ENT-TABLE  (DATA)       ; Calculator: Table of function entry points
+33A1       delete     (CODE)       ; Calculator: Delete FP number from stack (pops HL from calc stack)
+33A2       fp-calc-2  (CODE)       ; Calculator: Secondary entry or continuation
+33A9       TEST-5-SP  (CODE)       ; Calculator: Test for 5 bytes of space on calc stack
+33B4       STACK-NUM  (CODE)       ; Calculator: Stack a number from BASIC line
+33C0       MOVE-FP    (CODE)       ; Calculator: Move FP number on stack
+33C6       stk-data   (CODE)       ; Calculator: Stack data from memory
+33C8       STK-CONST  (CODE)       ; Calculator: Stack a constant (pointed by DE)
+33DE       FORM-EXP   (CODE)       ; Calculator: Form exponent for STK-CONST
+33F1       STK-ZEROS  (CODE)       ; Calculator: Stack zeros (for uninitialized FP)
+33F7       SKIP-CONS  (CODE)       ; Calculator: Skip constant data
+33F8       SKIP-NEXT  (CODE)       ; Calculator: Skip to next item
+3406       LOC-MEM    (CODE)       ; Calculator: Locate item in memory for series calc
+340F       get-mem-xx (CODE)       ; Calculator: Get value from memory for series calc
+341B       stk-const-xx (CODE)     ; Calculator: Stack constant for series calc
+342D       st-mem-xx  (CODE)       ; Calculator: Store to memory for series calc
+343C       exchange   (CODE)       ; Calculator: Exchange top two FP numbers on stack
+343E       SWAP-BYTE  (CODE)       ; Swap byte A with (HL)
+3449       series-xx  (CODE)       ; Calculator: Evaluate series (for SIN, COS, EXP etc.)
+3453       G-LOOP     (CODE)       ; Series calculation loop
+346A       abs        (CODE)       ; Calculator: ABS function
+346E       negate     (CODE)       ; Calculator: Negate FP number on stack (unary minus)
+3474       NEG-TEST   (CODE)       ; Test if number on stack is negative
+3483       INT-CASE   (CODE)       ; Integer conversion case for SGN/ABS
+3492       sgn        (CODE)       ; Calculator: SGN function
+34A5       in         (CODE)       ; Calculator: IN function (read from I/O port)
+34AC       peek       (CODE)       ; Calculator: PEEK function
+34B0       IN-PK-STK  (CODE)       ; PEEK/IN: Get address/port, stack result
+34B3       usr-no     (CODE)       ; Calculator: USR function (numeric address)
+34BC       usr-$      (CODE)       ; Calculator: USR function (string address - Spectrum+)
+34D3       USR-RANGE  (CODE)       ; USR: Check address range
+34E4       USR-STACK  (CODE)       ; USR: Setup stack and call user code
+34E7       REPORT-A   (CODE)       ; Error Report: "Invalid argument" (often for USR address)
+34E9       TEST-ZERO  (CODE)       ; Test if FP number on stack is zero
+34F9       greater-0  (CODE)       ; Test if FP number on stack is > 0
+3501       not        (CODE)       ; Calculator: NOT function (logical)
+3506       less-0     (CODE)       ; Test if FP number on stack is < 0
+3507       SIGN-TO-C  (CODE)       ; Set C flag based on sign of FP number
+350B       FP-0/1     (CODE)       ; Push 0 or 1 (FP) based on C flag (for logical ops)
+351B       or         (CODE)       ; Calculator: OR operator (logical/bitwise)
+3524       no-&-no    (CODE)       ; Numeric AND numeric
+352D       str-&-no   (CODE)       ; String AND numeric (error) or vice versa
+353B       no-l-eql   (CODE)       ; Numeric comparison (<=, >=, <>, =)
+3543       EX-OR-NOT  (CODE)       ; Used by OR and AND for result
+354E       NU-OR-STR  (CODE)       ; Numeric OR String (error)
+3559       STRINGS    (CODE)       ; String comparison routine (=, <, >, <=, >=, <>)
+3564       BYTE-COMP  (CODE)       ; Compare bytes for string comparison
+356B       SECND-LOW  (CODE)       ; Second string char lower
+3572       BOTH-NULL  (CODE)       ; Both strings null
+3575       SEC-PLUS   (CODE)       ; Second string is "greater"
+3585       FRST-LESS  (CODE)       ; First string is "lesser"
+3588       STR-TEST   (CODE)       ; Test string comparison result
+358C       END-TESTS  (CODE)       ; End of comparison tests
+359C       strs-add   (CODE)       ; String concatenation (+)
+35B7       OTHER-STR  (CODE)       ; String concatenation: get other string
+35BF       STK-PNTRS  (CODE)       ; String concatenation: stack pointers
+35C9       chrs       (CODE)       ; Calculator: CHR$ function
+35DC       REPORT-Bd  (CODE)       ; Error Report: "CHR$ argument out of range" (B - Integer out of range)
+35DE       val        (CODE)       ; Calculator: VAL function (convert string to number)
+360C       V-RPORT-C  (CODE)       ; VAL: Report error in VAL string
+361F       str$       (CODE)       ; Calculator: STR$ function (convert number to string)
+3645       read-in    (CODE)       ; Calculator: READ-IN for VAL (get char from string)
+365F       R-I-STORE  (CODE)       ; VAL: Store intermediate result
+3669       code       (CODE)       ; Calculator: CODE function (ASCII value of char)
+3671       STK-CODE   (CODE)       ; CODE: Stack result
+3674       len        (CODE)       ; Calculator: LEN function (length of string)
+367A       dec-jr-nz  (CODE)       ; DE decrement and jump if not zero
+3686       JUMP       (CODE)       ; Unconditional jump to address in HL (JP HL)
+3687       JUMP-2     (CODE)       ; Jump if Z to address in HL
+368F       jump-true  (CODE)       ; Jump if condition true (result of comparison on stack is non-zero)
+369B       end-calc   (CODE)       ; End of calculator operation, return result on stack
+36A0       n-mod-m    (CODE)       ; Modulo operation N MOD M (not a direct BASIC command)
+36AF       int        (CODE)       ; Calculator: INT function (truncate towards negative infinity)
+36B7       X-NEG      (CODE)       ; INT: Handle negative number
+36C2       EXIT       (CODE)       ; Exit calculator with result
+36C4       exp        (CODE)       ; Calculator: EXP function (e^x)
+3703       REPORT-6b  (CODE)       ; Error Report: "Number too big" for EXP
+3705       N-NEGTV    (CODE)       ; EXP: Handle negative exponent
+370C       RESULT-OK  (CODE)       ; EXP: Result is valid
+370E       RSLT-ZERO  (CODE)       ; EXP: Result is zero
+3713       ln         (CODE)       ; Calculator: LN function (natural logarithm)
+371A       REPORT-Ab  (CODE)       ; Error Report: "LN of zero or negative" (A - Invalid argument)
+371C       VALID      (CODE)       ; LN: Validate argument (>0)
+373D       GRE.8      (CODE)       ; LN: Argument > 0.8 internal check for series
+3783       get-argt   (CODE)       ; Get argument for trig functions (SIN, COS, TAN)
+37A1       ZPLUS      (CODE)       ; Trig: argument + 0
+37A8       YNEG       (CODE)       ; Trig: negate Y component for ATN
+37AA       cos        (CODE)       ; Calculator: COS function
+37B5       sin        (CODE)       ; Calculator: SIN function
+37B7       C-ENT      (CODE)       ; SIN/COS: Common entry point using series
+37DA       tan        (CODE)       ; Calculator: TAN function (SIN/COS)
+37E2       atn        (CODE)       ; Calculator: ATN function (arctangent)
+37F8       SMALL      (CODE)       ; ATN: Handle small argument
+37FA       CASES      (CODE)       ; ATN: Different cases for argument ranges
+3833       asn        (CODE)       ; Calculator: ASN function (arcsin)
+3843       acs        (CODE)       ; Calculator: ACS function (arccos)
+384A       sqr        (CODE)       ; Calculator: SQR function (square root)
+3851       to-power   (CODE)       ; Calculator: ^ operator (raise to power)
+385D       XISO       (CODE)       ; Power: X is zero
+386A       ONE        (CODE)       ; Power: Result is one
+386C       LAST       (CODE)       ; Power: Last checks for power
+386E       spare      (----)       ; Unused ROM space / NOPs
+3D00       char_set   (DATA)       ; Default Character Set bitmap data (starts with space)

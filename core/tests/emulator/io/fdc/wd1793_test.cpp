@@ -2,6 +2,7 @@
 
 #include "_helpers/testtiminghelper.h"
 
+#include "common/modulelogger.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
@@ -20,6 +21,11 @@ static constexpr size_t const TSTATES_IN_MS = Z80_FREQUENCY / 1000;
 class WD1793_Test : public ::testing::Test
 {
 protected:
+    // Module logger definitions
+    const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISK;
+    const uint16_t _SUBMODULE = PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC;
+    ModuleLogger* _logger = nullptr;
+
     EmulatorContext* _context = nullptr;
     CoreCUT* _core = nullptr;
     Z80* _z80 = nullptr;
@@ -29,16 +35,15 @@ protected:
 protected:
     void SetUp() override
     {
-        _context = new EmulatorContext(LoggerLevel::LogError);
-
-        // Set-up module logger only for FDC messages
-        ModuleLogger& logger = *_context->pModuleLogger;
-        logger.TurnOffLoggingForAll();
-        logger.TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
-        // Show more info if needed
-        //logger.SetLoggingLevel(LoggerLevel::LogInfo);
-        //logger.SetLoggingLevel(LoggerLevel::LogDebug);
-
+        _context = new EmulatorContext(LoggerLevel::LogDebug);
+        _logger = _context->pModuleLogger;
+        
+        // Enable logging for WD1793 module
+        _logger->TurnOffLoggingForAll();
+        _logger->TurnOnLoggingForModule(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC);
+        
+        // Set log level to warning by default. Each test can override
+        _logger->SetLoggingLevel(LoggerLevel::LogWarning);
 
         // Mock Core and Z80 to make timings work
         _core = new CoreCUT(_context);
@@ -199,20 +204,47 @@ TEST_F(WD1793_Test, Beta128_Status_DRQ)
 /// Test motor starts and auto-stops after 3 seconds
 TEST_F(WD1793_Test, FDD_Motor_StartStop)
 {
-    static constexpr size_t const RESTORE_TEST_DURATION_SEC = 4;
-    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * RESTORE_TEST_DURATION_SEC;
+    static constexpr size_t const TEST_DURATION_SEC = 4;
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * TEST_DURATION_SEC;
     static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
 
-    // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    // Internal logging messages with specified level (Warning for regular test runs, Debug for triaging)
+    _context->pModuleLogger->SetLoggingLevel(LogDebug);
 
     WD1793CUT fdc(_context);
 
     // Reset WDC internal time marks
     fdc.resetTime();
-
+    
+    // Initialize time tracking
+    int64_t currentTime = 10;  // Start at 10 T-states
+    int64_t prevTime = 0;
+    
+    // Set initial time
+    fdc._time = currentTime;
+    
+    // Ensure we have a disk in the drive
+    DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+    EXPECT_TRUE(fdc.getDrive()->isDiskInserted()) << "Disk image must be inserted";
+    
+    // Reset index pulse tracking
+    fdc._indexPulseCounter = 0;
+    fdc._prevIndex = false;
+    fdc._index = false;
+    
+    // Store initial index pulse counter
+    uint32_t initialIndexPulseCount = fdc._indexPulseCounter;
+    
     // Trigger motor start
     fdc.prolongFDDMotorRotation();
+    
+    // Log the initial state
+    GTEST_LOG_(INFO) << "Initial state:"
+                     << "\n  Motor: " << (fdc._selectedDrive->getMotor() ? "ON" : "OFF")
+                     << "\n  Initial timeout: " << fdc._motorTimeoutTStates << " T-states (" 
+                     << (fdc._motorTimeoutTStates / (double)Z80_FREQUENCY) << "s)"
+                     << "\n  Initial index pulse count: " << initialIndexPulseCount;
 
     /// region <Perform simulation loop>
 
@@ -221,37 +253,100 @@ TEST_F(WD1793_Test, FDD_Motor_StartStop)
     int64_t motorStopTStates = 0;
 
     size_t clk;
-    for (clk = 10; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    // Simulate time progression in fixed increments
+    for (clk = currentTime; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
     {
-        // Update time for FDC
-        fdc._time = clk;
+        // Calculate time difference for this iteration
+        prevTime = currentTime;
+        currentTime = clk;
+        int64_t diffTime = TEST_INCREMENT_TSTATES;  // Fixed time increment
+        
+        // Log the current state for debugging
+        if (clk % (Z80_FREQUENCY / 10) == 0)  // Log every 100ms
+        {
+            GTEST_LOG_(INFO) << "Time: " << currentTime << " T-states (" 
+                             << (currentTime / (double)Z80_FREQUENCY) << "s), "
+                             << "Motor: " << (fdc._selectedDrive->getMotor() ? "ON" : "OFF") 
+                             << ", Timeout: " << fdc._motorTimeoutTStates << " T-states";
+        }
+        
+        // Update time for FDC and process motor state
+        fdc._time = currentTime;
+        fdc._diffTime = diffTime;  // Set the actual time difference since last update
 
-        // Process FSM state updates
-        fdc.process();
+        // Process FDC state updates
+        fdc.process();                // Process other FDC states
 
         if (!motorStarted && fdc._selectedDrive->getMotor())
         {
             motorStartTStates = clk;
-
             motorStarted = true;
+
+            // Log when motor starts
+            GTEST_LOG_(INFO) << "FDD motor started at " << clk << " T-states (" << (clk * 1000 / (double)Z80_FREQUENCY)
+                             << "ms)";
         }
 
         if (motorStarted && !fdc._selectedDrive->getMotor())
         {
             motorStopTStates = clk;
-
             motorStarted = false;
+
+            // Log when motor stops
+            GTEST_LOG_(INFO) << "FDD motor stopped at " << clk << " T-states (" << (clk * 1000 / (double)Z80_FREQUENCY)
+                             << "ms)";
+        }
+
+        // Log index strobe data using Google Test's debug output
+        std::string strobeInfo = fdc.dumpIndexStrobeData();
+        if (!strobeInfo.empty())
+        {
+            //GTEST_LOG_(INFO) << "Index Strobe Data at " << clk << " T-states (" << (clk * 1000 / (double)Z80_FREQUENCY) << "ms):\n" << strobeInfo;
         }
     }
     /// endregion </Perform simulation loop>
 
     /// region <Check results>
-    EXPECT_NE(motorStartTStates, 0);
-    EXPECT_NE(motorStopTStates, 0);
+    EXPECT_NE(motorStartTStates, 0) << "Motor never started";
+    EXPECT_NE(motorStopTStates, 0) << "Motor never stopped";
 
-    size_t estimatedMotorOnTStates = 3 * Z80_FREQUENCY;
+    // Calculate motor runtime statistics
+    size_t estimatedMotorOnTStates = 3 * Z80_FREQUENCY;  // 3 seconds at 3.5MHz = 10,500,000 T-states
     size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
-    EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
+    uint32_t finalIndexPulseCount = fdc._indexPulseCounter;
+    uint32_t indexPulsesDuringTest = finalIndexPulseCount - initialIndexPulseCount;
+    
+    // Calculate expected index pulses (5 per second at 300 RPM)
+    const double testDurationSeconds = motorWasOnForTSTates / (double)Z80_FREQUENCY;
+    const double expectedIndexPulses = testDurationSeconds * FDD::DISK_REVOLUTIONS_PER_SECOND;
+    
+    // Log detailed results
+    GTEST_LOG_(INFO) << "Test Results:"
+                     << "\n  Motor Runtime:"
+                     << "\n    T-states: " << motorWasOnForTSTates
+                     << "\n    Milliseconds: " << (motorWasOnForTSTates * 1000.0 / Z80_FREQUENCY)
+                     << "\n    Seconds: " << (motorWasOnForTSTates / (double)Z80_FREQUENCY)
+                     << "\n  Index Pulses:"
+                     << "\n    Initial count: " << initialIndexPulseCount
+                     << "\n    Final count: " << finalIndexPulseCount
+                     << "\n    Pulses during test: " << indexPulsesDuringTest
+                     << "\n    Expected pulses: ~" << static_cast<int>(expectedIndexPulses)
+                     << " (" << FDD::DISK_REVOLUTIONS_PER_SECOND << " per second)";
+    
+    // The motor should run for approximately 3 seconds (10.5M T-states at 3.5MHz)
+    // Allow some tolerance in the test
+    size_t tolerance = Z80_FREQUENCY / 10;  // 100ms tolerance (350,000 T-states)
+    
+    EXPECT_GE(motorWasOnForTSTates, estimatedMotorOnTStates - tolerance) 
+        << "Motor ran for less time than expected";
+    
+    // The motor should not run for significantly longer than 3 seconds
+    EXPECT_LE(motorWasOnForTSTates, estimatedMotorOnTStates + tolerance) 
+        << "Motor ran for longer than expected";
+    
+    // Verify index pulse counting is reasonable
+    EXPECT_NEAR(indexPulsesDuringTest, expectedIndexPulses, 1)
+        << "Unexpected number of index pulses detected";
     /// endregion </Check results>
 }
 
@@ -411,12 +506,22 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     static constexpr size_t const TEST_INCREMENT_TSTATES = 1000; // Time increments during simulation
 
     // Internal logging messages are done on Info level
-    _context->pModuleLogger->SetLoggingLevel(LogInfo);
+    _context->pModuleLogger->SetLoggingLevel(LogDebug);
 
     WD1793CUT fdc(_context);
 
     // Reset WDC internal time marks
     fdc.resetTime();
+
+    // Ensure we have a disk in the drive
+    DiskImage diskImage = DiskImage(MAX_CYLINDERS, MAX_SIDES);
+    fdc.getDrive()->insertDisk(&diskImage);
+    EXPECT_TRUE(fdc.getDrive()->isDiskInserted()) << "Disk image must be inserted";
+
+    // Reset index pulse tracking
+    fdc._indexPulseCounter = 0;
+    fdc._prevIndex = false;
+    fdc._index = false;
 
     /// region <Perform simulation loop>
     bool motorStarted = false;
@@ -425,7 +530,12 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     int64_t motorStopTStates = 0;
 
     /// region <Pre-checks>
-    EXPECT_EQ(fdc._indexPulseCounter, 0);
+    bool diskInserted = fdc._selectedDrive && fdc._selectedDrive->isDiskInserted();
+    bool motorOn = fdc._motorTimeoutTStates > 0;
+
+    EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter should be zero at the beginning of the test";
+    EXPECT_EQ(diskInserted, true) << "Disk image must be inserted before starting the test";
+    EXPECT_EQ(motorOn, false) << "FDD motor should be stopped before starting the test";
     /// endregion </Pre-checks>
 
     size_t clk;
@@ -436,7 +546,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
             EXPECT_EQ(fdc._indexPulseCounter, 0) << "Index pulse counter shouldn't increment when FDD motor is stopped";
         }
 
-        // Start motor after 1 second delay
+        // Start motor after 1-second delay
         if (clk > Z80_FREQUENCY && !motorStarted && !motorStopped)  // Block motor re-start by checking motorStopped flag meaning it was done intentionally
         {
             // Trigger motor start
@@ -446,8 +556,16 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
             motorStarted = true;
         }
 
-        // Stop motor after 0.5 second after start
-        if (!motorStopped && clk >= 1.5 * Z80_FREQUENCY)
+        // All the time until the explicit stop motor should be on
+        if (clk > Z80_FREQUENCY && clk < 2 * Z80_FREQUENCY)
+        {
+            bool motorOn = fdc._selectedDrive->getMotor() && motorStarted && !motorStopped;
+            EXPECT_EQ(motorOn, true) << "Motor should be on between 1 and 2 seconds after start";
+        }
+
+        // Stop motor after 1 second after start
+        // We expect that FDD_RPM index pulses will be detected
+        if (!motorStopped && clk >= 2 * Z80_FREQUENCY)
         {
             fdc.stopFDDMotor();
 
@@ -475,7 +593,7 @@ TEST_F(WD1793_Test, FDD_Rotation_Index_NotCountingIfMotorStops)
     EXPECT_NE(motorStopTStates, 0);
 
     // Check motor still switched off within specs
-    size_t estimatedMotorOnTStates = 0.5 * Z80_FREQUENCY;
+    size_t estimatedMotorOnTStates = 1 * Z80_FREQUENCY;
     size_t motorWasOnForTSTates = std::abs(motorStopTStates - motorStartTStates);
     EXPECT_IN_RANGE(motorWasOnForTSTates, estimatedMotorOnTStates - TEST_INCREMENT_TSTATES, estimatedMotorOnTStates + TEST_INCREMENT_TSTATES);
 

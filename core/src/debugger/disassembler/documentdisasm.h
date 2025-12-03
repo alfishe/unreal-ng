@@ -2,6 +2,10 @@
 #include "stdafx.h"
 
 #include "z80disasm.h"
+#include "debugger/labels/labelmanager.h"
+
+// Forward declarations
+class EmulatorContext;
 
 /// region <Types>
 
@@ -25,10 +29,11 @@ struct DisplayInstruction : public DecodedInstruction
 class DocumentDisasm
 {
 public:
-    explicit DocumentDisasm();
+    explicit DocumentDisasm(EmulatorContext* context);
     virtual ~DocumentDisasm();
     DisplayInstruction getInstructionForZ80Address(uint16_t address);
 
 protected:
     std::unique_ptr<Z80Disassembler> _disassembler;
+    EmulatorContext* _context;
 };

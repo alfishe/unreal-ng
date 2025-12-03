@@ -6,14 +6,14 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>879</width>
-    <height>593</height>
+    <width>1106</width>
+    <height>686</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>256</width>
-    <height>64</height>
+    <width>720</width>
+    <height>640</height>
    </size>
   </property>
   <property name="maximumSize">
@@ -113,10 +113,22 @@
     <layout class="QHBoxLayout" name="horizontalLayout_3">
      <item>
       <widget class="QHexView" name="hexView">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Fixed" vsizetype="Expanding">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
        <property name="minimumSize">
         <size>
          <width>360</width>
          <height>300</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>360</width>
+         <height>16777215</height>
         </size>
        </property>
        <property name="font">
@@ -134,24 +146,17 @@
       </widget>
      </item>
      <item>
-      <spacer name="horizontalSpacer_3">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
       <widget class="DisassemblerWidget" name="disassemblerWidget" native="true">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+         <horstretch>1</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
        <property name="minimumSize">
         <size>
-         <width>360</width>
-         <height>100</height>
+         <width>300</width>
+         <height>300</height>
         </size>
        </property>
       </widget>

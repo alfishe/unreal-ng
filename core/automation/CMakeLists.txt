@@ -16,25 +16,35 @@ option(ENABLE_AUTOMATION "Allow automation" ON)
 option(ENABLE_LUA_AUTOMATION "Enable automation for Lua" ON)
 option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
+option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 
 # Respect parent's ENABLE_AUTOMATION option
 if (NOT ENABLE_AUTOMATION)
     set(ENABLE_LUA_AUTOMATION OFF)
     set(ENABLE_PYTHON_AUTOMATION OFF)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
+    set(ENABLE_CLI_AUTOMATION OFF)
 endif()
 
 # Add subdirectories based on automation options
 if (ENABLE_LUA_AUTOMATION)
     add_subdirectory(lua)
+    set(AUTOMATION_LUA_TARGET automation_lua)
 endif()
 
 if (ENABLE_PYTHON_AUTOMATION)
     add_subdirectory(python)
+    set(AUTOMATION_PYTHON_TARGET automation_python)
 endif()
 
 if (ENABLE_WEBAPI_AUTOMATION)
     add_subdirectory(webapi)
+    set(AUTOMATION_WEBAPI_TARGET automation_webapi)
+endif()
+
+if (ENABLE_CLI_AUTOMATION)
+    add_subdirectory(cli)
+    set(AUTOMATION_CLI_TARGET automation-cli)
 endif()
 
 set(SOURCES
@@ -81,6 +91,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>          # Conditional linking
         $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking for CLI
 
         unrealng::core
         ${common_libraries}
@@ -118,13 +129,21 @@ else()
         $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES>
     )
 
-    # Link libraries conditionally (depending on correspondent options)
-    # Use PRIVATE linkage to avoid propagating transitive dependencies
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>
-        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>
-        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>
-    )
+    # Link all automation libraries
+    if(ENABLE_CLI_AUTOMATION)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${AUTOMATION_CLI_TARGET}
+            ${AUTOMATION_LUA_TARGET}
+            ${AUTOMATION_PYTHON_TARGET}
+            ${AUTOMATION_WEBAPI_TARGET}
+        )
+    else()
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
+            $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
+            $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
+        )
+    endif()
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -133,13 +152,16 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_lua,INCLUDE_DIRECTORIES>>
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_python,INCLUDE_DIRECTORIES>>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_webapi,INCLUDE_DIRECTORIES>>
+    $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
 )
 
 # Add conditional compiler definitions for automation modules
+# Must exactly match the definitions in unreal-qt/CMakeLists.txt!!!
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
     $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
     $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+    $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
 )
 
 # <Diagnostics>
@@ -148,6 +170,7 @@ message(STATUS "Options:")
 message(STATUS "  ENABLE_AUTOMATION: ${ENABLE_AUTOMATION}")
 message(STATUS "    ENABLE_LUA_AUTOMATION: ${ENABLE_LUA_AUTOMATION}")
 message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
+message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")

@@ -6,6 +6,7 @@
 class Disassembler_Test : public ::testing::Test
 {
 protected:
+    EmulatorContext* _context = nullptr;
     Z80DisassemblerCUT* _disasm = nullptr;
 
 protected:

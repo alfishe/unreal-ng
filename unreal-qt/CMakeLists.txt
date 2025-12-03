@@ -5,10 +5,12 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'core' on C++
 project(unreal-qt LANGUAGES CXX)
 
-option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
-option(ENABLE_LUA_AUTOMATION "Enable Lua automation" OFF)
-option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
-option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" OFF)
+# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
+set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
+set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
+set(ENABLE_PYTHON_AUTOMATION OFF CACHE BOOL "Enable Python automation" FORCE)
+set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
+set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -46,7 +48,12 @@ if (NOT DEFINED QT_INSTALL_PATH)
             "$ENV{QTDIR}"
         )
     elseif (UNIX AND NOT APPLE)  # Linux
-        set(QT_INSTALL_PATH "$ENV{HOME}/Qt/6.5.0/gcc_64")
+        list(APPEND QT_INSTALL_PATH
+            "$ENV{HOME}/Qt/6.5.0/gcc_64"
+            "$ENV{HOME}/Qt/6.5.3/gcc_64"
+            "$ENV{HOME}/Qt/6.9.0/gcc_64"
+            "$ENV{QTDIR}"
+        )
     elseif (WIN32)  # Windows
         set(QT_INSTALL_PATH "C:/Qt/6.5.0/msvc2019_64")
     endif ()
@@ -138,6 +145,14 @@ if (ENABLE_AUTOMATION)
     )
 
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
+
+    # Must exactly match the definitions in core/automation/CMakeLists.txt!!!
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+    )
 endif ()
 
 # Debug configuration
@@ -182,6 +197,11 @@ if (INCLUDE_AUTOMATION)
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
+    
+    # Link Winsock on Windows for automation
+    if(WIN32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+    endif()
 else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 
@@ -237,6 +257,7 @@ message(STATUS "  ENABLE_AUTOMATION: ${ENABLE_AUTOMATION}")
 message(STATUS "    ENABLE_LUA_AUTOMATION: ${ENABLE_LUA_AUTOMATION}")
 message(STATUS "    ENABLE_PYTHON_AUTOMATION: ${ENABLE_PYTHON_AUTOMATION}")
 message(STATUS "    ENABLE_WEBAPI_AUTOMATION: ${ENABLE_WEBAPI_AUTOMATION}")
+message(STATUS "    ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME:        ${PROJECT_NAME}")
 message(STATUS "  SRC_DIR:             ${SRC_DIR}")

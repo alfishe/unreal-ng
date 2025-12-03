@@ -125,8 +125,10 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     std::string tempFile = tempDir + "\\test.txt";
 
     // Create test directory and file
-    (void)system(("mkdir \"" + tempDir + "\"").c_str());
-    (void)system(("type nul > \"" + tempFile + "\"").c_str());
+    int ret = system(("mkdir \"" + tempDir + "\"").c_str());
+    ASSERT_EQ(ret, 0);
+    ret = system(("type nul > \"" + tempFile + "\"").c_str());
+    ASSERT_EQ(ret, 0);
 
     // Test absolute path resolution
     std::string result = FileHelper::AbsolutePath(tempFile);
@@ -147,15 +149,18 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
     ASSERT_EQ(result, PlatformPath(uncPath));
 
     // Cleanup
-    (void)system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+    ret = system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+    ASSERT_EQ(ret, 0);
 #else
     // Unix-specific test paths
     std::string tempDir = "/tmp/filehelper_test";
     std::string tempFile = tempDir + "/test.txt";
 
     // Create test directory and file
-    (void)system(("mkdir -p " + tempDir).c_str());
-    (void)system(("touch " + tempFile).c_str());
+    int ret = system(("mkdir -p " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
+    ret = system(("touch " + tempFile).c_str());
+    ASSERT_EQ(ret, 0);
 
     // Test absolute path resolution
     std::string result = FileHelper::AbsolutePath(tempFile);
@@ -168,20 +173,23 @@ TEST_F(FileHelper_Test, AbsolutePath_ExistingPath)
 
     // Test with relative path
     std::string relPath = "./filehelper_test/test.txt";
-    chdir("/tmp");
+    ret = chdir("/tmp");
+    ASSERT_EQ(ret, 0);
     result = FileHelper::AbsolutePath(relPath);
     ASSERT_FALSE(result.empty());
     ASSERT_EQ(result, PlatformPath(tempFile));
 
     // Test with symbolic links
     std::string linkPath = tempDir + "/link.txt";
-    system(("ln -s " + tempFile + " " + linkPath).c_str());
+    ret = system(("ln -s " + tempFile + " " + linkPath).c_str());
+    ASSERT_EQ(ret, 0);
     result = FileHelper::AbsolutePath(linkPath);
     ASSERT_FALSE(result.empty());
     ASSERT_EQ(result, PlatformPath(tempFile));
 
     // Cleanup
-    (void)system(("rm -rf " + tempDir).c_str());
+    ret = system(("rm -rf " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
 #endif
 }
 
@@ -193,7 +201,8 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
     std::string nonExistentFile = tempDir + "\\nonexistent.txt";
 
     // Create test directory
-    (void)system(("mkdir \"" + tempDir + "\"").c_str());
+    int ret = system(("mkdir \"" + tempDir + "\"").c_str());
+    ASSERT_EQ(ret, 0);
 
     // Test absolute path resolution for non-existent file
     std::string result = FileHelper::AbsolutePath(nonExistentFile);
@@ -207,14 +216,17 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
     ASSERT_EQ(result, PlatformPath(drivePath));
 
     // Cleanup
-    (void)system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+    ret = system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+    ASSERT_EQ(ret, 0);
 #else
     // Unix-specific test paths
     std::string tempDir = "/tmp/filehelper_test";
     std::string nonExistentFile = tempDir + "/nonexistent.txt";
 
-    (void)system(("rm -rf " + tempDir).c_str());
-    (void)system(("mkdir -p " + tempDir).c_str());
+    int ret = system(("rm -rf " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
+    ret = system(("mkdir -p " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
 
     // Test absolute path resolution for non-existent file
     std::string result = FileHelper::AbsolutePath(nonExistentFile);
@@ -234,7 +246,8 @@ TEST_F(FileHelper_Test, AbsolutePath_NonExistentPath)
     ASSERT_EQ(result, PlatformPath(rootPath));
 
     // Cleanup
-    (void)system(("rm -rf " + tempDir).c_str());
+    ret = system(("rm -rf " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
 #endif
 }
 
@@ -246,8 +259,10 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     std::string mixedSepPath = tempDir + "/test.txt";
 
     // Create test directory
-    (void)system(("mkdir \"" + tempDir + "\"").c_str());
-    (void)system(("type nul > \"" + tempDir + "\\test.txt\"").c_str());
+    int ret = system(("mkdir \"" + tempDir + "\"").c_str());
+    ASSERT_EQ(ret, 0);
+    ret = system(("type nul > \"" + tempDir + "\\test.txt\"").c_str());
+    ASSERT_EQ(ret, 0);
 
     // Test forward slash to backslash conversion
     std::string result = FileHelper::AbsolutePath(mixedSepPath);
@@ -266,15 +281,19 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     ASSERT_EQ(result, PlatformPath(tempDir + "\\test.txt"));
 
     // Cleanup
-    (void)system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+    ret = system(("rmdir /S /Q \"" + tempDir + "\"").c_str());
+    ASSERT_EQ(ret, 0);
 #else
     // Unix-specific path normalization
     std::string tempDir = "/tmp/filehelper_test";
     std::string tempFile = tempDir + "/test.txt";
 
-    (void)system(("rm -rf " + tempDir).c_str());
-    (void)system(("mkdir -p " + tempDir).c_str());
-    (void)system(("touch " + tempFile).c_str());
+    int ret = system(("rm -rf " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
+    ret = system(("mkdir -p " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
+    ret = system(("touch " + tempFile).c_str());
+    ASSERT_EQ(ret, 0);
 
     // Test backslash to forward slash conversion
     std::string mixedSepPath = tempDir + "\\test.txt";
@@ -295,6 +314,7 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     ASSERT_EQ(result, PlatformPath(tempDir + "/TEST.txt"));
 
     // Cleanup
-    (void)system(("rm -rf " + tempDir).c_str());
+    ret = system(("rm -rf " + tempDir).c_str());
+    ASSERT_EQ(ret, 0);
 #endif
 }

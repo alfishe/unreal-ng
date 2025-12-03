@@ -1,18 +1,29 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QTimer>
 #include <QMutex>
+#include <QEvent>
+#include <QResizeEvent>
+#include <QMoveEvent>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDropEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QSettings>
 #include <QPushButton>
-
-#include "debugger/debuggerwindow.h"
-#include "logviewer/logwindow.h"
-#include "widgets/devicescreen.h"
-#include "emulator/guiemulatorcontext.h"
-#include "emulator/emulatormanager.h"
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
+#include "debugger/debuggerwindow.h"
 #include "emulator/emulator.h"
+#include "emulator/guiemulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "logviewer/logwindow.h"
+#include "widgets/devicescreen.h"
+#include "emulator/soundmanager.h"
+#include "ui_mainwindow.h"
 
 #ifdef ENABLE_AUTOMATION
     // Avoid name conflicts between Python and Qt "slot"
@@ -21,6 +32,7 @@
     #define slots Q_SLOTS
 #endif // ENABLE_AUTOMATION
 
+class DockingManager;
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -32,11 +44,18 @@ class MainWindow : public QMainWindow, public Observer
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override;
+    virtual ~MainWindow() override;
+
+    // Disable object copy
+    MainWindow(const MainWindow&) = delete;
+    MainWindow& operator=(const MainWindow&) = delete;
 
 private slots:
     void handleStartButton();
     void handleMessageScreenRefresh(int id, Message* message);
+    void handleFileOpenRequest(int id, Message* message);
+    void openFileDialog();
+    void openSpecificFile(const QString& filepath);
     void resetEmulator();
     void handleFullScreenShortcut();
 
@@ -69,6 +88,12 @@ protected:
     void adjust(QEvent* event, const QPoint& delta = QPoint{});
 
 private:
+    // Save the last directory path to settings
+    void saveLastDirectory(const QString& path);
+    
+    // Clean up automation resources
+    void cleanupAutomation();
+    
     // Platform-specific initialization methods
     void initializePlatformMacOS();
     void initializePlatformWindows();
@@ -79,6 +104,10 @@ private:
     void handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState);
     void handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState);
 
+    void handleFullScreenShortcutMacOS();
+    void handleFullScreenShortcutWindows();
+    void handleFullScreenShortcutLinux();
+
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
@@ -87,12 +116,13 @@ private:
     QMutex lockMutex;
 
 #ifdef ENABLE_AUTOMATION
-    Automation automation;
+    std::unique_ptr<Automation> _automation{nullptr};
 #endif // ENABLE_AUTOMATION
 
     EmulatorManager* _emulatorManager = nullptr;
+    AppSoundManager* _soundManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
-    Emulator* _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator = nullptr;
     uint32_t _lastFrameCount = 0;
 
     QPoint _lastCursorPos;
@@ -103,7 +133,14 @@ private:
 
     // Stores window geometry before going fullscreen / maximized
     QRect _normalGeometry;
+    QRect _maximizedGeometry;
+    Qt::WindowStates _preFullScreenState = Qt::WindowNoState;
     bool _isFullScreen = false;
     bool _inTransitionToFullScreen = false;
+    
+    // Last directory used for file operations
+    QString _lastDirectory;
+
+    DockingManager* _dockingManager = nullptr;
 };
 

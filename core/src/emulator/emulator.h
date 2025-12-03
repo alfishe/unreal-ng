@@ -13,6 +13,18 @@
 #include "emulator/cpu/core.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "base/featuremanager.h"
+#include "common/autoresetevent.h"
+
+#include <string>
+#include <mutex>
+#include <memory>
+#include <atomic>
+#include <chrono>
+#include <random>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
 
 class BreakpointManager;
 
@@ -51,13 +63,22 @@ class Emulator
 protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
     const uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_GENERIC;
+
     ModuleLogger* _logger = nullptr;
     /// endregion </ModuleLogger definitions for Module/Submodule>
 
     /// region <Fields>
 protected:
-    bool _initialized = false;
-    std::mutex _mutexInitialization;
+    // Emulator identity
+    std::string _emulatorId;              // Auto-generated UUID
+    std::string _symbolicId;              // Optional user-provided symbolic ID
+    std::chrono::system_clock::time_point _createdAt; // When instance was created
+    std::chrono::system_clock::time_point _lastActivity; // When last operation was performed
+    EmulatorStateEnum _state = StateUnknown;
+    mutable std::mutex _stateMutex;
+    
+    std::atomic<bool> _initialized{false};
+    mutable std::mutex _mutexInitialization;
 
     std::thread* _asyncThread = nullptr;
 
@@ -71,6 +92,7 @@ protected:
     MainLoop* _mainloop = nullptr;
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
+    FeatureManager* _featureManager = nullptr; // Feature toggle manager
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -79,12 +101,15 @@ protected:
     volatile bool _isPaused = false;
     volatile bool _isRunning = false;
     volatile bool _isDebug = false;
+
+    // Step-over synchronization
+    AutoResetEvent _stepOverSyncEvent;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
 public:
-    Emulator();
-    Emulator(LoggerLevel level);
+    explicit Emulator(LoggerLevel level);
+    explicit Emulator(const std::string& symbolicId, LoggerLevel level = LoggerLevel::LogTrace);
     virtual ~Emulator();
     /// endregion </Constructors / destructors>
 
@@ -95,6 +120,20 @@ public:
     // Initialization operations
     [[nodiscard]] bool Init();
     void Release();
+
+    // Helper to generate UUID
+    static std::string GenerateUUID();
+
+    // Timestamp helpers
+    void UpdateLastActivity();
+    std::chrono::system_clock::time_point GetCreationTime() const;
+    std::chrono::system_clock::time_point GetLastActivityTime() const;
+    std::string GetUptimeString() const;
+
+    // ID management
+    std::string GetUUID() const;
+    std::string GetSymbolicId() const;
+    void SetSymbolicId(const std::string& symbolicId);
 
     // Info methods
     void GetSystemInfo();
@@ -131,6 +170,7 @@ public:
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunUntilInterrupt();
     void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
+    void StepOver();  // Execute instruction, skip calls and subroutines
 
     // Actions
     bool LoadROM(std::string path);
@@ -143,15 +183,23 @@ public:
     Z80State* GetZ80State();
 
 
+    // Identity and state methods
+    const std::string& GetId() const;
+    EmulatorStateEnum GetState();
+    void SetState(EmulatorStateEnum state);
+    
     // Status methods
     bool IsRunning();
     bool IsPaused();
     bool IsDebug();
     std::string GetStatistics();
+    std::string GetInstanceInfo();
 
     // Counters method
     void ResetCountersAll();
     void ResetCounter();
+
+    FeatureManager* GetFeatureManager() const { return _featureManager; }
 };
 
 #endif

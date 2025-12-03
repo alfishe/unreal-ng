@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include <queue>
+#include <vector>
 #include <common/stringhelper.h>
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
@@ -12,8 +13,12 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793state.h"
 
+class WD1793Collector;
+
 class WD1793 : public PortDecoder, public PortDevice
 {
+    friend WD1793Collector;
+
     /// region <Types>
 public:
     /// region <WD1793 / VG93 commands>
@@ -32,7 +37,9 @@ public:
         WD_CMD_READ_TRACK,      // Read Track      - Read the entire contents of a track into the FDC's internal buffer
         WD_CMD_WRITE_TRACK,     // Write Track     - Write an entire track worth of data from the FDC's internal buffer to the floppy disk
 
-        WD_CMD_FORCE_INTERRUPT  // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
+        WD_CMD_FORCE_INTERRUPT, // Force Interrupt - Forces an interrupt to occur, regardless of the current state of the FDC
+
+        WD_CMD_INVALID          // Default initializer
     };
 
     static inline const char* getWD_COMMANDName(WD_COMMANDS command)
@@ -318,14 +325,16 @@ public:
         CMD_MULTIPLE      = 0x10
     };
 
-    // Force Interrupt command parameter bits
-    enum WD_FORCE_INTERRUPT_BITS : uint8_t
+    /// region <Force Interrupt command flags>
+    enum WD_FORCE_INTERRUPT : uint8_t
     {
-        WD_FORCE_INTERRUPT_NOT_READY            = 0x01,
-        WD_FORCE_INTERRUPT_READY                = 0x02,
-        WD_FORCE_INTERRUPT_INDEX_PULSE          = 0x04,
-        WD_FORCE_INTERRUPT_IMMEDIATE_INTERRUPT  = 0x08
+        WD_FORCE_INTERRUPT_NONE = 0,
+        WD_FORCE_INTERRUPT_NOT_READY = 0b0000'0001,   // Bit0 (J0) - Not-Ready to Ready transition
+        WD_FORCE_INTERRUPT_READY = 0b0000'0010,       // Bit1 (J1) - Ready to Not-Ready transition
+        WD_FORCE_INTERRUPT_INDEX_PULSE = 0b0000'0100, // Bit2 (J2) - Index pulse
+        WD_FORCE_INTERRUPT_IMMEDIATE = 0b0000'1000    // Bit3 (J3) - Immediate interrupt
     };
+    /// endregion </Force Interrupt command flags>
 
     enum BETA128_COMMAND_BITS : uint8_t
     {
@@ -478,6 +487,13 @@ public:
     };
 
 public:
+    static constexpr const auto ONE_SECOND = std::chrono::seconds(1);
+    static constexpr const auto ONE_MILLISECOND = std::chrono::milliseconds(1);
+    static constexpr const auto ONE_MICROSECOND = std::chrono::microseconds(1);
+    static constexpr const size_t MILLISECONDS_PER_SECOND = std::chrono::milliseconds(ONE_SECOND).count();
+    static constexpr const size_t MICROSECONDS_PER_SECOND = std::chrono::microseconds(ONE_SECOND).count();
+    static constexpr const size_t MICROSECONDS_PER_MILLISECOND = std::chrono::milliseconds(ONE_MILLISECOND).count();
+
     static constexpr const size_t Z80_FREQUENCY = 3.5 * 1'000'000;
     static constexpr const size_t TSTATES_PER_MS = Z80_FREQUENCY / 1000; // 3500 t-states per millisecond
     static constexpr const double TSTATES_PER_US = (double)Z80_FREQUENCY / 1'000'000.0; // 3.5 t-states per microsecond
@@ -521,6 +537,10 @@ public:
     static constexpr const uint8_t  STEP_TIMINGS_MS_1MHZ[] = { 6, 12, 20, 30 };
     static constexpr const uint8_t STEP_TIMINGS_MS_2MHZ[] = { 3, 6, 10, 15 };
 
+    // Disk rotation and timing constants
+    static constexpr const size_t DISK_ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
+    static constexpr const size_t INDEX_STROBE_DURATION_TSTATES = DISK_ROTATION_PERIOD_TSTATES / 100 * 2;  // 2% of rotation period
+
     /// endregion </Constants>
 
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -531,6 +551,8 @@ public:
 
     /// region <Fields>
 protected:
+    WD1793Collector* _collector = nullptr;
+
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
 
@@ -563,9 +585,11 @@ protected:
     uint8_t _drive = 0;                 // Currently selected drive index [0..3]
     bool _sideUp = false;               // False - bottom side. True - top side
 
+    // WD1793 state getters - moved to public section
     WD_COMMANDS _lastDecodedCmd = WD_CMD_RESTORE; // Last command executed (decoded)
     uint8_t _lastCmdValue = 0x00;       // Last command parameters (already masked)
     WDSTATE _state = S_IDLE;
+    
     WDSTATE _state2 = S_IDLE;
     std::queue<FSMEvent> _operationFIFO;    // Holds FIFO queue for scheduled state transitions (when WD1793 command requires complex FSM flow)
 
@@ -591,6 +615,8 @@ protected:
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
     bool _index = false;                // Current state of index strobe
+    bool _prevIndex = false;            // Previous state of index strobe
+    uint64_t _lastIndexPulseStartTime = 0;   // T-state when the current index pulse started (0 if no active pulse)
     size_t _indexPulseCounter = 0;      // Index pulses counter
     int64_t _motorTimeoutTStates = 0;   // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
 
@@ -606,6 +632,9 @@ protected:
     // TODO: Remove temporary fields once switched to WD93State.signals
     bool _intrq_out = false;
     bool _drq_out = false;
+    
+    // Force Interrupt command conditions (I0-I3 bits)
+    uint8_t _interruptConditions = 0;   // Stores the interrupt condition flags from the Force Interrupt command
 
     /// endregion </Fields>
 
@@ -613,6 +642,15 @@ protected:
 public:
     FDD* getDrive() { return _selectedDrive; }
     void setDrive(FDD* drive) { _selectedDrive = drive; }
+
+    // Getters for WD1793 state and registers
+    const WD93State& getState() const { return _wd93State; }
+    WD_COMMANDS getLastDecodedCommand() const { return _lastDecodedCmd; }
+    uint8_t getStatusRegister() const { return _statusRegister; }
+    uint8_t getTrackRegister() const { return _trackRegister; }
+    uint8_t getSectorRegister() const { return _sectorRegister; }
+    uint8_t getDataRegister() const { return _dataRegister; }
+    uint8_t getBeta128Status() const { return _beta128status; }
     /// endregion </Properties>
 
     /// region <Constructors / destructors>
@@ -627,13 +665,7 @@ public:
     void internalReset();
 
     void process();
-    void ejectDisk()
-    {
-        if (_selectedDrive)
-        {
-            _selectedDrive->ejectDisk();
-        }
-    }
+    void ejectDisk();
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -689,24 +721,7 @@ protected:
 
     /// region <State machine handlers>
 protected:
-    std::map<WDSTATE, FSMHandler> _stateHandlerMap =
-    {
-        { S_IDLE,           &WD1793::processIdle },
-        { S_WAIT,           &WD1793::processWait },
-        { S_FETCH_FIFO,     &WD1793::processFetchFIFO },
-        { S_STEP,           &WD1793::processStep },
-        { S_VERIFY,         &WD1793::processVerify },
-        { S_SEARCH_ID,      &WD1793::processSearchID },
-        { S_READ_SECTOR,    &WD1793::processReadSector },
-        { S_WRITE_SECTOR,   &WD1793::processWriteSector },
-        { S_READ_TRACK,     &WD1793::processReadTrack },
-        { S_WRITE_TRACK,    &WD1793::processWriteTrack },
-        { S_READ_BYTE,      &WD1793::processReadByte },
-        { S_WRITE_BYTE,     &WD1793::processWriteByte },
-        { S_READ_CRC,       &WD1793::processReadCRC },
-        { S_WRITE_CRC,      &WD1793::processWriteCRC },
-        { S_END_COMMAND,    &WD1793::processEndCommand },
-    };
+    std::vector<FSMHandler> _stateHandlers;
 
     void processIdle();
     void processWait();
@@ -850,9 +865,10 @@ public:
 public:
     std::string dumpStatusRegister(WD_COMMANDS command);
     std::string dumpBeta128Register();
-    std::string dumpCommand(uint8_t value);
+    std::string dumpCommand(uint8_t value) const;
     std::string dumpStep();
     std::string dumpFullState();
+    std::string dumpIndexStrobeData(bool skipNoTransitions = true);
 
     static inline size_t convertTStatesToMs(size_t tStates)
     {
@@ -921,7 +937,10 @@ public:
     using WD1793::_seek_error;
 
     using WD1793::_index;
+    using WD1793::_prevIndex;
+    using WD1793::_lastIndexPulseStartTime;
     using WD1793::_indexPulseCounter;
+    using WD1793::_interruptConditions;
 
     using WD1793::isType1Command;
     using WD1793::isType2Command;
@@ -958,6 +977,8 @@ public:
     using WD1793::startFDDMotor;
     using WD1793::stopFDDMotor;
     using WD1793::getDrive;
+    using WD1793::processFDDMotorState;
+    using WD1793::processFDDIndexStrobe;
 };
 
 #endif // _CODE_UNDER_TEST

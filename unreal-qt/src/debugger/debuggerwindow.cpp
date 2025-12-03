@@ -9,9 +9,15 @@
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QTimer>
+#include <QMessageBox>
 
 #include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/breakpointdialog.h"
+#include "debugger/breakpointeditor.h"
+#include "debugger/breakpointgroupdialog.h"
+#include "debugger/labeleditor.h"
+
 #include "emulator/emulator.h"
 
 /// region <Constructor / destructors>
@@ -19,6 +25,7 @@
 DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
+    _curPageOffset = 0;  // Initialize to 0 to prevent uninitialized memory access
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
@@ -41,19 +48,38 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     // Populate actions
     continueAction = toolBar->addAction("Continue");
     pauseAction = toolBar->addAction("Pause");
-    cpuStepAction = toolBar->addAction("CPU step");
+    stepInAction = new QAction("Step In", this);
+    stepInAction->setIcon(QIcon::fromTheme("debug-step-into"));
+    stepInAction->setShortcut(QKeySequence(Qt::Key_F11));
+    connect(stepInAction, &QAction::triggered, this, &DebuggerWindow::stepIn);
+    toolBar->addAction(stepInAction);
+
+    stepOverAction = new QAction("Step Over", this);
+    stepOverAction->setIcon(QIcon::fromTheme("debug-step-over"));
+    stepOverAction->setShortcut(QKeySequence(Qt::Key_F10));
+    connect(stepOverAction, &QAction::triggered, this, &DebuggerWindow::stepOver);
+    toolBar->addAction(stepOverAction);
+
+    stepOutAction = new QAction("Step Out", this);
+    stepOutAction->setIcon(QIcon::fromTheme("debug-step-out"));
+    stepOutAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F11));
+    connect(stepOutAction, &QAction::triggered, this, &DebuggerWindow::stepOut);
+    toolBar->addAction(stepOutAction);
+
     frameStepAction = toolBar->addAction("Frame step");
     waitInterruptAction = toolBar->addAction("Wait INT");
     resetAction = toolBar->addAction("Reset");
     toolBar->addWidget(spacer);
+    labelsAction = new QAction("Labels", this);
+    toolBar->addAction(labelsAction);
     breakpointsAction = toolBar->addAction("Breakpoints");
 
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
-    connect(cpuStepAction, &QAction::triggered, this, &DebuggerWindow::cpuStep);
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
+    connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
 
     // Subscribe to events leading to MemoryView changes
@@ -61,6 +87,12 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewBank(uint8_t)), this, SLOT(changeMemoryViewBank(uint8_t)));
     connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)));
     connect(ui->stackWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
+
+    // Connect register and stack jump to disassembly signals
+    connect(ui->registersWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)),
+            ui->disassemblerWidget, SLOT(goToAddress(uint16_t)));
+    connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)),
+            ui->disassemblerWidget, SLOT(goToAddress(uint16_t)));
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
@@ -87,6 +119,14 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
 
+    // Subscribe to CPU step messages
+    ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
+    messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
+    
+    // Subscribe to label change notifications
+    ObserverCallbackMethod labelChangedCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
+    messageCenter.AddObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
+
     /// endregion </Subscribe to events>
 }
 
@@ -94,11 +134,27 @@ DebuggerWindow::~DebuggerWindow()
 {
     qDebug() << "DebuggerWindow::~DebuggerWindow()";
 
-    // Unsubscribe from breakpoint trigger messages
+    // Unsubscribe from all message topics
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, callback);
+
+    // Unsubscribe from emulator state changes
+    ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
+    messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    // Unsubscribe from breakpoint trigger messages
+    ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
+
+    // Unsubscribe from CPU step messages
+    ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
+    messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
+    
+    // Unsubscribe from label change notifications
+    ObserverCallbackMethod labelChangedCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
+    messageCenter.RemoveObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
+
+    delete ui;
 }
 
 /// endregion </Constructor / destructors>
@@ -107,12 +163,24 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
 
-    // Load debugger state from disk
-    loadState();
+    if (_emulator)
+    {
+        // Load debugger state from disk
+        loadState();
 
-    pauseAction->setEnabled(true);
+        // Initially disable all actions, including breakpoints and labels
+        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+        updateToolbarActions(false, false, false, false, false, false);
 
-    updateState();
+        // Update the full state which will set the correct button states
+        updateState();
+    }
+    else
+    {
+        // No emulator available, disable all actions
+        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+        updateToolbarActions(false, false, false, false, false, false);
+    }
 }
 
 Emulator* DebuggerWindow::getEmulator()
@@ -139,8 +207,30 @@ void DebuggerWindow::reset()
 
 /// region <Helper methods>
 
- void DebuggerWindow::updateState()
- {
+void DebuggerWindow::clearInterruptBreakpoints()
+{
+    if (!_emulator)
+    {
+        return;
+    }
+
+    BreakpointManager* breakpointManager = _emulator->GetDebugManager()->GetBreakpointsManager();
+    if (!breakpointManager)
+    {
+        return;
+    }
+
+    // Remove all breakpoints in our IM1 and IM2 groups
+    breakpointManager->RemoveBreakpointGroup(IM1_BREAKPOINT_GROUP);
+    breakpointManager->RemoveBreakpointGroup(IM2_BREAKPOINT_GROUP);
+    qDebug() << "Cleared all interrupt breakpoints";
+
+    _waitingForInterrupt = false;
+}
+
+void DebuggerWindow::updateState()
+{
+    qDebug() << "DebuggerWindow::updateState() called - emulator state:" << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
     if (_emulator)
     {
         Z80State* state = _emulator->GetZ80State();
@@ -151,6 +241,7 @@ void DebuggerWindow::reset()
 
         // Update disassembler widget
         ui->disassemblerWidget->setDisassemblerAddress(state->Z80Registers::pc);
+        ui->disassemblerWidget->refresh();
 
         // Update memory banks widget
         ui->memorypagesWidget->refresh();
@@ -199,12 +290,12 @@ void DebuggerWindow::reset()
     }
     else
     {
-        // Disable all toolbar actions when no active emulator available
-        continueAction->setEnabled(false);
-        pauseAction->setEnabled(false);
-        cpuStepAction->setEnabled(false);
-        frameStepAction->setEnabled(false);
-        waitInterruptAction->setEnabled(false);
+        // No emulator available, disable all actions
+        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+        updateToolbarActions(false, false, false, false, false, false);
+
+        // Update disassembler widget to show detached state
+        ui->disassemblerWidget->refresh();
     }
  }
 
@@ -228,15 +319,42 @@ void DebuggerWindow::reset()
     /// </Test>
  }
 
- ///
- /// \brief DebuggerWindow::saveState
- /// Persists debugger state (including breakpoints)
- void DebuggerWindow::saveState()
- {
+///
+/// \brief DebuggerWindow::saveState
+/// Persists debugger state (including breakpoints)
+void DebuggerWindow::saveState()
+{
+    // TODO: Implement state persistence
+}
 
+///
+/// \brief DebuggerWindow::updateToolbarActions
+/// Updates the state of all toolbar actions based on emulator state
+/// \param canContinue - Enable/disable Continue action
+/// \param canPause - Enable/disable Pause action
+/// \param canStep - Enable/disable Step actions (Step In, Step Out, etc.)
+/// \param canReset - Enable/disable Reset action
+/// \param canManageBreakpoints - Enable/disable Breakpoints action
+void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints, bool canManageLabels)
+{
+    // Update main execution control actions
+    continueAction->setEnabled(canContinue);
+    pauseAction->setEnabled(canPause);
+    resetAction->setEnabled(canReset);
+
+    // Update stepping actions
+    stepInAction->setEnabled(canStep);
+    stepOverAction->setEnabled(canStep);
+    stepOutAction->setEnabled(canStep);
+    frameStepAction->setEnabled(canStep);
+    waitInterruptAction->setEnabled(canStep);
+
+    // Update breakpoint management
+    breakpointsAction->setEnabled(canManageBreakpoints);
+    labelsAction->setEnabled(canManageLabels);
  }
 
- /// endregion </Helper methods>
+/// endregion </Helper methods>
 
 /// region <QT Helper methods>
 
@@ -297,43 +415,34 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
         {
             case StateUnknown:
             case StateStopped:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(false);
-                cpuStepAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(false);
+                // When emulator is stopped:
+                // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+                updateToolbarActions(false, false, false, false, false, false);
 
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
                 reset();
                 break;
+
             case StateInitialized:
             default:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(true);
-                cpuStepAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(false);
+                // When emulator is initialized:
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(false, true, false, false, true, true);
                 break;
+
             case StateRun:
             case StateResumed:
-                continueAction->setEnabled(false);
-                pauseAction->setEnabled(true);
-                cpuStepAction->setEnabled(false);
-                frameStepAction->setEnabled(false);
-                waitInterruptAction->setEnabled(false);
-                resetAction->setEnabled(true);
+                // When emulator is running:
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
+                updateToolbarActions(false, true, false, true, true, true);
                 break;
+
             case StatePaused:
-                continueAction->setEnabled(true);
-                pauseAction->setEnabled(false);
-                cpuStepAction->setEnabled(true);
-                frameStepAction->setEnabled(true);
-                waitInterruptAction->setEnabled(true);
-                resetAction->setEnabled(true);
+                // When emulator is paused:
+                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(true, false, true, true, true, true);
                 break;
         }
 
@@ -343,25 +452,126 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
 
 void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 {
-    if (message == nullptr || message->obj == nullptr)
+    Q_UNUSED(id);
+
+    if (!_emulator || !message || !message->obj)
+    {
         return;
+    }
 
-    qDebug() << "DebuggerWindow::handleMessageBreakpointTriggered()";
+    SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
+    if (!payload)
+    {
+        return;
+    }
 
-    _breakpointTriggered = true;
-
-    SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
     uint16_t breakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+    BreakpointManager* bpManager = _emulator->GetDebugManager()->GetBreakpointsManager();
+    if (!bpManager)
+    {
+        return;
+    }
 
+    // Get all breakpoints and find the one with matching ID
+    const auto& allBreakpoints = bpManager->GetAllBreakpoints();
+    auto it = allBreakpoints.find(breakpointID);
+    if (it == allBreakpoints.end())
+    {
+        return;
+    }
+    BreakpointDescriptor* breakpoint = it->second;
+
+    // Handle interrupt breakpoints if we're waiting for an interrupt
+    if (_waitingForInterrupt)
+    {
+        // For IM2, we might hit a vector table read breakpoint first
+        if (breakpoint->type == BRK_MEMORY && (breakpoint->memoryType & BRK_MEM_READ))
+        {
+            EmulatorContext* context = _emulator->GetContext();
+            Memory* memory = context->pMemory;
+            Z80* z80 = context->pCore->GetZ80();
+
+            // This is a vector table read breakpoint for IM2
+            // We need to set an execution breakpoint at the handler address
+            if (z80 && z80->im == 2)
+            {
+                // Read the vector from memory
+                uint8_t lsb = memory->DirectReadFromZ80Memory(breakpoint->z80address);
+                uint8_t msb = memory->DirectReadFromZ80Memory(breakpoint->z80address + 1);
+                uint16_t handlerAddress = (msb << 8) | lsb;
+
+                // Add execution breakpoint at the handler address
+                bpManager->AddExecutionBreakpoint(handlerAddress);
+
+                // Continue execution until we hit the handler
+                continueExecution();
+                return;
+            }
+        }
+        // This is the actual interrupt handler breakpoint
+        else if (breakpoint->type == BRK_MEMORY && (breakpoint->memoryType & BRK_MEM_EXECUTE))
+        {
+            // We've hit our interrupt handler breakpoint
+            _waitingForInterrupt = false;
+
+            // Clear all interrupt breakpoints (both IM1 and IM2)
+            clearInterruptBreakpoints();
+
+            // Pause the emulator
+            _breakpointTriggered = true;
+            _emulator->Pause();
+
+            // Update the UI
+            updateState();
+            return;
+        }
+    }
+
+    // Handle step over/out breakpoints
+    if (breakpoint->note == STEP_OVER_NOTE)
+    {
+        // Step-over breakpoints are now handled by the core Emulator::StepOver() method
+        // Just remove the breakpoint and continue
+        bpManager->RemoveBreakpointByID(breakpointID);
+    }
+    else if (breakpoint->note == STEP_OUT_NOTE)
+    {
+        _inStepOutOperation = false;
+        bpManager->RemoveBreakpointByID(breakpointID);
+        _stepOutBreakpointID = BRK_INVALID;
+    }
+
+    // Update the UI in the main thread
     dispatchToMainThread([this]()
     {
-        continueAction->setEnabled(true);
-        pauseAction->setEnabled(false);
-        cpuStepAction->setEnabled(true);
-        frameStepAction->setEnabled(true);
-        waitInterruptAction->setEnabled(true);
-
+        // When a breakpoint is hit:
+        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+        updateToolbarActions(true, false, true, true, true, true);
         updateState();
+    });
+}
+
+void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
+{
+    qDebug() << "DebuggerWindow::handleCPUStepMessage()";
+
+    if (_emulator && _emulator->IsPaused())
+    {
+        // Update debugger state in the main thread
+        dispatchToMainThread([this]()
+        {
+            updateState();
+        });
+    }
+}
+
+void DebuggerWindow::handleLabelChanged(int id, Message* message)
+{
+    qDebug() << "DebuggerWindow::handleLabelChanged() - Refreshing disassembler view due to label changes";
+    
+    // Forward the refresh to the disassembler widget on the main thread
+    dispatchToMainThread([this]() {
+        ui->disassemblerWidget->refresh();
     });
 }
 
@@ -371,15 +581,18 @@ void DebuggerWindow::continueExecution()
 
     _breakpointTriggered = false;
 
-    if (_emulator && _emulator->IsPaused())
+    if (_emulator && !_emulator->IsRunning())
     {
-        continueAction->setEnabled(false);
-        pauseAction->setEnabled(true);
-        cpuStepAction->setEnabled(false);
-        frameStepAction->setEnabled(false);
-        waitInterruptAction->setEnabled(false);
-
         _emulator->Resume();
+
+        // When emulator is running:
+        // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
+        updateToolbarActions(false, true, false, true, true, true);
+
+        // Force immediate update of the disassembler widget state
+        ui->disassemblerWidget->refresh();
+
+        updateState();
     }
 }
 
@@ -392,19 +605,17 @@ void DebuggerWindow::pauseExecution()
         _emulator->Pause();
         _emulator->DebugOn();
 
-        continueAction->setEnabled(true);
-        pauseAction->setEnabled(false);
-        cpuStepAction->setEnabled(true);
-        frameStepAction->setEnabled(true);
-        waitInterruptAction->setEnabled(true);
+        // When emulator is paused:
+        // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON)
+        updateToolbarActions(true, false, true, true, true, true);
 
         updateState();
     }
 }
 
-void DebuggerWindow::cpuStep()
+void DebuggerWindow::stepIn()
 {
-    qDebug() << "DebuggerWindow::cpuStep()";
+    qDebug() << "DebuggerWindow::stepIn()";
 
     _breakpointTriggered = false;
 
@@ -416,6 +627,85 @@ void DebuggerWindow::cpuStep()
 
         updateState();
     }
+}
+
+void DebuggerWindow::stepOver()
+{
+    qDebug() << "DebuggerWindow::stepOver()";
+
+    _breakpointTriggered = false;
+
+    if (!_emulator)
+        return;
+
+    // Use the new core Emulator::StepOver() method
+    _emulator->StepOver();
+
+    updateState();
+}
+
+void DebuggerWindow::stepOut()
+{
+    qDebug() << "DebuggerWindow::stepOut()";
+
+    _breakpointTriggered = false;
+
+    if (_emulator)
+    {
+        // 1. Read the return address from the stack
+        Memory* memory = _emulator->GetMemory();
+        Z80State* z80 = _emulator->GetZ80State();
+        uint16_t sp = static_cast<uint16_t>(z80->Z80Registers::sp);
+
+        // Read the return address from the stack (first word on the stack)
+        uint8_t loByte = memory->DirectReadFromZ80Memory(sp);
+        uint8_t hiByte = memory->DirectReadFromZ80Memory(sp + 1);
+        uint16_t returnAddress = (hiByte << 8) | loByte;
+
+        qDebug() << "Step Out: Return address found at" << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
+
+        // 2. Set a temporary breakpoint at the return address
+        BreakpointManager* breakpointManager = _emulator->GetBreakpointManager();
+
+        // Create a breakpoint descriptor with the note field already set
+        BreakpointDescriptor* bpDesc = new BreakpointDescriptor();
+        bpDesc->type = BreakpointTypeEnum::BRK_MEMORY;
+        bpDesc->memoryType = BRK_MEM_EXECUTE;
+        bpDesc->z80address = returnAddress;
+        bpDesc->note = STEP_OUT_NOTE;
+
+        // Add the breakpoint
+        _stepOutBreakpointID = breakpointManager->AddBreakpoint(bpDesc);
+
+        // Set its group if successfully added
+        if (_stepOutBreakpointID != BRK_INVALID)
+        {
+            breakpointManager->SetBreakpointGroup(_stepOutBreakpointID, TEMP_BREAKPOINT_GROUP);
+        }
+
+        if (_stepOutBreakpointID != BRK_INVALID)
+        {
+            // Set flag to indicate we're in a step-out operation
+            _inStepOutOperation = true;
+
+            qDebug() << "Step Out: Successfully set breakpoint ID:" << _stepOutBreakpointID << "at address:"
+                     << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
+
+            // 3. Continue execution until the breakpoint is hit
+            continueExecution();
+        }
+        else
+        {
+            qDebug() << "Step Out: Failed to set breakpoint at return address:"
+                     << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
+
+            // If we couldn't set the breakpoint, just do a normal step
+            qDebug() << "Step Out: Failed to set breakpoint, falling back to step-in";
+            stepIn();
+        }
+    }
+
+    updateState();
 }
 
 void DebuggerWindow::frameStep()
@@ -431,9 +721,60 @@ void DebuggerWindow::waitInterrupt()
 {
     qDebug() << "DebuggerWindow::waitInterrupt()";
 
-    _breakpointTriggered = false;
+    if (!_emulator)
+    {
+        qWarning() << "No emulator instance";
+        return;
+    }
 
+    // Clear any existing interrupt breakpoints
+    clearInterruptBreakpoints();
+
+    EmulatorContext* context = _emulator->GetContext();
+    Z80* cpu = context->pCore->GetZ80();
+    if (!cpu)
+    {
+        qWarning() << "No CPU instance";
+        return;
+    }
+
+    DebugManager* debugManager = _emulator->GetDebugManager();
+    BreakpointManager* bpManager = debugManager->GetBreakpointsManager();
+    Memory* memory = _emulator->GetMemory();
+
+    // Check current interrupt mode
+    uint8_t im = cpu->im;
+
+    if (im == 1 || im == 0)  // IM1 or IM0 (both use 0x0038 handler)
+    {
+        // For IM1/IM0, set breakpoint at 0x0038
+        uint16_t breakpointId = bpManager->AddExecutionBreakpoint(0x0038);
+        bpManager->SetBreakpointGroup(breakpointId, IM1_BREAKPOINT_GROUP);
+        qDebug() << "Set IM1/IM0 interrupt breakpoint at 0x0038";
+    }
+    else if (im == 2)  // IM2
+    {
+        // For IM2, the interrupt handler address is read from the vector table at (I << 8) | (data_bus)
+        // The data bus can have any value (0-255), so we need to handle all possible vectors
+        uint8_t i_reg = cpu->i;
+        uint16_t interruptVectorTableBase = (uint16_t)(i_reg) << 8;
+        uint8_t lsb = memory->DirectReadFromZ80Memory(interruptVectorTableBase);
+        uint8_t msb = memory->DirectReadFromZ80Memory(interruptVectorTableBase + 1);
+        uint16_t interruptHandler = (msb << 8) | lsb;
+
+        uint16_t breakpointId = bpManager->AddExecutionBreakpoint(interruptHandler);
+        bpManager->SetBreakpointGroup(breakpointId, IM2_BREAKPOINT_GROUP);
+        qDebug() << "Set IM2 interrupt handler breakpoint at" << QString("0x%1").arg(interruptHandler, 4, 16, QLatin1Char('0')).toUpper();
+    }
+
+    _waitingForInterrupt = true;
     updateState();
+
+    // Continue execution automatically if paused
+    if (_emulator && _emulator->IsPaused())
+    {
+        continueExecution();
+    }
 }
 
 void DebuggerWindow::resetEmulator()
@@ -453,42 +794,17 @@ void DebuggerWindow::showBreakpointManager()
 {
     qDebug() << "DebuggerWindow::showBreakpointManager()";
 
-    QDialog dialog;
-    dialog.setWindowTitle("Table Dialog");
-    dialog.resize(400, 500);
+    if (!_emulator)
+    {
+        QMessageBox::warning(this, "Warning", "No emulator selected");
+        return;
+    }
 
-
-    // Create the table widget
-    QTableWidget tableWidget(3, 2, &dialog);  // 3 rows, 2 columns
-    QHeaderView* header = tableWidget.horizontalHeader();
-    header->setSectionResizeMode(0, QHeaderView::Stretch);
-    header->setSectionResizeMode(1, QHeaderView::Stretch);
-
-    // Set the headers for the columns
-    QStringList headers;
-    headers << "Column 1" << "Column 2";
-    tableWidget.setHorizontalHeaderLabels(headers);
-
-    // Set the data for each cell
-    QTableWidgetItem *item;
-    item = new QTableWidgetItem("Row 1, Column 1");
-    tableWidget.setItem(0, 0, item);
-    item = new QTableWidgetItem("Row 1, Column 2");
-    tableWidget.setItem(0, 1, item);
-    item = new QTableWidgetItem("Row 2, Column 1");
-    tableWidget.setItem(1, 0, item);
-    item = new QTableWidgetItem("Row 2, Column 2");
-    tableWidget.setItem(1, 1, item);
-    item = new QTableWidgetItem("Row 3, Column 1");
-    tableWidget.setItem(2, 0, item);
-    item = new QTableWidgetItem("Row 3, Column 2");
-    tableWidget.setItem(2, 1, item);
-
-    QHBoxLayout *layout = new QHBoxLayout(&dialog);
-    layout->addWidget(&tableWidget);
-    dialog.setLayout(layout);
-
+    BreakpointDialog dialog(_emulator, this);
     dialog.exec();
+
+    // Update debugger state after dialog closes
+    updateState();
 }
 
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
@@ -548,6 +864,23 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
     // otherwise widget is unaware of the document and where to jump so just skipping the request
     ui->hexView->gotoOffset(currentAddress);       // Position cursor on the byte with offset
     ui->hexView->update();
+}
+
+void DebuggerWindow::showLabelManager()
+{
+    qDebug() << "DebuggerWindow::showLabelManager()";
+
+    if (!_emulator)
+    {
+        QMessageBox::warning(this, "Warning", "No emulator selected");
+        return;
+    }
+
+    LabelEditor labelEditor(_emulator->GetDebugManager()->GetLabelManager(), this);
+    labelEditor.exec();
+
+    // Update debugger state after dialog closes (if needed)
+    updateState(); // Refresh in case labels changed that affect disassembly, etc.
 }
 
 /// endregion </Event handlers / Slots>

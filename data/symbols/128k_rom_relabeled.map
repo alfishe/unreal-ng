@@ -1,0 +1,1115 @@
+--- SPECTRUM 128 ROM 0 DISASSEMBLY (Verified & Relabeled Map) ---
+; ----------------------------------------------
+; Address  Label                        Type          Comments
+;-----------------------------------------------------------------------------------------------------------------------
+0000       RST_0                        (CODE)       ; RST $00 - Reset Machine
+0004       RESET_DELAY_LOOP             (CODE)       ; Delay about 0.2s to allow screen switching mechanism to settle.
+000C       SPARE_000C                   (DATA)       ; N4 Spare bytes
+0010       RST_10_PRINT_A               (CODE)       ; RST $10 - Print A Character
+0014       SPARE_0014                   (DATA)       ; N4 Spare bytes
+0018       RST_18_GET_CHAR              (CODE)       ; RST $18 - Collect A Character
+001C       SPARE_001C                   (DATA)       ; N4 Spare bytes
+0020       RST_20_NEXT_CHAR             (CODE)       ; RST $20 - Collect Next Character
+0024       SPARE_0024                   (DATA)       ; N4 Spare bytes
+0028       RST_28_CALL_ROM1             (CODE)       ; RST $28 - Call Routine in ROM 1
+0037       SPARE_0037                   (DATA)       ; N4 Spare byte
+0038       MASK_INTERRUPT_ROUTINE       (CODE)       ; MASKABLE INTERRUPT ROUTINE
+0048       END_INTERRUPT                (CODE)       ; End of interrupt routine.
+004A       ERROR_128K                   (CODE)       ; 128K Error Routine
+005C       CALL_ROM1_CONT               (CODE)       ; Call ROM 1 Routine (RST $28 Continuation)
+006B       RAM_SWAP_TO_OTHER_ROM        (CODE)       ; Swap to Other ROM (copied to $5B00)
+007F       RAM_RETURN_TO_OTHER_ROM      (CODE)       ; Return to Other ROM Routine (copied to $5B14)
+0088       RAM_ERROR_HANDLER            (CODE)       ; Error Handler Routine (copied to $5B1D)
+009A       RAM_P_CHAN_INPUT             (CODE)       ; 'P' Channel Input Routine (copied to $5B2F)
+009F       RAM_P_CHAN_OUTPUT            (CODE)       ; 'P' Channel Output Routine (copied to $5B34)
+00A2       P_CHAN_OUTPUT_JP             (CODE)       ; Part of 'P' Channel Output Routine
+00B5       RAM_P_CHAN_EXIT              (CODE)       ; 'P' Channel Exit Routine (copied to $5B4A)
+00C3       CALL_SUBROUTINE_ONERR        (CODE)       ; Call Subroutine
+00C7       RESET_CONT_1                 (CODE)       ; Reset Routine (RST $00 Continuation, Part 1)
+00C9       RAM_TEST_LOOP                (CODE)       ; Loop through all RAM banks.
+00FF       SPARE_00FF                   (DATA)       ; Spare byte
+0100       VECT_BASIC_PARSER            (CODE)       ; ROUTINE VECTOR TABLE - BASIC interpreter parser.
+0103       VECT_LINE_RUN                (CODE)       ; ROUTINE VECTOR TABLE - 'Line Run' entry point.
+0106       VECT_TRANSFER_TO_RAM4        (CODE)       ; ROUTINE VECTOR TABLE - Transfer bytes to logical RAM bank 4.
+0109       VECT_TRANSFER_FROM_RAM4      (CODE)       ; ROUTINE VECTOR TABLE - Transfer bytes from logical RAM bank 4.
+010C       VECT_128K_ERROR              (CODE)       ; ROUTINE VECTOR TABLE - 128K error routine.
+010F       VECT_ROM1_PATCH_ERROR        (CODE)       ; ROUTINE VECTOR TABLE - Error routine from ROM 1 patch.
+0112       VECT_ROM1_STMT_RETURN        (CODE)       ; ROUTINE VECTOR TABLE - 'Statement Return' routine from ROM 1 patch.
+0115       VECT_ROM1_STMT_NEXT          (CODE)       ; ROUTINE VECTOR TABLE - 'Statement Next' routine from ROM 1 patch.
+0118       VECT_SCAN_KEYPAD             (CODE)       ; ROUTINE VECTOR TABLE - Scan the keypad.
+011B       VECT_PLAY_MUSIC              (CODE)       ; ROUTINE VECTOR TABLE - Play music strings.
+011E       VECT_MIDI_OUT                (CODE)       ; ROUTINE VECTOR TABLE - MIDI byte output routine.
+0121       VECT_RS232_IN                (CODE)       ; ROUTINE VECTOR TABLE - RS232 byte input routine.
+0124       VECT_RS232_TEXT_OUT          (CODE)       ; ROUTINE VECTOR TABLE - RS232 text output routine.
+0127       VECT_RS232_BYTE_OUT          (CODE)       ; ROUTINE VECTOR TABLE - RS232 byte output routine.
+012A       VECT_COPY_SCREEN             (CODE)       ; ROUTINE VECTOR TABLE - COPY (screen dump) routine.
+012D       VECT_KP_SCAN_ROM1            (CODE)       ; ROUTINE VECTOR TABLE - Call keypad scan routine in ROM 1.
+0131       FATAL_RAM_ERROR              (CODE)       ; Fatal RAM Error
+0135       FATAL_RAM_ERROR_LOOP         (CODE)       ; Infinite loop for Fatal RAM Error.
+0137       RESET_CONT_2                 (CODE)       ; Reset Routine (RST $00 Continuation, Part 2)
+019D       NEW_ENTRY_POINT              (CODE)       ; Entry point for NEW with normal BASIC memory configuration.
+026B       EXEC_COMMAND_LINE            (CODE)       ; Execute Command Line
+02BA       RETURN_FROM_SYNTAX_CHECK     (CODE)       ; Return from BASIC Line Syntax Check
+02C1       PARSE_LINE_SUCCESS           (CODE)       ; Parse a BASIC line (successful syntax check).
+02DF       SIGNAL_CLS_LOWER             (CODE)       ; Signal to clear lower screen.
+02F4       USE_NORMAL_RAM_CONFIG        (CODE)       ; Use Normal RAM Configuration.
+0321       ERROR_HANDLER_3              (CODE)       ; Error Handler Routine
+034A       DISPLAY_ERR_NR               (CODE)       ; Display error code held in ERR_NR.
+034E       PREPARE_ERROR_DISPLAY        (CODE)       ; Save the error code and prepare for display.
+037D       ERR_TO_UPPER_CASE            (CODE)       ; Convert error code to upper case letter.
+037F       DISPLAY_ERROR_CHAR           (CODE)       ; Display the error character.
+039C       DISPLAY_STD_ERROR_MSG        (CODE)       ; Display a standard error message.
+03A2       DISPLAY_ERROR_LINE_NUM       (CODE)       ; Display comma and statement number.
+03CC       ADVANCE_TO_NEXT_STMT         (CODE)       ; Advance to the next statement.
+03CF       HANDLE_STMT_CONTINUE         (CODE)       ; Handle statement continuation.
+03DD       COPY_PPC_FOR_CONTINUE        (CODE)       ; Copy SUBPPC and PPC for CONTINUE.
+03DF       SIGNAL_NO_STMT_RETURN_ED     (CODE)       ; Signal no current statement and return to Editor.
+03EF       ERROR_NO_ROOM_FOR_LINE       (CODE)       ; Error Handler Routine When Parsing BASIC Line
+03F7       PARSE_LINE_WITH_NUM          (CODE)       ; Parse a BASIC Line with a Line Number
+040A       NO_LINE_NUMBER               (CODE)       ; No line number specified.
+0429       DELETE_EXISTING_LINE         (CODE)       ; Line exists, so delete it.
+0442       INSERT_NEW_LINE              (CODE)       ; Line exists, so insert new line.
+046A       EXIT_LINE_INSERT_DELETE      (CODE)       ; Exit routine after line insertion/deletion.
+046C       NEW_ERROR_MSG_VECTOR         (DATA)       ; New Error Message Vector Table
+048C       NEW_ERROR_MSG_TABLE          (DATA)       ; New Error Message Table - MERGE erro
+057D       PRINT_MESSAGE                (CODE)       ; Print Message
+0589       INITIAL_CHAN_INFO_DATA       (DATA)       ; The 'Initial Channel Information'
+059E       INITIAL_STREAM_DATA          (DATA)       ; The 'Initial Stream Data'
+05AC       PRODUCE_ERROR_REPORT         (CODE)       ; Produce Error Report
+05C8       HANDLE_NEW_ERROR             (CODE)       ; Handle a new error code.
+05D6       CHECK_BREAK                  (CODE)       ; Check for BREAK into Program
+05E6       RS232_CHAN_HANDLER           (CODE)       ; RS232 Channel Handler Routines
+060A       HANDLE_INPUT_HASH            (CODE)       ; Handle INPUT#
+0610       RETURN_FROM_RS232_IO         (CODE)       ; Return from input/output routine.
+0614       ERROR_END_OF_FILE            (CODE)       ; Produce an error "8 End of file".
+0618       CHAR_NOT_RECEIVED            (CODE)       ; A character was not received.
+061B       CHAR_RECEIVED                (CODE)       ; A character was received.
+062D       ENTER_RECEIVED               (CODE)       ; Enter was received so end reading the stream.
+0637       HANDLE_INKEY_PRINT_HASH      (CODE)       ; Handle INKEY$# and PRINT#
+063D       RETURN_CHAR_RECEIVED         (CODE)       ; Return if a character was received.
+0641       FORMAT_ROUTINE               (CODE)       ; FORMAT Routine
+0659       HANDLE_FORMAT_CHAR           (CODE)       ; Handle character after FORMAT
+0661       GET_BAUD_RATE                (CODE)       ; Check for semicolon and get baud rate.
+067D       GET_CHAR_AFTER_BAUD          (CODE)       ; Get next character after baud rate.
+0689       CHECK_EOL_AFTER_BAUD         (CODE)       ; Check for end of line after baud rate.
+0698       LOOKUP_BAUD_TIMING           (CODE)       ; Lookup timing constant for specified baud rate.
+069B       BAUD_TABLE_LOOP              (CODE)       ; Loop through baud rate table.
+06AF       BAUD_RATE_MATCHED            (CODE)       ; Baud rate has been matched.
+06B8       BAUD_RATE_TABLE              (DATA)       ; Baud Rate Table
+06D8       RS232_INPUT_ROUTINE          (CODE)       ; RS232 Input Routine
+06E5       READ_BYTE_FROM_RS232         (CODE)       ; Read Byte from RS232 Port
+070E       LOOK_FOR_START_BIT           (CODE)       ; Look for the start bit.
+0715       START_BIT_TIMEOUT_LOOP       (CODE)       ; Timeout loop for start bit.
+071E       TEST_START_BIT_AGAIN         (CODE)       ; Second/Third test of START BIT.
+0731       READ_DATA_BITS               (CODE)       ; Start bit found, read data bits.
+0736       BIT_DELAY_LOOP               (CODE)       ; BD-DELAY - delay loop for bit reading.
+074B       RECEIVED_ZERO                (CODE)       ; Received one 0.
+0754       ALL_BITS_READ                (CODE)       ; After reading 8 data bits.
+0757       RS232_IN_EXIT                (CODE)       ; Success and failure paths converge here.
+0766       STOP_BIT_DELAY               (CODE)       ; Delay for the stop bit.
+0771       CHECK_SECOND_BYTE            (CODE)       ; Check for a second byte.
+077F       SECOND_BYTE_INCOMING         (CODE)       ; A second byte is on its way.
+079D       SECOND_BYTE_DELAY_TUNE       (CODE)       ; Fine tune delay for second byte.
+07A2       SECOND_BYTE_DELAY_LOOP       (CODE)       ; Delay loop for second byte.
+07B7       SECOND_BYTE_ZERO             (CODE)       ; Received one 0 (second byte).
+07C0       EXIT_BYTE_READ               (CODE)       ; Exit with the byte that was read in.
+07CA       RS232_OUTPUT_ROUTINE         (CODE)       ; RS232 Output Routine
+07DB       HANDLE_RS232_PARAMS          (CODE)       ; Handle parameter processing.
+07E0       NO_RS232_PARAMS              (CODE)       ; No parameters to process.
+07F2       HANDLE_SPACE_OUT             (CODE)       ; Handle space character output.
+07FD       CHECK_GRAPHIC_UDG_OUT        (CODE)       ; Compare against graphic/UDG characters.
+0803       CHECK_CONTROL_CHAR_OUT       (CODE)       ; Check for control character.
+0807       HANDLE_PRINTABLE_CHAR        (CODE)       ; Printable character handling.
+081A       CHAR_READY_TO_PRINT          (CODE)       ; Character ready to print.
+081E       PROCESS_CONTROL_CODES        (CODE)       ; Process control codes.
+0822       HANDLE_CR_OUT                (CODE)       ; Handle a carriage return.
+0830       CHECK_COMMA_OUT              (CODE)       ; Check for comma.
+083A       HANDLE_COMMA_LOOP            (CODE)       ; Comma handler loop.
+0840       SUB_8_FROM_COL               (CODE)       ; Subtract 8 from column position.
+0848       OUTPUT_MULTIPLE_SPACES       (CODE)       ; Output multiple spaces.
+0853       CHECK_AT_TAB_COLOR           (CODE)       ; Check for AT, TAB, or colour codes.
+0860       HANDLE_AT_TAB                (CODE)       ; Handle AT and TAB.
+0869       HANDLE_COLOR_CODES           (CODE)       ; Handle INK, PAPER, FLASH, BRIGHT, INVERSE, OVER.
+0872       ALL_PARAMS_PROCESSED         (CODE)       ; All parameters processed.
+0882       PROCESS_AT_TAB_PARAMS        (CODE)       ; Process AT and TAB parameters.
+088A       COL_POS_GTE_REQUESTED        (CODE)       ; Column position equal or greater than length of row.
+0890       COL_POS_LT_REQUESTED         (CODE)       ; Column position less than length of row.
+0895       COMPARE_COL_POS              (CODE)       ; Compare against desired column position.
+08A3       WRITE_BYTE_TO_RS232          (CODE)       ; Write Byte to RS232 Port
+08AF       WAIT_DEVICE_READY            (CODE)       ; Wait for device to be ready.
+08C8       TRANSMIT_BIT                 (CODE)       ; Transmit each bit.
+08DA       TRANSMIT_ONE                 (CODE)       ; Transmit a 1.
+08E0       BIT_LENGTH_DELAY             (CODE)       ; Delay the length of a bit.
+08F0       COPY_COMMAND_ROUTINE         (CODE)       ; COPY Command Routine
+08F5       HALF_ROW_LOOP                (CODE)       ; Loop for each half row.
+090E       COPY_DONE_RESET_SPACING      (CODE)       ; Copy done, reset printer line spacing.
+0915       OUTPUT_HALF_ROW              (CODE)       ; Output Half Row
+091A       OUTPUT_PIXEL_COLUMN          (CODE)       ; Output a column of pixels.
+0926       OUTPUT_PIXEL_COLUMN_DOUBLE   (CODE)       ; Output a column of pixels (at double height).
+093A       PIXEL_HALF_ROW_LOOP          (CODE)       ; Loop for four pixels in half row.
+0944       ADD_DOUBLE_HEIGHT_PIXEL      (CODE)       ; Add double height pixel value to byte.
+0955       OUTPUT_NIBBLE_OF_PIXELS      (CODE)       ; Output Nibble of Pixels
+095F       OUTPUT_CHARS_FROM_TABLE      (CODE)       ; Output Characters from Table
+0961       SEND_CHARS_LOOP              (CODE)       ; Loop to send characters.
+096D       TEST_PIXEL_SET               (CODE)       ; Test Whether Pixel (B,C) is Set
+0974       SHIFT_MASK_BIT               (CODE)       ; Shift the mask bit into the required bit position.
+0979       EPSON_DOUBLE_DENSITY_CODES   (DATA)       ; EPSON Printer Control Code Tables - double density
+0980       EPSON_LINE_FEED_CODE         (DATA)       ; EPSON Printer Control Code Tables - line feed
+0982       EPSON_1_6_INCH_SPACING       (DATA)       ; EPSON Printer Control Code Tables - 1/6 inch spacing
+0985       PLAY_COMMAND_ENTRY           (CODE)       ; PLAY COMMAND ROUTINES - main entry
+098D       CALC_PLAY_WORKSPACE_LOOP     (CODE)       ; Loop to calculate workspace size.
+09A0       INIT_PLAY_STRINGS_LOOP       (CODE)       ; Loop over each string to initialize.
+0A05       PLAY_VECT_ENTRY              (CODE)       ; Entry point from vector table for PLAY.
+0A31       RAM_CALC_TIMING_LOOP         (CODE)       ; Calculate Timing Loop Counter <<< RAM Routine >>>
+0A3E       TEST_BREAK_KEY               (CODE)       ; Test BREAK Key
+0A4A       SELECT_CHAN_DURATION_PTRS    (CODE)       ; Select Channel Data Block Duration Pointers
+0A4F       SELECT_CHAN_BLOCK_PTRS       (CODE)       ; Select Channel Data Block Pointers
+0A52       GET_CHANNEL_POINTERS         (CODE)       ; Continue to get channel pointers.
+0A67       GET_CHAN_BLOCK_ADDR          (CODE)       ; Get Channel Data Block Address for Current String
+0A6E       NEXT_CHAN_DATA_PTR           (CODE)       ; Next Channel Data Pointer
+0A7D       PLAY_COMMAND_CONT            (CODE)       ; PLAY Command (Continuation) - main processing loop
+0A80       PROCESS_NEXT_PLAY_STRING     (CODE)       ; Process next string in PLAY command.
+0A8C       CHECK_ALL_CHANNELS_PROC      (CODE)       ; Check if all channels processed.
+0A97       FIND_SMALLEST_DUR_PLAY_NOTES (CODE)       ; Find smallest duration and play notes.
+0A9F       CHECK_ANYTHING_TO_PLAY       (CODE)       ; Check if there is anything left to play.
+0AAB       WAIT_DUR_AND_UPDATE          (CODE)       ; Wait for note duration and update.
+0AB7       PLAY_CHAR_TABLE              (DATA)       ; PLAY Command Character Table
+0AC5       GET_PLAY_CHARACTER           (CODE)       ; Get Play Character
+0AD1       GET_NEXT_NOTE_SEMITONES      (CODE)       ; Get Next Note in Semitones
+0AD4       GET_PLAY_CHAR_LOOP           (CODE)       ; Get current character from PLAY string.
+0ADF       SIGNAL_REST_AND_RETURN       (CODE)       ; Signal a rest and restore HL.
+0AE1       PLAY_END_OF_STRING           (CODE)       ; End of string found, clear channel flag.
+0AEC       CHECK_SHARP                  (CODE)       ; Check for sharp.
+0AF3       CHECK_FLAT                   (CODE)       ; Check for flat.
+0AFA       CHECK_LOWER_CASE             (CODE)       ; Check for lower case letter.
+0B04       CONVERT_NOTE_TO_UPPER        (CODE)       ; Convert to upper case and check range.
+0B1D       GET_NUMERIC_FROM_PLAY        (CODE)       ; Get Numeric Value from Play String
+0B28       PARSE_NUMERIC_LOOP           (CODE)       ; Loop to parse numeric digits.
+0B42       ERROR_NUM_TOO_BIG            (CODE)       ; Produce "l number too big" error.
+0B45       END_OF_NUMERIC               (CODE)       ; End of numeric value reached.
+0B50       MULTIPLY_DE_BY_10            (CODE)       ; Multiply DE by 10
+0B55       MULTIPLY_LOOP                (CODE)       ; Loop to multiply.
+0B5C       FIND_NEXT_NOTE               (CODE)       ; Find Next Note from Channel String
+0B69       FIND_NEXT_NOTE_LOOP          (CODE)       ; Main loop for finding next note.
+0B83       RETURN_AFTER_NON_NUM         (CODE)       ; Make a return after processing non-numeric digit.
+0B84       JUMP_TO_COMMAND_HANDLER      (CODE)       ; Jump to the command handler routine.
+0B85       PLAY_COMMENT                 (CODE)       ; Play Command '!' (Comment)
+0B90       PLAY_OCTAVE                  (CODE)       ; Play Command 'O' (Octave)
+0BA5       PLAY_SEPARATOR               (CODE)       ; Play Command 'N' (Separator)
+0BA6       PLAY_START_REPEAT            (CODE)       ; Play Command '(' (Start of Repeat)
+0BC2       PLAY_END_REPEAT              (CODE)       ; Play Command ')' (End of Repeat)
+0BF0       NEW_BRACKET_NESTING          (CODE)       ; A new level of closing bracket nesting.
+0C0B       SET_RETURN_ADDR_CLOSE_BRACKET (CODE)      ; Set return address for a closing bracket.
+0C27       GET_BRACKET_POINTER_ADDR     (CODE)       ; Get Address of Bracket Pointer Store
+0C32       PLAY_TEMPO                   (CODE)       ; Play Command 'T' (Tempo)
+0C76       TEMPO_COMMAND_RETURN         (CODE)       ; Tempo Command Return
+0C84       PLAY_MIXER                   (CODE)       ; Play Command 'M' (Mixer)
+0C95       PLAY_VOLUME                  (CODE)       ; Play Command 'V' (Volume)
+0CAD       PLAY_USE_VOLUME_EFFECT       (CODE)       ; Play Command 'U' (Use Volume Effect)
+0CBA       PLAY_VOLUME_EFFECT_SPEC      (CODE)       ; Play command 'W' (Volume Effect Specifier)
+0CCE       PLAY_VOLUME_EFFECT_DUR       (CODE)       ; Play Command 'X' (Volume Effect Duration)
+0CDD       PLAY_MIDI_CHANNEL            (CODE)       ; Play Command 'Y' (MIDI Channel)
+0CEE       PLAY_MIDI_PROG_CODE          (CODE)       ; Play Command 'Z' (MIDI Programming Code)
+0CF6       PLAY_STOP                    (CODE)       ; Play Command 'H' (Stop)
+0CFB       PLAY_NOTES_AND_SYMBOLS       (CODE)       ; Play Commands 'a'..'g', 'A'..'G', '1'.."12", '&' and '_'
+0D28       INCREMENT_TIED_NOTES_TRIPLET (CODE)       ; Increment the counter of tied notes for triplets.
+0D32       NOTE_DUR_1_TO_9              (CODE)       ; Note duration in range 1-9.
+0D38       CHECK_TIED_NOTE              (CODE)       ; Check for tied note.
+0D3B       CHECK_TIED_NOTE_UNDERSCORE   (CODE)       ; Check for '_' tied note marker.
+0D5F       NON_TRIPLET_TIED_NOTE        (CODE)       ; A non-triplet tied note.
+0D6E       STORE_NOTE_DUR               (CODE)       ; Store duration value for non-tied note.
+0D74       INCREMENT_TIED_NOTES         (CODE)       ; Increment the tied notes counter.
+0D81       CHAR_IS_LETTER_OR_SYMBOL     (CODE)       ; The character is a letter, '&' or '_'.
+0D9C       MODIFY_RETURN_ADDR           (CODE)       ; Modify the return address to point to the RET instruction.
+0DA1       END_OF_STRING_COMMENT        (CODE)       ; End of String Found (from comment)
+0DA2       END_OF_STRING_PROCESSING     (CODE)       ; End of string found (processing).
+0DAC       POINT_TO_DUR_LENGTH          (CODE)       ; Point to Duration Length within Channel Data Block
+0DB4       STORE_DUR_LENGTH_PTR         (CODE)       ; Store Entry in Command Data Block's Channel Duration Length Pointer Table
+0DCA       PLAY_JUMP_TABLE              (DATA)       ; PLAY Command Jump Table
+0DE8       ENVELOPE_LOOKUP_TABLE        (DATA)       ; Envelope Waveform Lookup Table
+0DF0       IDENTIFY_COMMAND_CHAR        (CODE)       ; Identify Command Character
+0DF9       SEMITONES_TABLE              (DATA)       ; Semitones Table
+0E00       FIND_NOTE_DURATION_LENGTH    (CODE)       ; Find Note Duration Length
+0E0C       NOTE_DURATION_TABLE          (DATA)       ; Note Duration Table
+0E19       IS_NUMERIC_DIGIT             (CODE)       ; Is Numeric Digit?
+0E20       PLAY_NOTE_ON_SOUND_CHIP      (CODE)       ; Play a Note On a Sound Chip Channel
+0E3F       STORE_NOTE_CHECK_CHANNEL     (CODE)       ; Store note number and check if sound chip channel.
+0E57       NOTE_21_TO_107               (CODE)       ; Note number 21 to 107.
+0E5E       LOOKUP_NOTE_AND_PLAY         (CODE)       ; Look up note value and play it.
+0E7C       SET_SOUND_GENERATOR_REG      (CODE)       ; Set Sound Generator Register
+0E89       READ_SOUND_GENERATOR_REG     (CODE)       ; Read Sound Generator Register
+0E93       TURN_OFF_ALL_SOUND           (CODE)       ; Turn Off All Sound
+0EAC       RESET_ALL_MIDI_CHANNELS      (CODE)       ; Reset all MIDI channels in use.
+0EB8       CHECK_ALL_MIDI_RESET         (CODE)       ; Check if all MIDI channels reset.
+0EC3       ALL_MIDI_CHANNELS_RESET      (CODE)       ; All MIDI channels reset.
+0EC8       GET_PREVIOUS_PLAY_CHAR       (CODE)       ; Get Previous Character from Play String
+0ED0       SKIP_SPACES_ENTERS_LOOP      (CODE)       ; Loop to skip spaces and enters.
+0EE3       GET_CURRENT_PLAY_CHAR        (CODE)       ; Get Current Character from Play String
+0EEC       CHECK_PLAY_END_OF_STRING     (CODE)       ; Check for end of string.
+0EFB       GET_NEXT_PLAY_CHAR           (CODE)       ; Get next play character, skipping spaces and enters.
+0F05       RETURN_AFTER_SKIP            (CODE)       ; Return after skipping.
+0F09       ADVANCE_CHAR_POINTER         (CODE)       ; Advance character pointer.
+0F12       ERROR_NOTE_OUT_OF_RANGE      (CODE)       ; Produce Play Error Reports - "n Out of range"
+0F1A       ERROR_NUM_TOO_BIG_PLAY       (CODE)       ; Produce Play Error Reports - "l Number too big"
+0F22       ERROR_INVALID_NOTE_NAME      (CODE)       ; Produce Play Error Reports - "k Invalid note name"
+0F2A       ERROR_TOO_MANY_BRACKETS      (CODE)       ; Produce Play Error Reports - "d Too many brackets"
+0F32       ERROR_NOTE_OUT_OF_RANGE_M    (CODE)       ; Produce Play Error Reports - "m Note out of range"
+0F3A       ERROR_TOO_MANY_TIED_NOTES    (CODE)       ; Produce Play Error Reports - "o Too many tied notes"
+0F42       PLAY_NOTE_ON_EACH_CHANNEL    (CODE)       ; Play Note on Each Channel
+0F45       PLAY_NOTE_LOOP               (CODE)       ; Main loop to play note on each channel.
+0F69       PLAY_MIDI_NOTE               (CODE)       ; Play MIDI note.
+0F6C       CHECK_ALL_CHANNELS_PLAYED    (CODE)       ; Check if all channels processed.
+0F76       WAIT_NOTE_DURATION           (CODE)       ; Wait Note Duration
+0F86       TEMPO_LOOP                   (CODE)       ; Tempo-100 loop.
+0F91       FIND_SMALLEST_DURATION       (CODE)       ; Find Smallest Duration Length
+0F97       FIND_SMALLEST_DUR_LOOP       (CODE)       ; Main loop to find smallest duration.
+0FAF       ALL_CHANNELS_CHECKED         (CODE)       ; All channel strings checked.
+0FBA       STORE_SMALLEST_DURATION      (CODE)       ; Store the smallest channel duration length.
+0FC1       PLAY_AND_UPDATE_DURATIONS    (CODE)       ; Play a Note on Each Channel and Update Channel Duration Lengths
+0FC8       UPDATE_DURATIONS_LOOP        (CODE)       ; Main loop to update duration lengths.
+0FFC       CHANNEL_USES_SMALLEST_DUR    (CODE)       ; Current channel uses the smallest duration length.
+100C       TURN_OFF_MIDI_SOUND          (CODE)       ; Turn off the assigned MIDI channel sound.
+1026       CHANNEL_HAS_TIED_NOTES       (CODE)       ; The channel has more tied notes.
+103D       GET_NEXT_NOTE                (CODE)       ; Get next note in the string.
+105A       CHECK_ANOTHER_CHAN_UPDATE    (CODE)       ; Check whether another channel needs its duration length updated.
+1066       DELAY_1_96TH_NOTE            (CODE)       ; Delay for 1/96th of a note.
+106F       UPDATE_VOLUME_NOTE_ALL       (CODE)       ; Update volume/note on each MIDI/sound chip channel.
+1089       PLAY_MIDI_NOTE_AND_VOLUME    (CODE)       ; Play a note and set volume on assigned MIDI channel.
+108C       CHECK_ALL_CHANNELS_UPDATED   (CODE)       ; Check if all channels processed.
+1096       NOTE_LOOKUP_TABLE            (DATA)       ; Note Lookup Table
+116E       PLAY_NOTE_ON_MIDI_CHANNEL    (CODE)       ; Play Note on MIDI Channel
+118D       TURN_OFF_MIDI_CHANNEL        (CODE)       ; Turn MIDI Channel Off
+11A3       SEND_BYTE_TO_MIDI            (CODE)       ; Send Byte to MIDI Device
+11B4       MIDI_TIMING_DELAY_LOOP       (CODE)       ; Delay loop for MIDI timing.
+11BE       ROTATE_AND_SEND_BIT          (CODE)       ; Rotate and send next bit.
+11C9       SEND_ZERO_BIT                (CODE)       ; Send a 0 bit.
+11CF       MIDI_DATA_BIT_DELAY          (CODE)       ; Delay for MIDI data bit.
+11D1       MIDI_DATA_BIT_DELAY_LOOP     (CODE)       ; Loop for MIDI data bit delay.
+11E7       MIDI_STOP_BIT_DELAY          (CODE)       ; Delay for MIDI stop bit.
+11EB       SAVE_ROUTINE                 (CODE)       ; SAVE Routine
+11F2       LOAD_ROUTINE                 (CODE)       ; LOAD Routine
+11F9       VERIFY_ROUTINE               (CODE)       ; VERIFY Routine
+1200       MERGE_ROUTINE                (CODE)       ; MERGE Routine
+1205       TAPE_COMMAND_ENTRY           (CODE)       ; Common entry for tape commands.
+1219       ERROR_C_RAMDISK              (CODE)       ; Produce error "C Nonsense in BASIC" for RAM disk.
+121D       RAM_DISK_COMMAND_HANDLING    (CODE)       ; RAM Disk Command Handling
+124E       HANDLE_ARRAY_TYPE            (CODE)       ; Handle array type.
+1280       ERROR_WRONG_FILE_TYPE        (CODE)       ; Produce error "b Wrong file type".
+1284       CHECK_MERGE_VERIFY           (CODE)       ; Check for MERGE or VERIFY.
+1290       HANDLE_VERIFY_LOAD_CODE_SCREEN (CODE)      ; Handle verify/load of CODE/SCREEN$.
+129B       RAM_DISK_VERIFY_ROUTINE      (CODE)       ; RAM Disk VERIFY! Routine
+12AE       HANDLE_VERIFY_LENGTH         (CODE)       ; Handle requested length.
+12B8       HANDLE_VERIFY_ADDR           (CODE)       ; Handle program/array start address.
+12C1       RAM_DISK_LOAD_HL_DE          (CODE)       ; Load DE bytes at address pointed to by HL.
+12C5       RAM_DISK_MERGE_ROUTINE       (CODE)       ; RAM Disk MERGE! Routine
+12DB       RAM_DISK_LOAD_ROUTINE        (CODE)       ; RAM Disk LOAD! Routine
+12ED       LOAD_ADDR_SPECIFIED          (CODE)       ; A start address was specified.
+12F6       TEST_ROOM_FOR_FILE           (CODE)       ; Test if there is room for file.
+12FF       TEST_FILE_TYPE               (CODE)       ; Test file type.
+1303       HANDLE_PROG_ARRAY_TYPE       (CODE)       ; Handle program/array type.
+1315       INSERT_NEW_ARRAY_ENTRY       (CODE)       ; Insert new array entry into variables area.
+1331       LOAD_DE_BYTES_AT_HL_2        (CODE)       ; Load DE bytes to address pointed to by HL.
+1335       HANDLE_PROGRAM_TYPE          (CODE)       ; Program type handling.
+1370       SET_AUTORUN_AND_LOAD         (CODE)       ; Set auto-run and load program.
+137E       RAM_DISK_LOAD_BYTES          (CODE)       ; RAM Disk Load Bytes
+1385       GET_EXPRESSION_FROM_BASIC    (CODE)       ; Get Expression from BASIC Line
+1393       CHECK_FILENAME_AND_COPY      (CODE)       ; Check Filename and Copy
+13AD       FILL_FILENAME_SPACES_LOOP    (CODE)       ; Loop to fill filename with spaces.
+13BA       ERROR_INVALID_FILENAME       (CODE)       ; Produce error "f Invalid name".
+13BE       CASS_RAM_DISK_HANDLER        (CODE)       ; Cassette / RAM Disk Command Handling
+13D2       CREATE_HEADER_SPACE          (CODE)       ; Create space in workspace for header.
+13DC       CLEAR_FILENAME_LOOP          (CODE)       ; Loop to clear filename.
+13F9       CHECK_FILENAME_VALIDITY      (CODE)       ; Check filename validity.
+1400       TRANSFER_FILENAME_TO_WORKSPACE (CODE)      ; Transfer filename to workspace.
+1407       HANDLE_DATA_PARAM            (CODE)       ; Handle 'xxx "name" DATA'.
+1425       HANDLE_NEW_ARRAY_SAVE        (CODE)       ; Handle new array SAVE/VERIFY.
+142F       HANDLE_EXISTING_ARRAY        (CODE)       ; Continue with the handling of an existing array.
+1444       HANDLE_ARRAY_TYPE_COMMON     (CODE)       ; Handle old/new array type.
+144E       SAVE_TYPE_IN_HEADER          (CODE)       ; Save the 'type' in the header area.
+1451       EXAMINE_LAST_PART            (CODE)       ; Examine last part of the statement.
+145F       CONSIDER_SCREEN_PARAM        (CODE)       ; Now Consider 'SCREEN$'.
+1482       CONSIDER_CODE_PARAM          (CODE)       ; Now consider 'CODE'.
+14A0       LOOK_FOR_START_ADDR          (CODE)       ; Look for a 'starting address'.
+14AF       HANDLE_LENGTH_PARAM          (CODE)       ; Handle 'length'.
+14B4       FETCH_LENGTH_PARAM           (CODE)       ; Fetch the 'length' as it was specified.
+14B8       STORE_CODE_PARAMS            (CODE)       ; Store parameters in header area.
+14CF       TYPE_3_COMMON_EXIT           (CODE)       ; 'SCREEN$' and 'CODE' are both of type 3.
+14D5       CONSIDER_LINE_PARAM          (CODE)       ; Now consider 'LINE' and 'no further parameters'.
+14E2       FETCH_LINE_NUMBER            (CODE)       ; Fetch the 'line number' that must follow 'LINE'.
+14F9       TYPE_0_COMMON_ENTRY          (CODE)       ; 'LINE' and 'no further parameters' are both of type 0.
+1519       SEPARATE_SAVE_LOAD           (CODE)       ; Separate SAVE from LOAD, VERIFY and MERGE.
+152B       HANDLE_TAPE_LOAD_MERGE_VERIFY (CODE)      ; Handle LOAD, VERIFY or MERGE from tape.
+152F	   RELIST_FROM_CURRENT_LINE     (CODE) ; Relist the BASIC Program from the Current Line
+1536	   LISTING_DISPLAY_LOOP         (CODE) ; Main loop to display a screenful of program listing.
+1540	   FETCH_ABOVE_SCREEN_ROWS (CODE) ; Fetch number of rows in Above-Screen buffer.
+1554	   CHECK_ROWS_OFF_TOP (CODE) ; Check if rows off top of screen.
+1563	   COPY_BASIC_TO_SCREEN_BUFFER (CODE) ; Copy BASIC line rows into the Screen Line Edit Buffer.
+156F	   SHIFT_BASIC_TO_BELOW_BUFFER (CODE) ; Shift BASIC line into Below-Screen buffer.
+1594	   SIGNAL_CURRENT_LINE (CODE) ; Signal this is the current line.
+1596	   COPY_ROW_TO_SCREEN_BUFFER (CODE) ; Copy row from Below-Screen to Screen Line Edit Buffer.
+15AB	   LOCATE_CURSOR_COLUMN (CODE) ; Scan across BASIC line to locate cursor column position.
+15C0	   CURSOR_POS_LOCATED (CODE) ; Column position of cursor located.
+15CB	   STORE_CURRENT_CURSOR_POS (CODE) ; Store the current cursor position.
+15D3	   MOVE_TO_NEXT_ROW (CODE) ; Move to next row.
+15F4	   NO_CURRENT_LINE (CODE) ; No current line, create line number representation.
+15FD	   CONTINUE_LISTING_FROM_FIRST (CODE) ; Continue listing from the first line.
+1602	   BOTTOM_LINE_IS_CURRENT (CODE) ; Bottom line is the current line.
+1605	   PRINT_ALL_SCREEN_ROWS (CODE) ; Print All Screen Line Edit Buffer Rows to the Display File
+160C	   PRINT_EACH_ROW_LOOP (CODE) ; Loop to print each row.
+1615	   ADVANCE_TO_NEXT_ROW (CODE) ; Advance to the next row.
+161E	   FIND_NEW_CURSOR_COLUMN (CODE) ; Find new cursor column position.
+1630	   CLEAR_EDITING_DISPLAY (CODE) ; Clear Editing Display
+1639	   SHIFT_ALL_ROWS_UP_AND_UPDATE (CODE) ; Shift All Edit Buffer Rows Up and Update Display File if Required
+1648	   SHIFT_ALL_ROWS_UP_COMMON (CODE) ; Shift All Screen Line Edit Buffer Rows Up and Update Display File if Required
+1656	   SHIFT_ROWS_UP_LOOP (CODE) ; Loop to shift rows up.
+1663	   ALL_ROWS_SHIFTED_UP (CODE) ; All Screen Line Edit Buffer rows shifted up.
+1664	   SHIFT_DISPLAY_ROWS_UP (CODE) ; Shift up all edit rows in the display file.
+166F	   SHIFT_ALL_ROWS_DOWN_AND_UPDATE (CODE) ; Shift All Edit Buffer Rows Down and Update Display File if Required
+1675	   INSERT_BLANK_ROW_ENTRY (CODE) ; Entry point to insert a blank row.
+168E	   SHIFT_ROWS_DOWN_LOOP (CODE) ; Loop to shift rows down.
+1695	   ROW_SHIFT_COUNTER (CODE) ; Row shift counter.
+169A	   ALL_ROWS_SHIFTED_DOWN (CODE) ; All Screen Line Edit Buffer rows shifted down.
+16A9	   BELOW_SCREEN_BUFFER_FULL (CODE) ; The Below-Screen Line Edit Buffer is full.
+16AC	   INSERT_CHAR_SHIFT_RIGHT (CODE) ; Insert Character into Edit Buffer Row, Shifting Row Right
+16B0	   SETUP_SHIFT_RIGHT (CODE) ; Set up for shifting.
+16B3	   SHIFT_BYTES_RIGHT_LOOP (CODE) ; Loop to shift bytes right.
+16C1	   INSERT_CHAR_SHIFT_LEFT (CODE) ; Insert Character into Edit Buffer Row, Shifting Row Left
+16C5	   SETUP_SHIFT_LEFT (CODE) ; Set up for shifting.
+16CC	   SHIFT_BYTES_LEFT_LOOP (CODE) ; Loop to shift bytes left.
+16D3	   MAIN_SHIFT_LEFT_LOOP (CODE) ; Main shift loop entry.
+16D6	   END_OF_SHIFT (CODE) ; End of shift.
+16DC	   SYNTAX_OFFSET_TABLE (DATA) ; The Syntax Offset Table
+170E	   SYNTAX_PARAM_TABLE (DATA) ; The Syntax Parameter Table - LET
+17AF	   MAIN_BASIC_PARSER (CODE) ; The 'Main Parser' Of the BASIC Interpreter
+17C0	   STATEMENT_LOOP_SEPARATOR (CODE) ; Loop for ':' separator.
+17C1	   STATEMENT_LOOP (CODE) ; The Statement Loop
+17F4	   HANDLE_COMMANDS_CE_PLUS (CODE) ; Handle commands from $CE onwards.
+17FD	   COMMAND_CLASS_LOOP (CODE) ; Loop for command class routines.
+1800	   PARAM_ENTRY_LOOP (CODE) ; Loop for parameter entries.
+181A	   SEPARATOR_SUBROUTINE (CODE) ; The 'Separator' Subroutine
+1821	   STATEMENT_RETURN_SUBROUTINE (CODE) ; The 'Statement Return' Subroutine
+182A	   HANDLE_STMT_JUMP (CODE) ; Handle jump after statement.
+1838	   LINE_RUN_ENTRY_POINT (CODE) ; The 'Line Run' Entry Point
+184C	   LINE_NEW_SUBROUTINE (CODE) ; The 'Line New' Subroutine
+1862	   REM_ROUTINE (CODE) ; REM Routine
+1863	   LINE_END_ROUTINE (CODE) ; The 'Line End' Routine
+1870	   LINE_USE_ROUTINE (CODE) ; The 'Line Use' Routine
+1882	   NEXT_LINE_ROUTINE (CODE) ; The 'Next Line' Routine
+189D	   ERROR_STMT_LOST (CODE) ; Produce error report "N Statement lost".
+18A1	   CHECK_END_SUBROUTINE (CODE) ; The 'CHECK-END' Subroutine
+18A8	   STMT_NEXT_ROUTINE (CODE) ; The 'STMT-NEXT' Routine
+18B5	   COMMAND_CLASS_TABLE (DATA) ; The 'Command Class' Table
+18C4	   COMMAND_CLASS_0D (CODE) ; The 'Command Classes - 0C, 0D & 0E' - class-0D
+18C7	   COMMAND_CLASS_0C (CODE) ; The 'Command Classes - 0C, 0D & 0E' - class-0C
+18C8	   COMMAND_CLASS_0E (CODE) ; The 'Command Classes - 0C, 0D & 0E' - class-0E
+18D6	   COMMAND_CLASS_03 (CODE) ; The 'Command Classes - 00, 03 & 05' - class-03
+18D9	   COMMAND_CLASS_00 (CODE) ; The 'Command Classes - 00, 03 & 05' - class-00
+18DA	   COMMAND_CLASS_05 (CODE) ; The 'Command Classes - 00, 03 & 05' - class-05
+18F8	   RETURN_FROM_ROM_PAGING (CODE) ; Return point after ROM paging.
+18F9	   COMMAND_CLASS_01 (CODE) ; The 'Command Class - 01'
+18FD	   COMMAND_CLASS_02 (CODE) ; The 'Command Class - 02'
+1905	   COMMAND_CLASS_04 (CODE) ; The 'Command Class - 04'
+1909	   COMMAND_CLASS_08 (CODE) ; The 'Command Class - 08'
+190A	   DELEGATE_EXPT_2NUM (CODE) ; Delegate handling to ROM 1 for EXPT_2NUM.
+190E	   COMMAND_CLASS_06 (CODE) ; The 'Command Class - 06'
+1912	   REPORT_C_NONSENSE (CODE) ; Report C - Nonsense in BASIC
+1916	   COMMAND_CLASS_0A (CODE) ; The 'Command Class - 0A'
+191A	   COMMAND_CLASS_07 (CODE) ; The 'Command Class - 07'
+1927	   PROCESS_COLOR_CMDS (CODE) ; Process colour commands.
+1944	   COMMAND_CLASS_09 (CODE) ; The 'Command Class - 09'
+1948	   COMMAND_CLASS_0B (CODE) ; The 'Command Class - 0B'
+1967	   IF_ROUTINE (CODE) ; IF Routine
+196E	   DELETE_LAST_CALC_VALUE (CODE) ; 'delete' the last value on the calculator stack.
+197E	   JUMP_IF_TRUE (CODE) ; Jump to next statement if 'TRUE'.
+1981	   FOR_ROUTINE (CODE) ; FOR Routine
+198E	   HANDLE_STEP_1 (CODE) ; Handle 'STEP 1'.
+19A6	   DELEGATE_FOR_HANDLING (CODE) ; Delegate FOR handling to ROM 1.
+19AA	   READ_LOOP (CODE) ; READ Routine - loop for each variable.
+19AB	   READ_ROUTINE (CODE) ; READ Routine - main entry.
+19CB	   PICK_UP_DATA_VALUE (CODE) ; Pick up a value from the DATA list.
+19E2	   CHECK_READ_SEPARATOR (CODE) ; Check for comma separator.
+19E5	   READ_MORE_ITEMS_LOOP (CODE) ; Loop for more items.
+19EB	   DATA_ROUTINE (CODE) ; DATA Routine
+19F1	   DATA_EXPRESSION_LOOP (CODE) ; Loop for each expression in DATA.
+19FC	   PASS_BY_RUNTIME (CODE) ; Pass-by in 'run-time'.
+19FE	   PASS_BY_DATA_OR_DEFFN (CODE) ; Pass-by 'DATA' or 'DEF FN'.
+1A02	   RUN_ROUTINE (CODE) ; RUN Routine
+1A0D	   CLEAR_ROUTINE (CODE) ; CLEAR Routine
+1A10	   ENTRY_FROM_RUN (CODE) ; Entry from RUN routine.
+1A18	   SET_RAMTOP (CODE) ; Set RAMTOP.
+1A3B	   ERROR_RAMTOP_NO_GOOD (CODE) ; Produce error "M Ramtop no good".
+1A3F	   FINALIZE_CLEAR (CODE) ; Finalize CLEAR.
+1A53	   GOSUB_ROUTINE (CODE) ; GO SUB Routine
+1A6F	   RETURN_ROUTINE (CODE) ; RETURN Routine
+1A86	   ERROR_RETURN_NO_GOSUB (CODE) ; Produce error "7 RETURN without GO SUB".
+1A8C	   DEFFN_ROUTINE (CODE) ; DEF FN Routine
+1A97	   HANDLE_DEFFN_VARIABLE (CODE) ; Handle the variable of the function.
+1AAA	   CHECK_DEFFN_PARENS (CODE) ; Check for parenthesis.
+1AB3	   DEFFN_PARAM_LOOP (CODE) ; Loop for each parameter.
+1AB6	   DEFFN_PARAM_MUST_BE_LETTER (CODE) ; The present code must be a letter.
+1AC1	   HANDLE_DEFFN_PARAMS (CODE) ; Handle parameters.
+1AD3	   HANDLE_DEFFN_DEFINITION (CODE) ; Handle the definition of the function.
+1AEA	   ERROR_DEFFN_SYNTAX (CODE) ; Give error report if syntax incorrect.
+1AF0	   MOVE_ROUTINE (CODE) ; MOVE Routine
+1AF1	   RUN_TAPE_LOADER (CODE) ; Run Tape Loader
+1B14	   LIST_TO_PRINTER (CODE) ; List Program to Printer
+1B2B	   SPECTRUM_ROUTINE (CODE) ; SPECTRUM Routine
+1B47	   MENU_48K_BASIC (CODE) ; Main Menu - 48 BASIC Option
+1B53	   SET_P_CHANNEL_DATA (CODE) ; Set 'P' Channel Data
+1B6E	   LOAD_EMPTY_BYTES (DATA) ; LOAD "" Command Bytes
+1B71	   LLIST_ROUTINE (CODE) ; LLIST Routine
+1B75	   LIST_ROUTINE (CODE) ; LIST Routine
+1B77	   LIST_LLIST_COMMON (CODE) ; Common entry for LIST/LLIST.
+1B83	   OPEN_CHANNEL_FOR_LIST (CODE) ; Open channel for LIST.
+1B96	   HANDLE_LIST_NUM_EXPR (CODE) ; Handle numeric expression after LIST.
+1B9E	   USE_ZERO_IF_NO_EXPR (CODE) ; Use zero if no numeric expression.
+1BA3	   FETCH_LINE_NUM_NO_STREAM (CODE) ; Fetch line number if no stream change.
+1BA6	   DELEGATE_LIST_HANDLING (CODE) ; Delegate LIST handling to ROM 1.
+1BAD	   RAM_DISK_SAVE_ROUTINE (CODE) ; RAM Disk SAVE! Routine
+1BE5	   CAT_ROUTINE (CODE) ; CAT! Routine
+1C0C	   ERASE_ROUTINE (CODE) ; ERASE! Routine
+1C2E	   LOAD_HEADER_FROM_RAM_DISK (CODE) ; Load Header from RAM Disk
+1C4B	   LOAD_FROM_RAM_DISK (CODE) ; Load from RAM Disk
+1C64	   PAGE_LOGICAL_RAM_BANK (CODE) ; Page Logical RAM Bank
+1C81	   PHYSICAL_RAM_BANK_MAP_TABLE (DATA) ; Physical RAM Bank Mapping Table
+1C87	   COMPARE_FILENAMES (CODE) ; Compare Filenames
+1C8A	   COMPARE_FILENAMES_DE_IX (CODE) ; Compare filenames at DE and IX.
+1C8F	   COMPARE_FILENAMES_LOOP (CODE) ; Loop to compare characters.
+1C97	   CREATE_NEW_CATALOGUE_ENTRY (CODE) ; Create New Catalogue Entry
+1CA0	   CHECK_CATALOGUE_SPACE (CODE) ; Check for space in catalogue.
+1CBE	   COPY_FILENAME_SET_FLAGS (CODE) ; Copy filename and set flags.
+1CF3	   ADJUST_RAM_DISK_FREE_SPACE (CODE) ; Adjust RAM Disk Free Space
+1D03	   STORE_NEW_FREE_SPACE (CODE) ; Store new free space value.
+1D0A	   HANDLE_ADDING_DATA (CODE) ; Handle adding data.
+1D0E	   ERROR_OUT_OF_MEMORY (CODE) ; Produce "4 Out of memory" error.
+1D12	   FIND_CATALOGUE_ENTRY (CODE) ; Find Catalogue Entry for Filename
+1D1B	   FIND_ENTRY_LOOP (CODE) ; Loop to find entry.
+1D2E	   NO_MATCH_NEXT_ENTRY (CODE) ; No match found, point to next entry.
+1D35	   FIND_RAM_DISK_FILE (CODE) ; Find RAM Disk File
+1D3E	   FILE_EXISTS_SETUP_ADDR (CODE) ; File exists, set up current working address.
+1D56	   UPDATE_CATALOGUE_ENTRY (CODE) ; Update Catalogue Entry
+1D9C	   COPY_PREV_END_ADDR (CODE) ; Copy the end address of the previous entry into the new entry.
+1DAC	   SAVE_BYTES_TO_RAM_DISK (CODE) ; Save Bytes to RAM Disk
+1DCC	   SOURCE_BELOW_C000_FULL (CODE) ; Source fits completely below upper RAM bank.
+1DD5	   SOURCE_WITHIN_UPPER_RAM (CODE) ; Source fits completely within upper RAM bank.
+1DE4	   SOURCE_FITS_TRANSFER_BUFFER (CODE) ; Source fits completely within transfer buffer.
+1DE9	   TRANSFER_BLOCK_SAVE (CODE) ; Transfer a block.
+1DF4	   SETUP_BLOCK_TRANSFER_SAVE (CODE) ; Set up for block transfer.
+1E05	   TRANSFER_BYTE_SAVE (CODE) ; Transfer a byte.
+1E0B	   ALL_BYTES_TRANSFERRED_SAVE (CODE) ; All bytes transferred.
+1E24	   END_OF_RAM_BANK_SAVE (CODE) ; End of RAM bank reached.
+1E37	   LOAD_BYTES_FROM_RAM_DISK (CODE) ; Load Bytes from RAM Disk
+1E45	   DEST_BELOW_C000 (CODE) ; Destination is below $C000.
+1E5C	   CODE_SPANS_C000 (CODE) ; Code will span across $C000.
+1E67	   CODE_DESTINED_UPPER_RAM (CODE) ; Code destined for upper RAM bank.
+1E76	   CODE_SPANS_TRANSFER_BUFFER (CODE) ; Code will span transfer buffer.
+1E7B	   TRANSFER_BLOCK_LOAD (CODE) ; Transfer a block.
+1E80	   SETUP_BLOCK_TRANSFER_LOAD (CODE) ; Set up for block transfer.
+1E91	   TRANSFER_BYTE_LOOP_LOAD (CODE) ; Loop to transfer bytes.
+1E97	   ALL_BYTES_TRANSFERRED_LOAD (CODE) ; All bytes transferred.
+1EB7	   TRANSFER_REMAINING_FROM_BUFFER (CODE) ; Transfer remaining bytes from buffer.
+1EBC	   END_OF_RAM_BANK_LOAD (CODE) ; End of RAM bank has been reached.
+1ECF	   VECT_TRANSFER_TO_RAM4_UNUSED (CODE) ; Transfer Bytes to RAM Bank 4 - Vector Table Entry
+1EE8	   VECT_LOAD_ENTRY (CODE) ; Entry point for load vector routine.
+1F04	   VECT_TRANSFER_FROM_RAM4_UNUSED (CODE) ; Transfer Bytes from RAM Bank 4 - Vector Table Entry
+1F20	   USE_NORMAL_RAM_CONFIG_PAGING (CODE) ; Use Normal RAM Configuration
+1F3A	   SELECT_RAM_BANK_PAGING (CODE) ; Select RAM Bank
+1F45	   USE_WORKSPACE_RAM_CONFIG (CODE) ; Use Workspace RAM Configuration
+1F5F	   ERASE_RAM_DISK_FILE (CODE) ; Erase a RAM Disk File
+1F68	   FILE_FOUND_FREE_SPACE (CODE) ; File found, free up space.
+200D	   DECREMENT_AND_MOVE_FILE (CODE) ; Decrement and move file.
+2024	   STORE_BYTE_FROM_NEXT_FILE (CODE) ; Store byte from next file.
+203E	   FILE_HAS_BEEN_MOVED (CODE) ; The file has been moved.
+2048	   DELETE_CATALOGUE_ENTRY (CODE) ; Delete a catalogue entry.
+2061	   UPDATE_CATALOGUE_LOOP (CODE) ; Loop to update catalogue entries.
+207C	   UPDATE_START_ADDRESS (CODE) ; Update start address.
+2099	   UPDATE_END_ADDRESS (CODE) ; Update end address.
+20D2	   PRINT_RAM_DISK_CATALOGUE (CODE) ; Print RAM Disk Catalogue
+20DA	   SETUP_FILENAME_COMPARISON (CODE) ; Set up initial comparison filenames.
+20E1	   PRINT_CATALOGUE_LOOP (CODE) ; Loop to find and print next highest filename.
+210A	   POINT_TO_NEXT_CAT_ENTRY (CODE) ; Point to next catalogue entry.
+2111	   ALL_FILENAMES_PRINTED (CODE) ; All filenames printed.
+2121	   FILENAME_DATA_LOWEST (DATA) ; Print Catalogue Filename Data - lowest
+212B	   FILENAME_DATA_HIGHEST (DATA) ; Print Catalogue Filename Data - highest
+2135	   PRINT_SINGLE_CATALOGUE_ENTRY (CODE) ; Print Single Catalogue Entry
+2152	   PRINT_FILENAME_LOOP (CODE) ; Loop to print filename.
+2174	   LPRINT_ROUTINE (CODE) ; LPRINT Routine
+2178	   PRINT_ROUTINE (CODE) ; PRINT Routine
+217A	   PRINT_LPRINT_COMMON (CODE) ; Common entry for PRINT/LPRINT.
+2182	   DELEGATE_PRINT_TO_ROM1 (CODE) ; Delegate PRINT handling to ROM 1.
+218C	   INPUT_ROUTINE (CODE) ; INPUT Routine
+2199	   SIGNAL_LOWER_SCREEN (CODE) ; Signal lower screen is being handled.
+21A7	   COPY_ROUTINE (CODE) ; COPY Routine
+21AA	   NEW_ROUTINE (CODE) ; NEW Routine
+21AE	   CIRCLE_ROUTINE (CODE) ; CIRCLE Routine
+21BE	   DRAW_ROUTINE (CODE) ; DRAW Routine
+21CA	   HANDLE_DRAW_ANGLE (CODE) ; Handle third parameter (angle).
+21D5	   DIM_ROUTINE (CODE) ; DIM Routine
+21E7	   RECLAIM_EXISTING_ARRAY (CODE) ; An 'existing array' is reclaimed.
+21EB	   ERROR_C_NONSENSE_BASIC_2 (CODE) ; Error Report C - Nonsense in BASIC
+21EF	   CLEAR_SCREEN_ROUTINE (CODE) ; Clear Screen Routine
+21F8	   EVALUATE_NUMERIC_EXPRESSION (CODE) ; Evaluate Numeric Expression
+223A	   ERROR_Q_PARAMETER (CODE) ; Produce error "Q Parameter error".
+223E	   SIMULATE_ENTER_PRESS (CODE) ; Make it appear that 'Enter' has been pressed.
+2264	   PROCESS_FP_NUMBER_LOOP (CODE) ; Loop to process all characters of floating point number.
+226F	   PROCESS_KEY_PRESS (CODE) ; Process Key Press
+228E	   FIND_START_OF_BASIC_COMMAND (CODE) ; Find Start of BASIC Command
+2297	   IS_LET_COMMAND (CODE) ; Is LET Command?
+22A0	   CHECK_MULTISTATEMENT_LET_LOOP (CODE) ; Loop to check for multi-statement LET.
+22AB	   IS_OPERATOR_CHARACTER (CODE) ; Is Operator Character?
+22AF	   FIND_OPERATOR_LOOP (CODE) ; Loop to find operator in table.
+22B9	   OPERATOR_NOT_FOUND (CODE) ; Not found.
+22BD	   OPERATOR_TOKENS_TABLE (DATA) ; Operator Tokens Table
+22CB	   IS_FUNCTION_CHARACTER (CODE) ; Is Function Character?
+22DD	   RETURN_IF_FUNCTION (CODE) ; Return zero flag set if a function token.
+22E0	   IS_NUMERIC_OR_FUNCTION (CODE) ; Is Numeric or Function Expression?
+22E9	   CHAR_IS_LETTER_NUM_FUNC (CODE) ; Character is a letter.
+22ED	   CHAR_NOT_LETTER_NUM_FUNC (CODE) ; Character is not a letter.
+22F6	   CHECK_NEXT_NUMERIC_CHAR (CODE) ; Loop for next numeric character.
+2307	   RESET_FLAG_NON_ALPHANUM (CODE) ; Reset zero flag for non-alphanumeric.
+230A	   IS_NUMERIC_CHARACTER (CODE) ; Is Numeric Character?
+2314	   NOT_NUMERIC_DIGIT (CODE) ; Not a numeric digit.
+2317	   PLAY_ROUTINE (CODE) ; PLAY Routine
+231A	   PLAY_STRING_LOOP (CODE) ; Loop for each string in PLAY.
+2327	   CHECK_PLAY_STRING_COUNT (CODE) ; Check number of strings.
+2330	   CONTINUE_PLAY_CODE (CODE) ; Continue with PLAY code.
+2336	   UNUSED_RETURN_TO_EDITOR (CODE) ; UNUSED - Return to Editor
+2342	   UNUSED_BC_HL_DE_SWAP (CODE) ; UNUSED - BC=HL-DE, Swap HL and DE
+234A	   UNUSED_CREATE_ROOM_1_BYTE (CODE) ; UNUSED - Create Room for 1 Byte
+2358	   UNUSED_ROOM_FOR_BC_BYTES (CODE) ; UNUSED - Room for BC Bytes?
+2368	   UNUSED_ERROR_OUT_OF_MEMORY (CODE) ; UNUSED - Signal error "4 Out of Memory".
+236F	   UNUSED_HL_A_32 (CODE) ; UNUSED - HL = A32
+2371	   UNUSED_HL_A_8 (CODE) ; UNUSED - HL = A8
+2378	   UNUSED_FIND_FREE_SPACE (CODE) ; UNUSED - Find Amount of Free Space
+2384	   UNUSED_PRINT_SCREEN_BUFFER_ROW (CODE) ; UNUSED - Print Screen Buffer Row
+23B8	   UNUSED_BLANK_SCREEN_BUFFER (CODE) ; UNUSED - Blank Screen Buffer Content
+23CB	   UNUSED_PRINT_BUFFER_TO_DISPLAY (CODE) ; UNUSED - Print Screen Buffer to Display File
+23E1	   UNUSED_PRINT_CHARS_TO_DISPLAY (CODE) ; UNUSED - Print Screen Buffer Characters to Display File
+23EC	   UNUSED_HANDLE_CONTROL_CHARS (CODE) ; UNUSED - Handle control characters.
+23F7	   UNUSED_HANDLE_GRAPHIC_UDG (CODE) ; UNUSED - Handle graphic/UDG characters.
+2409	   UNUSED_HANDLE_GRAPHIC (CODE) ; UNUSED - Handle graphic characters.
+2411	   UNUSED_HANDLE_UDG (CODE) ; UNUSED - Handle UDG characters.
+2422	   UNUSED_HANDLE_SPECIAL_SYMBOLS (CODE) ; UNUSED - Handle special symbols and graphic characters.
+2429	   UNUSED_DISPLAY_SYMBOL (CODE) ; UNUSED - Display a symbol.
+242B	   UNUSED_DROP_THROUGH_COPY_A (CODE) ; UNUSED - Drop through to Copy A Character.
+242C	   UNUSED_COPY_A_CHAR_RAM (CODE) ; UNUSED - Copy A Character <<< RAM Routine >>>
+244C	   UNUSED_SWITCH_TO_RAM7 (CODE) ; UNUSED - Switch back to RAM bank 7 if needed.
+2450	   UNUSED_CONTINUE_NEXT_CHAR (CODE) ; UNUSED - Continue to next character.
+2456	   UNUSED_TOGGLE_ROMS_1_RAM (CODE) ; UNUSED - Toggle ROMs 1 <<< RAM Routine >>>
+2464	   UNUSED_TOGGLE_ROMS_2_RAM (CODE) ; UNUSED - Toggle ROMs 2 <<< RAM Routine >>>
+246F	   UNUSED_CONSTRUCT_COPY_CHAR (CODE) ; UNUSED - Construct 'Copy Character' Routine in RAM
+2488	   UNUSED_SET_ATTRIBUTES_FROM_BUFFER (CODE) ; UNUSED - Set Attributes File from Screen Buffer
+249B	   UNUSED_SET_ATTRIBUTES_FOR_ROW (CODE) ; UNUSED - Set Attributes for a Screen Buffer Row
+249C	   UNUSED_SET_ATTR_MAIN_LOOP (CODE) ; UNUSED - Main loop for setting attributes.
+24AA	   UNUSED_NOT_BLANK_CHAR (CODE) ; UNUSED - Not a blank character.
+24C2	   UNUSED_HANDLE_PAPER (CODE) ; UNUSED - Handle PAPER.
+24D1	   UNUSED_HANDLE_FLASH (CODE) ; UNUSED - Handle FLASH.
+24DE	   UNUSED_HANDLE_BRIGHT (CODE) ; UNUSED - Handle BRIGHT.
+24EC	   UNUSED_HANDLE_INVERSE (CODE) ; UNUSED - Handle INVERSE.
+2505	   UNUSED_COMBINE_STORE_ATTR (CODE) ; UNUSED - Combine and store new attribute value.
+2507	   UNUSED_ATTR_LOOP_ALL_CHARS (CODE) ; UNUSED - Loop for all characters in row.
+2513	   UNUSED_SWAP_INK_PAPER_BITS (CODE) ; UNUSED - Swap Ink and Paper Attribute Bits
+2527	   UNUSED_GRAPHIC_CTRL_CODE_DATA (DATA) ; UNUSED - Character Data - Graphic control code
+252F	   UNUSED_ERROR_MARKER_DATA (DATA) ; UNUSED - Character Data - Error marker
+2537	   EDIT_KEYS_ACTION_TABLE (DATA) ; Editing Keys Action Table
+2577	   MENU_KEYS_ACTION_TABLE (DATA) ; Menu Keys Action Table
+2584	   INIT_MODE_SETTINGS (CODE) ; Initialise Mode Settings
+259F	   SHOW_MAIN_MENU (CODE) ; Show Main Menu
+25AD	   SETUP_MAIN_MENU_DISPLAY (CODE) ; Set up for Main Menu display.
+25CB	   RETURN_FROM_ERROR (CODE) ; Return to Editor / Calculator / Menu from Error
+25E3	   MAIN_RETURN_LOOP_ERROR (CODE) ; Main return loop from error/action.
+2601	   RETURN_TO_CALCULATOR (CODE) ; Return to Calculator mode.
+2604	   RETURN_TO_EDITOR (CODE) ; Return to the Editor
+262A	   NO_PROGRAM_EXISTS (CODE) ; No program exists.
+262D	   RELIST_FROM_LAST_EDITED (CODE) ; Relist from last edited line.
+2653	   MAIN_WAITING_LOOP (CODE) ; Main Waiting Loop
+2669	   PROCESS_KEY_PRESS_MAIN (CODE) ; Process Key Press
+2677	   FIND_CALL_KEY_HANDLER (CODE) ; Find and call the action handler for this key press.
+2681	   NO_ACTION_FOR_KEY (CODE) ; No action defined for key code.
+2689	   MENU_NOT_DISPLAYED (CODE) ; A menu is not being displayed.
+2694	   CHECK_SUPPORTED_FUNC_KEY (CODE) ; Check if a supported function key code was pressed.
+269B	   TOGGLE_KEY_HANDLER (CODE) ; TOGGLE Key Handler Routine
+26B6	   SET_LOWER_AREA (CODE) ; Set the lower area as the current editing area.
+26B9	   SIGNAL_NO_ERROR_BEEP (CODE) ; Signal do not produce an error beep.
+26BB	   SELECT_LOWER_SCREEN (CODE) ; Select Lower Screen
+26CE	   SELECT_UPPER_SCREEN (CODE) ; Select Upper Screen
+26D9	   RELIST_BASIC_PROGRAM (CODE) ; Relist the BASIC program.
+26E7	   PRODUCE_ERROR_BEEP (CODE) ; Produce Error Beep
+26EC	   KEY_CLICK_TONE (CODE) ; Entry point for key click tone.
+26F4	   PRODUCE_TONE (CODE) ; Produce a tone.
+26FA	   PRODUCE_SUCCESS_BEEP (CODE) ; Produce Success Beep
+2704	   MENU_KEY_HANDLER_MENU (CODE) ; Menu Key Press Handler - MENU
+270F	   DISPLAY_FIRST_MENU_ITEM (CODE) ; Display menu and highlight first item.
+2717	   MENU_KEY_HANDLER_SELECT (CODE) ; Menu Key Press Handler - SELECT
+272E	   MENU_KEY_HANDLER_CURSOR_UP (CODE) ; Menu Key Press Handler - CURSOR UP
+2731	   MENU_KEY_HANDLER_CURSOR_DOWN (CODE) ; Menu Key Press Handler - CURSOR DOWN
+2732	   HANDLE_CURSOR_UP_DOWN (CODE) ; Handle cursor up/down.
+2742	   COMPLETE_MENU_CURSOR (CODE) ; Complete handling of Menu cursor.
+2744	   MAIN_MENU_JUMP_TABLE (DATA) ; Main Menu - Jump table
+2754	   MAIN_MENU_TEXT (DATA) ; Main Menu - Text
+2790	   EDIT_MENU_JUMP_TABLE (DATA) ; Edit Menu - Jump table
+27A0	   EDIT_MENU_TEXT (DATA) ; Edit Menu - Text
+27CB	   CALC_MENU_JUMP_TABLE (DATA) ; Calculator Menu - Jump table
+27D2	   CALC_MENU_TEXT (DATA) ; Calculator Menu - Text
+27EB	   TAPE_LOADER_TEXT (DATA) ; Tape Loader Text
+2811	   MENU_HANDLER_SCREEN (CODE) ; Edit Menu - Screen Option
+2816	   MENU_HANDLER_TAPE_TESTER (CODE) ; Main Menu - Tape Tester Option
+281C	   MENU_HANDLER_EXIT (CODE) ; Edit Menu / Calculator Menu - Exit Option
+2831	   MENU_HANDLER_TAPE_LOADER (CODE) ; Main Menu - Tape Loader Option
+2851	   MENU_HANDLER_RENUMBER (CODE) ; Edit Menu - Renumber Option
+2862	   MENU_HANDLER_PRINT (CODE) ; Edit Menu - Print Option
+2865	   RENUMBER_OPTION_JOINS_HERE (CODE) ; Edit Menu - Renumber option joins here.
+286C	   CLEAR_AND_PRINT_BANNER (CODE) ; Clear screen and print "128 BASIC" banner.
+2874	   SCREEN_OPTION_JOINS_HERE (CODE) ; Edit Menu - Screen option joins here.
+2885	   MENU_HANDLER_CALCULATOR (CODE) ; Main Menu - Calculator Option
+28B1	   PRINT_OPTION_JOINS_HERE (CODE) ; Edit Menu - Print option joins here.
+28BE	   RESET_CURSOR_POSITION (CODE) ; Reset Cursor Position
+28C7	   RETURN_TO_MAIN_MENU (CODE) ; Return to Main Menu
+28D1	   MAIN_SCREEN_ERROR_CURSOR_SETTINGS (DATA) ; Main Screen Error Cursor Settings
+28D8	   LOWER_SCREEN_GOOD_CURSOR_SETTINGS (DATA) ; Lower Screen Good Cursor Settings
+28DF	   INIT_LOWER_SCREEN_SETTINGS (CODE) ; Initialise Lower Screen Editing Settings
+28E8	   INIT_MAIN_SCREEN_SETTINGS (CODE) ; Initialise Main Screen Editing Settings
+28F1	   HANDLE_KEY_PRESS_CHAR (CODE) ; Handle Key Press Character Code
+291B	   DEL_RIGHT_HANDLER (CODE) ; DELETE-RIGHT Key Handler Routine
+292B	   DEL_LEFT_HANDLER (CODE) ; DELETE Key Handler Routine
+2944	   ENTER_HANDLER (CODE) ; ENTER Key Handler Routine
+295E	   ON_BASIC_LINE (CODE) ; On a BASIC line.
+296A	   INSERT_BLANK_ROW (CODE) ; Insert a blank row after the current line.
+297A	   CURSOR_ON_BLANK_ROW (CODE) ; Cursor is on a blank row.
+297F	   SYNTAX_ERROR_OCCURRED (CODE) ; A syntax error occurred.
+2983	   TOP_OF_PROG_HANDLER (CODE) ; TOP-OF-PROGRAM Key Handler Routine
+29AB	   END_OF_PROG_HANDLER (CODE) ; END-OF-PROGRAM Key Handler Routine
+29D4	   WORD_LEFT_HANDLER (CODE) ; WORD-LEFT Key Handler Routine
+29E1	   WORD_RIGHT_HANDLER (CODE) ; WORD-RIGHT Key Handler Routine
+29EC	   REMOVE_CURSOR (CODE) ; Remove Cursor
+29F2	   SHOW_CURSOR (CODE) ; Show Cursor
+29F8	   DISPLAY_CURSOR (CODE) ; Display Cursor
+2A07	   FETCH_CURSOR_POSITION (CODE) ; Fetch Cursor Position
+2A11	   STORE_CURSOR_POSITION (CODE) ; Store Cursor Position
+2A1A	   GET_CHAR_FROM_SCREEN_BUFFER (CODE) ; Get Current Character from Screen Line Edit Buffer
+2A25	   TEN_ROWS_DOWN_HANDLER (CODE) ; TEN-ROWS-DOWN Key Handler Routine
+2A2B	   MOVE_DOWN_LOOP (CODE) ; Loop to move down.
+2A42	   BLANK_ROW_BELOW (CODE) ; A blank row was found below.
+2A4F	   TEN_ROWS_UP_HANDLER (CODE) ; TEN-ROWS-UP Key Handler Routine
+2A55	   MOVE_UP_LOOP (CODE) ; Loop to move up.
+2A6D	   BLANK_ROW_ABOVE (CODE) ; A blank row was found above.
+2A7A	   END_OF_LINE_HANDLER (CODE) ; END-OF-LINE Key Handler Routine
+2A87	   START_OF_LINE_HANDLER (CODE) ; START-OF-LINE Key Handler Routine
+2A94	   CURSOR_UP_HANDLER (CODE) ; CURSOR-UP Key Handler Routine
+2AB5	   CURSOR_DOWN_HANDLER (CODE) ; CURSOR-DOWN Key Handler Routine
+2AD7	   CURSOR_LEFT_HANDLER (CODE) ; CURSOR-LEFT Key Handler Routine
+2AE3	   CURSOR_RIGHT_HANDLER (CODE) ; CURSOR-RIGHT Key Handler Routine
+2AF9	   FIND_CLOSEST_POS_RIGHT_LEFT (CODE) ; Find Closest Screen Line Edit Buffer Editable Position to the Right else Left
+2B02	   FIND_CLOSEST_POS_LEFT_RIGHT (CODE) ; Find Closest Screen Line Edit Buffer Editable Position to the Left else Right
+2B0B	   INSERT_AND_SHIFT_DOWN (CODE) ; Insert BASIC Line, Shift Edit Buffer Rows Down If Required and Update Display File If Required
+2B2D	   MOVE_TO_PREVIOUS_ROW (CODE) ; Move onto the previous row.
+2B2F	   SIGNAL_NEW_ROW_MOVED (CODE) ; Signal a new row was moved to.
+2B30	   INSERT_AND_SHIFT_UP (CODE) ; Insert BASIC Line, Shift Edit Buffer Rows Up If Required and Update Display File If Required
+2B3F	   INSERT_LINE_IF_ALTERED (CODE) ; Insert the BASIC Line into the BASIC program if the line has been altered.
+2B58	   ON_LAST_ROW (CODE) ; On the last row of the editing area?
+2B5A	   SIGNAL_NEW_ROW_MOVED_2 (CODE) ; Signal a new row was moved to.
+2B5B	   FIND_POS_LEFT_WRAP (CODE) ; Find Next Screen Line Edit Buffer Editable Position to Left, Wrapping Above if Required
+2B66	   WRAP_ABOVE (CODE) ; Wrap above to the previous row.
+2B78	   FIND_POS_RIGHT_WRAP (CODE) ; Find Next Screen Line Edit Buffer Editable Position to Right, Wrapping Below if Required
+2B85	   WRAP_BELOW (CODE) ; Need to wrap below to the next row.
+2BC0	   CONTINUE_WRAP_BELOW (CODE) ; Continue wrapping to row below.
+2BD4	   FIND_POS_FROM_PREV_RIGHT (CODE) ; Find Screen Line Edit Buffer Editable Position from Previous Column to the Right
+2BDF	   FIND_POS_FROM_CURR_LEFT (CODE) ; Find Screen Line Edit Buffer Editable Position to the Left
+2BEA	   FIND_WORD_LEFT (CODE) ; Find Start of Word to Left in Screen Line Edit Buffer
+2BEC	   SEARCH_LEFT_FOR_SPACE (CODE) ; Search towards the left of this row until a space or start of line is found.
+2BF1	   GET_NEW_POS_CHAR_LEFT (CODE) ; Get character at new position.
+2BF8	   SEARCH_LEFT_FOR_WORD_START (CODE) ; Search towards the left of this row until the start of the word or start of the line is found.
+2C07	   SPACE_BEFORE_WORD (CODE) ; A space prior to the word was found.
+2C09	   FIND_WORD_RIGHT (CODE) ; Find Start of Word to Right in Screen Line Edit Buffer
+2C0B	   SEARCH_RIGHT_FOR_SPACE (CODE) ; Search towards the right of this row until a space or end of line is found.
+2C17	   SEARCH_RIGHT_FOR_WORD_START (CODE) ; Search towards the right of this row until the start of a new word or end of the line is found.
+2C2B	   END_OF_LINE_FOUND (CODE) ; End of line or start of next line was found.
+2C31	   FIND_START_OF_BASIC_LINE (CODE) ; Find Start of Current BASIC Line in Screen Line Edit Buffer
+2C33	   FIND_START_LINE_LOOP (CODE) ; Loop to find the start of the BASIC line.
+2C45	   ON_FIRST_ROW_FIND_START_COL (CODE) ; On the first row of the BASIC line, so find the starting column.
+2C4C	   FIND_END_OF_BASIC_LINE (CODE) ; Find End of Current BASIC Line in Screen Line Edit Buffer
+2C4E	   FIND_END_LINE_LOOP (CODE) ; Loop to find the end of the BASIC line.
+2C60	   ON_LAST_ROW_FIND_END_COL (CODE) ; On the last row of the BASIC line, so find the last column.
+2C65	   RESTORE_REGS_AND_RETURN (CODE) ; Restore registers.
+2C68	   INSERT_LINE_IF_ALTERED_MAIN (CODE) ; Insert BASIC Line into Program if Altered
+2C7C	   INSERT_LINE_IF_ALTERED_FIRST_ROW (CODE) ; Insert Line into BASIC Program If Altered and the First Row of the Line
+2C8E	   INSERT_LINE_INTO_BASIC (CODE) ; Insert Line into BASIC Program
+2C90	   FIND_ROW_START_ADDR_IN_BUFFER (CODE) ; Find the start address of the row in the Screen Line Edit Buffer.
+2CA3	   TOKENIZE_TYPED_LINE (CODE) ; Tokenize the typed BASIC line.
+2CEF	   SYNTAX_ERROR_IN_LINE (CODE) ; A syntax error occurred.
+2D0A	   SHIFT_CURSOR_TO_ERROR (CODE) ; Shift the cursor to the error marker position.
+2D1B	   MOVE_CURSOR_BACK_TO_ERROR (CODE) ; Move the cursor back until it is at the same position as the error marker.
+2D2A	   MOVE_CURSOR_FORWARD_TO_ERROR (CODE) ; Move the cursor forward until it is at the same position as the error marker.
+2D2B	   GET_KEY_PRESS_ERROR (CODE) ; Get a key press.
+2D38	   MOVE_CURSOR_FORWARD_LOOP (CODE) ; Loop to move cursor forward.
+2D45	   CURSOR_AT_ERROR_MARKER (CODE) ; The cursor position is at the location of the error marker.
+2D54	   FETCH_NEXT_CHAR_TO_INSERT (CODE) ; Fetch Next Character from BASIC Line to Insert
+2D62	   GET_CHAR_AND_STATUS (CODE) ; Get character and status.
+2D85	   FETCH_NEXT_CHAR_JUMP_TABLE (DATA) ; Fetch Next Character Jump Table
+2D8F	   FETCH_CHAR_FROM_CURRENT_ROW (CODE) ; Fetch Character from the Current Row of the BASIC Line in the Screen Line Edit Buffer
+2D92	   FETCH_FROM_ABOVE_SCREEN_LOOP (CODE) ; Loop to get character from Above-Screen buffer.
+2D9E	   END_OF_ABOVE_SCREEN_ROW (CODE) ; End of row reached - no more editable characters in Above-Screen Line Edit Buffer row.
+2DAC	   ON_VISIBLE_ROW (CODE) ; On visible row of BASIC line.
+2DBE	   CURSOR_ON_FIRST_VISIBLE_ROW (CODE) ; Cursor on first visible row of the BASIC line in the Screen Line Edit Buffer.
+2DBF	   FETCH_FROM_SCREEN_BUFFER (CODE) ; Fetch a character from the Screen Line Edit Buffer.
+2DCE	   END_OF_SCREEN_ROW (CODE) ; End of row reached - no editable characters in the Screen Line Edit Buffer row.
+2DDB	   NOT_LAST_ROW_MOVE_TO_NEXT (CODE) ; Not on the last row of the BASIC line so move to the beginning of the next, if it is on screen.
+2DE9	   USING_LOWER_SCREEN_TOP_ROW (CODE) ; Using lower screen and only top row of a multi-row BASIC line is visible.
+2DEC	   FETCH_FROM_BELOW_SCREEN_BUFFER (CODE) ; Fetch character from Below-Screen Line Edit Buffer.
+2DF8	   END_OF_BELOW_SCREEN_ROW (CODE) ; End of row reached - no editable characters in the Below-Screen Line Edit Buffer row.
+2E09	   ALL_CHARS_FETCHED_RETURN_ENTER (CODE) ; All characters from rows off bottom of screen fetched so return an 'Enter'.
+2E0E	   FETCH_CHAR_FROM_EDIT_BUFFER_ROW (CODE) ; Fetch Character from Edit Buffer Row
+2E1B	   UPPER_SCREEN_ROWS_TABLE (DATA) ; Upper Screen Rows Table
+2E1D	   LOWER_SCREEN_ROWS_TABLE (DATA) ; Lower Screen Rows Table
+2E1F	   RESET_TO_MAIN_SCREEN (CODE) ; Reset to Main Screen
+2E2D	   RESET_TO_LOWER_SCREEN (CODE) ; Reset to Lower Screen
+2E41	   FIND_EDITABLE_POS_RIGHT (CODE) ; Find Edit Buffer Editable Position from Previous Column to the Right
+2E56	   CHECK_CURRENT_CHAR (CODE) ; Check current character.
+2E5B	   ADVANCE_TO_NEXT_POS (CODE) ; Advance to next position.
+2E63	   FIND_EDITABLE_POS_LEFT (CODE) ; Find Edit Buffer Editable Position to the Left
+2E6C	   CHECK_CURRENT_CHAR_LEFT (CODE) ; Check current character.
+2E78	   ADVANCE_TO_NEXT_EDITABLE (CODE) ; Advance to the column after the editable position.
+2E7B	   FETCH_EDIT_BUFFER_ROW_CHAR (CODE) ; Fetch Edit Buffer Row Character
+2E81	   INSERT_CHAR_IN_SCREEN_BUFFER (CODE) ; Insert Character into Screen Line Edit Buffer
+2E8E	   INSERT_CHAR_IN_BUFFER_ROW (CODE) ; Insert character into edit buffer row at current cursor position, shifting the row right.
+2ECC	   RETRIEVE_CURSOR_POS (CODE) ; Retrieve cursor position.
+2ECE	   INSERT_BLANK_ROW_SHIFT_DOWN (CODE) ; Insert Blank Row into Screen Edit Buffer, Shifting Rows Down
+2ED3	   SAVE_REGS_INSERT_BLANK (CODE) ; Save registers.
+2EEC	   RESTORE_REGS_AFTER_SHIFT (CODE) ; Restore registers after shifting rows.
+2EEF	   EMPTY_EDIT_BUFFER_ROW_DATA (DATA) ; Empty Edit Buffer Row Data
+2F12	   DELETE_CHAR_FROM_BASIC_LINE (CODE) ; Delete a Character from a BASIC Line in the Screen Line Edit Buffer
+2F17	   FIND_LAST_ROW_LOOP (CODE) ; Loop to find the last row of the BASIC line.
+2F31	   FETCH_INITIAL_CURSOR_POS (CODE) ; Fetch the initial cursor row and column numbers.
+2F32	   STACK_INITIAL_CURSOR_POS (CODE) ; Stack initial cursor row and column numbers.
+2F41	   SAVE_CHAR_TO_INSERT (CODE) ; Save the character to insert.
+2F4A	   SETUP_CHAR_SHIFT (CODE) ; Set up for character shift.
+2F54	   INSERT_AND_CHECK_BLANK (CODE) ; Insert character and check for blank row.
+2F6F	   RESTORE_ROW_START_ADDR (CODE) ; Restore start address of the row.
+2F74	   RESTORE_AND_CONTINUE_SHIFT (CODE) ; Restore character and continue shift.
+2F80	   SHIFT_UP_CLOSE_BLANK_ROW (CODE) ; Shift Rows Up to Close Blank Row in Screen Line Edit Buffer
+2FBC	   DEL_WORD_LEFT_HANDLER (CODE) ; DELETE-WORD-LEFT Key Handler Routine
+2FBF	   SAVE_EDITING_AREA_ADDR (CODE) ; Save address of the editing area information.
+2FD9	   SEARCH_WORD_START_LOOP (CODE) ; Loop to search for the start of the word.
+2FF3	   SPACE_BEFORE_WORD_FOUND (CODE) ; A space prior to a word has been found.
+2FF7	   RETRIEVE_EDITING_AREA_ADDR (CODE) ; Retrieve address of the editing area information.
+2FF8	   PRINT_ALL_ROWS (CODE) ; Print all rows to the screen.
+3017	   DEL_WORD_RIGHT_HANDLER (CODE) ; DELETE-WORD-RIGHT Key Handler Routine
+301A	   SAVE_EDITING_AREA_ADDR_2 (CODE) ; Save address of the editing area information.
+302F	   HANDLE_END_OF_WORD_SPACES (CODE) ; Handle spaces at the end of the word.
+303E	   DEL_TO_START_HANDLER (CODE) ; DELETE-TO-START-OF-LINE Key Handler Routine
+3041	   SAVE_EDITING_AREA_ADDR_3 (CODE) ; Save address of the editing area information.
+3059	   IN_FIRST_ROW_OF_BASIC (CODE) ; In the first row of the BASIC line.
+306D	   RETRIEVE_EDITING_AREA_ADDR_2 (CODE) ; Retrieve address of the editing area information.
+306E	   SIGNAL_NO_ERROR_BEEP_2 (CODE) ; Signal not to produce error beep.
+3072	   DEL_TO_END_HANDLER (CODE) ; DELETE-TO-END-OF-LINE Key Handler Routine
+3075	   DELETE_CHARS_LOOP (CODE) ; Loop to delete characters.
+3084	   REMOVE_CURSOR_DISABLE_UPDATE (CODE) ; Remove Cursor Attribute and Disable Updating Display File
+3095	   PREVIOUS_CHAR_EXISTS (CODE) ; Previous Character Exists in Screen Line Edit Buffer?
+30AE	   ON_FIRST_ROW_OF_BASIC_2 (CODE) ; On first row of a BASIC line.
+30B2	   SET_ZERO_FLAG (CODE) ; Set the zero flag.
+30B4	   FIND_ROW_ADDR_IN_BUFFER (CODE) ; Find Row Address in Screen Line Edit Buffer
+30B7	   SAVE_A_REG (CODE) ; Save A.
+30BC	   FIND_ROW_LOOP (CODE) ; Loop to find row.
+30C3	   TRANSFER_ADDR_TO_DE (CODE) ; Transfer address to DE.
+30C6	   UNUSED_FIND_POS_IN_BUFFER (CODE) ; (UNUSED) Find Position within Screen Line Edit Buffer
+30D0	   BELOW_SCREEN_BUFFER_SETTINGS (DATA) ; Below-Screen Line Edit Buffer Settings
+30D6	   SET_BELOW_SCREEN_BUFFER_SETTINGS (CODE) ; Set Below-Screen Line Edit Buffer Settings
+30DF	   SHIFT_UP_BELOW_SCREEN (CODE) ; Shift Up Rows in Below-Screen Line Edit Buffer
+30F8	   COPY_BASIC_TO_BELOW_BUFFER (CODE) ; Copy the BASIC line into the buffer.
+3101	   ROWS_IN_BELOW_BUFFER (CODE) ; There are rows in the buffer, so shift them up.
+3116	   UPDATE_ROW_COUNT (CODE) ; Update the number of rows held in the buffer.
+311E	   SHIFT_DOWN_BELOW_SCREEN (CODE) ; Shift Down Rows in Below-Screen Line Edit Buffer
+313F	   FIRST_ROW_OR_ASSOC_NUM (CODE) ; First row of the BASIC line or an associated line number stored.
+314C	   NOT_FIRST_ROW_BASIC (CODE) ; Not the first row the BASIC line.
+316E	   INSERT_CHAR_IN_BELOW_BUFFER (CODE) ; Insert Character into Below-Screen Line Edit Buffer
+3180	   INSERT_INTO_CURRENT_ROW (CODE) ; Insert character into the current row.
+3184	   INSERT_INTO_START_OF_ROW (CODE) ; Insert character into the start of the edit buffer row.
+31A0	   CHECK_ANOTHER_ROW_TO_SHIFT (CODE) ; Check whether there is another row to shift.
+31BA	   ALL_ROWS_SHIFTED_COMPLETE (CODE) ; The shifting of all rows has completed.
+31C3	   FIND_ROW_ADDR_BELOW_SCREEN (CODE) ; Find Row Address in Below-Screen Line Edit Buffer
+31C9	   DELETE_CHAR_FROM_BELOW_SCREEN (CODE) ; Delete a Character from a BASIC Line in the Below-Screen Line Edit Buffer
+31D9	   AT_LEAST_ONE_ROW_BELOW (CODE) ; There is at least one row in the Below-Screen Line Edit Buffer.
+31F2	   ROW_IS_BLANK_AFTER_SHIFT (CODE) ; The row is already blank or the result of the shift has caused it to become blank.
+3204	   BLANK_ROW_NOT_FIRST (CODE) ; The blank row is not the first row in the Below-Screen Line Edit Buffer.
+3208	   UPDATE_FLAG_BYTE_ABOVE (CODE) ; Update the flag byte for the row above.
+3216	   CONTINUE_WITH_NEXT_ROW_DEL (CODE) ; Continue with the next row.
+321B	   ALL_ROWS_BELOW_SHIFTED (CODE) ; All rows in the Below-Screen Line Edit Buffer have been shifted.
+321E	   ABOVE_SCREEN_BUFFER_SETTINGS (DATA) ; Above-Screen Line Edit Buffer Settings
+3222	   SET_ABOVE_SCREEN_BUFFER_SETTINGS (CODE) ; Set Above-Screen Line Edit Buffer Settings
+322B	   SHIFT_DOWN_ABOVE_SCREEN (CODE) ; Shift Rows Down in the Above-Screen Line Edit Buffer
+3244	   SETUP_NEW_BASIC_LINE_COPY (CODE) ; Set up to copy the new BASIC line.
+3253	   ROWS_OFF_TOP_SCREEN (CODE) ; There are rows of the BASIC line off the top of the screen.
+325D	   UPDATE_ROW_COUNT_ABOVE (CODE) ; Update the number of rows if necessary.
+3262	   STORE_NEXT_ROW_ADDR (CODE) ; Store the address of the next row.
+326A	   SHIFT_UP_ABOVE_SCREEN_IF_REQ (CODE) ; Shift Row Up into the Above-Screen Line Edit Buffer if Required
+3282	   CHECK_LAST_ROW_BASIC_2 (CODE) ; Check if last row of BASIC line.
+32A0	   NOT_LAST_ROW_BASIC_2 (CODE) ; Not the last row of the BASIC line.
+32B3	   ABOVE_SCREEN_BUFFER_FULL_2 (CODE) ; Above-Screen Line Edit Buffer is full.
+32B7	   FIND_ROW_ADDR_ABOVE_SCREEN (CODE) ; Find Row Address in Above-Screen Line Edit Buffer
+32BD	   BASIC_CHAR_ACTION_JUMP_TABLE (DATA) ; BASIC Line Character Action Handler Jump Table
+32D6	   COPY_BASIC_LINE_TO_BUFFER (CODE) ; Copy a BASIC Line into the Above-Screen or Below-Screen Line Edit Buffer
+32EA	   PROCESS_BASIC_CHAR_LOOP (CODE) ; Loop to process each character from the current BASIC line.
+3307	   CALL_ACTION_HANDLER_CHAR (CODE) ; Call action handler to process character.
+3323	   EDIT_BUFFER_HAS_ROOM (CODE) ; The edit buffer has room for another character.
+3326	   STORE_CHAR_IN_BUFFER (CODE) ; Store the character in the current row/column in the Above-Screen Line Edit Buffer.
+332C	   NO_MORE_CHARS_AVAILABLE (CODE) ; No more characters are available.
+3331	   SET_CONTINUATION_ROW (CODE) ; Set 'Continuation' Row in Line Edit Buffer
+334A	   FIND_BASIC_LINE_ADDR_SPEC (CODE) ; Find Address of BASIC Line with Specified Line Number
+3352	   CREATE_NEXT_LINE_NUM_REP (CODE) ; Create Next Line Number Representation in Keyword Construction Buffer
+335A	   FETCH_NEXT_DETOKENIZED_CHAR (CODE) ; Fetch Next De-tokenized Character from Selected BASIC Line in Program Area
+335F	   COPY_INSERT_KWD_ROUTINE_TO_RAM (CODE) ; Copy 'Insert Keyword Representation into Keyword Construction Buffer' Routine into RAM
+3374	   RAM_INSERT_KEYWORD_REP (CODE) ; Insert Keyword Representation into Keyword Construction Buffer <<< RAM Routine >>>
+3395	   TOKEN_RANGE_B5_C4 (CODE) ; Used for token range B5-C4.
+339C	   TOKEN_RANGE_C5_D4 (CODE) ; Used for token range C5-D4.
+33A3	   TOKEN_RANGE_D5_E4 (CODE) ; Used for token range D5-E4.
+33AA	   TOKEN_RANGE_E5_F4 (CODE) ; Used for token range E5-F4.
+33B1	   TOKEN_RANGE_F5_FF (CODE) ; Used for token range F5-FF.
+33B6	   FIND_TOKEN_ENTRY_LOOP (CODE) ; Loop to find token entry.
+33B8	   INDEXED_ITEM_FOUND_JUMP (CODE) ; Jump if indexed item found.
+33BA	   FIND_END_OF_TOKEN_LOOP (CODE) ; Loop to find end of token.
+33C3	   RAM_COPY_KEYWORD_CHARS (CODE) ; Copy Keyword Characters <<< RAM Routine >>>
+33D9	   COPY_KEYWORD_CHARS_LOOP (CODE) ; Loop to copy keyword characters.
+33F4	   IDENTIFY_TOKEN_FROM_TABLE (CODE) ; Identify Token from Table
+3401	   MATCH_128K_TOKENS_ENTRY (CODE) ; Entry point for matching 128K mode tokens.
+3404	   MATCH_CHARS_LOOP (CODE) ; Loop to match characters.
+340E	   COMPARE_CHARS_TOKEN (CODE) ; Compare characters.
+341A	   HANDLE_TOKEN_MISMATCH (CODE) ; Handle mismatch.
+341D	   SKIP_TO_NEXT_TOKEN_ENTRY (CODE) ; The token does not match, skip to next entry.
+3425	   ALL_CODES_TESTED_NO_MATCH (CODE) ; All character codes tested and no match found.
+3426	   TOKEN_COMMON_EXIT (CODE) ; The common exit point.
+3430	   CREATE_NEXT_LINE_NUM (CODE) ; Create Next Line Number Representation in Keyword Construction Buffer
+344D	   INSERT_LINE_NUM_IN_BUFFER (CODE) ; Insert line number into the buffer.
+3491	   END_OF_PROG_NO_LINE (CODE) ; End of program reached, no line number available.
+3495	   INSERT_ASCII_LINE_DIGIT (CODE) ; Insert ASCII Line Number Digit
+3496	   SUBTRACT_AND_COUNT_LOOP (CODE) ; Loop to subtract.
+34B1	   HANDLE_NON_ZERO_DIGIT (CODE) ; Handle non-zero digit.
+34B3	   POINT_TO_NEXT_BUFFER_LOC (CODE) ; Point to the next buffer location.
+34B6	   FIND_BASIC_LINE_ADDR_SPEC_2 (CODE) ; Find Address of BASIC Line with Specified Line Number
+34CF	   MOVE_TO_NEXT_BASIC_LINE (CODE) ; Move to Next BASIC Line
+34D9	   CHECK_END_OF_BASIC_PROG (CODE) ; Check if at End of BASIC Program
+34E0	   COMPARE_LINE_NUMBERS (CODE) ; Compare Line Numbers
+34EA	   CLEAR_BASIC_CONSTRUCTION_PTRS (CODE) ; Clear BASIC Line Construction Pointers
+34F6	   FIND_BASIC_LINE_ADDR_3 (CODE) ; Find Address of BASIC Line
+350A	   FIND_LINE_LOOP (CODE) ; Loop to find line.
+3517	   FETCH_NEXT_DETOKENIZED_CHAR_2 (CODE) ; Fetch Next De-tokenized Character from BASIC Line in Program Area
+3529	   STORE_LEADING_SPACE_FLAG (CODE) ; Store 'print a leading space' flag.
+3534	   STORE_NEXT_CHAR_ADDR (CODE) ; Store address of next character.
+353C	   FETCH_NEXT_TOKENIZED_CHAR (CODE) ; Fetch next tokenized character from BASIC line.
+3547	   HANDLE_FLOATING_POINT (CODE) ; Handle floating-point representation.
+3554	   STORE_NEXT_CMD_ADDR_AND_CHECK (CODE) ; Store next command address and check for keyword.
+3567	   HANDLE_NON_48K_KEYWORDS (CODE) ; Handle non-48K keywords.
+3572	   HANDLE_PLAY_KEYWORD (CODE) ; Handle 'PLAY'.
+3575	   COPY_KEYWORD_AND_CONTINUE (CODE) ; Copy keyword string and continue.
+357B	   NOT_A_KEYWORD (CODE) ; Not a keyword.
+358F	   SIGNAL_CHAR_AVAILABLE (CODE) ; Signal a character was available.
+3591	   SIGNAL_NO_CHAR_AVAILABLE (CODE) ; Signal no character available.
+3594	   KWD_STRING_TABLE_SPECTRUM (DATA) ; Keywords String Table - "SPECTRUM"
+359C	   KWD_STRING_TABLE_PLAY (DATA) ; Keywords String Table - "PLAY"
+35B9	   INDENTATION_SETTINGS (DATA) ; Indentation Settings
+35BC	   SET_INDENTATION_SETTINGS (CODE) ; Set Indentation Settings
+35C5	   STORE_CHAR_IN_EDIT_BUFFER (CODE) ; Store Character in Column of Edit Buffer Row
+35CC	   ENTER_ACTION_HANDLER (CODE) ; 'Enter' Action Handler Routine
+35DA	   NULL_COLUMNS_ACTION_HANDLER (CODE) ; 'Null Columns' Action Handler Routine
+35E6	   NULL_COLUMN_POSITIONS (CODE) ; Null Column Positions
+35EC	   NULL_COLUMNS_LOOP (CODE) ; Loop to null columns.
+35F4	   INDENT_EDIT_BUFFER_ROW (CODE) ; Indent Edit Buffer Row
+35F9	   INDENT_ROW_LOOP (CODE) ; Loop to indent row.
+3604	   PRINT_EDIT_BUFFER_ROW (CODE) ; Print Edit Buffer Row to Display File if Required
+3614	   RESTORE_REGS_PRINT (CODE) ; Restore registers.
+3618	   SHIFT_UP_EDIT_ROWS_DISPLAY (CODE) ; Shift Up Edit Rows in Display File if Required
+3628	   RESTORE_REGS_SHIFT_UP (CODE) ; Restore registers.
+362C	   SHIFT_DOWN_EDIT_ROWS_DISPLAY (CODE) ; Shift Down Edit Rows in Display File if Required
+363C	   RESTORE_REGS_SHIFT_DOWN (CODE) ; Restore registers.
+3640	   SET_CURSOR_ATTRIBUTE_COLOUR (CODE) ; Set Cursor Attribute Colour
+364F	   RESTORE_CURSOR_PREV_ATTR (CODE) ; Restore Cursor Position Previous Attribute
+365E	   RESET_L_MODE (CODE) ; Reset 'L' Mode
+3668	   CHECK_RETURN_TO_CALC (CODE) ; Check if returning to calculator.
+367C	   SELECT_BASIC_CALC_MODE (CODE) ; Select BASIC/Calculator mode.
+367F	   WAIT_FOR_KEY_PRESS (CODE) ; Wait for a Key Press
+3680	   MAIN_KEY_WAIT_LOOP (CODE) ; Main loop waiting for key.
+3683	   KEY_WAIT_LOOP (CODE) ; Loop waiting for key.
+36A2	   RESTORE_HL_KEY (CODE) ; Restore HL.
+36A4	   HANDLE_CAPS_MODE_CODES (CODE) ; Handle CAPS LOCK code and 'mode' codes.
+36A8	   DISPLAY_MENU (CODE) ; Display Menu
+36D1	   PRINT_MENU_ITEMS_LOOP (CODE) ; Loop to print menu items.
+36D7	   PRINT_SINGLE_MENU_ITEM_LOOP (CODE) ; Loop to print a single menu item.
+36E0	   PRINT_FINAL_CHAR (CODE) ; Print final character.
+36E3	   PRINT_TRAILING_SPACES (CODE) ; Print trailing spaces.
+3719	   PLOT_A_LINE (CODE) ; Plot a Line
+372B	   PRINT_AT_B_C (CODE) ; Print "AT B,C" Characters
+3733	   PRINT_STRING (CODE) ; Print String
+373B	   STORE_MENU_SCREEN_AREA (CODE) ; Store Menu Screen Area
+373E	   RESTORE_MENU_SCREEN_AREA (CODE) ; Restore Menu Screen Area
+373F	   RESTORE_STORE_LOOP_START (CODE) ; Start of restore/store loop.
+3748	   SYS_VARS_LOOP (CODE) ; Loop for system variables.
+374D	   SYS_VARS_LOOP_CONTINUE (CODE) ; Continue loop for system variables.
+3753	   COPY_COORDS_SYS_VAR (CODE) ; Copy COORDS.
+375B	   SETUP_SCREEN_AREA_COPY (CODE) ; Set up for screen area copy.
+3769	   STORE_RESTORE_ROWS_LOOP (CODE) ; Loop to store/restore multiple rows.
+377E	   STORE_RESTORE_MENU_ROW (CODE) ; Store / Restore Menu Screen Row - display file
+3781	   COPY_DISPLAY_BYTES_LOOP (CODE) ; Loop to copy display file bytes.
+3789	   COPY_DISPLAY_BYTES (CODE) ; Copy display file bytes.
+378E	   SAVE_COPY_DIRECTION (CODE) ; Save copy direction flag.
+37A0	   COPY_ATTRIBUTE_BYTES (CODE) ; Copy attribute bytes.
+37A5	   SAVE_COPY_DIRECTION_2 (CODE) ; Save copy direction flag.
+37A7	   MOVE_UP_MENU (CODE) ; Move Up Menu
+37B1	   TOGGLE_NEW_MENU_ITEM_UP (CODE) ; Toggle new menu item selection.
+37B6	   MOVE_DOWN_MENU (CODE) ; Move Down Menu
+37C5	   TOGGLE_NEW_MENU_ITEM_DOWN (CODE) ; Toggle new menu item selection.
+37CA	   TOGGLE_MENU_OPTION_HIGHLIGHT (CODE) ; Toggle Menu Option Selection Highlight
+37D6	   FIND_ATTRIBUTE_BYTE_LOOP (CODE) ; Loop to find attribute byte.
+37DA	   SET_ATTRIBUTE_FOR_HIGHLIGHT (CODE) ; Set attribute byte for highlight.
+37E1	   SETUP_ATTRIBUTE_SET (CODE) ; Set up for setting attributes.
+37E3	   SET_ATTRIBUTES_LOOP (CODE) ; Loop to set attributes.
+37EC	   MENU_TITLE_COLOURS_TABLE (DATA) ; Menu Title Colours Table
+37FA	   MENU_TITLE_SPACE_TABLE (DATA) ; Menu Title Space Table
+3802	   SINCLAIR_STRIPES_BITMAPS (DATA) ; Menu Sinclair Stripes Bitmaps
+3812	   SINCLAIR_STRIP_TEXT (DATA) ; Sinclair Strip 'Text'
+3822	   PRINT_SINCLAIR_STRIPES (CODE) ; Print the Sinclair stripes on the menu
+3848	   PRINT_128_BASIC_BANNER (CODE) ; Print '128 BASIC' Banner
+384D	   PRINT_CALCULATOR_BANNER (CODE) ; Print 'Calculator' Banner
+3852	   PRINT_TAPE_LOADER_BANNER (CODE) ; Print 'Tape Loader' Banner
+3857	   PRINT_TAPE_TESTER_BANNER (CODE) ; Print 'Tape Tester' Banner
+385A	   PRINT_BANNER (CODE) ; Print Banner
+3865	   SET_BLACK_ROW_LOOP (CODE) ; Loop to set black row.
+3881	   CLEAR_LOWER_EDITING_DISPLAY (CODE) ; Clear Lower Editing Display
+3888	   RENUMBER_ROUTINE (CODE) ; RENUMBER ROUTINE
+38AA	   RENUMBER_LINE_LOOP (CODE) ; Loop to renumber each line.
+38B8	   RENUMBER_TOKEN_LOOP (CODE) ; Loop to renumber tokens in a line.
+38C5	   END_OF_LINE_RENUMBER (CODE) ; End of line, update line number.
+38DD	   UPDATE_LINE_NUMBERS_LOOP (CODE) ; Loop to update line numbers.
+3907	   TOKENS_USING_LINE_NUMBERS (DATA) ; Tokens Using Line Numbers
+390E	   PARSE_LINE_RENUM_REFS (CODE) ; Parse a Line Renumbering Line Number References
+391F	   PARSE_CHARS_LOOP (CODE) ; Loop to parse characters.
+393B	   LINE_REF_NOT_FOUND (CODE) ; A line number reference was not found.
+393F	   INC_DIGIT_COUNT_AND_CONTINUE (CODE) ; Increment digit counter and continue parsing.
+3943	   EMBEDDED_NUMBER_FOUND (CODE) ; An embedded number was found.
+3957	   END_OF_STMT_LINE_FOUND (CODE) ; End of statement/line found.
+396F	   REFERENCE_LINE_EXISTS (CODE) ; The reference line exists.
+3980	   NEW_LINE_BEING_REFERENCED (CODE) ; HL=New line number being referenced.
+39BE	   NO_ROOM_FOR_EXTRA_DIGITS (CODE) ; No room available to insert extra line number digits.
+39C0	   EXIT_RENUMBER_NO_BASIC (CODE) ; Exit if no BASIC program or renumbering would cause overflow.
+39C5	   NEW_LINE_LESS_DIGITS (CODE) ; The new line number contains less digits than the old line number.
+39CF	   UPDATE_LINE_NUMBER_VALUE (CODE) ; The appropriate amount of space now exists in the BASIC line so update the line number value.
+3A05	   COUNT_BASIC_LINES (CODE) ; Count the Number of BASIC Lines
+3A0B	   CHECK_PROGRAM_EXISTS (CODE) ; Check if program exists.
+3A1D	   COUNT_LINES_LOOP (CODE) ; Loop to count lines.
+3A2E	   RETRIEVE_AND_INC_COUNT (CODE) ; Retrieve and increment line count.
+3A31	   NO_BASIC_PROGRAM (CODE) ; No BASIC program.
+3A35	   SKIP_SPACES (CODE) ; Skip Spaces
+3A36	   FETCH_AND_CHECK_CHAR (CODE) ; Fetch and check character.
+3A3C	   CREATE_ASCII_LINE_NUM (CODE) ; Create ASCII Line Number Representation
+3A56	   SKIP_LEADING_ZEROS_LOOP (CODE) ; Skip over leading zeros.
+3A60	   INSERT_LINE_NUM_DIGIT (CODE) ; Insert Line Number Digit
+3A61	   SUBTRACT_LOOP (CODE) ; Loop to add negative value.
+3A6D	   INIT_LOWER_CURSOR_SETTINGS (DATA) ; Initial Lower Screen Cursor Settings
+3A76	   INIT_MAIN_CURSOR_SETTINGS (DATA) ; Initial Main Screen Cursor Settings
+3A7F	   SET_MAIN_CURSOR_DETAILS (CODE) ; Set Main Screen Editing Cursor Details
+3A88	   SET_LOWER_CURSOR_DETAILS (CODE) ; Set Lower Screen Editing Cursor Details
+3A8B	   JUMP_TO_COPY_SETTINGS (CODE) ; Jump to copy the settings.
+3A91	   UNUSED_PRINT_AD (CODE) ; (UNUSED) Print 'AD'
+3A96	   STORE_CURSOR_COLOUR (CODE) ; Store Cursor Colour
+3A9D	   SET_CURSOR_POS_ATTR (CODE) ; Set Cursor Position Attribute
+3AB2	   RESTORE_CURSOR_POS_ATTR (CODE) ; Restore Cursor Position Attribute
+3ABF	   SHIFT_UP_EDIT_ROWS (CODE) ; Shift Up Edit Rows in Display File
+3AC6	   SHIFT_DOWN_EDIT_ROWS (CODE) ; Shift Down Edit Rows in Display File
+3ACD	   SHIFT_ROWS (CODE) ; Shift Rows
+3AD6	   SHIFT_TO_PREVIOUS_ROW (CODE) ; Shift up/down to previous row.
+3AE3	   MOVE_TO_NEXT_ROW_SHIFT (CODE) ; Move to next row.
+3AE4	   SETUP_ROW_COPY (CODE) ; Set up for row copy.
+3AEE	   COPY_ONE_DISPLAY_ROW (CODE) ; Copy one row of the display file.
+3B16	   MOVE_TO_NEXT_ROW_2 (CODE) ; Move to the next row.
+3B17	   DECREMENT_ROW_COUNTER (CODE) ; Decrement the row counter.
+3B1D	   PRINT_ROW_TO_SCREEN (CODE) ; Print a Row of the Edit Buffer to the Screen
+3B1E	   EXCHANGE_COLOUR_ITEMS_PRINT (CODE) ; Exchange colour items.
+3B31	   SET_TVFLAG_PRINT_AT (CODE) ; Set TVFLAG and print AT.
+3B3C	   PRINT_CHARS_LOOP (CODE) ; Loop to print characters.
+3B42	   CHECK_FOR_UDG_PRINT (CODE) ; Check for UDG.
+3B49	   PRINT_NEXT_CHAR_LOOP (CODE) ; Loop for next character.
+3B55	   PRINT_UDG (CODE) ; Print UDG.
+3B5E	   CLEAR_DISPLAY_ROWS (CODE) ; Clear Display Rows
+3B68	   CLEAR_DISPLAY_FILE_ROW (CODE) ; Clear display file row.
+3B6E	   BLANK_ROW_LOOP (CODE) ; Loop to blank a row.
+3B72	   BLANK_COLUMNS_LOOP (CODE) ; Loop to blank columns.
+3B86	   RESET_DISPLAY_ATTRIBUTES (CODE) ; Reset display file attributes.
+3B94	   FIND_ROWS_COLS_TO_END_SCREEN (CODE) ; Find Rows and Columns to End of Screen
+3B98	   FIND_ROWS_TO_END_SCREEN (CODE) ; Find Rows to End of Screen
+3BA0	   GET_ATTRIBUTE_ADDRESS (CODE) ; Get Attribute Address
+3BB8	   EXCHANGE_COLOUR_ITEMS (CODE) ; Exchange Colour Items
+3BE9	   TAPE_TESTER_ROUTINE (CODE) ; TAPE TESTER ROUTINE
+3BFA	   PRINT_BLACK_SQUARES_LOOP (CODE) ; Loop to print black squares.
+3BFE	   TAPE_INPUT_MAIN_LOOP (CODE) ; Main loop for tape input signal.
+3C04	   CHECK_KEY_PRESSES_TAPE (CODE) ; Check for key presses.
+3C1D	   SAMPLE_TAPE_PORT (CODE) ; Sample tape port.
+3C2B	   ALL_SAMPLES_READ_TAPE (CODE) ; All samples read.
+3C3D	   HANDLE_INITIAL_TAPE_LEVEL (CODE) ; Handle initial tape port level.
+3C3F	   SHOW_CYAN_MARKER (CODE) ; L holds the column for the cyan marker.
+3C4B	   SET_BLUE_SQUARES_LOOP (CODE) ; Loop to set blue squares.
+3C56	   HALF_SECOND_DELAY (CODE) ; Half second delay then clear key press flag.
+3C59	   HALF_SECOND_DELAY_LOOP (CODE) ; Loop for half second delay.
+3C63	   TOKENIZE_LINE_ERROR_DETECTED (CODE) ; Tokenize BASIC Line - syntax error detected
+3C67	   TOKENIZE_LINE_ENTRY (CODE) ; Tokenize BASIC Line - main entry
+3C69	   SETUP_TOKENIZER (CODE) ; Store 'locate error marker' flag and initialize.
+3CA1	   FETCH_PROCESS_CHAR_LOOP (CODE) ; Loop to fetch and process characters.
+3CB3	   FIRST_CHAR_IN_BUFFER (CODE) ; The first character to potentially put into the Keyword Conversion Buffer.
+3CB8	   INSERT_CHAR_INTO_BUFFER (CODE) ; Insert the character.
+3CC4	   STRING_TOO_LONG_FOR_KWD (CODE) ; String too long, not a keyword.
+3CCC	   COPY_KWD_BUFFER_TO_WORKSPACE (CODE) ; Copy the Keyword Conversion Buffer into the BASIC line workspace.
+3CD6	   STRING_TOO_LONG_AND_SEP (CODE) ; String was too long to be a keyword and was followed by a space, a '#' or a ''.
+3DAF	   HANDLE_NON_LETTER_CHARS (CODE) ; Handle non-letter characters.
+3DBD	   INDICATE_HASH_OR_DOLLAR (CODE) ; Indicate a '#' or '$'.
+3DC0	   INDICATE_SPACE (CODE) ; Indicate a space.
+3DC3	   INDICATE_LETTER (CODE) ; Indicate a letter.
+3DC6	   IS_LOWERCASE_LETTER (CODE) ; Is Lowercase Letter?
+3DCD	   COPY_KWD_BUFFER_TO_BASIC (CODE) ; Copy Keyword Conversion Buffer Contents into BASIC Line Workspace
+3DDA	   COPY_BUFFER_LOOP (CODE) ; Loop to copy characters.
+3DE9	   INSERT_CHAR_INTO_KWD_BUFFER (CODE) ; Insert Character into Keyword Conversion Buffer
+3DF8	   BUFFER_NOT_FULL (CODE) ; End of buffer not reached.
+3E03	   REMOVE_TERMINATOR_BIT (CODE) ; Remove terminator bit from previous character.
+3E09	   STORE_CHAR_IN_KWD_BUFFER (CODE) ; Store the character in the buffer.
+3E13	   BUFFER_REACHED_END (CODE) ; End of buffer reached.
+3E16	   INSERT_CHAR_HANDLE_GT_LT (CODE) ; Insert Character into BASIC Line Workspace, Handling '>' and '<'
+3E26	   INSERT_CHAR_AND_RETURN (CODE) ; Insert character and return.
+3E2A	   STORE_GT_LT_FOR_TREATMENT (CODE) ; Store '<' or '>' for special treatment.
+3E2F	   PREVIOUS_CHAR_WAS_GT_LT (CODE) ; The previous character was '<' or '>'.
+3E41	   HANDLE_LT_EQ (CODE) ; Handle '<='.
+3E49	   PREV_WAS_LT_NEW_IS_LT (CODE) ; Previous character was '<' and new character is '<'.
+3E52	   PREVIOUS_CHAR_WAS_GT (CODE) ; Previous character was '>'.
+3E5B	   PREV_WAS_GT_NEW_IS_GT (CODE) ; Previous character was '>' and new character is '>'.
+3E64	   INSERT_CHAR_HANDLE_REM_QUOTES (CODE) ; Insert Character into BASIC Line Workspace, Handling 'REM' and Quotes
+3E74	   HANDLE_NON_REM_CHARS (CODE) ; Handle non-REM characters.
+3E82	   INSERT_CHAR_INTO_BASIC (CODE) ; Insert character.
+3E88	   HANDLE_ENTER_CHAR (CODE) ; Handle 'ENTER' character.
+3E99	   TOKENIZING_BASIC_LINE (CODE) ; Tokenizing the BASIC line.
+3E9C	   INSERT_CHAR_SUPPRESS_SPACES (CODE) ; Insert Character into BASIC Line Workspace With Space Suppression
+3EB7	   SPACE_AFTER_SPACE (CODE) ; Character to insert is a space and the last character was a space.
+3EBF	   SPACE_AFTER_TOKEN (CODE) ; Character to insert is a space and the last character was a token.
+3EC6	   CHAR_NOT_SPACE (CODE) ; Character to insert is not a space.
+3EDA	   NON_TOKEN_AFTER_SPACE (CODE) ; Character to insert is not a space and not a token and the last character was a space.
+3EEE	   TOKEN_INSERT (CODE) ; Character to insert is a token.
+3EFB	   INSERT_CHAR_INTO_BASIC_WORKSPACE (CODE) ; Insert a Character into BASIC Line Workspace
+3F2A	   ERROR_MARKER_LOCATED (CODE) ; Handle error marker located.
+3F30	   ERROR_MARKER_NOT_YET_REACHED (CODE) ; The error marker has not yet been reached.
+3F33	   TOKENIZING_BASIC_LINE_2 (CODE) ; Tokenizing the BASIC line.
+3F35	   SEARCHING_FOR_ERROR_MARKER (CODE) ; Searching for the error marker.
+3F47	   TOKENIZING_BASIC_LINE_3 (CODE) ; Tokenizing the BASIC line.
+3F5D	   ADVANCE_TO_NEXT_CHAR_TOKENIZE (CODE) ; Advance to the next character.
+3F66	   ROOM_FOR_BC_BYTES (CODE) ; Room for BC Bytes?
+3F76	   SIGNAL_ERROR_4_OUT_OF_MEMORY (CODE) ; Signal error "4 Out of Memory".
+3F7E	   IDENTIFY_KEYWORD (CODE) ; Identify Keyword
+3F96	   HANDLE_OPEN_HASH_KWD (CODE) ; Handle "OPEN#".
+3F9E	   HANDLE_DEFFN_KWD (CODE) ; Handle "DEFFN".
+3FA6	   HANDLE_GOSUB_KWD (CODE) ; Handle "GOSUB".
+3FAE	   HANDLE_GOTO_KWD (CODE) ; Handle "GOTO".
+3FB6	   HANDLE_SPECTRUM_PLAY_KWD (CODE) ; Handle 'SPECTRUM' and 'PLAY'.
+3FB8	   SIGNAL_KEYWORD_IDENTIFIED (CODE) ; Signal keyword identified.
+3FBA	   COPY_DATA_BLOCK (CODE) ; Copy Data Block
+3FBC	   COPY_DATA_BLOCK_LOOP (CODE) ; Loop to copy bytes.
+3FC3	   UNUSED_GET_NUMERIC_FROM_ASCII (CODE) ; (UNUSED) Get Numeric Value for ASCII Character
+3FCE	   CALL_ACTION_HANDLER (CODE) ; Call Action Handler Routine
+3FD2	   ACTION_HANDLER_MATCH_LOOP (CODE) ; Loop to find match.
+3FE1	   ACTION_HANDLER_MATCH_FOUND (CODE) ; Found a match.
+3FEB	   HANDLE_NO_ERROR_BEEP (CODE) ; Handle no error beep.
+3FEE	   JUMP_TO_ACTION_HANDLER (CODE) ; Jump to the action handler routine.
+3FEF	   PROGRAMMERS_INITIALS (DATA) ; PROGRAMMERS' INITIALS
+3FFF	   END_OF_ROM_MARKER (DATA) ; END OF ROM MARKER

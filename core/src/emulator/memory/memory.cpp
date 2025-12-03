@@ -11,7 +11,9 @@
 #include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/platform.h"
+#include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/ports/portdecoder.h"
+#include "base/featuremanager.h"
 #include <cassert>
 
 // Platform-specific includes for memory mapping
@@ -40,6 +42,16 @@ Memory::Memory(EmulatorContext* context)
     _state = &context->emulatorState;
     _logger = context->pModuleLogger;
 
+    // Update feature cache to see what's enabled
+    FeatureManager* fm = _context->pFeatureManager;
+    if (fm)
+    {
+        // It's probably better to have a master switch
+        bool debugMode = fm->isEnabled(Features::kDebugMode);
+        _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
+        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+    }
+
     // Allocate ZX-Spectrum memory and make it memory mapped to file for debugging
     AllocateAndExportMemoryToMmap();
 
@@ -48,15 +60,16 @@ Memory::Memory(EmulatorContext* context)
     _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
     _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
     _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
+    
+    // Create memory access tracker
+    _memoryAccessTracker = new MemoryAccessTracker(this, context);
+    _memoryAccessTracker->Initialize();
 
     // Memory filling with random values will give a false positive on memory changes analyzer, so disable it if memory mapping is enabled
 #ifndef ENABLE_MEMORY_MAPPING
     // Make power turn-on behavior realistic: all memory cells contain random values
     RandomizeMemoryContent();
 #endif // ENABLE_MEMORY_MAPPING
-
-    // Reset counters
-    ResetCounters();
 
     // Initialize with default (non-platform specific)
     // base_sos_rom should point to ROM Bank 0 (unit tests depend on that)
@@ -72,18 +85,30 @@ Memory::Memory(EmulatorContext* context)
     _bank_mode[3] = BANK_RAM;
 
     /// region <Debug info>
-
-#ifdef _DEBUG
-    // Dump information about all memory regions
-    MLOGDEBUG(DumpAllMemoryRegions());
-#endif // _DEBUG
-
+    MLOGDEBUG("Memory::Memory() - Instance created");
+    MLOGDEBUG("Memory::Memory() - Memory size: %zu bytes", _memorySize);
+    MLOGDEBUG("Memory::Memory() - RAM base: %p", _ramBase);
+    MLOGDEBUG("Memory::Memory() - Cache base: %p", _cacheBase);
+    MLOGDEBUG("Memory::Memory() - Misc base: %p", _miscBase);
+    MLOGDEBUG("Memory::Memory() - ROM base: %p", _romBase);
     /// endregion </Debug info>
+
+    if (_memoryAccessTracker)
+    {
+        _memoryAccessTracker->ResetCounters();
+    }
 }
 
 Memory::~Memory()
 {
     UnmapMemory();
+
+    // Clean up memory access tracker
+    if (_memoryAccessTracker != nullptr)
+    {
+        delete _memoryAccessTracker;
+        _memoryAccessTracker = nullptr;
+    }
 
     _context = nullptr;
 
@@ -127,7 +152,7 @@ uint8_t Memory::MemoryReadFast(uint16_t addr, [[maybe_unused]] bool isExecution)
 /// Used from: Z80::DbgMemIf
 /// \param addr 16-bit address in Z80 memory space
 /// \return Byte read from Z80 memory
-uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
+uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution)
 {
     /// region <MemoryReadFast functionality>
 
@@ -140,80 +165,51 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, bool isExecution)
 
     /// endregion </MemoryReadFast functionality>
 
-    /// region  <Update counters>
-
-    uint16_t physicalPage = GetPageForBank(bank);
-    size_t physicalOffset = GetPhysicalOffsetForZ80Address(addr);
-
-    if (isExecution)
+    /// region <Memory access tracking>
+    if (_memoryAccessTracker != nullptr)
     {
-        // Mark Z80 bank as accessed for code execution
-        _memZ80BankExecuteMarks |= (1 << bank);
-
-        // Mark bank as accessed for code execution
-        uint8_t pageExecuteMarksByte = physicalPage >> 3;
-        uint8_t pageExecuteMarksBit = physicalPage & 0b0000'0111;
-        _memPageExecuteMarks[pageExecuteMarksByte] |= (1 << pageExecuteMarksBit);
-
-        // Increment execute access counter for Z80 address
-        _memZ80ExecuteCounters[addr] += 1;
-
-        // Increment execution access counter for physical page
-        _memPageExecuteCounters[physicalPage] += 1;
-
-        // Increment execute access counter for physical address
-        _memAccessExecuteCounters[physicalOffset] += 1;
+        uint16_t pc = _context->pCore->GetZ80()->m1_pc;
+        if (isExecution)
+        {
+            _memoryAccessTracker->TrackMemoryExecute(addr, pc);
+        }
+        else
+        {
+            _memoryAccessTracker->TrackMemoryRead(addr, result, pc);
+        }
     }
-    else
-    {
-        // Mark Z80 bank as accessed for read
-        _memZ80BankReadMarks |= (1 << bank);
-
-        // Mark bank as accessed for read
-        uint8_t pageReadMarksByte = physicalPage >> 3;
-        uint8_t pageReadMarksBit = physicalPage & 0b0000'0111;
-        _memPageReadMarks[pageReadMarksByte] |= (1 << pageReadMarksBit);
-
-        // Increment read access counter for Z80 address
-        _memZ80ReadCounters[addr] += 1;
-
-        // Increment read access counter for physical page
-        _memPageReadCounters[physicalPage] += 1;
-
-        // Increment read access counter for physical address
-        _memAccessReadCounters[physicalOffset] += 1;
-    }
-
-    /// endregion </Update counters>
+    /// endregion </Memory access tracking>
 
     /// region <Read breakpoint logic>
-
-    Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCore->GetZ80();
-    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-    uint16_t breakpointID = brk.HandleMemoryRead(addr);
-    if (breakpointID != BRK_INVALID)
+    if (_feature_breakpoints_enabled)
     {
-        // Request to pause emulator
-        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
-        emulator.Pause();
+        Emulator& emulator = *_context->pEmulator;
+        Z80& z80 = *_context->pCore->GetZ80();
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        // Broadcast notification - breakpoint triggered
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-        // Wait until emulator resumed externally (by debugger or scripting engine)
-        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-        if (z80.IsPaused())
+        uint16_t breakpointID = brk.HandleMemoryRead(addr);
+        if (breakpointID != BRK_INVALID)
         {
-            while (z80.IsPaused())
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
+
+            // Broadcast notification - breakpoint triggered
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+            if (z80.IsPaused())
             {
-                sleep_ms(20);
+                while (z80.IsPaused())
+                {
+                    sleep_ms(20);
+                }
             }
         }
     }
-
     /// endregion </Read breakpoint logic>
 
     return result;
@@ -245,63 +241,47 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     uint8_t bank = (addr >> 14) & 0b0000'0011;
     uint16_t addressInBank = addr & 0b0011'1111'1111'1111;
 
-    // Write byte to correspondent memory bank cell
+    // Write byte to the correspondent memory bank cell
     *(_bank_write[bank] + addressInBank) = value;
 
     /// endregion </MemoryWriteFast functionality>
+    
+    // Track memory write if tracker is initialized
+    if (_feature_memorytracking_enabled && _memoryAccessTracker != nullptr)
+    {
+        uint16_t pc = _context->pCore->GetZ80()->m1_pc;
+        _memoryAccessTracker->TrackMemoryWrite(addr, value, pc);
+    }
 
-    /// region  <Update counters>
-
-    uint16_t physicalPage = GetPageForBank(bank);
-    size_t physicalOffset = GetPhysicalOffsetForZ80Address(addr);
-
-    // Mark Z80 bank as accessed for write
-    _memZ80BankWriteMarks |= (1 << bank);
-
-    // Mark page as accessed for write
-    uint8_t pageWriteMarksByte = physicalPage >> 3;
-    uint8_t pageWriteMarksBit = physicalPage & 0b0000'0111;
-    _memPageWriteMarks[pageWriteMarksByte] |= (1 << pageWriteMarksBit);
-
-    // Increment write access counter for Z80 address
-    _memZ80WriteCounters[addr] += 1;
-
-    // Increment write access counter for physical page
-    _memPageWriteCounters[physicalPage] += 1;
-
-    // Increment write access counter for physical address
-    _memAccessWriteCounters[physicalOffset] += 1;
-
-    /// endregion </Update counters>
-
-    // Raise flag that video memory was changed
+    // Raise a flag that video memory was changed
     if (addr >= 0x4000 && addr <= 0x5B00)
     {
         _state->video_memory_changed = true;
     }
 
     /// region <Write breakpoint logic>
-
-    Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCore->GetZ80();
-    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-    uint16_t breakpointID = brk.HandleMemoryWrite(addr);
-    if (breakpointID != BRK_INVALID)
+    if (_feature_breakpoints_enabled)
     {
-        // Request to pause emulator
-        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
-        emulator.Pause();
+        Emulator& emulator = *_context->pEmulator;
+        Z80& z80 = *_context->pCore->GetZ80();
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandleMemoryWrite(addr);
+        if (breakpointID != BRK_INVALID)
+        {
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
 
-        // Broadcast notification - breakpoint triggered
-        MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+            // Broadcast notification - breakpoint triggered
+            MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-        // Wait until emulator resumed externally (by debugger or scripting engine)
-        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-        z80.WaitUntilResumed();
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+            z80.WaitUntilResumed();
+        }
     }
-
     /// endregion </Write breakpoint logic>
 }
 
@@ -316,10 +296,13 @@ void Memory::Reset()
     // Bank 1 [4000:7FFF] - RAM
     // Bank 2 [8000:BFFF] - RAM
     // Bank 3 [C000:FFFF] - RAM
-    //DefaultBanksFor48k();
+    DefaultBanksFor48k();
 
-    // Reset counters
-    ResetCounters();
+    // Reset memory access counters
+    if (_memoryAccessTracker)
+    {
+        _memoryAccessTracker->ResetCounters();
+    }
 }
 
 /// Fill whole physical RAM with random values
@@ -362,8 +345,8 @@ void Memory::AllocateAndExportMemoryToMmap()
 #ifdef USE_SHAREDMEM_MAPPING
 #ifdef _WIN32
     // Windows implementation using named shared memory
-    std::string shmName = "Local\\ZXSpectrumMemory";
-    
+    std::string shmName = "Local\\zxspectrum_memory" + std::to_string(GetCurrentProcessId());
+
     // Clean up any existing mapping with the same name
     if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
     {
@@ -413,7 +396,7 @@ void Memory::AllocateAndExportMemoryToMmap()
 #else
     // Unix/Linux/macOS implementation
     // Create a shared memory name
-    std::string shmName = "/zxspectrum";
+    std::string shmName = "/zxspectrum_memory-" + std::to_string(getpid());
 
     // Try to clean up any existing shared memory with this name
     shm_unlink(shmName.c_str());
@@ -661,6 +644,12 @@ void Memory::UnmapMemory()
         _mappedMemoryFilepath.clear();
     }
 
+#else
+    if (_memory)
+    {
+        delete[] _memory;
+        _memory = nullptr;
+    }
 #endif // ENABLE_MEMORY_MAPPING
 }
 
@@ -676,7 +665,7 @@ void Memory::SyncToDisk()
         }
     }
 #elif defined(ENABLE_MEMORY_MAPPING) && defined(_WIN32)
-    if (_memory && _hMapFile != INVALID_HANDLE_VALUE)
+    if (_memory && _mappedMemoryHandle != INVALID_HANDLE_VALUE)
     {
         // On Windows, FlushViewOfFile forces writes to disk for a mapped view
         // of a file backed by the system paging file. If it's a file mapping of
@@ -698,7 +687,8 @@ void Memory::SyncToDisk()
         {
             LOGWARNING("Windows: FlushViewOfFile failed: " + std::to_string(GetLastError()));
         }
-        LOGINFO("Windows: FlushViewOfFile called.");
+
+        MLOGDEBUG("Windows: FlushViewOfFile called.");
     }
 #else
 #endif
@@ -1196,346 +1186,6 @@ MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
 
 /// endregion </Address helper methods>
 
-/// region <Counters>
-
-void Memory::ResetCounters()
-{
-    memset(_memZ80ReadCounters, 0, sizeof(_memZ80ReadCounters));
-    memset(_memZ80WriteCounters, 0, sizeof(_memZ80WriteCounters));
-    memset(_memZ80ExecuteCounters, 0, sizeof(_memZ80ExecuteCounters));
-
-    memset(_memAccessReadCounters, 0, sizeof(_memAccessReadCounters));
-    memset(_memAccessWriteCounters, 0, sizeof(_memAccessWriteCounters));
-    memset(_memAccessExecuteCounters, 0, sizeof(_memAccessExecuteCounters));
-
-    memset(_memPageReadCounters, 0, sizeof(_memPageReadCounters));
-    memset(_memPageWriteCounters, 0, sizeof(_memPageWriteCounters));
-    memset(_memPageExecuteCounters, 0, sizeof(_memPageExecuteCounters));
-
-    _memZ80BankReadMarks = 0;
-    _memZ80BankWriteMarks = 0;
-    _memZ80BankExecuteMarks = 0;
-
-    memset(_memPageReadMarks, 0, sizeof(_memPageReadMarks));
-    memset(_memPageWriteMarks, 0, sizeof(_memPageWriteMarks));
-    memset(_memPageExecuteMarks, 0, sizeof(_memPageExecuteMarks));
-}
-
-size_t Memory::GetZ80BankTotalAccessCount(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    [[maybe_unused]] uint16_t absolutePage = GetPageForBank(bank);
-    uint8_t bankBit = 1 << bank;
-    bool bankWasRead = _memZ80BankReadMarks & bankBit;
-    bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
-    bool bankWasExecuted = _memZ80BankExecuteMarks & bankBit;
-
-    if (bankWasRead || bankWasWritten || bankWasExecuted)
-    {
-        size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-        for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
-        {
-            if (bankWasRead)
-            {
-                result += _memAccessReadCounters[i];
-            }
-
-            if (bankWasWritten)
-            {
-                result += _memAccessWriteCounters[i];
-            }
-
-            if (bankWasExecuted)
-            {
-                result += _memAccessExecuteCounters[i];
-            }
-        }
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankReadAccessCount(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    uint8_t bankBit = 1 << bank;
-    bool bankWasRead = _memZ80BankReadMarks & bankBit;
-
-    if (bankWasRead)
-    {
-        size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-        for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
-        {
-            result += _memAccessReadCounters[i];
-        }
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankWriteAccessCount(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    uint8_t bankBit = 1 << bank;
-    bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
-
-    if (bankWasWritten)
-    {
-        size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-        for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
-        {
-            result += _memAccessWriteCounters[i];
-        }
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankExecuteAccessCount(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    uint8_t bankBit = 1 << bank;
-    bool bankWasExecuted = _memZ80BankExecuteMarks & bankBit;
-
-    if (bankWasExecuted)
-    {
-        size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-        for (size_t i = physicalOffset; i < physicalOffset + PAGE_SIZE; i++)
-        {
-            result += _memAccessExecuteCounters[i];
-        }
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankTotalAccessCountExclScreen(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
-    {
-        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
-
-        uint8_t bankBit = 1 << bank;
-        bool bankWasRead = _memZ80BankReadMarks & bankBit;
-        bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
-        bool bankWasExecuted = _memZ80BankExecuteMarks & bankBit;
-
-        if (bankWasRead || bankWasWritten || bankWasExecuted)
-        {
-            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-            for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
-            {
-                if (bankWasRead)
-                {
-                    result += _memAccessReadCounters[i];
-                }
-
-                if (bankWasWritten)
-                {
-                    result += _memAccessWriteCounters[i];
-                }
-
-                if (bankWasExecuted)
-                {
-                    result += _memAccessExecuteCounters[i];
-                }
-            }
-        }
-    }
-    else
-    {
-        result = GetZ80BankTotalAccessCount(bank);
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankReadAccessCountExclScreen(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
-    {
-        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
-
-        uint8_t bankBit = 1 << bank;
-        bool bankWasRead = _memZ80BankReadMarks & bankBit;
-        if (bankWasRead)
-        {
-            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-            for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
-            {
-                result += _memAccessReadCounters[i];
-            }
-        }
-    }
-    else
-    {
-        result = GetZ80BankReadAccessCount(bank);
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankWriteAccessCountExclScreen(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
-    {
-        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
-
-        uint8_t bankBit = 1 << bank;
-        bool bankWasWritten = _memZ80BankWriteMarks & bankBit;
-        if (bankWasWritten)
-        {
-            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-            for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
-            {
-                result += _memAccessWriteCounters[i];
-            }
-        }
-    }
-    else
-    {
-        result = GetZ80BankWriteAccessCount(bank);
-    }
-
-    return result;
-}
-
-size_t Memory::GetZ80BankExecuteAccessCountExclScreen(uint8_t bank)
-{
-    size_t result = 0;
-
-    /// region <Sanity checks>
-
-#ifdef _DEBUG
-    if (bank > 3)
-        throw std::logic_error("Invalid Z80 bank");
-#endif
-
-    bank = bank & 0b0000'0011;
-
-    /// endregion </Sanity checks>
-
-    if (bank == 1)  // Bank 1 [4000:7F00] contains screen
-    {
-        // Include access count for all addresses except from [0x4000:0x5AFF] range - standard spectrum screen
-
-        uint8_t bankBit = 1 << bank;
-        bool bankWasExecuted = _memZ80BankExecuteMarks & bankBit;
-        if (bankWasExecuted)
-        {
-            size_t physicalOffset = GetPhysicalOffsetForZ80Bank(bank);
-
-            for (size_t i = physicalOffset + 0x1B00; i < physicalOffset + PAGE_SIZE; i++)
-            {
-                result += _memAccessExecuteCounters[i];
-            }
-        }
-    }
-    else
-    {
-        result = GetZ80BankExecuteAccessCount(bank);
-    }
-
-    return result;
-}
-
-/// endregion </Counters>
-
-
 /// region <Debug methods>
 
 void Memory::SetROM48k(bool updatePorts)
@@ -1754,6 +1404,21 @@ void Memory::DefaultBanksFor48k()
 
 /// region <Debug methods>
 
+/// Gets the bank name for a given Z80 address
+/// @param address - Address in Z80 address space (0x0000-0xFFFF)
+/// @return bank name string (e.g., "ROM 0", "RAM 5")
+std::string Memory::GetBankNameForAddress(uint16_t address)
+{
+    // Determine which 16KB bank the address belongs to (0-3)
+    uint8_t bank = address >> 14;  // Divide by 16384 (0x4000) to get bank number
+    
+    // Use the existing method to get the bank name
+    return GetCurrentBankName(bank);
+}
+
+/// Gets the current bank name for a given bank index
+/// @param bank - Bank index (0-3)
+/// @return bank name string (e.g., "ROM 0", "RAM 5")
 std::string Memory::GetCurrentBankName(uint8_t bank)
 {
     std::string result = "<UNKNOWN>";
@@ -1786,6 +1451,8 @@ std::string Memory::GetCurrentBankName(uint8_t bank)
     return result;
 }
 
+/// Dumps memory bank information
+/// @return string containing bank information for all four banks
 std::string Memory::DumpMemoryBankInfo()
 {
     std::string result;
@@ -1802,6 +1469,8 @@ std::string Memory::DumpMemoryBankInfo()
     return result;
 }
 
+/// Dumps all memory regions
+/// @return string containing memory regions information
 std::string Memory::DumpAllMemoryRegions()
 {
     std::string result = "\n\nMemory regions:\n";
@@ -1829,3 +1498,26 @@ std::string Memory::DumpAllMemoryRegions()
 }
 
 /// endregion <Debug methods>
+
+// Update feature cache (call when features change at runtime)
+void Memory::UpdateFeatureCache()
+{
+    FeatureManager* fm = _context->pFeatureManager;
+    if (fm)
+    {
+        bool debugMode = fm->isEnabled(Features::kDebugMode);
+        _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
+        _feature_breakpoints_enabled = debugMode && fm->isEnabled(Features::kBreakpoints);
+        
+        // Update memory access tracker if it exists
+        if (_memoryAccessTracker)
+        {
+            _memoryAccessTracker->UpdateFeatureCache();
+        }
+    }
+    else
+    {
+        _feature_memorytracking_enabled = false;
+        _feature_breakpoints_enabled = false;
+    }
+}

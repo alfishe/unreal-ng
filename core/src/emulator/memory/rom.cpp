@@ -429,8 +429,15 @@ uint16_t ROM::LoadROM(string& path, uint8_t* bank, uint16_t max_banks)
 
 		if (!FileHelper::FileExists(resolvedPath))
 		{
-			MLOGERROR("ROM::LoadROM - file %s not found", FileHelper::PrintablePath(resolvedPath).c_str());
-			return result;
+			// Try resources path (especially for macOS app bundles)
+			string resourcesPath = FileHelper::GetResourcesPath();
+			resolvedPath = FileHelper::PathCombine(resourcesPath, path);
+
+			if (!FileHelper::FileExists(resolvedPath))
+			{
+				MLOGERROR("ROM::LoadROM - file %s not found. Tried executable path and resources path.", FileHelper::PrintablePath(resolvedPath).c_str());
+				return result;
+			}
 		}
 	}
 

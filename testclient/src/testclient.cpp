@@ -9,7 +9,7 @@
 /// region <TestClient class>
 TestClient::TestClient()
 {
-    _emulator = new Emulator();
+    _emulator = new Emulator(LoggerLevel::LogError);
 }
 
 TestClient::~TestClient()

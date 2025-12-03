@@ -1,28 +1,43 @@
 #include "mainwindow.h"
-#include "ui_mainwindow.h"
+
+#include <stdio.h>
+#include <webapi/src/automation-webapi.h>
 
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QDebug>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QMimeData>
 #include <QScopedValueRollback>
 #include <QShortcut>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <stdio.h>
 
-#include "debugger/breakpoints/breakpointmanager.h"
-#include "emulator/filemanager.h"
-#include "emulator/soundmanager.h"
-
+#include "3rdparty/message-center/eventqueue.h"
+#include "common/dockingmanager.h"
 #include "common/modulelogger.h"
-#include "emulator/sound/soundmanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "emulator/filemanager.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/soundmanager.h"
+#include "emulator/soundmanager.h"
+#include "ui_mainwindow.h"
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWindow)
+MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
+    // Load the last used directory from settings
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    _lastDirectory = settings.value("LastFileDirectory", QCoreApplication::applicationDirPath()).toString();
+    qDebug() << "Loading last directory from settings:" << _lastDirectory;
+
+#ifdef ENABLE_AUTOMATION
+    _automation = std::make_unique<Automation>();
+#endif  // ENABLE_AUTOMATION
+
     // Intercept all keyboard and mouse events
-    //qApp->installEventFilter(this);
+    // qApp->installEventFilter(this);
 
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
@@ -45,22 +60,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     layout->addWidget(deviceScreen, Qt::AlignHCenter);
     contentFrame->setLayout(layout);
 
-/*
-    QSizePolicy dp;
-    dp.setHorizontalPolicy(QSizePolicy::Expanding);
-    dp.setVerticalPolicy(QSizePolicy::Expanding);
-    deviceScreen->setSizePolicy(dp);
-*/
+    /*
+        QSizePolicy dp;
+        dp.setHorizontalPolicy(QSizePolicy::Expanding);
+        dp.setVerticalPolicy(QSizePolicy::Expanding);
+        deviceScreen->setSizePolicy(dp);
+    */
 
     // Connect button release signal to appropriate event handling slot
     connect(startButton, SIGNAL(released()), this, SLOT(handleStartButton()));
 
     // Create bridge between GUI and emulator
-    _emulatorManager = EmulatorManager::defaultInstance();
+    _emulatorManager = EmulatorManager::GetInstance();
 
     // Init audio subsystem
-    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-    soundManager.init();
+    _soundManager = new AppSoundManager();
+    _soundManager->init();
 
     // Instantiate Logger window
     logWindow = new LogWindow();
@@ -70,7 +85,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     debuggerWindow->reset();
     debuggerWindow->show();
 
-    // Bring application windows to foreground 
+    _dockingManager = new DockingManager(this);
+    _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
+    _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
+
+    // Bring application windows to foreground
     debuggerWindow->raise();
     this->raise();
 
@@ -83,7 +102,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Store original window geometry before going fullscreen / maximized
     _normalGeometry = normalGeometry();
-    
+
     // Initialize platform-specific settings
 #ifdef Q_OS_MAC
     initializePlatformMacOS();
@@ -94,7 +113,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
 #endif
 
 #ifdef ENABLE_AUTOMATION
-    automation.start();
+
+    // Delay automation modules start, so the main thread is not blocked, and automation is fully initialized
+    // Otherwise race conditions
+    // TODO: implement proper waiting until automation is fully initialized
+    QTimer::singleShot(300, this, [this]() {
+        if (_automation)
+        {
+            _automation->start();
+        }
+    });
+
 #endif
 
     /// region <Debug>
@@ -102,35 +131,49 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), ui(new Ui::MainWi
     /// endregion </Debug>
 }
 
+void MainWindow::cleanupAutomation()
+{
+#ifdef ENABLE_AUTOMATION
+    if (_automation)
+    {
+        _automation->stop();
+        _automation.reset();
+        qDebug() << "Automation cleanup complete";
+    }
+#endif
+}
+
 MainWindow::~MainWindow()
 {
     setAcceptDrops(false);
 
-    // Deinit audio subsystem
-    AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-    soundManager.deinit();
+    // Clean up automation resources first
+    cleanupAutomation();
 
-#ifdef ENABLE_AUTOMATION
-    automation.stop();
-#endif
+    // Deinit audio subsystem
+    if (_soundManager)
+    {
+        _soundManager->deinit();
+        delete _soundManager;
+        _soundManager = nullptr;
+    }
 
     if (debuggerWindow != nullptr)
     {
+        _dockingManager->removeDockableWindow(debuggerWindow);
         debuggerWindow->hide();
         delete debuggerWindow;
     }
 
     if (logWindow != nullptr)
     {
+        _dockingManager->removeDockableWindow(logWindow);
         logWindow->hide();
         delete logWindow;
     }
 
     if (deviceScreen != nullptr)
         delete deviceScreen;
-
-    if (_emulatorManager)
-        delete _emulatorManager;
 
     if (_guiContext)
         delete _guiContext;
@@ -143,7 +186,7 @@ MainWindow::~MainWindow()
 /// region <QWidget events override>
 
 /// QWidget event called after windows is shown
-void MainWindow::showEvent(QShowEvent *event)
+void MainWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
 
@@ -151,64 +194,61 @@ void MainWindow::showEvent(QShowEvent *event)
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 }
 
-void MainWindow::closeEvent(QCloseEvent *event)
+void MainWindow::closeEvent(QCloseEvent* event)
 {
-     event->accept();
-     qDebug() << "QCloseEvent : Closing application";
+    // Clean up automation resources
+    cleanupAutomation();
 
-     // Stop automation services first (before emulator shutdown)
-     // This ensures all network threads and sockets are closed before emulator resources are destroyed
-#ifdef ENABLE_AUTOMATION
-     automation.stop();
-     qDebug() << "Automation cleanup complete";
-#endif
+    event->accept();
+    qDebug() << "QCloseEvent : Closing application";
 
-     // Stop emulator
-     if (_emulator)
-     {
+    // Stop emulator
+    if (_emulator)
+    {
         _emulator->Stop();
-     }
+    }
 
-     // Unsubscribe from message bus events
-     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-     Observer* observerInstance = static_cast<Observer*>(this);
-     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-     messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+    // Unsubscribe from message bus events
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
+    ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+    messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
-     // Close debugger
-     if (debuggerWindow)
-     {
+    // Close debugger
+    if (debuggerWindow)
+    {
+        _dockingManager->removeDockableWindow(debuggerWindow);
         debuggerWindow->hide();
         delete debuggerWindow;
         debuggerWindow = nullptr;
-     }
+    }
 
-     // Close LogViewer
-     if (logWindow)
-     {
-         logWindow->hide();
-         delete logWindow;
-         logWindow = nullptr;
-     }
+    // Close LogViewer
+    if (logWindow)
+    {
+        _dockingManager->removeDockableWindow(logWindow);
+        logWindow->hide();
+        delete logWindow;
+        logWindow = nullptr;
+    }
 
-     // Shutdown emulator
-     if (deviceScreen)
-     {
+    // Shutdown emulator
+    if (deviceScreen)
+    {
         deviceScreen->detach();
-     }
+    }
 
-     if (_emulator)
-     {
-         delete _emulator;
-         _emulator = nullptr;
-     }
+    if (_emulator)
+    {
+        _emulator = nullptr;
+    }
 
-     qDebug() << "QCloseEvent : Emulator shutdown complete";
+    qDebug() << "QCloseEvent : Emulator shutdown complete";
 }
 
-void MainWindow::resizeEvent(QResizeEvent *event)
+void MainWindow::resizeEvent(QResizeEvent* event)
 {
-    //deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
+    // deviceScreen->move(this->rect().center() - deviceScreen->rect().center());
 
     // Keep widget center-aligned. Alignment policy is not working good
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
@@ -216,15 +256,19 @@ void MainWindow::resizeEvent(QResizeEvent *event)
     // Update normal geometry
     _normalGeometry = normalGeometry();
 
+    // Notify docked child windows
+    _dockingManager->updateDockedWindows();
+
     QWidget::resizeEvent(event);
 }
 
-void MainWindow::moveEvent(QMoveEvent *event)
+void MainWindow::moveEvent(QMoveEvent* event)
 {
     QWidget::moveEvent(event);
 
-    //arrangeWindows();
-    adjust(nullptr);
+    // Notify docked child windows
+    if (_dockingManager)
+        _dockingManager->updateDockedWindows();
 
     // Update normal geometry
     _normalGeometry = normalGeometry();
@@ -234,23 +278,28 @@ void MainWindow::changeEvent(QEvent* event)
 {
     if (event->type() == QEvent::WindowStateChange)
     {
-        QWindowStateChangeEvent *stateEvent = static_cast<QWindowStateChangeEvent*>(event);
+        QWindowStateChangeEvent* stateEvent = static_cast<QWindowStateChangeEvent*>(event);
         Qt::WindowStates oldState = stateEvent->oldState();
         Qt::WindowStates newState = windowState();
 
         // Debug output for state transitions
         auto stateToString = [](Qt::WindowStates state) -> QString {
             QStringList states;
-            if (state == Qt::WindowNoState) states << "NoState";
-            if (state & Qt::WindowMinimized) states << "Minimized";
-            if (state & Qt::WindowMaximized) states << "Maximized";
-            if (state & Qt::WindowFullScreen) states << "FullScreen";
-            if (state & Qt::WindowActive) states << "Active";
+            if (state == Qt::WindowNoState)
+                states << "NoState";
+            if (state & Qt::WindowMinimized)
+                states << "Minimized";
+            if (state & Qt::WindowMaximized)
+                states << "Maximized";
+            if (state & Qt::WindowFullScreen)
+                states << "FullScreen";
+            if (state & Qt::WindowActive)
+                states << "Active";
             return states.join(" | ");
         };
 
-        qDebug().noquote() << "Window state changed from:" << stateToString(oldState) 
-                         << "to:" << stateToString(newState);
+        qDebug().noquote() << "Window state changed from:" << stateToString(oldState)
+                           << "to:" << stateToString(newState);
 
 #ifdef Q_OS_MAC
         handleWindowStateChangeMacOS(oldState, newState);
@@ -275,22 +324,27 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 #ifdef _DEBUG
     auto stateToString = [](Qt::WindowStates state) -> QString {
         QStringList states;
-        if (state == Qt::WindowNoState) states << "NoState";
-        if (state & Qt::WindowMinimized) states << "Minimized";
-        if (state & Qt::WindowMaximized) states << "Maximized";
-        if (state & Qt::WindowFullScreen) states << "FullScreen";
-        if (state & Qt::WindowActive) states << "Active";
+        if (state == Qt::WindowNoState)
+            states << "NoState";
+        if (state & Qt::WindowMinimized)
+            states << "Minimized";
+        if (state & Qt::WindowMaximized)
+            states << "Maximized";
+        if (state & Qt::WindowFullScreen)
+            states << "FullScreen";
+        if (state & Qt::WindowActive)
+            states << "Active";
         return states.isEmpty() ? "Unknown" : states.join("|");
     };
-    
-    //qDebug() << "Window state change - Old:" << stateToString(oldState) << "New:" << stateToString(newState);
+
+    // qDebug() << "Window state change - Old:" << stateToString(oldState) << "New:" << stateToString(newState);
 #endif
 
     // Handle maximize state (triggered by green button or double-click)
     if (newState & Qt::WindowMaximized && !_isFullScreen)
     {
         qDebug() << "Maximizing window (macOS)";
-        
+
         _isFullScreen = false;
 
         // Ensure we're not in fullscreen mode
@@ -345,7 +399,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         _isFullScreen = false;
 
         // Hide window before applying changes to its style
-        //hide();
+        // hide();
 
         // Restore normal styling
         setPalette(_originalPalette);
@@ -371,19 +425,20 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
         {
             qDebug() << "Restoring to normal geometry:" << _normalGeometry;
 
-//            QTimer::singleShot(0, this, [this, geom = _normalGeometry]() {
-//                // Ensure we are not in a recursive handler call (should be false)
-//                // and that the window is still in a normal state.
-//                if (this->windowState() == Qt::WindowNoState) // Check state again
-//                {
-//                    qDebug().noquote() << QString("Deferred: Applying stored normal geometry");
-//                    this->setGeometry(geom);
-//                }
-//                else
-//                {
-//                    qDebug().noquote() << QString("Deferred: Window state is not Qt::WindowNoState or recursive call suspected. Skipping setGeometry.");
-//                }
-//            });
+            //            QTimer::singleShot(0, this, [this, geom = _normalGeometry]() {
+            //                // Ensure we are not in a recursive handler call (should be false)
+            //                // and that the window is still in a normal state.
+            //                if (this->windowState() == Qt::WindowNoState) // Check state again
+            //                {
+            //                    qDebug().noquote() << QString("Deferred: Applying stored normal geometry");
+            //                    this->setGeometry(geom);
+            //                }
+            //                else
+            //                {
+            //                    qDebug().noquote() << QString("Deferred: Window state is not Qt::WindowNoState or
+            //                    recursive call suspected. Skipping setGeometry.");
+            //                }
+            //            });
 
             setGeometry(_normalGeometry);
         }
@@ -398,7 +453,7 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
             show();
         }
     }
-    
+
     // Ensure the window is properly updated
     activateWindow();
     raise();
@@ -407,74 +462,111 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState)
 {
     // Handle maximize state
-    if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
+    if (newState & Qt::WindowMaximized &&
+        !(newState & Qt::WindowFullScreen))  // Check if it's maximize and NOT fullscreen
     {
-        qDebug() << "Maximized (Windows)";
-        
-        // Ensure we're not in fullscreen mode
-        _isFullScreen = false;
-        
-        // Store geometry if coming from normal state
-        if (!(oldState & Qt::WindowFullScreen))
+        // This is a standard maximize (e.g., user clicked maximize button), not our managed fullscreen.
+        if (!_isFullScreen)  // Only if we are not in a managed fullscreen state
         {
-            _normalGeometry = normalGeometry(); // Store geometry before maximization
+            qDebug() << "Maximized (Windows) - standard maximize";
+            if (oldState == Qt::WindowNoState)
+            {  // If maximizing from a normal (non-maximized, non-fullscreen) state
+                _normalGeometry = normalGeometry();  // Store pre-maximize geometry
+                qDebug() << "Stored geometry from Normal state for Maximize:" << _normalGeometry;
+            }
         }
-
-        showMaximized();
+        else
+        {
+            // If we get here while _isFullScreen is true, it means we're in an inconsistent state
+            // This can happen if the user uses OS controls to maximize while in fullscreen
+            _isFullScreen = false;
+            setPalette(_originalPalette);
+            statusBar()->show();
+            startButton->show();
+        }
     }
-    // Handle fullscreen state
-    else if (newState & Qt::WindowFullScreen)
+    else if (newState & Qt::WindowFullScreen)  // Handle fullscreen state
     {
         qDebug() << "FullScreen (Windows)";
-
-        hide();
         _isFullScreen = true;
 
-        // Store geometry if coming from normal state
-        if (oldState == Qt::WindowNoState)
+        // Store geometry to restore to when exiting fullscreen.
+        if (!(oldState & Qt::WindowFullScreen))
         {
-            _normalGeometry = normalGeometry();
+            if (oldState == Qt::WindowNoState)
+            {
+                _normalGeometry = this->geometry();
+                qDebug() << "Stored geometry from Normal state for FullScreen:" << _normalGeometry;
+            }
+            else if (oldState & Qt::WindowMaximized)
+            {
+                qDebug() << "Transitioning to FullScreen from Maximized, _normalGeometry is:" << _normalGeometry;
+            }
         }
-
         // Apply fullscreen styling
         QPalette palette;
         palette.setColor(QPalette::Window, Qt::black);
         setPalette(palette);
         statusBar()->hide();
         startButton->hide();
-
-        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
-        showFullScreen();
+        // Do NOT call setWindowFlags or showFullScreen() here! Already handled in shortcut.
     }
     // Handle restore state
     else if (newState == Qt::WindowNoState)
     {
         qDebug() << "Restored (Windows)";
 
-        // Skip intermediate restore events
-        if (oldState & Qt::WindowMaximized && !_isFullScreen)
+        if (_isFullScreen)
         {
-            return;
+            // We are exiting our managed fullscreen state
+            qDebug() << "Exiting managed fullscreen to normal state";
+            _isFullScreen = false;
+
+            // Restore normal styling
+            setPalette(_originalPalette);
+            statusBar()->show();
+            startButton->show();
+
+            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);  // Restore frame
+
+            if (_normalGeometry.isValid())
+            {
+                qDebug() << "Restoring geometry to:" << _normalGeometry;
+                setGeometry(_normalGeometry);  // Restore geometry
+            }
+            else
+            {
+                qDebug() << "No valid _normalGeometry to restore for exiting fullscreen.";
+            }
+            // Do not call showNormal() here, already done in shortcut
         }
-
-        hide();
-        _isFullScreen = false;
-
-        // Restore normal styling
-        setPalette(_originalPalette);
-        statusBar()->show();
-        startButton->show();
-
-        // Restore window flags and geometry
-        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-
-        // Restore to previous geometry
-        if (_normalGeometry.isValid())
+        else
         {
-            setGeometry(_normalGeometry);
-        }
+            // Transition to WindowNoState, but not from our managed fullscreen.
+            // E.g., user un-maximizes a window that was never in our managed fullscreen.
+            qDebug() << "Restored (Windows) - standard unmaximize or other normal transition";
 
-        showNormal();
+            // Ensure frameless hint is off if it was somehow set
+            if (windowFlags() & Qt::FramelessWindowHint)
+            {
+                setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+            }
+
+            // If it was a standard maximize (oldState was Maximized and we are not in _isFullScreen), _normalGeometry
+            // should have been set when it was maximized from a normal state.
+            if (oldState & Qt::WindowMaximized)
+            {
+                if (_normalGeometry.isValid())
+                {
+                    qDebug() << "Restoring geometry from standard Maximize:" << _normalGeometry;
+                    setGeometry(_normalGeometry);
+                }
+                else
+                {
+                    qDebug() << "No valid _normalGeometry to restore for standard unmaximize.";
+                }
+            }
+        }
     }
 }
 
@@ -484,10 +576,10 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
     if (newState & Qt::WindowMaximized && !(newState & Qt::WindowFullScreen))
     {
         qDebug() << "Maximized (Linux)";
-        
+
         // Ensure we're not in fullscreen mode
         _isFullScreen = false;
-        
+
         showMaximized();
     }
     // Handle fullscreen state
@@ -579,15 +671,19 @@ void MainWindow::dropEvent(QDropEvent* event)
         qDebug() << pathList.size() << "files dropped";
         qDebug() << pathList.join(",");
 
-        // TODO:
-        //  1. Pass file(s) to file loader
-        //  2. Detect file type
-        //  3. Issue proper command to emulator instance
+        // Process the dropped file
         QString filepath = pathList.first();
         std::string file = filepath.toStdString();
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepath);
+
+        // Save the directory for next time
         QFileInfo fileInfo(filepath);
         QString ext = fileInfo.suffix();
+
+        // Save directory to settings
+        saveLastDirectory(filepath);
+
+        // Determine file type
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepath);
 
         switch (category)
         {
@@ -602,6 +698,12 @@ void MainWindow::dropEvent(QDropEvent* event)
             case FileDisk:
                 _emulator->LoadDisk(file);
                 break;
+            case FileSymbol:
+                if (_emulator && _emulator->GetDebugManager())
+                {
+                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+                }
+                break;
             default:
                 break;
         };
@@ -611,14 +713,14 @@ void MainWindow::dropEvent(QDropEvent* event)
     ui->contentFrame->setStyleSheet("border: none;");
 }
 
-void MainWindow::keyPressEvent(QKeyEvent *event)
+void MainWindow::keyPressEvent(QKeyEvent* event)
 {
     event->accept();
 
     qDebug() << "MainWindow : keyPressEvent , key : " << event->text();
 }
 
-void MainWindow::mousePressEvent(QMouseEvent *event)
+void MainWindow::mousePressEvent(QMouseEvent* event)
 {
     event->accept();
 
@@ -637,148 +739,130 @@ void MainWindow::initializePlatformMacOS()
     flags |= Qt::WindowTitleHint;
     flags |= Qt::WindowCloseButtonHint;
     flags |= Qt::CustomizeWindowHint;
-    
+
     // Explicitly disable the fullscreen button
     flags &= ~Qt::WindowFullscreenButtonHint;
-    
+
     setWindowFlags(flags);
-    
+
     // Store the original palette for later restoration
     _originalPalette = palette();
 
     // Store normal geometry
     _normalGeometry = normalGeometry();
-    
+
     qDebug() << "macOS window initialized with flags:" << flags;
 }
 
 void MainWindow::initializePlatformWindows()
 {
-  // Windows-specific initialization
-  // Set window flags for Windows behavior
-  this->setWindowFlag(Qt::WindowMaximizeButtonHint);
+    // Windows-specific initialization
+    // Set window flags for Windows behavior
+    this->setWindowFlag(Qt::WindowMaximizeButtonHint);
 }
 
 void MainWindow::initializePlatformLinux()
 {
-  // Linux-specific initialization
-  // Set window flags for Linux behavior
-  this->setWindowFlag(Qt::WindowMaximizeButtonHint);
+    // Linux-specific initialization
+    // Set window flags for Linux behavior
+    this->setWindowFlag(Qt::WindowMaximizeButtonHint);
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    // Handle main window dragging state for docking manager
+    if (watched == this)
+    {
+        if (event->type() == QEvent::NonClientAreaMouseButtonPress)
+        {
+            if (_dockingManager)
+                _dockingManager->setSnappingLocked(true);
+        }
+        else if (event->type() == QEvent::NonClientAreaMouseButtonRelease)
+        {
+            if (_dockingManager)
+                _dockingManager->setSnappingLocked(false);
+        }
+    }
+
     switch (event->type())
     {
         case QEvent::KeyPress:
+        {
+            QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+            QString keyName = QKeySequence(keyEvent->key()).toString();
+            QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
+            QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
+
+            qDebug() << "MainWindow : eventFilter - keyPress, scan: " << hexScanCode << "virt: " << hexVirtualKey
+                     << " key: " << keyName << " " << keyEvent->text();
+
+            /*
+            if (keyEvent->key() == Qt::Key_F1)
             {
-                 QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-                 QString keyName = QKeySequence(keyEvent->key()).toString();
-                 QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
-                 QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
-
-                 qDebug() << "MainWindow : eventFilter - keyPress, scan: "<< hexScanCode << "virt: " << hexVirtualKey << " key: " << keyName << " " << keyEvent->text();
-
-                 /*
-                 if (keyEvent->key() == Qt::Key_F1)
-                 {
-                        if( QWidget* w = QApplication::widgetAt( QCursor::pos() ) )
-                        {
-                                if( w == XXX )
-                                {
-                                       // show help
-                                       return;
-                                 }
-                        }
-                 }
-                 */
-
-                 deviceScreen->handleExternalKeyPress(keyEvent);
+                   if( QWidget* w = QApplication::widgetAt( QCursor::pos() ) )
+                   {
+                           if( w == XXX )
+                           {
+                                  // show help
+                                  return;
+                            }
+                   }
             }
-            break;
+            */
+
+            deviceScreen->handleExternalKeyPress(keyEvent);
+        }
+        break;
         case QEvent::KeyRelease:
-            {
-                QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-                QString keyName = QKeySequence(keyEvent->key()).toString();
-                QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
-                QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
+        {
+            QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
+            QString keyName = QKeySequence(keyEvent->key()).toString();
+            QString hexScanCode = QString("0x%1").arg(keyEvent->nativeScanCode(), 4, 16, QLatin1Char('0'));
+            QString hexVirtualKey = QString("0x%1").arg(keyEvent->nativeVirtualKey(), 4, 16, QLatin1Char('0'));
 
-                qDebug() << "MainWindow : eventFilter - keyRelease, scan: "<< hexScanCode << "virt: " << hexVirtualKey << " key: " << keyName << " " << keyEvent->text();
+            qDebug() << "MainWindow : eventFilter - keyRelease, scan: " << hexScanCode << "virt: " << hexVirtualKey
+                     << " key: " << keyName << " " << keyEvent->text();
 
-                deviceScreen->handleExternalKeyRelease(keyEvent);
-            }
-            break;
+            deviceScreen->handleExternalKeyRelease(keyEvent);
+        }
+        break;
         case QEvent::Move:
             _lastCursorPos = QCursor::pos();
             break;
         case QEvent::Resize:
         case QEvent::Show:
-            adjust(event);
+            _dockingManager->updateDockedWindows();
             break;
 
         case QEvent::NonClientAreaMouseButtonPress:
             _lastCursorPos = QCursor::pos();
             break;
         case QEvent::NonClientAreaMouseButtonRelease:
-            adjust(event);
+            _dockingManager->updateDockedWindows();
             break;
         case QEvent::NonClientAreaMouseMove:
+        {
+            if (watched == this && static_cast<QMouseEvent*>(event)->buttons() == Qt::LeftButton)
             {
-                if (static_cast<QMouseEvent *>(event)->buttons() == Qt::LeftButton)
-                {
-                    QPoint delta = QCursor::pos() - _lastCursorPos;
-                    adjust(event, delta);
-                }
+                QPoint currentPos = QCursor::pos();
+                QPoint delta = currentPos - _lastCursorPos;
+                _dockingManager->moveDockedWindows(delta);
+
+                _lastCursorPos = currentPos;
             }
-            break;
+        }
+        break;
         default:
             break;
     }
 
-    //return false;
+    // return false;
 
     // Forward the key event to QShortcut
     QApplication::sendEvent(_fullScreenShortcut, event);
 
     return QMainWindow::eventFilter(watched, event);
-}
-
-void MainWindow::arrangeWindows()
-{
-    QRect mainWindowRect = this->geometry();
-
-    if (this->debuggerWindow)
-    {
-        QRect debuggerWindowRect = this->debuggerWindow->rect();
-
-        debuggerWindowRect.moveLeft(mainWindowRect.left() - debuggerWindowRect.width());
-        debuggerWindowRect.moveTop(mainWindowRect.top());
-        debuggerWindow->setGeometry(debuggerWindowRect);
-    }
-
-    if (this->logWindow)
-    {
-        QRect logWindowRect = this->logWindow->rect();
-
-        logWindowRect.moveLeft(mainWindowRect.right());
-        logWindowRect.moveTop(mainWindowRect.top());
-        logWindow->setGeometry(logWindowRect);
-    }
-}
-
-void MainWindow::adjust(QEvent* event, const QPoint& delta)
-{
-    if (debuggerWindow)
-    {
-        const QPoint offsetDebugger(-debuggerWindow->geometry().width(), 0);
-        debuggerWindow->move(this->geometry().topLeft() + offsetDebugger + delta);
-    }
-
-    if (logWindow)
-    {
-        QPoint targetPoint = this->geometry().topRight() + delta;
-        logWindow->move(targetPoint);
-    }
 }
 
 /// endregion </Protected members>
@@ -797,10 +881,15 @@ void MainWindow::handleStartButton()
         // Clear log
         logWindow->reset();
 
-        _emulator = _emulatorManager->createEmulatorInstance();
+        size_t size = sizeof(AutomationWebAPI);
+        size_t sizeAutomation = sizeof(Automation);
+        EmulatorManager* test = EmulatorManager::GetInstance();
+
+        // Create a new emulator instance
+        _emulator = _emulatorManager->CreateEmulator("test", LoggerLevel::LogInfo);
 
         // Initialize emulator instance
-        if (_emulator->Init())
+        if (_emulator)
         {
             _lastFrameCount = 0;
 
@@ -814,17 +903,23 @@ void MainWindow::handleStartButton()
                 logger.SetLoggingLevel(LoggerLevel::LogInfo);
 
                 // Mute frequently firing events
-                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80, PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
-                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_GENERIC);
-                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
-                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO, PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT);
-                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_MEMORY, PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM);
-                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE, PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_Z80,
+                                               PlatformZ80SubmodulesEnum::SUBMODULE_Z80_M1);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO,
+                                               PlatformIOSubmodulesEnum::SUBMODULE_IO_GENERIC);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO,
+                                               PlatformIOSubmodulesEnum::SUBMODULE_IO_IN);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_IO,
+                                               PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_MEMORY,
+                                               PlatformMemorySubmodulesEnum::SUBMODULE_MEM_ROM);
+                logger.TurnOffLoggingForModule(PlatformModulesEnum::MODULE_CORE,
+                                               PlatformCoreSubmodulesEnum::SUBMODULE_CORE_MAINLOOP);
 
                 logger.TurnOffLoggingForAll();
-                //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
-                //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
-                //logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
+                // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_TAPE);
+                // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_IN);
+                // logger.TurnOnLoggingForModule(MODULE_IO, SUBMODULE_IO_OUT);
                 logger.TurnOnLoggingForModule(MODULE_DISK, SUBMODULE_DISK_FDC);
 
                 std::string dumpSettings = logger.DumpSettings();
@@ -837,12 +932,12 @@ void MainWindow::handleStartButton()
                 portDecoder.MuteLoggingForPort(0xFFFD);
                 portDecoder.MuteLoggingForPort(0xBFFD);
 
-
                 if (false)
                 {
                     // Redirect all module logger output to the LogWindow
                     ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
-                    ModuleObserverObserverCallbackMethod loggerCallback = static_cast<ModuleObserverObserverCallbackMethod>(&LogWindow::Out);
+                    ModuleObserverObserverCallbackMethod loggerCallback =
+                        static_cast<ModuleObserverObserverCallbackMethod>(&LogWindow::Out);
                     logger.SetLoggerOut(loggerObserverInstance, loggerCallback);
                     logWindow->reset();
                     logWindow->show();
@@ -853,15 +948,17 @@ void MainWindow::handleStartButton()
 
             /// region <Setup breakpoints>
             BreakpointManager& breakpointManager = *_emulator->GetBreakpointManager();
-            //breakpointManager.AddExecutionBreakpoint(0x05ED);   // LD_SAMPLE in SOS48
-            //breakpointManager.AddExecutionBreakpoint(0x05FA);   // LD_SAMPLE - pilot edge detected
-            //breakpointManager.AddExecutionBreakpoint(0x0562);   // LD_BYTES - first IN A,($FE)
-            //breakpointManager.AddExecutionBreakpoint(0x04D8);   // SA_LEADER - 5 seconds of pilot during SAVE
+            // breakpointManager.AddExecutionBreakpoint(0x05ED);   // LD_SAMPLE in SOS48
+            // breakpointManager.AddExecutionBreakpoint(0x05FA);   // LD_SAMPLE - pilot edge detected
+            // breakpointManager.AddExecutionBreakpoint(0x0562);   // LD_BYTES - first IN A,($FE)
+            // breakpointManager.AddExecutionBreakpoint(0x04D8);   // SA_LEADER - 5 seconds of pilot during SAVE
             /// endregion </Setup breakpoints>
 
             // Attach emulator audio buffer
-            AppSoundManager& soundManager = _emulatorManager->getSoundManager();
-            _emulator->SetAudioCallback(&soundManager, &AppSoundManager::audioCallback);
+            if (_soundManager)
+            {
+                _emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+            }
 
             // Attach emulator framebuffer to GUI
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
@@ -881,15 +978,24 @@ void MainWindow::handleStartButton()
             Observer* observerInstance = static_cast<Observer*>(this);
 
             // Subscribe to video frame refresh events
-            ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+            ObserverCallbackMethod callback =
+                static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
             messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+
+            // Subscribe to file open request events
+            ObserverCallbackMethod fileOpenCallback =
+                static_cast<ObserverCallbackMethod>(&MainWindow::handleFileOpenRequest);
+            messageCenter.AddObserver(NC_FILE_OPEN_REQUEST, observerInstance, fileOpenCallback);
 
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)
-            debuggerWindow->setEmulator(_emulator);
+            debuggerWindow->setEmulator(_emulator.get());
 
             // Enable audio output
-            _emulatorManager->getSoundManager().start();
+            if (_soundManager)
+            {
+                _soundManager->start();
+            }
 
             // Start in async own thread
             _emulator->StartAsync();
@@ -900,13 +1006,12 @@ void MainWindow::handleStartButton()
             startButton->setEnabled(true);
 
             // DEBUG: Reset ZX-Spectrum each 2 seconds
-            //QTimer *timer = new QTimer(this);
-            //connect(timer, SIGNAL(timeout()), this, SLOT(resetEmulator()));
-            //timer->start(2000);
+            // QTimer *timer = new QTimer(this);
+            // connect(timer, SIGNAL(timeout()), this, SLOT(resetEmulator()));
+            // timer->start(2000);
         }
         else
         {
-            delete _emulator;
             _emulator = nullptr;
         }
     }
@@ -915,24 +1020,28 @@ void MainWindow::handleStartButton()
         startButton->setEnabled(false);
 
         // Disable audio output
-        _emulatorManager->getSoundManager().stop();
+        _soundManager->stop();
 
-        // Stop emulator instance
-        _emulator->Stop();
+        if (_emulator)
+        {
+            // Stop emulator instance
+            _emulator->Stop();
 
-        // Unsubscribe from message bus events
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        Observer* observerInstance = static_cast<Observer*>(this);
+            // Unsubscribe from message bus events
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            Observer* observerInstance = static_cast<Observer*>(this);
 
-        ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+            ObserverCallbackMethod callback =
+                static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+            messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
 
-        // Detach framebuffer
-        deviceScreen->detach();
+            // Detach framebuffer
+            deviceScreen->detach();
 
-        // Destroy emulator
-        _emulatorManager->destroyEmulatorInstance(_emulator);
-        _emulator = nullptr;
+            // Remove emulator from manager
+            _emulatorManager->RemoveEmulator(_emulator->GetId());
+            _emulator = nullptr;
+        }
 
         _lastFrameCount = 0;
 
@@ -945,27 +1054,203 @@ void MainWindow::handleStartButton()
 
 void MainWindow::handleFullScreenShortcut()
 {
-    if (isFullScreen())
+#ifdef Q_OS_WIN
+    handleFullScreenShortcutWindows();
+#elif defined(Q_OS_MAC)
+    handleFullScreenShortcutMacOS();
+#elif defined(Q_OS_LINUX)
+    handleFullScreenShortcutLinux();
+#endif
+}
+
+void MainWindow::handleFullScreenShortcutWindows()
+{
+    if (windowState() & Qt::WindowFullScreen)
     {
-      _isFullScreen = false;
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
 
-#ifdef __APPLE__
-        setWindowFlags(Qt::Window); // Prevent horizontal transition from full screen to system desktop
-#endif // __APPLE__
+        // Always restore palette and frame before leaving fullscreen
+        setPalette(_originalPalette);
+        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        statusBar()->show();
+        startButton->show();
 
-        // Exit full-screen mode
+        // First show normal to ensure clean state
         showNormal();
+        
+        if (_preFullScreenState & Qt::WindowMaximized)
+        {
+            // Restore to maximized state
+            showMaximized();
+        }
+        else if (_normalGeometry.isValid())
+        {
+            // Restore to normal state with saved geometry
+            setGeometry(_normalGeometry);
+        }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager) {
+                _dockingManager->onExitFullscreen();
+
+                QTimer::singleShot(100, this, [this](){
+                    if (_dockingManager) _dockingManager->setSnappingLocked(false);
+                });
+            }
+        });
     }
     else
     {
-        _isFullScreen = true;
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        if (_dockingManager) _dockingManager->onEnterFullscreen();
 
-        // Enter full-screen mode
-#ifdef _WIN32
-        showMaximized();    // Windows flow: Normal -> Maximize -> FullScreen
-#else
-        showFullScreen();   // macOS and Linux - direct transition to FullScreen
-#endif // _WIN32
+        // Store state and geometry before entering fullscreen
+        bool wasMaximized = (windowState() & Qt::WindowMaximized) && !(windowFlags() & Qt::FramelessWindowHint);
+        _preFullScreenState = wasMaximized ? Qt::WindowMaximized : Qt::WindowNoState;
+
+        // Always store the current geometry
+        if (wasMaximized)
+        {
+            // If maximized, store both the current (maximized) state and the normal geometry
+            _maximizedGeometry = geometry();
+            qDebug() << "Storing maximized geometry:" << _maximizedGeometry;
+
+            // Store the normal geometry if we have it, otherwise use current geometry as fallback
+            if (!_normalGeometry.isValid())
+            {
+                _normalGeometry = normalGeometry();
+                qDebug() << "Using normal geometry from window:" << _normalGeometry;
+            }
+        }
+        else
+        {
+            // If normal, just store the normal geometry
+            _normalGeometry = geometry();
+            qDebug() << "Storing normal geometry:" << _normalGeometry;
+        }
+        // Set palette and hide UI for fullscreen
+        QPalette palette;
+        palette.setColor(QPalette::Window, Qt::black);
+        setPalette(palette);
+        statusBar()->hide();
+        startButton->hide();
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        setWindowState(Qt::WindowNoState);
+        showFullScreen();
+
+        QTimer::singleShot(100, this, [this](){
+            if (_dockingManager) _dockingManager->setSnappingLocked(false);
+        });
+    }
+}
+
+void MainWindow::handleFullScreenShortcutMacOS()
+{
+    if (windowState() & Qt::WindowFullScreen)
+    {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+
+        setWindowFlags(Qt::Window);  // Prevent horizontal transition from full screen to system desktop
+        // Restore previous state and geometry
+        if (_preFullScreenState & Qt::WindowMaximized)
+        {
+            if (_maximizedGeometry.isValid())
+                setGeometry(_maximizedGeometry);
+            showMaximized();
+        }
+        else
+        {
+            if (_normalGeometry.isValid())
+                setGeometry(_normalGeometry);
+            showNormal();
+        }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager) {
+                _dockingManager->onExitFullscreen();
+
+                QTimer::singleShot(100, this, [this](){
+                    if (_dockingManager) _dockingManager->setSnappingLocked(false);
+                });
+            }
+        });
+    }
+    else
+    {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        if (_dockingManager) _dockingManager->onEnterFullscreen();
+
+        // Store state and geometry before entering fullscreen
+        if (windowState() & Qt::WindowMaximized)
+        {
+            _preFullScreenState = Qt::WindowMaximized;
+            _maximizedGeometry = geometry();
+        }
+        else
+        {
+            _preFullScreenState = Qt::WindowNoState;
+            _normalGeometry = geometry();
+        }
+        showFullScreen();
+        QTimer::singleShot(100, this, [this](){
+            if (_dockingManager) _dockingManager->setSnappingLocked(false);
+        });
+    }
+}
+
+void MainWindow::handleFullScreenShortcutLinux()
+{
+    if (windowState() & Qt::WindowFullScreen)
+    {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        
+        // Restore previous state and geometry
+        if (_preFullScreenState & Qt::WindowMaximized)
+        {
+            if (_maximizedGeometry.isValid())
+                setGeometry(_maximizedGeometry);
+            showMaximized();
+        }
+        else
+        {
+            if (_normalGeometry.isValid())
+                setGeometry(_normalGeometry);
+            showNormal();
+        }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager) {
+                _dockingManager->onExitFullscreen();
+
+                QTimer::singleShot(100, this, [this](){
+                    if (_dockingManager) _dockingManager->setSnappingLocked(false);
+                });
+            }
+        });
+    }
+    else
+    {
+        if (_dockingManager) _dockingManager->setSnappingLocked(true);
+        if (_dockingManager) _dockingManager->onEnterFullscreen();
+
+        // Store state and geometry before entering fullscreen
+        if (windowState() & Qt::WindowMaximized)
+        {
+            _preFullScreenState = Qt::WindowMaximized;
+            _maximizedGeometry = geometry();
+        }
+        else
+        {
+            _preFullScreenState = Qt::WindowNoState;
+            _normalGeometry = geometry();
+        }
+        showFullScreen();
+        QTimer::singleShot(100, this, [this](){
+            if (_dockingManager) _dockingManager->setSnappingLocked(false);
+        });
     }
 }
 
@@ -990,6 +1275,150 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
 
             _lastFrameCount = frameCount;
         }
+    }
+}
+
+void MainWindow::handleFileOpenRequest(int id, Message* message)
+{
+    if (!_emulator)
+    {
+        qDebug() << "File open request received but no emulator is running";
+        return;
+    }
+
+    // Check if a filepath was provided in the message payload
+    if (message && message->obj)
+    {
+        // The message payload should be a SimpleTextPayload containing the filepath
+        SimpleTextPayload* payload = static_cast<SimpleTextPayload*>(message->obj);
+        QString filepath = QString::fromStdString(payload->_payloadText);
+
+        // Use Qt's signal/slot mechanism to handle the file opening on the main thread
+        QMetaObject::invokeMethod(this, "openSpecificFile", Qt::QueuedConnection, Q_ARG(QString, filepath));
+    }
+    else
+    {
+        // No filepath provided, show a file open dialog on the main thread
+        QMetaObject::invokeMethod(this, "openFileDialog", Qt::QueuedConnection);
+    }
+}
+
+void MainWindow::openSpecificFile(const QString& filepath)
+{
+    // Check if the file exists
+    QFileInfo fileInfo(filepath);
+    if (fileInfo.exists() && fileInfo.isFile())
+    {
+        // Save directory to settings
+        saveLastDirectory(filepath);
+
+        // Process the file based on its extension
+        QString filepathCopy = filepath;  // Create a non-const copy for the method call
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepathCopy);
+        std::string file = filepath.toStdString();
+
+        switch (category)
+        {
+            case FileROM:
+                break;
+            case FileSnapshot:
+                _emulator->LoadSnapshot(file);
+                break;
+            case FileTape:
+                _emulator->LoadTape(file);
+                break;
+            case FileDisk:
+                _emulator->LoadDisk(file);
+                break;
+            case FileSymbol:
+                if (_emulator && _emulator->GetDebugManager())
+                {
+                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+                }
+                break;
+            default:
+                qDebug() << "Unsupported file type:" << filepath;
+                break;
+        };
+    }
+    else
+    {
+        qDebug() << "File does not exist or is not a regular file:" << filepath;
+        // If the specified file doesn't exist, fall back to the file dialog
+        openFileDialog();
+    }
+}
+
+void MainWindow::openFileDialog()
+{
+    // Show a file open dialog using the last directory
+    QString filePath = QFileDialog::getOpenFileName(
+        this, tr("Open File"), _lastDirectory,
+        tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
+           "*.z80);;Tapes (*.tap *.tzx);;Disks (*.trd *.scl *.fdi *.td0 *.udi);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        // Save directory to settings
+        saveLastDirectory(filePath);
+
+        // Process the selected file
+        QString filePathCopy = filePath;  // Create a non-const copy for the method call
+        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
+        std::string file = filePath.toStdString();
+
+        switch (category)
+        {
+            case FileROM:
+                break;
+            case FileSnapshot:
+                _emulator->LoadSnapshot(file);
+                break;
+            case FileTape:
+                _emulator->LoadTape(file);
+                break;
+            case FileDisk:
+                _emulator->LoadDisk(file);
+                break;
+            case FileSymbol:
+                if (_emulator && _emulator->GetDebugManager())
+                {
+                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+                }
+                break;
+            default:
+                qDebug() << "Unsupported file type:" << filePath;
+                break;
+        };
+    }
+}
+
+void MainWindow::saveLastDirectory(const QString& path)
+{
+    if (path.isEmpty())
+        return;
+
+    QFileInfo fileInfo(path);
+    QString dirPath;
+
+    if (fileInfo.isFile())
+        dirPath = fileInfo.absolutePath();
+    else if (fileInfo.isDir())
+        dirPath = path;
+    else
+        return;
+
+    // Only update if it's different
+    if (_lastDirectory != dirPath)
+    {
+        _lastDirectory = dirPath;
+
+        // Save to settings with explicit organization and application name
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("LastFileDirectory", _lastDirectory);
+        settings.sync();  // Force immediate write to disk
+
+        qDebug() << "Saved last directory to settings:" << _lastDirectory;
     }
 }
 

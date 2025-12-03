@@ -30,6 +30,8 @@ Z80::Z80(EmulatorContext* context) : Z80State {}
 	// Ensure register memory and unions do not contain garbage
 	Z80State::
 	tt = 0;
+	t = 0;                  // Initialize t-state counter
+	eipos = 0;              // Initialize EI command position
 	pc = 0;
 	sp = 0;
 	ir_ = 0;
@@ -46,19 +48,13 @@ Z80::Z80(EmulatorContext* context) : Z80State {}
 	alt.hl = 0;
 	memptr = 0;
 
-
 	tpi = 0;
 	rate = (1 << 8);
-	dbgbreak = 0;
-    isDebugMode = 0;
-	debug_last_t = 0;
+    isDebugMode = false;
 	trace_curs = trace_top = (unsigned)-1;
 	trace_mode = 0;
 	mem_curs = mem_top = 0;
 	pc_trflags = nextpc = 0;
-	dbg_stophere = dbg_stopsp = (unsigned)-1;
-	dbg_loop_r1 = 0;
-	dbg_loop_r2 = 0xFFFF;
     int_pending = false;
 	int_gate = true;
 	nmi_in_progress = false;
@@ -432,21 +428,8 @@ void Z80::DirectWrite(uint16_t addr, uint8_t val)
 {
 	uint8_t* remap_addr = _context->pMemory->MapZ80AddressToPhysicalAddress(addr);
 	*remap_addr = val;
-
-	// Update TSConf cache data
-	// TODO: move to plugin
-    const CONFIG& config = _context->config;
-    if (config.mem_model == MM_TSL)
-    {
-        Z80 &_cpu_state = *this;
-        uint16_t cache_pointer = addr & 0x1FF;
-        _cpu_state.tscache_addr[cache_pointer] = -1; // MemoryWrite invalidates flag
-    }
 }
 
-
-
-///
 /// Simulate Z80 INT pin signal raising
 /// Interrupt request will be processed before next CPU cycle in
 void Z80::RequestMaskedInterrupt()
@@ -472,13 +455,7 @@ void Z80::RequestNonMaskedInterrupt()
 void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_end)
 {
 	Z80& cpu = *this;
-	CONFIG& config = _context->config;
-	EmulatorState& state = _context->emulatorState;
 	VideoControl& video = _context->pScreen->_vid;
-
-	// Baseconf NMI trap
-	if (config.mem_model == MM_ATM3 && (state.pBF & 0x10) && (cpu.pc == state.pBD))
-		_nmi_pending_count = 1;
 
 	// NMI processing
 	if (_nmi_pending_count > 0)
@@ -506,19 +483,6 @@ void Z80::ProcessInterrupts(bool int_occurred, unsigned int_start, unsigned int_
 			_nmi_pending_count = 0;
 	     */
 	} // end if (nmi_pending)
-
-	// Baseconf NMI
-	if (state.pBE)
-	{
-	    /*
-		if (config.mem_model == MM_ATM3 && state.pBE == 1)
-		{
-			cpu.nmi_in_progress = false;
-			SetBanks();
-		}
-	     */
-		state.pBE--;
-	}
 
 	// Generate INT
 	// TODO: move INT forming logic to Screen class since in reality it's formed by ULA / frame counters
@@ -670,120 +634,6 @@ void Z80::IncrementCPUCyclesCounter(uint8_t cycles)
 
     clock_count += cycles;
 }
-
-/// region <TSConf specific>
-
-// Note: Only TSConf supports interrupt vectors
-uint8_t Z80::GetTSConfInterruptVector()
-{
-    Z80& _cpu_state = *this;
-    const CONFIG& config = _context->config;
-    const EmulatorState& state = _context->emulatorState;
-
-    uint8_t result = 0xFF;
-
-    _cpu_state.tt += _cpu_state.rate * 3; // Skip 3 CPU cycles before reading INT vector
-
-    if (config.mem_model == MM_TSL)
-    {
-        // Note: Only TSConf supports interrupt vectors
-
-        // check status of frame INT
-        //ts_frame_int(state.ts.vdos || state.ts.vdos_m1);
-
-        if (state.ts.intctrl.frame_pend)
-            return state.ts.im2vect[INT_FRAME];
-
-        else if (state.ts.intctrl.line_pend)
-            return state.ts.im2vect[INT_LINE];
-
-        else if (state.ts.intctrl.dma_pend)
-            return state.ts.im2vect[INT_DMA];
-
-        else
-            return 0xFF;
-    }
-    else
-    {
-        // Simulate random noise on data bus
-        // Getting CPU time counter for that
-#if defined __x86_64__
-        if (state.flags & CF_Z80FBUS)
-            result = (uint8_t)(rdtsc() & 0xFF);
-#endif
-
-#if defined(__arm__) || defined(__aarch64__)
-        if (state.flags & CF_Z80FBUS)
-            result = (uint8_t)(rdtsc() & 0xFF);
-#endif
-    }
-
-    return result;
-}
-
-// TODO: Move to adapter
-void Z80::ts_frame_int(bool vdos)
-{
-    Z80& _cpu_state = *this;
-    const CONFIG& config = _context->config;
-    EmulatorState& state = _context->emulatorState;
-
-	if (!state.ts.intctrl.frame_pend)
-	{
-		bool f1 = (_cpu_state.t - state.ts.intctrl.frame_t) < state.ts.intctrl.frame_len; // INT signal in current frame
-		bool f2 = (state.ts.intctrl.frame_t + state.ts.intctrl.frame_len) > config.frame; // INT signal is transferred from the previous frame
-		bool new_frame = _cpu_state.t < state.ts.intctrl.last_cput; // is it new frame ? - !!! check this !!!
-
-		if (f1 || (f2 && new_frame))
-		{
-			state.ts.intctrl.frame_pend = state.ts.intframe;
-			state.ts.intctrl.frame_cnt = _cpu_state.t - state.ts.intctrl.frame_t + (f1 ? 0 : config.frame);
-		}
-	}
-	else if (vdos) { /* No Operation */ }
-	else if (state.ts.intctrl.frame_pend && ((state.ts.intctrl.frame_cnt + (_cpu_state.t - state.ts.intctrl.last_cput)) < state.ts.intctrl.frame_len))
-	{
-		state.ts.intctrl.frame_cnt += (_cpu_state.t - state.ts.intctrl.last_cput);
-	}
-	else
-		state.ts.intctrl.frame_pend = false;
-
-	state.ts.intctrl.last_cput = _cpu_state.t;
-}
-
-void Z80::ts_line_int(bool vdos)
-{
-	Z80& _cpu_state = *this;
-	EmulatorState& state = _context->emulatorState;
-
-	if (_cpu_state.t >= state.ts.intctrl.line_t)
-	{
-		state.ts.intctrl.line_t += VID_TACTS;
-		bool pre_pend;
-
-		// Disabled until vdac2 logic restored
-		//if (state.ts.vdac2 && state.ts.ft_en)
-		//	pre_pend = vdac2::process_line();
-		//else
-			pre_pend = true;
-
-		if (!vdos)
-			state.ts.intctrl.line_pend = pre_pend && state.ts.intline; // !!! incorrect behaviour, pending flag must be processed after VDOS
-	}
-}
-
-void Z80::ts_dma_int([[maybe_unused]] bool vdos)
-{
-	EmulatorState& state = _context->emulatorState;
-
-	if (state.ts.intctrl.new_dma)
-	{
-		state.ts.intctrl.new_dma = false;
-		state.ts.intctrl.dma_pend = state.ts.intdma;   // !!! possibly incorrect behaviour (VDOS)
-	}
-}
-
-/// endregion </TSConf specific>
 
 /// region <Debug methods>
 #include <cstdio>

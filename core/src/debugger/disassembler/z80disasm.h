@@ -4,13 +4,21 @@
 #include <regex>
 #include <vector>
 #include "emulator/platform.h"
+#include "emulator/emulatorcontext.h"
+
+// Forward declarations
+class ModuleLogger;
+class DebugManager;
+class LabelManager;
+struct Z80Registers;
+class Memory;
 
 /// region <Types>
 
 /// Represents opcode dictionary data record from disassembler decoding tables
 struct OpCode
 {
-    uint16_t flags;
+    uint32_t flags;
     uint8_t t;				// T-states for unconditional operations
     uint8_t met_t;          // T-states for conditional operation when condition met
     uint8_t notmet_t;       // T-states for conditional operation when condition not met
@@ -38,12 +46,22 @@ struct DecodedInstruction
     bool hasJump = false;
     bool hasRelativeJump = false;
     bool hasDisplacement = false;
+    bool hasIndirect = false;
     bool hasReturn = false;
     bool hasByteOperand = false;
     bool hasWordOperand = false;
 
     bool hasCondition = false;
     bool hasVariableCycles = false;
+    bool isRst = false;             // RST instruction (jump to predefined address)
+    bool isBlockOp = false;         // Block operations (LDI, LDIR, etc.)
+    bool isIO = false;              // I/O operations (IN, OUT)
+    bool isInterrupt = false;       // Interrupt-related (EI, DI, IM)
+    bool isRegExchange = false;     // Register exchange operations (EX)
+    bool isDjnz = false;            // DJNZ instruction
+    bool affectsFlags = false;      // Instruction modifies flags
+    bool affectsAllFlags = false;   // All flags affected (AND, OR, XOR)
+    bool affectsSZFlags = false;    // Only S and Z flags affected
 
     int8_t displacement = 0x00;             // 8-bit signed displacement (offset) for IX/IY indexed operations
     int8_t relJumpOffset = 0x00;            // 8-bit relative jump offset
@@ -62,7 +80,9 @@ struct DecodedInstruction
 
     std::string hexDump;
     std::string mnemonic;
-    std::string mnemonicWithLabel;
+    std::string label;
+    std::string annotation;
+    std::string comment;
 
     /// region <Constructors / Destructors>
 
@@ -105,18 +125,19 @@ constexpr uint32_t OF_MEMADR = (1UL << 4);          // operand contains memory a
 constexpr uint32_t OF_CONDITION = (1UL << 5);       // operation checks condition
 constexpr uint32_t OF_RELJUMP = (1UL << 6);         // opcode uses relative jump offset as operand
 constexpr uint32_t OF_VAR_T = (1UL << 7);           // operation takes variable number of t-states (i.e. cycles)
-constexpr uint32_t OF_JUMP = (1UL << 8);            // operand is jump or call address
-constexpr uint32_t OF_RET = (1UL << 9);             // operation will take next PC address from stack
-constexpr uint32_t OF_RST = (1UL << 10);            // operation will jump to pre-defined address (RST n)
-constexpr uint32_t OF_FLAGS_AFFECTED = (1UL << 11); // Instruction modifies flags
-constexpr uint32_t OF_FLAGS_ALL = (1UL << 12);      // All flags affected (like AND, OR, XOR)
-constexpr uint32_t OF_FLAGS_SZ = (1UL << 13);       // Only S and Z flags affected
-constexpr uint32_t OF_REG_EXCHANGE = (1UL << 14);   // Register exchange operations (EX)
-constexpr uint32_t OF_BLOCK = (1UL << 15);          // Block operations (LDI, LDIR, etc.)
-constexpr uint32_t OF_IO = (1UL << 16);             // I/O operations (IN, OUT)
-constexpr uint32_t OF_INTERRUPT = (1UL << 17);      // Interrupt-related (EI, DI, IM)
-
-constexpr uint32_t OF_SKIPABLE = (1UL << 31);       // opcode is skippable during single step debug
+constexpr uint32_t OF_JUMP = (1UL << 8);            // operand is jump address (JP, JR)
+constexpr uint32_t OF_CALL = (1UL << 9);            // operand is call address (CALL)
+constexpr uint32_t OF_RET = (1UL << 10);            // operation will take next PC address from stack
+constexpr uint32_t OF_RST = (1UL << 11);            // operation will jump to pre-defined address (RST n)
+constexpr uint32_t OF_FLAGS_AFFECTED = (1UL << 12); // Instruction modifies flags
+constexpr uint32_t OF_FLAGS_ALL = (1UL << 13);      // All flags affected (like AND, OR, XOR)
+constexpr uint32_t OF_FLAGS_SZ = (1UL << 14);       // Only S and Z flags affected
+constexpr uint32_t OF_REG_EXCHANGE = (1UL << 15);   // Register exchange operations (EX)
+constexpr uint32_t OF_BLOCK = (1UL << 16);          // Block operations (LDI, LDIR, etc.)
+constexpr uint32_t OF_IO = (1UL << 17);             // I/O operations (IN, OUT)
+constexpr uint32_t OF_INTERRUPT = (1UL << 18);      // Interrupt-related (EI, DI, IM)
+constexpr uint32_t OF_DJNZ = (1UL << 19);           // DJNZ instruction
+constexpr uint32_t OF_INDIRECT = (1UL << 20);       // Command uses indirect addressing (via one register pairs)
 
 namespace OpFlags
 {
@@ -175,11 +196,12 @@ namespace OpFlags
     // Operation type flags
     namespace Operation
     {
+        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
         constexpr Flag RegExchange{1UL << 14, "RegExchange", "Register exchange operations"};
         constexpr Flag Block{1UL << 15, "Block", "Block operations (LDI, LDIR, etc.)"};
         constexpr Flag IO{1UL << 16, "IO", "I/O operations (IN, OUT)"};
         constexpr Flag Interrupt{1UL << 17, "Interrupt", "Interrupt-related (EI, DI, IM)"};
-        constexpr Flag VarCycles{1UL << 7, "VarCycles", "Variable number of t-states"};
+        constexpr Flag Djnz{1UL << 18, "Djnz", "DJNZ instruction"};
     }
 
     // Debug flags
@@ -246,9 +268,7 @@ namespace OpFlags
 
 /// endregion </Types>
 
-class ModuleLogger;
-struct Z80Registers;
-class Memory;
+
 
 class Z80Disassembler
 {
@@ -257,6 +277,10 @@ public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DISASSEMBLER;
     const uint16_t _SUBMODULE = PlatformDisassemblerSubmodulesEnum::SUBMODULE_DISASSEMBLER_CORE;
     /// endregion </ModuleLogger definitions for Module/Submodule>
+
+public:
+    /// Maximum length of a Z80 instruction in bytes (prefix + opcode + operands)
+    static constexpr size_t MAX_INSTRUCTION_LENGTH = 4;
 
     /// region <Static>
 protected:
@@ -272,18 +296,39 @@ protected:
 
     /// endregion </Static>
 
+
+
     /// region <Fields>
 protected:
     ModuleLogger* _logger;
+    EmulatorContext* _context;
     /// endregion </Fields>
 
 public:
+    explicit Z80Disassembler(EmulatorContext* context);
+    virtual ~Z80Disassembler() = default;
+
     void SetLogger(ModuleLogger* logger) { _logger = logger; }
     
-    std::string disassembleSingleCommand(const uint8_t* buffer, size_t len, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
-    std::string disassembleSingleCommandWithRuntime(const uint8_t* buffer, size_t len, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommand(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen = nullptr, DecodedInstruction* decoded = nullptr);
+    std::string disassembleSingleCommandWithRuntime(const std::vector<uint8_t>& buffer, uint16_t instructionAddr, uint8_t* commandLen, Z80Registers* registers, Memory* memory, DecodedInstruction* decoded = nullptr);
 
     std::string getRuntimeHints(DecodedInstruction& decoded);
+    
+    // Helper methods for debugger step functionality
+    bool shouldStepOver(const std::vector<uint8_t>& buffer);
+    uint16_t getNextInstructionAddress(uint16_t currentAddress, Memory* memory);
+        
+    // Get address ranges that should be excluded from breakpoint triggering during step-over
+    // Returns vector of address range pairs (start, end) that should be excluded
+    std::vector<std::pair<uint16_t, uint16_t>> getStepOverExclusionRanges(
+        uint16_t currentPC, Memory* memory, int maxDepth = 5);
+    
+    /// @brief Generate a runtime annotation for a decoded instruction
+    /// @param decodedInstruction The decoded instruction
+    /// @param registers CPU registers for runtime state evaluation
+    /// @return String containing the annotation or empty string if not applicable
+    std::string getCommandAnnotation(const DecodedInstruction& decodedInstruction, Z80Registers* registers);
 
     /// region <Helper methods>
 protected:
@@ -291,12 +336,16 @@ protected:
     uint16_t getWord();
     int getRelativeOffset();
 
-    DecodedInstruction decodeInstruction(const uint8_t* buffer, size_t len, Z80Registers* registers = nullptr, Memory* memory = nullptr);
+    DecodedInstruction decodeInstruction(const std::vector<uint8_t>& buffer, uint16_t instructionAddr = 0, Z80Registers* registers = nullptr, Memory* memory = nullptr);
     OpCode getOpcode(uint16_t prefix, uint8_t fetchByte);
     uint8_t hasOperands(OpCode& opcode);
     std::string formatMnemonic(const DecodedInstruction& decoded);
     std::vector<uint8_t> parseOperands(std::string& mnemonic, uint8_t* expectedOperandsLen = nullptr);
     std::string formatOperandString(const DecodedInstruction& decoded, const std::string& mnemonic, std::vector<uint16_t>& values);
+    
+    // Helper method for step-over exclusion ranges
+    void analyzeCalledFunction(uint16_t functionAddress, Memory* memory, 
+                              std::vector<std::pair<uint16_t, uint16_t>>& ranges, int maxDepth);
 
     /// endregion </Helper methods>
 };
@@ -309,6 +358,9 @@ protected:
 class Z80DisassemblerCUT : public Z80Disassembler
 {
 public:
+    // Add a constructor that calls the base class constructor with required parameters
+    Z80DisassemblerCUT(EmulatorContext* context) : Z80Disassembler(context) {};
+
     using Z80Disassembler::getByte;
     using Z80Disassembler::getWord;
     using Z80Disassembler::getRelativeOffset;
