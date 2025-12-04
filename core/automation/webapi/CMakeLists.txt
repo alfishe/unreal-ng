@@ -322,17 +322,13 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         jsoncpp_static
     )
     
-    # Link with zlib if it's being built
+    # Note: zlib is linked transitively through Drogon, so we don't need to link it explicitly here
+    # This avoids duplicate library warnings. Drogon will use the zlib we configured via ZLIB_LIBRARIES
     if (BUILD_ZLIB)
-        message(STATUS "[${PROJECT_NAME}] Linking with zlib: ${ZLIB_TARGET_NAME}")
-        
-        # Add dependency on zlib
+        # Ensure zlib is built before automation_webapi (Drogon depends on it)
         add_dependencies(${PROJECT_NAME} ${ZLIB_TARGET_NAME})
         
-        # Link with zlib
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${ZLIB_TARGET_NAME})
-        
-        # Add zlib include directories
+        # Include directories are still needed for compilation
         target_include_directories(${PROJECT_NAME} PRIVATE ${ZLIB_INCLUDE_DIRS})
     endif()
 
@@ -362,16 +358,15 @@ else () # Called from upper level CMake => build static library
         jsoncpp_static
     )
 
+    # Note: zlib is linked transitively through Drogon, so we don't need to link it explicitly here
+    # This avoids duplicate library warnings. Drogon will use the zlib we configured via ZLIB_LIBRARIES
     if (BUILD_ZLIB)
-        message(STATUS "[${PROJECT_NAME}] Linking with zlib: ${ZLIB_TARGET_NAME}")
+        # Ensure zlib is built before automation_webapi (Drogon depends on it)
         add_dependencies(${PROJECT_NAME}
             ${ZLIB_TARGET_NAME}
         )
-
-        target_link_libraries(${PROJECT_NAME} PRIVATE
-            ${ZLIB_TARGET_NAME}
-        )
-
+        
+        # Include directories are still needed for compilation
         target_include_directories(${PROJECT_NAME} PRIVATE
             ${ZLIB_INCLUDE_DIRS}
         )
