@@ -1,15 +1,16 @@
-#include "stdafx.h"
 #include "soundmanager.h"
 
 #include "common/dumphelper.h"
-#include "common/stringhelper.h"
 #include "common/sound/audiohelper.h"
+#include "common/sound/audioutils.h"
+#include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "stdafx.h"
 
 /// region <Constructors / Destructors>
 
-SoundManager::SoundManager(EmulatorContext *context)
+SoundManager::SoundManager(EmulatorContext* context)
 {
     _context = context;
     _logger = context->pModuleLogger;
@@ -50,9 +51,9 @@ void SoundManager::reset()
     _prevRightValue = 0;
 
     // New wave file
-    //closeWaveFile();
-    //std::string filePath = "unreal.wav";
-    //openWaveFile(filePath);
+    // closeWaveFile();
+    // std::string filePath = "unreal.wav";
+    // openWaveFile(filePath);
 }
 
 void SoundManager::mute()
@@ -95,9 +96,7 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     */
 
     size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / config.frame;
-    size_t sampleIndex = (frameTState *  SAMPLES_PER_FRAME) / config.frame;
-
-
+    size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / config.frame;
 
     /// region <If we're over frame duration>
     if (prevIndex >= 882)
@@ -148,7 +147,7 @@ void SoundManager::handleFrameStart()
 
 void SoundManager::handleStep()
 {
-   _turboSound->handleStep();
+    _turboSound->handleStep();
 }
 
 void SoundManager::handleFrameEnd()
@@ -156,10 +155,7 @@ void SoundManager::handleFrameEnd()
     uint16_t* _ayBuffer = _turboSound->getAudioBuffer();
 
     /// region <Mix all channels to output buffer>
-    for (size_t i = 0; i < AUDIO_BUFFER_SAMPLES_PER_FRAME; i++)
-    {
-        _outBuffer[i] = _ayBuffer[i] + _beeperBuffer[i];
-    }
+    AudioUtils::MixAudio((const int16_t*)_ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
     /// endregion </Mix all channels to output buffer>
 
     // Enqueue generated sound data via previously registered application callback
