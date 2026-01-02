@@ -92,14 +92,19 @@ inline void MixAudio(const int16_t* src1, const int16_t* src2, int16_t* dst, siz
 #endif
 
     // Fallback for all samples (on non-SIMD platforms) or remainder samples (on SIMD platforms)
-    for (; i < count; i++)
+    const size_t remaining = count - i;
+    const int16_t* psrc1 = src1 + i;
+    const int16_t* psrc2 = src2 + i;
+    int16_t* pdst = dst + i;
+
+    for (size_t k = 0; k < remaining; k++)
     {
-        int32_t mixed = static_cast<int32_t>(src1[i]) + static_cast<int32_t>(src2[i]);
+        int32_t mixed = static_cast<int32_t>(psrc1[k]) + static_cast<int32_t>(psrc2[k]);
         if (mixed > 32767)
             mixed = 32767;
         else if (mixed < -32768)
             mixed = -32768;
-        dst[i] = static_cast<int16_t>(mixed);
+        pdst[k] = static_cast<int16_t>(mixed);
     }
 }
 
