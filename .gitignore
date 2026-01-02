@@ -49,3 +49,6 @@
 
 # MacOS files
 .DS_Store
+
+.cache
+.cursorindexingignore
