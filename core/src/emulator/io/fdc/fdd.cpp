@@ -39,6 +39,11 @@ FDD::FDD(EmulatorContext* context) : _context(context)
     }
     /// endregion </Debug Image initialization>
 }
+
+FDD::~FDD()
+{
+    // Disk image is deleted in ejectDisk()
+}
 /// endregion </Constructors / destructors>
 
 /// region <Methods>
@@ -67,7 +72,11 @@ void FDD::insertDisk(DiskImage* diskImage)
 
 void FDD::ejectDisk()
 {
-    _diskImage = nullptr;
+    if (_diskImage)
+    {
+        delete _diskImage;
+        _diskImage = nullptr;
+    }
     _diskInserted = false;
 }
 

@@ -109,7 +109,7 @@ public:
     /// region <Constructors / destructors>
 public:
     FDD(EmulatorContext* context);
-    virtual ~FDD() = default;
+    virtual ~FDD();
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
