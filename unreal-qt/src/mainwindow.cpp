@@ -178,6 +178,9 @@ MainWindow::~MainWindow()
     if (_guiContext)
         delete _guiContext;
 
+    if (_dockingManager)
+        delete _dockingManager;
+
     delete ui;
 }
 
