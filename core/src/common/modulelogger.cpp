@@ -72,6 +72,9 @@ ModuleLogger::ModuleLogger(EmulatorContext* context)
 
 ModuleLogger::~ModuleLogger()
 {
+    // Mark logger as shutting down to prevent use-after-free in logging calls from destructors
+    _shutdown = true;
+
     // Unsubscribe from logger settings change notifications
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
@@ -400,8 +403,8 @@ bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodu
 {
     bool result = false;
 
-    // Skip all checks if muted
-    if (_mute)
+    // Skip all checks if muted or shutting down
+    if (_mute || _shutdown)
         return result;
 
     uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));

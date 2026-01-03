@@ -269,6 +269,7 @@ protected:
     LoggerSettings _settings;
     volatile bool _mute = false;
     LoggerLevel _level = LoggerLevel::LogTrace;                      // Allow all types of logging messages by default
+    volatile bool _shutdown = false;                                 // Set to true when logger is being destroyed
 
     EmulatorContext* _context = nullptr;
     ModuleLoggerOutCallback* _outCallback = nullptr;
