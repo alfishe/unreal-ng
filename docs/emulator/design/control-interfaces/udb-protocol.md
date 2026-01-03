@@ -4,11 +4,13 @@
 
 The Universal Debug Bridge is a custom high-performance binary protocol inspired by Android Debug Bridge (ADB) but designed specifically for retro computer emulation. It extends beyond GDB capabilities to provide streaming, profiling, advanced analysis, and time-travel debugging.
 
-**Status**: 🔮 Planned (Q3-Q4 2026)  
-**Inspiration**: Android Debug Bridge (ADB)  
-**Protocol**: Custom binary protocol over TCP  
-**Port**: Configurable (default: 5555)  
-**Design Goal**: Advanced debugging, profiling, and analysis for power users  
+**Status**: 🔮 Planned (Q3-Q4 2026)
+**Inspiration**: Android Debug Bridge (ADB)
+**Protocol**: Custom binary protocol over TCP
+**Port**: Configurable (default: 5555)
+**Design Goal**: Advanced debugging, profiling, and analysis for power users
+
+**Note**: This interface provides advanced debugging capabilities beyond standard commands. See [command-interface.md](./command-interface.md) for the core emulator command capabilities that this interface extends.  
 
 ## Architecture
 
@@ -677,9 +679,17 @@ Graphical debugger with:
 
 ## See Also
 
-- [Command Interface Overview](./command-interface.md)
-- [GDB Protocol](./gdb-protocol.md)
-- [CLI Interface](./cli-interface.md)
-- [Python Bindings](./python-interface.md)
-- [Android Debug Bridge (ADB)](https://developer.android.com/studio/command-line/adb)
-- [Zstandard Compression](https://facebook.github.io/zstd/)
+### Interface Documentation
+- **[Command Interface Overview](./command-interface.md)** - Core command reference and architecture
+- **[CLI Interface](./cli-interface.md)** - TCP-based text protocol for interactive debugging
+- **[WebAPI Interface](./webapi-interface.md)** - HTTP/REST API for web integration
+- **[Python Bindings](./python-interface.md)** - Direct C++ bindings for automation and AI/ML
+- **[Lua Bindings](./lua-interface.md)** - Lightweight scripting and embedded logic
+- **[GDB Protocol](./gdb-protocol.md)** - Professional debugging with standard GDB/LLDB clients
+
+### Navigation
+- **[Interface Documentation Index](./README.md)** - Overview of all control interfaces
+
+### External Resources
+- **[Android Debug Bridge (ADB)](https://developer.android.com/studio/command-line/adb)** - Inspiration for UDB protocol design
+- **[Zstandard Compression](https://facebook.github.io/zstd/)** - Compression library used for data transfer

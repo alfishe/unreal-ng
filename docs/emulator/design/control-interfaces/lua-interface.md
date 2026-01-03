@@ -4,10 +4,12 @@
 
 The Lua bindings provide a lightweight, fast scripting interface to the emulator. Perfect for macros, event handlers, quick automation, and embedded logic.
 
-**Status**: ✅ Implemented  
-**Implementation**: `core/automation/lua/`  
-**Binding Library**: sol2 (C++/Lua bridge)  
-**Lua Version**: 5.4  
+**Status**: ✅ Implemented
+**Implementation**: `core/automation/lua/`
+**Binding Library**: sol2 (C++/Lua bridge)
+**Lua Version**: 5.4
+
+**Note**: See [command-interface.md](./command-interface.md) for the complete command reference that these Lua bindings implement.  
 
 ## Architecture
 
@@ -616,7 +618,19 @@ emu:load_snapshot("save.z80")
 
 ## See Also
 
-- [Command Interface Overview](./command-interface.md)
-- [Python Bindings](./python-interface.md)
-- [Lua 5.4 Reference Manual](https://www.lua.org/manual/5.4/)
-- [sol2 Documentation](https://sol2.readthedocs.io/)
+### Interface Documentation
+- **[Command Interface Overview](./command-interface.md)** - Core command reference and architecture
+- **[CLI Interface](./cli-interface.md)** - TCP-based text protocol for interactive debugging
+- **[WebAPI Interface](./webapi-interface.md)** - HTTP/REST API for web integration
+- **[Python Bindings](./python-interface.md)** - Direct C++ bindings for automation and AI/ML
+
+### Advanced Interfaces (Future)
+- **[GDB Protocol](./gdb-protocol.md)** - Professional debugging with standard GDB/LLDB clients
+- **[Universal Debug Bridge](./udb-protocol.md)** - High-performance analysis and profiling
+
+### Navigation
+- **[Interface Documentation Index](./README.md)** - Overview of all control interfaces
+
+### External Resources
+- **[Lua 5.4 Reference Manual](https://www.lua.org/manual/5.4/)** - Lua programming language specification
+- **[sol2 Documentation](https://sol2.readthedocs.io/)** - C++/Lua binding library

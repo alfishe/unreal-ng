@@ -4,10 +4,12 @@
 
 The GDB Remote Serial Protocol support enables standard GDB/LLDB debuggers and IDEs to connect to the emulator as if debugging a physical Z80 target. This provides professional debugging workflows using industry-standard tools.
 
-**Status**: 🔮 Planned (Q2 2026)  
-**Protocol**: GDB Remote Serial Protocol (RSP)  
-**Transport**: TCP socket (default port: 1234)  
-**Standard**: [GDB Remote Protocol Documentation](https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html)  
+**Status**: 🔮 Planned (Q2 2026)
+**Protocol**: GDB Remote Serial Protocol (RSP)
+**Transport**: TCP socket (default port: 1234)
+**Standard**: [GDB Remote Protocol Documentation](https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html)
+
+**Note**: This interface provides GDB protocol compatibility for professional debugging tools. See [command-interface.md](./command-interface.md) for the underlying emulator command capabilities that GDB clients will access through this protocol.  
 
 ## Architecture
 
@@ -532,7 +534,17 @@ std::string AutomationGDB::serializeRegisters() {
 
 ## See Also
 
-- [Command Interface Overview](./command-interface.md)
-- [Universal Debug Bridge Protocol](./udb-protocol.md)
-- [GDB Remote Protocol Specification](https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html)
-- [Z80 Architecture Guide](https://en.wikipedia.org/wiki/Zilog_Z80)
+### Interface Documentation
+- **[Command Interface Overview](./command-interface.md)** - Core command reference and architecture
+- **[CLI Interface](./cli-interface.md)** - TCP-based text protocol for interactive debugging
+- **[WebAPI Interface](./webapi-interface.md)** - HTTP/REST API for web integration
+- **[Python Bindings](./python-interface.md)** - Direct C++ bindings for automation and AI/ML
+- **[Lua Bindings](./lua-interface.md)** - Lightweight scripting and embedded logic
+- **[Universal Debug Bridge Protocol](./udb-protocol.md)** - High-performance analysis and profiling
+
+### Navigation
+- **[Interface Documentation Index](./README.md)** - Overview of all control interfaces
+
+### External Resources
+- **[GDB Remote Protocol Specification](https://sourceware.org/gdb/current/onlinedocs/gdb/Remote-Protocol.html)** - Official GDB protocol documentation
+- **[Z80 Architecture Guide](https://en.wikipedia.org/wiki/Zilog_Z80)** - Z80 processor architecture reference

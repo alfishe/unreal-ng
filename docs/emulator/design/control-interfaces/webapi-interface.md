@@ -4,11 +4,13 @@
 
 The WebAPI interface provides a RESTful HTTP API for controlling the emulator. Designed for web frontends, dashboards, and remote management applications.
 
-**Status**: ✅ Partially Implemented  
-**Implementation**: `core/automation/webapi/`  
-**Framework**: Drogon (C++ HTTP framework)  
-**Port**: Configurable (default: TBD)  
-**Protocol**: HTTP/1.1, JSON request/response bodies  
+**Status**: ✅ Partially Implemented
+**Implementation**: `core/automation/webapi/`
+**Framework**: Drogon (C++ HTTP framework)
+**Port**: Configurable (default: TBD)
+**Protocol**: HTTP/1.1, JSON request/response bodies
+
+**Note**: See [command-interface.md](./command-interface.md) for the complete command reference that this WebAPI interface implements.  
 
 ## Architecture
 
@@ -479,7 +481,18 @@ X-RateLimit-Reset: 1609459200
 
 ## See Also
 
-- [Command Interface Overview](./command-interface.md)
-- [CLI Interface](./cli-interface.md)
-- [Python Bindings](./python-interface.md)
-- [Drogon Framework Documentation](https://drogon.org/)
+### Interface Documentation
+- **[Command Interface Overview](./command-interface.md)** - Core command reference and architecture
+- **[CLI Interface](./cli-interface.md)** - TCP-based text protocol for interactive debugging
+- **[Python Bindings](./python-interface.md)** - Direct C++ bindings for automation and AI/ML
+- **[Lua Bindings](./lua-interface.md)** - Lightweight scripting and embedded logic
+
+### Advanced Interfaces (Future)
+- **[GDB Protocol](./gdb-protocol.md)** - Professional debugging with standard GDB/LLDB clients
+- **[Universal Debug Bridge](./udb-protocol.md)** - High-performance analysis and profiling
+
+### Navigation
+- **[Interface Documentation Index](./README.md)** - Overview of all control interfaces
+
+### External Resources
+- **[Drogon Framework Documentation](https://drogon.org/)** - HTTP framework used for WebAPI implementation
