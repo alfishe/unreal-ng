@@ -14,8 +14,10 @@ EmulatorContext::EmulatorContext() : EmulatorContext(LoggerLevel::LogTrace)
 /// Constructor allowing to specify default logging level
 EmulatorContext::EmulatorContext(LoggerLevel level)
 {
-    // Ensure config area is clean
+    // Ensure config and emulator state areas are clean
     this->config = CONFIG{};
+    this->emulatorState = EmulatorState{};
+    this->temporary = TEMP{};
 
     // Create advanced logging
     ModuleLogger* moduleLogger = new ModuleLogger(this);
