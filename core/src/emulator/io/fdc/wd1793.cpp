@@ -60,25 +60,9 @@ WD1793::~WD1793()
     delete _collector;
     _collector = nullptr;
 
-    for (size_t i = 0; i < 4; i++)
-    {
-        FDD* diskDrive = _context->coreState.diskDrives[i];
-        if (diskDrive)
-        {
-            diskDrive->ejectDisk();
-            delete diskDrive;
-
-            _context->coreState.diskDrives[i] = nullptr;
-        }
-
-        DiskImage* diskImage = _context->coreState.diskImages[i];
-        if (diskImage)
-        {
-            delete diskImage;
-
-            _context->coreState.diskImages[i] = nullptr;
-        }
-    }
+    // Note: Disk drives and disk images are owned by Emulator/CoreState
+    // They are managed and deleted by the Emulator, not by WD1793
+    // WD1793 only uses them via pointers stored in CoreState
 }
 
 /// endregion </Constructors / destructors>
