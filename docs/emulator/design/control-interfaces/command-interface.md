@@ -544,6 +544,98 @@ Commands to view and control emulator runtime features for the selected emulator
 - Feature changes logged to debug output
 - Python/Lua bindings provide programmatic feature control
 
+### 6. Emulator Instance Settings
+
+Commands to configure emulator instance behavior and performance characteristics. These settings control how the emulator handles I/O operations and execution speed.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `setting list` | `settings` | | Display all emulator settings with their current values | ✅ Implemented |
+| `setting <name> <value>` | `set` | `<setting-name> <value>` | Change a specific setting value | ✅ Implemented |
+| `setting fast_tape <on\|off>` | | `on` or `off` | Enable/disable fast tape loading. When enabled, tape operations execute at maximum speed without audio emulation, significantly reducing loading times. | ✅ Implemented |
+| `setting fast_disk <on\|off>` | | `on` or `off` | Enable/disable fast disk loading. When enabled, FDD operations bypass timing delays for near-instant disk access. | 🔮 Planned |
+| `setting turbo_fdc <on\|off>` | | `on` or `off` | Enable/disable turbo FDC mode. Accelerates WD1793 FDC operations for faster disk I/O. | 🔮 Planned |
+| `setting max_cpu_speed <value>` | | `<multiplier>` or `unlimited` | Set maximum CPU speed multiplier. Values: `1` (3.5MHz), `2` (7MHz), `4` (14MHz), `8` (28MHz), `16` (56MHz), or `unlimited`. Affects execution speed for loading and intensive operations. | 🔮 Planned |
+| `setting cpu_frequency <value>` | | `<MHz>` | Set exact CPU frequency in MHz. Alternative to multiplier setting. Valid range: 3.5 - 112.0 MHz. | 🔮 Planned |
+| `setting reset` | | | Reset all settings to default values | 🔮 Planned |
+
+**Implementation Details**:
+
+**Setting Categories**:
+
+1. **I/O Acceleration Settings**:
+   - `fast_tape`: Bypasses audio emulation and timing for tape operations
+   - `fast_disk`: Accelerates FDD seek times and data transfer
+   - `turbo_fdc`: Removes WD1793 command delays
+
+2. **CPU Performance Settings**:
+   - `max_cpu_speed`: Controls CPU clock multiplier (relative to 3.5MHz base)
+   - `cpu_frequency`: Direct frequency control in MHz
+   - Affects: instruction timing, video frame timing, audio sample rate
+
+3. **Compatibility Settings** (Future):
+   - `timing_model`: `accurate` | `fast` | `compatible`
+   - `contention_model`: `full` | `simplified` | `none`
+   - `interrupt_timing`: `exact` | `frame` | `scanline`
+
+**Common Settings**:
+
+| Setting | Type | Default | Valid Values | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `fast_tape` | Boolean | `off` | `on`, `off` | Fast tape loading mode |
+| `fast_disk` | Boolean | `off` | `on`, `off` | Fast disk access mode |
+| `turbo_fdc` | Boolean | `off` | `on`, `off` | Turbo FDC operations |
+| `max_cpu_speed` | Integer/String | `1` | `1`, `2`, `4`, `8`, `16`, `unlimited` | CPU speed multiplier |
+| `cpu_frequency` | Float | `3.5` | `3.5` - `112.0` | CPU frequency in MHz |
+| `timing_model` | String | `accurate` | `accurate`, `fast`, `compatible` | Timing emulation model |
+
+**Use Cases**:
+
+1. **Fast Loading**: Reduce load times for development
+   ```
+   setting fast_tape on
+   setting fast_disk on
+   # Load tape/disk, then disable for accurate emulation
+   setting fast_tape off
+   setting fast_disk off
+   ```
+
+2. **Turbo Mode**: Maximum speed for automated testing
+   ```
+   setting max_cpu_speed unlimited
+   setting turbo_fdc on
+   ```
+
+3. **Accurate Emulation**: Precise timing for demos/games
+   ```
+   setting max_cpu_speed 1
+   setting fast_tape off
+   setting fast_disk off
+   ```
+
+4. **Custom CPU Speed**: Test at specific frequency
+   ```
+   setting cpu_frequency 7.0    # 7MHz (Pentagon timing)
+   setting cpu_frequency 14.0   # 14MHz (ultra-fast)
+   ```
+
+**Notes**:
+- Setting changes take effect immediately
+- Fast modes may affect timing-sensitive software (demos, loaders)
+- Settings persist for the emulator instance lifetime
+- Different instances can have different settings
+- Settings are NOT saved between sessions (use configuration files for persistence)
+- `unlimited` CPU speed runs as fast as host allows (useful for automated tests)
+- Python/Lua bindings provide programmatic setting control
+
+**Implementation**:
+- Settings managed via `EmulatorContext::config` structure
+- Changes trigger appropriate subsystem updates
+- CLI: `CLIProcessor::HandleSetting()`
+- WebAPI: `/api/v1/emulator/{id}/settings` endpoint
+- Python: `emulator.set_setting(name, value)`
+- Lua: `emulator:set_setting(name, value)`
+
 ---
 
 ## Future Capabilities
@@ -788,7 +880,7 @@ Extract and detokenize ZX Spectrum BASIC programs from memory or files.
 | `basic extract <addr> <len>` | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
 | `basic extract file <file>` | `<filename>` | Extract BASIC from .tap, .tzx, or raw file. | 🔮 Planned |
 | `basic save <file>` | `<filename>` | Save extracted BASIC to text file. | 🔮 Planned |
-| `basic tokenize <file>` | `<filename>` | Tokenize ASCII BASIC back to binary format. | 🔮 Planned |
+| `basic load <file>` | `<filename>` | Load ASCII BASIC from text file: tokenize into memory and adjust system variables (PROG, VARS, E_LINE). | 🔮 Planned |
 
 **Features**:
 - Detokenizes all Spectrum 48K/128K BASIC tokens (0xA3-0xFF)

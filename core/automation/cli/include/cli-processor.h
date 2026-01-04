@@ -97,6 +97,12 @@ private:
     void HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFeature(const ClientSession& session, const std::vector<std::string>& args);
+    
+    // BASIC command handlers
+    void HandleBasic(const ClientSession& session, const std::vector<std::string>& args);
+    
+    // Settings command handlers
+    void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
@@ -106,6 +112,10 @@ private:
     // The parsed address is stored in the 'result' parameter
     // maxValue specifies the maximum allowed value (default: 0xFFFF for 16-bit addresses)
     bool ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue = 0xFFFF) const;
+    
+    // Helper method to format text for terminal output (converts \n to \r\n)
+    // This ensures proper line breaks in telnet/terminal clients
+    static std::string FormatForTerminal(const std::string& text);
     
     // Helper method to notify UI components that breakpoints have changed
     void onBreakpointsChanged();

@@ -2,6 +2,7 @@
 
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
+#include <debugger/analyzers/basicextractor.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -71,7 +72,15 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memcounters", &CLIProcessor::HandleMemCounters},
                         {"memstats", &CLIProcessor::HandleMemCounters},
                         {"calltrace", &CLIProcessor::HandleCallTrace},
-                        {"feature", &CLIProcessor::HandleFeature}};
+                        {"feature", &CLIProcessor::HandleFeature},
+                        
+                        // BASIC commands
+                        {"basic", &CLIProcessor::HandleBasic},
+                        
+                        // Settings commands
+                        {"setting", &CLIProcessor::HandleSetting},
+                        {"settings", &CLIProcessor::HandleSetting},
+                        {"set", &CLIProcessor::HandleSetting}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -270,6 +279,52 @@ bool CLIProcessor::ParseAddress(const std::string& addressStr, uint16_t& result,
     }
 }
 
+std::string CLIProcessor::FormatForTerminal(const std::string& text)
+{
+    std::string result;
+    result.reserve(text.size() + text.size() / 10);  // Reserve extra space for \r characters
+    
+    for (size_t i = 0; i < text.size(); ++i)
+    {
+        char c = text[i];
+        
+        if (c == '\n')
+        {
+            // Check if this \n is already part of \r\n
+            if (i > 0 && text[i - 1] == '\r')
+            {
+                // Already have \r\n, just add \n
+                result += c;
+            }
+            else
+            {
+                // Convert standalone \n to \r\n
+                result += NEWLINE;
+            }
+        }
+        else if (c == '\r')
+        {
+            // Check if next char is \n
+            if (i + 1 < text.size() && text[i + 1] == '\n')
+            {
+                // Already \r\n, keep \r
+                result += c;
+            }
+            else
+            {
+                // Standalone \r, convert to \r\n
+                result += NEWLINE;
+            }
+        }
+        else
+        {
+            result += c;
+        }
+    }
+    
+    return result;
+}
+
 void CLIProcessor::onBreakpointsChanged()
 {
     // Notify UI components that breakpoints have changed
@@ -314,6 +369,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  feature <name> mode <mode>   - Set mode for a feature" << NEWLINE;
     oss << "  feature save                 - Save current feature settings to features.ini" << NEWLINE;
     oss << NEWLINE;
+    oss << "Emulator Settings:" << NEWLINE;
+    oss << "  setting, setting list        - List all emulator settings and their values" << NEWLINE;
+    oss << "  setting <name>               - Show current value of a specific setting" << NEWLINE;
+    oss << "  setting <name> <value>       - Change a setting value" << NEWLINE;
+    oss << "    Available settings:" << NEWLINE;
+    oss << "      fast_tape on|off         - Enable/disable fast tape loading" << NEWLINE;
+    oss << "      fast_disk on|off         - Enable/disable fast disk I/O" << NEWLINE;
+    oss << NEWLINE;
     oss << "Memory Access Tracking:" << NEWLINE;
     oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;
     oss << "  memcounters save [opts] - Save memory access data to file" << NEWLINE;
@@ -322,6 +385,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  calltrace [latest [N]] - Show latest N call trace events" << NEWLINE;
     oss << "  calltrace stats        - Show call trace buffer statistics" << NEWLINE;
     oss << "  calltrace save [file]  - Save call trace to file" << NEWLINE;
+    oss << NEWLINE;
+    oss << "BASIC Program Tools:" << NEWLINE;
+    oss << "  basic                  - Show BASIC command help" << NEWLINE;
+    oss << "  basic extract          - Extract BASIC program from memory" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
@@ -1046,6 +1113,8 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
             uint8_t value = memory->DirectReadFromZ80Memory(byteAddr);
             oss << (value >= 32 && value <= 126 ? static_cast<char>(value) : '.');
         }
+        
+        oss << NEWLINE;
     }
 
     session.SendResponse(oss.str());
@@ -2827,5 +2896,257 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     // Add note about viewing full register state
     ss << "\nUse 'registers' command to view full CPU state\n";
 
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<std::string>& args)
+{
+    // Get the selected emulator
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("Error: No emulator selected.") + NEWLINE);
+        return;
+    }
+
+    // Check for subcommand
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "BASIC commands:" << NEWLINE;
+        ss << "  basic extract             - Extract BASIC program from memory" << NEWLINE;
+        ss << "  basic extract <addr> <len> - Extract BASIC from specific memory region (not implemented)" << NEWLINE;
+        ss << "  basic extract file <file>  - Extract BASIC from file (not implemented)" << NEWLINE;
+        ss << "  basic save <file>          - Save extracted BASIC to text file (not implemented)" << NEWLINE;
+        ss << "  basic load <file>          - Load ASCII BASIC from text file (not implemented)" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    std::string subcommand = args[0];
+
+    if (subcommand == "extract")
+    {
+        if (args.size() == 1)
+        {
+            // Extract from memory using system variables
+            BasicExtractor extractor;
+            Memory* memory = emulator->GetMemory();
+            
+            if (!memory)
+            {
+                session.SendResponse(std::string("Error: Unable to access emulator memory.") + NEWLINE);
+                return;
+            }
+
+            std::string basicListing = extractor.extractFromMemory(memory);
+            
+            if (basicListing.empty())
+            {
+                session.SendResponse(std::string("No BASIC program found in memory or invalid program structure.") + NEWLINE);
+                return;
+            }
+
+            std::stringstream ss;
+            ss << "BASIC Program:" << NEWLINE;
+            ss << "----------------------------------------" << NEWLINE;
+            ss << FormatForTerminal(basicListing);
+            ss << "----------------------------------------" << NEWLINE;
+            session.SendResponse(ss.str());
+        }
+        else if (args.size() == 3)
+        {
+            // basic extract <addr> <len>
+            session.SendResponse(std::string("Error: 'basic extract <addr> <len>' is not yet implemented.") + NEWLINE);
+        }
+        else if (args.size() == 3 && args[1] == "file")
+        {
+            // basic extract file <file>
+            session.SendResponse(std::string("Error: 'basic extract file' is not yet implemented.") + NEWLINE);
+        }
+        else
+        {
+            session.SendResponse(std::string("Error: Invalid syntax. Use 'basic' to see available commands.") + NEWLINE);
+        }
+    }
+    else if (subcommand == "save")
+    {
+        session.SendResponse(std::string("Error: 'basic save' is not yet implemented.") + NEWLINE);
+    }
+    else if (subcommand == "load")
+    {
+        session.SendResponse(std::string("Error: 'basic load' is not yet implemented.") + NEWLINE);
+    }
+    else
+    {
+        session.SendResponse(std::string("Error: Unknown BASIC subcommand: ") + subcommand + NEWLINE +
+                           "Use 'basic' to see available commands." + NEWLINE);
+    }
+}
+
+void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector<std::string>& args)
+{
+    // Get the selected emulator
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("Error: No emulator selected.") + NEWLINE);
+        return;
+    }
+
+    // Get emulator context
+    EmulatorContext* context = emulator->GetContext();
+    if (!context)
+    {
+        session.SendResponse(std::string("Error: Unable to access emulator context.") + NEWLINE);
+        return;
+    }
+
+    CONFIG& config = context->config;
+
+    // If no arguments, show all settings (list)
+    if (args.empty())
+    {
+        std::stringstream ss;
+        ss << "Current Settings:" << NEWLINE;
+        ss << "==================" << NEWLINE;
+        ss << NEWLINE;
+        
+        ss << "I/O Acceleration:" << NEWLINE;
+        ss << "  fast_tape     = " << (config.tape_traps ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)" << NEWLINE;
+        ss << NEWLINE;
+        
+        ss << "Disk Interface:" << NEWLINE;
+        ss << "  trdos_present = " << (config.trdos_present ? "on" : "off") << "  (TR-DOS Beta Disk interface)" << NEWLINE;
+        ss << "  trdos_traps   = " << (config.trdos_traps ? "on" : "off") << "  (TR-DOS traps)" << NEWLINE;
+        ss << NEWLINE;
+        
+        ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
+        ss << "Example: setting fast_tape on" << NEWLINE;
+        
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    // Get setting name
+    std::string settingName = args[0];
+    std::transform(settingName.begin(), settingName.end(), settingName.begin(), ::tolower);
+
+    // Handle special commands
+    if (settingName == "list")
+    {
+        // Redirect to show all settings (same as no arguments)
+        std::stringstream ss;
+        ss << "Current Settings:" << NEWLINE;
+        ss << "==================" << NEWLINE;
+        ss << NEWLINE;
+        
+        ss << "I/O Acceleration:" << NEWLINE;
+        ss << "  fast_tape     = " << (config.tape_traps ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
+        ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)" << NEWLINE;
+        ss << NEWLINE;
+        
+        ss << "Disk Interface:" << NEWLINE;
+        ss << "  trdos_present = " << (config.trdos_present ? "on" : "off") << "  (TR-DOS Beta Disk interface)" << NEWLINE;
+        ss << "  trdos_traps   = " << (config.trdos_traps ? "on" : "off") << "  (TR-DOS traps)" << NEWLINE;
+        ss << NEWLINE;
+        
+        ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
+        ss << "Example: setting fast_tape on" << NEWLINE;
+        
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    // If only setting name provided, show current value
+    if (args.size() == 1)
+    {
+        std::stringstream ss;
+        
+        if (settingName == "fast_tape")
+        {
+            ss << "fast_tape = " << (config.tape_traps ? "on" : "off") << NEWLINE;
+            ss << "Description: Fast tape loading (bypasses audio emulation)" << NEWLINE;
+        }
+        else if (settingName == "fast_disk")
+        {
+            ss << "fast_disk = " << (config.wd93_nodelay ? "on" : "off") << NEWLINE;
+            ss << "Description: Fast disk I/O (removes WD1793 controller delays)" << NEWLINE;
+        }
+        else if (settingName == "trdos_present")
+        {
+            ss << "trdos_present = " << (config.trdos_present ? "on" : "off") << NEWLINE;
+            ss << "Description: Enable Beta128 TR-DOS disk interface" << NEWLINE;
+        }
+        else if (settingName == "trdos_traps")
+        {
+            ss << "trdos_traps = " << (config.trdos_traps ? "on" : "off") << NEWLINE;
+            ss << "Description: Use TR-DOS traps for faster disk operations" << NEWLINE;
+        }
+        else
+        {
+            ss << "Error: Unknown setting '" << settingName << "'" << NEWLINE;
+            ss << "Use 'setting' to see all available settings" << NEWLINE;
+        }
+        
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    // Setting name and value provided - change the setting
+    std::string value = args[1];
+    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+
+    // Parse boolean value
+    bool boolValue = false;
+    if (value == "on" || value == "1" || value == "true" || value == "yes")
+    {
+        boolValue = true;
+    }
+    else if (value == "off" || value == "0" || value == "false" || value == "no")
+    {
+        boolValue = false;
+    }
+    else
+    {
+        session.SendResponse(std::string("Error: Invalid value '") + value + "'. Use: on/off, true/false, 1/0, or yes/no" + NEWLINE);
+        return;
+    }
+
+    // Apply the setting
+    std::stringstream ss;
+    
+    if (settingName == "fast_tape")
+    {
+        config.tape_traps = boolValue ? 1 : 0;
+        ss << "Setting changed: fast_tape = " << (boolValue ? "on" : "off") << NEWLINE;
+        ss << "Fast tape loading is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+    }
+    else if (settingName == "fast_disk")
+    {
+        config.wd93_nodelay = boolValue;
+        ss << "Setting changed: fast_disk = " << (boolValue ? "on" : "off") << NEWLINE;
+        ss << "Fast disk I/O is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+    }
+    else if (settingName == "trdos_present")
+    {
+        config.trdos_present = boolValue;
+        ss << "Setting changed: trdos_present = " << (boolValue ? "on" : "off") << NEWLINE;
+        ss << "TR-DOS interface is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+        ss << "Note: Restart emulator for this change to take effect" << NEWLINE;
+    }
+    else if (settingName == "trdos_traps")
+    {
+        config.trdos_traps = boolValue;
+        ss << "Setting changed: trdos_traps = " << (boolValue ? "on" : "off") << NEWLINE;
+        ss << "TR-DOS traps are now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+    }
+    else
+    {
+        ss << "Error: Unknown setting '" << settingName << "'" << NEWLINE;
+        ss << "Use 'setting' to see all available settings" << NEWLINE;
+    }
+    
     session.SendResponse(ss.str());
 }

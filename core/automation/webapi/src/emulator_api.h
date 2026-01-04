@@ -33,6 +33,11 @@ namespace api
                 METHOD_ADD(EmulatorAPI::stopEmulator, "/{id}/stop", drogon::Post);
                 METHOD_ADD(EmulatorAPI::pauseEmulator, "/{id}/pause", drogon::Post);
                 METHOD_ADD(EmulatorAPI::resumeEmulator, "/{id}/resume", drogon::Post);
+                
+                // Settings management
+                METHOD_ADD(EmulatorAPI::getSettings, "/{id}/settings", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getSetting, "/{id}/settings/{name}", drogon::Get);
+                METHOD_ADD(EmulatorAPI::setSetting, "/{id}/settings/{name}", drogon::Put, drogon::Post);
             METHOD_LIST_END
 
             // List all emulators
@@ -73,6 +78,21 @@ namespace api
             void resumeEmulator(const drogon::HttpRequestPtr &req,
                               std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                               const std::string &id) const;
+            
+            // Settings management
+            void getSettings(const drogon::HttpRequestPtr &req,
+                           std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                           const std::string &id) const;
+                           
+            void getSetting(const drogon::HttpRequestPtr &req,
+                          std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &id,
+                          const std::string &name) const;
+                          
+            void setSetting(const drogon::HttpRequestPtr &req,
+                          std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                          const std::string &id,
+                          const std::string &name) const;
         
         private:
             // Helper method to handle emulator actions with common error handling

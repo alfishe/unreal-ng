@@ -277,7 +277,7 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	// Beta128 section
 	config.trdos_present = inimanager.GetLongValue(beta128, "beta128", 1) ? true : false;
 	config.trdos_traps = inimanager.GetLongValue(beta128, "Traps", 1) ? true : false;
-	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 1) ? true : false;
+	config.wd93_nodelay = inimanager.GetLongValue(beta128, "Fast", 0) ? true : false;  // Default: off (realistic WD1793 timing)
 	config.trdos_interleave = (uint8_t)inimanager.GetLongValue(beta128, "IL", 1) - 1;
 	if (config.trdos_interleave > 2)
 		config.trdos_interleave = 0;
