@@ -771,7 +771,541 @@ Enhanced code analysis and disassembly features.
 | `label set <addr> <name>` | `<address> <label>` | Manually set label at address. | 🔮 Planned |
 | `comment set <addr> <text>` | `<address> <comment>` | Add comment annotation at address. | 🔮 Planned |
 
-### 8. Performance & Profiling
+### 8. Content Analyzers & Extractors
+
+Intelligent analysis and extraction of various content types from memory or files. These analyzers help with reverse engineering, archiving, and understanding software structure.
+
+#### 8.1 BASIC Program Extractor
+
+**Status**: ✅ Implemented  
+**Implementation**: `core/src/debugger/analyzers/basicextractor.h/cpp`
+
+Extract and detokenize ZX Spectrum BASIC programs from memory or files.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `basic extract` | | Extract BASIC program from current memory (using PROG/VARS system variables). Returns detokenized BASIC listing. | ✅ Implemented |
+| `basic extract <addr> <len>` | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
+| `basic extract file <file>` | `<filename>` | Extract BASIC from .tap, .tzx, or raw file. | 🔮 Planned |
+| `basic save <file>` | `<filename>` | Save extracted BASIC to text file. | 🔮 Planned |
+| `basic tokenize <file>` | `<filename>` | Tokenize ASCII BASIC back to binary format. | 🔮 Planned |
+
+**Features**:
+- Detokenizes all Spectrum 48K/128K BASIC tokens (0xA3-0xFF)
+- Handles numeric constants (integral and floating-point formats)
+- Extracts directly from memory using system variables
+- Supports malformed programs (e.g., invalid line lengths)
+- Line-by-line parsing with proper formatting
+
+**Use Cases**:
+- Archive BASIC programs from tape/disk images
+- Analyze game loaders and protection routines
+- Convert tokenized BASIC to editable text
+- Study programming techniques in commercial software
+
+#### 8.2 Music Detector & Ripper
+
+**Status**: 🔮 Planned (Q2-Q3 2026)
+
+Detect music players, identify formats, and extract music data (RIP).
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `music detect` | | Scan memory for known music player signatures (AY, Beeper engines). | 🔮 Planned |
+| `music identify` | | Identify music format: AY (Vortex, PT3, ASC), Beeper (Special FX, Phaser1). | 🔮 Planned |
+| `music extract <addr>` | `<address>` | Extract music data starting at address. Auto-detects format. | 🔮 Planned |
+| `music rip <file>` | `<filename>` | Rip music to standard format (.pt3, .ay, .sna with player). | 🔮 Planned |
+| `music info` | | Display music metadata (title, author, format details). | 🔮 Planned |
+
+**Supported Formats**:
+- **AY Players**: Vortex Tracker II, ProTracker 3, ASC Sound Master
+- **Beeper Engines**: Special FX, Phaser1, Octode, 1-bit engines
+- **Sample Players**: SpecialFX, Covox, MegaBlaster
+- **Custom**: Game-specific music routines
+
+**Detection Methods**:
+- Signature scanning (known player code patterns)
+- Heuristic analysis (interrupt handlers, port writes)
+- Frequency analysis (audio output patterns)
+- Structure recognition (pattern tables, note data)
+
+#### 8.3 Sprite Ripper
+
+**Status**: 🔮 Planned (Q3 2026)
+
+Extract graphics sprites from memory.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `sprite scan <addr> <len>` | `<address> <length>` | Scan memory region for sprite data. | 🔮 Planned |
+| `sprite extract <addr> <w> <h>` | `<address> <width> <height>` | Extract sprite at address with dimensions. | 🔮 Planned |
+| `sprite save <file>` | `<filename>` | Save extracted sprites to image file (PNG, GIF). | 🔮 Planned |
+| `sprite sheet <file>` | `<filename>` | Save all sprites as sprite sheet. | 🔮 Planned |
+| `sprite detect format` | | Detect sprite format: standard, mask, multi-color. | 🔮 Planned |
+
+**Detection Capabilities**:
+- Standard 8x8, 16x16, 32x32 sprites
+- Masked sprites (AND/OR masks)
+- Multi-color sprites
+- Attributed sprites (color-per-char)
+- Compiled sprites
+- RLE/packed sprites
+
+#### 8.4 Self-Modifying Code Detector
+
+**Status**: 🔮 Planned (Q3 2026)
+
+Detect and analyze self-modifying code - code that modifies its own instructions during execution, then loops back to execute the newly modified code.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `smc detect` | | Scan for self-modifying code (writes to recently executed code). | 🔮 Planned |
+| `smc watch <addr> <len>` | `<address> <length>` | Monitor code region for self-modifications during execution. | 🔮 Planned |
+| `smc trace` | | Record all code modifications with execution context. | 🔮 Planned |
+| `smc analyze` | | Analyze self-modification patterns and generate report. | 🔮 Planned |
+
+**Analysis Features**:
+- Detects writes to recently executed code regions
+- Identifies code that modifies itself then re-executes modified parts
+- Tracks modification-execution cycles and patterns
+- Logs modification sequences with timing information
+- Generates before/after disassembly comparisons
+
+**Use Cases**:
+- **Demo Effects**: Understand optimized raster effects and display tricks
+- **Protection Schemes**: Analyze decryption and obfuscation techniques
+- **Packers/Crunchers**: Study unpacking and decompression routines
+- **Code Optimization**: Learn advanced Z80 programming techniques
+
+#### 8.5 Compressor/Packer Detector
+
+**Status**: 🔮 Planned (Q2-Q3 2026)
+
+Detect and unpack compressed/protected software.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `pack detect` | | Detect known compression/protection: Turbo, RCS, Hrust, etc. | 🔮 Planned |
+| `pack identify` | | Identify packer version and parameters. | 🔮 Planned |
+| `pack unpack <addr>` | `<address>` | Unpack compressed data at address. | 🔮 Planned |
+| `pack trace` | | Trace unpacking process (breakpoint on unpack completion). | 🔮 Planned |
+| `pack save <file>` | `<filename>` | Save unpacked data to file. | 🔮 Planned |
+
+**Supported Packers/Protectors**:
+- **Compressors**: Turbo, Hrust 1.x/2.x, RCS, ASC, CharPres
+- **Protectors**: Speedlock, Alkatraz, Bleepload, Microsphere
+- **Crunchers**: Exomizer, ZX7, MegaLZ, MS-Pack
+- **Encryptors**: XOR variants, custom encryption schemes
+
+**Detection Methods**:
+- Signature scanning (known depacker code)
+- Entropy analysis
+- Code pattern recognition
+- Loader behavior analysis
+
+#### 8.6 Tape Loader Detector
+
+**Status**: 🔮 Planned (Q3 2026)
+
+Detect and analyze non-standard tape loading routines. Tape loaders use audio signal processing to load data from cassette tapes.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `tape loader detect` | | Detect custom tape loaders in current code. | 🔮 Planned |
+| `tape loader identify` | | Identify loader type: turbo, custom sync, headerless. | 🔮 Planned |
+| `tape loader params` | | Extract loader parameters (timing, pilot tone, sync patterns). | 🔮 Planned |
+| `tape loader trace` | | Trace tape loader execution and audio I/O operations. | 🔮 Planned |
+
+**Loader Types Detected**:
+- **Standard ROM Loader**: Built-in Spectrum ROM tape routines (0x056B, 0x04C2)
+- **Turbo Loaders**: Faster custom loaders (various speeds: 1500-3000 baud)
+- **Custom Sync Patterns**: Non-standard pilot tones and sync sequences
+- **Headerless Loaders**: No header block, direct data loading
+- **Multi-Stage Loaders**: Chained loading with multiple custom routines
+- **Protection Schemes**: Anti-copy tape tricks, timing-based protection
+
+**Audio Analysis Features**:
+- Pilot tone duration and frequency detection
+- Sync pattern recognition
+- Bit timing analysis (0 and 1 pulse lengths)
+- Baud rate calculation
+- Custom border effects during loading
+
+**Use Cases**:
+- Understand commercial game loaders
+- Archive protected software
+- Document loading algorithms
+- Optimize tape image conversion
+
+#### 8.7 Disk System Detector
+
+**Status**: 🔮 Planned (Q3 2026)
+
+Detect and analyze disk operating systems and custom disk routines. Context-aware detection based on emulated disk interface(s).
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `disk system detect` | | Detect which disk operating system is in use. | 🔮 Planned |
+| `disk system identify` | | Identify DOS type and version (TR-DOS, +3DOS, ESXDOS, etc.). | 🔮 Planned |
+| `disk loader detect` | | Detect custom disk loading routines. | 🔮 Planned |
+| `disk loader params` | | Extract loader parameters (FDC commands, sector access patterns). | 🔮 Planned |
+| `disk loader trace` | | Trace disk I/O operations and FDC command sequences. | 🔮 Planned |
+
+**Supported Disk Interfaces**:
+
+**Classic External Interfaces**:
+- **Beta Disk Interface (1984/1985)**: TR-DOS operating system, standard in Eastern Europe/Russia. Uses WD1793 FDC, single/double density 3.5"/5.25" drives.
+- **Beta 128 (1987)**: Updated for ZX Spectrum 128 with adjusted memory paging.
+- **DISCiPLE & +D (MGT, 1987-1988)**: Popular in UK, Shugart standard drives, snapshot feature, G+DOS operating system.
+- **MB02+ (Late 1990s)**: Advanced interface, HD 1.8MB support, Z80DMA controller for high-speed transfers.
+
+**Integrated Interface**:
+- **+3DOS (ZX Spectrum +3, 1987)**: Built-in 3-inch disk drive, CP/M compatible, Amstrad-era standard.
+
+**Modern Interfaces**:
+- **ESXDOS** ([esxdos.org](https://www.esxdos.org)): For DivIDE/DivMMC interfaces, FAT16/FAT32 support, virtual disk, .TRD emulation, TAP file support.
+- **ZX-Next DOS**: For ZX Spectrum Next, modern SD card support.
+- **NEMO IDE**: HDD/CompactFlash interface with IDE protocol.
+- **DivIDE/DivMMC**: IDE and SD/MMC card interfaces.
+
+**Operating Systems Detected**:
+- **TR-DOS**: Beta Disk standard (multiple versions: 4.xx, 5.xx, 6.xx)
+- **iS-DOS**: RAM-resident DOS (Iskra Soft, 1990-1991, Saint Petersburg), supports FDD/HDD/CD-ROM
+- **+3DOS**: Spectrum +3 built-in DOS
+- **G+DOS**: DISCiPLE/+D operating system
+- **ESXDOS**: Modern FAT filesystem DOS
+- **CP/M**: CP/M 2.2 and Plus variants
+- **Custom DOS**: Game-specific or commercial DOS variants
+
+**Detection Methods**:
+- ROM signature scanning (known DOS entry points)
+- System variable analysis (DOS workspace locations)
+- FDC command pattern recognition
+- Filesystem structure detection (boot sector, FAT, directory structure)
+- I/O port access patterns (specific to interface type)
+
+**FDC Analysis Features**:
+- WD1793/WD1773 command sequence analysis
+- Sector read/write patterns
+- Track seek optimization detection
+- Multi-sector operations
+- DMA transfer detection (MB02+)
+- Copy protection schemes:
+  - Weak bits (intentional read errors)
+  - Fuzzy bits (variable data on reads)
+  - Protection tracks (non-standard formats)
+  - Bad sector maps
+  - Custom sector sizes
+
+**Context-Aware Operation**:
+The disk detector operates based on the currently emulated interface(s):
+
+```bash
+# Example: Detect DOS on Beta Disk system
+> disk system detect
+Detected: TR-DOS 5.03
+Interface: Beta Disk (WD1793)
+Tracks: 80, Sides: 2, Sectors/Track: 16
+Format: 720KB (TR-DOS standard)
+
+# Example: Detect on +3
+> disk system detect
+Detected: +3DOS 1.0
+Interface: Amstrad +3 (µPD765A)
+Format: 3-inch disk, 180KB per side
+
+# Example: Detect ESXDOS
+> disk system detect
+Detected: ESXDOS 0.8.9
+Interface: DivMMC (SD Card)
+Filesystem: FAT32
+Virtual Disks: 2x .TRD mounted
+```
+
+**Use Cases**:
+- Identify which DOS is running
+- Analyze commercial disk protection
+- Understand FDC access patterns
+- Document disk format structures
+- Debug custom loaders
+- Convert between disk formats
+
+#### 8.8 Graphics Effects Detector
+
+**Status**: 🔮 Planned (Q4 2026)
+
+Detect advanced graphics techniques.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `gfx detect` | | Detect special graphics effects in use. | 🔮 Planned |
+| `gfx identify` | | Identify effect type: multicolor, gigascreen, hardware scroll. | 🔮 Planned |
+| `gfx parameters` | | Extract effect parameters (frame timing, color patterns). | 🔮 Planned |
+
+**Effects Detected**:
+- **Multi-color**: Attribute flashing techniques, color cycling
+- **Gigascreen**: Interlaced frame techniques
+- **Hardware Scrolling**: ULA tricks, border manipulation
+- **Raster Effects**: Split-screen, raster bars, parallax
+- **3D Graphics**: Polygon renderers, raycasting engines
+
+#### 8.9 Analyzer Framework
+
+**Common Features**:
+- **Batch Analysis**: Run multiple analyzers simultaneously
+- **Confidence Scoring**: Rate detection accuracy (0-100%)
+- **Report Generation**: JSON, XML, or text reports
+- **Pattern Database**: User-extensible signature database
+- **Python/Lua API**: Create custom analyzers in scripts
+
+**Example Usage**:
+```bash
+# Detect everything
+analyze all --format json --output report.json
+
+# Chain analyzers
+basic extract | analyze
+music detect | music rip game.pt3
+
+# Custom analyzer in Python
+python my_analyzer.py --memory 0x8000 0x4000
+```
+
+### 9. LLM Integration Interfaces (MCP/A2A)
+
+**Status**: 🔮 Planned (Q3-Q4 2026)
+
+Model Context Protocol (MCP) and Agent-to-Agent (A2A) interfaces enable Large Language Models and AI agents to interact with the emulator programmatically for automated analysis, testing, and content generation.
+
+#### 9.1 Model Context Protocol (MCP)
+
+**Overview**: MCP provides a standardized way for LLMs to access emulator context, state, and capabilities as part of their reasoning process.
+
+**Use Cases**:
+- **Automated Testing**: LLM generates test cases and validates behavior
+- **Code Analysis**: AI analyzes assembly code and suggests optimizations
+- **Documentation**: Auto-generate documentation from code behavior
+- **Debugging**: AI-assisted debugging with natural language queries
+- **Retro Game AI**: Train agents to play and master classic games
+
+#### 9.2 MCP Commands
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `mcp enable` | | Enable MCP interface on specified port/endpoint. | 🔮 Planned |
+| `mcp query <prompt>` | `<natural-language>` | Send natural language query to configured LLM about emulator state. | 🔮 Planned |
+| `mcp context set <type>` | `<full\|minimal\|custom>` | Configure context detail level sent to LLM. | 🔮 Planned |
+| `mcp analyze <target>` | `<code\|memory\|behavior>` | Request LLM analysis of specific emulator aspect. | 🔮 Planned |
+| `mcp suggest` | | Get AI suggestions for current debugging context. | 🔮 Planned |
+
+#### 9.3 Agent-to-Agent (A2A) Protocol
+
+**Overview**: A2A enables autonomous agents to control the emulator and coordinate complex multi-step tasks.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `a2a register <agent>` | `<agent-id>` | Register an AI agent with the emulator. | 🔮 Planned |
+| `a2a task assign <task>` | `<task-definition>` | Assign task to agent (e.g., "find all CALLs to ROM"). | 🔮 Planned |
+| `a2a task status` | | Query task progress and results. | 🔮 Planned |
+| `a2a collaborate <agents>` | `<agent-list>` | Enable multi-agent collaboration on complex tasks. | 🔮 Planned |
+| `a2a unregister <agent>` | `<agent-id>` | Unregister agent and cleanup resources. | 🔮 Planned |
+
+#### 9.4 MCP Context Types
+
+**Full Context** (for deep analysis):
+```json
+{
+  "emulator_state": {
+    "cpu": { "registers": {...}, "pc": "0x8000", "flags": {...} },
+    "memory": { "prog_start": "0x5C53", "vars_start": "0x5C4B" },
+    "devices": { "tape": "playing", "disk": "idle" },
+    "breakpoints": [...],
+    "call_stack": [...]
+  },
+  "code_context": {
+    "current_instruction": "LD A, (HL)",
+    "disassembly": [...],
+    "symbols": {...}
+  },
+  "analysis": {
+    "basic_program": "10 PRINT \"Hello\"\n20 GOTO 10",
+    "detected_patterns": ["infinite loop", "basic program"]
+  }
+}
+```
+
+**Minimal Context** (for quick queries):
+```json
+{
+  "pc": "0x8000",
+  "af": "0x44C4",
+  "instruction": "LD A, (HL)"
+}
+```
+
+#### 9.5 Example LLM Workflows
+
+**Automated Game Testing**:
+```bash
+# AI agent plays game and reports bugs
+a2a register game-tester
+a2a task assign "Play game for 5 minutes, find edge cases"
+# Agent uses key injection, monitors crashes, logs anomalies
+a2a task status
+```
+
+**Code Reverse Engineering**:
+```bash
+# LLM analyzes unknown routine
+mcp query "What does the code at 0x8000 do?"
+# Response: "This appears to be a sprite drawing routine..."
+
+# Follow-up analysis
+mcp analyze code --range 0x8000-0x8100
+# Generates detailed analysis with pseudocode
+```
+
+**Natural Language Debugging**:
+```bash
+# Developer asks question in natural language
+mcp query "Why is the screen flickering?"
+# LLM analyzes interrupt timing, screen updates, identifies issue
+# Response: "Interrupt handler at 0x0038 is taking 25000 T-states..."
+```
+
+**Content Generation**:
+```bash
+# AI generates test content
+a2a task assign "Create BASIC program to test all graphics modes"
+# Agent generates tokenized BASIC, loads it, validates output
+```
+
+#### 9.6 Integration Points
+
+**Language Models**:
+- OpenAI GPT-4/GPT-4o (API)
+- Anthropic Claude (API)
+- Local LLMs (Ollama, LM Studio)
+- Specialized code models (CodeLlama, StarCoder)
+
+**Agent Frameworks**:
+- LangChain
+- AutoGPT
+- BabyAGI
+- Custom agent implementations
+
+**Protocols**:
+- REST API endpoints (for stateless queries)
+- WebSocket (for streaming context)
+- gRPC (for high-performance agent communication)
+- JSON-RPC (for structured commands)
+
+#### 9.7 Safety & Sandboxing
+
+**Resource Limits**:
+- Query rate limiting
+- Context size limits
+- Agent execution timeouts
+- Memory usage caps
+
+**Permission Model**:
+- Read-only mode (safe exploration)
+- Read-write mode (testing, requires confirmation)
+- Admin mode (full control, authentication required)
+
+**Audit Logging**:
+- All LLM queries logged
+- Agent actions tracked
+- Decision reasoning recorded
+- Compliance with AI safety guidelines
+
+#### 9.8 Implementation Architecture
+
+```
+┌─────────────────────────────────────────┐
+│  LLM / AI Agent                         │
+│  (GPT-4, Claude, Local Model)           │
+└──────────────┬──────────────────────────┘
+               │ MCP Protocol (JSON)
+               ▼
+┌─────────────────────────────────────────┐
+│  MCP/A2A Interface Layer                │
+│  • Context serialization                │
+│  • Query processing                     │
+│  • Response generation                  │
+│  • Safety checks                        │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────┐
+│  Emulator Control Interface (ECI)       │
+│  All standard commands available        │
+└─────────────────────────────────────────┘
+```
+
+**Context Serialization**:
+- Automatic state extraction
+- Relevance filtering (only send what's needed)
+- Compression (large contexts compressed)
+- Caching (avoid redundant context generation)
+
+**Query Processing**:
+- Natural language → Command translation
+- Intent recognition
+- Parameter extraction
+- Error handling with suggestions
+
+**Response Generation**:
+- Command results → Natural language
+- Code formatting and syntax highlighting
+- Visualization hints (for GUI clients)
+- Confidence scores
+
+#### 9.9 Example Use Cases
+
+**Scenario 1: Automated Bug Finder**
+```python
+# Python agent using MCP
+agent = A2A_Agent("bug-finder")
+agent.task = "Find buffer overflows in this game"
+
+# Agent methodology:
+# 1. Analyze BASIC program structure
+# 2. Set watchpoints on variables
+# 3. Inject edge-case inputs
+# 4. Monitor memory corruption
+# 5. Generate bug report
+
+results = agent.execute()
+print(results.bugs_found)
+```
+
+**Scenario 2: Interactive Tutor**
+```bash
+# Student asks question
+> mcp query "How do I implement PRINT in my BASIC interpreter?"
+
+# LLM analyzes ROM PRINT routine, explains:
+# - Token parsing
+# - Character output via RST 10h
+# - Screen positioning
+# - Scroll handling
+# - Provides working example code
+```
+
+**Scenario 3: Code Optimizer**
+```bash
+# AI suggests optimizations
+> mcp analyze code --optimize --range 0x8000-0x8100
+
+# LLM identifies:
+# - Redundant loads: "LD A, (HL); LD A, (HL)" → optimize
+# - Loop unrolling opportunities
+# - Register allocation improvements
+# - Generates optimized version with explanation
+```
+
+### 10. Performance & Profiling
 
 Commands for analyzing emulator and emulated code performance.
 
@@ -784,7 +1318,7 @@ Commands for analyzing emulator and emulated code performance.
 | `benchmark` | | Run standard benchmark (e.g., empty loop timing) and report performance. | 🔮 Planned |
 | `fps` | | Display current frames-per-second and frame time statistics. | 🔮 Planned |
 
-### 9. Network & Multi-Emulator Operations
+### 11. Network & Multi-Emulator Operations
 
 Experimental features for networked emulation and multi-instance orchestration.
 
@@ -799,23 +1333,59 @@ Experimental features for networked emulation and multi-instance orchestration.
 
 ## Implementation Priority
 
-1. **High Priority** (Q1-Q2 2026):
-   - Snapshot save/load
-   - Input injection (key press, type text)
-   - Screenshot capture
-   - Disassembly commands
+### Phase 1: Core Functionality (Q1-Q2 2026)
+**Focus**: Essential debugging and state management
+- ✅ **BASIC Extractor** - Already implemented
+- Snapshot save/load
+- Input injection (key press, type text)
+- Screenshot capture
+- Disassembly commands
+- Symbol file loading
 
-2. **Medium Priority** (Q2-Q3 2026):
-   - GDB Remote Serial Protocol
-   - Enhanced tape/disk control
-   - Audio/video recording
-   - Script execution
+### Phase 2: Advanced Debugging (Q2-Q3 2026)
+**Focus**: Professional tools and content analysis
+- **GDB Remote Serial Protocol** - Industry-standard debugging
+- **Music Detector & Ripper** - Extract and identify music
+- **Compressor/Packer Detector** - Identify and unpack protection
+- Enhanced tape/disk control
+- Audio/video recording
+- Script execution (Lua/Python command sequences)
 
-3. **Low Priority** (Q4 2026+):
-   - Universal Debug Bridge protocol
-   - History rewind/replay
-   - Performance profiling
-   - Multi-emulator networking
+### Phase 3: Intelligent Analysis (Q3 2026)
+**Focus**: Automated content extraction and analysis
+- **Sprite Ripper** - Extract graphics assets
+- **Self-Modifying Code Detector** - Analyze dynamic code
+- **Tape/Disk Loader Detector** - Identify custom loaders
+- **Graphics Effects Detector** - Identify multicolor, gigascreen
+- Performance profiling
+- History rewind/replay
+
+### Phase 4: AI Integration & Advanced Features (Q3-Q4 2026)
+**Focus**: LLM integration and cutting-edge capabilities
+- **Model Context Protocol (MCP)** - LLM integration
+- **Agent-to-Agent (A2A) Protocol** - Autonomous agents
+- **Universal Debug Bridge Protocol** - High-performance analysis
+- Analyzer framework extensibility (Python/Lua custom analyzers)
+- Multi-emulator networking
+- Collaborative debugging features
+
+### Implementation Notes
+
+**Analyzer Framework**:
+- Core analyzer infrastructure (Q2 2026)
+- Plugin system for custom analyzers (Q3 2026)
+- Machine learning-based detection (Q4 2026)
+
+**MCP/A2A Interfaces**:
+- Basic MCP query support (Q3 2026)
+- Context serialization and optimization (Q3 2026)
+- Agent registration and task management (Q4 2026)
+- Multi-agent collaboration (Q4 2026+)
+
+**Performance Targets**:
+- Analyzers should process 48KB in <1 second
+- MCP context generation <100ms
+- Pattern database: 1000+ signatures by end of 2026
 
 ---
 

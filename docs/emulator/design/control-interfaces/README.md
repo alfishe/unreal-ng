@@ -125,11 +125,25 @@ All interfaces (where applicable) support these command categories:
 
 6. **Snapshot Management** - Save/load state
 7. **Input Injection** - Keyboard, joystick automation
-8. **Media Operations** - Tape/disk control
-9. **Audio/Video Capture** - Recording and export
-10. **Scripting Integration** - Script execution
-11. **Disassembly** - Code analysis
-12. **Performance Profiling** - CPU hotspots
+8. **Content Analyzers & Extractors** - Intelligent content analysis
+   - ✅ BASIC Extractor (implemented)
+   - Music detector & ripper
+   - Sprite ripper
+   - Self-modifying code detector
+   - Compressor/packer detector
+   - Tape/disk loader detector
+   - Graphics effects detector
+9. **LLM Integration (MCP/A2A)** - AI-assisted debugging and automation
+   - Model Context Protocol for LLM queries
+   - Agent-to-Agent protocol for autonomous agents
+   - Natural language debugging
+   - Automated testing and analysis
+10. **Media Operations** - Tape/disk control
+11. **Audio/Video Capture** - Recording and export
+12. **Scripting Integration** - Script execution
+13. **Disassembly** - Code analysis
+14. **Performance Profiling** - CPU hotspots
+15. **Network & Multi-Emulator** - Multi-instance coordination
 
 See [command-interface.md](./command-interface.md) for complete details.
 
@@ -145,42 +159,87 @@ See [command-interface.md](./command-interface.md) for complete details.
 - ✅ Breakpoint system (execution, memory, port)
 - ✅ Debug features (stepping, memory inspection)
 - ✅ Feature toggles
+- ✅ **BASIC Extractor** - Tokenized BASIC program extraction
 
 **Partially Implemented**:
 - 🔧 WebAPI (missing: breakpoints, memory, advanced features)
 - 🔧 Python/Lua (missing: some advanced debugging features)
 
-**Planned**:
-- 🔮 GDB Remote Serial Protocol (Q2 2026)
-- 🔮 Universal Debug Bridge (Q3-Q4 2026)
+**Planned - Phase 1 (Q1-Q2 2026)**:
 - 🔮 Snapshot save/load commands
 - 🔮 Input injection (keyboard, joystick)
+- 🔮 Disassembly commands
+- 🔮 Symbol file loading
+
+**Planned - Phase 2 (Q2-Q3 2026)**:
+- 🔮 GDB Remote Serial Protocol
+- 🔮 **Music Detector & Ripper** - Extract and identify music formats
+- 🔮 **Compressor/Packer Detector** - Identify protection schemes
 - 🔮 Media operations (tape/disk control)
 - 🔮 Audio/video capture
-- 🔮 Disassembly commands
+
+**Planned - Phase 3 (Q3 2026)**:
+- 🔮 **Sprite Ripper** - Graphics asset extraction
+- 🔮 **Self-Modifying Code Detector** - Dynamic code analysis
+- 🔮 **Loader Detector** - Custom tape/disk routines
+- 🔮 **Graphics Effects Detector** - Multicolor, gigascreen
 - 🔮 Performance profiling
+- 🔮 History rewind/replay
+
+**Planned - Phase 4 (Q3-Q4 2026)**:
+- 🔮 Universal Debug Bridge (UDB) Protocol
+- 🔮 **Model Context Protocol (MCP)** - LLM integration for AI-assisted debugging
+- 🔮 **Agent-to-Agent (A2A) Protocol** - Autonomous agent control
+- 🔮 **Analyzer Framework** - Extensible pattern detection system
+- 🔮 Multi-emulator networking
 
 ## Development Roadmap
 
 ### Q1 2026 (Current)
-- Document all existing interfaces ✅
+- ✅ Document all existing interfaces
+- ✅ **BASIC Extractor** implementation complete
 - Stabilize CLI and Python/Lua APIs
 - Expand WebAPI endpoint coverage
+- Begin analyzer framework design
 
-### Q2 2026
+### Q2 2026 - Core & Analysis Tools
+**Focus**: Essential debugging + content analysis
 - Implement GDB Remote Serial Protocol
 - Add snapshot save/load commands
 - Input injection (keyboard/joystick)
+- **Music Detector & Ripper** - AY/Beeper format detection
+- **Compressor/Packer Detector** - Protection scheme identification
+- Disassembly commands with symbol support
 
-### Q3 2026
+### Q3 2026 - Advanced Analysis
+**Focus**: Automated content extraction
 - Begin Universal Debug Bridge protocol
-- Disassembly commands
+- **Sprite Ripper** - Graphics extraction
+- **Self-Modifying Code Detector** - Dynamic analysis
+- **Tape/Disk Loader Detector** - Custom routine detection
+- **Graphics Effects Detector** - Multicolor, gigascreen
 - Audio/video capture
-
-### Q4 2026
-- Complete UDB protocol
 - Performance profiling
+- **Analyzer Framework** core infrastructure
+
+### Q4 2026 - AI Integration
+**Focus**: LLM integration and autonomous agents
+- Complete UDB protocol
+- **Model Context Protocol (MCP)** - LLM query interface
+- **Agent-to-Agent (A2A) Protocol** - Autonomous agent control
+- Natural language debugging capabilities
+- Automated testing with AI agents
+- **Extensible Analyzer System** - Python/Lua custom analyzers
 - Time-travel debugging
+- Multi-agent collaboration features
+
+### 2027+ - Future Expansion
+- Machine learning-based pattern detection
+- Cloud-based LLM integration
+- Collaborative debugging (multi-user sessions)
+- Advanced game AI training environments
+- Automated software archaeology tools
+- Community pattern database (crowdsourced signatures)
 
 ## Architecture Highlights
 
