@@ -35,12 +35,19 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "Usage: state <subsystem> [subcommand] [args]" << NEWLINE;
         ss << NEWLINE;
         ss << "Available subsystems:" << NEWLINE;
+        ss << "  memory         - Memory configuration (ROM + RAM + paging)" << NEWLINE;
+        ss << "  memory ram     - RAM bank mapping (alias: ram)" << NEWLINE;
+        ss << "  memory rom     - ROM configuration (alias: rom)" << NEWLINE;
         ss << "  screen         - Screen configuration (brief)" << NEWLINE;
         ss << "  screen verbose - Screen configuration (detailed)" << NEWLINE;
         ss << "  screen mode    - Detailed video mode information" << NEWLINE;
         ss << "  screen flash   - Flash state and counter" << NEWLINE;
         ss << NEWLINE;
         ss << "Examples:" << NEWLINE;
+        ss << "  state memory         - Show complete memory configuration" << NEWLINE;
+        ss << "  state memory ram     - Show RAM banking only" << NEWLINE;
+        ss << "  state ram            - Same as above (alias)" << NEWLINE;
+        ss << "  state rom            - Show ROM configuration only" << NEWLINE;
         ss << "  state screen         - Show screen configuration (brief)" << NEWLINE;
         ss << "  state screen verbose - Show screen configuration (detailed)" << NEWLINE;
         ss << "  state screen mode    - Show video mode details" << NEWLINE;
@@ -53,8 +60,51 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     std::string subsystem = args[0];
     std::transform(subsystem.begin(), subsystem.end(), subsystem.begin(), ::tolower);
 
+    // Handle 'memory' subsystem or aliases
+    if (subsystem == "memory" || subsystem == "ram" || subsystem == "rom")
+    {
+        // For aliases, convert to memory subsystem with appropriate subcommand
+        if (subsystem == "ram")
+        {
+            HandleStateMemoryRAM(session, context);
+            return;
+        }
+        else if (subsystem == "rom")
+        {
+            HandleStateMemoryROM(session, context);
+            return;
+        }
+        
+        // Check for subcommands
+        if (args.size() > 1)
+        {
+            std::string subcommand = args[1];
+            std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
+            
+            if (subcommand == "ram")
+            {
+                HandleStateMemoryRAM(session, context);
+                return;
+            }
+            else if (subcommand == "rom")
+            {
+                HandleStateMemoryROM(session, context);
+                return;
+            }
+            else
+            {
+                session.SendResponse(std::string("Error: Unknown subcommand '") + args[1] + "'" + NEWLINE +
+                                    "Available: ram, rom" + NEWLINE);
+                return;
+            }
+        }
+        
+        // No subcommand - show complete memory state
+        HandleStateMemory(session, context);
+        return;
+    }
     // Handle 'screen' subsystem
-    if (subsystem == "screen")
+    else if (subsystem == "screen")
     {
         // Check for subcommands
         if (args.size() > 1)
@@ -93,7 +143,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else
     {
         session.SendResponse(std::string("Error: Unknown subsystem '") + subsystem + "'" + NEWLINE +
-                            "Available subsystems: screen" + NEWLINE);
+                            "Available subsystems: memory, ram, rom, screen" + NEWLINE);
         return;
     }
 }
@@ -296,6 +346,225 @@ void CLIProcessor::HandleStateScreenFlash(const ClientSession& session, Emulator
     ss << NEWLINE;
     ss << "Note: Flash toggles every 16 frames (0.32 seconds at 50Hz)" << NEWLINE;
     ss << "      Full flash cycle is 32 frames (0.64 seconds)" << NEWLINE;
+    
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    CONFIG& config = context->config;
+    Memory& memory = *context->pMemory;
+    EmulatorState& state = context->emulatorState;
+    
+    ss << "Memory Configuration" << NEWLINE;
+    ss << "====================" << NEWLINE;
+    ss << NEWLINE;
+    
+    // Determine model
+    std::string model = "ZX Spectrum 48K";
+    if (config.mem_model == MM_SPECTRUM128)
+        model = "ZX Spectrum 128K";
+    else if (config.mem_model == MM_PENTAGON)
+        model = "Pentagon 128K";
+    else if (config.mem_model == MM_PLUS3)
+        model = "ZX Spectrum +3";
+    
+    ss << "Model: " << model << NEWLINE;
+    ss << NEWLINE;
+    
+    // ROM Configuration
+    ss << "ROM Configuration:" << NEWLINE;
+    ss << "  Active ROM Page:  " << (int)memory.GetROMPage() << NEWLINE;
+    
+    // Determine ROM mode
+    std::string romMode = "Unknown";
+    if (config.mem_model == MM_SPECTRUM48)
+        romMode = "48K BASIC";
+    else if (config.mem_model == MM_SPECTRUM128)
+        romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
+    else if (config.mem_model == MM_PENTAGON)
+        romMode = (memory.GetROMPage() == 2) ? "128K Editor" : (memory.GetROMPage() == 3 ? "48K BASIC" : "Service/TR-DOS");
+    else if (config.mem_model == MM_PLUS3)
+        romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
+        
+    ss << "  ROM Mode:         " << romMode << NEWLINE;
+    ss << "  Bank 0 (0x0000-0x3FFF): " << memory.GetCurrentBankName(0) << NEWLINE;
+    ss << NEWLINE;
+    
+    // RAM Configuration
+    ss << "RAM Configuration:" << NEWLINE;
+    ss << "  Bank 1 (0x4000-0x7FFF): " << memory.GetCurrentBankName(1) << NEWLINE;
+    ss << "  Bank 2 (0x8000-0xBFFF): " << memory.GetCurrentBankName(2) << NEWLINE;
+    ss << "  Bank 3 (0xC000-0xFFFF): " << memory.GetCurrentBankName(3) << NEWLINE;
+    ss << NEWLINE;
+    
+    // Paging State
+    if (config.mem_model != MM_SPECTRUM48)
+    {
+        ss << "Paging State:" << NEWLINE;
+        ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') 
+           << (int)state.p7FFD << std::dec << NEWLINE;
+        ss << "  RAM Bank 3:       " << (int)(state.p7FFD & 0x07) << NEWLINE;
+        ss << "  Screen:           " << ((state.p7FFD & 0x08) ? "1 (Shadow)" : "0 (Normal)") << NEWLINE;
+        ss << "  ROM Select:       " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
+        ss << "  Paging Locked:    " << ((state.p7FFD & 0x20) ? "YES" : "NO") << NEWLINE;
+    }
+    
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    CONFIG& config = context->config;
+    Memory& memory = *context->pMemory;
+    EmulatorState& state = context->emulatorState;
+    
+    ss << "RAM Bank Mapping" << NEWLINE;
+    ss << "================" << NEWLINE;
+    ss << NEWLINE;
+    
+    // Determine model
+    std::string model = "ZX Spectrum 48K";
+    if (config.mem_model == MM_SPECTRUM128)
+        model = "ZX Spectrum 128K";
+    else if (config.mem_model == MM_PENTAGON)
+        model = "Pentagon 128K";
+    else if (config.mem_model == MM_PLUS3)
+        model = "ZX Spectrum +3";
+    
+    ss << "Model: " << model << NEWLINE;
+    ss << NEWLINE;
+    
+    // Show detailed Z80 address space to RAM page mapping
+    ss << "Z80 Address Space → Physical RAM Pages:" << NEWLINE;
+    ss << "=========================================" << NEWLINE;
+    ss << NEWLINE;
+    
+    // Bank 0 (might be ROM)
+    if (memory.IsBank0ROM())
+    {
+        ss << "Bank 0 (0x0000-0x3FFF): ROM " << (int)memory.GetROMPage() << " (read-only)" << NEWLINE;
+    }
+    else
+    {
+        ss << "Bank 0 (0x0000-0x3FFF): RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
+    }
+    
+    // Bank 1 (always RAM)
+    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (read/write, contended)" << NEWLINE;
+    ss << "                        [Screen 0 location]" << NEWLINE;
+    
+    // Bank 2 (always RAM)
+    ss << "Bank 2 (0x8000-0xBFFF): RAM Page " << (int)memory.GetRAMPageForBank2() << " (read/write)" << NEWLINE;
+    
+    // Bank 3 (always RAM, pageable on 128K)
+    ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (read/write)" << NEWLINE;
+    
+    if (config.mem_model != MM_SPECTRUM48)
+    {
+        ss << NEWLINE;
+        ss << "Paging Control:" << NEWLINE;
+        ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') 
+           << (int)state.p7FFD << std::dec << " (bin: ";
+        
+        // Show binary
+        for (int i = 7; i >= 0; --i)
+        {
+            ss << ((state.p7FFD >> i) & 1);
+        }
+        ss << ")" << NEWLINE;
+        
+        ss << "  Bits 0-2 (RAM):   " << (int)(state.p7FFD & 0x07) 
+           << " (RAM page " << (int)(state.p7FFD & 0x07) << " at bank 3)" << NEWLINE;
+        ss << "  Bit 3 (Screen):   " << ((state.p7FFD & 0x08) ? "1 (Shadow)" : "0 (Normal)") << NEWLINE;
+        ss << "  Bit 4 (ROM):      " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
+        ss << "  Bit 5 (Lock):     " << ((state.p7FFD & 0x20) ? "1 (Locked)" : "0 (Unlocked)") << NEWLINE;
+    }
+    
+    session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorContext* context)
+{
+    std::stringstream ss;
+    CONFIG& config = context->config;
+    Memory& memory = *context->pMemory;
+    EmulatorState& state = context->emulatorState;
+    
+    ss << "ROM Configuration" << NEWLINE;
+    ss << "=================" << NEWLINE;
+    ss << NEWLINE;
+    
+    // Determine model
+    std::string model = "ZX Spectrum 48K";
+    int totalROMPages = 1;
+    if (config.mem_model == MM_SPECTRUM128)
+    {
+        model = "ZX Spectrum 128K";
+        totalROMPages = 2;
+    }
+    else if (config.mem_model == MM_PENTAGON)
+    {
+        model = "Pentagon 128K";
+        totalROMPages = 4;
+    }
+    else if (config.mem_model == MM_PLUS3)
+    {
+        model = "ZX Spectrum +3";
+        totalROMPages = 4;
+    }
+    
+    ss << "Model:            " << model << NEWLINE;
+    ss << "Total ROM Pages:  " << totalROMPages << NEWLINE;
+    ss << "Active ROM Page:  " << (int)memory.GetROMPage() << NEWLINE;
+    ss << "ROM Size:         " << (totalROMPages * 16) << " KB (" << totalROMPages << " × 16KB pages)" << NEWLINE;
+    ss << NEWLINE;
+    
+    // Show ROM page descriptions based on model
+    ss << "Available ROM Pages:" << NEWLINE;
+    if (config.mem_model == MM_SPECTRUM48)
+    {
+        ss << "  Page 0: 48K BASIC ROM" << NEWLINE;
+    }
+    else if (config.mem_model == MM_SPECTRUM128)
+    {
+        ss << "  Page 0: 128K Editor/Menu ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 1: 48K BASIC ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
+    }
+    else if (config.mem_model == MM_PENTAGON)
+    {
+        ss << "  Page 0: Service ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 1: TR-DOS ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 2: 128K Editor/Menu ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 3: 48K BASIC ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
+    }
+    else if (config.mem_model == MM_PLUS3)
+    {
+        ss << "  Page 0: +3 Editor ROM " << ((memory.GetROMPage() == 0) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 1: 48K BASIC ROM " << ((memory.GetROMPage() == 1) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 2: +3DOS ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
+        ss << "  Page 3: 48K BASIC (copy) ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
+    }
+    
+    ss << NEWLINE;
+    ss << "Current Mapping:" << NEWLINE;
+    ss << "  Bank 0 (0x0000-0x3FFF): ";
+    if (memory.IsBank0ROM())
+    {
+        ss << "ROM " << (int)memory.GetROMPage() << " (read-only)" << NEWLINE;
+    }
+    else
+    {
+        ss << "RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
+    }
+    
+    if (config.mem_model != MM_SPECTRUM48)
+    {
+        ss << NEWLINE;
+        ss << "Port 0x7FFD bit 4 (ROM select): " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
+    }
     
     session.SendResponse(ss.str());
 }

@@ -119,6 +119,9 @@ private:
     
     // State inspection command handlers
     void HandleState(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleStateMemory(const ClientSession& session, EmulatorContext* context);
+    void HandleStateMemoryRAM(const ClientSession& session, EmulatorContext* context);
+    void HandleStateMemoryROM(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreen(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenVerbose(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenMode(const ClientSession& session, EmulatorContext* context);

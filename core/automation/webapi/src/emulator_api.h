@@ -40,6 +40,9 @@ namespace api
                 METHOD_ADD(EmulatorAPI::setSetting, "/{id}/settings/{name}", drogon::Put, drogon::Post);
                 
                 // State inspection
+                METHOD_ADD(EmulatorAPI::getStateMemory, "/{id}/state/memory", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateMemoryRAM, "/{id}/state/memory/ram", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateMemoryROM, "/{id}/state/memory/rom", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getStateScreen, "/{id}/state/screen", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getStateScreenMode, "/{id}/state/screen/mode", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getStateScreenFlash, "/{id}/state/screen/flash", drogon::Get);
@@ -100,6 +103,18 @@ namespace api
                           const std::string &name) const;
             
             // State inspection
+            void getStateMemory(const drogon::HttpRequestPtr &req,
+                              std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                              const std::string &id) const;
+                              
+            void getStateMemoryRAM(const drogon::HttpRequestPtr &req,
+                                 std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                 const std::string &id) const;
+                                 
+            void getStateMemoryROM(const drogon::HttpRequestPtr &req,
+                                 std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                 const std::string &id) const;
+                                 
             void getStateScreen(const drogon::HttpRequestPtr &req,
                               std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                               const std::string &id) const;

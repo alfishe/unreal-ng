@@ -44,6 +44,13 @@ void PortDecoder_Pentagon128::reset()
     // 2 - SOS128
     // 3 - SOS48
 
+    // Explicitly reset port states to ensure consistent reset behavior
+    EmulatorState& state = _context->emulatorState;
+    state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, ROM 0, paging enabled)
+    state.pBFFD = 0x00;     // Reset AY register select port
+    state.pFFFD = 0x00;     // Reset AY data port
+    state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+
     // Set default 120K memory pages
     Memory& memory = *_context->pMemory;
     memory.SetROMPage(2);           // Pentagon 128K: ROM0 - service; ROM1 - TR-DOS; ROM2 - 128K; ROM3 - 48K
@@ -51,9 +58,14 @@ void PortDecoder_Pentagon128::reset()
     memory.SetRAMPageToBank2(2);
     memory.SetRAMPageToBank3(0);
 
-
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+
+    // Explicitly force screen to SCREEN_NORMAL before port update
+    // This is necessary because Port_7FFD_Out has an optimization that skips screen switching
+    // if the screen number hasn't changed (0x00 -> 0x00), but during reset we need to ensure
+    // the hardware screen state matches the port state regardless
+    _screen->SetActiveScreen(SCREEN_NORMAL);
 
     // Set default memory paging state: RAM bank: 0; Screen: Normal (bank 5); ROM bank: 0; Disable paging: No
     Port_7FFD_Out(0x7FFD, 0x00, 0x0000);
