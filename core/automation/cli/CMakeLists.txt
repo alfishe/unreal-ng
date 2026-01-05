@@ -1,11 +1,8 @@
 # CLI Automation Module
 project(automation-cli LANGUAGES CXX)
 
-get_filename_component(CORE_LIBRARY_PATH
-    "${CMAKE_CURRENT_LIST_DIR}/../../../core"
-    ABSOLUTE
-)
-
+# Get root directory
+get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
 
 # Add source files
 set(SOURCES
@@ -22,7 +19,7 @@ add_library(${PROJECT_NAME} STATIC ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
-    ${CORE_LIBRARY_PATH}/src  # For emulator headers
+    ${ROOT_DIR}/core/src  # For core headers
 )
 
 # Install the library
@@ -73,7 +70,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 # <Diagnostics>
 message(STATUS "<${PROJECT_NAME} diagnostics>")
 message(STATUS "  PROJECT_NAME: ${PROJECT_NAME}")
-message(STATUS "  CORE_LIBRARY_PATH: ${CORE_LIBRARY_PATH}")
+message(STATUS "  ROOT_DIR: ${ROOT_DIR}")
 message(STATUS "  INCLUDE_DIRECTORIES:")
 get_property(include_dirs DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES)
 foreach (dir ${include_dirs})

@@ -121,8 +121,9 @@ TEST_F(BasicExtractorTest, ExtractBasic_AcrossFile)
     // Check for key components
     EXPECT_NE(result.find("10  BORDER VAL \"7\": INK VAL \"7\""), std::string::npos);
     EXPECT_NE(result.find("RANDOMIZE USR VAL \"15619\""), std::string::npos);
-    // Note: CODE token seems to not have leading space in our table, results in glued output. Accepted for now.
-    EXPECT_NE(result.find("LOAD \"ACROSSLK\"CODE"), std::string::npos);
+    // Note: Our extractor now adds a space after a closing quote if the next byte is a token.
+    // So LOAD "ACROSSLK"CODE becomes LOAD "ACROSSLK" CODE
+    EXPECT_NE(result.find("LOAD \"ACROSSLK\" CODE"), std::string::npos);
 }
 
 TEST_F(BasicExtractorTest, ExtractBasic_FromMemory)

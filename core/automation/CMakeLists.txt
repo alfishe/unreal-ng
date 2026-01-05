@@ -69,8 +69,6 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE
         $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES>
     )
-    
-
 
     if (APPLE)
         target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
