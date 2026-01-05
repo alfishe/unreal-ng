@@ -51,6 +51,7 @@ public:
     MainWindow(const MainWindow&) = delete;
     MainWindow& operator=(const MainWindow&) = delete;
 
+    // region <Slots>
 private slots:
     void handleStartButton();
     void handleMessageScreenRefresh(int id, Message* message);
@@ -76,8 +77,9 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void updateMenuStates();
+    // endregion <Slots>
 
-    /// region <QWidget events override>
+    // region <QWidget events override>
 protected:
     void showEvent(QShowEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
@@ -92,7 +94,7 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
-/// endregion </QWidget events override>
+    // endregion </QWidget events override>
 
 protected:
     void updatePosition(QWidget *widget, QWidget *parent, float xscale, float yscale)
@@ -112,6 +114,9 @@ private:
     // Clean up automation resources
     void cleanupAutomation();
     
+    // Unsubscribe from all message bus events
+    void unsubscribeFromMessageBus();
+    
     // Platform-specific initialization methods
     void initializePlatformMacOS();
     void initializePlatformWindows();
@@ -126,6 +131,7 @@ private:
     void handleFullScreenShortcutWindows();
     void handleFullScreenShortcutLinux();
 
+private:
     Ui::MainWindow* ui = nullptr;
     DebuggerWindow* debuggerWindow = nullptr;
     LogWindow* logWindow = nullptr;
