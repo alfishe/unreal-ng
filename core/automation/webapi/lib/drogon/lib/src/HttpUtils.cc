@@ -732,12 +732,7 @@ const std::vector<std::string_view> &getFileExtensions(ContentType contentType)
         for (const auto &e : fileTypeDatabase_)
             if (!e.first.empty())
                 extensionMap_[e.second.second].push_back(e.first);
-        // Add deprecated (backward compatibility - intentionally using deprecated API)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        extensionMap_[CT_APPLICATION_X_JAVASCRIPT] =
-            extensionMap_[CT_TEXT_JAVASCRIPT];
-#pragma GCC diagnostic pop
+        //extensionMap_[CT_APPLICATION_X_JAVASCRIPT] =  extensionMap_[CT_TEXT_JAVASCRIPT];
         extensionMap_[CT_TEXT_XML] = extensionMap_[CT_APPLICATION_XML];
     });
     auto it = extensionMap_.find(contentType);
