@@ -346,7 +346,16 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         target_include_directories(${PROJECT_NAME} PRIVATE ${ZLIB_INCLUDE_DIRS})
     endif()
 
-
+    # Copy HTML resources to build directory (multiple locations for flexibility)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/resources/html
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/bin/resources/html
+        COMMENT "Copying HTML resources to build directory"
+    )
 
 else () # Called from upper level CMake => build static library
     # Create the webapi library
@@ -388,6 +397,35 @@ else () # Called from upper level CMake => build static library
 
     # Create alias for the library
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+    
+    # Copy HTML resources to build directory (multiple locations for flexibility)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/resources/html
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/html
+        ${CMAKE_BINARY_DIR}/bin/resources/html
+        COMMENT "Copying HTML resources to build directory"
+    )
+    
+    # Install HTML resources for deployment
+    # For macOS .app bundles
+    if(APPLE)
+        install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources/html/
+                DESTINATION "${CMAKE_INSTALL_PREFIX}/unreal-qt.app/Contents/Resources/html"
+                OPTIONAL)
+    endif()
+    
+    # For standard installations (Linux, Windows, macOS non-bundle)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources/html/
+            DESTINATION "share/unreal-speccy/resources/html"
+            OPTIONAL)
+    
+    # Also install alongside executable for portable deployments
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources/html/
+            DESTINATION "bin/resources/html"
+            OPTIONAL)
 endif ()
 
 

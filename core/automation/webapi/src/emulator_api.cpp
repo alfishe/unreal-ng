@@ -4,6 +4,8 @@
 #include <emulator/platform.h>
 #include <drogon/HttpResponse.h>
 #include <json/json.h>
+#include <fstream>
+#include <sstream>
 
 using namespace drogon;
 using namespace api::v1;
@@ -12,6 +14,54 @@ namespace api
 {
     namespace v1
     {
+        // Helper function to add CORS headers to responses
+        void addCorsHeaders(HttpResponsePtr &resp)
+        {
+            resp->addHeader("Access-Control-Allow-Origin", "*");
+            resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+        }
+
+        // Helper function to load HTML file from resources
+        std::string loadHtmlFile(const std::string& filename)
+        {
+            // Try multiple possible locations for the HTML resources
+            std::vector<std::string> searchPaths = {
+                // Development/Build paths
+                "./resources/html/",                         // In current directory (from bin when running)
+                "../resources/html/",                        // One level up (from bin to build root)
+                "./core/automation/webapi/resources/html/",  // Development/build from project root
+                "../../resources/html/",                     // Two levels up
+                
+                // macOS .app bundle path
+                "../Resources/html/",                        // From MacOS folder to Resources folder in .app bundle
+                "../../Resources/html/",                     // Alternative .app bundle structure
+                
+                // Standard installation paths
+                "/usr/local/share/unreal-speccy/resources/html/",  // Unix standard install
+                "/usr/share/unreal-speccy/resources/html/",        // Unix system install
+                "./share/unreal-speccy/resources/html/",           // Relative to install prefix
+            };
+            
+            for (const auto& basePath : searchPaths) {
+                std::string fullPath = basePath + filename;
+                std::ifstream file(fullPath);
+                if (file.is_open()) {
+                    std::stringstream buffer;
+                    buffer << file.rdbuf();
+                    return buffer.str();
+                }
+            }
+            
+            // Fallback: return a minimal HTML page if file not found
+            return "<!DOCTYPE html><html><head><title>Error</title></head><body>"
+                   "<h1>Resource Not Found</h1>"
+                   "<p>Could not load HTML resource: " + filename + "</p>"
+                   "<p>Searched paths: development builds, macOS .app bundle, standard installations</p>"
+                   "<p>Please ensure resources are properly installed.</p>"
+                   "</body></html>";
+        }
+
         // Helper function to convert emulator state to string
         std::string stateToString(EmulatorStateEnum state) {
             switch (state) {
@@ -21,6 +71,251 @@ namespace api
                 case StateStopped: return "stopped";
                 default: return "unknown";
             }
+        }
+
+        // GET /
+        // Root redirect to OpenAPI documentation
+        void EmulatorAPI::rootRedirect(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            // Load HTML page from disk
+            std::string html = loadHtmlFile("index.html");
+
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setBody(html);
+            resp->setContentTypeCode(ContentType::CT_TEXT_HTML);
+            addCorsHeaders(resp);
+            callback(resp);
+        }
+
+        // OPTIONS / (CORS preflight)
+        void EmulatorAPI::corsPreflight(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto resp = HttpResponse::newHttpResponse();
+            resp->setStatusCode(HttpStatusCode::k204NoContent);
+            addCorsHeaders(resp);
+            callback(resp);
+        }
+
+        // GET /api/v1/openapi.json
+        // OpenAPI 3.0 specification
+        void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            Json::Value spec;
+            
+            // OpenAPI version and info
+            spec["openapi"] = "3.0.0";
+            spec["info"]["title"] = "Unreal Speccy Emulator API";
+            spec["info"]["description"] = "REST API for controlling and inspecting ZX Spectrum emulator instances";
+            spec["info"]["version"] = "1.0.0";
+            
+            // Servers
+            Json::Value servers(Json::arrayValue);
+            Json::Value server;
+            server["url"] = "http://localhost:8090";
+            server["description"] = "Local development server";
+            servers.append(server);
+            spec["servers"] = servers;
+            
+            // Paths
+            Json::Value paths;
+            
+            // GET /api/v1/emulator
+            paths["/api/v1/emulator"]["get"]["summary"] = "List all emulators";
+            paths["/api/v1/emulator"]["get"]["tags"].append("Emulator Management");
+            paths["/api/v1/emulator"]["get"]["responses"]["200"]["description"] = "Successful response";
+            paths["/api/v1/emulator"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/EmulatorList";
+            
+            // POST /api/v1/emulator
+            paths["/api/v1/emulator"]["post"]["summary"] = "Create new emulator";
+            paths["/api/v1/emulator"]["post"]["tags"].append("Emulator Management");
+            paths["/api/v1/emulator"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/CreateEmulatorRequest";
+            paths["/api/v1/emulator"]["post"]["responses"]["201"]["description"] = "Emulator created";
+            
+            // GET /api/v1/emulator/status
+            paths["/api/v1/emulator/status"]["get"]["summary"] = "Get overall emulator status";
+            paths["/api/v1/emulator/status"]["get"]["tags"].append("Emulator Management");
+            paths["/api/v1/emulator/status"]["get"]["responses"]["200"]["description"] = "Successful response";
+            
+            // GET /api/v1/emulator/models
+            paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
+            paths["/api/v1/emulator/models"]["get"]["tags"].append("Emulator Management");
+            paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["description"] = "Successful response";
+            
+            // GET /api/v1/emulator/{id}
+            paths["/api/v1/emulator/{id}"]["get"]["summary"] = "Get emulator details";
+            paths["/api/v1/emulator/{id}"]["get"]["tags"].append("Emulator Management");
+            paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["description"] = "Emulator UUID or index (0-based)";
+            paths["/api/v1/emulator/{id}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}"]["get"]["responses"]["200"]["description"] = "Successful response";
+            
+            // DELETE /api/v1/emulator/{id}
+            paths["/api/v1/emulator/{id}"]["delete"]["summary"] = "Remove emulator";
+            paths["/api/v1/emulator/{id}"]["delete"]["tags"].append("Emulator Management");
+            paths["/api/v1/emulator/{id}"]["delete"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}"]["delete"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}"]["delete"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}"]["delete"]["responses"]["204"]["description"] = "Emulator removed";
+            
+            // Control endpoints
+            paths["/api/v1/emulator/{id}/start"]["post"]["summary"] = "Start emulator";
+            paths["/api/v1/emulator/{id}/start"]["post"]["tags"].append("Emulator Control");
+            paths["/api/v1/emulator/{id}/start"]["post"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/start"]["post"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/start"]["post"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/start"]["post"]["responses"]["200"]["description"] = "Emulator started";
+            
+            paths["/api/v1/emulator/{id}/stop"]["post"]["summary"] = "Stop emulator";
+            paths["/api/v1/emulator/{id}/stop"]["post"]["tags"].append("Emulator Control");
+            paths["/api/v1/emulator/{id}/stop"]["post"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/stop"]["post"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/stop"]["post"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/stop"]["post"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/stop"]["post"]["responses"]["200"]["description"] = "Emulator stopped";
+            
+            paths["/api/v1/emulator/{id}/pause"]["post"]["summary"] = "Pause emulator";
+            paths["/api/v1/emulator/{id}/pause"]["post"]["tags"].append("Emulator Control");
+            paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/pause"]["post"]["responses"]["200"]["description"] = "Emulator paused";
+            
+            paths["/api/v1/emulator/{id}/resume"]["post"]["summary"] = "Resume emulator";
+            paths["/api/v1/emulator/{id}/resume"]["post"]["tags"].append("Emulator Control");
+            paths["/api/v1/emulator/{id}/resume"]["post"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/resume"]["post"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/resume"]["post"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/resume"]["post"]["responses"]["200"]["description"] = "Emulator resumed";
+            
+            paths["/api/v1/emulator/{id}/reset"]["post"]["summary"] = "Reset emulator";
+            paths["/api/v1/emulator/{id}/reset"]["post"]["tags"].append("Emulator Control");
+            paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/reset"]["post"]["responses"]["200"]["description"] = "Emulator reset";
+            
+            // Audio state endpoints
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["tags"].append("Audio State");
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["responses"]["200"]["description"] = "AY chips information";
+            
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["summary"] = "Get specific AY chip details";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["tags"].append("Audio State");
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][1]["name"] = "chip";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][1]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][1]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][1]["description"] = "AY chip index (0-based)";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}"]["get"]["responses"]["200"]["description"] = "AY chip details";
+            
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["summary"] = "Get AY chip register details";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["tags"].append("Audio State");
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["name"] = "chip";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][2]["name"] = "reg";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][2]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][2]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][2]["description"] = "Register number (0-15)";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+            paths["/api/v1/emulator/{id}/state/audio/ay/{chip}/register/{reg}"]["get"]["responses"]["200"]["description"] = "Register details";
+            
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["summary"] = "Get beeper state";
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["tags"].append("Audio State");
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["parameters"][0]["name"] = "id";
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["parameters"][0]["schema"]["type"] = "string";
+            paths["/api/v1/emulator/{id}/state/audio/beeper"]["get"]["responses"]["200"]["description"] = "Beeper state";
+            
+            // Active emulator endpoints (no ID required)
+            paths["/api/v1/emulator/state/audio/ay"]["get"]["summary"] = "Get AY chips overview (active emulator)";
+            paths["/api/v1/emulator/state/audio/ay"]["get"]["tags"].append("Audio State (Active)");
+            paths["/api/v1/emulator/state/audio/ay"]["get"]["responses"]["200"]["description"] = "AY chips information";
+            
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["summary"] = "Get specific AY chip details (active emulator)";
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["tags"].append("Audio State (Active)");
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["parameters"][0]["name"] = "chip";
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["parameters"][0]["in"] = "path";
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["parameters"][0]["required"] = true;
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["parameters"][0]["schema"]["type"] = "integer";
+            paths["/api/v1/emulator/state/audio/ay/{chip}"]["get"]["responses"]["200"]["description"] = "AY chip details";
+            
+            spec["paths"] = paths;
+            
+            // Components/Schemas
+            Json::Value schemas;
+            
+            schemas["EmulatorList"]["type"] = "object";
+            schemas["EmulatorList"]["properties"]["emulators"]["type"] = "array";
+            schemas["EmulatorList"]["properties"]["emulators"]["items"]["$ref"] = "#/components/schemas/EmulatorInfo";
+            schemas["EmulatorList"]["properties"]["count"]["type"] = "integer";
+            
+            schemas["EmulatorInfo"]["type"] = "object";
+            schemas["EmulatorInfo"]["properties"]["id"]["type"] = "string";
+            schemas["EmulatorInfo"]["properties"]["id"]["description"] = "Emulator UUID";
+            schemas["EmulatorInfo"]["properties"]["state"]["type"] = "string";
+            schemas["EmulatorInfo"]["properties"]["state"]["enum"].append("initialized");
+            schemas["EmulatorInfo"]["properties"]["state"]["enum"].append("running");
+            schemas["EmulatorInfo"]["properties"]["state"]["enum"].append("paused");
+            schemas["EmulatorInfo"]["properties"]["state"]["enum"].append("stopped");
+            schemas["EmulatorInfo"]["properties"]["is_running"]["type"] = "boolean";
+            schemas["EmulatorInfo"]["properties"]["is_paused"]["type"] = "boolean";
+            schemas["EmulatorInfo"]["properties"]["is_debug"]["type"] = "boolean";
+            
+            schemas["CreateEmulatorRequest"]["type"] = "object";
+            schemas["CreateEmulatorRequest"]["properties"]["model"]["type"] = "string";
+            schemas["CreateEmulatorRequest"]["properties"]["model"]["description"] = "Emulator model (e.g., ZX48, ZX128)";
+            
+            spec["components"]["schemas"] = schemas;
+            
+            // Tags
+            Json::Value tags(Json::arrayValue);
+            Json::Value tag1;
+            tag1["name"] = "Emulator Management";
+            tag1["description"] = "Emulator lifecycle and information";
+            tags.append(tag1);
+            
+            Json::Value tag2;
+            tag2["name"] = "Emulator Control";
+            tag2["description"] = "Control emulator execution state";
+            tags.append(tag2);
+            
+            Json::Value tag3;
+            tag3["name"] = "Audio State";
+            tag3["description"] = "Inspect audio hardware state (with emulator ID)";
+            tags.append(tag3);
+            
+            Json::Value tag4;
+            tag4["name"] = "Audio State (Active)";
+            tag4["description"] = "Inspect audio hardware state (active/most recent emulator)";
+            tags.append(tag4);
+            
+            spec["tags"] = tags;
+            
+            auto resp = HttpResponse::newHttpJsonResponse(spec);
+            addCorsHeaders(resp);
+            callback(resp);
         }
 
         // GET /api/v1/emulator
@@ -48,8 +343,9 @@ namespace api
             
             ret["emulators"] = emulators;
             ret["count"] = static_cast<Json::UInt>(emulatorIds.size());
-            
+
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -88,6 +384,7 @@ namespace api
             ret["count"] = static_cast<Json::UInt>(models.size());
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -117,6 +414,7 @@ namespace api
             ret["states"] = states;
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -151,6 +449,7 @@ namespace api
 
                         auto resp = HttpResponse::newHttpJsonResponse(error);
                         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                        addCorsHeaders(resp);
                         callback(resp);
                         return;
                     }
@@ -164,6 +463,7 @@ namespace api
 
                         auto resp = HttpResponse::newHttpJsonResponse(error);
                         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                        addCorsHeaders(resp);
                         callback(resp);
                         return;
                     }
@@ -179,6 +479,7 @@ namespace api
 
                     auto resp = HttpResponse::newHttpJsonResponse(error);
                     resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                    addCorsHeaders(resp);
                     callback(resp);
                     return;
                 }
@@ -190,6 +491,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(HttpStatusCode::k201Created);
+                addCorsHeaders(resp);
                 callback(resp);
             } catch (const std::exception& e) {
                 Json::Value error;
@@ -216,6 +518,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -228,6 +531,7 @@ namespace api
             ret["is_debug"] = emulator->IsDebug();
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -244,6 +548,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -257,6 +562,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(HttpStatusCode::k200OK);
+                addCorsHeaders(resp);
                 callback(resp);
             } else {
                 ret["status"] = "error";
@@ -281,6 +587,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -300,6 +607,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
                 callback(resp);
             } catch (const std::exception& e) {
                 Json::Value error;
@@ -326,6 +634,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -345,6 +654,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
                 callback(resp);
             } catch (const std::exception& e) {
                 Json::Value error;
@@ -371,6 +681,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -390,6 +701,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
                 callback(resp);
             } catch (const std::exception& e) {
                 Json::Value error;
@@ -416,6 +728,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -435,6 +748,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
                 callback(resp);
             } catch (const std::exception& e) {
                 Json::Value error;
@@ -461,6 +775,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -480,6 +795,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
                 callback(resp);
             } catch (const std::exception& e) {
                 Json::Value error;
@@ -510,6 +826,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -551,6 +868,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -588,6 +906,7 @@ namespace api
             ret["settings"] = settings;
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -605,6 +924,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -647,6 +967,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -654,6 +975,7 @@ namespace api
             ret["emulator_id"] = id;
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -671,6 +993,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -732,6 +1055,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -739,6 +1063,7 @@ namespace api
             ret["emulator_id"] = id;
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
         
@@ -760,6 +1085,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -819,6 +1145,7 @@ namespace api
             }
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
         
@@ -838,6 +1165,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -930,6 +1258,7 @@ namespace api
             }
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
         
@@ -949,6 +1278,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -1097,6 +1427,7 @@ namespace api
             }
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
         
@@ -1114,6 +1445,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -1239,6 +1571,7 @@ namespace api
             }
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
         
@@ -1258,6 +1591,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -1309,6 +1643,7 @@ namespace api
             ret["compatibility"] = "48K/128K/+2/+2A/+3 standard";
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
         
@@ -1328,6 +1663,7 @@ namespace api
                 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -1358,6 +1694,7 @@ namespace api
             ret["toggle_interval_seconds"] = 0.32;  // at 50Hz
             
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -1455,6 +1792,7 @@ namespace api
 
             ret["chips"] = chips;
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -1531,6 +1869,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -1617,6 +1956,7 @@ namespace api
             ret["sound_played_since_reset"] = false; // TODO: Implement sound played tracking
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -1692,6 +2032,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -1833,6 +2174,7 @@ namespace api
             ret["decoding"] = decoding;
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -1893,6 +2235,7 @@ namespace api
             ret["sound_played_since_reset"] = false; // TODO: Implement sound played tracking
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -1907,6 +2250,7 @@ namespace api
             ret["note"] = "This endpoint is reserved for future implementation.";
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -1921,6 +2265,7 @@ namespace api
             ret["note"] = "This endpoint is reserved for future implementation.";
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -2026,6 +2371,7 @@ namespace api
             ret["master"] = master;
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
+            addCorsHeaders(resp);
             callback(resp);
         }
 
@@ -2043,6 +2389,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -2065,6 +2412,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -2087,6 +2435,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -2107,6 +2456,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -2127,6 +2477,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -2147,6 +2498,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }
@@ -2167,6 +2519,7 @@ namespace api
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k404NotFound);
+                addCorsHeaders(resp);
                 callback(resp);
                 return;
             }

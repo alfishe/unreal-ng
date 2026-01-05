@@ -13,6 +13,14 @@ namespace api
             EmulatorAPI() = default;
 
             METHOD_LIST_BEGIN
+                // Root redirect to OpenAPI
+                ADD_METHOD_TO(EmulatorAPI::rootRedirect, "/", drogon::Get);
+                ADD_METHOD_TO(EmulatorAPI::corsPreflight, "/", drogon::Options);
+
+                // OpenAPI specification
+                ADD_METHOD_TO(EmulatorAPI::getOpenAPISpec, "/api/v1/openapi.json", drogon::Get);
+                ADD_METHOD_TO(EmulatorAPI::corsPreflight, "/api/v1/openapi.json", drogon::Options);
+
                 // List all emulators
                 ADD_METHOD_TO(EmulatorAPI::get, "/api/v1/emulator", drogon::Get);
 
@@ -69,6 +77,18 @@ namespace api
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioCovoxActive, "/api/v1/emulator/state/audio/covox", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioChannelsActive, "/api/v1/emulator/state/audio/channels", drogon::Get);
             METHOD_LIST_END
+
+            // Root redirect
+            void rootRedirect(const drogon::HttpRequestPtr &req,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
+
+            // CORS preflight handler
+            void corsPreflight(const drogon::HttpRequestPtr &req,
+                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
+
+            // OpenAPI specification
+            void getOpenAPISpec(const drogon::HttpRequestPtr &req,
+                               std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
 
             // List all emulators
             void get(const drogon::HttpRequestPtr &req, 

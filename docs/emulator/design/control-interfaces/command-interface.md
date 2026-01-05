@@ -1542,6 +1542,29 @@ private:
      - `GET http://localhost:8090/api/v1/emulator/state/audio/ay` - AY overview (active emulator)
      - `GET http://localhost:8090/api/v1/emulator/0/state/audio/ay/0/register/0` - AY register 0 (emulator 0)
      - `GET http://localhost:8090/api/v1/emulator/state/audio/beeper` - Beeper state (active emulator)
+   - **OpenAPI Specification**:
+     - **Available at**: `GET http://localhost:8090/api/v1/openapi.json`
+     - Provides machine-readable API documentation in OpenAPI 3.0 format
+     - **CORS Support**: Fully enabled for cross-origin requests from web interfaces
+     - **Usage with Swagger UI**:
+       1. Pull and run Swagger UI: `docker pull swaggerapi/swagger-ui && docker run --name unreal-speccy-swagger-ui -p 8081:8080 -e SWAGGER_JSON_URL=http://localhost:8090/api/v1/openapi.json swaggerapi/swagger-ui`
+       2. Open browser: `http://localhost:8081`
+       3. Swagger UI automatically loads the API spec - explore and test all endpoints interactively!
+     - **Usage with Postman**:
+       1. Open Postman → Import → Link
+       2. Enter: `http://localhost:8090/api/v1/openapi.json`
+       3. Import as collection for full API testing
+     - **Usage with curl**:
+       ```bash
+       curl http://localhost:8090/api/v1/openapi.json | jq .
+       ```
+     - **Benefits**:
+       - Automatic API discovery
+       - Interactive testing interface
+       - Request/response schema validation
+       - Code generation for multiple languages
+       - Always up-to-date documentation
+       - CORS enabled for web integration
 
 3. **Python Bindings**:
    ```python

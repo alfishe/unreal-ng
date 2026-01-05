@@ -1,11 +1,53 @@
 #include "automation-webapi.h"
 
 #include <thread>
+#include <fstream>
+#include <sstream>
+#include <vector>
 #include <drogon/HttpController.h>
 #include <drogon/WebSocketController.h>
 #include "hello_world_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_api.h"           // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"     // Triggers auto-registration for WebSocket handlers
+
+// Helper function to load HTML file from resources
+static std::string loadHtmlFile(const std::string& filename) {
+    // Try multiple possible locations for the HTML resources
+    std::vector<std::string> searchPaths = {
+        // Development/Build paths
+        "./resources/html/",                         // In current directory (from bin when running)
+        "../resources/html/",                        // One level up (from bin to build root)
+        "./core/automation/webapi/resources/html/",  // Development/build from project root
+        "../../resources/html/",                     // Two levels up
+        
+        // macOS .app bundle path
+        "../Resources/html/",                        // From MacOS folder to Resources folder in .app bundle
+        "../../Resources/html/",                     // Alternative .app bundle structure
+        
+        // Standard installation paths
+        "/usr/local/share/unreal-speccy/resources/html/",  // Unix standard install
+        "/usr/share/unreal-speccy/resources/html/",        // Unix system install
+        "./share/unreal-speccy/resources/html/",           // Relative to install prefix
+    };
+    
+    for (const auto& basePath : searchPaths) {
+        std::string fullPath = basePath + filename;
+        std::ifstream file(fullPath);
+        if (file.is_open()) {
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            return buffer.str();
+        }
+    }
+    
+    // Fallback: return a minimal HTML page if file not found
+    return "<!DOCTYPE html><html><head><title>Error</title></head><body>"
+           "<h1>Resource Not Found</h1>"
+           "<p>Could not load HTML resource: " + filename + "</p>"
+           "<p>Searched paths: development builds, macOS .app bundle, standard installations</p>"
+           "<p>Please ensure resources are properly installed.</p>"
+           "</body></html>";
+}
 
 /// region <Methods>
 void AutomationWebAPI::start()
@@ -80,11 +122,23 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
 
     LOG_INFO << "Starting server on port 8090.";
-    LOG_INFO << "HTTP API example: http://localhost:8090/api/v1/HelloWorld";
-    LOG_INFO << "HTTP Emulator API: http://localhost:8090/api/v1/emulator";
-    LOG_INFO << "WebSocket endpoint: ws://localhost:8090/api/v1/websocket";
+    LOG_INFO << "API Documentation: http://localhost:8090/";
+    LOG_INFO << "Emulator API: http://localhost:8090/api/v1/emulator";
+    LOG_INFO << "OpenAPI Spec: http://localhost:8090/api/v1/openapi.json";
+    LOG_INFO << "WebSocket: ws://localhost:8090/api/v1/websocket";
 
     drogon::HttpAppFramework& app = drogon::app();
+
+    // Custom 404 page that guides users to API documentation
+    // Load from external HTML file for easy maintenance
+    std::string notFoundHtml = loadHtmlFile("404.html");
+    
+    auto notFoundResp = drogon::HttpResponse::newHttpResponse();
+    notFoundResp->setBody(notFoundHtml);
+    notFoundResp->setContentTypeCode(drogon::ContentType::CT_TEXT_HTML);
+    notFoundResp->setStatusCode(drogon::HttpStatusCode::k404NotFound);
+    
+    app.setCustom404Page(notFoundResp);
 
     app.setLogPath("./")
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unreal Speccy Emulator API</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 10px;
+        }
+        .endpoint {
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .endpoint h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+        }
+        pre {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .tools {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .tool-card {
+            background: #fff;
+            border: 2px solid #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            transition: border-color 0.3s;
+        }
+        .tool-card:hover {
+            border-color: #3498db;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: bold;
+            margin: 10px 5px;
+        }
+        .btn:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎮 Unreal Speccy Emulator API</h1>
+
+    <p>Welcome to the Unreal Speccy Emulator REST API. This API provides comprehensive control over ZX Spectrum emulator instances.</p>
+
+    <div class="endpoint" style="background: #e8f4fd; border-left-color: #2196f3;">
+        <h3>✅ CORS Enabled</h3>
+        <p>All endpoints support Cross-Origin Resource Sharing (CORS), allowing direct access from web applications and tools like Swagger UI.</p>
+    </div>
+    
+    <div class="endpoint">
+        <h3>📄 OpenAPI Specification</h3>
+        <p>Machine-readable API documentation in OpenAPI 3.0 format:</p>
+        <a href="/api/v1/openapi.json" class="btn">View OpenAPI Spec (JSON)</a>
+    </div>
+
+    <h2>🛠️ Testing Tools</h2>
+    <div class="tools">
+        <div class="tool-card">
+            <h3>Swagger UI</h3>
+            <p>Interactive API testing</p>
+            <pre style="text-align: left; font-size: 11px;">docker pull swaggerapi/swagger-ui
+docker run --name unreal-speccy-swagger-ui \
+  -p 8081:8080 \
+  -e SWAGGER_JSON_URL=http://localhost:8090/api/v1/openapi.json \
+  swaggerapi/swagger-ui</pre>
+            <p style="font-size: 12px;">Then visit <code>localhost:8081</code><br>Swagger UI will automatically load the API spec!</p>
+        </div>
+        
+        <div class="tool-card">
+            <h3>Postman</h3>
+            <p>API client & testing</p>
+            <p style="font-size: 12px;">Import → Link<br><code>http://localhost:8090/api/v1/openapi.json</code></p>
+        </div>
+        
+        <div class="tool-card">
+            <h3>curl</h3>
+            <p>Command line access</p>
+            <pre style="text-align: left; font-size: 11px;">curl http://localhost:8090/\
+api/v1/openapi.json | jq .</pre>
+        </div>
+    </div>
+
+    <h2>🚀 Quick Start</h2>
+    <div class="endpoint">
+        <h3>List all emulators</h3>
+        <pre>curl http://localhost:8090/api/v1/emulator</pre>
+    </div>
+
+    <div class="endpoint">
+        <h3>Get emulator status</h3>
+        <pre>curl http://localhost:8090/api/v1/emulator/status</pre>
+    </div>
+
+    <div class="endpoint">
+        <h3>Get available models</h3>
+        <pre>curl http://localhost:8090/api/v1/emulator/models</pre>
+    </div>
+
+    <div class="endpoint">
+        <h3>Audio state inspection (active emulator)</h3>
+        <pre>curl http://localhost:8090/api/v1/emulator/state/audio/ay</pre>
+    </div>
+
+    <footer style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e9ecef; text-align: center; color: #666;">
+        <p>For full documentation, see the <a href="/api/v1/openapi.json">OpenAPI specification</a></p>
+    </footer>
+</body>
+</html>
+
