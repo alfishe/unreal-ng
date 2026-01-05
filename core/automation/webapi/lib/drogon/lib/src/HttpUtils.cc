@@ -59,9 +59,12 @@ static const std::unordered_map<
         {CT_APPLICATION_X_BZIP2, {{"application/x-bzip2"}, ""}},
         {CT_APPLICATION_X_7Z, {{"application/x-7z-compressed"}, ""}},
         {CT_APPLICATION_X_HTTPD_PHP, {{"application/x-httpd-php"}, ""}},
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
         {CT_APPLICATION_X_JAVASCRIPT,
          {{"application/x-javascript"},
           "application/x-javascript; charset=utf-8"}},
+#pragma GCC diagnostic pop
         {CT_APPLICATION_X_FONT_OPENTYPE,
          {{"application/x-font-opentype", "font/otf"}, ""}},
         {CT_APPLICATION_X_FONT_TRUETYPE,
@@ -729,9 +732,12 @@ const std::vector<std::string_view> &getFileExtensions(ContentType contentType)
         for (const auto &e : fileTypeDatabase_)
             if (!e.first.empty())
                 extensionMap_[e.second.second].push_back(e.first);
-        // Add deprecated
+        // Add deprecated (backward compatibility - intentionally using deprecated API)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
         extensionMap_[CT_APPLICATION_X_JAVASCRIPT] =
             extensionMap_[CT_TEXT_JAVASCRIPT];
+#pragma GCC diagnostic pop
         extensionMap_[CT_TEXT_XML] = extensionMap_[CT_APPLICATION_XML];
     });
     auto it = extensionMap_.find(contentType);
