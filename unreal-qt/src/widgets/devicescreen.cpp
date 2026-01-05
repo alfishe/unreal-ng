@@ -96,19 +96,19 @@ void DeviceScreen::keyPressEvent(QKeyEvent *event)
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
     {
-        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKey(event->key());
+        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
 
         // Skip unknown keys
         if (zxKey != 0)
         {
-            KeyboardEvent* event = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
+            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
 
             // Send valid key combinations to emulator instance
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(MC_KEY_PRESSED, event);
+            messageCenter.Post(MC_KEY_PRESSED, keyEvent);
         }
 
-        QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2)").arg(event->key(), 2, 16).arg(event->key());
+        QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4").arg(event->key(), 2, 16).arg(event->key()).arg((int)event->modifiers(), 2, 16).arg(zxKey, 2, 16);
         qDebug() << message;
     }
 }
@@ -120,21 +120,21 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent *event)
     // Don't react on auto-repeat
     if (!event->isAutoRepeat())
     {
-        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKey(event->key());
+        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
 
         // Skip unknown keys
         if (zxKey != 0)
         {
-            KeyboardEvent* event = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
+            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
 
             // Send valid key combinations to emulator instance
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            messageCenter.Post(MC_KEY_RELEASED, event);
+            messageCenter.Post(MC_KEY_RELEASED, keyEvent);
         }
-    }
 
-    QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2)").arg(event->key(), 2, 16).arg(event->key());
-    qDebug() << message;
+        QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4").arg(event->key(), 2, 16).arg(event->key()).arg((int)event->modifiers(), 2, 16).arg(zxKey, 2, 16);
+        qDebug() << message;
+    }
 }
 
 void DeviceScreen::mousePressEvent(QMouseEvent *event)
