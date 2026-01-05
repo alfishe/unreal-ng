@@ -223,7 +223,14 @@ void AutomationCLI::run()
 
             if (activity < 0 && errno != EINTR)
             {
-                std::cerr << "select() error: " << strerror(errno) << std::endl;
+                if (errno == EBADF)
+                {
+                    std::cerr << "Select error: Bad file descriptor (socket may be closed)" << std::endl;
+                }
+                else
+                {
+                    std::cerr << "select() error: " << strerror(errno) << std::endl;
+                }
                 break;
             }
 
@@ -256,11 +263,34 @@ void AutomationCLI::run()
             {
                 std::lock_guard<std::mutex> lock(_clientSocketsMutex);
                 auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](int sock) {
+                    // First check if socket is still valid (not already closed)
+                    if (sock == INVALID_SOCKET)
+                    {
+                        return true; // Remove invalid sockets
+                    }
+
                     fd_set set;
                     FD_ZERO(&set);
                     FD_SET(sock, &set);
                     timeval tv = {0, 0};
-                    return select(sock + 1, &set, NULL, NULL, &tv) == 1 && recv(sock, nullptr, 0, MSG_PEEK) == 0;
+
+                    // Use select to check if socket is readable
+                    int selectResult = select(sock + 1, &set, NULL, NULL, &tv);
+                    if (selectResult < 0)
+                    {
+                        // select() failed - socket is likely closed or invalid
+                        return true;
+                    }
+
+                    if (selectResult == 1 && FD_ISSET(sock, &set))
+                    {
+                        // Socket is readable, check if it's closed by attempting to peek
+                        char dummy;
+                        int recvResult = recv(sock, &dummy, 1, MSG_PEEK);
+                        return recvResult == 0; // recv returns 0 when connection is closed
+                    }
+
+                    return false; // Socket appears to be still connected
                 });
 
                 if (it != _activeClientSockets.end())
@@ -272,6 +302,7 @@ void AutomationCLI::run()
                             close(*i);
                         }
                     }
+
                     _activeClientSockets.erase(it, _activeClientSockets.end());
                 }
             }
@@ -374,7 +405,11 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
         {
             if (errno == EINTR)
                 continue;  // Interrupted by signal
-            std::cerr << "Select error: " << strerror(getLastSocketError()) << std::endl;
+            if (errno == EBADF) {
+                std::cerr << "Select error: Bad file descriptor (client socket closed)" << std::endl;
+            } else {
+                std::cerr << "Select error: " << strerror(getLastSocketError()) << std::endl;
+            }
             break;
         }
 
@@ -511,6 +546,15 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
         {
             std::cout << "Socket error detected, closing connection" << std::endl;
             break;
+        }
+    }
+
+    // Remove socket from active sockets list before closing
+    {
+        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
+        auto it = std::find(_activeClientSockets.begin(), _activeClientSockets.end(), clientSocket);
+        if (it != _activeClientSockets.end()) {
+            _activeClientSockets.erase(it);
         }
     }
 
