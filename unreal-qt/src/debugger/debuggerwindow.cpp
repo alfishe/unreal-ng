@@ -1,28 +1,26 @@
 #include "debuggerwindow.h"
 
-#include "ui_debuggerwindow.h"
-
-#include <Qt>
 #include <QBoxLayout>
 #include <QColor>
 #include <QDialog>
-#include <QTableWidget>
 #include <QHeaderView>
-#include <QTimer>
 #include <QMessageBox>
+#include <QTableWidget>
+#include <QTimer>
+#include <Qt>
 
-#include "debugger/debugmanager.h"
-#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/breakpointdialog.h"
 #include "debugger/breakpointeditor.h"
 #include "debugger/breakpointgroupdialog.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "debugger/labeleditor.h"
-
 #include "emulator/emulator.h"
+#include "ui_debuggerwindow.h"
 
 /// region <Constructor / destructors>
 
-DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
+DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(parent), ui(new Ui::DebuggerWindow)
 {
     _emulator = emulator;
     _curPageOffset = 0;  // Initialize to 0 to prevent uninitialized memory access
@@ -31,11 +29,11 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     ui->setupUi(this);
 
     // Create floating toolbar
-    //toolBar = new QToolBar("Debugger toolbar", this);
-    //toolBar->setMovable(true);
-    //toolBar->setFloatable(true);
-    //toolBar->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
-    //toolBar->setWindowFlags(Qt::Tool);
+    // toolBar = new QToolBar("Debugger toolbar", this);
+    // toolBar->setMovable(true);
+    // toolBar->setFloatable(true);
+    // toolBar->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+    // toolBar->setWindowFlags(Qt::Tool);
     toolBar = new QToolBar("Debugger toolbar");
 
     // Set toolbar size
@@ -83,16 +81,19 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
 
     // Subscribe to events leading to MemoryView changes
-    connect(ui->registersWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
+    connect(ui->registersWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this,
+            SLOT(changeMemoryViewZ80Address(uint16_t)));
     connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewBank(uint8_t)), this, SLOT(changeMemoryViewBank(uint8_t)));
-    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)), this, SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)));
-    connect(ui->stackWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this, SLOT(changeMemoryViewZ80Address(uint16_t)));
+    connect(ui->memorypagesWidget, SIGNAL(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)), this,
+            SLOT(changeMemoryViewAddress(uint8_t*, size_t, uint16_t)));
+    connect(ui->stackWidget, SIGNAL(changeMemoryViewZ80Address(uint16_t)), this,
+            SLOT(changeMemoryViewZ80Address(uint16_t)));
 
     // Connect register and stack jump to disassembly signals
-    connect(ui->registersWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)),
-            ui->disassemblerWidget, SLOT(goToAddress(uint16_t)));
-    connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)),
-            ui->disassemblerWidget, SLOT(goToAddress(uint16_t)));
+    connect(ui->registersWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)), ui->disassemblerWidget,
+            SLOT(goToAddress(uint16_t)));
+    connect(ui->stackWidget, SIGNAL(jumpToAddressInDisassembly(uint16_t)), ui->disassemblerWidget,
+            SLOT(goToAddress(uint16_t)));
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
@@ -102,29 +103,31 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget *parent) : QWidget(pa
 
     // Set up hex viewer
     QHexOptions options = ui->hexView->options();
-    options.linelength = 8;     // Display 8 hex bytes per line
-    options.addresswidth = 4;   // Address is 4 hex digits [0000-FFFF]
+    options.linelength = 8;    // Display 8 hex bytes per line
+    options.addresswidth = 4;  // Address is 4 hex digits [0000-FFFF]
     ui->hexView->setOptions(options);
-
 
     /// region <Subscribe to events>
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
 
     // Subscribe to emulator state changes
-    ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
+    ObserverCallbackMethod stateCallback =
+        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
     messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
 
     // Subscribe to breakpoint trigger messages
-    ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    ObserverCallbackMethod breakpointCallback =
+        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
 
     // Subscribe to CPU step messages
     ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
     messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
-    
+
     // Subscribe to label change notifications
-    ObserverCallbackMethod labelChangedCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
+    ObserverCallbackMethod labelChangedCallback =
+        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
     messageCenter.AddObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
 
     /// endregion </Subscribe to events>
@@ -139,19 +142,22 @@ DebuggerWindow::~DebuggerWindow()
     Observer* observerInstance = static_cast<Observer*>(this);
 
     // Unsubscribe from emulator state changes
-    ObserverCallbackMethod stateCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
+    ObserverCallbackMethod stateCallback =
+        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
 
     // Unsubscribe from breakpoint trigger messages
-    ObserverCallbackMethod breakpointCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
+    ObserverCallbackMethod breakpointCallback =
+        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
     messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
 
     // Unsubscribe from CPU step messages
     ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
     messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
-    
+
     // Unsubscribe from label change notifications
-    ObserverCallbackMethod labelChangedCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
+    ObserverCallbackMethod labelChangedCallback =
+        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
     messageCenter.RemoveObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
 
     delete ui;
@@ -230,7 +236,8 @@ void DebuggerWindow::clearInterruptBreakpoints()
 
 void DebuggerWindow::updateState()
 {
-    qDebug() << "DebuggerWindow::updateState() called - emulator state:" << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
+    qDebug() << "DebuggerWindow::updateState() called - emulator state:"
+             << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
     if (_emulator)
     {
         Z80State* state = _emulator->GetZ80State();
@@ -297,27 +304,27 @@ void DebuggerWindow::updateState()
         // Update disassembler widget to show detached state
         ui->disassemblerWidget->refresh();
     }
- }
+}
 
- ///
- /// \brief DebuggerWindow::loadState
- /// Loads up debugger state (including breakpoints)
- void DebuggerWindow::loadState()
- {
+///
+/// \brief DebuggerWindow::loadState
+/// Loads up debugger state (including breakpoints)
+void DebuggerWindow::loadState()
+{
     DebugManager& dbgManager = *_emulator->GetDebugManager();
     BreakpointManager& brkManager = *_emulator->GetBreakpointManager();
 
     /// <Test>
     _emulator->DebugOn();
-    //brkManager.AddExecutionBreakpoint(0x272E);  // ROM128K::$272E - MENU_MOVE_UP
-    //brkManager.AddExecutionBreakpoint(0x2731);  // ROM128K::$2731 - MENU_MOVE_DOWN
+    // brkManager.AddExecutionBreakpoint(0x272E);  // ROM128K::$272E - MENU_MOVE_UP
+    // brkManager.AddExecutionBreakpoint(0x2731);  // ROM128K::$2731 - MENU_MOVE_DOWN
 
-    //brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
-    //brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
+    // brkManager.AddExecutionBreakpoint(0x37A7);  // ROM128K::$37A7 - MENU_MOVE_UP
+    // brkManager.AddExecutionBreakpoint(0x37B6);  // ROM128K::$37B6 - MENU_MOVE_DOWN
 
-    //brkManager.AddExecutionBreakpoint(0x38A2);    // ROM48K:$38A2
+    // brkManager.AddExecutionBreakpoint(0x38A2);    // ROM48K:$38A2
     /// </Test>
- }
+}
 
 ///
 /// \brief DebuggerWindow::saveState
@@ -335,7 +342,8 @@ void DebuggerWindow::saveState()
 /// \param canStep - Enable/disable Step actions (Step In, Step Out, etc.)
 /// \param canReset - Enable/disable Reset action
 /// \param canManageBreakpoints - Enable/disable Breakpoints action
-void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints, bool canManageLabels)
+void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset,
+                                          bool canManageBreakpoints, bool canManageLabels)
 {
     // Update main execution control actions
     continueAction->setEnabled(canContinue);
@@ -352,7 +360,7 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     // Update breakpoint management
     breakpointsAction->setEnabled(canManageBreakpoints);
     labelsAction->setEnabled(canManageLabels);
- }
+}
 
 /// endregion </Helper methods>
 
@@ -362,8 +370,8 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
 /// @param callback
 void DebuggerWindow::dispatchToMainThread(std::function<void()> callback)
 {
-    QThread *mainThread = qApp->thread();
-    QThread *currentThread = QThread::currentThread();
+    QThread* mainThread = qApp->thread();
+    QThread* currentThread = QThread::currentThread();
 
     if (currentThread == mainThread)
     {
@@ -371,13 +379,12 @@ void DebuggerWindow::dispatchToMainThread(std::function<void()> callback)
     }
     else
     {
-        QTimer *timer = new QTimer();
+        QTimer* timer = new QTimer();
         timer->moveToThread(qApp->thread());
         timer->setSingleShot(true);
 
         // This lambda will be called from main thread
-        QObject::connect(timer, &QTimer::timeout, [=]()
-        {
+        QObject::connect(timer, &QTimer::timeout, [=]() {
             // Execution will be done in main thread
             try
             {
@@ -404,13 +411,12 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
     if (message == nullptr || message->obj == nullptr)
         return;
 
-    SimpleNumberPayload *payload = static_cast<SimpleNumberPayload *>(message->obj);
+    SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
     _emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
 
     qDebug() << "DebuggerWindow::handleEmulatorStateChanged(" << getEmulatorStateName(_emulatorState) << ")";
 
-    dispatchToMainThread([this]()
-    {
+    dispatchToMainThread([this]() {
         switch (_emulatorState)
         {
             case StateUnknown:
@@ -542,8 +548,7 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
     }
 
     // Update the UI in the main thread
-    dispatchToMainThread([this]()
-    {
+    dispatchToMainThread([this]() {
         // When a breakpoint is hit:
         // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
         updateToolbarActions(true, false, true, true, true, true);
@@ -558,21 +563,16 @@ void DebuggerWindow::handleCPUStepMessage(int id, Message* message)
     if (_emulator && _emulator->IsPaused())
     {
         // Update debugger state in the main thread
-        dispatchToMainThread([this]()
-        {
-            updateState();
-        });
+        dispatchToMainThread([this]() { updateState(); });
     }
 }
 
 void DebuggerWindow::handleLabelChanged(int id, Message* message)
 {
     qDebug() << "DebuggerWindow::handleLabelChanged() - Refreshing disassembler view due to label changes";
-    
+
     // Forward the refresh to the disassembler widget on the main thread
-    dispatchToMainThread([this]() {
-        ui->disassemblerWidget->refresh();
-    });
+    dispatchToMainThread([this]() { ui->disassemblerWidget->refresh(); });
 }
 
 void DebuggerWindow::continueExecution()
@@ -581,7 +581,7 @@ void DebuggerWindow::continueExecution()
 
     _breakpointTriggered = false;
 
-    if (_emulator && !_emulator->IsRunning())
+    if (_emulator && _emulator->IsPaused())
     {
         _emulator->Resume();
 
@@ -600,7 +600,7 @@ void DebuggerWindow::pauseExecution()
 {
     qDebug() << "DebuggerWindow::pauseExecution()";
 
-    if (_emulator && _emulator->IsRunning())
+    if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
         _emulator->Pause();
         _emulator->DebugOn();
@@ -662,7 +662,8 @@ void DebuggerWindow::stepOut()
         uint8_t hiByte = memory->DirectReadFromZ80Memory(sp + 1);
         uint16_t returnAddress = (hiByte << 8) | loByte;
 
-        qDebug() << "Step Out: Return address found at" << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
+        qDebug() << "Step Out: Return address found at"
+                 << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
 
         // 2. Set a temporary breakpoint at the return address
         BreakpointManager* breakpointManager = _emulator->GetBreakpointManager();
@@ -688,8 +689,8 @@ void DebuggerWindow::stepOut()
             // Set flag to indicate we're in a step-out operation
             _inStepOutOperation = true;
 
-            qDebug() << "Step Out: Successfully set breakpoint ID:" << _stepOutBreakpointID << "at address:"
-                     << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
+            qDebug() << "Step Out: Successfully set breakpoint ID:" << _stepOutBreakpointID
+                     << "at address:" << QString("0x%1").arg(returnAddress, 4, 16, QLatin1Char('0')).toUpper();
 
             // 3. Continue execution until the breakpoint is hit
             continueExecution();
@@ -764,7 +765,8 @@ void DebuggerWindow::waitInterrupt()
 
         uint16_t breakpointId = bpManager->AddExecutionBreakpoint(interruptHandler);
         bpManager->SetBreakpointGroup(breakpointId, IM2_BREAKPOINT_GROUP);
-        qDebug() << "Set IM2 interrupt handler breakpoint at" << QString("0x%1").arg(interruptHandler, 4, 16, QLatin1Char('0')).toUpper();
+        qDebug() << "Set IM2 interrupt handler breakpoint at"
+                 << QString("0x%1").arg(interruptHandler, 4, 16, QLatin1Char('0')).toUpper();
     }
 
     _waitingForInterrupt = true;
@@ -853,16 +855,19 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
         throw std::logic_error("DebuggerWindow::changeMemoryViewAddress - invalid parameters");
     }
 
-    qDebug("DebuggerWindow::changeMemoryViewAddress - address: %p, size: 0x%04X, offset: 0x%02X, currentAddress: 0x%02X", address, (uint16_t)size, offset, currentAddress);;
+    qDebug(
+        "DebuggerWindow::changeMemoryViewAddress - address: %p, size: 0x%04X, offset: 0x%02X, currentAddress: 0x%02X",
+        address, (uint16_t)size, offset, currentAddress);
+    ;
 
     QByteArray data((const char*)address, size);
     QHexDocument* document = QHexDocument::fromMemory<QMemoryBuffer>(data);
-    ui->hexView->setBaseAddress(offset);       // Set base offset for the whole hex view
+    ui->hexView->setBaseAddress(offset);  // Set base offset for the whole hex view
     ui->hexView->setDocument(document);
 
     // Note: change offset position only after assigning document to HexView
     // otherwise widget is unaware of the document and where to jump so just skipping the request
-    ui->hexView->gotoOffset(currentAddress);       // Position cursor on the byte with offset
+    ui->hexView->gotoOffset(currentAddress);  // Position cursor on the byte with offset
     ui->hexView->update();
 }
 
@@ -880,7 +885,7 @@ void DebuggerWindow::showLabelManager()
     labelEditor.exec();
 
     // Update debugger state after dialog closes (if needed)
-    updateState(); // Refresh in case labels changed that affect disassembly, etc.
+    updateState();  // Refresh in case labels changed that affect disassembly, etc.
 }
 
 /// endregion </Event handlers / Slots>

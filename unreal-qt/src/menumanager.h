@@ -1,26 +1,28 @@
 #pragma once
 
-#include <QMenu>
-#include <QMenuBar>
 #include <QAction>
 #include <QActionGroup>
+#include <QMenu>
+#include <QMenuBar>
 #include <QObject>
 #include <memory>
 
 class Emulator;
 class MainWindow;
 
+#include "3rdparty/message-center/messagecenter.h"
+
 /// @brief MenuManager - Manages all menu-related functionality for the main window
 ///
 /// This class creates and manages a comprehensive cross-platform menu system that provides
 /// shortcuts to all emulator control functions.
-class MenuManager : public QObject
+class MenuManager : public QObject, public Observer
 {
     Q_OBJECT
 
 public:
     explicit MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* parent = nullptr);
-    virtual ~MenuManager() = default;
+    virtual ~MenuManager();
 
     // Update menu states based on active emulator
     // Queries emulator directly - no state duplication!
@@ -29,29 +31,32 @@ public:
     // Set the current active emulator instance
     void setActiveEmulator(std::shared_ptr<Emulator> emulator);
 
+    // Observer callback for emulator state changes
+    void handleEmulatorStateChanged(int id, Message* message);
+
 signals:
     // Signal emitted when user requests to open a file
     void openFileRequested();
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
-    
+
     // Emulator control signals
     void startRequested();
     void pauseRequested();
     void resumeRequested();
     void resetRequested();
     void stopRequested();
-    
+
     // Speed control signals
     void speedMultiplierChanged(int multiplier);
     void turboModeToggled(bool enabled);
-    
+
     // Debug signals
     void stepInRequested();
     void stepOverRequested();
     void debugModeToggled(bool enabled);
-    
+
     // View signals
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
@@ -65,7 +70,7 @@ private:
     void createDebugMenu();
     void createToolsMenu();
     void createHelpMenu();
-    
+
     // Platform-specific menu adjustments
     void applyPlatformSpecificSettings();
 
@@ -73,7 +78,7 @@ private:
     MainWindow* _mainWindow;
     QMenuBar* _menuBar;
     std::weak_ptr<Emulator> _activeEmulator;  // Weak reference - don't own the emulator
-    
+
     // Menus
     QMenu* _fileMenu;
     QMenu* _editMenu;
@@ -82,7 +87,7 @@ private:
     QMenu* _debugMenu;
     QMenu* _toolsMenu;
     QMenu* _helpMenu;
-    
+
     // File Menu Actions
     QAction* _openAction;
     QAction* _openSnapshotAction;
@@ -91,10 +96,10 @@ private:
     QAction* _saveSnapshotAction;
     QAction* _recentFilesAction;
     QAction* _exitAction;
-    
+
     // Edit Menu Actions
     QAction* _preferencesAction;
-    
+
     // View Menu Actions
     QAction* _debuggerAction;
     QAction* _logWindowAction;
@@ -102,7 +107,7 @@ private:
     QAction* _zoomInAction;
     QAction* _zoomOutAction;
     QAction* _zoomResetAction;
-    
+
     // Run Menu Actions
     QAction* _startAction;
     QAction* _pauseAction;
@@ -117,7 +122,7 @@ private:
     QAction* _speed8xAction;
     QAction* _speed16xAction;
     QAction* _turboModeAction;
-    
+
     // Debug Menu Actions
     QAction* _debugModeAction;
     QAction* _stepInAction;
@@ -129,15 +134,14 @@ private:
     QAction* _showBreakpointsAction;
     QAction* _showRegistersAction;
     QAction* _showMemoryAction;
-    
+
     // Tools Menu Actions
     QAction* _settingsAction;
     QAction* _screenshotAction;
     QAction* _recordVideoAction;
-    
+
     // Help Menu Actions
     QAction* _aboutAction;
     QAction* _documentationAction;
     QAction* _keyboardShortcutsAction;
 };
-
