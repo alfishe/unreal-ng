@@ -36,6 +36,21 @@ docker run --name unreal-speccy-swagger-ui \
 # API spec loads automatically - no manual entry needed!
 ```
 
+### ⚠️ Manual OpenAPI Maintenance
+
+**Important**: The OpenAPI specification at `/api/v1/openapi.json` is **manually maintained** and **NOT auto-generated**.
+
+**When making API changes:**
+1. Update the API endpoint code
+2. **Manually update** the OpenAPI JSON specification in `emulator_api.cpp`
+3. Test with Swagger UI to ensure documentation matches implementation
+4. Update HTML documentation and deployment guides
+
+**Failure to update the OpenAPI spec will result in:**
+- Documentation being out of sync with actual API
+- Swagger UI showing incorrect information
+- Integration issues for API consumers
+
 ## Resource Search Order
 
 The application searches for HTML resources in this order:

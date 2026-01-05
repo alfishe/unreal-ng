@@ -1542,9 +1542,10 @@ private:
      - `GET http://localhost:8090/api/v1/emulator/state/audio/ay` - AY overview (active emulator)
      - `GET http://localhost:8090/api/v1/emulator/0/state/audio/ay/0/register/0` - AY register 0 (emulator 0)
      - `GET http://localhost:8090/api/v1/emulator/state/audio/beeper` - Beeper state (active emulator)
-   - **OpenAPI Specification**:
+     - **OpenAPI Specification**:
      - **Available at**: `GET http://localhost:8090/api/v1/openapi.json`
      - Provides machine-readable API documentation in OpenAPI 3.0 format
+     - **⚠️ Manually Maintained**: This specification is NOT auto-generated. All API changes must be manually reflected in the OpenAPI JSON.
      - **CORS Support**: Fully enabled for cross-origin requests from web interfaces
      - **Usage with Swagger UI**:
        1. Pull and run Swagger UI: `docker pull swaggerapi/swagger-ui && docker run --name unreal-speccy-swagger-ui -p 8081:8080 -e SWAGGER_JSON_URL=http://localhost:8090/api/v1/openapi.json swaggerapi/swagger-ui`
