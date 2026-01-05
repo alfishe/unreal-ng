@@ -172,6 +172,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 
     // Enable global debugging (memory debug interface, CPU level debug) + enable Breakpoints feature
     emulator->DebugOn();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
     context->pFeatureManager->setFeature(Features::kBreakpoints, true);
 
     // Transfer test Z80 command sequence to ROM space (From address $0000)
@@ -201,7 +202,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     breakpoint->z80address = breakpointAddress;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(10);
+    emulator->RunNCPUCycles(25);
 
     if (!breakpointTriggered)
     {
@@ -237,6 +238,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
     // Enable global debugging (memory debug interface, CPU level debug) + enable Breakpoints feature
     emulator->DebugOn();
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
     context->pFeatureManager->setFeature(Features::kBreakpoints, true);
 
     // Transfer test Z80 command sequence to ROM space (From address $0000)
@@ -266,7 +268,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     breakpoint->z80address = breakpointAddress;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(6, false);
+    emulator->RunNCPUCycles(35, false);
 
     if (!breakpointTriggered)
     {
