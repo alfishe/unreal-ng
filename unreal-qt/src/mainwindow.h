@@ -55,6 +55,9 @@ private slots:
     void handleStartButton();
     void handleMessageScreenRefresh(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
+    void handleEmulatorStateChanged(int id, Message* message);
+    void handleEmulatorInstanceDestroyed(int id, Message* message);
+    void handleEmulatorInstanceCreated(int id, Message* message);
     void openFileDialog();
     void openSpecificFile(const QString& filepath);
     void resetEmulator();

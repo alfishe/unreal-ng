@@ -597,11 +597,9 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
     CONFIG& config = _context->config;
     
-    // Scale frame duration by current speed multiplier (same as SoundManager and Z80 do)
-    // Note: Multiplier changes are now queued and applied only at frame boundaries,
-    // so this value remains consistent throughout the entire frame
-    uint32_t scaledFrame = config.frame * state.current_z80_frequency_multiplier;
-    uint32_t maxFrameDuration = scaledFrame + MAX_FRAME_DURATION_TOLERANCE;
+    // Screen timings work with unscaled 3-byte t-state counter
+    // Z80 runs at scaled speed, but screen sees unscaled t-state values
+    uint32_t maxFrameDuration = config.frame + MAX_FRAME_DURATION_TOLERANCE;
 
     // Next frame started during current CPU command processing. Adjust to Tstate
     if (fromTstate > toTstate)

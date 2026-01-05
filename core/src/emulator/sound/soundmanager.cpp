@@ -136,6 +136,21 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     _prevFrane = _context->emulatorState.frame_counter;
 }
 
+// TurboSound/AY chip access for debugging
+SoundChip_AY8910* SoundManager::getAYChip(int index) const
+{
+    if (!_turboSound) return nullptr;
+
+    return _turboSound->getChip(index);
+}
+
+int SoundManager::getAYChipCount() const
+{
+    if (!_turboSound) return 0;
+
+    return _turboSound->getChipCount();
+}
+
 /// endregion </Methods>
 
 /// region <Emulation events>

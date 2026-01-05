@@ -364,6 +364,28 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 	return result;
 }
 
+std::vector<TMemModel> Config::GetAvailableModels() const
+{
+	std::vector<TMemModel> models;
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		models.push_back(mem_model[i]);
+	}
+	return models;
+}
+
+const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
+{
+	for (uint8_t i = 0; i < N_MM_MODELS; i++)
+	{
+		if (StringHelper::CompareCaseInsensitive(shortName.c_str(), mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+		{
+			return &mem_model[i];
+		}
+	}
+	return nullptr;
+}
+
 void Config::CopyStringValue(const char* src, char* dst, size_t dst_len)
 {
 	if (src != nullptr && dst != nullptr && dst_len > 0)

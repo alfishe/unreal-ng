@@ -203,17 +203,99 @@ Commands to manage the connection and emulator instances. These commands are ess
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
 | `help` | `?` | `[command]` | Display available commands and their usage. If `command` is specified, show detailed help for that command. |
+| `start` | | `[model]` | Create and start a new emulator instance. Optional `model` parameter specifies model (default: 48K). Returns the new instance ID. Triggers `NC_EMULATOR_INSTANCE_CREATED` notification. | 🔮 Planned |
+| `start <model>` | | `<model-name>` | Start a new emulator instance with specific Spectrum model (48k, 128k, +2, +3, pentagon, etc.). Returns the new instance ID. | 🔮 Planned |
+| `start <config-file>` | | `<config-path>` | Start a new emulator instance using configuration from file. Returns the new instance ID. | 🔮 Planned |
+| `stop [id]` | | `[emulator-id|index|all]` | Stop and destroy emulator instance(s). If only one emulator is running, can be called without parameters. Can specify UUID, index from `list` command (1-based), or `all` to stop all instances. Triggers `NC_EMULATOR_INSTANCE_DESTROYED` and `NC_EMULATOR_STATE_CHANGE` notifications. | 🔮 Planned |
+| `stop all` | | | Stop and destroy all emulator instances. | 🔮 Planned |
 | `status` | | | Show the runtime status (Running/Paused/Stopped/Debug) of all emulator instances, including ID, symbolic name, uptime, and current state. |
-| `list` | | | List all available emulator instances with their UUIDs, symbolic IDs (if set), and creation timestamps. Used to identify which emulator to `select`. |
+| `list` | | | List all managed emulator instances with their UUIDs, status (Running/Paused/Stopped), and debug state. Stopped instances are removed from this list. |
 | `select <id>` | | `<emulator-id>` | Select the active emulator instance for subsequent commands. The `<id>` can be either the UUID or symbolic ID. All following commands (reset, pause, registers, etc.) will operate on this selected instance. |
 | `open <file>` | | `<file-path>` | Open and load a file into the selected emulator. Supports multiple formats: tape images (.tap, .tzx), snapshots (.z80, .sna), disk images (.trd, .scl, .fdi). File type is auto-detected by extension. |
 | `exit` | `quit` | | Terminate the control session. For CLI, closes the TCP connection. Does not stop the emulator instances themselves. |
 | `dummy` | | | No-operation command used for connection initialization and testing. Returns a simple acknowledgment. Useful for verifying the connection is alive. |
 
+**Implementation Details**:
+
+**`start` Commands**:
+- Creates a new emulator instance via `EmulatorManager::CreateEmulator()`
+- Assigns unique UUID and optional symbolic name
+- Initializes with specified configuration or defaults
+- Automatically starts the emulator in paused state
+- Returns instance ID for immediate use
+- Triggers `NC_EMULATOR_INSTANCE_CREATED` Message Center notification
+
+**`stop <id>`**:
+- Locates emulator instance by ID (UUID or symbolic name)
+- Calls `EmulatorManager::StopEmulator()` then `EmulatorManager::RemoveEmulator()`
+- Cleans up all resources (memory, threads, peripherals)
+- If stopping the currently selected instance, selection becomes invalid
+- Triggers `NC_EMULATOR_INSTANCE_DESTROYED` Message Center notification
+
+**`stop all`**:
+- Iterates through all emulator instances
+- Stops each instance individually
+- Triggers individual `NC_EMULATOR_INSTANCE_DESTROYED` notifications
+- Useful for cleanup before application exit
+
+**Message Center Integration**:
+- All instance lifecycle changes trigger notifications:
+  - `NC_EMULATOR_INSTANCE_CREATED`: New instance created and started (payload: instance ID)
+  - `NC_EMULATOR_INSTANCE_DESTROYED`: Instance destroyed (payload: instance ID)
+  - `NC_EMULATOR_STATE_CHANGE`: Instance state changes (payload: instance ID, new state)
+- GUI components, automation scripts, and other interfaces receive notifications
+- Enables reactive UI updates and automated workflows
+- WebAPI clients can subscribe to notifications via WebSocket for real-time updates
+
+**Configuration Options**:
+- **Default**: Standard 48K Spectrum with BASIC ROM
+- **Model-based**: `start 128k`, `start pentagon`, `start +3`
+- **Config file**: `start /path/to/config.json` (JSON configuration)
+- **Inline config**: Future support for `--option=value` parameters
+
+**Multi-Instance Scenarios**:
+- **Testing**: Run multiple instances with different ROMs for compatibility testing
+- **Comparison**: Compare behavior between different Spectrum models
+- **Debugging**: Debug interaction between programs (e.g., loader + main program)
+- **Automation**: Parallel processing of multiple tasks
+
+**Example Usage**:
+```bash
+# Start default 48K instance
+> start
+Started emulator instance: emu-12345678-abcd-1234-5678-123456789abc
+
+# Start specific model
+> start pentagon
+Started emulator instance: emu-pentagon-87654321-dcba-4321-8765-987654321fed
+
+# List all instances
+> list
+┌─────────────────────────────────────┬────────────┬─────────────────────┐
+│ Instance ID                         │ Model      │ Status              │
+├─────────────────────────────────────┼────────────┼─────────────────────┤
+│ emu-12345678-abcd-1234-5678-123456789abc │ 48K        │ Paused              │
+│ emu-pentagon-87654321-dcba-4321-8765-987654321fed │ Pentagon  │ Paused              │
+└─────────────────────────────────────┴────────────┴─────────────────────┘
+
+# Select and work with specific instance
+> select emu-pentagon-87654321-dcba-4321-8765-987654321fed
+Selected emulator: emu-pentagon-87654321-dcba-4321-8765-987654321fed
+
+# Stop specific instance
+> stop emu-12345678-abcd-1234-5678-123456789abc
+Stopped emulator instance: emu-12345678-abcd-1234-5678-123456789abc
+
+# Stop all instances
+> stop all
+Stopped 1 emulator instance(s)
+```
+
 **Notes**:
 - Most commands require an emulator to be selected first via `select <id>`
 - CLI sessions auto-select the most recently created emulator if only one exists
 - WebAPI requests must include the emulator ID in the URL path (stateless design)
+- Instance management operations are thread-safe and can be performed while other instances are running
 
 ### 2. Execution Control
 
@@ -1336,14 +1418,17 @@ IN:
 
 #### 6.8 Audio Device State
 
-Inspect audio hardware state including beeper and AY-3-8912 PSG.
+Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and Covox devices.
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `state audio beeper` | | | Show beeper state:<br/>• Current output level (0/1)<br/>• Last toggle timestamp<br/>• Toggle frequency estimate<br/>• Output waveform visualization | 🔮 Planned |
-| `state audio ay` | | | Show AY-3-8912 chip state:<br/>• Selected register (0-15)<br/>• All register values with decoding<br/>• Channel A/B/C: period, amplitude, mixer<br/>• Envelope shape and period<br/>• Noise period<br/>• I/O ports A/B state | 🔮 Planned |
+| `state audio beeper` | | | Show beeper state:<br/>• Current output level (0/1)<br/>• Last toggle timestamp<br/>• Toggle frequency estimate<br/>• Output waveform visualization<br/>• Whether sound was played since reset via this device | 🔮 Planned |
+| `state audio ay` | | | Show brief state for all AY chips available:<br/>• Number of AY chips (1 = standard, 2 = TurboSound, 3 = ZX Next)<br/>• Basic info for each AY: type, active channels, envelope state<br/>• Whether sound was played since reset via each device | 🔮 Planned |
+| `state audio ay <index>` | | `<chip-index>` | Show detailed information about selected AY chip:<br/>• Chip index (0-based)<br/>• Chip type (AY-3-8912, YM2149, etc.)<br/>• All register values (0-15) with decoding<br/>• Channel A/B/C: frequency, volume, mixer state<br/>• Envelope shape, period, and current phase<br/>• Noise period and LFSR state<br/>• I/O ports A/B values and direction<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio ay register <N>` | | `<register>` | Show specific AY register (0-15) with full decoding:<br/>**Example: `state audio ay register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately) | 🔮 Planned |
-| `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY Channel A/B/C: ON/OFF, volume<br/>• Covox: state (if present)<br/>• Master output level<br/>• Mute state | 🔮 Planned |
+| `state audio gs` | | | Show General Sound device state (if available):<br/>• Device type and model<br/>• Current register values<br/>• Active channels and volume levels<br/>• Sample playback state<br/>• DMA status (if applicable)<br/>• Whether sound was played since reset via this device | 🔮 Planned |
+| `state audio covox` | | | Show Covox DAC state:<br/>• DAC model (Covox, SounDrive, etc.)<br/>• Current output level (8-bit value)<br/>• Sample rate and buffer status<br/>• Port address being used<br/>• Whether sound was played since reset via this device | 🔮 Planned |
+| `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level and mute state | 🔮 Planned |
 
 **AY-3-8912 Registers**:
 
@@ -1410,8 +1495,11 @@ public:
     
     // Audio State
     std::string GetBeeperState();
-    std::string GetAYState();
-    std::string GetAYRegister(uint8_t reg);
+    std::string GetAYState();                    // Brief state for all AY chips
+    std::string GetAYState(uint8_t chipIndex);   // Detailed state for specific AY chip
+    std::string GetAYRegister(uint8_t reg);      // Specific register decoding
+    std::string GetGeneralSoundState();          // General Sound device state
+    std::string GetCovoxState();                 // Covox DAC state
     
 private:
     EmulatorContext* _context;
@@ -2383,6 +2471,7 @@ Experimental features for networked emulation and multi-instance orchestration.
 ### Phase 1: Core Functionality (Q1-Q2 2026)
 **Focus**: Essential debugging and state management
 - ✅ **BASIC Extractor** - Already implemented
+- **Emulator Instance Management** - `start`, `stop`, `list`, `status` commands with Message Center notifications
 - Snapshot save/load
 - Input injection (key press, type text)
 - Screenshot capture

@@ -134,6 +134,38 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     initializePlatformLinux();
 #endif
 
+    // Subscribe to global emulator instance lifecycle events (so UI can detect CLI/WebAPI-started instances)
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
+
+    ObserverCallbackMethod createCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceCreated);
+    messageCenter.AddObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
+
+    ObserverCallbackMethod destroyCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceDestroyed);
+    messageCenter.AddObserver(NC_EMULATOR_INSTANCE_DESTROYED, observerInstance, destroyCallback);
+
+    qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
+
+    // Check if there's already a running emulator instance (started before UI)
+    QTimer::singleShot(100, this, [this]() {
+        auto emulatorIds = _emulatorManager->GetEmulatorIds();
+        if (!emulatorIds.empty() && !_emulator)
+        {
+            // Adopt the first running emulator
+            auto emulator = _emulatorManager->GetEmulator(emulatorIds[0]);
+            if (emulator)
+            {
+                qDebug() << "MainWindow: Found existing emulator instance, binding to it...";
+                // Trigger the bind via the normal handler
+                SimpleTextPayload payload(emulatorIds[0]);
+                Message msg(0, &payload, false);  // topic id 0, don't cleanup payload (it's on stack)
+                handleEmulatorInstanceCreated(0, &msg);
+            }
+        }
+    });
+
 #ifdef ENABLE_AUTOMATION
 
     // Delay automation modules start, so the main thread is not blocked, and automation is fully initialized
@@ -232,6 +264,18 @@ void MainWindow::closeEvent(QCloseEvent* event)
     Observer* observerInstance = static_cast<Observer*>(this);
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
     messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+
+    ObserverCallbackMethod stateCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
+    messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod destroyCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceDestroyed);
+    messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_DESTROYED, observerInstance, destroyCallback);
+
+    ObserverCallbackMethod createCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceCreated);
+    messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
 
     // Close debugger
     if (debuggerWindow)
@@ -1005,9 +1049,14 @@ void MainWindow::handleStartButton()
             // breakpointManager.AddExecutionBreakpoint(0x04D8);   // SA_LEADER - 5 seconds of pilot during SAVE
             /// endregion </Setup breakpoints>
 
-            // Attach emulator audio buffer
+            // Reinitialize and attach emulator audio (audio device can only be bound to one emulator at a time)
             if (_soundManager)
             {
+                qDebug() << "MainWindow::handleStartButton() - Reinitializing audio device";
+                _soundManager->deinit();
+                _soundManager->init();
+
+                qDebug() << "MainWindow::handleStartButton() - Setting audio callback for UI-started emulator";
                 _emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
             }
 
@@ -1038,6 +1087,21 @@ void MainWindow::handleStartButton()
                 static_cast<ObserverCallbackMethod>(&MainWindow::handleFileOpenRequest);
             messageCenter.AddObserver(NC_FILE_OPEN_REQUEST, observerInstance, fileOpenCallback);
 
+            // Subscribe to emulator state change events
+            ObserverCallbackMethod stateCallback =
+                static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
+            messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+            // Subscribe to emulator instance destruction events
+            ObserverCallbackMethod destroyCallback =
+                static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceDestroyed);
+            messageCenter.AddObserver(NC_EMULATOR_INSTANCE_DESTROYED, observerInstance, destroyCallback);
+
+            // Subscribe to emulator instance creation events
+            ObserverCallbackMethod createCallback =
+                static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceCreated);
+            messageCenter.AddObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
+
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)
             debuggerWindow->setEmulator(_emulator.get());
@@ -1045,6 +1109,7 @@ void MainWindow::handleStartButton()
             // Enable audio output
             if (_soundManager)
             {
+                qDebug() << "MainWindow::handleStartButton() - Starting audio for UI-started emulator";
                 _soundManager->start();
             }
 
@@ -1088,13 +1153,25 @@ void MainWindow::handleStartButton()
             _emulatorManager->StopEmulator(emulatorId);
             updateMenuStates();
 
-            // Unsubscribe from message bus events
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            Observer* observerInstance = static_cast<Observer*>(this);
+    // Unsubscribe from message bus events
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    Observer* observerInstance = static_cast<Observer*>(this);
 
-            ObserverCallbackMethod callback =
-                static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
-            messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+    ObserverCallbackMethod callback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+    messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+
+    ObserverCallbackMethod stateCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
+    messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod destroyCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceDestroyed);
+    messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_DESTROYED, observerInstance, destroyCallback);
+
+    ObserverCallbackMethod createCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceCreated);
+    messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
 
             // Detach framebuffer
             deviceScreen->detach();
@@ -1544,8 +1621,9 @@ void MainWindow::handleStopEmulator()
         // Full cleanup like the main button
         startButton->setEnabled(false);
 
-        // Disable audio output
+        // Stop and deinit audio (must be reinitialized for next emulator)
         _soundManager->stop();
+        _soundManager->deinit();
 
         // Stop emulator instance - use EmulatorManager for lifecycle
         std::string emulatorId = _emulator->GetId();
@@ -1557,6 +1635,18 @@ void MainWindow::handleStopEmulator()
         ObserverCallbackMethod callback =
             static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
         messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+
+        ObserverCallbackMethod stateCallback =
+            static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
+        messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+        ObserverCallbackMethod destroyCallback =
+            static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceDestroyed);
+        messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_DESTROYED, observerInstance, destroyCallback);
+
+        ObserverCallbackMethod createCallback =
+            static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceCreated);
+        messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
 
         // Detach framebuffer
         deviceScreen->detach();
@@ -1671,5 +1761,193 @@ void MainWindow::updateMenuStates()
 }
 
 /// endregion </Menu action handlers>
+
+/// region <Message handlers>
+
+void MainWindow::handleEmulatorStateChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+    Q_UNUSED(message);
+
+    // Update UI state to reflect emulator state changes
+    QMetaObject::invokeMethod(this, "updateMenuStates", Qt::QueuedConnection);
+}
+
+void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    // Handle emulator instance destruction (from CLI, WebAPI, or UI)
+    if (message && message->obj)
+    {
+        SimpleTextPayload* payload = dynamic_cast<SimpleTextPayload*>(message->obj);
+        if (payload)
+        {
+            std::string destroyedId = payload->_payloadText;
+
+            // Check if this was our active emulator - BEFORE queuing to main thread
+            // to avoid race condition where _emulator might be cleared by the time lambda runs
+            bool wasOurEmulator = (_emulator && _emulator->GetId() == destroyedId);
+
+            if (wasOurEmulator)
+            {
+                // Update UI on main thread
+                QMetaObject::invokeMethod(this, [this, destroyedId]() {
+                    // Double-check _emulator still exists and matches
+                    // (it might have been cleared by stop button handler already)
+                    if (!_emulator || _emulator->GetId() != destroyedId)
+                    {
+                        qDebug() << "MainWindow: Emulator" << QString::fromStdString(destroyedId)
+                                 << "already cleaned up by UI";
+                        return;
+                    }
+
+                    // Stop and deinit audio (must be reinitialized for next emulator)
+                    if (_soundManager)
+                    {
+                        qDebug() << "MainWindow: Stopping and deinitializing audio device";
+                        _soundManager->stop();
+                        _soundManager->deinit();
+                    }
+
+                    // Unsubscribe from MessageCenter events
+                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                    Observer* observerInstance = static_cast<Observer*>(this);
+
+                    ObserverCallbackMethod screenRefreshCallback =
+                        static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+                    messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, screenRefreshCallback);
+
+                    ObserverCallbackMethod stateChangeCallback =
+                        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
+                    messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateChangeCallback);
+
+                    // Detach framebuffer
+                    deviceScreen->detach();
+
+                    // Clear emulator reference from menu manager
+                    if (_menuManager)
+                    {
+                        _menuManager->setActiveEmulator(nullptr);
+                    }
+
+                    // Clear emulator reference from debugger
+                    if (debuggerWindow)
+                    {
+                        debuggerWindow->setEmulator(nullptr);
+                    }
+
+                    // Clear emulator reference
+                    _emulator.reset();
+
+                    // Update UI state
+                    startButton->setText("Start");
+                    startButton->setEnabled(true);
+                    updateMenuStates();
+
+                    qDebug() << "MainWindow: Active emulator instance" << QString::fromStdString(destroyedId)
+                             << "destroyed externally - fully unbound from UI";
+                }, Qt::QueuedConnection);
+            }
+        }
+    }
+}
+
+void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    // Handle emulator instance creation
+    if (message && message->obj)
+    {
+        SimpleTextPayload* payload = dynamic_cast<SimpleTextPayload*>(message->obj);
+        if (payload)
+        {
+            std::string createdId = payload->_payloadText;
+
+            // If we don't have an active emulator, adopt this new one (e.g., started from CLI or WebAPI)
+            if (!_emulator)
+            {
+                auto* emulatorManager = EmulatorManager::GetInstance();
+                auto emulator = emulatorManager->GetEmulator(createdId);
+
+                if (emulator)
+                {
+                    // Update UI on main thread
+                    QMetaObject::invokeMethod(this, [this, emulator]() {
+                        // Set as our active emulator
+                        _emulator = emulator;
+
+                        // Reinitialize and bind audio callback (audio device can only be bound to one emulator at a time)
+                        if (_soundManager)
+                        {
+                            qDebug() << "MainWindow::handleEmulatorInstanceCreated() - Reinitializing audio device";
+                            _soundManager->deinit();
+                            _soundManager->init();
+
+                            qDebug() << "MainWindow::handleEmulatorInstanceCreated() - Binding audio to emulator" << QString::fromStdString(_emulator->GetId());
+                            _emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+                            _soundManager->start();
+                        }
+
+                        // Subscribe to emulator state change events
+                        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                        Observer* observerInstance = static_cast<Observer*>(this);
+
+                        ObserverCallbackMethod screenRefreshCallback =
+                            static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+                        messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, screenRefreshCallback);
+
+                        ObserverCallbackMethod stateChangeCallback =
+                            static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorStateChanged);
+                        messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateChangeCallback);
+
+                        // Initialize device screen with emulator's screen (if emulator is running or just initialized)
+                        auto* context = _emulator->GetContext();
+                        if (context && context->pScreen)
+                        {
+                            try {
+                                // Get screen dimensions and framebuffer
+                                auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
+                                deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+                            } catch (const std::exception& e) {
+                                qWarning() << "Failed to initialize device screen:" << e.what();
+                            }
+                        }
+
+                        // Pass emulator reference to debugger
+                        if (debuggerWindow)
+                        {
+                            debuggerWindow->setEmulator(_emulator.get());
+                        }
+
+                        // Pass active emulator reference to menu manager
+                        if (_menuManager)
+                        {
+                            _menuManager->setActiveEmulator(_emulator);
+                        }
+
+                        // Update UI state
+                        if (emulator->IsRunning())
+                        {
+                            startButton->setText("Stop");
+                        }
+                        else
+                        {
+                            startButton->setText("Start");
+                        }
+                        startButton->setEnabled(true);
+                        updateMenuStates();
+
+                        qDebug() << "MainWindow: Bound to emulator instance" << QString::fromStdString(emulator->GetId())
+                                 << "(started externally from CLI/WebAPI)";
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
+    }
+}
+
+/// endregion </Message handlers>
 
 /// endregion </Slots>

@@ -39,6 +39,28 @@ protected:
     /// region <Properties>
 public:
     uint16_t* getAudioBuffer() { return (uint16_t*)_ayBuffer; }
+
+    // Chip access for monitoring purposes
+    SoundChip_AY8910* getChip(int index) const
+    {
+        if (index == 0) return _chip0;
+        if (index == 1) return _chip1;
+
+        MLOGWARNING("Invalid chip index: %d", index);
+        return nullptr;
+    }
+
+    int getChipCount() const
+    {
+        int count = 0;
+        if (_chip0)
+            count++;
+        
+        if (_chip1)
+            count++;
+
+        return count;
+    }
     /// endregion </Properties>
 
     /// region <Constructors / destructor>

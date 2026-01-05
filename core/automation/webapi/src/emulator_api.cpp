@@ -53,6 +53,44 @@ namespace api
             callback(resp);
         }
 
+        // GET /api/v1/emulator/models
+        // Get available emulator models
+        void EmulatorAPI::getModels(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto models = manager->GetAvailableModels();
+
+            Json::Value ret;
+            Json::Value modelsArray(Json::arrayValue);
+
+            for (const auto& model : models) {
+                Json::Value modelInfo;
+                modelInfo["name"] = model.ShortName;
+                modelInfo["full_name"] = model.FullName;
+                modelInfo["model_id"] = static_cast<int>(model.Model);
+                modelInfo["default_ram_kb"] = model.defaultRAM;
+
+                // Parse available RAM sizes from bitmask
+                Json::Value availableRAMs(Json::arrayValue);
+                unsigned ramMask = model.AvailRAMs;
+                const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
+                for (int ram : ramSizes) {
+                    if (ramMask & ram) {
+                        availableRAMs.append(ram);
+                    }
+                }
+                modelInfo["available_ram_sizes_kb"] = availableRAMs;
+
+                modelsArray.append(modelInfo);
+            }
+
+            ret["models"] = modelsArray;
+            ret["count"] = static_cast<Json::UInt>(models.size());
+
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
         // GET /api/v1/emulator/status
         // Get overall emulator status
         void EmulatorAPI::status(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
@@ -84,26 +122,72 @@ namespace api
 
         // POST /api/v1/emulator
         // Create a new emulator instance
+        // Request body (all optional):
+        // {
+        //   "symbolic_id": "my-emulator",
+        //   "model": "48K" | "128K" | "PENTAGON" | etc,
+        //   "ram_size": 128 (in KB, only valid for models that support it)
+        // }
         void EmulatorAPI::createEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
         {
             auto manager = EmulatorManager::GetInstance();
-            
+
             // Parse request body
             auto json = req->getJsonObject();
             std::string symbolicId = json ? (*json)["symbolic_id"].asString() : "";
-            
+            std::string modelName = json ? (*json)["model"].asString() : "";
+            uint32_t ramSize = json && json->isMember("ram_size") ? (*json)["ram_size"].asUInt() : 0;
+
             try {
                 std::shared_ptr<Emulator> emulator;
-                if (symbolicId.empty()) {
-                    emulator = manager->CreateEmulator();
+
+                if (!modelName.empty() && ramSize > 0) {
+                    // Create with specific model and RAM size
+                    emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize);
+                    if (!emulator) {
+                        Json::Value error;
+                        error["error"] = "Failed to create emulator";
+                        error["message"] = "Invalid model '" + modelName + "' or RAM size " + std::to_string(ramSize) + "KB not supported by this model";
+
+                        auto resp = HttpResponse::newHttpJsonResponse(error);
+                        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                        callback(resp);
+                        return;
+                    }
+                } else if (!modelName.empty()) {
+                    // Create with specific model (default RAM)
+                    emulator = manager->CreateEmulatorWithModel(symbolicId, modelName);
+                    if (!emulator) {
+                        Json::Value error;
+                        error["error"] = "Failed to create emulator";
+                        error["message"] = "Unknown or invalid model: '" + modelName + "'";
+
+                        auto resp = HttpResponse::newHttpJsonResponse(error);
+                        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                        callback(resp);
+                        return;
+                    }
                 } else {
+                    // Create with default configuration
                     emulator = manager->CreateEmulator(symbolicId);
                 }
-                
+
+                if (!emulator) {
+                    Json::Value error;
+                    error["error"] = "Failed to create emulator";
+                    error["message"] = "Emulator initialization failed";
+
+                    auto resp = HttpResponse::newHttpJsonResponse(error);
+                    resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                    callback(resp);
+                    return;
+                }
+
                 Json::Value ret;
                 ret["id"] = emulator->GetId();
                 ret["state"] = stateToString(emulator->GetState());
-                
+                ret["symbolic_id"] = emulator->GetSymbolicId();
+
                 auto resp = HttpResponse::newHttpJsonResponse(ret);
                 resp->setStatusCode(HttpStatusCode::k201Created);
                 callback(resp);
@@ -111,7 +195,7 @@ namespace api
                 Json::Value error;
                 error["error"] = "Failed to create emulator";
                 error["message"] = e.what();
-                
+
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k500InternalServerError);
                 callback(resp);
@@ -188,40 +272,225 @@ namespace api
         // Start an emulator
         void EmulatorAPI::startEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
         {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->StartAsync();
-                return "Emulator started";
-            });
+            auto manager = EmulatorManager::GetInstance();
+
+            if (!manager->HasEmulator(id)) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            try {
+                bool success = manager->StartEmulatorAsync(id);
+
+                Json::Value ret;
+                ret["status"] = success ? "success" : "error";
+                ret["message"] = success ? "Emulator started" : "Failed to start emulator (already running or error)";
+                ret["emulator_id"] = id;
+
+                auto emulator = manager->GetEmulator(id);
+                if (emulator) {
+                    ret["state"] = stateToString(emulator->GetState());
+                }
+
+                auto resp = HttpResponse::newHttpJsonResponse(ret);
+                resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                callback(resp);
+            } catch (const std::exception& e) {
+                Json::Value error;
+                error["error"] = "Operation failed";
+                error["message"] = e.what();
+                error["emulator_id"] = id;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+            }
         }
 
         // POST /api/v1/emulator/:id/stop
         // Stop an emulator
         void EmulatorAPI::stopEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
         {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->Stop();
-                return "Emulator stopped";
-            });
+            auto manager = EmulatorManager::GetInstance();
+
+            if (!manager->HasEmulator(id)) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            try {
+                bool success = manager->StopEmulator(id);
+
+                Json::Value ret;
+                ret["status"] = success ? "success" : "error";
+                ret["message"] = success ? "Emulator stopped" : "Failed to stop emulator (not running or error)";
+                ret["emulator_id"] = id;
+
+                auto emulator = manager->GetEmulator(id);
+                if (emulator) {
+                    ret["state"] = stateToString(emulator->GetState());
+                }
+
+                auto resp = HttpResponse::newHttpJsonResponse(ret);
+                resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                callback(resp);
+            } catch (const std::exception& e) {
+                Json::Value error;
+                error["error"] = "Operation failed";
+                error["message"] = e.what();
+                error["emulator_id"] = id;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+            }
         }
 
         // POST /api/v1/emulator/:id/pause
         // Pause an emulator
         void EmulatorAPI::pauseEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
         {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->Pause();
-                return "Emulator paused";
-            });
+            auto manager = EmulatorManager::GetInstance();
+
+            if (!manager->HasEmulator(id)) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            try {
+                bool success = manager->PauseEmulator(id);
+
+                Json::Value ret;
+                ret["status"] = success ? "success" : "error";
+                ret["message"] = success ? "Emulator paused" : "Failed to pause emulator (not running or error)";
+                ret["emulator_id"] = id;
+
+                auto emulator = manager->GetEmulator(id);
+                if (emulator) {
+                    ret["state"] = stateToString(emulator->GetState());
+                }
+
+                auto resp = HttpResponse::newHttpJsonResponse(ret);
+                resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                callback(resp);
+            } catch (const std::exception& e) {
+                Json::Value error;
+                error["error"] = "Operation failed";
+                error["message"] = e.what();
+                error["emulator_id"] = id;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+            }
         }
 
         // POST /api/v1/emulator/:id/resume
         // Resume an emulator
         void EmulatorAPI::resumeEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
         {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->Resume();
-                return "Emulator resumed";
-            });
+            auto manager = EmulatorManager::GetInstance();
+
+            if (!manager->HasEmulator(id)) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            try {
+                bool success = manager->ResumeEmulator(id);
+
+                Json::Value ret;
+                ret["status"] = success ? "success" : "error";
+                ret["message"] = success ? "Emulator resumed" : "Failed to resume emulator (not paused or error)";
+                ret["emulator_id"] = id;
+
+                auto emulator = manager->GetEmulator(id);
+                if (emulator) {
+                    ret["state"] = stateToString(emulator->GetState());
+                }
+
+                auto resp = HttpResponse::newHttpJsonResponse(ret);
+                resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                callback(resp);
+            } catch (const std::exception& e) {
+                Json::Value error;
+                error["error"] = "Operation failed";
+                error["message"] = e.what();
+                error["emulator_id"] = id;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+            }
+        }
+
+        // POST /api/v1/emulator/:id/reset
+        // Reset an emulator
+        void EmulatorAPI::resetEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+
+            if (!manager->HasEmulator(id)) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            try {
+                bool success = manager->ResetEmulator(id);
+
+                Json::Value ret;
+                ret["status"] = success ? "success" : "error";
+                ret["message"] = success ? "Emulator reset" : "Failed to reset emulator";
+                ret["emulator_id"] = id;
+
+                auto emulator = manager->GetEmulator(id);
+                if (emulator) {
+                    ret["state"] = stateToString(emulator->GetState());
+                }
+
+                auto resp = HttpResponse::newHttpJsonResponse(ret);
+                resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+                callback(resp);
+            } catch (const std::exception& e) {
+                Json::Value error;
+                error["error"] = "Operation failed";
+                error["message"] = e.what();
+                error["emulator_id"] = id;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+            }
         }
 
         // Helper method to handle emulator actions with common error handling
@@ -1088,6 +1357,627 @@ namespace api
             ret["toggle_interval_frames"] = 16;
             ret["toggle_interval_seconds"] = 0.32;  // at 50Hz
             
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/ay
+        void EmulatorAPI::getStateAudioAY(const HttpRequestPtr &req,
+                                        std::function<void(const HttpResponsePtr &)> &&callback,
+                                        const std::string &id) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetEmulator(id);
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Unable to access emulator context";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            SoundManager* soundManager = context->pSoundManager;
+            if (!soundManager) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Sound manager not available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            Json::Value ret;
+
+    // Count available AY chips
+    int ayCount = soundManager->getAYChipCount();
+    bool hasTurboSound = soundManager->hasTurboSound();
+
+            ret["available_chips"] = ayCount;
+            ret["turbo_sound"] = hasTurboSound;
+
+            if (ayCount == 0) {
+                ret["description"] = "No AY chips available";
+            } else if (ayCount == 1) {
+                ret["description"] = "Standard AY-3-8912";
+            } else if (ayCount == 2) {
+                ret["description"] = "TurboSound (dual AY-3-8912)";
+            } else if (ayCount == 3) {
+                ret["description"] = "ZX Next (triple AY-3-8912)";
+            }
+
+            // Brief info for each chip
+            Json::Value chips(Json::arrayValue);
+            for (int i = 0; i < ayCount; i++) {
+                Json::Value chipInfo;
+                chipInfo["index"] = i;
+                chipInfo["type"] = "AY-3-8912";
+
+                SoundChip_AY8910* chip = soundManager->getAYChip(i);
+                if (chip) {
+                    // Check if any channels are active
+                    bool hasActiveChannels = false;
+                    const auto* toneGens = chip->getToneGenerators();
+                    for (int ch = 0; ch < 3; ch++) {
+                        if (toneGens[ch].toneEnabled() || toneGens[ch].noiseEnabled()) {
+                            hasActiveChannels = true;
+                            break;
+                        }
+                    }
+                    chipInfo["active_channels"] = hasActiveChannels;
+                    chipInfo["envelope_active"] = (chip->getEnvelopeGenerator().out() > 0);
+                }
+
+                chipInfo["sound_played_since_reset"] = false; // TODO: Implement sound played tracking
+                chips.append(chipInfo);
+            }
+
+            ret["chips"] = chips;
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/ay/{chip}
+        void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr &req,
+                                             std::function<void(const HttpResponsePtr &)> &&callback,
+                                             const std::string &id,
+                                             const std::string &chipStr) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetEmulator(id);
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Unable to access emulator context";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            SoundManager* soundManager = context->pSoundManager;
+            if (!soundManager || !soundManager->hasTurboSound()) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "AY chips not available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // Parse chip index
+            int chipIndex = -1;
+            try {
+                chipIndex = std::stoi(chipStr);
+            } catch (const std::exception&) {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid chip index (must be integer)";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                callback(resp);
+                return;
+            }
+
+            // Get the requested chip
+            SoundChip_AY8910* chip = soundManager->getAYChip(chipIndex);
+
+            if (!chip) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "AY chip " + chipStr + " not available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            Json::Value ret;
+            ret["chip_index"] = chipIndex;
+            ret["chip_type"] = "AY-3-8912";
+
+            // Get registers using public method
+            const uint8_t* chipRegisters = chip->getRegisters();
+
+            // Register values
+            Json::Value registers(Json::objectValue);
+            for (int reg = 0; reg < 16; reg++) {
+                registers[SoundChip_AY8910::AYRegisterNames[reg]] = (int)chipRegisters[reg];
+            }
+            ret["registers"] = registers;
+
+            // Channel information
+            Json::Value channels(Json::arrayValue);
+            const char* channelNames[] = { "A", "B", "C" };
+            const auto* toneGens = chip->getToneGenerators();
+            for (int ch = 0; ch < 3; ch++) {
+                Json::Value channel;
+                const auto& toneGen = toneGens[ch];
+
+                uint8_t fine = chipRegisters[ch * 2];
+                uint8_t coarse = chipRegisters[ch * 2 + 1];
+                uint16_t period = (coarse << 8) | fine;
+
+                channel["name"] = channelNames[ch];
+                channel["period"] = period;
+                channel["fine"] = (int)fine;
+                channel["coarse"] = (int)coarse;
+                channel["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
+                channel["volume"] = (int)toneGen.volume();
+                channel["tone_enabled"] = toneGen.toneEnabled();
+                channel["noise_enabled"] = toneGen.noiseEnabled();
+                channel["envelope_enabled"] = toneGen.envelopeEnabled();
+
+                channels.append(channel);
+            }
+            ret["channels"] = channels;
+
+            // Envelope generator
+            Json::Value envelope;
+            uint8_t envShape = chipRegisters[13];
+            uint16_t envPeriod = (chipRegisters[12] << 8) | chipRegisters[11];
+            envelope["shape"] = (int)envShape;
+            envelope["period"] = envPeriod;
+            envelope["current_output"] = (int)chip->getEnvelopeGenerator().out();
+            envelope["frequency_hz"] = 1750000.0 / (256.0 * (envPeriod + 1));
+            ret["envelope"] = envelope;
+
+            // Noise generator
+            Json::Value noise;
+            uint8_t noisePeriod = chipRegisters[6] & 0x1F;
+            noise["period"] = (int)noisePeriod;
+            noise["frequency_hz"] = 1750000.0 / (16.0 * (noisePeriod + 1));
+            ret["noise"] = noise;
+
+            // Mixer state
+            Json::Value mixer;
+            uint8_t mixerValue = chipRegisters[7];
+            mixer["register_value"] = (int)mixerValue;
+            mixer["channel_a_tone"] = ((mixerValue & 0x01) == 0);
+            mixer["channel_b_tone"] = ((mixerValue & 0x02) == 0);
+            mixer["channel_c_tone"] = ((mixerValue & 0x04) == 0);
+            mixer["channel_a_noise"] = ((mixerValue & 0x08) == 0);
+            mixer["channel_b_noise"] = ((mixerValue & 0x10) == 0);
+            mixer["channel_c_noise"] = ((mixerValue & 0x20) == 0);
+            mixer["porta_input"] = ((mixerValue & 0x40) != 0);
+            mixer["portb_input"] = ((mixerValue & 0x80) != 0);
+            ret["mixer"] = mixer;
+
+            // I/O ports
+            Json::Value ports;
+            ports["porta_value"] = (int)chipRegisters[14];
+            ports["porta_direction"] = ((mixerValue & 0x40) ? "input" : "output");
+            ports["portb_value"] = (int)chipRegisters[15];
+            ports["portb_direction"] = ((mixerValue & 0x80) ? "input" : "output");
+            ret["io_ports"] = ports;
+
+            ret["sound_played_since_reset"] = false; // TODO: Implement sound played tracking
+
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/ay/register/{reg}
+        void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr &req,
+                                                std::function<void(const HttpResponsePtr &)> &&callback,
+                                                const std::string &id,
+                                                const std::string &regStr) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetEmulator(id);
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Unable to access emulator context";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            SoundManager* soundManager = context->pSoundManager;
+            if (!soundManager || !soundManager->hasTurboSound() || !soundManager->getAYChip(0)) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "AY chips not available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // Parse register number
+            int regNum = -1;
+            try {
+                regNum = std::stoi(regStr);
+            } catch (const std::exception&) {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid register number (must be 0-15)";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                callback(resp);
+                return;
+            }
+
+            if (regNum < 0 || regNum > 15) {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Register number must be between 0 and 15";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                callback(resp);
+                return;
+            }
+
+            SoundChip_AY8910* chip = soundManager->getAYChip(0); // Use first available chip
+            const uint8_t* registers = chip->getRegisters();
+            uint8_t regValue = registers[regNum];
+
+            Json::Value ret;
+            ret["register_number"] = regNum;
+            ret["register_name"] = SoundChip_AY8910::AYRegisterNames[regNum];
+            ret["value_hex"] = "0x" + std::string((regValue < 16 ? "0" : "") + std::to_string(regValue));
+            ret["value_dec"] = (int)regValue;
+            ret["value_bin"] = std::bitset<8>(regValue).to_string();
+
+            // Add specific decoding based on register
+            Json::Value decoding;
+
+            switch (regNum) {
+                case 0: case 2: case 4: // Fine period registers
+                {
+                    int channel = regNum / 2;
+                    const char* channelNames[] = { "A", "B", "C" };
+                    decoding["description"] = std::string("Channel ") + channelNames[channel] + " tone period (fine)";
+                    decoding["note"] = "Lower 8 bits of 12-bit period value";
+                    uint8_t coarse = registers[regNum + 1];
+                    uint16_t period = (coarse << 8) | regValue;
+                    decoding["full_period"] = period;
+                    decoding["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
+                    break;
+                }
+                case 1: case 3: case 5: // Coarse period registers
+                {
+                    int channel = (regNum - 1) / 2;
+                    const char* channelNames[] = { "A", "B", "C" };
+                    decoding["description"] = std::string("Channel ") + channelNames[channel] + " tone period (coarse)";
+                    decoding["note"] = "Upper 4 bits of 12-bit period value";
+                    uint8_t fine = registers[regNum - 1];
+                    uint16_t period = (regValue << 8) | fine;
+                    decoding["full_period"] = period;
+                    decoding["frequency_hz"] = 1750000.0 / (16.0 * (period + 1));
+                    break;
+                }
+                case 6: // Noise period
+                    decoding["description"] = "Noise generator period";
+                    decoding["period_value"] = (int)(regValue & 0x1F);
+                    decoding["frequency_hz"] = 1750000.0 / (16.0 * ((regValue & 0x1F) + 1));
+                    break;
+                case 7: // Mixer control
+                    decoding["description"] = "Mixer control and I/O port direction";
+                    decoding["channel_a_tone_enabled"] = ((regValue & 0x01) == 0);
+                    decoding["channel_b_tone_enabled"] = ((regValue & 0x02) == 0);
+                    decoding["channel_c_tone_enabled"] = ((regValue & 0x04) == 0);
+                    decoding["channel_a_noise_enabled"] = ((regValue & 0x08) == 0);
+                    decoding["channel_b_noise_enabled"] = ((regValue & 0x10) == 0);
+                    decoding["channel_c_noise_enabled"] = ((regValue & 0x20) == 0);
+                    decoding["porta_direction"] = ((regValue & 0x40) ? "input" : "output");
+                    decoding["portb_direction"] = ((regValue & 0x80) ? "input" : "output");
+                    break;
+                case 8: case 9: case 10: // Volume registers
+                {
+                    int channel = regNum - 8;
+                    const char* channelNames[] = { "A", "B", "C" };
+                    decoding["description"] = std::string("Channel ") + channelNames[channel] + " volume";
+                    decoding["volume_level"] = (int)(regValue & 0x0F);
+                    decoding["envelope_mode"] = ((regValue & 0x10) != 0);
+                    if (regValue & 0x10) {
+                        decoding["note"] = "Volume controlled by envelope generator";
+                    } else {
+                        decoding["note"] = "Fixed volume level";
+                    }
+                    break;
+                }
+                case 11: // Envelope period fine
+                    decoding["description"] = "Envelope period (fine)";
+                    decoding["note"] = "Lower 8 bits of 16-bit envelope period";
+                    {
+                        uint8_t coarse = registers[12];
+                        uint16_t period = (coarse << 8) | regValue;
+                        decoding["full_period"] = period;
+                        decoding["frequency_hz"] = 1750000.0 / (256.0 * (period + 1));
+                    }
+                    break;
+                case 12: // Envelope period coarse
+                    decoding["description"] = "Envelope period (coarse)";
+                    decoding["note"] = "Upper 8 bits of 16-bit envelope period";
+                    {
+                        uint8_t fine = registers[11];
+                        uint16_t period = (regValue << 8) | fine;
+                        decoding["full_period"] = period;
+                        decoding["frequency_hz"] = 1750000.0 / (256.0 * (period + 1));
+                    }
+                    break;
+                case 13: // Envelope shape
+                    decoding["description"] = "Envelope shape control";
+                    decoding["shape_value"] = (int)(regValue & 0x0F);
+                    decoding["continue"] = ((regValue & 0x01) != 0);
+                    decoding["attack"] = ((regValue & 0x02) != 0);
+                    decoding["alternate"] = ((regValue & 0x04) != 0);
+                    decoding["hold"] = ((regValue & 0x08) != 0);
+                    break;
+                case 14: // I/O Port A
+                    decoding["description"] = "I/O Port A";
+                    decoding["direction"] = ((registers[7] & 0x40) ? "input" : "output");
+                    decoding["value"] = (int)regValue;
+                    break;
+                case 15: // I/O Port B
+                    decoding["description"] = "I/O Port B";
+                    decoding["direction"] = ((registers[7] & 0x80) ? "input" : "output");
+                    decoding["value"] = (int)regValue;
+                    break;
+            }
+
+            ret["decoding"] = decoding;
+
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/beeper
+        void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr &req,
+                                            std::function<void(const HttpResponsePtr &)> &&callback,
+                                            const std::string &id) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetEmulator(id);
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Unable to access emulator context";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            SoundManager* soundManager = context->pSoundManager;
+            if (!soundManager) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Sound manager not available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            Json::Value ret;
+            ret["device"] = "Beeper (ULA integrated)";
+            ret["output_port"] = "0xFE";
+            ret["current_level"] = "unknown"; // Internal state not accessible
+            ret["last_output"] = "unknown"; // Internal state not accessible
+            ret["frequency_range_hz"] = "20 - 10000";
+            ret["bit_resolution"] = 1;
+            ret["sound_played_since_reset"] = false; // TODO: Implement sound played tracking
+
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/gs
+        void EmulatorAPI::getStateAudioGS(const HttpRequestPtr &req,
+                                        std::function<void(const HttpResponsePtr &)> &&callback,
+                                        const std::string &id) const
+        {
+            Json::Value ret;
+            ret["status"] = "not_implemented";
+            ret["description"] = "General Sound (GS) is a sound expansion device that was planned for the ZX Spectrum but never released commercially.";
+            ret["note"] = "This endpoint is reserved for future implementation.";
+
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/covox
+        void EmulatorAPI::getStateAudioCovox(const HttpRequestPtr &req,
+                                           std::function<void(const HttpResponsePtr &)> &&callback,
+                                           const std::string &id) const
+        {
+            Json::Value ret;
+            ret["status"] = "not_implemented";
+            ret["description"] = "Covox is an 8-bit DAC (Digital-to-Analog Converter) that connects to various ports on the ZX Spectrum for sample playback.";
+            ret["note"] = "This endpoint is reserved for future implementation.";
+
+            auto resp = HttpResponse::newHttpJsonResponse(ret);
+            callback(resp);
+        }
+
+        // GET /api/v1/emulator/{id}/state/audio/channels
+        void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr &req,
+                                              std::function<void(const HttpResponsePtr &)> &&callback,
+                                              const std::string &id) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetEmulator(id);
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "Emulator with specified ID not found";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            EmulatorContext* context = emulator->GetContext();
+            if (!context) {
+                Json::Value error;
+                error["error"] = "Internal Error";
+                error["message"] = "Unable to access emulator context";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            SoundManager* soundManager = context->pSoundManager;
+            Json::Value ret;
+
+            // Beeper channel
+            Json::Value beeper;
+            beeper["available"] = true;
+            beeper["current_level"] = "unknown";
+            beeper["active"] = "unknown";
+            ret["beeper"] = beeper;
+
+            // AY channels
+            Json::Value ayChannels;
+            bool hasAY = (soundManager && soundManager->hasTurboSound());
+            ayChannels["available"] = hasAY;
+
+            if (hasAY) {
+                Json::Value chips(Json::arrayValue);
+                int ayCount = soundManager->getAYChipCount();
+
+                for (int chipIdx = 0; chipIdx < ayCount; chipIdx++) {
+                    SoundChip_AY8910* chip = soundManager->getAYChip(chipIdx);
+                    if (!chip) continue;
+
+                    Json::Value chipChannels(Json::arrayValue);
+                    const char* channelNames[] = { "A", "B", "C" };
+                    const auto* toneGens = chip->getToneGenerators();
+
+                    for (int ch = 0; ch < 3; ch++) {
+                        Json::Value channel;
+                        const auto& toneGen = toneGens[ch];
+                        channel["name"] = std::string("AY") + std::to_string(chipIdx) + channelNames[ch];
+                        channel["active"] = (toneGen.toneEnabled() || toneGen.noiseEnabled());
+                        channel["volume"] = (int)toneGen.volume();
+                        channel["envelope_enabled"] = toneGen.envelopeEnabled();
+                        chipChannels.append(channel);
+                    }
+
+                    Json::Value chipInfo;
+                    chipInfo["chip_index"] = chipIdx;
+                    chipInfo["channels"] = chipChannels;
+                    chips.append(chipInfo);
+                }
+                ayChannels["chips"] = chips;
+            }
+            ret["ay_channels"] = ayChannels;
+
+            // General Sound (not implemented)
+            Json::Value gs;
+            gs["available"] = false;
+            gs["status"] = "not_implemented";
+            ret["general_sound"] = gs;
+
+            // Covox (not implemented)
+            Json::Value covox;
+            covox["available"] = false;
+            covox["status"] = "not_implemented";
+            ret["covox"] = covox;
+
+            // Master audio state
+            Json::Value master;
+            master["muted"] = (soundManager ? soundManager->isMuted() : false);
+            master["sample_rate_hz"] = 44100;
+            master["channels"] = "stereo";
+            master["bit_depth"] = 16;
+            ret["master"] = master;
+
             auto resp = HttpResponse::newHttpJsonResponse(ret);
             callback(resp);
         }

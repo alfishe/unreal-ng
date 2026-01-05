@@ -127,6 +127,20 @@ private:
     void HandleStateScreenMode(const ClientSession& session, EmulatorContext* context);
     void HandleStateScreenFlash(const ClientSession& session, EmulatorContext* context);
 
+    // Audio state handlers
+    void HandleStateAudio(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioAY(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioAYIndex(const ClientSession& session, EmulatorContext* context, const std::string& indexStr);
+    void HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& regStr);
+    void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
+    void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
+
+    // Instance management command handlers
+    void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
+
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
     

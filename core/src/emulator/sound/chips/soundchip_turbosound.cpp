@@ -16,7 +16,12 @@ void SoundChip_TurboSound::handleFrameStart()
 void SoundChip_TurboSound::handleStep()
 {
     size_t currentTStates = _context->pCore->GetZ80()->t;
-    int32_t diff =  currentTStates - _lastTStates;
+
+    // Scale t-states by speed multiplier for correct AY audio pitch
+    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    size_t scaledCurrentTStates = currentTStates * speedMultiplier;
+
+    int32_t diff = scaledCurrentTStates - _lastTStates;
 
     if (diff > 0)
     {
@@ -63,7 +68,7 @@ void SoundChip_TurboSound::handleStep()
         }
     }
 
-    _lastTStates = currentTStates;
+    _lastTStates = scaledCurrentTStates;
 }
 
 void SoundChip_TurboSound::handleFrameEnd()

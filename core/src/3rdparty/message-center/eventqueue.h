@@ -94,7 +94,7 @@ public:
     std::string _payloadText;
 
 public:
-    SimpleTextPayload(std::string& text) : MessagePayload() { _payloadText = std::string(text); };
+    SimpleTextPayload(const std::string& text) : MessagePayload() { _payloadText = text; };
     SimpleTextPayload(const char* text) : MessagePayload() { _payloadText = std::string(text); };
     virtual ~SimpleTextPayload() = default;
 };

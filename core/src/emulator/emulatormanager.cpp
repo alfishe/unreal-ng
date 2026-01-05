@@ -2,6 +2,8 @@
 
 #include "common/modulelogger.h"
 #include "stdafx.h"
+#include "3rdparty/message-center/messagecenter.h"
+#include "3rdparty/message-center/eventqueue.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -12,7 +14,7 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
 {
     // Create a new emulator with an auto-generated UUID
     auto emulator = std::make_shared<Emulator>(symbolicId, level);
-    
+
     // Initialize the emulator
     if (emulator->Init())
     {
@@ -20,13 +22,19 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
         std::string uuid = emulator->GetUUID();
         _emulators[uuid] = emulator;
         emulator->SetState(StateInitialized);
-        
+
         LOGINFO("EmulatorManager::CreateEmulator - Created emulator with UUID: %s, Symbolic ID: '%s'",
               uuid.c_str(),
               symbolicId.empty() ? "[none]" : symbolicId.c_str());
+
+        // Emit notification that instance was created
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleTextPayload* payload = new SimpleTextPayload(uuid);
+        messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
         return emulator;
     }
-    
+
     LOGERROR("EmulatorManager::CreateEmulator - Failed to initialize emulator");
     return nullptr;
 }
@@ -34,31 +42,147 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::string& emulatorId, const std::string& symbolicId, LoggerLevel level)
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
-    
+
     // Check if an emulator with this UUID already exists
     if (_emulators.find(emulatorId) != _emulators.end())
     {
         LOGERROR("EmulatorManager::CreateEmulatorWithId - Emulator with UUID '%s' already exists", emulatorId.c_str());
         return nullptr;
     }
-    
+
     // Create a new emulator instance with the specified UUID
     auto emulator = std::make_shared<Emulator>(symbolicId, level);
-    
+
     // Initialize the emulator
     if (emulator->Init())
     {
         _emulators[emulatorId] = emulator;
         emulator->SetState(StateInitialized);
-        
+
         LOGINFO("EmulatorManager::CreateEmulatorWithId - Created emulator with UUID: %s, Symbolic ID: '%s'",
               emulatorId.c_str(),
               symbolicId.empty() ? "[none]" : symbolicId.c_str());
+
+        // Emit notification that instance was created
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleTextPayload* payload = new SimpleTextPayload(emulatorId);
+        messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
         return emulator;
     }
-    
+
     LOGERROR("EmulatorManager::CreateEmulatorWithId - Failed to initialize emulator with UUID: %s", emulatorId.c_str());
     return nullptr;
+}
+
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    // Create a new emulator instance
+    auto emulator = std::make_shared<Emulator>(symbolicId, level);
+
+    // Find the model configuration
+    Config tempConfig(emulator->GetContext());
+    const TMemModel* modelInfo = tempConfig.FindModelByShortName(modelName);
+    if (!modelInfo)
+    {
+        LOGERROR("EmulatorManager::CreateEmulatorWithModel - Unknown model: '%s'", modelName.c_str());
+        return nullptr;
+    }
+
+    // Configure the emulator for this model before initialization
+    CONFIG& config = emulator->GetContext()->config;
+    config.mem_model = modelInfo->Model;
+    config.ramsize = modelInfo->defaultRAM;
+
+    // Initialize the emulator
+    if (emulator->Init())
+    {
+        std::string uuid = emulator->GetId();
+        _emulators[uuid] = emulator;
+        emulator->SetState(StateInitialized);
+
+        LOGINFO("EmulatorManager::CreateEmulatorWithModel - Created emulator with UUID: %s, Symbolic ID: '%s', Model: '%s'",
+                uuid.c_str(),
+                symbolicId.empty() ? "[none]" : symbolicId.c_str(),
+                modelInfo->FullName);
+
+        // Emit notification that instance was created
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleTextPayload* payload = new SimpleTextPayload(uuid);
+        messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+        return emulator;
+    }
+
+    LOGERROR("EmulatorManager::CreateEmulatorWithModel - Failed to initialize emulator with model: '%s'", modelName.c_str());
+    return nullptr;
+}
+
+std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    // Create a new emulator instance
+    auto emulator = std::make_shared<Emulator>(symbolicId, level);
+
+    // Find the model configuration
+    Config tempConfig(emulator->GetContext());
+    const TMemModel* modelInfo = tempConfig.FindModelByShortName(modelName);
+    if (!modelInfo)
+    {
+        LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Unknown model: '%s'", modelName.c_str());
+        return nullptr;
+    }
+
+    // Validate RAM size for this model
+    if ((ramSize & modelInfo->AvailRAMs) == 0)
+    {
+        LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - RAM size %dKB not supported by model '%s'",
+                ramSize, modelName.c_str());
+        return nullptr;
+    }
+
+    // Configure the emulator for this model and RAM size before initialization
+    CONFIG& config = emulator->GetContext()->config;
+    config.mem_model = modelInfo->Model;
+    config.ramsize = ramSize;
+
+    // Initialize the emulator
+    if (emulator->Init())
+    {
+        std::string uuid = emulator->GetId();
+        _emulators[uuid] = emulator;
+        emulator->SetState(StateInitialized);
+
+        LOGINFO("EmulatorManager::CreateEmulatorWithModelAndRAM - Created emulator with UUID: %s, Symbolic ID: '%s', Model: '%s', RAM: %dKB",
+                uuid.c_str(),
+                symbolicId.empty() ? "[none]" : symbolicId.c_str(),
+                modelInfo->FullName,
+                ramSize);
+
+        // Emit notification that instance was created
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleTextPayload* payload = new SimpleTextPayload(uuid);
+        messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+        return emulator;
+    }
+
+    LOGERROR("EmulatorManager::CreateEmulatorWithModelAndRAM - Failed to initialize emulator with model: '%s', RAM: %dKB",
+            modelName.c_str(), ramSize);
+    return nullptr;
+}
+
+std::vector<TMemModel> EmulatorManager::GetAvailableModels() const
+{
+    // Create a temporary config to access the model list
+    // This is a bit of a hack, but since the models are static data,
+    // we can access them through any config instance
+    EmulatorContext tempContext;
+    Config tempConfig(&tempContext);
+    return tempConfig.GetAvailableModels();
 }
 
 std::shared_ptr<Emulator> EmulatorManager::GetEmulator(const std::string& emulatorId)
@@ -114,6 +238,12 @@ bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
         // Remove from map
         _emulators.erase(it);
         LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
+
+        // Emit notification that instance was destroyed
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleTextPayload* payload = new SimpleTextPayload(emulatorId);
+        messageCenter.Post(NC_EMULATOR_INSTANCE_DESTROYED, payload);
+
         return true;
     }
 

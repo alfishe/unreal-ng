@@ -282,31 +282,87 @@ void MainLoop::OnFrameEnd()
     if (!_context)
         return;
 
+
+    // Additional safety checks - ensure context integrity
+    if (!_context->pScreen || !_context->pSoundManager)
+        return;
+
+    // Basic sanity check for context corruption
+    if (_context->config.frame == 0 || _context->config.frame > 100000)
+        return;  // Invalid frame timing suggests corruption
+
     // Update counters
     _context->emulatorState.t_states += _context->config.frame;
 
     // Trigger events for peripherals
-    _context->pTape->handleFrameEnd();
-    _context->pBetaDisk->handleFrameEnd();
+    if (_context->pTape)
+    {
+        try
+        {
+            _context->pTape->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("Tape::handleFrameEnd failed: %s", e.what());
+        }
+    }
+    if (_context->pBetaDisk)
+    {
+        try
+        {
+            _context->pBetaDisk->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("BetaDisk::handleFrameEnd failed: %s", e.what());
+        }
+    }
 
     // Audio generation: Skip in turbo mode unless explicitly requested
     const CONFIG& config = _context->config;
     if (!config.turbo_mode || config.turbo_mode_audio)
     {
-        _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+        if (_context->pSoundManager)
+        {
+            try
+            {
+                _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+            }
+            catch (const std::exception& e)
+            {
+                // Log error but don't crash - audio failure shouldn't stop emulation
+                MLOGERROR("SoundManager::handleFrameEnd failed: %s", e.what());
+            }
+        }
     }
 
     // Capture video frame for recording (if recording is active)
     // This is called AFTER UpdateScreen() has rendered the current frame
     // In turbo mode, this captures every emulated frame for correct timing
-    if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
+    if (_context->pRecordingManager && _context->pRecordingManager->IsRecording() && _context->pScreen)
     {
-        _context->pRecordingManager->CaptureFrame(_context->pScreen->GetFramebufferDescriptor());
+        try
+        {
+            _context->pRecordingManager->CaptureFrame(_context->pScreen->GetFramebufferDescriptor());
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - recording failure shouldn't stop emulation
+            MLOGERROR("RecordingManager::CaptureFrame failed: %s", e.what());
+        }
     }
 
     // Notify that video frame is composed and ready for rendering
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
+    try
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
+    }
+    catch (const std::exception& e)
+    {
+        // Log error but don't crash - message center failure shouldn't stop emulation
+        MLOGERROR("MessageCenter post failed: %s", e.what());
+    }
 }
 
 void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused]] Message* message)

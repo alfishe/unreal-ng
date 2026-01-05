@@ -83,7 +83,11 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                          { "set", &CLIProcessor::HandleSetting },
                          
                          // State inspection commands
-                         { "state", &CLIProcessor::HandleState } };
+                         { "state", &CLIProcessor::HandleState },
+
+                         // Instance management commands
+                         { "start", &CLIProcessor::HandleStart },
+                         { "stop", &CLIProcessor::HandleStop } };
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -198,16 +202,13 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
 
 std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession& session)
 {
-    // First check if we have a cached emulator reference
-    if (_emulator)
-    {
-        return _emulator;
-    }
-
     // Get the selected emulator ID from the session
     std::string selectedId = session.GetSelectedEmulatorId();
     if (selectedId.empty())
     {
+        // Clear cached emulator if none selected
+        _emulator.reset();
+
         // Try to auto-select an emulator if none is selected
         auto* emulatorManager = EmulatorManager::GetInstance();
         if (emulatorManager)
@@ -219,17 +220,25 @@ std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession&
                 return _emulator;
             }
         }
+        
         return nullptr;
     }
 
-    // Get the emulator from the manager
+    // Check if we have a cached emulator reference and if it matches the selected ID
+    if (_emulator && _emulator->GetId() == selectedId)
+    {
+        return _emulator;
+    }
+
+    // Cached emulator doesn't match selected ID, need to look it up
     auto* emulatorManager = EmulatorManager::GetInstance();
     if (emulatorManager)
     {
         _emulator = emulatorManager->GetEmulator(selectedId);
+        return _emulator;
     }
 
-    return _emulator;
+    return nullptr;
 }
 
 bool CLIProcessor::ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue) const
@@ -342,8 +351,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Available commands:" << NEWLINE;
     oss << "  help, ?       - Show this help message" << NEWLINE;
     oss << "  status        - Show emulator status" << NEWLINE;
-    oss << "  list          - List available emulators" << NEWLINE;
+    oss << "  list          - List managed emulator instances" << NEWLINE;
     oss << "  select <id>   - Select an emulator" << NEWLINE;
+    oss << "  start [model] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
+    oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  reset         - Reset the emulator" << NEWLINE;
     oss << "  pause         - Pause emulation" << NEWLINE;
     oss << "  resume        - Resume emulation" << NEWLINE;
@@ -502,8 +513,21 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
             // Note: We'd need to add this to the Emulator class if it's not already there
             // response += " (" + emulator->GetSymbolicName() + ")";
 
-            response +=
-                std::string(NEWLINE) + "     Status: " + std::string(emulator->IsRunning() ? "Running" : "Stopped");
+            std::string status;
+            if (emulator->IsPaused())
+            {
+                status = "Paused";
+            }
+            else if (emulator->IsRunning())
+            {
+                status = "Running";
+            }
+            else
+            {
+                status = "Stopped";
+            }
+            
+            response += std::string(NEWLINE) + "     Status: " + status;
             response += std::string(NEWLINE) + "     Debug: " + std::string(emulator->IsDebug() ? "On" : "Off");
             response += NEWLINE;
         }
@@ -696,6 +720,13 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
     if (!emulator)
     {
         session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    // Check if the emulator is running
+    if (!emulator->IsRunning())
+    {
+        session.SendResponse("Emulator is not running. Cannot pause.");
         return;
     }
 
@@ -3258,4 +3289,262 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     }
 
     session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<std::string>& args)
+{
+    if (!args.empty())
+    {
+        // start <model> - create emulator with specific model
+        std::string modelName = args[0];
+
+        // Create emulator with the specified model
+        auto* emulatorManager = EmulatorManager::GetInstance();
+        auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName);
+
+        if (emulator)
+        {
+            // Start the emulator
+            bool startSuccess = emulatorManager->StartEmulatorAsync(emulator->GetId());
+
+            // Auto-select the newly created emulator
+            const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+
+            std::stringstream ss;
+            if (startSuccess)
+            {
+                ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
+                ss << "Model: " << modelName << NEWLINE;
+                ss << "Auto-selected as current emulator" << NEWLINE;
+            }
+            else
+            {
+                ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
+                ss << "Model: " << modelName << NEWLINE;
+                ss << "Warning: Failed to start emulator automatically" << NEWLINE;
+                ss << "Auto-selected as current emulator" << NEWLINE;
+            }
+
+            // Note: NC_EMULATOR_INSTANCE_CREATED notification is now automatically sent by EmulatorManager
+
+            session.SendResponse(ss.str());
+        }
+        else
+        {
+            std::stringstream ss;
+            ss << "Error: Failed to create emulator with model '" << modelName << "'" << NEWLINE;
+            ss << "Use 'start' without arguments for default 48K, or specify a valid model name" << NEWLINE;
+            ss << "Available models: ";
+
+            // List available models
+            auto models = emulatorManager->GetAvailableModels();
+            for (size_t i = 0; i < models.size(); ++i)
+            {
+                if (i > 0) ss << ", ";
+                ss << models[i].ShortName;
+            }
+            ss << NEWLINE;
+
+            session.SendResponse(ss.str());
+        }
+    }
+    else
+    {
+        // start - create default emulator
+        auto emulator = EmulatorManager::GetInstance()->CreateEmulator("", LoggerLevel::LogInfo);
+
+        if (emulator)
+        {
+            // Start the emulator
+            bool startSuccess = EmulatorManager::GetInstance()->StartEmulatorAsync(emulator->GetId());
+
+            // Auto-select the newly created emulator
+            const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+
+            std::stringstream ss;
+            if (startSuccess)
+            {
+                ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
+                ss << "Model: 48K (default)" << NEWLINE;
+                ss << "Auto-selected as current emulator" << NEWLINE;
+            }
+            else
+            {
+                ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
+                ss << "Model: 48K (default)" << NEWLINE;
+                ss << "Warning: Failed to start emulator automatically" << NEWLINE;
+                ss << "Auto-selected as current emulator" << NEWLINE;
+            }
+
+            // Send notification about instance creation
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleTextPayload* payload = new SimpleTextPayload(emulator->GetId());
+            messageCenter.Post(NC_EMULATOR_INSTANCE_CREATED, payload);
+
+            session.SendResponse(ss.str());
+        }
+        else
+        {
+            session.SendResponse("Error: Failed to create default emulator instance" + std::string(NEWLINE));
+        }
+    }
+}
+
+void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto* emulatorManager = EmulatorManager::GetInstance();
+    auto emulatorIds = emulatorManager->GetEmulatorIds();
+
+    if (args.empty())
+    {
+        // If no arguments provided, check if there's exactly one emulator
+        if (emulatorIds.size() == 1)
+        {
+            // Stop the single emulator directly
+            std::string actualId = emulatorIds[0];
+
+            if (emulatorManager->StopEmulator(actualId))
+            {
+                emulatorManager->RemoveEmulator(actualId);
+                std::stringstream ss;
+                ss << "Stopped emulator instance: " << actualId << NEWLINE;
+
+                // Clear selection if it was pointing to the stopped emulator
+                if (session.GetSelectedEmulatorId() == actualId)
+                {
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
+                    _emulator.reset();
+                    ss << "Cleared emulator selection" << NEWLINE;
+                }
+
+                session.SendResponse(ss.str());
+            }
+            else
+            {
+                session.SendResponse("Error: Emulator instance '" + actualId + "' not found or could not be stopped" + std::string(NEWLINE));
+            }
+            return;
+        }
+        else if (emulatorIds.empty())
+        {
+            session.SendResponse("No emulators running." + std::string(NEWLINE));
+            return;
+        }
+        else
+        {
+            session.SendResponse("Usage: stop <emulator-id> | stop all | stop (stops single emulator if only one is running)" + std::string(NEWLINE));
+            return;
+        }
+    }
+
+    std::string targetId = args[0];
+
+    if (targetId == "all")
+    {
+        // Stop all emulators
+        auto* emulatorManager = EmulatorManager::GetInstance();
+        auto emulatorIds = emulatorManager->GetEmulatorIds();
+        size_t stoppedCount = 0;
+
+        for (const auto& id : emulatorIds)
+        {
+            if (emulatorManager->StopEmulator(id))
+            {
+                // Remove from manager after stopping
+                // Note: NC_EMULATOR_INSTANCE_DESTROYED notification is now automatically sent by EmulatorManager
+                emulatorManager->RemoveEmulator(id);
+
+                stoppedCount++;
+            }
+        }
+
+        std::stringstream ss;
+        ss << "Stopped " << stoppedCount << " emulator instance(s)" << NEWLINE;
+
+        // Clear selection if it was pointing to a stopped emulator
+        std::string currentSelected = session.GetSelectedEmulatorId();
+        if (currentSelected != "none" && std::find(emulatorIds.begin(), emulatorIds.end(), currentSelected) != emulatorIds.end())
+        {
+            const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
+            // Also clear our cached emulator reference
+            _emulator.reset();
+            ss << "Cleared emulator selection" << NEWLINE;
+        }
+
+        session.SendResponse(ss.str());
+    }
+    else
+    {
+        // Check if targetId is a number (index)
+        bool isIndex = true;
+        int index = -1;
+        try
+        {
+            index = std::stoi(targetId);
+            if (index < 1) isIndex = false; // Indices start from 1
+        }
+        catch (const std::exception&)
+        {
+            isIndex = false;
+        }
+
+        std::string actualId = targetId;
+
+        if (isIndex)
+        {
+            // Convert index to emulator ID
+            auto* emulatorManager = EmulatorManager::GetInstance();
+            auto emulatorIds = emulatorManager->GetEmulatorIds();
+
+            if (index > 0 && static_cast<size_t>(index) <= emulatorIds.size())
+            {
+                actualId = emulatorIds[index - 1]; // Convert to 0-based index
+            }
+            else
+            {
+                std::stringstream ss;
+                ss << "Error: Invalid index '" << index << "'. Valid range: 1-" << emulatorIds.size() << NEWLINE;
+                ss << "Use 'list' to see available instances" << NEWLINE;
+                session.SendResponse(ss.str());
+                return;
+            }
+        }
+
+        // Stop specific emulator
+        auto* emulatorManager = EmulatorManager::GetInstance();
+        if (emulatorManager->StopEmulator(actualId))
+        {
+            // Remove from manager after stopping
+            // Note: NC_EMULATOR_INSTANCE_DESTROYED notification is now automatically sent by EmulatorManager
+            emulatorManager->RemoveEmulator(actualId);
+
+            std::stringstream ss;
+            ss << "Stopped emulator instance: " << actualId << NEWLINE;
+
+            // Clear selection if it was pointing to this emulator
+            if (session.GetSelectedEmulatorId() == actualId)
+            {
+                const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
+                // Also clear our cached emulator reference
+                _emulator.reset();
+                ss << "Cleared emulator selection" << NEWLINE;
+            }
+
+            session.SendResponse(ss.str());
+        }
+        else
+        {
+            std::stringstream ss;
+            if (isIndex)
+            {
+                ss << "Error: Could not stop emulator at index " << index << NEWLINE;
+            }
+            else
+            {
+                ss << "Error: Emulator instance '" << actualId << "' not found or could not be stopped" << NEWLINE;
+            }
+            ss << "Use 'list' to see available instances" << NEWLINE;
+            session.SendResponse(ss.str());
+        }
+    }
 }

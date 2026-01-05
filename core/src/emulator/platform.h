@@ -13,6 +13,8 @@ constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SU
 
 
 constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
+constexpr char const* NC_EMULATOR_INSTANCE_CREATED = "EMULATOR_INSTANCE_CREATED"; // New emulator instance created
+constexpr char const* NC_EMULATOR_INSTANCE_DESTROYED = "EMULATOR_INSTANCE_DESTROYED"; // Emulator instance destroyed
 
 constexpr char const* NC_SYSTEM_RESET = "RESET";                                // Event fired when system was reset
 constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Event fired when one single CPU step performed. Active in debug mode only.

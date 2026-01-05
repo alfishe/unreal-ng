@@ -534,6 +534,8 @@ void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
 {
     _context->pAudioManagerObj = obj;
     _context->pAudioCallback = callback;
+
+    MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
 }
 
 /// endregion </Integration interfaces>
@@ -618,6 +620,12 @@ void Emulator::Pause()
     if (_isPaused)
         return;
 
+    if (!_isRunning || !_mainloop)
+    {
+        // Cannot pause if not running or mainloop not initialized
+        return;
+    }
+
     _isPaused = true;
     // NOTE: Do NOT set _isRunning = false here!
     // The emulator thread is still active, just paused.
@@ -639,6 +647,12 @@ void Emulator::Resume()
 {
     if (!_isPaused)
     {
+        return;
+    }
+
+    if (!_mainloop)
+    {
+        // Cannot resume if mainloop not initialized
         return;
     }
 

@@ -50,7 +50,16 @@ void AppSoundManager::deinit()
 
 void AppSoundManager::start()
 {
-    ma_device_start(&_audioDevice);     // The device is sleeping by default, so you'll need to start it manually.
+    ma_result result = ma_device_start(&_audioDevice);     // The device is sleeping by default, so you'll need to start it manually.
+
+    if (result != MA_SUCCESS)
+    {
+        qDebug() << "AppSoundManager::start() - Failed to start audio device. Error code:" << result;
+    }
+    else
+    {
+        qDebug() << "AppSoundManager::start() - Audio device started successfully";
+    }
 
     // New wave file
     /*
@@ -107,6 +116,12 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
 
 void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSamples)
 {
+    static int callCount = 0;
+    if (++callCount == 1)
+    {
+        qDebug() << "AppSoundManager::audioCallback() - First call received with" << numSamples << "samples";
+    }
+
     AppSoundManager* appSoundManager = (AppSoundManager*)obj;
     if (appSoundManager)
     {

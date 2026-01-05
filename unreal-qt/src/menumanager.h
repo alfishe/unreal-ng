@@ -33,6 +33,7 @@ public:
 
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
+    void handleEmulatorInstanceCreated(int id, Message* message);
 
 signals:
     // Signal emitted when user requests to open a file

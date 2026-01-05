@@ -66,6 +66,12 @@ public:
     const AudioFrameDescriptor& getAudioBufferDescriptor();
     Beeper& getBeeper();
 
+    // TurboSound/AY chip access for debugging
+    bool hasTurboSound() const { return _turboSound != nullptr; }
+    SoundChip_AY8910* getAYChip(int index) const;
+    int getAYChipCount() const;
+    bool isMuted() const { return _mute; }
+
     void updateDAC(uint32_t frameTState, int16_t left, int16_t right);
     /// endregion </Methods>
 

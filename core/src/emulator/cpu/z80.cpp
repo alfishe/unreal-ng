@@ -292,20 +292,23 @@ void Z80::Z80FrameCycle()
     // This prevents mid-frame timing inconsistencies
     if (state.next_z80_frequency_multiplier != state.current_z80_frequency_multiplier)
     {
+        uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
         state.current_z80_frequency_multiplier = state.next_z80_frequency_multiplier;
         state.current_z80_frequency = state.base_z80_frequency * state.current_z80_frequency_multiplier;
-        
-        MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx (%.2f MHz)", 
-                 state.current_z80_frequency_multiplier,
-                 state.current_z80_frequency / 1'000'000.0);
+
+        // Reset rate to normal - counter represents actual t-states
+        // Speed multipliers are handled by adjusting frame duration and timings
+        cpu.rate = 256;
+
+        MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx -> %dx (%.2f MHz, rate=%d)",
+                 oldMultiplier, state.current_z80_frequency_multiplier,
+                 state.current_z80_frequency / 1'000'000.0, cpu.rate);
     }
 
-    // Calculate scaled frame limit based on speed multiplier
-    uint32_t scaledFrameLimit = config.frame * state.current_z80_frequency_multiplier;
+    // Scale frame duration by speed multiplier
+    uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;
 
-    // Video Interrupt position calculation
-    // Scale interrupt timings by the same multiplier as the frame duration
-    // This ensures interrupts occur at the correct relative position within the frame
+    // Video Interrupt position calculation - scale by multiplier for Z80 timing
     bool int_occurred = false;
     unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
     unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
@@ -313,15 +316,15 @@ void Z80::Z80FrameCycle()
     cpu.haltpos = 0;
 
     // INT interrupt handling lasts for more than 1 frame
-    if (int_end >= scaledFrameLimit)
+    if (int_end >= frameLimit)
     {
-        int_end -= scaledFrameLimit;
+        int_end -= frameLimit;
         cpu.int_pending = true;
         int_occurred = true;
     }
 
-    // Cover whole frame (control by clock cycles), scaled by speed multiplier
-    while (cpu.t < scaledFrameLimit)
+    // Cover whole frame (control by effective t-states)
+    while (cpu.t < frameLimit)
     {
         // Handle interrupts if arrived
         ProcessInterrupts(int_occurred, int_start, int_end);

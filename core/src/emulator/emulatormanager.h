@@ -72,11 +72,36 @@ public:
     std::shared_ptr<Emulator> CreateEmulatorWithId(const std::string& emulatorId, const std::string& symbolicId = "", LoggerLevel level = LoggerLevel::LogWarning);
 
     /**
+     * @brief Create a new emulator instance with a specific model configuration
+     * @param symbolicId Optional symbolic identifier for the emulator
+     * @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K")
+     * @param level Logging level for the emulator
+     * @return Shared pointer to the created emulator, or nullptr on failure
+     */
+    std::shared_ptr<Emulator> CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level = LoggerLevel::LogWarning);
+
+    /**
+     * @brief Create a new emulator instance with a specific model and custom RAM size
+     * @param symbolicId Optional symbolic identifier for the emulator
+     * @param modelName Name of the model to create
+     * @param ramSize RAM size in KB (must be supported by the model)
+     * @param level Logging level for the emulator
+     * @return Shared pointer to the created emulator, or nullptr on failure
+     */
+    std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning);
+
+    /**
      * @brief Get an existing emulator by ID
      * @param emulatorId ID of the emulator to retrieve
      * @return Shared pointer to the emulator, or nullptr if not found
      */
     std::shared_ptr<Emulator> GetEmulator(const std::string& emulatorId);
+
+    /**
+     * @brief Get a list of all available emulator models
+     * @return Vector of model information structures
+     */
+    std::vector<TMemModel> GetAvailableModels() const;
 
     /**
      * @brief Get all emulator IDs

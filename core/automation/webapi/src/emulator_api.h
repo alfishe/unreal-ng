@@ -15,30 +15,34 @@ namespace api
             METHOD_LIST_BEGIN
                 // List all emulators
                 METHOD_ADD(EmulatorAPI::get, "", drogon::Get);
-                
+
                 // Get overall emulator status
                 METHOD_ADD(EmulatorAPI::status, "/status", drogon::Get);
-                
+
+                // Get available models
+                METHOD_ADD(EmulatorAPI::getModels, "/models", drogon::Get);
+
                 // Create a new emulator
                 METHOD_ADD(EmulatorAPI::createEmulator, "", drogon::Post);
-                
+
                 // Get emulator details
                 METHOD_ADD(EmulatorAPI::getEmulator, "/{id}", drogon::Get);
-                
+
                 // Remove an emulator
                 METHOD_ADD(EmulatorAPI::removeEmulator, "/{id}", drogon::Delete);
-                
+
                 // Control emulator state
                 METHOD_ADD(EmulatorAPI::startEmulator, "/{id}/start", drogon::Post);
                 METHOD_ADD(EmulatorAPI::stopEmulator, "/{id}/stop", drogon::Post);
                 METHOD_ADD(EmulatorAPI::pauseEmulator, "/{id}/pause", drogon::Post);
                 METHOD_ADD(EmulatorAPI::resumeEmulator, "/{id}/resume", drogon::Post);
-                
+                METHOD_ADD(EmulatorAPI::resetEmulator, "/{id}/reset", drogon::Post);
+
                 // Settings management
                 METHOD_ADD(EmulatorAPI::getSettings, "/{id}/settings", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getSetting, "/{id}/settings/{name}", drogon::Get);
                 METHOD_ADD(EmulatorAPI::setSetting, "/{id}/settings/{name}", drogon::Put, drogon::Post);
-                
+
                 // State inspection
                 METHOD_ADD(EmulatorAPI::getStateMemory, "/{id}/state/memory", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getStateMemoryRAM, "/{id}/state/memory/ram", drogon::Get);
@@ -46,6 +50,15 @@ namespace api
                 METHOD_ADD(EmulatorAPI::getStateScreen, "/{id}/state/screen", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getStateScreenMode, "/{id}/state/screen/mode", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getStateScreenFlash, "/{id}/state/screen/flash", drogon::Get);
+
+                // Audio state inspection
+                METHOD_ADD(EmulatorAPI::getStateAudioAY, "/{id}/state/audio/ay", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateAudioAYIndex, "/{id}/state/audio/ay/{chip}", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateAudioAYRegister, "/{id}/state/audio/ay/register/{reg}", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateAudioBeeper, "/{id}/state/audio/beeper", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateAudioGS, "/{id}/state/audio/gs", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateAudioCovox, "/{id}/state/audio/covox", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateAudioChannels, "/{id}/state/audio/channels", drogon::Get);
             METHOD_LIST_END
 
             // List all emulators
@@ -53,9 +66,13 @@ namespace api
                     std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
             
             // Get overall emulator status
-            void status(const drogon::HttpRequestPtr &req, 
+            void status(const drogon::HttpRequestPtr &req,
                        std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
-            
+
+            // Get available models
+            void getModels(const drogon::HttpRequestPtr &req,
+                          std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
+
             // Create a new emulator
             void createEmulator(const drogon::HttpRequestPtr &req,
                               std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
@@ -86,7 +103,11 @@ namespace api
             void resumeEmulator(const drogon::HttpRequestPtr &req,
                               std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                               const std::string &id) const;
-            
+
+            void resetEmulator(const drogon::HttpRequestPtr &req,
+                             std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                             const std::string &id) const;
+
             // Settings management
             void getSettings(const drogon::HttpRequestPtr &req,
                            std::function<void(const drogon::HttpResponsePtr &)> &&callback,
@@ -124,8 +145,39 @@ namespace api
                                   const std::string &id) const;
                                   
             void getStateScreenFlash(const drogon::HttpRequestPtr &req,
+                                    std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                    const std::string &id) const;
+
+            // Audio state inspection
+            void getStateAudioAY(const drogon::HttpRequestPtr &req,
+                               std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                               const std::string &id) const;
+
+            void getStateAudioAYIndex(const drogon::HttpRequestPtr &req,
+                                    std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                    const std::string &id,
+                                    const std::string &chip) const;
+
+            void getStateAudioAYRegister(const drogon::HttpRequestPtr &req,
+                                       std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                       const std::string &id,
+                                       const std::string &reg) const;
+
+            void getStateAudioBeeper(const drogon::HttpRequestPtr &req,
                                    std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                                    const std::string &id) const;
+
+            void getStateAudioGS(const drogon::HttpRequestPtr &req,
+                               std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                               const std::string &id) const;
+
+            void getStateAudioCovox(const drogon::HttpRequestPtr &req,
+                                  std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                  const std::string &id) const;
+
+            void getStateAudioChannels(const drogon::HttpRequestPtr &req,
+                                     std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                     const std::string &id) const;
         
         private:
             // Helper method to handle emulator actions with common error handling

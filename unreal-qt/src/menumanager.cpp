@@ -29,6 +29,11 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     ObserverCallbackMethod stateCallback =
         static_cast<ObserverCallbackMethod>(&MenuManager::handleEmulatorStateChanged);
     messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    // Subscribe to emulator instance creation events
+    ObserverCallbackMethod createCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleEmulatorInstanceCreated);
+    messageCenter.AddObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
 }
 
 MenuManager::~MenuManager()
@@ -39,6 +44,10 @@ MenuManager::~MenuManager()
     ObserverCallbackMethod stateCallback =
         static_cast<ObserverCallbackMethod>(&MenuManager::handleEmulatorStateChanged);
     messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
+
+    ObserverCallbackMethod createCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleEmulatorInstanceCreated);
+    messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
 }
 
 void MenuManager::createFileMenu()
@@ -453,4 +462,31 @@ void MenuManager::handleEmulatorStateChanged(int id, Message* message)
     // Ensure we update UI on the main thread
     QMetaObject::invokeMethod(
         this, [this]() { updateMenuStates(_activeEmulator.lock()); }, Qt::QueuedConnection);
+}
+
+void MenuManager::handleEmulatorInstanceCreated(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    // Handle emulator instance creation - update menu state if we don't have an active emulator
+    if (message && message->obj && !_activeEmulator.lock())
+    {
+        SimpleTextPayload* payload = dynamic_cast<SimpleTextPayload*>(message->obj);
+        if (payload)
+        {
+            std::string createdId = payload->_payloadText;
+            auto* emulatorManager = EmulatorManager::GetInstance();
+            auto emulator = emulatorManager->GetEmulator(createdId);
+
+            if (emulator)
+            {
+                // Update menu state on main thread
+                QMetaObject::invokeMethod(
+                    this, [this, emulator]() {
+                        _activeEmulator = emulator;
+                        updateMenuStates(emulator);
+                    }, Qt::QueuedConnection);
+            }
+        }
+    }
 }
