@@ -59,12 +59,7 @@ static const std::unordered_map<
         {CT_APPLICATION_X_BZIP2, {{"application/x-bzip2"}, ""}},
         {CT_APPLICATION_X_7Z, {{"application/x-7z-compressed"}, ""}},
         {CT_APPLICATION_X_HTTPD_PHP, {{"application/x-httpd-php"}, ""}},
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-        {CT_APPLICATION_X_JAVASCRIPT,
-         {{"application/x-javascript"},
-          "application/x-javascript; charset=utf-8"}},
-#pragma GCC diagnostic pop
+//        {CT_APPLICATION_X_JAVASCRIPT, {{"application/x-javascript"}, "application/x-javascript; charset=utf-8"}},
         {CT_APPLICATION_X_FONT_OPENTYPE,
          {{"application/x-font-opentype", "font/otf"}, ""}},
         {CT_APPLICATION_X_FONT_TRUETYPE,
