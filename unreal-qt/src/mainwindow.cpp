@@ -1490,9 +1490,12 @@ void MainWindow::resetEmulator()
 {
     if (_emulator)
     {
+        // Reset handles pause/resume internally to avoid race conditions
         _emulator->Reset();
-
         _lastFrameCount = 0;
+        
+        // Update menu states
+        updateMenuStates();
     }
 }
 

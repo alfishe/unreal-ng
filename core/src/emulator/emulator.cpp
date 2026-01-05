@@ -16,6 +16,7 @@
 #include "common/filehelper.h"
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
+#include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -541,7 +542,28 @@ void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
 
 void Emulator::Reset()
 {
+    // To avoid race conditions, we must pause the emulator during reset
+    // (Z80 thread executing ROM code during reset can cause inconsistent state)
+    bool wasRunning = _isRunning && !_isPaused;
+    
+    if (wasRunning)
+    {
+        // Pause the emulator
+        Pause();
+        
+        // Give the emulator thread time to fully pause
+        // (it needs to finish the current frame and enter pause loop)
+        sleep_ms(20);
+    }
+    
+    // Now perform reset while paused (safe, no race condition)
     _core->Reset();
+    
+    // Resume if it was running before
+    if (wasRunning)
+    {
+        Resume();
+    }
 }
 
 void Emulator::Start()
