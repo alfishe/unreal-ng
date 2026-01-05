@@ -15,6 +15,20 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 # Set CMake policy to allow linking to targets in other directories
 cmake_policy(SET CMP0079 NEW)
 
+# Find OpenSSL (required by Drogon/Trantor)
+# Try to find OpenSSL, and if it fails, set the root directory explicitly
+find_package(OpenSSL QUIET)
+if (NOT OpenSSL_FOUND)
+    # Fallback: set OpenSSL root directory for Homebrew on ARM64 macOS
+    if (APPLE AND EXISTS "/opt/homebrew/opt/openssl")
+        set(OPENSSL_ROOT_DIR "/opt/homebrew/opt/openssl")
+        set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
+        set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
+        message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
+    endif ()
+    find_package(OpenSSL REQUIRED)
+endif ()
+
 # Find or build zlib for Drogon
 option(BUILD_ZLIB "Build zlib from source" ON)
 

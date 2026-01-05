@@ -162,11 +162,20 @@ endif()
 if (DROGON_CXX_STANDARD EQUAL 17)
     message(STATUS "use c++17")
     # Check for partial implementation of c++17 (Windows/OSX only?)
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-    try_compile(check_filesystem_path ${CMAKE_BINARY_DIR}/cmaketest
-        ${PROJECT_SOURCE_DIR}/cmake/tests/check_has_std_filesystem_path.cc
-        CXX_STANDARD 17)
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE)
+    # Note: Don't set CMAKE_TRY_COMPILE_TARGET_TYPE to STATIC_LIBRARY for GCC-15+
+    # as it may cause linking issues with std::filesystem
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)
+        # GCC 15+ has full std::filesystem support, skip the check
+        message(STATUS "GCC 15+ detected, assuming full std::filesystem support")
+        set(check_filesystem_path TRUE)
+    else()
+        set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+        try_compile(check_filesystem_path ${CMAKE_BINARY_DIR}/cmaketest
+            ${PROJECT_SOURCE_DIR}/cmake/tests/check_has_std_filesystem_path.cc
+            CXX_STANDARD 17)
+        set(CMAKE_TRY_COMPILE_TARGET_TYPE)
+    endif()
+    
     if (NOT check_filesystem_path)
       message(FATAL_ERROR "The std::filesystem seems to be a partial implementation,"
         " please use a newer compiler")
