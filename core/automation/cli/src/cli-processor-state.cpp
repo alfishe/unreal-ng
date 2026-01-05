@@ -42,9 +42,10 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  screen verbose - Screen configuration (detailed)" << NEWLINE;
         ss << "  screen mode    - Detailed video mode information" << NEWLINE;
         ss << "  screen flash   - Flash state and counter" << NEWLINE;
-        ss << "  audio ay       - Brief state for all AY chips available" << NEWLINE;
-        ss << "  audio ay <N>   - Detailed information about AY chip N" << NEWLINE;
-        ss << "  audio ay reg <R> - Specific AY register R with decoding" << NEWLINE;
+        ss << "  audio          - Audio device overview" << NEWLINE;
+        ss << "  audio ay       - Brief state for all AY chips (1=standard, 2=TurboSound, 3=ZX Next)" << NEWLINE;
+        ss << "  audio ay <N>   - Detailed information about AY chip N (0-based index)" << NEWLINE;
+        ss << "  audio ay <N> reg <R> - Specific AY register R of chip N (0-15)" << NEWLINE;
         ss << "  audio beeper   - Beeper state and activity" << NEWLINE;
         ss << "  audio gs       - General Sound device state" << NEWLINE;
         ss << "  audio covox    - Covox DAC state" << NEWLINE;
@@ -59,8 +60,12 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         ss << "  state screen verbose - Show screen configuration (detailed)" << NEWLINE;
         ss << "  state screen mode    - Show video mode details" << NEWLINE;
         ss << "  state screen flash   - Show flash state" << NEWLINE;
-        ss << "  state audio ay       - Show brief AY chip information" << NEWLINE;
+        ss << "  state audio ay       - Show brief AY chip overview" << NEWLINE;
         ss << "  state audio ay 0     - Show detailed info for first AY chip" << NEWLINE;
+        ss << "  state audio ay reg 0 - Show detailed decoding for AY register 0" << NEWLINE;
+        ss << "  state audio beeper   - Show beeper state" << NEWLINE;
+        ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
+
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
         
@@ -162,36 +167,36 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
 
             if (subcommand == "ay")
             {
-                // Check if there's a chip index
-                if (args.size() > 2)
-                {
-                    std::string chipArg = args[2];
-                    if (chipArg == "reg" || chipArg == "register")
-                    {
-                        // state audio ay reg <register>
-                        if (args.size() > 3)
-                        {
-                            HandleStateAudioAYRegister(session, context, args[3]);
-                            return;
-                        }
-                        else
-                        {
-                            session.SendResponse(std::string("Error: Missing register number for 'state audio ay reg'") + NEWLINE +
-                                                std::string("Usage: state audio ay reg <register>") + NEWLINE);
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        // state audio ay <index>
-                        HandleStateAudioAYIndex(session, context, chipArg);
-                        return;
-                    }
-                }
-                else
+                // Handle different AY command syntaxes
+                // args[0] = subsystem ("audio"), args[1] = subcommand ("ay")
+                // AY-specific args start at args[2]
+
+                if (args.size() <= 2)
                 {
                     // state audio ay - show brief info for all AY chips
                     HandleStateAudioAY(session, context);
+                    return;
+                }
+
+                // We have additional arguments after "ay"
+                std::string ayArg0 = args[2]; // First arg after "ay"
+
+                // Check for: state audio ay <chip> reg <register>
+                if (args.size() >= 5 && (args[3] == "reg" || args[3] == "register"))
+                {
+                    HandleStateAudioAYRegister(session, context, ayArg0, args[4]);
+                    return;
+                }
+                // Check for legacy: state audio ay reg <register> (defaults to chip 0)
+                else if ((ayArg0 == "reg" || ayArg0 == "register") && args.size() >= 4)
+                {
+                    HandleStateAudioAYRegister(session, context, "0", args[3]);
+                    return;
+                }
+                else
+                {
+                    // state audio ay <index> - show detailed info for specific chip
+                    HandleStateAudioAYIndex(session, context, ayArg0);
                     return;
                 }
             }
@@ -884,7 +889,7 @@ void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, Emulato
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& regStr)
+void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& chipStr, const std::string& regStr)
 {
     std::stringstream ss;
     SoundManager* soundManager = context->pSoundManager;
@@ -892,6 +897,19 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
     if (!soundManager || !soundManager->hasTurboSound())
     {
         ss << "Error: AY chips not available (TurboSound not initialized)" << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    // Parse chip index
+    int chipIndex = -1;
+    try
+    {
+        chipIndex = std::stoi(chipStr);
+    }
+    catch (const std::exception&)
+    {
+        ss << "Error: Invalid chip index '" << chipStr << "' (must be 0-based integer)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -916,11 +934,10 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
         return;
     }
 
-    // Use the first available AY chip
-    SoundChip_AY8910* chip = soundManager->getAYChip(0); // Use first available chip
+    SoundChip_AY8910* chip = soundManager->getAYChip(chipIndex);
     if (!chip)
     {
-        ss << "Error: No AY chips available" << NEWLINE;
+        ss << "Error: AY chip " << chipIndex << " not available" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }

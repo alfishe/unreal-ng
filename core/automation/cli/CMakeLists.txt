@@ -48,8 +48,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-# Link against core library to access BasicExtractor and other core functionality
-target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::core)
+# Note: core library is linked by the parent project (unreal-qt)
+# Static libraries should only use headers, not link dependencies
 
 # Link against Winsock on Windows
 if (WIN32)

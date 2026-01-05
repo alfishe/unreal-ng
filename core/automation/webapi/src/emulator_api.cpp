@@ -1367,17 +1367,21 @@ namespace api
                                         const std::string &id) const
         {
             auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
+            auto emulator = getEmulatorByIdOrIndex(id);
 
+            // If specific emulator not found, try to use the most recent one (CLI-style fallback)
             if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
+                emulator = manager->GetMostRecentEmulator();
+                if (!emulator) {
+                    Json::Value error;
+                    error["error"] = "Not Found";
+                    error["message"] = "No emulator available (none running)";
 
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
+                    auto resp = HttpResponse::newHttpJsonResponse(error);
+                    resp->setStatusCode(HttpStatusCode::k404NotFound);
+                    callback(resp);
+                    return;
+                }
             }
 
             EmulatorContext* context = emulator->GetContext();
@@ -1461,17 +1465,21 @@ namespace api
                                              const std::string &chipStr) const
         {
             auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
+            auto emulator = getEmulatorByIdOrIndex(id);
 
+            // If specific emulator not found, try to use the most recent one (CLI-style fallback)
             if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
+                emulator = manager->GetMostRecentEmulator();
+                if (!emulator) {
+                    Json::Value error;
+                    error["error"] = "Not Found";
+                    error["message"] = "No emulator available (none running)";
 
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
+                    auto resp = HttpResponse::newHttpJsonResponse(error);
+                    resp->setStatusCode(HttpStatusCode::k404NotFound);
+                    callback(resp);
+                    return;
+                }
             }
 
             EmulatorContext* context = emulator->GetContext();
@@ -1616,20 +1624,25 @@ namespace api
         void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr &req,
                                                 std::function<void(const HttpResponsePtr &)> &&callback,
                                                 const std::string &id,
+                                                const std::string &chipStr,
                                                 const std::string &regStr) const
         {
             auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
+            auto emulator = getEmulatorByIdOrIndex(id);
 
+            // If specific emulator not found, try to use the most recent one (CLI-style fallback)
             if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
+                emulator = manager->GetMostRecentEmulator();
+                if (!emulator) {
+                    Json::Value error;
+                    error["error"] = "Not Found";
+                    error["message"] = "No emulator available (none running)";
 
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
+                    auto resp = HttpResponse::newHttpJsonResponse(error);
+                    resp->setStatusCode(HttpStatusCode::k404NotFound);
+                    callback(resp);
+                    return;
+                }
             }
 
             EmulatorContext* context = emulator->GetContext();
@@ -1645,13 +1658,40 @@ namespace api
             }
 
             SoundManager* soundManager = context->pSoundManager;
-            if (!soundManager || !soundManager->hasTurboSound() || !soundManager->getAYChip(0)) {
+            if (!soundManager || !soundManager->hasTurboSound()) {
                 Json::Value error;
                 error["error"] = "Internal Error";
                 error["message"] = "AY chips not available";
 
                 auto resp = HttpResponse::newHttpJsonResponse(error);
                 resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+
+            // Parse chip index
+            int chipIndex = -1;
+            try {
+                chipIndex = std::stoi(chipStr);
+            } catch (const std::exception&) {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid chip index: " + chipStr;
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                callback(resp);
+                return;
+            }
+
+            SoundChip_AY8910* chip = soundManager->getAYChip(chipIndex);
+            if (!chip) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "AY chip " + chipStr + " not available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
                 callback(resp);
                 return;
             }
@@ -1682,7 +1722,6 @@ namespace api
                 return;
             }
 
-            SoundChip_AY8910* chip = soundManager->getAYChip(0); // Use first available chip
             const uint8_t* registers = chip->getRegisters();
             uint8_t regValue = registers[regNum];
 
@@ -1803,17 +1842,21 @@ namespace api
                                             const std::string &id) const
         {
             auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
+            auto emulator = getEmulatorByIdOrIndex(id);
 
+            // If specific emulator not found, try to use the most recent one (CLI-style fallback)
             if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
+                emulator = manager->GetMostRecentEmulator();
+                if (!emulator) {
+                    Json::Value error;
+                    error["error"] = "Not Found";
+                    error["message"] = "No emulator available (none running)";
 
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
+                    auto resp = HttpResponse::newHttpJsonResponse(error);
+                    resp->setStatusCode(HttpStatusCode::k404NotFound);
+                    callback(resp);
+                    return;
+                }
             }
 
             EmulatorContext* context = emulator->GetContext();
@@ -1887,17 +1930,21 @@ namespace api
                                               const std::string &id) const
         {
             auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
+            auto emulator = getEmulatorByIdOrIndex(id);
 
+            // If specific emulator not found, try to use the most recent one (CLI-style fallback)
             if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
+                emulator = manager->GetMostRecentEmulator();
+                if (!emulator) {
+                    Json::Value error;
+                    error["error"] = "Not Found";
+                    error["message"] = "No emulator available (none running)";
 
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
+                    auto resp = HttpResponse::newHttpJsonResponse(error);
+                    resp->setStatusCode(HttpStatusCode::k404NotFound);
+                    callback(resp);
+                    return;
+                }
             }
 
             EmulatorContext* context = emulator->GetContext();
@@ -1980,6 +2027,174 @@ namespace api
 
             auto resp = HttpResponse::newHttpJsonResponse(ret);
             callback(resp);
+        }
+
+        // Audio state inspection (active emulator - no ID required)
+        void EmulatorAPI::getStateAudioAYActive(const HttpRequestPtr &req,
+                                               std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            // Use the existing method but with empty string as ID (will use most recent emulator)
+            getStateAudioAY(req, std::move(callback), emulator->GetId());
+        }
+
+        void EmulatorAPI::getStateAudioAYIndexActive(const HttpRequestPtr &req,
+                                                    std::function<void(const HttpResponsePtr &)> &&callback,
+                                                    const std::string &chip) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            getStateAudioAYIndex(req, std::move(callback), emulator->GetId(), chip);
+        }
+
+        void EmulatorAPI::getStateAudioAYRegisterActive(const HttpRequestPtr &req,
+                                                       std::function<void(const HttpResponsePtr &)> &&callback,
+                                                       const std::string &chip,
+                                                       const std::string &reg) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            getStateAudioAYRegister(req, std::move(callback), emulator->GetId(), chip, reg);
+        }
+
+        void EmulatorAPI::getStateAudioBeeperActive(const HttpRequestPtr &req,
+                                                   std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            getStateAudioBeeper(req, std::move(callback), emulator->GetId());
+        }
+
+        void EmulatorAPI::getStateAudioGSActive(const HttpRequestPtr &req,
+                                               std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            getStateAudioGS(req, std::move(callback), emulator->GetId());
+        }
+
+        void EmulatorAPI::getStateAudioCovoxActive(const HttpRequestPtr &req,
+                                                  std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            getStateAudioCovox(req, std::move(callback), emulator->GetId());
+        }
+
+        void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr &req,
+                                                     std::function<void(const HttpResponsePtr &)> &&callback) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+            auto emulator = manager->GetMostRecentEmulator();
+
+            if (!emulator) {
+                Json::Value error;
+                error["error"] = "Not Found";
+                error["message"] = "No active emulator available";
+
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            getStateAudioChannels(req, std::move(callback), emulator->GetId());
+        }
+
+        // Helper method to get emulator by ID (UUID) or index (numeric)
+        std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string& idOrIndex) const
+        {
+            auto manager = EmulatorManager::GetInstance();
+
+            // Try to parse as index first (check if it's numeric)
+            bool isNumeric = true;
+            int index = -1;
+            try {
+                index = std::stoi(idOrIndex);
+            } catch (const std::exception&) {
+                isNumeric = false;
+            }
+
+            if (isNumeric && index >= 0) {
+                // It's a valid index, try to get by index
+                return manager->GetEmulatorByIndex(index);
+            } else {
+                // It's not numeric or negative, treat as UUID
+                return manager->GetEmulator(idOrIndex);
+            }
         }
     }
 }

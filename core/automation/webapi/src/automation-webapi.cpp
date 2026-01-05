@@ -81,7 +81,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     LOG_INFO << "Starting server on port 8090.";
     LOG_INFO << "HTTP API example: http://localhost:8090/api/v1/HelloWorld";
-    LOG_INFO << "HTTP Emulator API: http://localhost:8090/api/v1/EmulatorAPI";
+    LOG_INFO << "HTTP Emulator API: http://localhost:8090/api/v1/emulator";
     LOG_INFO << "WebSocket endpoint: ws://localhost:8090/api/v1/websocket";
 
     drogon::HttpAppFramework& app = drogon::app();

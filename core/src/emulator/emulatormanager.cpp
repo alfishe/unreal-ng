@@ -199,6 +199,23 @@ std::shared_ptr<Emulator> EmulatorManager::GetEmulator(const std::string& emulat
     return nullptr;
 }
 
+std::shared_ptr<Emulator> EmulatorManager::GetEmulatorByIndex(int index)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    if (index < 0 || index >= static_cast<int>(_emulators.size()))
+    {
+        LOGDEBUG("EmulatorManager::GetEmulatorByIndex - Invalid index %d (valid range: 0-%d)",
+                index, static_cast<int>(_emulators.size()) - 1);
+        return nullptr;
+    }
+
+    // Iterate through the map to find the emulator at the specified index
+    auto it = _emulators.begin();
+    std::advance(it, index);
+    return it->second;
+}
+
 std::vector<std::string> EmulatorManager::GetEmulatorIds()
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);

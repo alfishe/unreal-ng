@@ -727,8 +727,20 @@ state disk catalog A
 # Show video mode
 state screen mode
 
-# Show AY chip registers
+# Show brief AY chip overview
 state audio ay
+
+# Show detailed info for first AY chip
+state audio ay 0
+
+# Show detailed decoding for AY register 0 of chip 0
+state audio ay 0 register 0
+
+# Show beeper state
+state audio beeper
+
+# Show all audio channels mixer state
+state audio channels
 ```
 
 #### 6.1 Memory Configuration & Paging
@@ -1424,8 +1436,8 @@ Inspect audio hardware state including beeper, AY-3-8912 PSG, General Sound, and
 | :--- | :--- | :--- | :--- | :--- |
 | `state audio beeper` | | | Show beeper state:<br/>• Current output level (0/1)<br/>• Last toggle timestamp<br/>• Toggle frequency estimate<br/>• Output waveform visualization<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio ay` | | | Show brief state for all AY chips available:<br/>• Number of AY chips (1 = standard, 2 = TurboSound, 3 = ZX Next)<br/>• Basic info for each AY: type, active channels, envelope state<br/>• Whether sound was played since reset via each device | 🔮 Planned |
-| `state audio ay <index>` | | `<chip-index>` | Show detailed information about selected AY chip:<br/>• Chip index (0-based)<br/>• Chip type (AY-3-8912, YM2149, etc.)<br/>• All register values (0-15) with decoding<br/>• Channel A/B/C: frequency, volume, mixer state<br/>• Envelope shape, period, and current phase<br/>• Noise period and LFSR state<br/>• I/O ports A/B values and direction<br/>• Whether sound was played since reset via this device | 🔮 Planned |
-| `state audio ay register <N>` | | `<register>` | Show specific AY register (0-15) with full decoding:<br/>**Example: `state audio ay register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately) | 🔮 Planned |
+| `state audio ay <index>` | | `<chip-index>` | Show detailed information about selected AY chip (0-based indexing):<br/>• Chip index (0=first chip, 1=second chip for TurboSound)<br/>• Chip type (AY-3-8912, YM2149, etc.)<br/>• All register values (0-15) with decoding<br/>• Channel A/B/C: frequency, volume, mixer state<br/>• Envelope shape, period, and current phase<br/>• Noise period and LFSR state<br/>• I/O ports A/B values and direction<br/>• Whether sound was played since reset via this device | 🔮 Planned |
+| `state audio ay <chip> register <N>` | | `<chip-index> <register>` | Show specific AY register (0-15) of specified chip with full decoding and frequency calculations:<br/>**Example: `state audio ay 0 register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately)<br/>• Bit-by-bit decoding with meaning for each register type | 🔮 Planned |
 | `state audio gs` | | | Show General Sound device state (if available):<br/>• Device type and model<br/>• Current register values<br/>• Active channels and volume levels<br/>• Sample playback state<br/>• DMA status (if applicable)<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio covox` | | | Show Covox DAC state:<br/>• DAC model (Covox, SounDrive, etc.)<br/>• Current output level (8-bit value)<br/>• Sample rate and buffer status<br/>• Port address being used<br/>• Whether sound was played since reset via this device | 🔮 Planned |
 | `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY chips: per-channel ON/OFF, volume<br/>• General Sound: active channels, levels<br/>• Covox: current level<br/>• Master output level and mute state | 🔮 Planned |
@@ -1515,14 +1527,21 @@ private:
    - Formats output for text display
 
 2. **WebAPI Interface** (`AutomationWebAPI`):
-   - New endpoint: `GET /api/v1/emulator/{id}/state/{subsystem}`
-   - Query parameters for subcommands
-   - Returns JSON-formatted state data
+   - **Base URL**: `http://localhost:8090/api/v1/emulator`
+   - **Two endpoint patterns supported:**
+     - `GET /api/v1/emulator/{id}/state/audio/*` - Target specific emulator by UUID or index
+     - `GET /api/v1/emulator/state/audio/*` - Use active/most recent emulator (no ID required)
+   - Returns JSON-formatted audio state data
+   - **Emulator Addressing**: `{id}` can be either:
+     - **UUID**: Full emulator UUID string (e.g., "550e8400-e29b-41d4-a716-446655440000")
+     - **Index**: Zero-based numeric index (e.g., "0", "1", "2")
+   - **Emulator Selection**: If specified ID/index doesn't exist, falls back to most recent emulator
    - Examples:
-     - `GET /api/v1/emulator/test/state/memory` - All memory info
-     - `GET /api/v1/emulator/test/state/memory?detail=rom` - ROM only
-     - `GET /api/v1/emulator/test/state/ports` - All ports
-     - `GET /api/v1/emulator/test/state/port/0xFE` - Specific port
+     - `GET http://localhost:8090/api/v1/emulator/0/state/audio/ay` - AY overview (emulator index 0)
+     - `GET http://localhost:8090/api/v1/emulator/550e8400-e29b-41d4-a716-446655440000/state/audio/ay` - AY overview (by UUID)
+     - `GET http://localhost:8090/api/v1/emulator/state/audio/ay` - AY overview (active emulator)
+     - `GET http://localhost:8090/api/v1/emulator/0/state/audio/ay/0/register/0` - AY register 0 (emulator 0)
+     - `GET http://localhost:8090/api/v1/emulator/state/audio/beeper` - Beeper state (active emulator)
 
 3. **Python Bindings**:
    ```python
@@ -1536,6 +1555,10 @@ private:
    print(state.sysvars.PROG)      # System variable
    print(state.tape())            # Tape status
    print(state.screen.mode())     # Video mode
+   print(state.audio.ay())        # All AY chips overview
+   print(state.audio.ay(0))       # Detailed AY chip 0 info
+   print(state.audio.ay(0).register(0))  # AY chip 0 register 0
+   print(state.audio.beeper())    # Beeper state
    ```
 
 4. **Lua Bindings**:
@@ -1549,6 +1572,10 @@ private:
    print(emu.state.sysvars.PROG)  -- System variable
    print(emu.state.tape())        -- Tape status
    print(emu.state.screen.mode()) -- Video mode
+   print(emu.state.audio.ay())    -- All AY chips overview
+   print(emu.state.audio.ay(0))   -- Detailed AY chip 0 info
+   print(emu.state.audio.ay(0).register(0)) -- AY chip 0 register 0
+   print(emu.state.audio.beeper()) -- Beeper state
    ```
 
 **Data Sources**:

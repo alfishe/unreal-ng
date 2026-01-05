@@ -131,7 +131,7 @@ private:
     void HandleStateAudio(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioAY(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioAYIndex(const ClientSession& session, EmulatorContext* context, const std::string& indexStr);
-    void HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& regStr);
+    void HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& chipStr, const std::string& regStr);
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
