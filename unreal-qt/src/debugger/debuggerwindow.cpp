@@ -412,8 +412,25 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
         return;
 
     SimpleNumberPayload* payload = static_cast<SimpleNumberPayload*>(message->obj);
-    _emulatorState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
+    EmulatorStateEnum newState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
 
+    // NOTE: State change events are broadcast globally by all emulators
+    // We must verify the state change is from OUR tracked emulator before reacting
+    // If we don't have an emulator, ignore all state changes
+    if (!_emulator)
+    {
+        return;
+    }
+
+    // Verify this state change is from OUR emulator by checking its actual state
+    // (since messages don't carry emulator ID, we can't tell which emulator it's from)
+    if (_emulator->GetState() != newState)
+    {
+        // State change is from a different emulator, ignore it
+        return;
+    }
+
+    _emulatorState = newState;
     qDebug() << "DebuggerWindow::handleEmulatorStateChanged(" << getEmulatorStateName(_emulatorState) << ")";
 
     dispatchToMainThread([this]() {
