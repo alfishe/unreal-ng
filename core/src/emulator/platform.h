@@ -49,6 +49,7 @@ enum PlatformModulesEnum : uint8_t
     MODULE_LOADER               = 9,
     MODULE_DEBUGGER             = 10,
     MODULE_DISASSEMBLER         = 11,
+    MODULE_RECORDING            = 12,
 
     MODULE_ALL                  = 0xFF
 };
@@ -184,6 +185,15 @@ enum PlatformDisassemblerSubmodulesEnum : uint16_t
     SUBMODULE_DISASSEMBLER_CORE     = 0x0001,
 
     SUBMODULE_DISASSEMBLER_ALL      = 0xFFFF
+};
+
+enum PlatformRecordingSubmodulesEnum : uint16_t
+{
+    SUBMODULE_RECORDING_NONE        = 0x0000,
+    SUBMODULE_RECORDING_MANAGER     = 0x0001,
+    SUBMODULE_RECORDING_ENCODER     = 0x0002,
+
+    SUBMODULE_RECORDING_ALL         = 0xFFFF
 };
 
 /// endregion </Logging / Tracing data>
@@ -382,6 +392,19 @@ struct CONFIG
 
 	uint8_t floatbus, floatdos;
 	bool portff;
+
+	/// Speed multiplier: 1x (default), 2x, 4x, 8x, or 16x
+	/// Multiplies the number of t-states executed per frame
+	uint8_t speed_multiplier = 1;
+
+	/// Turbo/Max speed mode - runs emulation as fast as possible
+	/// When enabled, disables audio synchronization for maximum performance
+	bool turbo_mode = false;
+
+	/// Generate audio samples even in turbo mode
+	/// Useful for video capture or when recording while in turbo mode
+	/// Audio will play at increased pitch due to faster execution
+	bool turbo_mode_audio = false;
 
 	int modem_port; //, modem_scheme;
 	int zifi_port;
@@ -722,6 +745,7 @@ struct EmulatorState
     uint32_t base_z80_frequency;                // x1 base CPU clock generator (in Hz)
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
+    uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
 
     /// endregion </Runtime CPU parameters
 

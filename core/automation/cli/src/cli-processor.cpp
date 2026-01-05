@@ -16,13 +16,13 @@
 #include <string>
 #include <vector>
 
-#include "emulator/memory/memoryaccesstracker.h"
-#include "emulator/platform.h"
-#include "platform-sockets.h"
 #include "base/featuremanager.h"
 #include "common/stringhelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memoryaccesstracker.h"
+#include "emulator/platform.h"
+#include "platform-sockets.h"
 
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const
@@ -37,50 +37,53 @@ void ClientSession::SendResponse(const std::string& message) const
 CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 {
     // Initialize command handlers map
-    _commandHandlers = {{"help", &CLIProcessor::HandleHelp},
-                        {"?", &CLIProcessor::HandleHelp},
-                        {"status", &CLIProcessor::HandleStatus},
-                        {"list", &CLIProcessor::HandleList},
-                        {"select", &CLIProcessor::HandleSelect},
-                        {"reset", &CLIProcessor::HandleReset},
-                        {"pause", &CLIProcessor::HandlePause},
-                        {"resume", &CLIProcessor::HandleResume},
-                        {"step", &CLIProcessor::HandleStepIn},             // Always one instruction
-                        {"stepin", &CLIProcessor::HandleStepIn},           // Always one instruction
-                        {"steps", &CLIProcessor::HandleSteps},             // Execute 1...N instructions
-                        {"stepover", &CLIProcessor::HandleStepOver},       // Execute instruction, skip calls
-                        {"memory", &CLIProcessor::HandleMemory},
-                        {"registers", &CLIProcessor::HandleRegisters},
-                        {"debugmode", &CLIProcessor::HandleDebugMode},
+    _commandHandlers = { { "help", &CLIProcessor::HandleHelp },
+                         { "?", &CLIProcessor::HandleHelp },
+                         { "status", &CLIProcessor::HandleStatus },
+                         { "list", &CLIProcessor::HandleList },
+                         { "select", &CLIProcessor::HandleSelect },
+                         { "reset", &CLIProcessor::HandleReset },
+                         { "pause", &CLIProcessor::HandlePause },
+                         { "resume", &CLIProcessor::HandleResume },
+                         { "step", &CLIProcessor::HandleStepIn },        // Always one instruction
+                         { "stepin", &CLIProcessor::HandleStepIn },      // Always one instruction
+                         { "steps", &CLIProcessor::HandleSteps },        // Execute 1...N instructions
+                         { "stepover", &CLIProcessor::HandleStepOver },  // Execute instruction, skip calls
+                         { "memory", &CLIProcessor::HandleMemory },
+                         { "registers", &CLIProcessor::HandleRegisters },
+                         { "debugmode", &CLIProcessor::HandleDebugMode },
 
-                        // Breakpoint commands
-                        {"bp", &CLIProcessor::HandleBreakpoint},          // Set execution breakpoint
-                        {"break", &CLIProcessor::HandleBreakpoint},       // Alias for bp
-                        {"breakpoint", &CLIProcessor::HandleBreakpoint},  // Alias for bp
-                        {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
-                        {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
-                        {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
-                        {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
-                        {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
-                        {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
-                        {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
+                         // Breakpoint commands
+                         { "bp", &CLIProcessor::HandleBreakpoint },          // Set execution breakpoint
+                         { "break", &CLIProcessor::HandleBreakpoint },       // Alias for bp
+                         { "breakpoint", &CLIProcessor::HandleBreakpoint },  // Alias for bp
+                         { "bplist", &CLIProcessor::HandleBPList },          // List all breakpoints
+                         { "wp", &CLIProcessor::HandleWatchpoint },          // Set memory read/write watchpoint
+                         { "bport", &CLIProcessor::HandlePortBreakpoint },   // Set port breakpoint
+                         { "bpclear", &CLIProcessor::HandleBPClear },        // Clear breakpoints
+                         { "bpgroup", &CLIProcessor::HandleBPGroup },        // Manage breakpoint groups
+                         { "bpon", &CLIProcessor::HandleBPActivate },        // Activate breakpoints
+                         { "bpoff", &CLIProcessor::HandleBPDeactivate },     // Deactivate breakpoints
 
-                        {"open", &CLIProcessor::HandleOpen},
-                        {"exit", &CLIProcessor::HandleExit},
-                        {"quit", &CLIProcessor::HandleExit},
-                        {"dummy", &CLIProcessor::HandleDummy},
-                        {"memcounters", &CLIProcessor::HandleMemCounters},
-                        {"memstats", &CLIProcessor::HandleMemCounters},
-                        {"calltrace", &CLIProcessor::HandleCallTrace},
-                        {"feature", &CLIProcessor::HandleFeature},
-                        
-                        // BASIC commands
-                        {"basic", &CLIProcessor::HandleBasic},
-                        
-                        // Settings commands
-                        {"setting", &CLIProcessor::HandleSetting},
-                        {"settings", &CLIProcessor::HandleSetting},
-                        {"set", &CLIProcessor::HandleSetting}};
+                         { "open", &CLIProcessor::HandleOpen },
+                         { "exit", &CLIProcessor::HandleExit },
+                         { "quit", &CLIProcessor::HandleExit },
+                         { "dummy", &CLIProcessor::HandleDummy },
+                         { "memcounters", &CLIProcessor::HandleMemCounters },
+                         { "memstats", &CLIProcessor::HandleMemCounters },
+                         { "calltrace", &CLIProcessor::HandleCallTrace },
+                         { "feature", &CLIProcessor::HandleFeature },
+
+                         // BASIC commands
+                         { "basic", &CLIProcessor::HandleBasic },
+
+                         // Settings commands
+                         { "setting", &CLIProcessor::HandleSetting },
+                         { "settings", &CLIProcessor::HandleSetting },
+                         { "set", &CLIProcessor::HandleSetting },
+                         
+                         // State inspection commands
+                         { "state", &CLIProcessor::HandleState } };
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -283,11 +286,11 @@ std::string CLIProcessor::FormatForTerminal(const std::string& text)
 {
     std::string result;
     result.reserve(text.size() + text.size() / 10);  // Reserve extra space for \r characters
-    
+
     for (size_t i = 0; i < text.size(); ++i)
     {
         char c = text[i];
-        
+
         if (c == '\n')
         {
             // Check if this \n is already part of \r\n
@@ -321,7 +324,7 @@ std::string CLIProcessor::FormatForTerminal(const std::string& text)
             result += c;
         }
     }
-    
+
     return result;
 }
 
@@ -368,6 +371,12 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  feature <name> on|off        - Enable or disable a feature" << NEWLINE;
     oss << "  feature <name> mode <mode>   - Set mode for a feature" << NEWLINE;
     oss << "  feature save                 - Save current feature settings to features.ini" << NEWLINE;
+    oss << NEWLINE;
+    oss << "State Inspection:" << NEWLINE;
+    oss << "  state screen                 - Show screen configuration (brief)" << NEWLINE;
+    oss << "  state screen verbose         - Show screen configuration (detailed)" << NEWLINE;
+    oss << "  state screen mode            - Show video mode details" << NEWLINE;
+    oss << "  state screen flash           - Show flash state and counter" << NEWLINE;
     oss << NEWLINE;
     oss << "Emulator Settings:" << NEWLINE;
     oss << "  setting, setting list        - List all emulator settings and their values" << NEWLINE;
@@ -616,8 +625,11 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
 void CLIProcessor::HandleExit(const ClientSession& session, const std::vector<std::string>& args)
 {
     std::stringstream ss;
-    ss << "Goodbye!";
+    ss << "Goodbye!" << NEWLINE;
     session.SendResponse(ss.str());
+
+    // Mark the session for closure - it will be closed after command processing
+    const_cast<ClientSession&>(session).MarkForClosure();
 }
 
 void CLIProcessor::HandleDummy(const ClientSession& session, const std::vector<std::string>& args)
@@ -782,8 +794,9 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
-                                                                                      z80State, memory, &decodedBefore);
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
+        buffer, initialPC, &commandLen, z80State, memory, &decodedBefore
+    );
 
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
@@ -928,8 +941,9 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
-                                                                                      z80State, memory, &decodedBefore);
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
+        buffer, initialPC, &commandLen, z80State, memory, &decodedBefore
+    );
 
     // Execute the step-over operation
     emulator->StepOver();
@@ -1113,7 +1127,7 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
             uint8_t value = memory->DirectReadFromZ80Memory(byteAddr);
             oss << (value >= 32 && value <= 126 ? static_cast<char>(value) : '.');
         }
-        
+
         oss << NEWLINE;
     }
 
@@ -2223,9 +2237,9 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
     uint64_t totalExecutes = 0;
 
     // Get per-Z80 bank (4 banks of 16KB each)
-    uint64_t bankReads[4] = {0};
-    uint64_t bankWrites[4] = {0};
-    uint64_t bankExecutes[4] = {0};
+    uint64_t bankReads[4] = { 0 };
+    uint64_t bankWrites[4] = { 0 };
+    uint64_t bankExecutes[4] = { 0 };
 
     for (int bank = 0; bank < 4; bank++)
     {
@@ -2253,7 +2267,7 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
     ss << "Z80 Memory Banks (16KB each):" << NEWLINE;
     ss << "----------------------------" << NEWLINE;
 
-    const char* bankNames[4] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
+    const char* bankNames[4] = { "0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF" };
 
     // Process each bank
     for (int bank = 0; bank < 4; bank++)
@@ -2412,7 +2426,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
 
                 // type
-                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+                const char* typenames[] = { "JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ" };
                 oss << StringHelper::Format("%-6s   ", typenames[static_cast<int>(ev.type)]);
                 oss << StringHelper::Format("%04X     ", ev.target_addr);
                 oss << StringHelper::Format("%02X      ", (int)ev.flags);
@@ -2426,8 +2440,9 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 // banks
                 for (int b = 0; b < 4; ++b)
                 {
-                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
-                                                (int)ev.banks[b].page_num);
+                    oss << StringHelper::Format(
+                        "%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM", (int)ev.banks[b].page_num
+                    );
                 }
 
                 // stack top
@@ -2457,7 +2472,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 const auto& ev = hot.event;
                 oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
                 // type
-                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
+                const char* typenames[] = { "JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ" };
                 oss << StringHelper::Format("%-6s ", typenames[static_cast<int>(ev.type)]);
                 oss << StringHelper::Format("%04X     ", ev.target_addr);
                 oss << StringHelper::Format("%02X     ", (int)ev.flags);
@@ -2471,8 +2486,9 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 // banks
                 for (int b = 0; b < 4; ++b)
                 {
-                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
-                                                (int)ev.banks[b].page_num);
+                    oss << StringHelper::Format(
+                        "%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM", (int)ev.banks[b].page_num
+                    );
                 }
                 // stack top
                 for (int s = 0; s < 3; ++s)
@@ -2507,7 +2523,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
             ss << "calltrace_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S") << ".yaml";
             filename = ss.str();
         }
-        
+
         // Use CallTraceBuffer's SaveToFile method
         if (!callTrace->SaveToFile(filename))
         {
@@ -2531,8 +2547,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         size_t hot_capacity = callTrace->HotCapacity();
         size_t cold_bytes = cold_count * sizeof(Z80ControlFlowEvent);
         size_t hot_bytes = hot_count * sizeof(HotEvent);
-        auto format_bytes = [](size_t bytes) -> std::string
-        {
+        auto format_bytes = [](size_t bytes) -> std::string {
             char buf[32];
             if (bytes >= 1024 * 1024)
                 snprintf(buf, sizeof(buf), "%.2f MB", bytes / 1024.0 / 1024.0);
@@ -2556,7 +2571,8 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         std::vector<uint32_t> loop_counts;
         for (const auto& ev : allCold)
         {
-            if (ev.was_hot) was_hot_count++;
+            if (ev.was_hot)
+                was_hot_count++;
             loop_counts.push_back(ev.loop_count);
         }
 
@@ -2566,7 +2582,8 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
         for (size_t i = 0; i < std::min<size_t>(5, loop_counts.size()); ++i)
         {
             oss << loop_counts[i];
-            if (i + 1 < std::min<size_t>(5, loop_counts.size())) oss << ", ";
+            if (i + 1 < std::min<size_t>(5, loop_counts.size()))
+                oss << ", ";
         }
         oss << NEWLINE;
 
@@ -2600,7 +2617,7 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
         session.SendResponse(out.str());
         return;
     }
-    
+
     // Feature command logic (moved from FeatureManager)
     if (args.empty() || (args.size() == 1 && args[0].empty()))
     {
@@ -2609,7 +2626,9 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
         const int state_width = 7;
         const int mode_width = 10;
         const int desc_width = 60;
-        const std::string separator = "------------------------------------------------------------------------------------------------------------------";
+        const std::string separator =
+            "----------------------------------------------------------------------------------------------------------"
+            "--------";
 
         out << separator << NEWLINE;
         out << "| " << std::left << std::setw(name_width) << "Name"
@@ -2623,13 +2642,12 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
             std::string state_str = f.enabled ? Features::kStateOn : Features::kStateOff;
             std::string mode_str = f.mode.empty() ? "" : f.mode;
 
-            out << "| " << std::left << std::setw(name_width) << f.id
-                << "| " << std::left << std::setw(state_width) << state_str
-                << "| " << std::left << std::setw(mode_width) << mode_str
-                << "| " << std::left << f.description << NEWLINE;
+            out << "| " << std::left << std::setw(name_width) << f.id << "| " << std::left << std::setw(state_width)
+                << state_str << "| " << std::left << std::setw(mode_width) << mode_str << "| " << std::left
+                << f.description << NEWLINE;
         }
         out << separator << NEWLINE;
-       
+
         session.SendResponse(out.str());
         return;
     }
@@ -2714,13 +2732,10 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
             }
         }
     }
-    
+
     // Usage/help output - only shown for errors or invalid commands
-    out << "Usage:" << NEWLINE
-        << "  feature <feature> on|off" << NEWLINE
-        << "  feature <feature> mode <mode>" << NEWLINE
-        << "  feature save" << NEWLINE
-        << "  feature" << NEWLINE;
+    out << "Usage:" << NEWLINE << "  feature <feature> on|off" << NEWLINE << "  feature <feature> mode <mode>"
+        << NEWLINE << "  feature save" << NEWLINE << "  feature" << NEWLINE;
     session.SendResponse(out.str());
 }
 
@@ -2798,8 +2813,9 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
-                                                                                      z80State, memory, &decodedBefore);
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
+        buffer, initialPC, &commandLen, z80State, memory, &decodedBefore
+    );
 
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
@@ -2932,7 +2948,7 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             // Extract from memory using system variables
             BasicExtractor extractor;
             Memory* memory = emulator->GetMemory();
-            
+
             if (!memory)
             {
                 session.SendResponse(std::string("Error: Unable to access emulator memory.") + NEWLINE);
@@ -2940,10 +2956,12 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             }
 
             std::string basicListing = extractor.extractFromMemory(memory);
-            
+
             if (basicListing.empty())
             {
-                session.SendResponse(std::string("No BASIC program found in memory or invalid program structure.") + NEWLINE);
+                session.SendResponse(
+                    std::string("No BASIC program found in memory or invalid program structure.") + NEWLINE
+                );
                 return;
             }
 
@@ -2966,7 +2984,9 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
         }
         else
         {
-            session.SendResponse(std::string("Error: Invalid syntax. Use 'basic' to see available commands.") + NEWLINE);
+            session.SendResponse(
+                std::string("Error: Invalid syntax. Use 'basic' to see available commands.") + NEWLINE
+            );
         }
     }
     else if (subcommand == "save")
@@ -2979,8 +2999,10 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
     }
     else
     {
-        session.SendResponse(std::string("Error: Unknown BASIC subcommand: ") + subcommand + NEWLINE +
-                           "Use 'basic' to see available commands." + NEWLINE);
+        session.SendResponse(
+            std::string("Error: Unknown BASIC subcommand: ") + subcommand + NEWLINE +
+            "Use 'basic' to see available commands." + NEWLINE
+        );
     }
 }
 
@@ -3011,20 +3033,33 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << "Current Settings:" << NEWLINE;
         ss << "==================" << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "I/O Acceleration:" << NEWLINE;
         ss << "  fast_tape     = " << (config.tape_traps ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
-        ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)" << NEWLINE;
+        ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)"
+           << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "Disk Interface:" << NEWLINE;
-        ss << "  trdos_present = " << (config.trdos_present ? "on" : "off") << "  (TR-DOS Beta Disk interface)" << NEWLINE;
+        ss << "  trdos_present = " << (config.trdos_present ? "on" : "off") << "  (TR-DOS Beta Disk interface)"
+           << NEWLINE;
         ss << "  trdos_traps   = " << (config.trdos_traps ? "on" : "off") << "  (TR-DOS traps)" << NEWLINE;
         ss << NEWLINE;
-        
+
+        ss << "Performance & Speed:" << NEWLINE;
+        ss << "  speed         = ";
+        if (config.turbo_mode)
+            ss << "unlimited";
+        else
+            ss << (int)config.speed_multiplier << "x";
+        ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
+        ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
+           << NEWLINE;
+        ss << NEWLINE;
+
         ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
         ss << "Example: setting fast_tape on" << NEWLINE;
-        
+
         session.SendResponse(ss.str());
         return;
     }
@@ -3041,20 +3076,33 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << "Current Settings:" << NEWLINE;
         ss << "==================" << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "I/O Acceleration:" << NEWLINE;
         ss << "  fast_tape     = " << (config.tape_traps ? "on" : "off") << "  (Fast tape loading)" << NEWLINE;
-        ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)" << NEWLINE;
+        ss << "  fast_disk     = " << (config.wd93_nodelay ? "on" : "off") << "  (Fast disk I/O - no WD1793 delays)"
+           << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "Disk Interface:" << NEWLINE;
-        ss << "  trdos_present = " << (config.trdos_present ? "on" : "off") << "  (TR-DOS Beta Disk interface)" << NEWLINE;
+        ss << "  trdos_present = " << (config.trdos_present ? "on" : "off") << "  (TR-DOS Beta Disk interface)"
+           << NEWLINE;
         ss << "  trdos_traps   = " << (config.trdos_traps ? "on" : "off") << "  (TR-DOS traps)" << NEWLINE;
         ss << NEWLINE;
-        
+
+        ss << "Performance & Speed:" << NEWLINE;
+        ss << "  speed         = ";
+        if (config.turbo_mode)
+            ss << "unlimited";
+        else
+            ss << (int)config.speed_multiplier << "x";
+        ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
+        ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
+           << NEWLINE;
+        ss << NEWLINE;
+
         ss << "Use: setting <name> <value>  to change a setting" << NEWLINE;
         ss << "Example: setting fast_tape on" << NEWLINE;
-        
+
         session.SendResponse(ss.str());
         return;
     }
@@ -3063,7 +3111,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     if (args.size() == 1)
     {
         std::stringstream ss;
-        
+
         if (settingName == "fast_tape")
         {
             ss << "fast_tape = " << (config.tape_traps ? "on" : "off") << NEWLINE;
@@ -3084,39 +3132,89 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
             ss << "trdos_traps = " << (config.trdos_traps ? "on" : "off") << NEWLINE;
             ss << "Description: Use TR-DOS traps for faster disk operations" << NEWLINE;
         }
+        else if (settingName == "speed" || settingName == "max_cpu_speed")
+        {
+            ss << "speed = ";
+            if (config.turbo_mode)
+                ss << "unlimited" << NEWLINE;
+            else
+                ss << (int)config.speed_multiplier << "x" << NEWLINE;
+            ss << "Description: Maximum CPU speed multiplier (1, 2, 4, 8, 16, unlimited)" << NEWLINE;
+        }
+        else if (settingName == "turbo_audio")
+        {
+            ss << "turbo_audio = " << (config.turbo_mode_audio ? "on" : "off") << NEWLINE;
+            ss << "Description: Enable audio generation in turbo mode (high pitch)" << NEWLINE;
+        }
         else
         {
             ss << "Error: Unknown setting '" << settingName << "'" << NEWLINE;
             ss << "Use 'setting' to see all available settings" << NEWLINE;
         }
-        
+
         session.SendResponse(ss.str());
         return;
     }
 
     // Setting name and value provided - change the setting
     std::string value = args[1];
-    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+    std::string valueLower = value;
+    std::transform(valueLower.begin(), valueLower.end(), valueLower.begin(), ::tolower);
 
-    // Parse boolean value
+    // Apply the setting
+    std::stringstream ss;
+
+    // Handle non-boolean settings first
+    if (settingName == "speed" || settingName == "max_cpu_speed")
+    {
+        if (valueLower == "unlimited" || valueLower == "max")
+        {
+            emulator->EnableTurboMode(config.turbo_mode_audio);
+            ss << "Setting changed: speed = unlimited (Turbo Mode)" << NEWLINE;
+        }
+        else
+        {
+            try
+            {
+                int m = std::stoi(valueLower);
+                if (m == 1 || m == 2 || m == 4 || m == 8 || m == 16)
+                {
+                    emulator->DisableTurboMode();
+                    emulator->SetSpeedMultiplier(m);
+                    ss << "Setting changed: speed = " << m << "x" << NEWLINE;
+                }
+                else
+                {
+                    ss << "Error: Invalid speed multiplier " << m << ". Use 1, 2, 4, 8, 16, or unlimited" << NEWLINE;
+                }
+            }
+            catch (...)
+            {
+                ss << "Error: Invalid value '" << value << "'. Use 1, 2, 4, 8, 16, or unlimited" << NEWLINE;
+            }
+        }
+        session.SendResponse(ss.str());
+        return;
+    }
+
+    // Parse boolean value for remaining settings
     bool boolValue = false;
-    if (value == "on" || value == "1" || value == "true" || value == "yes")
+    if (valueLower == "on" || valueLower == "1" || valueLower == "true" || valueLower == "yes")
     {
         boolValue = true;
     }
-    else if (value == "off" || value == "0" || value == "false" || value == "no")
+    else if (valueLower == "off" || valueLower == "0" || valueLower == "false" || valueLower == "no")
     {
         boolValue = false;
     }
     else
     {
-        session.SendResponse(std::string("Error: Invalid value '") + value + "'. Use: on/off, true/false, 1/0, or yes/no" + NEWLINE);
+        session.SendResponse(
+            std::string("Error: Invalid value '") + value + "'. Use: on/off, true/false, 1/0, or yes/no" + NEWLINE
+        );
         return;
     }
 
-    // Apply the setting
-    std::stringstream ss;
-    
     if (settingName == "fast_tape")
     {
         config.tape_traps = boolValue ? 1 : 0;
@@ -3142,11 +3240,22 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << "Setting changed: trdos_traps = " << (boolValue ? "on" : "off") << NEWLINE;
         ss << "TR-DOS traps are now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
     }
+    else if (settingName == "turbo_audio")
+    {
+        config.turbo_mode_audio = boolValue;
+        if (config.turbo_mode)
+        {
+            // Re-enable turbo with/without audio to apply immediately
+            emulator->EnableTurboMode(boolValue);
+        }
+        ss << "Setting changed: turbo_audio = " << (boolValue ? "on" : "off") << NEWLINE;
+        ss << "Audio in turbo mode is now " << (boolValue ? "enabled" : "disabled") << NEWLINE;
+    }
     else
     {
         ss << "Error: Unknown setting '" << settingName << "'" << NEWLINE;
         ss << "Use 'setting' to see all available settings" << NEWLINE;
     }
-    
+
     session.SendResponse(ss.str());
 }

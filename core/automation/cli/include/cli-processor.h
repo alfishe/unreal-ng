@@ -15,7 +15,7 @@
 class ClientSession
 {
 public:
-    ClientSession(SOCKET clientSocket) : _clientSocket(clientSocket), _selectedEmulatorId("") {}
+    ClientSession(SOCKET clientSocket) : _clientSocket(clientSocket), _selectedEmulatorId(""), _shouldClose(false) {}
 
     SOCKET GetSocket() const
     {
@@ -34,9 +34,22 @@ public:
     // Send a response to the client
     void SendResponse(const std::string& message) const;
 
+    // Mark session for closure
+    void MarkForClosure()
+    {
+        _shouldClose = true;
+    }
+
+    // Check if session should be closed
+    bool ShouldClose() const
+    {
+        return _shouldClose;
+    }
+
 private:
     SOCKET _clientSocket;
     std::string _selectedEmulatorId;  // ID of the currently selected emulator
+    bool _shouldClose;               // Flag indicating session should be closed
 };
 
 /**
@@ -103,6 +116,13 @@ private:
     
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);
+    
+    // State inspection command handlers
+    void HandleState(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleStateScreen(const ClientSession& session, EmulatorContext* context);
+    void HandleStateScreenVerbose(const ClientSession& session, EmulatorContext* context);
+    void HandleStateScreenMode(const ClientSession& session, EmulatorContext* context);
+    void HandleStateScreenFlash(const ClientSession& session, EmulatorContext* context);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);

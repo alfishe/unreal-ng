@@ -3,28 +3,27 @@
 #ifndef _INCLUDED_EMULATOR_H_
 #define _INCLUDED_EMULATOR_H_
 
-#include "stdafx.h"
-#include "common/logger.h"
-
-#include "emulatorcontext.h"
-#include "corestate.h"
-#include "emulator/config.h"
-#include "emulator/mainloop.h"
-#include "emulator/cpu/core.h"
-#include "cpu/z80.h"
-#include "debugger/disassembler/z80disasm.h"
-#include "base/featuremanager.h"
-#include "common/autoresetevent.h"
-
-#include <string>
-#include <mutex>
-#include <memory>
 #include <atomic>
 #include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <memory>
+#include <mutex>
 #include <random>
 #include <sstream>
-#include <iomanip>
-#include <ctime>
+#include <string>
+
+#include "base/featuremanager.h"
+#include "common/autoresetevent.h"
+#include "common/logger.h"
+#include "corestate.h"
+#include "cpu/z80.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "emulator/config.h"
+#include "emulator/cpu/core.h"
+#include "emulator/mainloop.h"
+#include "emulatorcontext.h"
+#include "stdafx.h"
 
 class BreakpointManager;
 
@@ -42,15 +41,8 @@ enum EmulatorStateEnum : uint8_t
 
 inline const char* getEmulatorStateName(EmulatorStateEnum value)
 {
-    static const char* names[] =
-    {
-        "StateUnknown",
-        "StateInitialized",
-        "StateRun",
-        "StatePaused",
-        "StateResumed",
-        "StateStopped"
-    };
+    static const char* names[] = { "StateUnknown", "StateInitialized", "StateRun",
+                                   "StatePaused",  "StateResumed",     "StateStopped" };
 
     return names[value];
 };
@@ -70,14 +62,14 @@ protected:
     /// region <Fields>
 protected:
     // Emulator identity
-    std::string _emulatorId;              // Auto-generated UUID
-    std::string _symbolicId;              // Optional user-provided symbolic ID
-    std::chrono::system_clock::time_point _createdAt; // When instance was created
-    std::chrono::system_clock::time_point _lastActivity; // When last operation was performed
+    std::string _emulatorId;                              // Auto-generated UUID
+    std::string _symbolicId;                              // Optional user-provided symbolic ID
+    std::chrono::system_clock::time_point _createdAt;     // When instance was created
+    std::chrono::system_clock::time_point _lastActivity;  // When last operation was performed
     EmulatorStateEnum _state = StateUnknown;
     mutable std::mutex _stateMutex;
-    
-    std::atomic<bool> _initialized{false};
+
+    std::atomic<bool> _initialized{ false };
     mutable std::mutex _mutexInitialization;
 
     std::thread* _asyncThread = nullptr;
@@ -92,7 +84,7 @@ protected:
     MainLoop* _mainloop = nullptr;
     DebugManager* _debugManager = nullptr;
     BreakpointManager* _breakpointManager = nullptr;
-    FeatureManager* _featureManager = nullptr; // Feature toggle manager
+    FeatureManager* _featureManager = nullptr;  // Feature toggle manager
 
     // Control flow
     volatile bool _stopRequested = false;
@@ -101,6 +93,7 @@ protected:
     volatile bool _isPaused = false;
     volatile bool _isRunning = false;
     volatile bool _isDebug = false;
+    volatile bool _isReleased = false;
 
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
@@ -141,6 +134,10 @@ public:
     // Performance management
     BaseFrequency_t GetSpeed();
     void SetSpeed(BaseFrequency_t speed);
+    void SetSpeedMultiplier(uint8_t multiplier);
+    void EnableTurboMode(bool withAudio = false);
+    void DisableTurboMode();
+    bool IsTurboMode() const;
 
     // Integration interfaces
     EmulatorContext* GetContext();
@@ -169,12 +166,11 @@ public:
     void RunSingleCPUCycle(bool skipBreakpoints = true);
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunUntilInterrupt();
-    void RunUntilCondition(/* some condition descriptor */);    // TODO: revise design
-    void StepOver();  // Execute instruction, skip calls and subroutines
+    void RunUntilCondition(/* some condition descriptor */);  // TODO: revise design
+    void StepOver();                                          // Execute instruction, skip calls and subroutines
 
     // Actions
     bool LoadROM(std::string path);
-
 
     // Debug methods
     void DebugOn();
@@ -182,12 +178,11 @@ public:
 
     Z80State* GetZ80State();
 
-
     // Identity and state methods
     const std::string& GetId() const;
     EmulatorStateEnum GetState();
     void SetState(EmulatorStateEnum state);
-    
+
     // Status methods
     bool IsRunning();
     bool IsPaused();
@@ -199,8 +194,10 @@ public:
     void ResetCountersAll();
     void ResetCounter();
 
-    FeatureManager* GetFeatureManager() const { return _featureManager; }
+    FeatureManager* GetFeatureManager() const
+    {
+        return _featureManager;
+    }
 };
 
 #endif
-

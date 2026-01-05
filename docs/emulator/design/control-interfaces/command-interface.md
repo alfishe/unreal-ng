@@ -478,73 +478,1028 @@ bpgroup show loader
 
 ### 5. Feature Management & Configuration
 
-Commands to view and control emulator runtime features for the selected emulator instance. Features can be toggled at runtime without restarting the emulator.
+Commands to view and control emulator runtime features for the selected emulator instance. Features control debugging and analysis capabilities and can be toggled at runtime without restarting the emulator.
 
-| Command | Aliases | Arguments | Description |
-| :--- | :--- | :--- | :--- |
-| `feature list` | | | Display all available features with their current enabled/disabled state. Features control various emulator subsystems and rendering layers. |
-| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name. Common features include:<br/>• `screen` - screen rendering<br/>• `border` - border rendering<br/>• `beeper` - beeper sound<br/>• `ay` - AY-3-8912 sound chip<br/>• `tape` - tape I/O<br/>• `disk` - disk I/O<br/>• `keyboard` - keyboard input<br/>Changes take effect immediately. |
-| `feature <name> off` | | `<feature-name> off` | Disable a specific feature. Useful for isolating subsystem behavior or improving performance during debugging. |
-| `feature all on` | | | Enable all features at once. |
-| `feature all off` | | | Disable all features (effectively freezes emulation). Use with caution. |
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `feature` | `feature list` | | Display all available features with their current state (on/off). Shows feature name, state, mode, and description in table format. | ✅ Implemented |
+| `feature <name> on` | | `<feature-name> on` | Enable a specific feature by name. Available features:<br/>• `calltrace` - collect call trace information for debugging<br/>• `breakpoints` - enable breakpoint handling<br/>• `memorytracking` - collect memory access counters and statistics<br/>• `debugmode` - master debug mode (enables/disables all debug features)<br/>Changes take effect immediately. | ✅ Implemented |
+| `feature <name> off` | | `<feature-name> off` | Disable a specific feature. Useful for improving performance when feature is not needed. | ✅ Implemented |
+| `feature reset` | | | Reset all features to their default state (typically all off). Useful for returning to standard configuration after debugging. | 🔮 Planned |
 
 **Implementation Details**:
 
 **Feature Manager**:
-- Implemented via `FeatureManager` class
+- Implemented via `FeatureManager` class in the emulator core
 - Features are registered at emulator initialization
 - Each feature has:
   - Unique string name (case-insensitive)
   - Boolean enabled/disabled state
+  - Optional mode string (future: "light", "full", etc.)
+  - Description text
   - Optional callback for state change notification
-  - Optional dependency on other features
 
-**Common Features**:
+**Available Features**:
 
-| Feature Name | Subsystem | Purpose | Performance Impact |
+| Feature Name | Default State | Purpose | Performance Impact |
 | :--- | :--- | :--- | :--- |
-| `screen` | Video | Render screen bitmap (256x192 pixels) | High (~30% CPU) |
-| `border` | Video | Render border area | Low (~5% CPU) |
-| `attr` | Video | Process color attributes | Low (~3% CPU) |
-| `beeper` | Audio | 1-bit beeper sound emulation | Medium (~10% CPU) |
-| `ay` | Audio | AY-3-8912 PSG emulation | Medium (~15% CPU) |
-| `tape` | I/O | Tape loading/saving | Low (~2% CPU when active) |
-| `disk` | I/O | FDD/HDD emulation | Low (~5% CPU when active) |
-| `keyboard` | Input | Keyboard matrix scanning | Minimal (<1% CPU) |
+| `calltrace` | OFF | Collect call trace information (CALL/RET/RST tracking). Records function calls, return addresses, and call depth for debugging. Maintains circular buffer of recent calls. | Medium (~10-15% CPU overhead) |
+| `breakpoints` | OFF | Enable breakpoint handling. When enabled, the emulator checks for breakpoint hits on every instruction. Required for execution breakpoints, watchpoints, and port breakpoints to work. | Low (~2-5% CPU overhead with <100 breakpoints) |
+| `memorytracking` | OFF | Collect memory access counters and statistics. Records read/write/execute counts per address, identifies hotspots, and tracks access patterns. Required for `memcounters` command. | High (~40-50% CPU overhead, significant memory usage) |
+| `debugmode` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
+
+**Feature Dependencies**:
+
+- `debugmode` is a master switch that controls other features
+- When `debugmode on` is executed:
+  - Enables `calltrace`
+  - Enables `breakpoints`
+  - Enables `memorytracking`
+- When `debugmode off` is executed:
+  - Disables all debug features
+  - Restores normal execution speed
 
 **Use Cases**:
 
-1. **Performance Profiling**: Disable features to identify bottlenecks
+1. **Enable Call Tracing**: Track function calls during execution
    ```
-   feature all off
-   feature screen on  # Test screen rendering overhead
-   ```
-
-2. **Audio Debugging**: Isolate sound subsystems
-   ```
-   feature ay off      # Disable AY chip, keep beeper
+   feature calltrace on
+   # Run program
+   calltrace 50  # Show last 50 calls
+   feature calltrace off
    ```
 
-3. **Headless Emulation**: Run without rendering for automation
+2. **Breakpoint Debugging**: Enable breakpoint system
    ```
-   feature screen off
-   feature border off
+   feature breakpoints on
+   bp 0x8000        # Set breakpoint
+   resume           # Run until breakpoint
+   # ... debug ...
+   feature breakpoints off  # Disable when done
    ```
 
-4. **I/O Troubleshooting**: Disable tape/disk to test programs without I/O
+3. **Memory Hotspot Analysis**: Find most frequently accessed memory
    ```
-   feature tape off
-   feature disk off
+   feature memorytracking on
+   # Run program for a while
+   memcounters      # Show access statistics
+   memcounters reset
+   feature memorytracking off
    ```
+
+4. **Full Debug Session**: Enable all debug features at once
+   ```
+   feature debugmode on     # Enable everything
+   # Set breakpoints, run, analyze...
+   feature debugmode off    # Disable everything, return to full speed
+   ```
+
+5. **Reset After Debugging**: Return to default configuration
+   ```
+   feature reset    # All features off (default state)
+   ```
+
+**Performance Notes**:
+
+- **Production Use**: Keep all features OFF for maximum emulation speed
+- **Light Debugging**: Enable only `breakpoints` for minimal overhead
+- **Deep Analysis**: Enable `memorytracking` only when analyzing memory access patterns
+- **Full Debug**: Use `debugmode on` when you need comprehensive debugging (accepts significant slowdown)
+- **Feature Toggle Overhead**: Minimal (<1ms to enable/disable a feature)
+
+**Output Format**:
+
+```
+> feature
+
+------------------------------------------------------------------------------------------------------------------
+| Name           | State  | Mode      | Description
+------------------------------------------------------------------------------------------------------------------
+| calltrace      | off    |           | Collect call trace information for debugging
+| breakpoints    | off    |           | Enable or disable breakpoint handling
+| memorytracking | off    |           | Collect memory access counters and statistics
+| debugmode      | off    |           | Master debug mode, enables/disables all debug features for performance
+------------------------------------------------------------------------------------------------------------------
+```
 
 **Notes**:
-- Feature states persist across pause/resume
-- Some features may have dependencies (e.g., `screen` requires `video` subsystem)
-- Disabling core features (like `cpu`) may hang the emulator
-- Feature changes logged to debug output
+- Feature states persist across pause/resume but NOT across reset
+- Emulator reset returns all features to default (off) state
+- Feature changes are logged to debug output
 - Python/Lua bindings provide programmatic feature control
+- CLI: `CLIProcessor::HandleFeature()`
+- WebAPI: `/api/v1/emulator/{id}/feature` endpoint
+- Python: `emulator.feature(name, state)` or `emulator.feature.list()`
+- Lua: `emu:feature(name, state)` or `emu:feature_list()`
 
-### 6. Emulator Instance Settings
+### 6. System State Inspection
+
+Commands to inspect the runtime hardware configuration and peripheral state of the selected emulator instance. All state inspection commands are organized under the `state` command hierarchy for consistency and discoverability.
+
+**Command Structure**: `state <subsystem> [subcommand] [args]`
+
+**Quick Reference**:
+
+| Subsystem | Base Command | Purpose |
+| :--- | :--- | :--- |
+| `memory` | `state memory` | Memory configuration (ROM/RAM banking, paging) |
+| `ports` | `state ports` | All available I/O ports (model-specific) |
+| `port` | `state port <port>` | Specific I/O port values and monitoring |
+| `sysvars` | `state sysvars` | ZX Spectrum system variables (0x5C00-0x5CB5) |
+| `tape` | `state tape` | Tape device status and position |
+| `disk` | `state disk [drive]` | Disk drive status and FDC state |
+| `screen` | `state screen` | Screen configuration and video mode |
+| `ula` | `state ula` | ULA chip state and timing |
+| `audio` | `state audio` | Audio devices (beeper, AY chip) |
+
+**Example Usage**:
+```bash
+# Show all memory information (ROM + RAM + paging)
+state memory
+
+# Check only RAM configuration
+state memory ram
+# or shorter alias
+state ram
+
+# Check only ROM configuration
+state memory rom
+# or shorter alias
+state rom
+
+# List all available ports for current model/config
+state ports
+
+# Read specific ULA port value
+state port 0xFE
+
+# Check BASIC program pointer
+state sysvars PROG
+
+# Show tape status
+state tape
+
+# Show disk catalog for drive A
+state disk catalog A
+
+# Show video mode
+state screen mode
+
+# Show AY chip registers
+state audio ay
+```
+
+#### 6.1 Memory Configuration & Paging
+
+Inspect current memory configuration including ROM/RAM bank mapping. Critical for understanding 128K memory models, clones with extended memory, and troubleshooting paging issues.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state memory` | | | Display complete memory configuration:<br/>• **ROM**: Active ROM page, signature, version<br/>• **RAM**: All RAM banks mapping to Z80 address space<br/>• **Paging**: Current paging mode and lock state<br/>• **Contention**: Contended memory regions<br/>• **Model-specific**: Pentagon/Scorpion extended modes, +2A/+3 special modes<br/>Shows comprehensive memory layout in one view. | 🔮 Planned |
+| `state memory ram` | `state ram` | | Show RAM bank mapping detail:<br/>• Bank 0 (0x0000-0x3FFF): RAM page or ROM<br/>• Bank 1 (0x4000-0x7FFF): RAM page<br/>• Bank 2 (0x8000-0xBFFF): RAM page<br/>• Bank 3 (0xC000-0xFFFF): RAM page<br/>Includes page numbers, read/write state, contention status.<br/>Shows Z80 address space to physical RAM page mapping. | 🔮 Planned |
+| `state memory rom` | `state rom` | | Show ROM configuration:<br/>• Active ROM page (0 or 1 for 128K, 0-3 for +2A/+3)<br/>• ROM signature detection (48K ROM, 128K Editor, +2/+3 ROM)<br/>• ROM version and checksum (CRC32)<br/>• Custom ROM indicator if non-standard<br/>• ROM size and bank count | 🔮 Planned |
+| `state memory history [N]` | | `[count]` | Show memory paging history - last N paging changes (port 0x7FFD/0x1FFD writes):<br/>• Timestamp (T-states)<br/>• Port address and value written<br/>• Resulting RAM/ROM configuration<br/>• PC address that made the change<br/>• Change type (RAM remap, ROM switch, paging lock)<br/>Default: last 10 changes. Useful for tracking paging bugs. | 🔮 Planned |
+
+**Implementation Notes**:
+
+**Implementation Notes**:
+
+**128K Memory Paging** (Port 0x7FFD):
+```
+Bit 0-2: RAM page mapped to bank 3 (0xC000-0xFFFF) [0-7]
+Bit 3:   Active screen (0 = screen 0 at 0x4000, 1 = screen 1 at 0x7000)
+Bit 4:   ROM select (0 = 128K Editor, 1 = 48K BASIC)
+Bit 5:   Paging lock (1 = disable further paging until reset)
+Bit 6-7: Reserved
+```
+
+**Pentagon/Scorpion Extended Paging**:
+- Pentagon: 128KB-512KB RAM with extended port 0x7FFD decoding
+- Scorpion: 256KB RAM with additional port schemes
+
+**+2A/+3 Special Modes** (Port 0x1FFD):
+```
+Bit 0:   Paging mode (0 = normal, 1 = special)
+Bit 1:   All-RAM mode configuration
+Bit 2:   Disk motor control
+Bit 3:   Printer strobe
+Bit 4-7: Reserved
+```
+
+**ROM Signature Detection**:
+- CRC32 checksum of ROM contents
+- Known ROM signatures database (48K, 128K, +2, +3, custom ROMs)
+- Version detection from ROM header/copyright strings
+- Custom ROM flagging for non-standard images
+
+#### 6.2 I/O Port Inspection
+
+Monitor and query I/O port values. Ports control all peripheral devices, memory banking, and hardware configuration. Available ports are **model-specific** and **configuration-dependent** - determined by the active clone model and connected peripherals.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state ports` | | | List all available I/O ports for the current model and configuration:<br/>• **Port address** (hex and binary)<br/>• **Port decoding** (how hardware decodes the address - from PortDecoder)<br/>• **Device/Function** name<br/>• **Current value** (hex and binary)<br/>• **Value decoding** (bit-by-bit interpretation of value)<br/>• **Direction** (IN/OUT/BOTH)<br/>• **Last access** (timestamp and PC)<br/>Fetches port map from **PortMapper** which maintains model-specific port definitions based on:<br/>• Base model (48K, 128K, +2, +2A, +3, Pentagon, Scorpion, etc.)<br/>• Connected interfaces (Beta Disk, DivIDE, Kempston, etc.)<br/>• Active peripherals (AY chips, Covox, etc.)<br/>Port address decoding rules from **PortDecoder** (e.g., ULA = `xxxxxxx0`, Beta = `xxx11111`). | 🔮 Planned |
+| `state port <port>` | | `<port-number>` | Read and display current value of specific I/O port. Port number in hex (0x00-0xFFFF). Shows:<br/>• **Port address** (hex/binary)<br/>• **Port decoding** (hardware address decoding logic from PortDecoder)<br/>• **Aliases** (other addresses that decode to same port)<br/>• **Raw port value** (hex/binary)<br/>• **Value decoding** (bit-by-bit with labels)<br/>• **Last IN/OUT operations** to this port<br/>• **Device/function name** from PortMapper | 🔮 Planned |
+| `state port watch <port>` | | `<port-number>` | Monitor port for IN/OUT operations in real-time. Displays:<br/>• Direction (IN/OUT)<br/>• Value transferred (hex/binary/decoded)<br/>• PC address that accessed port<br/>• Timestamp (T-states)<br/>Updates continuously until stopped. | 🔮 Planned |
+| `state port history <port> [N]` | | `<port-number> [count]` | Show last N access operations to specific port. Default: 20. Shows:<br/>• Timestamp (T-states)<br/>• Direction (IN/OUT)<br/>• Value (hex/binary/decoded)<br/>• PC address<br/>Useful for tracing peripheral communication patterns. | 🔮 Planned |
+| `state port decode <port> <value>` | | `<port-number> <value>` | Decode arbitrary port value bit-by-bit with meaning (doesn't read from emulator):<br/>**Example: state port decode 0xFE 0x12**<br/>• Bit 0-2: Border color = 2 (red)<br/>• Bit 3: MIC output = 0<br/>• Bit 4: Beeper output = 1<br/>• Bit 5-7: Unused<br/>Provides human-readable interpretation. Useful for understanding port values in dumps/logs. | 🔮 Planned |
+
+**PortMapper & PortDecoder Architecture**:
+
+The **PortMapper** is a central registry that maintains port definitions, working together with **PortDecoder** which handles hardware-level address decoding logic.
+
+**PortMapper** maintains port definitions based on:
+
+1. **Base Model Ports**: Standard ports for each Spectrum model
+   - 48K: ULA (0xFE), Kempston (0xDF if enabled)
+   - 128K: +ULA, +Paging (0x7FFD), +AY (0xFFFD/0xBFFD)
+   - +2A/+3: +Special (0x1FFD), +FDC (0x2FFD, 0x3FFD)
+   - Pentagon: +Extended paging variants
+   - Scorpion: +Model-specific ports
+
+2. **Interface Ports**: Dynamically added when interfaces are attached
+   - Beta Disk: WD1793 ports (0x1F, 0x3F, 0x5F, 0x7F, 0xFF)
+   - DivIDE/DivMMC: IDE ports (0xE3, 0xE7, 0xEB, etc.)
+   - Kempston Mouse: Mouse ports (0xFADF, 0xFBDF, 0xFFDF)
+   - Multiface: Control ports (varies by model)
+
+3. **Peripheral Ports**: Added when peripherals are enabled
+   - TurboSound (dual AY): Additional AY ports (0xBFFD, 0xFFFD variants)
+   - Covox: DAC ports (0xFB, 0xDF variants)
+   - General Sound: Sound card ports (0xBB3B-0xBB3F)
+
+4. **Clone-Specific Ports**: Unique to specific clones
+   - Pentagon: Port 0x7FFD extensions, EFF7 for printer
+   - Scorpion: Extended memory ports
+   - TSConf: Modern graphics and DMA ports
+
+**PortDecoder** handles hardware address decoding logic:
+
+Different Spectrum models and interfaces decode port addresses differently - some use full 16-bit decoding, others use partial decoding where only specific bits matter. The **PortDecoder** provides this information for each port.
+
+**Port Address Decoding Examples**:
+
+| Port | Device | Decode Pattern | Description | Aliases |
+| :--- | :--- | :--- | :--- | :--- |
+| 0xFE | ULA (48K) | `xxxxxxx0` | Only bit 0 matters (must be 0) | 0x00, 0x02, 0x04, ..., 0xFE (all even ports) |
+| 0x7FFD | 128K Paging | `01xxxxxxxxxxxxxx` | Bits 15-14 = 01, others don't matter | 0x7FFD, 0x7FFC, 0x7EFD, etc. |
+| 0x1FFD | +2A/+3 Special | `0001xxxxxxxxxxxx` | Bits 15-13 = 000, bit 12 = 1 | 0x1FFD, 0x1FFC, 0x1EFD, etc. |
+| 0xFFFD | AY Register | `11xxxxxxxxxxxx01` | Bits 15-14 = 11, bits 1-0 = 01 | 0xFFFD, 0xFEFD, 0xFDFD, etc. |
+| 0xBFFD | AY Data | `10xxxxxxxxxxxx01` | Bits 15-14 = 10, bits 1-0 = 01 | 0xBFFD, 0xBEFD, 0xBDFD, etc. |
+| 0x1F | Beta Disk System | `xxx11111` | Bits 7-0 = 0x1F exactly | Only 0x1F, 0x011F, 0x021F, etc. (low byte fixed) |
+| 0x3F | Beta Disk Track | `xxx11111` | Bits 7-0 = 0x3F exactly | Only 0x3F, 0x013F, 0x023F, etc. |
+| 0xFF | Beta Disk Command | `xxx11111` | Bits 7-0 = 0xFF exactly | Only 0xFF, 0x01FF, 0x02FF, etc. |
+| 0xDF | Kempston Joystick | `xx011111` | Bits 7-0 = 0xDF, upper bits vary | 0x00DF, 0x01DF, ..., 0xFFDF |
+
+**Decoding Logic Types**:
+
+1. **Partial Decoding** (Most Common):
+   - Only specific bits checked, others ignored
+   - Multiple addresses map to same port (aliases)
+   - Examples: ULA (bit 0 only), 128K paging (bits 15-14)
+
+2. **Full Decoding**:
+   - All 16 bits matter
+   - Single address per port
+   - Examples: Some modern interfaces (DivIDE specific ports)
+
+3. **Low-Byte Decoding**:
+   - Only bits 7-0 matter, high byte ignored
+   - Examples: Beta Disk ports, Kempston
+
+4. **Pattern Matching**:
+   - Complex bit patterns
+   - Examples: AY chips (specific bit combinations)
+
+**PortDecoder Methods**:
+
+```cpp
+class PortDecoder
+{
+public:
+    struct DecodingInfo
+    {
+        uint16_t portAddress;           // Primary port address
+        uint16_t decodeMask;            // Bits that matter (1 = checked, 0 = ignored)
+        uint16_t decodePattern;         // Expected pattern for checked bits
+        std::string decodeString;       // Human-readable (e.g., "xxxxxxx0")
+        std::vector<uint16_t> aliases;  // Other addresses that decode to this port
+    };
+    
+    // Get decoding info for a port
+    DecodingInfo GetPortDecoding(uint16_t port, const std::string& modelId);
+    
+    // Check if address maps to this port
+    bool AddressMatchesPort(uint16_t address, uint16_t port, const std::string& modelId);
+    
+    // Get all addresses that decode to this port (up to limit)
+    std::vector<uint16_t> GetPortAliases(uint16_t port, const std::string& modelId, size_t maxAliases = 10);
+};
+```
+
+**Example Port List Output** (128K with Beta Disk):
+
+```
+Port    Decoding        Device          Dir     Value    Value Decoded
+------  --------------  --------------  ------  -------  -----------------------------
+0xFE    xxxxxxx0        ULA             IN/OUT  0x12     Border:2 MIC:0 EAR:1 Beeper:1
+        (bit 0 = 0)                                      Tape IN:1
+        Aliases: all even ports (0x00, 0x02, ..., 0xFE)
+
+0x7FFD  01xxxxxx        Paging (128K)   OUT     0x10     RAM:0 Screen:0 ROM:1 Lock:0
+        (bits 15-14=01)
+        Aliases: 0x7FFD, 0x7FFC, 0x7EFD, ...
+
+0x1F    xxx11111        Beta FDC Sys    IN      0x80     DRQ:1 INTRQ:0 Drive:A Disk:1
+        (bits 7-0 = 0x1F)
+        Aliases: 0x001F, 0x011F, 0x021F, ...
+
+0x3F    xxx11111        Beta FDC Track  IN/OUT  0x00     Track: 0
+        (bits 7-0 = 0x3F)
+
+0x5F    xxx11111        Beta FDC Sector IN/OUT  0x01     Sector: 1
+        (bits 7-0 = 0x5F)
+
+0x7F    xxx11111        Beta FDC Data   IN/OUT  0x00     Data: 0x00
+        (bits 7-0 = 0x7F)
+
+0xFF    xxx11111        Beta FDC Cmd    OUT     0x00     Idle (no command)
+        (bits 7-0 = 0xFF)
+
+0xBFFD  10xxxxxx        AY Data         IN/OUT  0x00     Register 0 data: 0x00
+        xxxx01          (Channel A Period Fine)
+        (bits 15-14=10, 1-0=01)
+
+0xFFFD  11xxxxxx        AY Register     OUT     0x00     Selected: R0
+        xxxx01
+        (bits 15-14=11, 1-0=01)
+
+0xDF    xx011111        Kempston Joy    IN      0x00     Fire:0 Up:0 Down:0 Left:0
+        (bits 7-0 = 0xDF)                                Right:0
+```
+
+**Enhanced `state port <port>` Output Example**:
+
+```bash
+> state port 0xFE
+
+Port: 0xFE (ULA)
+================
+
+Address Decoding (PortDecoder):
+  Pattern: xxxxxxx0 (only bit 0 checked, must be 0)
+  Decode Mask: 0x0001
+  Decode Pattern: 0x0000
+  Full Match: Any address with bit 0 = 0
+  
+Port Aliases (other addresses that decode to this port):
+  0x0000, 0x0002, 0x0004, 0x0006, ..., 0x00FE
+  0x0100, 0x0102, 0x0104, 0x0106, ..., 0x01FE
+  ... (all even addresses from 0x0000 to 0xFFFE)
+  Total: 32768 possible addresses
+
+Device: ULA (Uncommitted Logic Array)
+Direction: IN/OUT
+Model: 48K/128K/+2/+2A/+3 (all models)
+
+Current Value: 0x12 (0b00010010)
+================================
+
+Bit 7:   1   (IN)  Tape input (EAR) - HIGH
+Bit 6:   0   (IN)  Reserved (always 1 on read)
+Bit 5:   0   (IN)  Keyboard data (depends on selected row)
+Bit 4:   1   (OUT) Beeper output - ON
+Bit 3:   0   (OUT) MIC output (tape save) - OFF
+Bit 2-0: 010 (OUT) Border color - RED (2)
+
+Decoded:
+  Border: RED (2)
+  Beeper: ON
+  MIC: OFF
+  Tape Input: HIGH
+
+Last Access:
+  Direction: IN
+  Value: 0x12
+  PC: 0x053F (ROM tape loading routine)
+  T-state: 1234567
+  Time: 24.691 seconds ago
+```
+
+**Implementation Notes**:
+
+**PortMapper vs PortDecoder Roles**:
+- **PortMapper**: Tracks *which ports exist* for current model/configuration (registry of available ports)
+- **PortDecoder**: Knows *how hardware decodes addresses* for each port (address pattern matching logic)
+- Together they provide: "Port 0xFE exists (PortMapper) and responds to pattern `xxxxxxx0` (PortDecoder)"
+
+**Dynamic Behavior**:
+- `state ports` output is **dynamic** - reflects current hardware configuration
+- Port availability changes when interfaces are connected/disconnected
+- Decoding is context-aware (e.g., Beta Disk ports only shown when interface active)
+- PortMapper validates port addresses before access
+- Custom interfaces can register their ports with PortMapper at runtime
+- PortDecoder provides model-specific address decoding patterns for each port
+
+**Address Aliases**:
+- Many ports respond to multiple addresses due to partial decoding
+- `state port <port>` shows aliases to help understand hardware behavior
+- Useful for debugging software that uses non-standard port addresses
+- Example: Writing to 0x00FE, 0x02FE, or 0xFFFE all affect the ULA border color
+
+#### 6.3 System Variables
+
+Inspect ZX Spectrum system variables area. These variables control BASIC, screen, I/O, and system state.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state sysvars` | `state vars` | | Display all system variables (23552-23733 / 0x5C00-0x5CB5) with decoded values:<br/>• BASIC program pointers<br/>• Screen/cursor position<br/>• System flags<br/>• I/O channel info<br/>• Error codes<br/>Formatted table with addresses, names, raw values, and interpretations. | 🔮 Planned |
+| `state sysvars <name>` | `state vars <name>` | `<variable-name>` | Display specific system variable by name:<br/>**Example: `state sysvars PROG`**<br/>Shows address, value, and meaning. Supports all standard 48K/128K variable names. | 🔮 Planned |
+| `state sysvars addr <addr>` | | `<address>` | Display system variable at address with interpretation. Automatically identifies variable if in system area. | 🔮 Planned |
+| `state sysvars basic` | | | Show BASIC-related system variables:<br/>• PROG - BASIC program start<br/>• VARS - Variables area<br/>• E_LINE - Edit line<br/>• STKEND - Stack end<br/>• Memory map visualization | 🔮 Planned |
+| `state sysvars screen` | | | Show screen-related variables:<br/>• ATTR_T/P - Temporary/permanent attributes<br/>• P_FLAG - Print flags<br/>• DF_CC/DF_SZ - Display file counters<br/>• S_POSN - Screen position<br/>• SCR_CT - Scroll counter | 🔮 Planned |
+| `state sysvars io` | | | Show I/O-related variables:<br/>• BORDCR - Border color<br/>• FRAMES - Frame counter (uptime in 1/50 sec)<br/>• LAST_K - Last key pressed<br/>• FLAGS/FLAGS2 - System flags<br/>• Tape/Disk state variables | 🔮 Planned |
+| `state sysvars watch <name>` | | `<variable-name>` | Monitor system variable for changes. Updates displayed when value changes. Useful for tracking FRAMES counter, key presses, etc. | 🔮 Planned |
+
+**Key System Variables** (48K/128K):
+
+| Address | Name | Size | Description |
+| :--- | :--- | :--- | :--- |
+| 0x5C00 | KSTATE | 8 | Keyboard state (repeated key info) |
+| 0x5C08 | LAST_K | 1 | Last key pressed |
+| 0x5C09 | REPDEL | 1 | Repeat delay |
+| 0x5C0A | REPPER | 1 | Repeat period |
+| 0x5C3B | FRAMES | 3 | Frame counter (50Hz, 24-bit) |
+| 0x5C48 | BORDCR | 1 | Border color |
+| 0x5C4A | P_FLAG | 1 | Print flags |
+| 0x5C4B | VARS | 2 | Variables area address |
+| 0x5C4D | DEST | 2 | Destination for LOAD/VERIFY |
+| 0x5C4F | CHANS | 2 | Channel data address |
+| 0x5C51 | CURCHL | 2 | Current channel address |
+| 0x5C53 | PROG | 2 | BASIC program start address |
+| 0x5C55 | NXTLIN | 2 | Next line address |
+| 0x5C57 | DATADD | 2 | Terminator of last DATA item |
+| 0x5C59 | E_LINE | 2 | Edit line address |
+| 0x5C5B | K_CUR | 2 | Cursor address |
+| 0x5C5D | CH_ADD | 2 | Character address |
+| 0x5C5F | X_PTR | 2 | Syntax error address |
+| 0x5C61 | STKBOT | 2 | Calculator stack bottom |
+| 0x5C63 | STKEND | 2 | Calculator stack end |
+| 0x5C65 | BREG | 1 | Calculator B register |
+| 0x5C6A | FRAMES (Duplicate) | 3 | Alternative reference |
+| 0x5C7F | P_RAMT | 2 | Printer position (128K) |
+| 0x5C81 | NMIADD | 2 | NMI routine address |
+
+#### 6.4 Tape Device State
+
+Inspect tape device status, position, and current operation. Essential for debugging tape loading issues.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state tape` | | | Show tape device status:<br/>• Tape inserted: filename<br/>• Format: TAP, TZX, CSW<br/>• State: Stopped, Playing, Recording<br/>• Position: Block N of M, byte offset<br/>• Current block info (header/data, length)<br/>• Playback speed (if turbo) | 🔮 Planned |
+| `state tape blocks` | | | List all blocks in current tape:<br/>• Block number<br/>• Type (Header/Data/Turbo/Pure Tone)<br/>• Length in bytes<br/>• Name (if header block)<br/>• Checksum status<br/>Highlights current block. | 🔮 Planned |
+| `state tape block <N>` | | `<block-number>` | Show detailed info about specific block:<br/>• Block type and flags<br/>• Header details (if applicable)<br/>• Data preview (hex dump)<br/>• Timing parameters (for TZX)<br/>• Checksum verification | 🔮 Planned |
+| `state tape position` | | | Show precise tape position:<br/>• Block index<br/>• Byte offset within block<br/>• Time position (for CSW)<br/>• Pilot/sync/data phase<br/>• Edge counter | 🔮 Planned |
+
+#### 6.5 Disk Device State
+
+Inspect disk drive status, disk geometry, and current operations. Supports Beta Disk, +3, and modern interfaces.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state disk [drive]` | | `[A\|B\|C\|D]` | Show disk status for specified drive (or all drives):<br/>• Disk inserted: filename<br/>• Format: TRD, SCL, FDI, UDI, DSK<br/>• Geometry: tracks, sides, sectors per track<br/>• Write protection status<br/>• Current track/sector position<br/>• Motor state<br/>• FDC busy/idle state | 🔮 Planned |
+| `state disk geometry [drive]` | | `[A\|B\|C\|D]` | Show disk geometry details:<br/>• Total tracks<br/>• Heads (sides)<br/>• Sectors per track<br/>• Bytes per sector<br/>• Total capacity<br/>• Format identification | 🔮 Planned |
+| `state disk catalog [drive]` | `state disk dir` | `[A\|B\|C\|D]` | Show disk catalog (file list) if DOS detected:<br/>• **TR-DOS**: File name, type, length, start address<br/>• **+3DOS**: CP/M directory listing<br/>• **ESXDOS**: FAT directory listing<br/>Automatically detects DOS type. | 🔮 Planned |
+| `state disk fdc` | | | Show FDC (Floppy Disk Controller) state:<br/>• Controller type (WD1793, µPD765A)<br/>• Current command<br/>• Status register<br/>• Track/sector registers<br/>• DMA state (if applicable) | 🔮 Planned |
+| `state disk dos` | | | Detect and identify disk operating system:<br/>• DOS type: TR-DOS, +3DOS, G+DOS, ESXDOS, etc.<br/>• Version<br/>• Boot sector signature<br/>• System tracks<br/>• References detected DOS type documentation | 🔮 Planned |
+
+#### 6.6 Screen Configuration
+
+Inspect active screen buffer, video mode, and rendering state. Handles 48K single screen, 128K dual screen (switchable via port 0x7FFD), and clone-specific modes.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state screen` | | | Show screen configuration (brief mode by default):<br/>• Model name (48K/128K/Pentagon/+3)<br/>• Video mode (Standard, Timex, etc.)<br/>• Active screen number and RAM page (for 128K models)<br/>• Border color<br/>• Hint to use `verbose` for detailed info | ✅ Implemented |
+| `state screen verbose` | | | Show detailed screen configuration:<br/>• **48K**: Screen at RAM page 5, offset 0x0000 (Z80 access: 0x4000-0x7FFF)<br/>• **128K**: Active screen (0 or 1 via port 0x7FFD bit 3), shows both screen locations<br/>  - Screen 0 (normal): ULA reads from RAM page 5, offset 0x0000<br/>  - Screen 1 (shadow): ULA reads from RAM page 7, offset 0x0000 (always, regardless of Z80 mapping)<br/>• Physical RAM page locations (where ULA reads from)<br/>• Z80 address space mapping (where CPU can access screen)<br/>• Port 0x7FFD bit values and decoding<br/>• Contention state<br/>• Full memory layout for both screens | ✅ Implemented |
+| `state screen mode` | | | Show detailed video mode information for current model:<br/>• **Standard Spectrum**: 256×192, 2 colors per 8×8 attribute block<br/>• **Timex/TC2068**: Hi-Res (512×192 mono), Hi-Color (256×192, 8×1 attrs), Dual Screen<br/>• **Pentagon**: GigaScreen (dual-screen interlace), SuperHiRes (512×384 on modified models)<br/>• **SAM Coupé**: Modes 1-4 (256×192 to 256×192×16 colors per pixel)<br/>• **ATM Turbo**: 320×200, 640×200, 16-color modes<br/>• **ZX Next**: Layer 2 (256×192×256 colors), 640×256, Timex compatibility<br/>• **eLeMeNt ZX**: HGFX modes (720×546, 512×384, 256-color)<br/>Shows: resolution, color depth, attribute block size, memory layout, active layers | ✅ Implemented |
+| `state screen flash` | | | Show flash state and counter:<br/>• Flash phase (normal/inverted)<br/>• Flash counter (frames until toggle, 16 frame cycle)<br/>• Frame position in flash cycle<br/>Useful for timing-sensitive flash effects in demos | ✅ Implemented |
+
+**Brief vs Verbose Mode**:
+
+The `state screen` command supports two output modes:
+
+1. **Brief Mode (Default)**: 
+   - Activated by: `state screen`
+   - Shows: Essential information only (model, video mode, active screen, border color)
+   - Use case: Quick checks, scripting, when you need just the active screen info
+   - Output: 5-6 lines
+
+2. **Verbose Mode**:
+   - Activated by: `state screen verbose`
+   - Shows: Complete details including both screen buffers (for 128K), physical RAM locations, Z80 address mappings, port decoding, contention states
+   - Use case: Deep debugging, understanding dual-screen setups, analyzing memory configurations
+   - Output: 20+ lines with full hardware details
+
+**WebAPI**: Add `?verbose=true` query parameter to get verbose output:
+- Brief: `GET /api/v1/emulator/test/state/screen`
+- Verbose: `GET /api/v1/emulator/test/state/screen?verbose=true`
+
+**128K Screen Switching**:
+
+The 128K Spectrum models can switch between two screen buffers by writing to **port 0x7FFD bit 3**:
+
+- **Bit 3 = 0**: ULA displays **Screen 0** (normal screen)
+  - ULA reads from **RAM page 5**, offset 0x0000-0x1FFF
+  - Pixel data: page 5 offset 0x0000-0x17FF (6144 bytes)
+  - Attributes: page 5 offset 0x1800-0x1AFF (768 bytes)
+  - For Z80 CPU access: typically mapped at 0x4000-0x7FFF (bank 1)
+
+- **Bit 3 = 1**: ULA displays **Screen 1** (shadow screen)
+  - ULA reads from **RAM page 7**, offset 0x0000-0x1FFF
+  - Pixel data: page 7 offset 0x0000-0x17FF (6144 bytes)
+  - Attributes: page 7 offset 0x1800-0x1AFF (768 bytes)
+  - **Important**: ULA always renders from page 7 offset 0x0000, regardless of whether page 7 is mapped in Z80 address space or not
+
+**Key Hardware Detail**:
+
+The ULA has **direct access to physical RAM pages** and does NOT read through the Z80's address space mapping. This means:
+
+- Screen 0 is always rendered from RAM page 5, offset 0x0000
+- Screen 1 is always rendered from RAM page 7, offset 0x0000
+- The ULA reads the active screen independently of which pages are mapped where in the Z80's 64KB address space
+- The Z80 can modify screen data even if that page is not currently mapped (by temporarily paging it in)
+
+**Z80 Access to Screen Buffers**:
+
+To modify screen data, the Z80 must have the corresponding RAM page mapped into its address space:
+
+| Screen | Physical Location | Z80 Access | Notes |
+| :--- | :--- | :--- | :--- |
+| Screen 0 | RAM page 5, offset 0x0000 | Typically at 0x4000-0x7FFF (bank 1) | Standard configuration, always accessible |
+| Screen 1 | RAM page 7, offset 0x0000 | Depends on port 0x7FFD bits 0-2 | Must be paged into bank 3 (0xC000-0xFFFF) for Z80 access |
+
+**Example**: When port 0x7FFD = 0x0F (binary 00001111):
+- Bits 0-2 = 111: RAM page 7 mapped to bank 3 (0xC000-0xFFFF)
+- Bit 3 = 1: ULA displays Screen 1 from page 7
+- Result: Z80 can write to screen at 0xC000-0xDFFF, ULA displays from same page
+
+**Common Usage in Demos**:
+
+Demos frequently use screen switching for:
+1. **Double Buffering**: Draw to shadow screen (page 7) while normal screen is displayed, then switch instantly
+   - Page 7 must be mapped into Z80 address space (typically bank 3 at 0xC000) for CPU to draw
+   - ULA displays from page 7 offset 0x0000 when port 0x7FFD bit 3 = 1
+2. **Page Flipping**: Alternate between screens for smooth animation (50Hz flicker-free)
+   - No tearing or flickering since switch happens during vertical blank
+3. **Split-Screen Effects**: Switch screen mid-frame by writing to 0x7FFD during display
+   - Can show different content in top and bottom halves
+4. **Prerendering**: Prepare complex graphics on shadow screen before revealing
+   - Draw to page 7 (via 0xC000-0xDFFF when paged in) while page 5 is displayed
+   - Instant switch when ready by setting bit 3 of port 0x7FFD
+
+**Important**: To modify shadow screen (page 7), it must be paged into Z80 address space. The ULA can display it regardless of where it's mapped.
+
+**Enhanced Graphics Modes (Clone-Specific)**:
+
+Several ZX Spectrum clones introduced enhanced graphics modes to overcome the original's limitations (256×192 resolution and "attribute clash" from 8×8 color blocks).
+
+**Timex Sinclair 2068 / TC 2048 / TC 2068 / UK 2086** (USA/Portuguese/Polish/UK variants):
+- **Hi-Res Mode**: 512×192 monochrome (for 64-column or 80-column text)
+- **Hi-Color Mode**: 256×192 with 8×1 attribute blocks (reduced from 8×8, less attribute clash)
+- **Dual Screen Mode**: Two 256×192 screens in memory for double-buffering
+- **Control**: Extended port 0xFF controls mode selection
+
+**SAM Coupé** (1989 "super-clone"):
+- **Mode 1**: 256×192 standard Spectrum-compatible
+- **Mode 2**: 256×192 with 8×1 attributes (similar to Timex Hi-Color)
+- **Mode 3**: 512×192 with 4 colors per line
+- **Mode 4**: 256×192 with each pixel from 16 colors (no attribute blocks)
+- **Control**: VMPR register (port 0xFC) selects mode
+
+**Pentagon** (Russian clone series):
+- **Standard**: 256×192 Spectrum-compatible mode
+- **GigaScreen**: Hardware modification combining two screens with interlacing for more colors (non-flickering dual-screen effect)
+- **SuperHiRes**: 512×384 on modified Pentagon models (rare hardware mod)
+- **Note**: Pentagon does NOT have Timex modes despite being sometimes confused with them
+
+**ATM Turbo** (Russian high-performance clone):
+- **320×200**: 16-color "chunky" pixels
+- **640×200**: High-resolution mode
+- **Text modes**: Enhanced text display modes
+- **Extended palette**: Hardware palette control for enhanced colors
+
+**Scorpion 256** (Russian 128K clone):
+- Mostly standard 128K modes
+- Advanced hardware expansions available for enhanced video
+- Compatible with many Pentagon mods
+
+**ZX Spectrum Next** (Modern FPGA-based, 2017+):
+- **Timex Compatibility**: Full support for Timex Hi-Res/Hi-Color modes
+- **Pentagon Compatibility**: GigaScreen and other Pentagon modes
+- **Layer 2**: 256×192 with 256 colors per pixel (8-bit color)
+- **640×256**: High-resolution mode
+- **Sprites**: Hardware sprites (128 sprites, 16×16 pixels)
+- **Tilemap**: Hardware tilemap layer
+- **Control**: Extended Next registers and ports
+
+**eLeMeNt ZX / MB03+ Interface** (Modern):
+- **HGFX modes**: Multiple high-resolution graphics modes
+- **720×546**: Full PAL resolution
+- **512×384**: SuperHiRes mode
+- **256-color modes**: True color modes with 256-color palette
+
+**Bobo64** (Rare Czech clone):
+- **256×256**: Graphics with 8×1 attributes
+- **512×256**: High-resolution mode
+
+**TSConf** (ZX Evolution):
+- **Modern graphics modes**: Up to 360×288 resolution
+- **Hardware acceleration**: Sprites and blitter
+- **Extended palette**: True color support
+
+**state screen mode Detection**:
+
+The `state screen mode` command will:
+1. **Auto-detect** current model from emulator configuration
+2. **Read mode control ports** (0xFF for Timex, 0xFC for SAM, model-specific for others)
+3. **Display active mode** with full specifications:
+   - Resolution (width × height)
+   - Color depth (colors per pixel/attribute block)
+   - Attribute block size (8×8, 8×1, per-pixel)
+   - Memory layout (page usage, address ranges)
+   - Active layers (for multi-layer systems like Next)
+4. **Show compatibility** with other modes if applicable
+
+**state screen mode Output Examples**:
+
+**Standard 128K**:
+```
+> state screen mode
+
+Model: ZX Spectrum 128K
+Video Mode: Standard
+============================================
+Resolution:      256 × 192 pixels
+Color Depth:     2 colors per attribute block
+Attribute Size:  8 × 8 pixels
+Memory Layout:
+  Pixel Data:    6144 bytes (32 lines × 192 pixels)
+  Attributes:    768 bytes (32 × 24 blocks)
+  Total:         6912 bytes per screen
+Active Screen:   Screen 0 (RAM page 5)
+Compatibility:   48K/128K/+2/+2A/+3 standard
+```
+
+**Timex Hi-Color Mode**:
+```
+> state screen mode
+
+Model: Timex Sinclair 2068
+Video Mode: Hi-Color (Extended Color Mode)
+============================================
+Resolution:      256 × 192 pixels
+Color Depth:     8 colors per attribute line
+Attribute Size:  8 × 1 pixels (reduced from 8×8)
+Memory Layout:
+  Pixel Data:    6144 bytes
+  Attributes:    6144 bytes (one byte per line instead of per block)
+  Total:         12288 bytes
+Port 0xFF:       0x02 (Hi-Color mode enabled)
+Advantages:      Significantly reduced attribute clash
+Compatibility:   Timex/TC2068 family only
+```
+
+**Pentagon GigaScreen**:
+```
+> state screen mode
+
+Model: Pentagon 128K
+Video Mode: GigaScreen (Dual-Screen Interlace)
+============================================
+Resolution:      256 × 192 pixels (per frame)
+Effective:       256 × 192 × enhanced colors
+Color Depth:     Interlaced dual-screen for more colors
+Frame Rate:      25 Hz effective (50 Hz alternating)
+Memory Layout:
+  Screen 0:      RAM page 5, offset 0x0000 (6912 bytes)
+  Screen 1:      RAM page 7, offset 0x0000 (6912 bytes)
+  Total:         13824 bytes (both screens)
+Technique:       Rapid alternation between screens (port 0x7FFD bit 3)
+                 Creates non-flickering multicolor effect
+Advantages:      More colors without attribute clash
+Compatibility:   Pentagon hardware/software specific
+```
+
+**ZX Spectrum Next Layer 2**:
+```
+> state screen mode
+
+Model: ZX Spectrum Next
+Video Mode: Layer 2 (256-Color Bitmap)
+============================================
+Resolution:      256 × 192 pixels
+Color Depth:     256 colors per pixel (8-bit color)
+Attribute Size:  1 × 1 (per-pixel color)
+Memory Layout:
+  Pixel Data:    49152 bytes (256 × 192 × 1 byte)
+  Banks Used:    3 × 16KB banks (pages 8, 9, 10)
+  Palette:       256-entry palette, 9-bit RGB (512 colors)
+Active Layers:
+  Layer 2:       ENABLED (this layer)
+  ULA Layer:     Enabled (below Layer 2)
+  Sprites:       Enabled (128 hardware sprites available)
+  Tilemap:       Disabled
+Port 0x123B:     0x03 (Layer 2 enabled, visible)
+Advantages:      No attribute clash, 256 simultaneous colors
+Compatibility:   ZX Spectrum Next only (2017+ models)
+```
+
+**SAM Coupé Mode 4**:
+```
+> state screen mode
+
+Model: SAM Coupé
+Video Mode: Mode 4 (16-Color Per-Pixel)
+============================================
+Resolution:      256 × 192 pixels
+Color Depth:     16 colors per pixel (4-bit color)
+Attribute Size:  1 × 1 (no attribute blocks)
+Memory Layout:
+  Pixel Data:    49152 bytes (2 pixels per byte, 4 bits each)
+  Palette:       16-entry palette from 128 colors
+VMPR Register:   0x?? (Mode 4 selected)
+Advantages:      No attribute clash, free color choice per pixel
+Compatibility:   SAM Coupé only
+```
+
+**Port 0x7FFD Screen Control**:
+
+```
+Port 0x7FFD (Memory Paging and Screen Control):
+  Bit 3: Screen select
+    0 = Display Screen 0 (RAM page 5)
+    1 = Display Screen 1 (RAM page 7)
+
+Example:
+  OUT (0x7FFD), 0x08  ; Switch to Screen 1 (bit 3 = 1)
+  OUT (0x7FFD), 0x00  ; Switch to Screen 0 (bit 3 = 0)
+```
+
+**state screen Output Examples**:
+
+**Brief Mode (Default)**:
+
+```
+> state screen
+
+Screen Configuration (Brief)
+============================
+
+Model:        ZX Spectrum 128K
+Video Mode:   Standard (256×192, 2 colors per 8×8 block)
+Active Screen: Screen 0 (RAM page 5)
+Border Color: 7
+
+Use 'state screen verbose' for detailed information
+```
+
+**Verbose Mode**:
+
+```
+> state screen verbose
+
+Screen Configuration (Verbose)
+==============================
+
+Model: ZX Spectrum 128K
+Active Screen: Screen 0 (normal)
+
+Screen 0 (Normal - RAM Page 5):
+  Physical Location: RAM page 5, offset 0x0000-0x1FFF
+  Pixel Data:        Page 5 offset 0x0000-0x17FF (6144 bytes)
+  Attributes:        Page 5 offset 0x1800-0x1AFF (768 bytes)
+  Z80 Access:        0x4000-0x7FFF (bank 1 - always accessible)
+  ULA Status:        CURRENTLY DISPLAYED
+  Contention:        Active when accessed via 0x4000-0x7FFF
+
+Screen 1 (Shadow - RAM Page 7):
+  Physical Location: RAM page 7, offset 0x0000-0x1FFF
+  Pixel Data:        Page 7 offset 0x0000-0x17FF (6144 bytes)
+  Attributes:        Page 7 offset 0x1800-0x1AFF (768 bytes)
+  Z80 Access:        Not currently mapped (page 5 at bank 3)
+  ULA Status:        Not displayed
+  Contention:        N/A (not mapped)
+
+Port 0x7FFD:  0x05 (bin: 00000101)
+  Bits 0-2: 5 (RAM page 5 mapped to bank 3)
+  Bit 3:    0 (ULA displays Screen 0)
+  Bit 4:    0 (ROM: 128K Editor)
+  Bit 5:    0 (Paging enabled)
+
+Note: ULA reads screen from physical RAM page, independent of Z80 address mapping.
+
+Display Mode: Standard (256×192, 2 colors per 8×8)
+Border Color: 7
+```
+
+#### 6.7 ULA State
+
+Inspect ULA (Uncommitted Logic Array) state - the main chip controlling video, contention, and I/O timing.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state ula` | | | Show ULA state:<br/>• Border color (3-bit)<br/>• MIC output (tape save)<br/>• Beeper output<br/>• Flash phase<br/>• Contention state<br/>• Current scanline<br/>• Horizontal position in line | 🔮 Planned |
+| `state ula timing` | | | Show ULA timing information:<br/>• Frame T-states (48K: 69888, 128K: 70908)<br/>• Current T-state in frame<br/>• Scanline timing (224 T-states/line)<br/>• Contention pattern<br/>• Next interrupt timing | 🔮 Planned |
+| `state ula contention` | | | Show memory contention details:<br/>• Contended memory range (0x4000-0x7FFF)<br/>• Current contention state (enabled/disabled)<br/>• T-states added by contention this frame<br/>• Contention pattern (6:5 snowflake) | 🔮 Planned |
+
+**Implementation Notes**:
+
+**Memory Contention**:
+- Occurs when CPU accesses screen memory (0x4000-0x7FFF) during active display
+- Pattern: 6 T-states contended, 5 T-states non-contended (repeats)
+- Only affects specific T-states within each scanline
+- Critical for accurate timing of demos and loaders
+
+**ULA Port 0xFE**:
+```
+OUT:
+  Bit 0-2: Border color (0-7)
+  Bit 3:   MIC output (tape save)
+  Bit 4:   Beeper output
+  Bit 5-7: Not used
+
+IN:
+  Bit 0-4: Keyboard row data (active low)
+  Bit 6:   Tape input (EAR)
+  Bit 7:   Not used (always 1)
+```
+
+#### 6.8 Audio Device State
+
+Inspect audio hardware state including beeper and AY-3-8912 PSG.
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `state audio beeper` | | | Show beeper state:<br/>• Current output level (0/1)<br/>• Last toggle timestamp<br/>• Toggle frequency estimate<br/>• Output waveform visualization | 🔮 Planned |
+| `state audio ay` | | | Show AY-3-8912 chip state:<br/>• Selected register (0-15)<br/>• All register values with decoding<br/>• Channel A/B/C: period, amplitude, mixer<br/>• Envelope shape and period<br/>• Noise period<br/>• I/O ports A/B state | 🔮 Planned |
+| `state audio ay register <N>` | | `<register>` | Show specific AY register (0-15) with full decoding:<br/>**Example: `state audio ay register 0`**<br/>• Register 0: Channel A fine period = 0x123<br/>• Frequency: 432 Hz<br/>• Note: A4 (440 Hz approximately) | 🔮 Planned |
+| `state audio channels` | | | Show audio mixer state for all sound sources:<br/>• Beeper: ON/OFF, level<br/>• AY Channel A/B/C: ON/OFF, volume<br/>• Covox: state (if present)<br/>• Master output level<br/>• Mute state | 🔮 Planned |
+
+**AY-3-8912 Registers**:
+
+| Register | Function | Bits |
+| :--- | :--- | :--- |
+| 0-1 | Channel A period (fine/coarse) | 12-bit |
+| 2-3 | Channel B period | 12-bit |
+| 4-5 | Channel C period | 12-bit |
+| 6 | Noise period | 5-bit |
+| 7 | Mixer control/enable | 8-bit |
+| 8-10 | Channel A/B/C amplitude | 5-bit each |
+| 11-12 | Envelope period | 16-bit |
+| 13 | Envelope shape | 4-bit |
+| 14-15 | I/O ports A/B | 8-bit each |
+
+#### 6.9 Implementation Strategy
+
+**Command Handler Architecture**:
+
+All `state` commands will be implemented in a dedicated `StateInspector` class that aggregates data from various emulator subsystems:
+
+```cpp
+class StateInspector
+{
+public:
+    StateInspector(EmulatorContext* context, PortMapper* portMapper, PortDecoder* portDecoder);
+    
+    // Memory Configuration & Paging
+    std::string GetMemoryInfo();           // Complete memory state (ROM + RAM + paging)
+    std::string GetRAMInfo();               // RAM banks only
+    std::string GetROMInfo();               // ROM configuration and signature
+    std::vector<MemoryChange> GetMemoryHistory(size_t count);  // Paging history
+    
+    // Port Inspection
+    std::string GetAllPorts();              // All available ports from PortMapper with decoding info
+    std::string GetPortValue(uint16_t port);  // Specific port with full decoding (address + value)
+    std::string DecodePortValue(uint16_t port, uint8_t value);  // Decode arbitrary port value
+    
+    // System Variables
+    std::string GetSystemVariables();
+    std::string GetSystemVariable(const std::string& name);
+    std::string GetSystemVariablesByCategory(const std::string& category);
+    
+    // Tape State
+    std::string GetTapeStatus();
+    std::string GetTapeBlocks();
+    std::string GetTapeBlockInfo(size_t blockIndex);
+    
+    // Disk State
+    std::string GetDiskStatus(char drive);
+    std::string GetDiskGeometry(char drive);
+    std::string GetDiskCatalog(char drive);
+    std::string GetFDCState();
+    
+    // Screen State
+    std::string GetScreenConfig();
+    std::string GetScreenMode();
+    std::string GetScreenAttrs();
+    
+    // ULA State
+    std::string GetULAState();
+    std::string GetULATiming();
+    std::string GetULAContention();
+    
+    // Audio State
+    std::string GetBeeperState();
+    std::string GetAYState();
+    std::string GetAYRegister(uint8_t reg);
+    
+private:
+    EmulatorContext* _context;
+};
+```
+
+**Integration Points**:
+
+1. **CLI Interface** (`CLIProcessor`):
+   - New handler: `HandleState(const ClientSession& session, const std::vector<std::string>& args)`
+   - Parses subsystem and subcommand
+   - Delegates to `StateInspector` methods
+   - Formats output for text display
+
+2. **WebAPI Interface** (`AutomationWebAPI`):
+   - New endpoint: `GET /api/v1/emulator/{id}/state/{subsystem}`
+   - Query parameters for subcommands
+   - Returns JSON-formatted state data
+   - Examples:
+     - `GET /api/v1/emulator/test/state/memory` - All memory info
+     - `GET /api/v1/emulator/test/state/memory?detail=rom` - ROM only
+     - `GET /api/v1/emulator/test/state/ports` - All ports
+     - `GET /api/v1/emulator/test/state/port/0xFE` - Specific port
+
+3. **Python Bindings**:
+   ```python
+   # Python API examples
+   state = emulator.state
+   print(state.memory())          # All memory info
+   print(state.memory.rom())      # ROM only
+   print(state.ram())             # Shortcut for RAM
+   print(state.ports())           # All available ports
+   print(state.port(0xFE))        # Specific port
+   print(state.sysvars.PROG)      # System variable
+   print(state.tape())            # Tape status
+   print(state.screen.mode())     # Video mode
+   ```
+
+4. **Lua Bindings**:
+   ```lua
+   -- Lua API examples
+   print(emu.state.memory())      -- All memory info
+   print(emu.state.memory.rom())  -- ROM only
+   print(emu.state.ram())         -- Shortcut for RAM
+   print(emu.state.ports())       -- All available ports
+   print(emu.state.port(0xFE))    -- Specific port
+   print(emu.state.sysvars.PROG)  -- System variable
+   print(emu.state.tape())        -- Tape status
+   print(emu.state.screen.mode()) -- Video mode
+   ```
+
+**Data Sources**:
+
+Each state command reads from specific emulator components:
+
+| State Subsystem | Primary Data Source | Additional Sources |
+| :--- | :--- | :--- |
+| `memory` | `Memory` class, `CONFIG` struct | Port 0x7FFD/0x1FFD monitor, paging history buffer |
+| `ports` | `PortMapper` registry, `PortDecoder` | Model configuration, interface list, peripheral registry |
+| `port` | `IO` class, port I/O history buffer | `PortMapper` for device info, `PortDecoder` for address decoding, device-specific value decoders |
+| `sysvars` | `Memory` (0x5C00-0x5CB5) | System variable definitions table |
+| `tape` | `Tape` class | Current tape image metadata, block list |
+| `disk` | `BetaDisk`/`PlusDisk` classes | FDC registers, disk image, DOS detector |
+| `screen` | `Screen` class, `ULA` | Port 0x7FFD bit 3, memory banking, video mode flags |
+| `ula` | `ULA` class | T-state counter, scanline position, contention logic |
+| `audio` | `Beeper`, `TurboSound` classes | AY register state, mixer configuration |
+
+**Output Formatting**:
+
+- **CLI**: Human-readable tables with aligned columns
+- **WebAPI**: JSON with full type information
+- **Python/Lua**: Native objects (dicts, tables) for programmatic access
+
+**Performance Considerations**:
+
+- State queries are read-only, no emulation side effects
+- Most queries complete in <1ms (simple memory/register reads)
+- History queries may take longer for large buffers
+- `watch` subcommands use event-driven updates (no polling)
+
+**Future Enhancements**:
+
+- **Live Watch Mode**: Real-time terminal UI with auto-refresh for all state subsystems
+- **State Diff**: Compare state between two points in time (e.g., before/after ROM switch)
+- **State Export**: JSON/XML export for external analysis and archiving
+- **State Alerts**: Trigger on specific state changes (e.g., memory paging changed, port accessed, ROM switched)
+
+### 7. Emulator Instance Settings
 
 Commands to configure emulator instance behavior and performance characteristics. These settings control how the emulator handles I/O operations and execution speed.
 

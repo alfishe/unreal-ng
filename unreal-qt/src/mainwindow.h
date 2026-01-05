@@ -23,6 +23,7 @@
 #include "logviewer/logwindow.h"
 #include "widgets/devicescreen.h"
 #include "emulator/soundmanager.h"
+#include "menumanager.h"
 #include "ui_mainwindow.h"
 
 #ifdef ENABLE_AUTOMATION
@@ -58,6 +59,20 @@ private slots:
     void openSpecificFile(const QString& filepath);
     void resetEmulator();
     void handleFullScreenShortcut();
+    
+    // Menu action handlers
+    void handleStartEmulator();
+    void handlePauseEmulator();
+    void handleResumeEmulator();
+    void handleStopEmulator();
+    void handleSpeedMultiplierChanged(int multiplier);
+    void handleTurboModeToggled(bool enabled);
+    void handleStepIn();
+    void handleStepOver();
+    void handleDebugModeToggled(bool enabled);
+    void handleDebuggerToggled(bool visible);
+    void handleLogWindowToggled(bool visible);
+    void updateMenuStates();
 
     /// region <QWidget events override>
 protected:
@@ -142,5 +157,6 @@ private:
     QString _lastDirectory;
 
     DockingManager* _dockingManager = nullptr;
+    MenuManager* _menuManager = nullptr;
 };
 

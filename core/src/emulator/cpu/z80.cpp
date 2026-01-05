@@ -288,26 +288,43 @@ void Z80::Z80FrameCycle()
     [[maybe_unused]] Z80& cpu = *this;
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
 
+    // Apply queued speed multiplier change at frame boundary (if any)
+    // This prevents mid-frame timing inconsistencies
+    if (state.next_z80_frequency_multiplier != state.current_z80_frequency_multiplier)
+    {
+        state.current_z80_frequency_multiplier = state.next_z80_frequency_multiplier;
+        state.current_z80_frequency = state.base_z80_frequency * state.current_z80_frequency_multiplier;
+        
+        MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx (%.2f MHz)", 
+                 state.current_z80_frequency_multiplier,
+                 state.current_z80_frequency / 1'000'000.0);
+    }
+
+    // Calculate scaled frame limit based on speed multiplier
+    uint32_t scaledFrameLimit = config.frame * state.current_z80_frequency_multiplier;
+
     // Video Interrupt position calculation
+    // Scale interrupt timings by the same multiplier as the frame duration
+    // This ensures interrupts occur at the correct relative position within the frame
     bool int_occurred = false;
-    unsigned int_start = config.intstart;
-    unsigned int_end = config.intstart + config.intlen;
+    unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
+    unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
 
     cpu.haltpos = 0;
 
     // INT interrupt handling lasts for more than 1 frame
-    if (int_end >= config.frame)
+    if (int_end >= scaledFrameLimit)
     {
-        int_end -= config.frame;
+        int_end -= scaledFrameLimit;
         cpu.int_pending = true;
         int_occurred = true;
     }
 
-    // Cover whole frame (control by clock cycles)
-    while (cpu.t < config.frame)
+    // Cover whole frame (control by clock cycles), scaled by speed multiplier
+    while (cpu.t < scaledFrameLimit)
     {
         // Handle interrupts if arrived
-        ProcessInterrupts(int_occurred, int_start, config.intlen);
+        ProcessInterrupts(int_occurred, int_start, int_end);
 
         // Perform single Z80 command cycle
         Z80Step();

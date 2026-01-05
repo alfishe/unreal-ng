@@ -83,9 +83,11 @@ void MainLoop::Run(volatile bool& stopRequested)
 
     /// endregion </Debug>
 
+    /// region <Info logging>
     static std::chrono::milliseconds timeout(20); // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
+    /// endregion </Info logging>
 
     while (!stopRequested)
     {
@@ -101,24 +103,44 @@ void MainLoop::Run(volatile bool& stopRequested)
 
             while (_pauseRequested)
             {
-              sleep_ms(20);
+                // React on stop request while paused
+                if (stopRequested)
+                {
+                    MLOGINFO("Stop requested while paused");
+                    break;  // Exit pause loop
+                }
+
+                sleep_ms(20);
             }
 
-            continue;
+            continue;  // Either we'll render next frame or exit main loop via stopRequested check
         }
         /// endregion </Handle Pause>
 
+        /// region <Info logging>
         //MLOGINFO("Frame recalculation time: %d us", duration1);
         //std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
         //std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
+        /// endregion </Info logging>
 
-        // Wait until audio callback requests more data and buffer is about half-full
-        // That means we're in sync between audio and video frames
-        std::unique_lock<std::mutex> lock(_audioBufferMutex);
-        auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-        _cv.wait_for(lock, timeout, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
-        _moreAudioDataRequested.store(false);
-        lock.unlock();
+        // Synchronization strategy depends on turbo mode setting
+        const CONFIG& config = _context->config;
+        if (!config.turbo_mode)
+        {
+            // Normal mode: Wait until audio callback requests more data and buffer is about half-full
+            // That means we're in sync between audio and video frames
+            std::unique_lock<std::mutex> lock(_audioBufferMutex);
+            auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
+            _cv.wait_for(lock, timeout, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
+            _moreAudioDataRequested.store(false);
+            lock.unlock();
+        }
+        else
+        {
+            // Turbo mode: Run as fast as possible without audio synchronization
+            // Optional: Yield CPU to prevent 100% core usage if desired
+            // std::this_thread::yield();
+        }
 
         lastRun = startTime;
     }
@@ -266,7 +288,21 @@ void MainLoop::OnFrameEnd()
     // Trigger events for peripherals
     _context->pTape->handleFrameEnd();
     _context->pBetaDisk->handleFrameEnd();
-    _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+
+    // Audio generation: Skip in turbo mode unless explicitly requested
+    const CONFIG& config = _context->config;
+    if (!config.turbo_mode || config.turbo_mode_audio)
+    {
+        _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+    }
+
+    // Capture video frame for recording (if recording is active)
+    // This is called AFTER UpdateScreen() has rendered the current frame
+    // In turbo mode, this captures every emulated frame for correct timing
+    if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
+    {
+        _context->pRecordingManager->CaptureFrame(_context->pScreen->GetFramebufferDescriptor());
+    }
 
     // Notify that video frame is composed and ready for rendering
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();

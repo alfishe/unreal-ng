@@ -95,8 +95,10 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     size_t sampleIndex = (floor)((double)frameTState / ratio);
     */
 
-    size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / config.frame;
-    size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / config.frame;
+    uint32_t scaledFrame = config.frame * _context->emulatorState.current_z80_frequency_multiplier;
+
+    size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / scaledFrame;
+    size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / scaledFrame;
 
     /// region <If we're over frame duration>
     if (prevIndex >= 882)
@@ -158,10 +160,23 @@ void SoundManager::handleFrameEnd()
     AudioUtils::MixAudio((const int16_t*)_ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
     /// endregion </Mix all channels to output buffer>
 
+    // Capture audio for recording BEFORE muting
+    // This ensures recordings get the actual audio, not silence
+    if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
+    {
+        _context->pRecordingManager->CaptureAudio(_outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    }
+
     // Enqueue generated sound data via previously registered application callback
     if (_context->pAudioCallback)
     {
-        //_context->pAudioCallback(_context->pAudioManagerObj, _beeperBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        // If muted, send silence instead of actual audio
+        if (_mute)
+        {
+            // Zero out the buffer (silence)
+            memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
+        }
+
         _context->pAudioCallback(_context->pAudioManagerObj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
     }
 }

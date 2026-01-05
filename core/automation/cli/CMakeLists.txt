@@ -11,6 +11,7 @@ get_filename_component(CORE_LIBRARY_PATH
 set(SOURCES
     src/automation-cli.cpp
     src/cli-processor.cpp
+    src/cli-processor-state.cpp
 )
 
 # Create the library

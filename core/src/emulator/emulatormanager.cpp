@@ -121,6 +121,143 @@ bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
     return false;
 }
 
+// Lifecycle control methods
+bool EmulatorManager::StartEmulator(const std::string& emulatorId)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    auto it = _emulators.find(emulatorId);
+    if (it != _emulators.end())
+    {
+        if (!it->second->IsRunning())
+        {
+            it->second->Start();
+            LOGINFO("EmulatorManager::StartEmulator - Started emulator with ID '%s'", emulatorId.c_str());
+            return true;
+        }
+        else
+        {
+            LOGDEBUG("EmulatorManager::StartEmulator - Emulator with ID '%s' already running", emulatorId.c_str());
+            return false;
+        }
+    }
+
+    LOGDEBUG("EmulatorManager::StartEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+    return false;
+}
+
+bool EmulatorManager::StartEmulatorAsync(const std::string& emulatorId)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    auto it = _emulators.find(emulatorId);
+    if (it != _emulators.end())
+    {
+        if (!it->second->IsRunning())
+        {
+            it->second->StartAsync();
+            LOGINFO("EmulatorManager::StartEmulatorAsync - Started emulator async with ID '%s'", emulatorId.c_str());
+            return true;
+        }
+        else
+        {
+            LOGDEBUG("EmulatorManager::StartEmulatorAsync - Emulator with ID '%s' already running", emulatorId.c_str());
+            return false;
+        }
+    }
+
+    LOGDEBUG("EmulatorManager::StartEmulatorAsync - No emulator found with ID '%s'", emulatorId.c_str());
+    return false;
+}
+
+bool EmulatorManager::StopEmulator(const std::string& emulatorId)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    auto it = _emulators.find(emulatorId);
+    if (it != _emulators.end())
+    {
+        if (it->second->IsRunning())
+        {
+            it->second->Stop();
+            LOGINFO("EmulatorManager::StopEmulator - Stopped emulator with ID '%s'", emulatorId.c_str());
+            return true;
+        }
+        else
+        {
+            LOGDEBUG("EmulatorManager::StopEmulator - Emulator with ID '%s' not running", emulatorId.c_str());
+            return false;
+        }
+    }
+
+    LOGDEBUG("EmulatorManager::StopEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+    return false;
+}
+
+bool EmulatorManager::PauseEmulator(const std::string& emulatorId)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    auto it = _emulators.find(emulatorId);
+    if (it != _emulators.end())
+    {
+        if (it->second->IsRunning() && !it->second->IsPaused())
+        {
+            it->second->Pause();
+            LOGINFO("EmulatorManager::PauseEmulator - Paused emulator with ID '%s'", emulatorId.c_str());
+            return true;
+        }
+        else
+        {
+            LOGDEBUG("EmulatorManager::PauseEmulator - Emulator with ID '%s' not running or already paused", emulatorId.c_str());
+            return false;
+        }
+    }
+
+    LOGDEBUG("EmulatorManager::PauseEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+    return false;
+}
+
+bool EmulatorManager::ResumeEmulator(const std::string& emulatorId)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    auto it = _emulators.find(emulatorId);
+    if (it != _emulators.end())
+    {
+        if (it->second->IsPaused())
+        {
+            it->second->Resume();
+            LOGINFO("EmulatorManager::ResumeEmulator - Resumed emulator with ID '%s'", emulatorId.c_str());
+            return true;
+        }
+        else
+        {
+            LOGDEBUG("EmulatorManager::ResumeEmulator - Emulator with ID '%s' not paused", emulatorId.c_str());
+            return false;
+        }
+    }
+
+    LOGDEBUG("EmulatorManager::ResumeEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+    return false;
+}
+
+bool EmulatorManager::ResetEmulator(const std::string& emulatorId)
+{
+    std::lock_guard<std::mutex> lock(_emulatorsMutex);
+
+    auto it = _emulators.find(emulatorId);
+    if (it != _emulators.end())
+    {
+        it->second->Reset();
+        LOGINFO("EmulatorManager::ResetEmulator - Reset emulator with ID '%s'", emulatorId.c_str());
+        return true;
+    }
+
+    LOGDEBUG("EmulatorManager::ResetEmulator - No emulator found with ID '%s'", emulatorId.c_str());
+    return false;
+}
+
 std::map<std::string, EmulatorStateEnum> EmulatorManager::GetAllEmulatorStatuses()
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);

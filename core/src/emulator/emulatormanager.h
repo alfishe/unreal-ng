@@ -98,6 +98,49 @@ public:
      */
     bool RemoveEmulator(const std::string& emulatorId);
 
+    // Lifecycle control methods - UI should use these instead of direct Emulator calls
+    /**
+     * @brief Start an emulator
+     * @param emulatorId ID of the emulator to start
+     * @return True if started successfully, false if emulator not found or already running
+     */
+    bool StartEmulator(const std::string& emulatorId);
+
+    /**
+     * @brief Start an emulator asynchronously
+     * @param emulatorId ID of the emulator to start
+     * @return True if started successfully, false if emulator not found or already running
+     */
+    bool StartEmulatorAsync(const std::string& emulatorId);
+
+    /**
+     * @brief Stop an emulator
+     * @param emulatorId ID of the emulator to stop
+     * @return True if stopped successfully, false if emulator not found
+     */
+    bool StopEmulator(const std::string& emulatorId);
+
+    /**
+     * @brief Pause an emulator
+     * @param emulatorId ID of the emulator to pause
+     * @return True if paused successfully, false if emulator not found or not running
+     */
+    bool PauseEmulator(const std::string& emulatorId);
+
+    /**
+     * @brief Resume an emulator
+     * @param emulatorId ID of the emulator to resume
+     * @return True if resumed successfully, false if emulator not found or not paused
+     */
+    bool ResumeEmulator(const std::string& emulatorId);
+
+    /**
+     * @brief Reset an emulator
+     * @param emulatorId ID of the emulator to reset
+     * @return True if reset successfully, false if emulator not found
+     */
+    bool ResetEmulator(const std::string& emulatorId);
+
     /**
      * @brief Get status of all emulators
      * @return Map of emulator UUIDs to their states

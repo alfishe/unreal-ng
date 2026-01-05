@@ -452,7 +452,14 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                         // Process the command
                         processor->ProcessCommand(session, lineBuffer);
                         lineBuffer.clear();
-                        
+
+                        // Check if session should be closed (e.g., exit command)
+                        if (session.ShouldClose())
+                        {
+                            std::cout << "CLI session marked for closure by command" << std::endl;
+                            break; // Exit the processing loop to close the connection
+                        }
+
                         // Send newline and prompt for next command
                         std::string promptStr = std::string(NEWLINE) + "> ";
                         send(clientSocket, promptStr.c_str(), promptStr.length(), 0);
@@ -469,9 +476,8 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                 }
                 else
                 {
-                    // Empty line, just send prompt again
-                    std::string promptStr = std::string(NEWLINE) + "> ";
-                    send(clientSocket, promptStr.c_str(), promptStr.length(), 0);
+                    // Empty line, just send prompt again (no extra newline needed, already echoed)
+                    send(clientSocket, "> ", 2, 0);
                 }
                 continue;
             }
@@ -484,6 +490,13 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                 char ch = static_cast<char>(c);
                 send(clientSocket, &ch, 1, 0);
             }
+        }
+
+        // Check if session should be closed (e.g., exit command was processed)
+        if (session.ShouldClose())
+        {
+            std::cout << "Closing session as requested by command" << std::endl;
+            break;
         }
 
         // Check if socket was closed by the command handler (e.g., exit/quit)

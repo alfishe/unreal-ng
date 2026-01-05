@@ -16,6 +16,7 @@ class WD1793;
 class PortDecoder;
 class Screen;
 class SoundManager;
+class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
@@ -78,6 +79,9 @@ public:
 
     // Sound manager
     SoundManager* pSoundManager;
+
+    // Recording manager (video/audio capture for recordings)
+    RecordingManager* pRecordingManager;
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager;

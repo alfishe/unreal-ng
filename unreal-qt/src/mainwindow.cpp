@@ -89,6 +89,28 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);
 
+    // Create and configure menu system
+    _menuManager = new MenuManager(this, ui->menubar, this);
+    
+    // Connect menu signals to handlers
+    connect(_menuManager, &MenuManager::openFileRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
+    connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
+    connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
+    connect(_menuManager, &MenuManager::stopRequested, this, &MainWindow::handleStopEmulator);
+    connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
+    connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
+    connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
+    connect(_menuManager, &MenuManager::stepInRequested, this, &MainWindow::handleStepIn);
+    connect(_menuManager, &MenuManager::stepOverRequested, this, &MainWindow::handleStepOver);
+    connect(_menuManager, &MenuManager::debugModeToggled, this, &MainWindow::handleDebugModeToggled);
+    connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
+    connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
+    connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
+
     // Bring application windows to foreground
     debuggerWindow->raise();
     this->raise();
@@ -205,12 +227,6 @@ void MainWindow::closeEvent(QCloseEvent* event)
     event->accept();
     qDebug() << "QCloseEvent : Closing application";
 
-    // Stop emulator
-    if (_emulator)
-    {
-        _emulator->Stop();
-    }
-
     // Unsubscribe from message bus events
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
@@ -241,8 +257,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
         deviceScreen->detach();
     }
 
+    // Remove emulator from manager before destroying it
     if (_emulator)
     {
+        std::string emulatorId = _emulator->GetId();
+        _emulatorManager->RemoveEmulator(emulatorId);
         _emulator = nullptr;
     }
 
@@ -688,18 +707,29 @@ void MainWindow::dropEvent(QDropEvent* event)
         // Determine file type
         SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepath);
 
+        // Auto-start emulator if not running (except for symbol files which don't need it)
+        if (!_emulator && category != FileSymbol && category != FileUnknown)
+        {
+            qDebug() << "Auto-starting emulator for dropped file";
+            handleStartButton();  // Create and start new emulator instance
+        }
+
+        // Now proceed with file loading
         switch (category)
         {
             case FileROM:
                 break;
             case FileSnapshot:
-                _emulator->LoadSnapshot(file);
+                if (_emulator)
+                    _emulator->LoadSnapshot(file);
                 break;
             case FileTape:
-                _emulator->LoadTape(file);
+                if (_emulator)
+                    _emulator->LoadTape(file);
                 break;
             case FileDisk:
-                _emulator->LoadDisk(file);
+                if (_emulator)
+                    _emulator->LoadDisk(file);
                 break;
             case FileSymbol:
                 if (_emulator && _emulator->GetDebugManager())
@@ -874,8 +904,26 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 
 void MainWindow::handleStartButton()
 {
+    // This is the "smart" handler for the UI Start/Stop button
+    // It handles multiple states:
+    // - If emulator is NULL -> Create and start new instance
+    // - If emulator is PAUSED -> Resume (convenience feature)
+    // - If emulator is RUNNING -> Stop and destroy instance
+    //
+    // Note: Menu actions use specific handlers (handleStartEmulator, handleResumeEmulator)
+    // that don't have this "smart" behavior - they do exactly what they say.
+    
     // Lock will be removed after method exit
     QMutexLocker ml(&lockMutex);
+
+    // Check if emulator is paused - if so, resume it (convenience for button)
+    if (_emulator && _emulator->IsPaused())
+    {
+        std::string emulatorId = _emulator->GetId();
+        _emulatorManager->ResumeEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        updateMenuStates();
+        return;
+    }
 
     if (_emulator == nullptr)
     {
@@ -1000,13 +1048,21 @@ void MainWindow::handleStartButton()
                 _soundManager->start();
             }
 
-            // Start in async own thread
-            _emulator->StartAsync();
+            // Pass active emulator reference to menu manager
+            if (_menuManager)
+            {
+                _menuManager->setActiveEmulator(_emulator);
+            }
+
+            // Start in async own thread - use EmulatorManager for lifecycle
+            std::string emulatorId = _emulator->GetId();
+            _emulatorManager->StartEmulatorAsync(emulatorId);
 
             fflush(stdout);
             fflush(stderr);
             startButton->setText("Stop");
             startButton->setEnabled(true);
+            updateMenuStates();
 
             // DEBUG: Reset ZX-Spectrum each 2 seconds
             // QTimer *timer = new QTimer(this);
@@ -1027,8 +1083,10 @@ void MainWindow::handleStartButton()
 
         if (_emulator)
         {
-            // Stop emulator instance
-            _emulator->Stop();
+            // Stop emulator instance - use EmulatorManager for lifecycle
+            std::string emulatorId = _emulator->GetId();
+            _emulatorManager->StopEmulator(emulatorId);
+            updateMenuStates();
 
             // Unsubscribe from message bus events
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1044,6 +1102,9 @@ void MainWindow::handleStartButton()
             // Remove emulator from manager
             _emulatorManager->RemoveEmulator(_emulator->GetId());
             _emulator = nullptr;
+            
+            // Update menu states - no active emulator now
+            updateMenuStates();
         }
 
         _lastFrameCount = 0;
@@ -1434,5 +1495,178 @@ void MainWindow::resetEmulator()
         _lastFrameCount = 0;
     }
 }
+
+/// region <Menu action handlers>
+
+void MainWindow::handleStartEmulator()
+{
+    // Menu "Start" action should ONLY start a new emulator instance
+    // It should not resume a paused emulator (that's what Resume is for)
+    if (_emulator == nullptr)
+    {
+        handleStartButton();
+    }
+    else
+    {
+        qDebug() << "Emulator already running. Use Stop or Resume instead.";
+    }
+}
+
+void MainWindow::handlePauseEmulator()
+{
+    if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
+    {
+        std::string emulatorId = _emulator->GetId();
+        _emulatorManager->PauseEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        updateMenuStates();
+        qDebug() << "Emulator paused";
+    }
+}
+
+void MainWindow::handleResumeEmulator()
+{
+    if (_emulator && _emulator->IsPaused())
+    {
+        std::string emulatorId = _emulator->GetId();
+        _emulatorManager->ResumeEmulator(emulatorId);  // Use EmulatorManager for lifecycle
+        updateMenuStates();
+        qDebug() << "Emulator resumed";
+    }
+}
+
+void MainWindow::handleStopEmulator()
+{
+    if (_emulator)
+    {
+        // Full cleanup like the main button
+        startButton->setEnabled(false);
+
+        // Disable audio output
+        _soundManager->stop();
+
+        // Stop emulator instance - use EmulatorManager for lifecycle
+        std::string emulatorId = _emulator->GetId();
+        _emulatorManager->StopEmulator(emulatorId);
+
+        // Unsubscribe from message bus events
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        Observer* observerInstance = static_cast<Observer*>(this);
+        ObserverCallbackMethod callback =
+            static_cast<ObserverCallbackMethod>(&MainWindow::handleMessageScreenRefresh);
+        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, callback);
+
+        // Detach framebuffer
+        deviceScreen->detach();
+
+        // Remove emulator from manager
+        _emulatorManager->RemoveEmulator(_emulator->GetId());
+        _emulator = nullptr;
+
+        _lastFrameCount = 0;
+
+        // Update UI
+        startButton->setText("Start");
+        startButton->setEnabled(true);
+        updateMenuStates();
+
+        qDebug() << "Emulator stopped and cleaned up";
+    }
+}
+
+void MainWindow::handleSpeedMultiplierChanged(int multiplier)
+{
+    if (_emulator)
+    {
+        Core* core = _emulator->GetContext()->pCore;
+        if (core)
+        {
+            core->SetSpeedMultiplier(static_cast<uint8_t>(multiplier));
+            qDebug() << "Speed multiplier set to" << multiplier << "x";
+        }
+    }
+}
+
+void MainWindow::handleTurboModeToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        Core* core = _emulator->GetContext()->pCore;
+        if (core)
+        {
+            if (enabled)
+            {
+                core->EnableTurboMode(false);  // No audio in turbo mode
+                qDebug() << "Turbo mode enabled";
+            }
+            else
+            {
+                core->DisableTurboMode();
+                qDebug() << "Turbo mode disabled";
+            }
+        }
+    }
+}
+
+void MainWindow::handleStepIn()
+{
+    if (_emulator)
+    {
+        _emulator->RunSingleCPUCycle(false);
+        qDebug() << "Step in executed";
+    }
+}
+
+void MainWindow::handleStepOver()
+{
+    if (_emulator)
+    {
+        _emulator->StepOver();
+        qDebug() << "Step over executed";
+    }
+}
+
+void MainWindow::handleDebugModeToggled(bool enabled)
+{
+    if (_emulator)
+    {
+        if (enabled)
+        {
+            _emulator->DebugOn();
+            qDebug() << "Debug mode enabled";
+        }
+        else
+        {
+            _emulator->DebugOff();
+            qDebug() << "Debug mode disabled";
+        }
+    }
+}
+
+void MainWindow::handleDebuggerToggled(bool visible)
+{
+    if (debuggerWindow)
+    {
+        debuggerWindow->setVisible(visible);
+    }
+}
+
+void MainWindow::handleLogWindowToggled(bool visible)
+{
+    if (logWindow)
+    {
+        logWindow->setVisible(visible);
+    }
+}
+
+void MainWindow::updateMenuStates()
+{
+    if (_menuManager)
+    {
+        // Menu will query emulator directly - no state duplication!
+        _menuManager->updateMenuStates(_emulator);
+    }
+}
+
+/// endregion </Menu action handlers>
 
 /// endregion </Slots>

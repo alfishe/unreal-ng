@@ -38,6 +38,11 @@ namespace api
                 METHOD_ADD(EmulatorAPI::getSettings, "/{id}/settings", drogon::Get);
                 METHOD_ADD(EmulatorAPI::getSetting, "/{id}/settings/{name}", drogon::Get);
                 METHOD_ADD(EmulatorAPI::setSetting, "/{id}/settings/{name}", drogon::Put, drogon::Post);
+                
+                // State inspection
+                METHOD_ADD(EmulatorAPI::getStateScreen, "/{id}/state/screen", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateScreenMode, "/{id}/state/screen/mode", drogon::Get);
+                METHOD_ADD(EmulatorAPI::getStateScreenFlash, "/{id}/state/screen/flash", drogon::Get);
             METHOD_LIST_END
 
             // List all emulators
@@ -93,6 +98,19 @@ namespace api
                           std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                           const std::string &id,
                           const std::string &name) const;
+            
+            // State inspection
+            void getStateScreen(const drogon::HttpRequestPtr &req,
+                              std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                              const std::string &id) const;
+                              
+            void getStateScreenMode(const drogon::HttpRequestPtr &req,
+                                  std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                  const std::string &id) const;
+                                  
+            void getStateScreenFlash(const drogon::HttpRequestPtr &req,
+                                   std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                                   const std::string &id) const;
         
         private:
             // Helper method to handle emulator actions with common error handling

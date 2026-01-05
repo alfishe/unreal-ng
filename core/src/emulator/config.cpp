@@ -9,6 +9,8 @@
 #include "emulator/platform.h"
 #include "emulator/memory/memory.h"
 #include <cassert>
+#include <array>
+#include <algorithm>
 
 #ifdef __linux__
 	// Use ICU library for path conversion in SimpleINI parser
@@ -266,7 +268,17 @@ bool Config::ParseConfig(CSimpleIniA& inimanager)
 	config.intstart = (unsigned)inimanager.GetLongValue(ula, "instart", 0);
 	config.intlen = (unsigned)inimanager.GetLongValue(ula, "intlen", 32);
 	config.t_line = (unsigned)inimanager.GetLongValue(ula, "line", 224);		// CPU cycles per video line
-	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888; 
+	config.frame = (unsigned)inimanager.GetLongValue(ula, "frame", 71680);		// ZX48/128: 69888; Pentagon: 71680; ScorpionZS256: 69888;
+	
+	// Speed multiplier: 1x (default), 2x, 4x, 8x, 16x
+		config.speed_multiplier = (uint8_t)inimanager.GetLongValue(ula, "speedmultiplier", 1);
+		{
+			static const std::array<uint8_t, 5> allowedMultipliers = { 1, 2, 4, 8, 16 };
+			if (std::find(allowedMultipliers.begin(), allowedMultipliers.end(), config.speed_multiplier) == allowedMultipliers.end())
+			{
+				config.speed_multiplier = 1;  // Default to 1x if invalid value
+			}
+		}
 
 	config.border_4T = (unsigned)inimanager.GetLongValue(ula, "4TBorder", 0);
 	config.even_M1 = (unsigned)inimanager.GetLongValue(ula, "EvenM1", 0);

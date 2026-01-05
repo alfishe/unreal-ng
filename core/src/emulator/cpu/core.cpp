@@ -4,6 +4,7 @@
 
 #include "core.h"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/vg93.h"
@@ -71,6 +72,15 @@ bool Core::Init()
     _state->base_z80_frequency = baseFrequency;
     _state->current_z80_frequency = baseFrequency;
     _state->current_z80_frequency_multiplier = 1;
+    _state->next_z80_frequency_multiplier = 1;  // Initialize queued multiplier
+
+    // Initialize speed multiplier from configuration
+    if (_config->speed_multiplier > 0 && _config->speed_multiplier <= 16)
+    {
+        _state->current_z80_frequency_multiplier = _config->speed_multiplier;
+        _state->next_z80_frequency_multiplier = _config->speed_multiplier;
+        _state->current_z80_frequency = baseFrequency * _config->speed_multiplier;
+    }
 
     /// endregion </Frequency>
 
@@ -175,6 +185,26 @@ bool Core::Init()
     }
 
     /// endregion </Sound manager>
+
+    /// region <Recording manager>
+
+    if (result)
+    {
+        result = false;
+
+        // Instantiate recording manager
+        _recordingManager = new RecordingManager(_context);
+
+        if (_recordingManager)
+        {
+            _context->pRecordingManager = _recordingManager;
+            _recordingManager->Init();
+
+            result = true;
+        }
+    }
+
+    /// endregion </Recording manager>
 
     /// region <HDD>
 
@@ -306,6 +336,13 @@ void Core::Release()
 
         delete _sound;
         _sound = nullptr;
+    }
+
+    _context->pRecordingManager = nullptr;
+    if (_recordingManager != nullptr)
+    {
+        delete _recordingManager;
+        _recordingManager = nullptr;
     }
 
     _context->pScreen = nullptr;
@@ -450,6 +487,77 @@ uint16_t Core::GetCPUFrequencyMultiplier()
     return _state->current_z80_frequency_multiplier;
 };
 
+//
+// Set speed multiplier for emulation (1x, 2x, 4x, 8x, 16x)
+// This scales the number of t-states executed per frame
+//
+void Core::SetSpeedMultiplier(uint8_t multiplier)
+{
+    // Validate multiplier is one of allowed values (use static list)
+    static const std::array<uint8_t, 5> allowedMultipliers = { 1, 2, 4, 8, 16 };
+    if (std::find(allowedMultipliers.begin(), allowedMultipliers.end(), multiplier) == allowedMultipliers.end())
+    {
+        LOGERROR("Core::SetSpeedMultiplier - Speed multiplier must be one of {1,2,4,8,16} (got %d)", multiplier);
+        assert(false);
+        return;
+    }
+
+    // Queue the multiplier change - it will be applied at the start of the next frame
+    // This prevents mid-frame inconsistencies in timing calculations
+    _state->next_z80_frequency_multiplier = multiplier;
+
+    MLOGINFO("Core::SetSpeedMultiplier - Speed multiplier queued to %dx (will apply at next frame)", multiplier);
+}
+
+uint8_t Core::GetSpeedMultiplier() const
+{
+    return _state->current_z80_frequency_multiplier;
+}
+
+//
+// Enable turbo/max speed mode - runs emulation as fast as possible
+// withAudio: if true, continue generating audio samples (at increased pitch)
+//
+void Core::EnableTurboMode(bool withAudio)
+{
+    _context->config.turbo_mode = true;
+    _context->config.turbo_mode_audio = withAudio;
+    
+    // Always mute audible output in turbo mode to avoid chipmunk sounds
+    // Audio generation may still occur if withAudio=true (for recording)
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->mute();
+    }
+    
+    MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)", 
+             withAudio ? "ON" : "OFF");
+}
+
+//
+// Disable turbo mode and return to normal speed
+//
+void Core::DisableTurboMode()
+{
+    _context->config.turbo_mode = false;
+    
+    // Restore audible output
+    if (_context->pSoundManager)
+    {
+        _context->pSoundManager->unmute();
+    }
+    
+    MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
+}
+
+//
+// Check if turbo mode is currently active
+//
+bool Core::IsTurboMode() const
+{
+    return _context->config.turbo_mode;
+}
+
 void Core::CPUFrameCycle()
 {
 	// Execute Z80 cycle
@@ -481,7 +589,10 @@ void Core::CPUFrameCycle()
 void Core::AdjustFrameCounters()
 {
     /// region <Input parameters validation>
-    if (_z80->t < _config->frame)
+    // Calculate scaled frame limit based on speed multiplier
+    uint32_t scaledFrame = _config->frame * _state->current_z80_frequency_multiplier;
+    
+    if (_z80->t < scaledFrame)
         return;
     /// endregion </Input parameters validation>
 
@@ -489,8 +600,8 @@ void Core::AdjustFrameCounters()
     _state->frame_counter++;
 
     // Re-adjust Core frame t-state counter and interrupt position
-    _z80->t -= _config->frame;
-    _z80->eipos -= _config->frame;
+    _z80->t -= scaledFrame;
+    _z80->eipos -= scaledFrame;
 }
 
 void Core::UpdateScreen()
