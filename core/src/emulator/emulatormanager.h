@@ -50,23 +50,23 @@ public:
         return &instance;
     }
 
-    /// @brief Create a new emulator instance with a unique ID
-    /// @param symbolicId Optional symbolic identifier for the emulator (if empty, a default will be used)
-    /// @param level Logger level for the emulator
-    /// @return Shared pointer to the created emulator, or nullptr if creation failed
+/// @brief Create a new emulator instance with a unique ID
+/// @param symbolicId Optional symbolic identifier for the emulator (if empty, a default will be used)
+/// @param level Logger level for the emulator (note: automation-created instances automatically disable all modular logging)
+/// @return Shared pointer to the created emulator, or nullptr if creation failed
     std::shared_ptr<Emulator> CreateEmulator(const std::string& symbolicId = "", LoggerLevel level = LoggerLevel::LogWarning);
 
     /// @brief Create a new emulator instance with a specific UUID and symbolic ID
     /// @param emulatorId The UUID to use for the emulator
     /// @param symbolicId Optional symbolic identifier for the emulator
-    /// @param level Logger level for the emulator
+    /// @param level Logger level for the emulator (note: automation-created instances automatically disable all modular logging)
     /// @return Shared pointer to the created emulator, or nullptr if creation failed
     std::shared_ptr<Emulator> CreateEmulatorWithId(const std::string& emulatorId, const std::string& symbolicId = "", LoggerLevel level = LoggerLevel::LogWarning);
 
     /// @brief Create a new emulator instance with a specific model configuration
     /// @param symbolicId Optional symbolic identifier for the emulator
     /// @param modelName Name of the model to create (e.g., "PENTAGON", "48K", "128K")
-    /// @param level Logging level for the emulator
+    /// @param level Logging level for the emulator (note: automation-created instances automatically disable all modular logging)
     /// @return Shared pointer to the created emulator, or nullptr on failure
     std::shared_ptr<Emulator> CreateEmulatorWithModel(const std::string& symbolicId, const std::string& modelName, LoggerLevel level = LoggerLevel::LogWarning);
 
@@ -74,7 +74,7 @@ public:
     /// @param symbolicId Optional symbolic identifier for the emulator
     /// @param modelName Name of the model to create
     /// @param ramSize RAM size in KB (must be supported by the model)
-    /// @param level Logging level for the emulator
+    /// @param level Logging level for the emulator (note: automation-created instances automatically disable all modular logging)
     /// @return Shared pointer to the created emulator, or nullptr on failure
     std::shared_ptr<Emulator> CreateEmulatorWithModelAndRAM(const std::string& symbolicId, const std::string& modelName, uint32_t ramSize, LoggerLevel level = LoggerLevel::LogWarning);
 

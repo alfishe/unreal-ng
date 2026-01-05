@@ -23,6 +23,27 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& sym
         _emulators[uuid] = emulator;
         emulator->SetState(StateInitialized);
 
+        /////////////////////////////////////////////////////////////////////////////////////////
+        // DISABLE ALL MODULAR LOGGING FOR AUTOMATION-CREATED EMULATOR INSTANCES
+        //
+        // Automation interfaces (WebAPI, CLI) create emulator instances that should not
+        // produce verbose internal logging output. This block explicitly disables all
+        // modular logging sources from all modules to prevent noisy output like:
+        // - [I/O_In] Info: [In] [PC:0296 ROM_3] Port: FE; Value: BF
+        // - [I/O_Generic] Warning: [In] [PC:0296 ROM_3] Port: BFFE - no peripheral device to handle
+        // - [Core_Generic] Info: tState counter after the frame: 71685
+        //
+        // This ensures clean automation output without internal emulator noise.
+        /////////////////////////////////////////////////////////////////////////////////////////
+        {
+            EmulatorContext* context = emulator->GetContext();
+            if (context && context->pModuleLogger)
+            {
+                context->pModuleLogger->TurnOffLoggingForAll();
+                LOGINFO("EmulatorManager::CreateEmulator - Disabled all modular logging for automation instance");
+            }
+        }
+
         LOGINFO("EmulatorManager::CreateEmulator - Created emulator with UUID: %s, Symbolic ID: '%s'",
               uuid.c_str(),
               symbolicId.empty() ? "[none]" : symbolicId.c_str());
@@ -58,6 +79,27 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithId(const std::strin
     {
         _emulators[emulatorId] = emulator;
         emulator->SetState(StateInitialized);
+
+        /////////////////////////////////////////////////////////////////////////////////////////
+        // DISABLE ALL MODULAR LOGGING FOR AUTOMATION-CREATED EMULATOR INSTANCES
+        //
+        // Automation interfaces (WebAPI, CLI) create emulator instances that should not
+        // produce verbose internal logging output. This block explicitly disables all
+        // modular logging sources from all modules to prevent noisy output like:
+        // - [I/O_In] Info: [In] [PC:0296 ROM_3] Port: FE; Value: BF
+        // - [I/O_Generic] Warning: [In] [PC:0296 ROM_3] Port: BFFE - no peripheral device to handle
+        // - [Core_Generic] Info: tState counter after the frame: 71685
+        //
+        // This ensures clean automation output without internal emulator noise.
+        /////////////////////////////////////////////////////////////////////////////////////////
+        {
+            EmulatorContext* context = emulator->GetContext();
+            if (context && context->pModuleLogger)
+            {
+                context->pModuleLogger->TurnOffLoggingForAll();
+                LOGINFO("EmulatorManager::CreateEmulatorWithId - Disabled all modular logging for automation instance");
+            }
+        }
 
         LOGINFO("EmulatorManager::CreateEmulatorWithId - Created emulator with UUID: %s, Symbolic ID: '%s'",
               emulatorId.c_str(),
@@ -102,6 +144,27 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModel(const std::st
         std::string uuid = emulator->GetId();
         _emulators[uuid] = emulator;
         emulator->SetState(StateInitialized);
+
+        /////////////////////////////////////////////////////////////////////////////////////////
+        // DISABLE ALL MODULAR LOGGING FOR AUTOMATION-CREATED EMULATOR INSTANCES
+        //
+        // Automation interfaces (WebAPI, CLI) create emulator instances that should not
+        // produce verbose internal logging output. This block explicitly disables all
+        // modular logging sources from all modules to prevent noisy output like:
+        // - [I/O_In] Info: [In] [PC:0296 ROM_3] Port: FE; Value: BF
+        // - [I/O_Generic] Warning: [In] [PC:0296 ROM_3] Port: BFFE - no peripheral device to handle
+        // - [Core_Generic] Info: tState counter after the frame: 71685
+        //
+        // This ensures clean automation output without internal emulator noise.
+        /////////////////////////////////////////////////////////////////////////////////////////
+        {
+            EmulatorContext* context = emulator->GetContext();
+            if (context && context->pModuleLogger)
+            {
+                context->pModuleLogger->TurnOffLoggingForAll();
+                LOGINFO("EmulatorManager::CreateEmulatorWithModel - Disabled all modular logging for automation instance");
+            }
+        }
 
         LOGINFO("EmulatorManager::CreateEmulatorWithModel - Created emulator with UUID: %s, Symbolic ID: '%s', Model: '%s'",
                 uuid.c_str(),
@@ -155,6 +218,27 @@ std::shared_ptr<Emulator> EmulatorManager::CreateEmulatorWithModelAndRAM(const s
         std::string uuid = emulator->GetId();
         _emulators[uuid] = emulator;
         emulator->SetState(StateInitialized);
+
+        /////////////////////////////////////////////////////////////////////////////////////////
+        // DISABLE ALL MODULAR LOGGING FOR AUTOMATION-CREATED EMULATOR INSTANCES
+        //
+        // Automation interfaces (WebAPI, CLI) create emulator instances that should not
+        // produce verbose internal logging output. This block explicitly disables all
+        // modular logging sources from all modules to prevent noisy output like:
+        // - [I/O_In] Info: [In] [PC:0296 ROM_3] Port: FE; Value: BF
+        // - [I/O_Generic] Warning: [In] [PC:0296 ROM_3] Port: BFFE - no peripheral device to handle
+        // - [Core_Generic] Info: tState counter after the frame: 71685
+        //
+        // This ensures clean automation output without internal emulator noise.
+        /////////////////////////////////////////////////////////////////////////////////////////
+        {
+            EmulatorContext* context = emulator->GetContext();
+            if (context && context->pModuleLogger)
+            {
+                context->pModuleLogger->TurnOffLoggingForAll();
+                LOGINFO("EmulatorManager::CreateEmulatorWithModelAndRAM - Disabled all modular logging for automation instance");
+            }
+        }
 
         LOGINFO("EmulatorManager::CreateEmulatorWithModelAndRAM - Created emulator with UUID: %s, Symbolic ID: '%s', Model: '%s', RAM: %dKB",
                 uuid.c_str(),

@@ -401,38 +401,56 @@ void ModuleLogger::Flush()
 
 bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule)
 {
-    bool result = false;
-
-    // Skip all checks if muted or shutting down
-    if (_mute || _shutdown)
-        return result;
-
-    uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
-
-    // Check if logging for the whole module allowed
-    if (BitHelper::IsBitSet(_settings.modules, moduleBitNumber))
+    try
     {
-        uint8_t submoduleBitNumber = BitHelper::GetFirstSetBitPosition(submodule);
+        bool result = false;
 
-        // Check settings on submodule level
-        if (BitHelper::IsBitSet(_settings.submodules[module], submoduleBitNumber))
+        // Skip all checks if muted or shutting down
+        if (_mute || _shutdown)
+            return result;
+
+        uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
+
+        // Check if logging for the whole module allowed
+        if (BitHelper::IsBitSet(_settings.modules, moduleBitNumber))
         {
-            result = true;
-        }
-    }
+            uint8_t submoduleBitNumber = BitHelper::GetFirstSetBitPosition(submodule);
 
-    return result;
+            // Check settings on submodule level
+            if (BitHelper::IsBitSet(_settings.submodules[module], submoduleBitNumber))
+            {
+                result = true;
+            }
+        }
+
+        return result;
+    }
+    catch (...)
+    {
+        // If anything goes wrong (corrupted object, invalid memory access, etc.),
+        // assume logging is disabled to prevent crashes
+        return false;
+    }
 }
 
 bool ModuleLogger::IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level)
 {
-    // Check of logging for the module / submodule allowed at all
-    bool result = IsLoggingEnabled(module, submodule);
+    try
+    {
+        // Check of logging for the module / submodule allowed at all
+        bool result = IsLoggingEnabled(module, submodule);
 
-    // Check if logger level is appropriate
-    result &= level >= _level;
+        // Check if logger level is appropriate
+        result &= level >= _level;
 
-    return result;
+        return result;
+    }
+    catch (...)
+    {
+        // If anything goes wrong (corrupted object, invalid memory access, etc.),
+        // assume logging is disabled to prevent crashes
+        return false;
+    }
 }
 
 const char* ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule)
