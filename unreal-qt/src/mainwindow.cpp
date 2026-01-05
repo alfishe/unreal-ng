@@ -1767,10 +1767,24 @@ void MainWindow::updateMenuStates()
 void MainWindow::handleEmulatorStateChanged(int id, Message* message)
 {
     Q_UNUSED(id);
-    Q_UNUSED(message);
 
     // Update UI state to reflect emulator state changes
     QMetaObject::invokeMethod(this, "updateMenuStates", Qt::QueuedConnection);
+
+    // If emulator stopped, detach screen to show default gray background
+    if (message && message->obj && _emulator)
+    {
+        SimpleNumberPayload* payload = dynamic_cast<SimpleNumberPayload*>(message->obj);
+        if (payload)
+        {
+            EmulatorStateEnum newState = static_cast<EmulatorStateEnum>(payload->_payloadNumber);
+            if (newState == StateStopped && deviceScreen)
+            {
+                // Detach screen to show default gray when emulator stops
+                QMetaObject::invokeMethod(deviceScreen, "detach", Qt::QueuedConnection);
+            }
+        }
+    }
 }
 
 void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)

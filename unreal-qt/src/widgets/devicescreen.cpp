@@ -50,6 +50,9 @@ void DeviceScreen::detach()
         delete devicePixels;
         devicePixels = nullptr;
     }
+
+    // Trigger immediate repaint to show default background when detached
+    update();
 }
 
 void DeviceScreen::refresh()
