@@ -19,6 +19,22 @@ EmulatorContext::EmulatorContext(LoggerLevel level)
     this->emulatorState = EmulatorState{};
     this->temporary = TEMP{};
 
+    // Initialize all pointer members to nullptr for safety
+    pModuleLogger = nullptr;
+    pMainLoop = nullptr;
+    pCore = nullptr;
+    pKeyboard = nullptr;
+    pMemory = nullptr;
+    pPortDecoder = nullptr;
+    pTape = nullptr;
+    pBetaDisk = nullptr;
+    pScreen = nullptr;
+    pAudioManagerObj = nullptr;
+    pAudioCallback = nullptr;
+    pSoundManager = nullptr;
+    pDebugManager = nullptr;
+    pEmulator = nullptr;
+
     // Create advanced logging
     ModuleLogger* moduleLogger = new ModuleLogger(this);
     if (moduleLogger)
