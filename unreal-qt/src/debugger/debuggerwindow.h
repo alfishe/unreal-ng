@@ -31,6 +31,9 @@ public:
 
     void setEmulator(Emulator* emulator);
     Emulator* getEmulator();
+    
+    // Called by MainWindow to notify of emulator state changes
+    void notifyEmulatorStateChanged(EmulatorStateEnum newState);
 
     void reset();
 

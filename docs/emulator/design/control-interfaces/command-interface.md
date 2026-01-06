@@ -303,9 +303,9 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
-| `pause` | | | Immediately pause emulation execution. The CPU stops at the next instruction boundary. Current register state and memory are preserved. Returns confirmation when paused. Useful before inspecting state or setting breakpoints. |
-| `resume` | | | Resume emulation execution from the paused state. The CPU continues from the current PC register value. If not paused, returns an error. |
-| `reset` | | | Perform a hardware reset of the emulator. Equivalent to pressing the physical reset button. Resets CPU registers to power-on state (PC=0x0000), reinitializes peripherals, and reloads ROM. RAM contents may be preserved depending on configuration. |
+| `pause [id]` | | `[emulator-id\|index]` | Immediately pause emulation execution. The CPU stops at the next instruction boundary. Current register state and memory are preserved. Returns confirmation when paused. Useful before inspecting state or setting breakpoints. If no ID specified, auto-selects when exactly one emulator exists. |
+| `resume [id]` | | `[emulator-id\|index]` | Resume emulation execution from the paused state. The CPU continues from the current PC register value. If not paused, returns an error. If no ID specified, auto-selects when exactly one emulator exists. |
+| `reset [id]` | | `[emulator-id\|index]` | Perform a hardware reset of the emulator. Equivalent to pressing the physical reset button. Resets CPU registers to power-on state (PC=0x0000), reinitializes peripherals, and reloads ROM. RAM contents may be preserved depending on configuration. If no ID specified, auto-selects when exactly one emulator exists. |
 | `step` | `stepin` | | Execute exactly one CPU instruction and return. The emulator pauses automatically after execution. Returns the new PC value and disassembled instruction that was executed. Used for line-by-line debugging. |
 | `steps <N>` | | `<count>` | Execute exactly `<N>` CPU instructions, then pause. Equivalent to calling `step` N times but more efficient. Returns execution summary including final PC. Useful for stepping through loops. |
 | `stepover` | | | Execute one instruction, treating subroutine calls (`CALL`, `RST`) as atomic operations. If the instruction is a call, execution continues until the corresponding `RET`, then pauses. If not a call instruction, behaves like `step`. Essential for stepping over function calls without diving into them. |

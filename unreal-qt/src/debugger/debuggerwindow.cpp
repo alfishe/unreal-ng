@@ -108,28 +108,20 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     ui->hexView->setOptions(options);
 
     /// region <Subscribe to events>
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observerInstance = static_cast<Observer*>(this);
-
-    // Subscribe to emulator state changes
-    ObserverCallbackMethod stateCallback =
-        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
-    messageCenter.AddObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
-
-    // Subscribe to breakpoint trigger messages
-    ObserverCallbackMethod breakpointCallback =
-        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
-
-    // Subscribe to CPU step messages
-    ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
-    messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
-
-    // Subscribe to label change notifications
-    ObserverCallbackMethod labelChangedCallback =
-        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
-    messageCenter.AddObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
-
+    // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow.
+    // We do NOT subscribe to ANY global MessageCenter events here!
+    // 
+    // Problem: Global events (NC_EXECUTION_BREAKPOINT, NC_EXECUTION_CPU_STEP, etc.)
+    // don't carry emulator ID information. When multiple emulators exist, we can't
+    // tell which emulator the event is from, leading to race conditions and crashes.
+    //
+    // Solution: DebuggerWindow only reacts to explicit method calls from MainWindow
+    // or from user interactions (button clicks). The emulator we're tracking is set
+    // via setEmulator(), and all our actions operate on that specific instance.
+    //
+    // For debugging events (breakpoints, steps), we rely on polling the emulator
+    // state when updateState() is called, rather than reacting to global broadcasts.
+    
     /// endregion </Subscribe to events>
 }
 
@@ -137,28 +129,9 @@ DebuggerWindow::~DebuggerWindow()
 {
     qDebug() << "DebuggerWindow::~DebuggerWindow()";
 
-    // Unsubscribe from all message topics
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Observer* observerInstance = static_cast<Observer*>(this);
-
-    // Unsubscribe from emulator state changes
-    ObserverCallbackMethod stateCallback =
-        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleEmulatorStateChanged);
-    messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, observerInstance, stateCallback);
-
-    // Unsubscribe from breakpoint trigger messages
-    ObserverCallbackMethod breakpointCallback =
-        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleMessageBreakpointTriggered);
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, observerInstance, breakpointCallback);
-
-    // Unsubscribe from CPU step messages
-    ObserverCallbackMethod cpuStepCallback = static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleCPUStepMessage);
-    messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, observerInstance, cpuStepCallback);
-
-    // Unsubscribe from label change notifications
-    ObserverCallbackMethod labelChangedCallback =
-        static_cast<ObserverCallbackMethod>(&DebuggerWindow::handleLabelChanged);
-    messageCenter.RemoveObserver(NC_LABEL_CHANGED, observerInstance, labelChangedCallback);
+    // NOTE: DebuggerWindow does not subscribe to any global MessageCenter events,
+    // so there's nothing to unsubscribe from here. All event handling is done via
+    // explicit method calls from MainWindow.
 
     delete ui;
 }
@@ -178,8 +151,18 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
         // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
         updateToolbarActions(false, false, false, false, false, false);
 
-        // Update the full state which will set the correct button states
-        updateState();
+        // Only update state if emulator is not actively running (to avoid race conditions)
+        // If it's running, we'll get a state change notification soon and update then
+        EmulatorStateEnum state = _emulator->GetState();
+        if (state != StateRun && state != StateResumed)
+        {
+            // Safe to update state for paused, stopped, or initialized emulators
+            updateState();
+        }
+        else
+        {
+            qDebug() << "DebuggerWindow::setEmulator() - Emulator is running, deferring state update until pause/stop";
+        }
     }
     else
     {
@@ -192,6 +175,54 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 Emulator* DebuggerWindow::getEmulator()
 {
     return _emulator;
+}
+
+void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
+{
+    // This is called directly by MainWindow, not via MessageCenter
+    // We trust that MainWindow is notifying us about the correct emulator
+    _emulatorState = newState;
+    qDebug() << "DebuggerWindow::notifyEmulatorStateChanged(" << getEmulatorStateName(_emulatorState) << ")";
+
+    dispatchToMainThread([this]() {
+        switch (_emulatorState)
+        {
+            case StateUnknown:
+            case StateStopped:
+                // When emulator is stopped:
+                // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+                updateToolbarActions(false, false, false, false, false, false);
+
+                // Emulator already stopped working.
+                // Time to disable all rendering activities and set controls to initial inactive state
+                _emulator = nullptr;
+                reset();
+                break;
+
+            case StateInitialized:
+            default:
+                // When emulator is initialized:
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(false, true, false, false, true, true);
+                updateState(); // Safe to update when initialized
+                break;
+
+            case StateRun:
+            case StateResumed:
+                // When emulator is running:
+                // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
+                updateToolbarActions(false, true, false, true, true, true);
+                // DO NOT call updateState() while running - race condition!
+                break;
+
+            case StatePaused:
+                // When emulator is paused:
+                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(true, false, true, true, true, true);
+                updateState(); // Safe to update when paused
+                break;
+        }
+    });
 }
 
 void DebuggerWindow::reset()
@@ -453,6 +484,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is initialized:
                 // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(false, true, false, false, true, true);
+                updateState(); // Safe to update when initialized
                 break;
 
             case StateRun:
@@ -460,16 +492,16 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is running:
                 // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
                 updateToolbarActions(false, true, false, true, true, true);
+                // DO NOT call updateState() while running - race condition!
                 break;
 
             case StatePaused:
                 // When emulator is paused:
                 // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(true, false, true, true, true, true);
+                updateState(); // Safe to update when paused
                 break;
         }
-
-        updateState();
     });
 }
 

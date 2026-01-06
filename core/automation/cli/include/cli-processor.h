@@ -144,6 +144,11 @@ private:
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
     
+    // Helper method to resolve emulator from optional argument or stateless auto-selection
+    // If args is not empty and first arg is an ID/index, resolves that emulator
+    // Otherwise uses GetSelectedEmulator logic
+    std::shared_ptr<Emulator> ResolveEmulator(const ClientSession& session, const std::vector<std::string>& args, std::string& errorMessage);
+    
     // Universal address parsing method for memory addresses and port numbers
     // Returns true if parsing was successful, false otherwise
     // The parsed address is stored in the 'result' parameter

@@ -117,6 +117,16 @@ private:
     // Unsubscribe from all message bus events
     void unsubscribeFromMessageBus();
     
+    // Subscribe/unsubscribe from per-emulator-instance events
+    void subscribeToPerEmulatorEvents();
+    void unsubscribeFromPerEmulatorEvents();
+    
+    // Bind audio callback to emulator (audio device runs continuously)
+    void bindEmulatorAudio(std::shared_ptr<Emulator> emulator);
+    
+    // Try to adopt another running emulator after the current one stops
+    void tryAdoptRemainingEmulator();
+    
     // Platform-specific initialization methods
     void initializePlatformMacOS();
     void initializePlatformWindows();
@@ -138,6 +148,8 @@ private:
     DeviceScreen* deviceScreen = nullptr;
     QPushButton* startButton = nullptr;
     QMutex lockMutex;
+    QMutex _audioMutex;  // Protects audio operations from race conditions
+    bool _audioInitialized = false;  // Tracks if audio device is initialized
 
 #ifdef ENABLE_AUTOMATION
     std::unique_ptr<Automation> _automation{nullptr};

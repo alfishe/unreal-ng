@@ -1836,24 +1836,19 @@ void EmulatorAPI::getStateScreenFlash(const HttpRequestPtr& req, std::function<v
 void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    auto manager = EmulatorManager::GetInstance();
     auto emulator = getEmulatorByIdOrIndex(id);
 
-    // If specific emulator not found, try to use the most recent one (CLI-style fallback)
     if (!emulator)
     {
-        emulator = manager->GetMostRecentEmulator();
-        if (!emulator)
-        {
-            Json::Value error;
-            error["error"] = "Not Found";
-            error["message"] = "No emulator available (none running)";
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
 
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k404NotFound);
-            callback(resp);
-            return;
-        }
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     EmulatorContext* context = emulator->GetContext();
@@ -1949,24 +1944,19 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
                                        const std::string& chipStr) const
 {
-    auto manager = EmulatorManager::GetInstance();
     auto emulator = getEmulatorByIdOrIndex(id);
 
-    // If specific emulator not found, try to use the most recent one (CLI-style fallback)
     if (!emulator)
     {
-        emulator = manager->GetMostRecentEmulator();
-        if (!emulator)
-        {
-            Json::Value error;
-            error["error"] = "Not Found";
-            error["message"] = "No emulator available (none running)";
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
 
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k404NotFound);
-            callback(resp);
-            return;
-        }
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     EmulatorContext* context = emulator->GetContext();
@@ -2122,24 +2112,19 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
                                           std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id,
                                           const std::string& chipStr, const std::string& regStr) const
 {
-    auto manager = EmulatorManager::GetInstance();
     auto emulator = getEmulatorByIdOrIndex(id);
 
-    // If specific emulator not found, try to use the most recent one (CLI-style fallback)
     if (!emulator)
     {
-        emulator = manager->GetMostRecentEmulator();
-        if (!emulator)
-        {
-            Json::Value error;
-            error["error"] = "Not Found";
-            error["message"] = "No emulator available (none running)";
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
 
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k404NotFound);
-            callback(resp);
-            return;
-        }
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     EmulatorContext* context = emulator->GetContext();
@@ -2359,24 +2344,19 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                       const std::string& id) const
 {
-    auto manager = EmulatorManager::GetInstance();
     auto emulator = getEmulatorByIdOrIndex(id);
 
-    // If specific emulator not found, try to use the most recent one (CLI-style fallback)
     if (!emulator)
     {
-        emulator = manager->GetMostRecentEmulator();
-        if (!emulator)
-        {
-            Json::Value error;
-            error["error"] = "Not Found";
-            error["message"] = "No emulator available (none running)";
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
 
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k404NotFound);
-            callback(resp);
-            return;
-        }
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     EmulatorContext* context = emulator->GetContext();
@@ -2456,24 +2436,19 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback,
                                         const std::string& id) const
 {
-    auto manager = EmulatorManager::GetInstance();
     auto emulator = getEmulatorByIdOrIndex(id);
 
-    // If specific emulator not found, try to use the most recent one (CLI-style fallback)
     if (!emulator)
     {
-        emulator = manager->GetMostRecentEmulator();
-        if (!emulator)
-        {
-            Json::Value error;
-            error["error"] = "Not Found";
-            error["message"] = "No emulator available (none running)";
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
 
-            auto resp = HttpResponse::newHttpJsonResponse(error);
-            resp->setStatusCode(HttpStatusCode::k404NotFound);
-            callback(resp);
-            return;
-        }
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
 
     EmulatorContext* context = emulator->GetContext();
@@ -2565,45 +2540,54 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
 }
 
 /// @brief Audio state inspection (active emulator - no ID required)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioAYActive(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/ay";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
     }
 
-    // Use the existing method but with empty string as ID (will use most recent emulator)
     getStateAudioAY(req, std::move(callback), emulator->GetId());
 }
 
 /// @brief Get specific AY chip details (active emulator)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioAYIndexActive(const HttpRequestPtr& req,
                                              std::function<void(const HttpResponsePtr&)>&& callback,
                                              const std::string& chip) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/ay/" + chip;
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -2613,21 +2597,26 @@ void EmulatorAPI::getStateAudioAYIndexActive(const HttpRequestPtr& req,
 }
 
 /// @brief Get AY chip register details (active emulator)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioAYRegisterActive(const HttpRequestPtr& req,
                                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                                 const std::string& chip, const std::string& reg) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/ay/" + chip + "/register/" + reg;
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -2637,20 +2626,25 @@ void EmulatorAPI::getStateAudioAYRegisterActive(const HttpRequestPtr& req,
 }
 
 /// @brief Get beeper state (active emulator)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioBeeperActive(const HttpRequestPtr& req,
                                             std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/beeper";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -2660,20 +2654,25 @@ void EmulatorAPI::getStateAudioBeeperActive(const HttpRequestPtr& req,
 }
 
 /// @brief Get GS state (active emulator)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioGSActive(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/gs";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -2683,20 +2682,25 @@ void EmulatorAPI::getStateAudioGSActive(const HttpRequestPtr& req,
 }
 
 /// @brief Get Covox state (active emulator)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioCovoxActive(const HttpRequestPtr& req,
                                            std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/covox";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -2706,20 +2710,25 @@ void EmulatorAPI::getStateAudioCovoxActive(const HttpRequestPtr& req,
 }
 
 /// @brief Get audio channels state (active emulator)
+/// Uses stateless auto-selection: only works if exactly one emulator exists
 void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr& req,
                                               std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto emulator = manager->GetMostRecentEmulator();
+    auto emulator = getEmulatorStateless();
 
     if (!emulator)
     {
+        auto manager = EmulatorManager::GetInstance();
+        auto count = manager->GetEmulatorIds().size();
+        
         Json::Value error;
-        error["error"] = "Not Found";
-        error["message"] = "No active emulator available";
+        error["error"] = count == 0 ? "Not Found" : "Bad Request";
+        error["message"] = count == 0 
+            ? "No emulator available (none running)"
+            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/channels";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
         return;
@@ -2729,6 +2738,7 @@ void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr& req,
 }
 
 /// @brief Helper method to get emulator by ID (UUID) or index (numeric)
+/// This does NOT auto-select; it returns nullptr if the specific ID/index is not found
 std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string& idOrIndex) const
 {
     auto manager = EmulatorManager::GetInstance();
@@ -2755,6 +2765,24 @@ std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string&
         // It's not numeric or negative, treat as UUID
         return manager->GetEmulator(idOrIndex);
     }
+}
+
+/// @brief Helper method for stateless emulator auto-selection
+/// Returns an emulator only if there's exactly one running (stateless behavior)
+/// Returns nullptr if there are 0 or 2+ emulators (requires explicit selection)
+std::shared_ptr<Emulator> EmulatorAPI::getEmulatorStateless() const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulatorIds = manager->GetEmulatorIds();
+    
+    if (emulatorIds.size() == 1)
+    {
+        // Only one emulator - auto-select it (stateless behavior)
+        return manager->GetEmulator(emulatorIds[0]);
+    }
+    
+    // 0 or 2+ emulators - return nullptr
+    return nullptr;
 }
 }  // namespace v1
 }  // namespace api

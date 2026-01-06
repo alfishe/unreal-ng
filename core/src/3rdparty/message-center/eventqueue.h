@@ -111,6 +111,21 @@ public:
     virtual ~SimpleNumberPayload() = default;
 };
 
+/// Allows to pass emulator ID (text) and frame counter (number) in MessageCenter message
+/// Used for per-instance frame refresh events
+/// Example: messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new EmulatorFramePayload("emulator-id", 12345));
+class EmulatorFramePayload : public MessagePayload
+{
+public:
+    std::string _emulatorId;
+    uint32_t _frameCounter;
+
+public:
+    EmulatorFramePayload(const std::string& id, uint32_t counter) 
+        : MessagePayload(), _emulatorId(id), _frameCounter(counter) {};
+    virtual ~EmulatorFramePayload() = default;
+};
+
 /// Allows to transfer uint8_t data blocks (as std::vector<uint8_t> in MessageCenter message
 /// std::move for parameter is mandatory since we don't want double copy for all content
 /// Warning: payloads longer than 10k are not recommended. Copy constructors to transfer large data blocks will be slow.

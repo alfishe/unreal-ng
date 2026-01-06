@@ -663,6 +663,9 @@ void Emulator::Resume()
 
     _isRunning = true;
 
+    // Update state
+    SetState(StateResumed);
+
     // Broadcast notification - Emulator execution resumed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);

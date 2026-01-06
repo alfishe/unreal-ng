@@ -7,34 +7,50 @@
 #define EMUL_DEBUG
 #define TRASH_PAGE
 
-/// region <Notification center events>
+// region <Notification center events>
 constexpr char const* NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODULES";
 constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
 
 
-constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
-constexpr char const* NC_EMULATOR_INSTANCE_CREATED = "EMULATOR_INSTANCE_CREATED"; // New emulator instance created
-constexpr char const* NC_EMULATOR_INSTANCE_DESTROYED = "EMULATOR_INSTANCE_DESTROYED"; // Emulator instance destroyed
+// region <GLOBAL MessageCenter Notifications>
 
-constexpr char const* NC_SYSTEM_RESET = "RESET";                                // Event fired when system was reset
-constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Event fired when one single CPU step performed. Active in debug mode only.
-constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint fired
+// These events are broadcast globally and do not carry emulator instance identification.
+// Subscribe ONCE in application/component constructor, not per-emulator-instance.
+// Examples: MainWindow constructor, automation listeners.
+constexpr char const* NC_EMULATOR_INSTANCE_CREATED = "EMULATOR_INSTANCE_CREATED"; // New emulator instance created (payload: emulator ID)
+constexpr char const* NC_EMULATOR_INSTANCE_DESTROYED = "EMULATOR_INSTANCE_DESTROYED"; // Emulator instance destroyed (payload: emulator ID)
+constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";     // Breakpoints added, removed, or modified (global change)
+constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";               // Labels added, removed, or modified (global change)
 
-constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio data for the current frame is ready
-constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video data for the current frame is ready
 
-constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio player callback notifies that buffer has less than half of its content
+// endregion </GLOBAL MessageCenter Notifications>
 
-constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";
-constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";
+// region <PER-EMULATOR-INSTANCE MessageCenter Notifications>
 
-constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";     // Request to open a file or file dialog
-constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";     // Notification that breakpoints have been added, removed, or modified
-constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                   // Notification that a label has been added, removed, or modified
+// These events are broadcast BY specific emulator instances during their lifecycle.
+// When multiple emulators exist, all listeners receive events from ALL instances.
+// Listeners must filter events by emulator ID (if payload supports it) or by comparing
+// against their adopted emulator reference to avoid processing events from wrong instances.
+// Subscribe when adopting an emulator, unsubscribe when releasing it.
+constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop)
+constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
+constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Single CPU step executed (debug mode only)
+constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered
 
-/// endregion </Notification center events>
+constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
+constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio buffer < 50% full
 
-/// region <Logging / Tracing data>
+constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
+constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
+
+constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
+
+// endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
+
+// endregion </Notification center events>
+
+// region <Logging / Tracing data>
 
 // High level modules
 enum PlatformModulesEnum : uint8_t
@@ -198,11 +214,11 @@ enum PlatformRecordingSubmodulesEnum : uint16_t
     SUBMODULE_RECORDING_ALL         = 0xFFFF
 };
 
-/// endregion </Logging / Tracing data>
+// endregion </Logging / Tracing data>
 
-/// region <CPU runtime>
+// region <CPU runtime>
 
-/// endregion </CPU runtime>
+// endregion </CPU runtime>
 
 #undef PAGE_SIZE
 const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x4000 or 16384)

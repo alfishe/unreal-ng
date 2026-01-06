@@ -112,31 +112,19 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
 
     // Check for auto-selection of emulators if none is currently selected
     // This handles the case where emulators appear asynchronously after connection
+    // In async mode, we auto-select only if there's exactly one emulator (stateless behavior)
     if (session.GetSelectedEmulatorId().empty() && !_emulator)
     {
         auto* emulatorManager = EmulatorManager::GetInstance();
         if (emulatorManager)
         {
-            // Force a refresh to get the latest emulator instances
-            auto mostRecent = emulatorManager->GetMostRecentEmulator();
             auto emulatorIds = emulatorManager->GetEmulatorIds();
 
-            // Auto-select if any emulators are available
-            if (!emulatorIds.empty())
+            // Auto-select only if there's exactly one emulator (stateless)
+            if (emulatorIds.size() == 1)
             {
-                // Use the most recent emulator if available, otherwise use the first one
-                std::string selectedId;
-                if (mostRecent)
-                {
-                    selectedId = mostRecent->GetId();
-                }
-                else
-                {
-                    selectedId = emulatorIds[0];
-                }
-
-                // Update our local reference to the emulator
-                _emulator = emulatorManager->GetEmulator(selectedId);
+                _emulator = emulatorManager->GetEmulator(emulatorIds[0]);
+                // Note: We don't persist the selection in the session for stateless behavior
             }
         }
     }
@@ -202,43 +190,117 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
 
 std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession& session)
 {
-    // Get the selected emulator ID from the session
-    std::string selectedId = session.GetSelectedEmulatorId();
-    if (selectedId.empty())
+    auto* emulatorManager = EmulatorManager::GetInstance();
+    if (!emulatorManager)
     {
-        // Clear cached emulator if none selected
-        _emulator.reset();
-
-        // Try to auto-select an emulator if none is selected
-        auto* emulatorManager = EmulatorManager::GetInstance();
-        if (emulatorManager)
-        {
-            auto mostRecent = emulatorManager->GetMostRecentEmulator();
-            if (mostRecent)
-            {
-                _emulator = mostRecent;
-                return _emulator;
-            }
-        }
-        
         return nullptr;
     }
 
-    // Check if we have a cached emulator reference and if it matches the selected ID
-    if (_emulator && _emulator->GetId() == selectedId)
+    // Get the selected emulator ID from the session
+    std::string selectedId = session.GetSelectedEmulatorId();
+    
+    // If a specific emulator is selected, try to use it
+    if (!selectedId.empty())
     {
-        return _emulator;
+        auto emulator = emulatorManager->GetEmulator(selectedId);
+        if (emulator)
+        {
+            _emulator = emulator;
+            return _emulator;
+        }
+        
+        // Selected emulator no longer exists, clear the selection
+        const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
     }
 
-    // Cached emulator doesn't match selected ID, need to look it up
-    auto* emulatorManager = EmulatorManager::GetInstance();
-    if (emulatorManager)
+    // No selection or selected emulator is gone - auto-select if only one emulator exists
+    auto emulatorIds = emulatorManager->GetEmulatorIds();
+    
+    if (emulatorIds.size() == 1)
     {
-        _emulator = emulatorManager->GetEmulator(selectedId);
+        // Only one emulator - auto-select it (stateless behavior)
+        _emulator = emulatorManager->GetEmulator(emulatorIds[0]);
         return _emulator;
     }
-
+    else if (emulatorIds.size() > 1)
+    {
+        // Multiple emulators - require explicit selection
+        _emulator.reset();
+        return nullptr;
+    }
+    
+    // No emulators available
+    _emulator.reset();
     return nullptr;
+}
+
+std::shared_ptr<Emulator> CLIProcessor::ResolveEmulator(const ClientSession& session, const std::vector<std::string>& args, std::string& errorMessage)
+{
+    auto* emulatorManager = EmulatorManager::GetInstance();
+    if (!emulatorManager)
+    {
+        errorMessage = "EmulatorManager not available.";
+        return nullptr;
+    }
+
+    // Check if an emulator ID or index is provided as first argument
+    if (!args.empty() && !args[0].empty())
+    {
+        std::string idOrIndex = args[0];
+        
+        // Try as index first (numeric)
+        bool isIndex = true;
+        for (char c : idOrIndex)
+        {
+            if (!std::isdigit(c))
+            {
+                isIndex = false;
+                break;
+            }
+        }
+        
+        if (isIndex)
+        {
+            // Parse as index (user provides 1-based, convert to 0-based for internal API)
+            int userIndex = std::stoi(idOrIndex);
+            if (userIndex < 1)
+            {
+                errorMessage = "Invalid index " + idOrIndex + ". Index must be at least 1. Use 'list' to see available emulators.";
+                return nullptr;
+            }
+            
+            int internalIndex = userIndex - 1;  // Convert from 1-based to 0-based
+            auto emulator = emulatorManager->GetEmulatorByIndex(internalIndex);
+            if (emulator)
+            {
+                _emulator = emulator;
+                return _emulator;
+            }
+            else
+            {
+                errorMessage = "No emulator found with index " + idOrIndex + ". Use 'list' to see available emulators.";
+                return nullptr;
+            }
+        }
+        else
+        {
+            // Try as UUID
+            auto emulator = emulatorManager->GetEmulator(idOrIndex);
+            if (emulator)
+            {
+                _emulator = emulator;
+                return _emulator;
+            }
+            else
+            {
+                errorMessage = "No emulator found with ID '" + idOrIndex + "'. Use 'list' to see available emulators.";
+                return nullptr;
+            }
+        }
+    }
+    
+    // No argument provided - use stateless auto-selection logic
+    return GetSelectedEmulator(session);
 }
 
 bool CLIProcessor::ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue) const
@@ -355,9 +417,9 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  select <id>   - Select an emulator" << NEWLINE;
     oss << "  start [model] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
-    oss << "  reset         - Reset the emulator" << NEWLINE;
-    oss << "  pause         - Pause emulation" << NEWLINE;
-    oss << "  resume        - Resume emulation" << NEWLINE;
+    oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  step          - Execute single CPU instruction" << NEWLINE;
     oss << "  stepin        - Execute single CPU instruction (alias for step)" << NEWLINE;
     oss << "  steps <count> - Execute 1 to N CPU instructions" << NEWLINE;
@@ -701,11 +763,19 @@ void CLIProcessor::InitializeProcessor()
 
 void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<std::string>& args)
 {
-    auto emulator = GetSelectedEmulator(session);
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
         return;
     }
 
@@ -715,11 +785,19 @@ void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<s
 
 void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<std::string>& args)
 {
-    auto emulator = GetSelectedEmulator(session);
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
         return;
     }
 
@@ -747,11 +825,19 @@ void CLIProcessor::HandlePause(const ClientSession& session, const std::vector<s
 
 void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<std::string>& args)
 {
-    auto emulator = GetSelectedEmulator(session);
+    std::string errorMessage;
+    auto emulator = ResolveEmulator(session, args, errorMessage);
 
     if (!emulator)
     {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        if (!errorMessage.empty())
+        {
+            session.SendResponse(errorMessage);
+        }
+        else
+        {
+            session.SendResponse("No emulator selected. Use 'select <id>' or 'list' to see available emulators.");
+        }
         return;
     }
 

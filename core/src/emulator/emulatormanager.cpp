@@ -294,18 +294,40 @@ std::shared_ptr<Emulator> EmulatorManager::GetEmulatorByIndex(int index)
         return nullptr;
     }
 
-    // Iterate through the map to find the emulator at the specified index
-    auto it = _emulators.begin();
-    std::advance(it, index);
-    return it->second;
+    // Create sorted list by creation time
+    std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> emulatorTimestamps;
+    for (const auto& pair : _emulators)
+    {
+        emulatorTimestamps.push_back({pair.first, pair.second->GetCreationTime()});
+    }
+
+    // Sort by creation time (earlier = lower index)
+    std::sort(emulatorTimestamps.begin(), emulatorTimestamps.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Get the ID at the specified index
+    std::string emulatorId = emulatorTimestamps[index].first;
+    return _emulators[emulatorId];
 }
 
 std::vector<std::string> EmulatorManager::GetEmulatorIds()
 {
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
-    std::vector<std::string> ids;
+    // Create vector of (id, creation_time) pairs
+    std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> emulatorTimestamps;
     for (const auto& pair : _emulators)
+    {
+        emulatorTimestamps.push_back({pair.first, pair.second->GetCreationTime()});
+    }
+
+    // Sort by creation time (earlier = lower index)
+    std::sort(emulatorTimestamps.begin(), emulatorTimestamps.end(),
+              [](const auto& a, const auto& b) { return a.second < b.second; });
+
+    // Extract just the IDs in sorted order
+    std::vector<std::string> ids;
+    for (const auto& pair : emulatorTimestamps)
     {
         ids.push_back(pair.first);
     }

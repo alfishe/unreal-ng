@@ -241,6 +241,14 @@ namespace api
              * @return Shared pointer to emulator, or nullptr if not found
              */
             std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex) const;
+            
+            /**
+             * @brief Get emulator using stateless auto-selection
+             * @details Auto-selects only if exactly one emulator exists (stateless behavior)
+             * @return Shared pointer to emulator, or nullptr if 0 or 2+ emulators exist
+             */
+            std::shared_ptr<Emulator> getEmulatorStateless() const;
+            
             // Helper method to handle emulator actions with common error handling
             void handleEmulatorAction(
                 const drogon::HttpRequestPtr &req,

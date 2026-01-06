@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "mainloop.h"
+#include "emulator.h"
 #include <algorithm>
 #include "3rdparty/message-center/eventqueue.h"
 #include <common/stringhelper.h>
@@ -353,10 +354,12 @@ void MainLoop::OnFrameEnd()
     }
 
     // Notify that video frame is composed and ready for rendering
+    // Send per-instance frame refresh event with emulator ID for filtering
     try
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
+        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+        messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
     }
     catch (const std::exception& e)
     {
