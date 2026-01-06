@@ -246,16 +246,16 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        unrealng::core
-        unrealng::automation
+        # unrealng::core # REMOVED - comes through automation
+        unrealng::automation # This brings in core as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
     
     # Link Winsock on Windows for automation
-    if(WIN32)
+    if (WIN32)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-    endif()
+    endif ()
 else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 
@@ -264,7 +264,7 @@ else ()
         Qt6::Multimedia
         QHexView
 
-        unrealng::core
+        unrealng::core  # Keep this when automation is disabled
         Threads::Threads
     )
 endif ()

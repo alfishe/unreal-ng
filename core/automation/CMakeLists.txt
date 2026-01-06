@@ -24,30 +24,30 @@ if (NOT ENABLE_AUTOMATION)
     set(ENABLE_PYTHON_AUTOMATION OFF)
     set(ENABLE_WEBAPI_AUTOMATION OFF)
     set(ENABLE_CLI_AUTOMATION OFF)
-endif()
+endif ()
 
 # Add subdirectories based on automation options
 if (ENABLE_LUA_AUTOMATION)
     add_subdirectory(lua)
     set(AUTOMATION_LUA_TARGET automation_lua)
-endif()
+endif ()
 
 if (ENABLE_PYTHON_AUTOMATION)
     add_subdirectory(python)
     set(AUTOMATION_PYTHON_TARGET automation_python)
-endif()
+endif ()
 
 if (ENABLE_WEBAPI_AUTOMATION)
     add_subdirectory(webapi)
     set(AUTOMATION_WEBAPI_TARGET automation_webapi)
-endif()
+endif ()
 
 if (ENABLE_CLI_AUTOMATION)
     add_subdirectory(cli)
     set(AUTOMATION_CLI_TARGET automation-cli)
-endif()
+endif ()
 
-set(SOURCES
+set (SOURCES
     automation.cpp
     automation.h
 )
@@ -84,15 +84,17 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         list(APPEND common_libraries Threads::Threads)
     endif()
 
+    # Link all automation libraries conditionally (based on their settings)
+    target_link_libraries(${PROJECT_NAME}
+        PRIVATE
+            $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>          # Conditional linking
+            $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
+            $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
+            $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking
 
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:automation_lua>          # Conditional linking
-        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:automation_python>    # Conditional linking
-        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:automation_webapi>    # Conditional linking
-        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:automation-cli>          # Conditional linking for CLI
-
-        unrealng::core
-        ${common_libraries}
+        PUBLIC
+            unrealng::core
+            ${common_libraries}
     )
 
     # Copy default config file to binary folder after successful compilation
@@ -118,8 +120,8 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         COMMAND ${CMAKE_COMMAND} -E
         copy_directory ${DATA_PATH}/testrom ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom
     )
-else()
-    # Produce static library;  Create unrealng::automation_lua alias for the target
+else ()
+    # Produce static library;  Create unrealng::automation alias for the target
     add_library(${PROJECT_NAME} STATIC ${SOURCES})
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
@@ -127,22 +129,17 @@ else()
         $<TARGET_PROPERTY:unrealng::core,INCLUDE_DIRECTORIES>
     )
 
-    # Link all automation libraries
-    if(ENABLE_CLI_AUTOMATION)
-        target_link_libraries(${PROJECT_NAME} PRIVATE
-            ${AUTOMATION_CLI_TARGET}
-            ${AUTOMATION_LUA_TARGET}
-            ${AUTOMATION_PYTHON_TARGET}
-            ${AUTOMATION_WEBAPI_TARGET}
-        )
-    else()
-        target_link_libraries(${PROJECT_NAME} PRIVATE
+    # Link all automation libraries conditionally (based on their settings)
+    target_link_libraries(${PROJECT_NAME}
+        PRIVATE
+            $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${AUTOMATION_CLI_TARGET}>
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
-        )
-    endif()
-endif()
+        PUBLIC
+            unrealng::core
+    )
+endif ()
 
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/
