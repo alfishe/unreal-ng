@@ -196,9 +196,8 @@ endif()
 
 
 # jsoncpp
-find_package(Jsoncpp REQUIRED)
-target_link_libraries(${PROJECT_NAME} PUBLIC Jsoncpp_lib)
-list(APPEND INCLUDE_DIRS_FOR_DYNAMIC_VIEW ${JSONCPP_INCLUDE_DIRS})
+message(STATUS "Using jsoncpp target from parent project")
+target_link_libraries(${PROJECT_NAME} PUBLIC jsoncpp_static)
 
 # yamlcpp
 if(BUILD_YAML_CONFIG)
