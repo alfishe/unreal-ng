@@ -853,13 +853,13 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret po" },                  // 0xE0
     { OF_NONE, 14, 0, 0, "pop ix" },                                 // 0xE1
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp po,:2" },   // 0xE2
-    { OF_DISP, 23, 0, 0, "ex (sp),ix" },                             // 0xE3
+    { OF_INDIRECT, 23, 0, 0, "ex (sp),ix" },                         // 0xE3
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" }, // 0xE4
     { OF_NONE, 15, 0, 0, "push ix" },                                // 0xE5
     { OF_MBYTE,  8, 0, 0, "and :1" },                                // 0xE6
     { OF_RST, 15, 0, 0, "rst #20" },                                 // 0xE7
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret pe" },                  // 0xE8
-    { OF_JUMP | OF_DISP,  8, 0, 0, "jp (ix)" },                      // 0xE9
+    { OF_JUMP | OF_INDIRECT,  8, 0, 0, "jp (ix)" },                  // 0xE9
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp pe,:2" },   // 0xEA
     { OF_NONE,  4, 0, 0, "ex de,hl" },                               // 0xEB
     { OF_CALL | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },  // 0xEC
