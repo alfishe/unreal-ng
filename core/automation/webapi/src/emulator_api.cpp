@@ -28,8 +28,7 @@ void addCorsHeaders(HttpResponsePtr& resp)
 std::string loadHtmlFile(const std::string& filename)
 {
     // Try multiple possible locations for the HTML resources
-    std::vector<std::string> searchPaths =
-    {
+    std::vector<std::string> searchPaths = {
         // Development/Build paths
         "./resources/html/",                         // In current directory (from bin when running)
         "../resources/html/",                        // One level up (from bin to build root)
@@ -2550,12 +2549,12 @@ void EmulatorAPI::getStateAudioAYActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/ay";
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/ay";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2579,12 +2578,13 @@ void EmulatorAPI::getStateAudioAYIndexActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/ay/" + chip;
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/ay/" +
+                                            chip;
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2608,12 +2608,13 @@ void EmulatorAPI::getStateAudioAYRegisterActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/ay/" + chip + "/register/" + reg;
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/ay/" +
+                                            chip + "/register/" + reg;
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2636,12 +2637,12 @@ void EmulatorAPI::getStateAudioBeeperActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/beeper";
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/beeper";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2664,12 +2665,12 @@ void EmulatorAPI::getStateAudioGSActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/gs";
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/gs";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2692,12 +2693,12 @@ void EmulatorAPI::getStateAudioCovoxActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/covox";
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/covox";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2720,12 +2721,12 @@ void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr& req,
     {
         auto manager = EmulatorManager::GetInstance();
         auto count = manager->GetEmulatorIds().size();
-        
+
         Json::Value error;
         error["error"] = count == 0 ? "Not Found" : "Bad Request";
-        error["message"] = count == 0 
-            ? "No emulator available (none running)"
-            : "Multiple emulators running. Please specify emulator ID in path: /api/v1/emulator/{id}/state/audio/channels";
+        error["message"] = count == 0 ? "No emulator available (none running)"
+                                      : "Multiple emulators running. Please specify emulator ID in path: "
+                                        "/api/v1/emulator/{id}/state/audio/channels";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(count == 0 ? HttpStatusCode::k404NotFound : HttpStatusCode::k400BadRequest);
@@ -2774,13 +2775,13 @@ std::shared_ptr<Emulator> EmulatorAPI::getEmulatorStateless() const
 {
     auto manager = EmulatorManager::GetInstance();
     auto emulatorIds = manager->GetEmulatorIds();
-    
+
     if (emulatorIds.size() == 1)
     {
         // Only one emulator - auto-select it (stateless behavior)
         return manager->GetEmulator(emulatorIds[0]);
     }
-    
+
     // 0 or 2+ emulators - return nullptr
     return nullptr;
 }
