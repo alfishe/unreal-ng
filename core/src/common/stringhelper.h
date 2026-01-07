@@ -1,14 +1,20 @@
 #pragma once
-#include "stdafx.h"
-
 #include <string>
+
+#include "stdafx.h"
 
 /// region <Helper formatters>
 class ThousandsDelimiterPunct : public std::numpunct<char>
 {
 protected:
-    virtual char do_thousands_sep() const { return ','; }
-    virtual std::string do_grouping() const { return "\03"; }
+    virtual char do_thousands_sep() const
+    {
+        return ',';
+    }
+    virtual std::string do_grouping() const
+    {
+        return "\03";
+    }
 };
 /// endregion </Helper formatters>
 
@@ -44,7 +50,10 @@ public:
     static std::string ToHex(T n, bool upperCase = false)
     {
         const char* hex = upperCase ? "0123456789ABCDEF" : "0123456789abcdef";
-        if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
+        // Handle char types explicitly (char, signed char, unsigned char)
+        // Note: char is a distinct type from int8_t and uint8_t in C++
+        if constexpr (std::is_same_v<T, char> || std::is_same_v<T, signed char> || std::is_same_v<T, unsigned char> ||
+                      std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
         {
             char buf[3];
             uint8_t val = static_cast<uint8_t>(n);
@@ -226,12 +235,14 @@ private:
     static std::string Format_Impl(const std::string& format, Args... args)
     {
         // Early return for empty format string
-        if (format.empty()) {
+        if (format.empty())
+        {
             return "";
         }
 
         // Handle case with no arguments (just return the format string as-is)
-        if constexpr (sizeof...(Args) == 0) {
+        if constexpr (sizeof...(Args) == 0)
+        {
             return format;
         }
 
@@ -249,15 +260,18 @@ private:
 
         // Calculate required buffer size with actual arguments
         size_t size = snprintf(nullptr, 0, format.c_str(), args...) + 1;
-        if (size <= 1) {  // size <= 1 means either error or empty result
+        if (size <= 1)
+        {  // size <= 1 means either error or empty result
             return format;
         }
 
-        try {
+        try
+        {
             std::unique_ptr<char[]> buf(new char[size]);
             int written = snprintf(buf.get(), size, format.c_str(), args...);
 
-            if (written < 0 || static_cast<size_t>(written) >= size) {
+            if (written < 0 || static_cast<size_t>(written) >= size)
+            {
                 // Formatting error occurred
                 return format;
             }
