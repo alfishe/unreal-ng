@@ -384,9 +384,16 @@ uint8_t Screen::GetBorderColor()
 
 uint32_t Screen::GetCurrentTstate()
 {
-    uint32_t result = _context->pCore->GetZ80()->t;
+    Z80* cpu = _context->pCore->GetZ80();
+    EmulatorState& state = _context->emulatorState;
 
-    return result;
+    // Z80 runs at scaled speed (multiplied by speed multiplier: 1x, 2x, 4x, 8x, 16x)
+    // but ULA/screen expects unscaled t-states based on base 3.5MHz clock
+    // Video signal timing is independent of CPU speed
+    uint32_t scaledTstate = cpu->t;
+    uint32_t unscaledTstate = scaledTstate / state.current_z80_frequency_multiplier;
+
+    return unscaledTstate;
 }
 
 ///
@@ -478,9 +485,9 @@ void Screen::DeallocateFramebuffer()
 {
     if (_framebuffer.memoryBuffer != nullptr)
     {
-            delete [] _framebuffer.memoryBuffer;
-            _framebuffer.memoryBuffer = nullptr;
-            _framebuffer.memoryBufferSize = 0;
+        delete[] _framebuffer.memoryBuffer;
+        _framebuffer.memoryBuffer = nullptr;
+        _framebuffer.memoryBufferSize = 0;
     }
 }
 
