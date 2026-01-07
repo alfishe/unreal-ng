@@ -1016,7 +1016,6 @@ void MainWindow::handleStartButton()
             // Unsubscribe first to ensure no duplicate subscriptions from previous emulators
             unsubscribeFromPerEmulatorEvents();
             subscribeToPerEmulatorEvents();
-            bindEmulatorAudio(_emulator);
 
             // Notify debugger about new emulator instance
             // Debugger will subscribe to required event messages from emulator core (like execution state changes)
