@@ -450,8 +450,13 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
 void MenuManager::setActiveEmulator(std::shared_ptr<Emulator> emulator)
 {
-    // Simply update menu states - they will query the emulator directly
-    updateMenuStates(emulator);
+    // Update menu states - must be done on main thread since it modifies UI menus
+    // Store the emulator reference for thread-safe access
+    _activeEmulator = emulator;
+
+    QMetaObject::invokeMethod(this, [this, emulator]() {
+        updateMenuStates(emulator);
+    }, Qt::QueuedConnection);
 }
 
 void MenuManager::handleEmulatorStateChanged(int id, Message* message)

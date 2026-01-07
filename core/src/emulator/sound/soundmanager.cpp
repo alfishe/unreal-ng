@@ -119,6 +119,11 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
             _beeperBuffer[i * 2 + 1] = _prevRightValue;
         }
     }
+    else
+    {
+        // Audio callback not active - this emulator doesn't have audio device access
+        // This is normal for headless emulators or emulators that lost audio device ownership
+    }
 
     // Render current samples
     if (sampleIndex != prevIndex)
@@ -183,7 +188,9 @@ void SoundManager::handleFrameEnd()
     }
 
     // Enqueue generated sound data via previously registered application callback
-    if (_context->pAudioCallback)
+    // Note: Audio callbacks are cleared when emulator loses audio device access to prevent
+    // multiple emulators from using the same audio device simultaneously
+    if (_context->pAudioCallback && _context->pAudioManagerObj)
     {
         // If muted, send silence instead of actual audio
         if (_mute)
@@ -192,7 +199,20 @@ void SoundManager::handleFrameEnd()
             memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
         }
 
-        _context->pAudioCallback(_context->pAudioManagerObj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        try
+        {
+            _context->pAudioCallback(_context->pAudioManagerObj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - audio callback failure shouldn't stop emulation
+            printf("SoundManager::handleFrameEnd - Audio callback failed: %s\n", e.what());
+        }
+        catch (...)
+        {
+            // Log error but don't crash - audio callback failure shouldn't stop emulation
+            printf("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
+        }
     }
 }
 

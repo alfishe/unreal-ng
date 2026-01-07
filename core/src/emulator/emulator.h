@@ -148,6 +148,7 @@ public:
     BreakpointManager* GetBreakpointManager();
     FramebufferDescriptor GetFramebuffer();
     void SetAudioCallback(void* obj, AudioCallback callback);
+    void ClearAudioCallback();
 
     // Emulator control cycle
     void Reset();

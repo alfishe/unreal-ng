@@ -54,6 +54,7 @@ public:
     // region <Slots>
 private slots:
     void handleStartButton();
+    void tryAdoptRemainingEmulator();
     void handleMessageScreenRefresh(int id, Message* message);
     void handleFileOpenRequest(int id, Message* message);
     void handleEmulatorStateChanged(int id, Message* message);
@@ -123,9 +124,6 @@ private:
     
     // Bind audio callback to emulator (audio device runs continuously)
     void bindEmulatorAudio(std::shared_ptr<Emulator> emulator);
-    
-    // Try to adopt another running emulator after the current one stops
-    void tryAdoptRemainingEmulator();
     
     // Platform-specific initialization methods
     void initializePlatformMacOS();

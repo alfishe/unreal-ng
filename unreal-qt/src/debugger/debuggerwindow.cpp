@@ -140,22 +140,31 @@ DebuggerWindow::~DebuggerWindow()
 
 void DebuggerWindow::setEmulator(Emulator* emulator)
 {
+    qDebug() << "DebuggerWindow::setEmulator() - Setting emulator to" << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
+
     _emulator = emulator;
 
     if (_emulator)
     {
+        qDebug() << "DebuggerWindow::setEmulator() - Loading debugger state";
+
         // Load debugger state from disk
         loadState();
+
+        qDebug() << "DebuggerWindow::setEmulator() - Updating toolbar actions";
 
         // Initially disable all actions, including breakpoints and labels
         // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
         updateToolbarActions(false, false, false, false, false, false);
+
+        qDebug() << "DebuggerWindow::setEmulator() - Checking emulator state";
 
         // Only update state if emulator is not actively running (to avoid race conditions)
         // If it's running, we'll get a state change notification soon and update then
         EmulatorStateEnum state = _emulator->GetState();
         if (state != StateRun && state != StateResumed)
         {
+            qDebug() << "DebuggerWindow::setEmulator() - Updating debugger state (safe)";
             // Safe to update state for paused, stopped, or initialized emulators
             updateState();
         }
@@ -163,13 +172,26 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
         {
             qDebug() << "DebuggerWindow::setEmulator() - Emulator is running, deferring state update until pause/stop";
         }
+
+        qDebug() << "DebuggerWindow::setEmulator() - Emulator setup complete";
     }
     else
     {
+        qDebug() << "DebuggerWindow::setEmulator() - No emulator available, disabling all actions";
+
         // No emulator available, disable all actions
         // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
         updateToolbarActions(false, false, false, false, false, false);
+
+        qDebug() << "DebuggerWindow::setEmulator() - Actions disabled, calling reset()";
+
+        // Reset the debugger UI to clean state
+        reset();
+
+        qDebug() << "DebuggerWindow::setEmulator() - Reset complete";
     }
+
+    qDebug() << "DebuggerWindow::setEmulator() - Method completed successfully";
 }
 
 Emulator* DebuggerWindow::getEmulator()
@@ -181,14 +203,33 @@ void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
 {
     // This is called directly by MainWindow, not via MessageCenter
     // We trust that MainWindow is notifying us about the correct emulator
+
+    // Safety check: If we have no emulator reference, ignore state changes
+    // This prevents crashes when the debugger window has been cleared but
+    // state change notifications are still in flight
+    if (!_emulator)
+    {
+        qDebug() << "DebuggerWindow::notifyEmulatorStateChanged(" << getEmulatorStateName(newState)
+                 << ") - IGNORED: No emulator reference";
+        return;
+    }
+
     _emulatorState = newState;
     qDebug() << "DebuggerWindow::notifyEmulatorStateChanged(" << getEmulatorStateName(_emulatorState) << ")";
 
     dispatchToMainThread([this]() {
+        // Additional safety check - ensure we still have an emulator and debugger window is valid
+        if (!_emulator)
+        {
+            qDebug() << "DebuggerWindow::notifyEmulatorStateChanged callback - emulator already cleared, skipping";
+            return;
+        }
+
         switch (_emulatorState)
         {
             case StateUnknown:
             case StateStopped:
+            {
                 // When emulator is stopped:
                 // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
                 updateToolbarActions(false, false, false, false, false, false);
@@ -196,8 +237,24 @@ void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
-                reset();
+
+                // Don't call reset() here since emulator is now null
+                // Just clear the UI manually without trying to read emulator state
+                ui->registersWidget->reset();
+                ui->hexView->reset();
+
+                QHexOptions options = ui->hexView->options();
+                options.linelength = 8;
+                options.addresswidth = 4;
+                options.flags = QHexFlags::HSeparator | QHexFlags::VSeparator;
+                ui->hexView->setOptions(options);
+
+                ui->memorypagesWidget->reset();
+                ui->stackWidget->reset();
+
+                // Don't call updateState() since emulator is null
                 break;
+            }
 
             case StateInitialized:
             default:
@@ -239,7 +296,11 @@ void DebuggerWindow::reset()
     ui->memorypagesWidget->reset();
     ui->stackWidget->reset();
 
-    updateState();
+    // Only update state if we have an emulator
+    if (_emulator)
+    {
+        updateState();
+    }
 }
 
 /// region <Helper methods>
@@ -376,6 +437,18 @@ void DebuggerWindow::saveState()
 void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset,
                                           bool canManageBreakpoints, bool canManageLabels)
 {
+    qDebug() << "DebuggerWindow::updateToolbarActions(" << canContinue << "," << canPause << "," << canStep << "," << canReset << "," << canManageBreakpoints << "," << canManageLabels << ")";
+
+    // Defensive checks - ensure all actions exist before accessing them
+    if (!continueAction || !pauseAction || !resetAction ||
+        !stepInAction || !stepOverAction || !stepOutAction ||
+        !frameStepAction || !waitInterruptAction ||
+        !breakpointsAction || !labelsAction)
+    {
+        qWarning() << "DebuggerWindow::updateToolbarActions - One or more actions are null!";
+        return;
+    }
+
     // Update main execution control actions
     continueAction->setEnabled(canContinue);
     pauseAction->setEnabled(canPause);
@@ -391,6 +464,8 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     // Update breakpoint management
     breakpointsAction->setEnabled(canManageBreakpoints);
     labelsAction->setEnabled(canManageLabels);
+
+    qDebug() << "DebuggerWindow::updateToolbarActions - completed successfully";
 }
 
 /// endregion </Helper methods>
@@ -469,6 +544,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
         {
             case StateUnknown:
             case StateStopped:
+            {
                 // When emulator is stopped:
                 // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
                 updateToolbarActions(false, false, false, false, false, false);
@@ -476,8 +552,24 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
-                reset();
+
+                // Don't call reset() here since emulator is now null
+                // Just clear the UI manually without trying to read emulator state
+                ui->registersWidget->reset();
+                ui->hexView->reset();
+
+                QHexOptions options = ui->hexView->options();
+                options.linelength = 8;
+                options.addresswidth = 4;
+                options.flags = QHexFlags::HSeparator | QHexFlags::VSeparator;
+                ui->hexView->setOptions(options);
+
+                ui->memorypagesWidget->reset();
+                ui->stackWidget->reset();
+
+                // Don't call updateState() since emulator is null
                 break;
+            }
 
             case StateInitialized:
             default:

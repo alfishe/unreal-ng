@@ -538,6 +538,14 @@ void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
 }
 
+void Emulator::ClearAudioCallback()
+{
+    _context->pAudioManagerObj = nullptr;
+    _context->pAudioCallback = nullptr;
+
+    MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
+}
+
 /// endregion </Integration interfaces>
 
 // region Regular workflow

@@ -37,57 +37,57 @@ void ClientSession::SendResponse(const std::string& message) const
 CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 {
     // Initialize command handlers map
-    _commandHandlers = { { "help", &CLIProcessor::HandleHelp },
-                         { "?", &CLIProcessor::HandleHelp },
-                         { "status", &CLIProcessor::HandleStatus },
-                         { "list", &CLIProcessor::HandleList },
-                         { "select", &CLIProcessor::HandleSelect },
-                         { "reset", &CLIProcessor::HandleReset },
-                         { "pause", &CLIProcessor::HandlePause },
-                         { "resume", &CLIProcessor::HandleResume },
-                         { "step", &CLIProcessor::HandleStepIn },        // Always one instruction
-                         { "stepin", &CLIProcessor::HandleStepIn },      // Always one instruction
-                         { "steps", &CLIProcessor::HandleSteps },        // Execute 1...N instructions
-                         { "stepover", &CLIProcessor::HandleStepOver },  // Execute instruction, skip calls
-                         { "memory", &CLIProcessor::HandleMemory },
-                         { "registers", &CLIProcessor::HandleRegisters },
-                         { "debugmode", &CLIProcessor::HandleDebugMode },
+    _commandHandlers = {{"help", &CLIProcessor::HandleHelp},
+                        {"?", &CLIProcessor::HandleHelp},
+                        {"status", &CLIProcessor::HandleStatus},
+                        {"list", &CLIProcessor::HandleList},
+                        {"select", &CLIProcessor::HandleSelect},
+                        {"reset", &CLIProcessor::HandleReset},
+                        {"pause", &CLIProcessor::HandlePause},
+                        {"resume", &CLIProcessor::HandleResume},
+                        {"step", &CLIProcessor::HandleStepIn},        // Always one instruction
+                        {"stepin", &CLIProcessor::HandleStepIn},      // Always one instruction
+                        {"steps", &CLIProcessor::HandleSteps},        // Execute 1...N instructions
+                        {"stepover", &CLIProcessor::HandleStepOver},  // Execute instruction, skip calls
+                        {"memory", &CLIProcessor::HandleMemory},
+                        {"registers", &CLIProcessor::HandleRegisters},
+                        {"debugmode", &CLIProcessor::HandleDebugMode},
 
-                         // Breakpoint commands
-                         { "bp", &CLIProcessor::HandleBreakpoint },          // Set execution breakpoint
-                         { "break", &CLIProcessor::HandleBreakpoint },       // Alias for bp
-                         { "breakpoint", &CLIProcessor::HandleBreakpoint },  // Alias for bp
-                         { "bplist", &CLIProcessor::HandleBPList },          // List all breakpoints
-                         { "wp", &CLIProcessor::HandleWatchpoint },          // Set memory read/write watchpoint
-                         { "bport", &CLIProcessor::HandlePortBreakpoint },   // Set port breakpoint
-                         { "bpclear", &CLIProcessor::HandleBPClear },        // Clear breakpoints
-                         { "bpgroup", &CLIProcessor::HandleBPGroup },        // Manage breakpoint groups
-                         { "bpon", &CLIProcessor::HandleBPActivate },        // Activate breakpoints
-                         { "bpoff", &CLIProcessor::HandleBPDeactivate },     // Deactivate breakpoints
+                        // Breakpoint commands
+                        {"bp", &CLIProcessor::HandleBreakpoint},          // Set execution breakpoint
+                        {"break", &CLIProcessor::HandleBreakpoint},       // Alias for bp
+                        {"breakpoint", &CLIProcessor::HandleBreakpoint},  // Alias for bp
+                        {"bplist", &CLIProcessor::HandleBPList},          // List all breakpoints
+                        {"wp", &CLIProcessor::HandleWatchpoint},          // Set memory read/write watchpoint
+                        {"bport", &CLIProcessor::HandlePortBreakpoint},   // Set port breakpoint
+                        {"bpclear", &CLIProcessor::HandleBPClear},        // Clear breakpoints
+                        {"bpgroup", &CLIProcessor::HandleBPGroup},        // Manage breakpoint groups
+                        {"bpon", &CLIProcessor::HandleBPActivate},        // Activate breakpoints
+                        {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
 
-                         { "open", &CLIProcessor::HandleOpen },
-                         { "exit", &CLIProcessor::HandleExit },
-                         { "quit", &CLIProcessor::HandleExit },
-                         { "dummy", &CLIProcessor::HandleDummy },
-                         { "memcounters", &CLIProcessor::HandleMemCounters },
-                         { "memstats", &CLIProcessor::HandleMemCounters },
-                         { "calltrace", &CLIProcessor::HandleCallTrace },
-                         { "feature", &CLIProcessor::HandleFeature },
+                        {"open", &CLIProcessor::HandleOpen},
+                        {"exit", &CLIProcessor::HandleExit},
+                        {"quit", &CLIProcessor::HandleExit},
+                        {"dummy", &CLIProcessor::HandleDummy},
+                        {"memcounters", &CLIProcessor::HandleMemCounters},
+                        {"memstats", &CLIProcessor::HandleMemCounters},
+                        {"calltrace", &CLIProcessor::HandleCallTrace},
+                        {"feature", &CLIProcessor::HandleFeature},
 
-                         // BASIC commands
-                         { "basic", &CLIProcessor::HandleBasic },
+                        // BASIC commands
+                        {"basic", &CLIProcessor::HandleBasic},
 
-                         // Settings commands
-                         { "setting", &CLIProcessor::HandleSetting },
-                         { "settings", &CLIProcessor::HandleSetting },
-                         { "set", &CLIProcessor::HandleSetting },
-                         
-                         // State inspection commands
-                         { "state", &CLIProcessor::HandleState },
+                        // Settings commands
+                        {"setting", &CLIProcessor::HandleSetting},
+                        {"settings", &CLIProcessor::HandleSetting},
+                        {"set", &CLIProcessor::HandleSetting},
 
-                         // Instance management commands
-                         { "start", &CLIProcessor::HandleStart },
-                         { "stop", &CLIProcessor::HandleStop } };
+                        // State inspection commands
+                        {"state", &CLIProcessor::HandleState},
+
+                        // Instance management commands
+                        {"start", &CLIProcessor::HandleStart},
+                        {"stop", &CLIProcessor::HandleStop}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -198,7 +198,7 @@ std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession&
 
     // Get the selected emulator ID from the session
     std::string selectedId = session.GetSelectedEmulatorId();
-    
+
     // If a specific emulator is selected, try to use it
     if (!selectedId.empty())
     {
@@ -208,14 +208,14 @@ std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession&
             _emulator = emulator;
             return _emulator;
         }
-        
+
         // Selected emulator no longer exists, clear the selection
         const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
     }
 
     // No selection or selected emulator is gone - auto-select if only one emulator exists
     auto emulatorIds = emulatorManager->GetEmulatorIds();
-    
+
     if (emulatorIds.size() == 1)
     {
         // Only one emulator - auto-select it (stateless behavior)
@@ -228,13 +228,14 @@ std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession&
         _emulator.reset();
         return nullptr;
     }
-    
+
     // No emulators available
     _emulator.reset();
     return nullptr;
 }
 
-std::shared_ptr<Emulator> CLIProcessor::ResolveEmulator(const ClientSession& session, const std::vector<std::string>& args, std::string& errorMessage)
+std::shared_ptr<Emulator> CLIProcessor::ResolveEmulator(const ClientSession& session,
+                                                        const std::vector<std::string>& args, std::string& errorMessage)
 {
     auto* emulatorManager = EmulatorManager::GetInstance();
     if (!emulatorManager)
@@ -247,7 +248,7 @@ std::shared_ptr<Emulator> CLIProcessor::ResolveEmulator(const ClientSession& ses
     if (!args.empty() && !args[0].empty())
     {
         std::string idOrIndex = args[0];
-        
+
         // Try as index first (numeric)
         bool isIndex = true;
         for (char c : idOrIndex)
@@ -258,17 +259,18 @@ std::shared_ptr<Emulator> CLIProcessor::ResolveEmulator(const ClientSession& ses
                 break;
             }
         }
-        
+
         if (isIndex)
         {
             // Parse as index (user provides 1-based, convert to 0-based for internal API)
             int userIndex = std::stoi(idOrIndex);
             if (userIndex < 1)
             {
-                errorMessage = "Invalid index " + idOrIndex + ". Index must be at least 1. Use 'list' to see available emulators.";
+                errorMessage =
+                    "Invalid index " + idOrIndex + ". Index must be at least 1. Use 'list' to see available emulators.";
                 return nullptr;
             }
-            
+
             int internalIndex = userIndex - 1;  // Convert from 1-based to 0-based
             auto emulator = emulatorManager->GetEmulatorByIndex(internalIndex);
             if (emulator)
@@ -298,7 +300,7 @@ std::shared_ptr<Emulator> CLIProcessor::ResolveEmulator(const ClientSession& ses
             }
         }
     }
-    
+
     // No argument provided - use stateless auto-selection logic
     return GetSelectedEmulator(session);
 }
@@ -588,7 +590,7 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
             {
                 status = "Stopped";
             }
-            
+
             response += std::string(NEWLINE) + "     Status: " + status;
             response += std::string(NEWLINE) + "     Debug: " + std::string(emulator->IsDebug() ? "On" : "Off");
             response += NEWLINE;
@@ -911,9 +913,8 @@ void CLIProcessor::HandleStepIn(const ClientSession& session, const std::vector<
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
-        buffer, initialPC, &commandLen, z80State, memory, &decodedBefore
-    );
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
 
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
@@ -1058,9 +1059,8 @@ void CLIProcessor::HandleStepOver(const ClientSession& session, const std::vecto
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
-        buffer, initialPC, &commandLen, z80State, memory, &decodedBefore
-    );
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
 
     // Execute the step-over operation
     emulator->StepOver();
@@ -2354,9 +2354,9 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
     uint64_t totalExecutes = 0;
 
     // Get per-Z80 bank (4 banks of 16KB each)
-    uint64_t bankReads[4] = { 0 };
-    uint64_t bankWrites[4] = { 0 };
-    uint64_t bankExecutes[4] = { 0 };
+    uint64_t bankReads[4] = {0};
+    uint64_t bankWrites[4] = {0};
+    uint64_t bankExecutes[4] = {0};
 
     for (int bank = 0; bank < 4; bank++)
     {
@@ -2384,7 +2384,7 @@ void CLIProcessor::HandleMemCounters(const ClientSession& session, const std::ve
     ss << "Z80 Memory Banks (16KB each):" << NEWLINE;
     ss << "----------------------------" << NEWLINE;
 
-    const char* bankNames[4] = { "0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF" };
+    const char* bankNames[4] = {"0x0000-0x3FFF", "0x4000-0x7FFF", "0x8000-0xBFFF", "0xC000-0xFFFF"};
 
     // Process each bank
     for (int bank = 0; bank < 4; bank++)
@@ -2543,7 +2543,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
 
                 // type
-                const char* typenames[] = { "JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ" };
+                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
                 oss << StringHelper::Format("%-6s   ", typenames[static_cast<int>(ev.type)]);
                 oss << StringHelper::Format("%04X     ", ev.target_addr);
                 oss << StringHelper::Format("%02X      ", (int)ev.flags);
@@ -2557,9 +2557,8 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 // banks
                 for (int b = 0; b < 4; ++b)
                 {
-                    oss << StringHelper::Format(
-                        "%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM", (int)ev.banks[b].page_num
-                    );
+                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
+                                                (int)ev.banks[b].page_num);
                 }
 
                 // stack top
@@ -2589,7 +2588,7 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 const auto& ev = hot.event;
                 oss << StringHelper::Format("%4d   %04X   ", (int)i, ev.m1_pc);
                 // type
-                const char* typenames[] = { "JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ" };
+                const char* typenames[] = {"JP", "JR", "CALL", "RST", "RET", "RETI", "DJNZ"};
                 oss << StringHelper::Format("%-6s ", typenames[static_cast<int>(ev.type)]);
                 oss << StringHelper::Format("%04X     ", ev.target_addr);
                 oss << StringHelper::Format("%02X     ", (int)ev.flags);
@@ -2603,9 +2602,8 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 // banks
                 for (int b = 0; b < 4; ++b)
                 {
-                    oss << StringHelper::Format(
-                        "%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM", (int)ev.banks[b].page_num
-                    );
+                    oss << StringHelper::Format("%s%-2d    ", ev.banks[b].is_rom ? "ROM" : "RAM",
+                                                (int)ev.banks[b].page_num);
                 }
                 // stack top
                 for (int s = 0; s < 3; ++s)
@@ -2930,9 +2928,8 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     {
         buffer[i] = memory->DirectReadFromZ80Memory(initialPC + i);
     }
-    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(
-        buffer, initialPC, &commandLen, z80State, memory, &decodedBefore
-    );
+    std::string instructionBefore = disassembler->disassembleSingleCommandWithRuntime(buffer, initialPC, &commandLen,
+                                                                                      z80State, memory, &decodedBefore);
 
     // Execute the requested number of CPU cycles
     for (int i = 0; i < stepCount; ++i)
@@ -3076,9 +3073,8 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
 
             if (basicListing.empty())
             {
-                session.SendResponse(
-                    std::string("No BASIC program found in memory or invalid program structure.") + NEWLINE
-                );
+                session.SendResponse(std::string("No BASIC program found in memory or invalid program structure.") +
+                                     NEWLINE);
                 return;
             }
 
@@ -3101,9 +3097,8 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
         }
         else
         {
-            session.SendResponse(
-                std::string("Error: Invalid syntax. Use 'basic' to see available commands.") + NEWLINE
-            );
+            session.SendResponse(std::string("Error: Invalid syntax. Use 'basic' to see available commands.") +
+                                 NEWLINE);
         }
     }
     else if (subcommand == "save")
@@ -3116,10 +3111,8 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
     }
     else
     {
-        session.SendResponse(
-            std::string("Error: Unknown BASIC subcommand: ") + subcommand + NEWLINE +
-            "Use 'basic' to see available commands." + NEWLINE
-        );
+        session.SendResponse(std::string("Error: Unknown BASIC subcommand: ") + subcommand + NEWLINE +
+                             "Use 'basic' to see available commands." + NEWLINE);
     }
 }
 
@@ -3326,9 +3319,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     }
     else
     {
-        session.SendResponse(
-            std::string("Error: Invalid value '") + value + "'. Use: on/off, true/false, 1/0, or yes/no" + NEWLINE
-        );
+        session.SendResponse(std::string("Error: Invalid value '") + value +
+                             "'. Use: on/off, true/false, 1/0, or yes/no" + NEWLINE);
         return;
     }
 
@@ -3393,22 +3385,33 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             // Start the emulator
             bool startSuccess = emulatorManager->StartEmulatorAsync(emulator->GetId());
 
-            // Auto-select the newly created emulator
-            const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+            // Auto-select only if this is the first emulator, otherwise keep current selection
+            auto emulatorIds = emulatorManager->GetEmulatorIds();
+            bool shouldAutoSelect = (emulatorIds.size() == 1);  // Only auto-select if this is the only emulator
 
             std::stringstream ss;
             if (startSuccess)
             {
                 ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: " << modelName << NEWLINE;
-                ss << "Auto-selected as current emulator" << NEWLINE;
+
+                if (shouldAutoSelect)
+                {
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+                    ss << "Auto-selected as current emulator" << NEWLINE;
+                }
             }
             else
             {
                 ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: " << modelName << NEWLINE;
                 ss << "Warning: Failed to start emulator automatically" << NEWLINE;
-                ss << "Auto-selected as current emulator" << NEWLINE;
+
+                if (shouldAutoSelect)
+                {
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+                    ss << "Auto-selected as current emulator" << NEWLINE;
+                }
             }
 
             // Note: NC_EMULATOR_INSTANCE_CREATED notification is now automatically sent by EmulatorManager
@@ -3426,7 +3429,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             auto models = emulatorManager->GetAvailableModels();
             for (size_t i = 0; i < models.size(); ++i)
             {
-                if (i > 0) ss << ", ";
+                if (i > 0)
+                    ss << ", ";
                 ss << models[i].ShortName;
             }
             ss << NEWLINE;
@@ -3444,22 +3448,34 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             // Start the emulator
             bool startSuccess = EmulatorManager::GetInstance()->StartEmulatorAsync(emulator->GetId());
 
-            // Auto-select the newly created emulator
-            const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+            // Auto-select only if this is the first emulator, otherwise keep current selection
+            auto* emulatorManager = EmulatorManager::GetInstance();
+            auto emulatorIds = emulatorManager->GetEmulatorIds();
+            bool shouldAutoSelect = (emulatorIds.size() == 1);  // Only auto-select if this is the only emulator
 
             std::stringstream ss;
             if (startSuccess)
             {
                 ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: 48K (default)" << NEWLINE;
-                ss << "Auto-selected as current emulator" << NEWLINE;
+
+                if (shouldAutoSelect)
+                {
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+                    ss << "Auto-selected as current emulator" << NEWLINE;
+                }
             }
             else
             {
                 ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: 48K (default)" << NEWLINE;
                 ss << "Warning: Failed to start emulator automatically" << NEWLINE;
-                ss << "Auto-selected as current emulator" << NEWLINE;
+
+                if (shouldAutoSelect)
+                {
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+                    ss << "Auto-selected as current emulator" << NEWLINE;
+                }
             }
 
             // Send notification about instance creation
@@ -3496,18 +3512,35 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
                 ss << "Stopped emulator instance: " << actualId << NEWLINE;
 
                 // Clear selection if it was pointing to the stopped emulator
-                if (session.GetSelectedEmulatorId() == actualId)
+                // Check both the session's selected ID and our local _emulator reference (same logic as list command)
+                bool wasSelected =
+                    (session.GetSelectedEmulatorId() == actualId) ||
+                    (_emulator && _emulator->GetId() == actualId && session.GetSelectedEmulatorId().empty());
+
+                if (wasSelected)
                 {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
                     _emulator.reset();
-                    ss << "Cleared emulator selection" << NEWLINE;
+
+                    // Auto-select the first remaining emulator (by creation time)
+                    auto remainingIds = emulatorManager->GetEmulatorIds();
+                    if (!remainingIds.empty())
+                    {
+                        const_cast<ClientSession&>(session).SetSelectedEmulatorId(remainingIds[0]);
+                        ss << "Auto-selected first emulator: " << remainingIds[0] << NEWLINE;
+                    }
+                    else
+                    {
+                        ss << "Cleared emulator selection" << NEWLINE;
+                    }
                 }
 
                 session.SendResponse(ss.str());
             }
             else
             {
-                session.SendResponse("Error: Emulator instance '" + actualId + "' not found or could not be stopped" + std::string(NEWLINE));
+                session.SendResponse("Error: Emulator instance '" + actualId + "' not found or could not be stopped" +
+                                     std::string(NEWLINE));
             }
             return;
         }
@@ -3518,7 +3551,9 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
         }
         else
         {
-            session.SendResponse("Usage: stop <emulator-id> | stop all | stop (stops single emulator if only one is running)" + std::string(NEWLINE));
+            session.SendResponse(
+                "Usage: stop <emulator-id> | stop all | stop (stops single emulator if only one is running)" +
+                std::string(NEWLINE));
             return;
         }
     }
@@ -3549,7 +3584,8 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
 
         // Clear selection if it was pointing to a stopped emulator
         std::string currentSelected = session.GetSelectedEmulatorId();
-        if (currentSelected != "none" && std::find(emulatorIds.begin(), emulatorIds.end(), currentSelected) != emulatorIds.end())
+        if (currentSelected != "none" &&
+            std::find(emulatorIds.begin(), emulatorIds.end(), currentSelected) != emulatorIds.end())
         {
             const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
             // Also clear our cached emulator reference
@@ -3567,7 +3603,8 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
         try
         {
             index = std::stoi(targetId);
-            if (index < 1) isIndex = false; // Indices start from 1
+            if (index < 1)
+                isIndex = false;  // Indices start from 1
         }
         catch (const std::exception&)
         {
@@ -3584,7 +3621,7 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
 
             if (index > 0 && static_cast<size_t>(index) <= emulatorIds.size())
             {
-                actualId = emulatorIds[index - 1]; // Convert to 0-based index
+                actualId = emulatorIds[index - 1];  // Convert to 0-based index
             }
             else
             {
@@ -3608,12 +3645,27 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
             ss << "Stopped emulator instance: " << actualId << NEWLINE;
 
             // Clear selection if it was pointing to this emulator
-            if (session.GetSelectedEmulatorId() == actualId)
+            // Check both the session's selected ID and our local _emulator reference (same logic as list command)
+            bool wasSelected = (session.GetSelectedEmulatorId() == actualId) ||
+                               (_emulator && _emulator->GetId() == actualId && session.GetSelectedEmulatorId().empty());
+
+            if (wasSelected)
             {
-                const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
+                const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
                 // Also clear our cached emulator reference
                 _emulator.reset();
-                ss << "Cleared emulator selection" << NEWLINE;
+
+                // Auto-select the first remaining emulator (by creation time)
+                auto remainingIds = emulatorManager->GetEmulatorIds();
+                if (!remainingIds.empty())
+                {
+                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(remainingIds[0]);
+                    ss << "Auto-selected first emulator: " << remainingIds[0] << NEWLINE;
+                }
+                else
+                {
+                    ss << "Cleared emulator selection" << NEWLINE;
+                }
             }
 
             session.SendResponse(ss.str());
