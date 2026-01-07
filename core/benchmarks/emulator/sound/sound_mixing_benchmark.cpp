@@ -46,5 +46,3 @@ static void BM_AudioMixing_SIMD(benchmark::State& state)
     }
 }
 BENCHMARK(BM_AudioMixing_SIMD);
-
-BENCHMARK_MAIN();

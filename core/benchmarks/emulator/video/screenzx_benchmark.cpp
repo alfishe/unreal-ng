@@ -211,4 +211,46 @@ static void BM_RenderOnlyMainScreen(benchmark::State& state)
     /// endregion </Teardown>
 }
 BENCHMARK(BM_RenderOnlyMainScreen)->Iterations(100);
-BENCHMARK(BM_RenderOnlyMainScreen)->Iterations(100)->Threads(12);
+
+// Multi-threaded benchmark - each thread gets its own emulator instance
+static void BM_RenderOnlyMainScreen_MT(benchmark::State& state)
+{
+    // Thread-local setup - each thread creates its own instance
+    // This avoids conflicts with shared memory and global resources
+    EmulatorContext* context = nullptr;
+    Core* cpu = nullptr;
+    ScreenZX* screenzx = nullptr;
+
+    // Setup phase - pause timing for setup
+    state.PauseTiming();
+    context = new EmulatorContext(LoggerLevel::LogError);
+    cpu = new Core(context);
+    bool initResult = cpu->Init();
+    cpu->GetMemory()->DefaultBanksFor48k();
+    screenzx = new ScreenZX(context);
+    screenzx->InitFrame();
+    state.ResumeTiming();
+
+    // Benchmark loop
+    for (auto _ : state)
+    {
+        screenzx->RenderOnlyMainScreen();
+    }
+
+    // Teardown phase
+    state.PauseTiming();
+    if (screenzx != nullptr)
+    {
+        delete screenzx;
+    }
+    if (cpu != nullptr)
+    {
+        delete cpu;
+    }
+    if (context != nullptr)
+    {
+        delete context;
+    }
+    state.ResumeTiming();
+}
+BENCHMARK(BM_RenderOnlyMainScreen_MT)->Iterations(100)->Threads(12)->UseRealTime();
