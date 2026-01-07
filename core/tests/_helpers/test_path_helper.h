@@ -26,14 +26,22 @@ public:
         // Look up the directory tree until we find the project root
         while (depth < maxDepth)
         {
-            // Check if this directory contains the characteristic project folders
-            bool hasSrc = fs::exists(current / "src");
-            bool hasData = fs::exists(current / "data");
+            // Check if this directory contains the characteristic project markers
             bool hasTestData = fs::exists(current / "testdata");
             bool hasCore = fs::exists(current / "core");
+            bool hasCMakeLists = fs::exists(current / "CMakeLists.txt");
 
-            // If we find all or most of the characteristic folders, this is likely the project root
-            if (hasTestData && (hasSrc || hasCore))
+            // Additional check: make sure core is a directory with source files, not just a build output
+            bool coreIsSourceDir = false;
+            if (hasCore)
+            {
+                fs::path corePath = current / "core";
+                // Check if core/src exists (indicating it's the source tree, not build output)
+                coreIsSourceDir = fs::is_directory(corePath) && fs::exists(corePath / "src");
+            }
+
+            // If we find testdata, a proper core source directory, and CMakeLists.txt, this is the project root
+            if (hasTestData && coreIsSourceDir && hasCMakeLists)
             {
                 return current;
             }
