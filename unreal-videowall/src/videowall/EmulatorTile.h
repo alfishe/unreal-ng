@@ -38,6 +38,7 @@ protected:
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
 
@@ -50,7 +51,11 @@ private:
     std::shared_ptr<Emulator> _emulator;
     std::string _emulatorId;  // Cached emulator UUID for efficient lookups
     bool _hasTileFocus = false;
+    bool _isDragHovering = false;     // Track drag-over state for visual feedback
+    bool _isBlinkingSuccess = false;  // Blink green after successful load
+    bool _isBlinkingFailure = false;  // Blink red after failed load
     QTimer* _refreshTimer = nullptr;
+    QTimer* _blinkTimer = nullptr;  // Timer for blink effect
 
     // Tile size: 512x384 pixels (ZX Spectrum 256x192 scaled 2x)
     static constexpr int TILE_WIDTH = 512;

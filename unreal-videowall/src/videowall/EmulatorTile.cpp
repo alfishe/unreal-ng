@@ -4,6 +4,7 @@
 #include <platform.h>
 
 #include <QDragEnterEvent>
+#include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QMimeData>
 #include <QPainter>
@@ -62,11 +63,34 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
         painter.fillRect(rect(), Qt::black);
     }
 
-    // Draw focus border if focused
-    if (_hasTileFocus)
+    // Draw visual feedback borders
+    if (_isBlinkingSuccess)
     {
-        painter.setPen(QPen(Qt::cyan, 2));
-        painter.drawRect(rect().adjusted(1, 1, -1, -1));
+        // Bright green blink on successful load
+        QPen pen(QColor(0, 255, 0), 6);
+        painter.setPen(pen);
+        painter.drawRect(rect().adjusted(2, 2, -4, -4));
+    }
+    else if (_isBlinkingFailure)
+    {
+        // Bright red blink on failed load
+        QPen pen(QColor(255, 0, 0), 6);
+        painter.setPen(pen);
+        painter.drawRect(rect().adjusted(2, 2, -4, -4));
+    }
+    else if (_isDragHovering)
+    {
+        // Thick blue border when dragging file over tile
+        QPen pen(QColor(80, 120, 255), 5);
+        painter.setPen(pen);
+        painter.drawRect(rect().adjusted(2, 2, -4, -4));
+    }
+    else if (_hasTileFocus)
+    {
+        // Lighter blue border when tile has keyboard focus
+        QPen pen(QColor(120, 160, 255), 2);
+        painter.setPen(pen);
+        painter.drawRect(rect().adjusted(1, 1, -2, -2));
     }
 }
 
@@ -86,26 +110,109 @@ void EmulatorTile::focusOutEvent(QFocusEvent* event)
 
 void EmulatorTile::dragEnterEvent(QDragEnterEvent* event)
 {
-    if (event->mimeData()->hasUrls())
+    if (!_emulator)
     {
-        event->acceptProposedAction();
+        event->ignore();
+        return;
     }
+
+    // Accept only file drops
+    if (!event->mimeData()->hasUrls())
+    {
+        event->ignore();
+        return;
+    }
+
+    // Validate file type
+    const QList<QUrl> urls = event->mimeData()->urls();
+    if (urls.isEmpty())
+    {
+        event->ignore();
+        return;
+    }
+
+    QString filePath = urls.first().toLocalFile();
+    QString ext = filePath.right(4).toLower();
+
+    // Accept snapshots and disk images
+    if (ext == ".sna" || ext == ".z80" || ext == ".scl" || ext == ".trd" || ext == ".tap" || ext == ".tzx")
+    {
+        _isDragHovering = true;  // Enable visual feedback
+        event->acceptProposedAction();
+        update();  // Trigger repaint for visual feedback
+    }
+    else
+    {
+        event->ignore();
+    }
+}
+
+void EmulatorTile::dragLeaveEvent(QDragLeaveEvent* event)
+{
+    _isDragHovering = false;  // Disable visual feedback
+    update();                 // Trigger repaint to remove border
+    QWidget::dragLeaveEvent(event);
 }
 
 void EmulatorTile::dropEvent(QDropEvent* event)
 {
-    // TODO: Phase 5 - Load snapshot/disk image
-    const QMimeData* mimeData = event->mimeData();
-
-    if (mimeData->hasUrls())
+    if (!_emulator)
     {
-        QList<QUrl> urls = mimeData->urls();
-        if (!urls.isEmpty())
-        {
-            QString filePath = urls.first().toLocalFile();
-            // TODO: Load file into emulator
-        }
+        event->ignore();
+        return;
     }
+
+    const QList<QUrl> urls = event->mimeData()->urls();
+    if (urls.isEmpty())
+    {
+        event->ignore();
+        return;
+    }
+
+    QString filePath = urls.first().toLocalFile();
+    QString ext = filePath.right(4).toLower();
+
+    bool loadSuccess = false;
+
+    // Load snapshot files
+    if (ext == ".sna" || ext == ".z80")
+    {
+        loadSuccess = _emulator->LoadSnapshot(filePath.toStdString());
+        qDebug() << (loadSuccess ? "Loaded" : "Failed to load") << "snapshot:" << filePath;
+    }
+    // Load disk images
+    else if (ext == ".scl" || ext == ".trd")
+    {
+        loadSuccess = _emulator->LoadDisk(filePath.toStdString());
+        qDebug() << (loadSuccess ? "Loaded" : "Failed to load") << "disk:" << filePath;
+    }
+    // Load tape files
+    else if (ext == ".tap" || ext == ".tzx")
+    {
+        loadSuccess = _emulator->LoadTape(filePath.toStdString());
+        qDebug() << (loadSuccess ? "Loaded" : "Failed to load") << "tape:" << filePath;
+    }
+
+    // Visual feedback: blink border (green=success, red=failure)
+    _isDragHovering = false;  // Clear hover state
+    if (loadSuccess)
+    {
+        _isBlinkingSuccess = true;
+    }
+    else
+    {
+        _isBlinkingFailure = true;
+    }
+
+    // Stop blink after 300ms
+    QTimer::singleShot(300, this, [this]() {
+        _isBlinkingSuccess = false;
+        _isBlinkingFailure = false;
+        update();
+    });
+
+    event->acceptProposedAction();
+    update();  // Repaint with blink effect
 }
 
 void EmulatorTile::mousePressEvent(QMouseEvent* event)
