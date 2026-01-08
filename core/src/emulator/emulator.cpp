@@ -744,7 +744,7 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
-    if (ext != ".z80" && ext != ".sna")
+    if (ext != "z80" && ext != "sna")
     {
         MLOGERROR("Invalid snapshot format: {}. Expected .z80 or .sna", ext.c_str());
         return false;
@@ -758,10 +758,10 @@ bool Emulator::LoadSnapshot(const std::string& path)
         wasRunning = true;
     }
 
-    if (ext == ".sna")
+    if (ext == "sna")
     {
         /// region <Load SNA snapshot>
-        LoaderSNA loaderSna(_context, path);
+        LoaderSNA loaderSna(_context, absolutePath);
         result = loaderSna.load();
 
         /// region <Info logging>
@@ -775,10 +775,10 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
         /// endregion </Load SNA snapshot>
     }
-    else if (ext == ".z80")
+    else if (ext == "z80")
     {
         /// region <Load Z80 snapshot>
-        LoaderZ80 loaderZ80(_context, path);
+        LoaderZ80 loaderZ80(_context, absolutePath);
         result = loaderZ80.load();
 
         /// region <Info logging>
