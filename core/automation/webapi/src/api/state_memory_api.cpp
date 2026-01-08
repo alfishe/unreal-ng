@@ -50,6 +50,7 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& req, std::function<void(c
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -131,6 +132,7 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& req, std::function<voi
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -246,6 +248,7 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }

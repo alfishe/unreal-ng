@@ -13,14 +13,19 @@ namespace api
             EmulatorAPI() = default;
 
             METHOD_LIST_BEGIN
-                // Root redirect to OpenAPI
+                // region Root and OpenAPI (implementation: emulator_api.cpp)
+                // Root redirect to OpenAPI (implementation: emulator_api.cpp)
                 ADD_METHOD_TO(EmulatorAPI::rootRedirect, "/", drogon::Get);
-                ADD_METHOD_TO(EmulatorAPI::corsPreflight, "/", drogon::Options);
 
                 // OpenAPI specification
                 ADD_METHOD_TO(EmulatorAPI::getOpenAPISpec, "/api/v1/openapi.json", drogon::Get);
-                ADD_METHOD_TO(EmulatorAPI::corsPreflight, "/api/v1/openapi.json", drogon::Options);
+                // endregion Root and OpenAPI
 
+                // Note: CORS preflight (OPTIONS) requests are handled globally via registerSyncAdvice
+                // in automation-webapi.cpp and main.cpp, so no need to register OPTIONS handlers here
+
+                // region Lifecycle Management (implementation: api/lifecycle_api.cpp)
+                // Lifecycle Management (implementation: api/lifecycle_api.cpp)
                 // List all emulators
                 ADD_METHOD_TO(EmulatorAPI::get, "/api/v1/emulator", drogon::Get);
 
@@ -30,8 +35,8 @@ namespace api
                 // Get available models
                 ADD_METHOD_TO(EmulatorAPI::getModels, "/api/v1/emulator/models", drogon::Get);
 
-                // Create a new emulator
-                ADD_METHOD_TO(EmulatorAPI::createEmulator, "/api/v1/emulator", drogon::Post);
+                // Create a new emulator (without starting)
+                ADD_METHOD_TO(EmulatorAPI::createEmulator, "/api/v1/emulator/create", drogon::Post);
 
                 // Get emulator details
                 ADD_METHOD_TO(EmulatorAPI::getEmulator, "/api/v1/emulator/{id}", drogon::Get);
@@ -40,12 +45,15 @@ namespace api
                 ADD_METHOD_TO(EmulatorAPI::removeEmulator, "/api/v1/emulator/{id}", drogon::Delete);
 
                 // Control emulator state
-                ADD_METHOD_TO(EmulatorAPI::startEmulator, "/api/v1/emulator/{id}/start", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::startEmulator, "/api/v1/emulator/start", drogon::Post); // Create and start a new emulator
+                ADD_METHOD_TO(EmulatorAPI::startExistingEmulator, "/api/v1/emulator/{id}/start", drogon::Post); // Start an existing emulator
                 ADD_METHOD_TO(EmulatorAPI::stopEmulator, "/api/v1/emulator/{id}/stop", drogon::Post);
                 ADD_METHOD_TO(EmulatorAPI::pauseEmulator, "/api/v1/emulator/{id}/pause", drogon::Post);
                 ADD_METHOD_TO(EmulatorAPI::resumeEmulator, "/api/v1/emulator/{id}/resume", drogon::Post);
                 ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
+                // endregion Lifecycle Management
 
+                // region Tape/Disk/Snapshot Control (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
                 // Tape control
                 ADD_METHOD_TO(EmulatorAPI::loadTape, "/api/v1/emulator/{id}/tape/load", drogon::Post);
                 ADD_METHOD_TO(EmulatorAPI::ejectTape, "/api/v1/emulator/{id}/tape/eject", drogon::Post);
@@ -62,20 +70,29 @@ namespace api
                 // Snapshot control
                 ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
                 ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
+                // endregion Tape/Disk/Snapshot Control
 
+                // region Settings Management (implementation: api/settings_api.cpp)
                 // Settings management
                 ADD_METHOD_TO(EmulatorAPI::getSettings, "/api/v1/emulator/{id}/settings", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getSetting, "/api/v1/emulator/{id}/settings/{name}", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::setSetting, "/api/v1/emulator/{id}/settings/{name}", drogon::Put, drogon::Post);
+                // endregion Settings Management
 
+                // region Memory State (implementation: api/state_memory_api.cpp)
                 // State inspection
                 ADD_METHOD_TO(EmulatorAPI::getStateMemory, "/api/v1/emulator/{id}/state/memory", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateMemoryRAM, "/api/v1/emulator/{id}/state/memory/ram", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateMemoryROM, "/api/v1/emulator/{id}/state/memory/rom", drogon::Get);
+                // endregion Memory State
+                
+                // region Screen State (implementation: api/state_screen_api.cpp)
                 ADD_METHOD_TO(EmulatorAPI::getStateScreen, "/api/v1/emulator/{id}/state/screen", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateScreenMode, "/api/v1/emulator/{id}/state/screen/mode", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateScreenFlash, "/api/v1/emulator/{id}/state/screen/flash", drogon::Get);
+                // endregion Screen State
 
+                // region Audio State (implementation: api/state_audio_api.cpp)
                 // Audio state inspection (with emulator ID)
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioAY, "/api/v1/emulator/{id}/state/audio/ay", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioAYIndex, "/api/v1/emulator/{id}/state/audio/ay/{chip}", drogon::Get);
@@ -93,20 +110,20 @@ namespace api
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioGSActive, "/api/v1/emulator/state/audio/gs", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioCovoxActive, "/api/v1/emulator/state/audio/covox", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getStateAudioChannelsActive, "/api/v1/emulator/state/audio/channels", drogon::Get);
+                // endregion Audio State
             METHOD_LIST_END
 
+            // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
             // Root redirect
             void rootRedirect(const drogon::HttpRequestPtr &req,
                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
 
-            // CORS preflight handler
-            void corsPreflight(const drogon::HttpRequestPtr &req,
-                              std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
-
             // OpenAPI specification
             void getOpenAPISpec(const drogon::HttpRequestPtr &req,
                                std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
+            // endregion Root and OpenAPI Methods
 
+            // region Lifecycle Management Methods (implementation: api/lifecycle_api.cpp)
             // List all emulators
             void get(const drogon::HttpRequestPtr &req, 
                     std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
@@ -135,8 +152,12 @@ namespace api
             
             // Control emulator state
             void startEmulator(const drogon::HttpRequestPtr &req,
-                             std::function<void(const drogon::HttpResponsePtr &)> &&callback,
-                             const std::string &id) const;
+                             std::function<void(const drogon::HttpResponsePtr &)>&& callback) const;
+            
+            // Start an existing emulator
+            void startExistingEmulator(const drogon::HttpRequestPtr &req,
+                                      std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                                      const std::string &id) const;
                               
             void stopEmulator(const drogon::HttpRequestPtr &req,
                             std::function<void(const drogon::HttpResponsePtr &)> &&callback,
@@ -153,7 +174,9 @@ namespace api
             void resetEmulator(const drogon::HttpRequestPtr &req,
                              std::function<void(const drogon::HttpResponsePtr &)>&& callback,
                              const std::string &id) const;
+            // endregion Lifecycle Management Methods
 
+            // region Tape/Disk/Snapshot Control Methods (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
             // Tape control
             void loadTape(const drogon::HttpRequestPtr &req,
                          std::function<void(const drogon::HttpResponsePtr &)>&& callback,
@@ -195,7 +218,9 @@ namespace api
             void getSnapshotInfo(const drogon::HttpRequestPtr &req,
                                 std::function<void(const drogon::HttpResponsePtr &)>&& callback,
                                 const std::string &id) const;
+            // endregion Tape/Disk/Snapshot Control Methods
 
+            // region Settings Management Methods (implementation: api/settings_api.cpp)
             // Settings management
             void getSettings(const drogon::HttpRequestPtr &req,
                            std::function<void(const drogon::HttpResponsePtr &)> &&callback,
@@ -210,7 +235,9 @@ namespace api
                           std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                           const std::string &id,
                           const std::string &name) const;
-            
+            // endregion Settings Management Methods
+
+            // region Memory State Methods (implementation: api/state_memory_api.cpp)
             // State inspection
             void getStateMemory(const drogon::HttpRequestPtr &req,
                               std::function<void(const drogon::HttpResponsePtr &)> &&callback,
@@ -231,11 +258,15 @@ namespace api
             void getStateScreenMode(const drogon::HttpRequestPtr &req,
                                   std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                                   const std::string &id) const;
-                                  
+            // endregion Memory State Methods
+
+            // region Screen State Methods (implementation: api/state_screen_api.cpp)
             void getStateScreenFlash(const drogon::HttpRequestPtr &req,
                                     std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                                     const std::string &id) const;
+            // endregion Screen State Methods
 
+            // region Audio State Methods (implementation: api/state_audio_api.cpp)
             // Audio state inspection
             void getStateAudioAY(const drogon::HttpRequestPtr &req,
                                std::function<void(const drogon::HttpResponsePtr &)> &&callback,
@@ -292,20 +323,18 @@ namespace api
 
             void getStateAudioChannelsActive(const drogon::HttpRequestPtr &req,
                                             std::function<void(const drogon::HttpResponsePtr &)> &&callback) const;
+            // endregion Audio State Methods
 
+            // region Helper Methods (implementation: emulator_api.cpp)
         private:
-            /**
-             * @brief Get emulator by ID (UUID) or index (numeric)
-             * @param idOrIndex Either a UUID string or numeric index (0-based)
-             * @return Shared pointer to emulator, or nullptr if not found
-             */
+            // Get emulator by ID (UUID) or index (numeric)
+            // @param idOrIndex Either a UUID string or numeric index (0-based)
+            // @return Shared pointer to emulator, or nullptr if not found
             std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex) const;
             
-            /**
-             * @brief Get emulator using stateless auto-selection
-             * @details Auto-selects only if exactly one emulator exists (stateless behavior)
-             * @return Shared pointer to emulator, or nullptr if 0 or 2+ emulators exist
-             */
+            // Get emulator using stateless auto-selection
+            // Auto-selects only if exactly one emulator exists (stateless behavior)
+            // @return Shared pointer to emulator, or nullptr if 0 or 2+ emulators exist
             std::shared_ptr<Emulator> getEmulatorStateless() const;
             
             // Helper method to handle emulator actions with common error handling
@@ -314,6 +343,7 @@ namespace api
                 std::function<void(const drogon::HttpResponsePtr &)> &&callback,
                 const std::string &id,
                 std::function<std::string(std::shared_ptr<Emulator>)> action) const;
+            // endregion Helper Methods
         };
     } // namespace v1
 } // namespace api

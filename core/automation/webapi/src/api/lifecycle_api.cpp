@@ -58,42 +58,65 @@ void EmulatorAPI::get(const HttpRequestPtr& req, std::function<void(const HttpRe
 /// @brief Get available emulator models
 void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto manager = EmulatorManager::GetInstance();
-    auto models = manager->GetAvailableModels();
-
     Json::Value ret;
     Json::Value modelsArray(Json::arrayValue);
 
-    for (const auto& model : models)
+    try
     {
-        Json::Value modelInfo;
-        modelInfo["name"] = model.ShortName;
-        modelInfo["full_name"] = model.FullName;
-        modelInfo["model_id"] = static_cast<int>(model.Model);
-        modelInfo["default_ram_kb"] = model.defaultRAM;
+        auto manager = EmulatorManager::GetInstance();
+        auto models = manager->GetAvailableModels();
 
-        // Parse available RAM sizes from bitmask
-        Json::Value availableRAMs(Json::arrayValue);
-        unsigned ramMask = model.AvailRAMs;
-        const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
-        for (int ram : ramSizes)
+        for (const auto& model : models)
         {
-            if (ramMask & ram)
+            // Skip empty/sentinel entries (entries with NULL or empty ShortName)
+            if (!model.ShortName || model.ShortName[0] == '\0')
             {
-                availableRAMs.append(ram);
+                continue;
             }
+
+
+            Json::Value modelInfo;
+
+            // Order fields logically: id and name first, then details
+            modelInfo["id"] = static_cast<int>(model.Model);
+            modelInfo["name"] = std::string(model.ShortName);
+            modelInfo["full_name"] = model.FullName ? std::string(model.FullName) : "";
+            modelInfo["default_ram_kb"] = model.defaultRAM;
+
+            // Parse available RAM sizes from bitmask
+            Json::Value availableRAMs(Json::arrayValue);
+            unsigned ramMask = model.AvailRAMs;
+            const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
+            for (int ram : ramSizes)
+            {
+                if (ramMask & ram)
+                {
+                    availableRAMs.append(ram);
+                }
+            }
+            modelInfo["available_ram_sizes_kb"] = availableRAMs;
+
+            modelsArray.append(modelInfo);
         }
-        modelInfo["available_ram_sizes_kb"] = availableRAMs;
 
-        modelsArray.append(modelInfo);
+        ret["models"] = modelsArray;
+        ret["count"] = static_cast<Json::UInt>(modelsArray.size());
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
     }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Failed to retrieve models";
+        error["message"] = e.what();
 
-    ret["models"] = modelsArray;
-    ret["count"] = static_cast<Json::UInt>(models.size());
-
-    auto resp = HttpResponse::newHttpJsonResponse(ret);
-    addCorsHeaders(resp);
-    callback(resp);
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
 }
 
 /// @brief GET /api/v1/emulator/status
@@ -133,6 +156,12 @@ void EmulatorAPI::status(const HttpRequestPtr& req, std::function<void(const Htt
 
 /// @brief POST /api/v1/emulator
 /// @brief Create a new emulator instance
+/// @brief Request body (all optional):
+/// @brief {
+/// @brief   "symbolic_id": "my-emulator",
+/// @brief   "model": "48K" | "128K" | "PENTAGON" | etc,
+/// @brief   "ram_size": 128 (in KB, only valid for models that support it)
+/// @brief }
 void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
                                  std::function<void(const HttpResponsePtr&)>&& callback) const
 {
@@ -154,16 +183,8 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
             emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize);
             if (!emulator)
             {
-                Json::Value error;
-                error["error"] = "Failed to create emulator";
-                error["message"] = "Invalid model '" + modelName + "' or RAM size " + std::to_string(ramSize) +
-                                   "KB not supported by this model";
-
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
+                // Fall back to default 48K if model/RAM combination invalid
+                emulator = manager->CreateEmulator(symbolicId);
             }
         }
         else if (!modelName.empty())
@@ -172,20 +193,13 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
             emulator = manager->CreateEmulatorWithModel(symbolicId, modelName);
             if (!emulator)
             {
-                Json::Value error;
-                error["error"] = "Failed to create emulator";
-                error["message"] = "Unknown or invalid model: '" + modelName + "'";
-
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k400BadRequest);
-                addCorsHeaders(resp);
-                callback(resp);
-                return;
+                // Fall back to default 48K if model is invalid
+                emulator = manager->CreateEmulator(symbolicId);
             }
         }
         else
         {
-            // Create with default configuration
+            // Create with default configuration (48K)
             emulator = manager->CreateEmulator(symbolicId);
         }
 
@@ -220,11 +234,12 @@ void EmulatorAPI::createEmulator(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
 
-/// @brief GET /api/v1/emulator/:id
+/// @brief GET /api/v1/emulator/{id}
 /// @brief Get emulator details
 void EmulatorAPI::getEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
@@ -257,7 +272,7 @@ void EmulatorAPI::getEmulator(const HttpRequestPtr& req, std::function<void(cons
     callback(resp);
 }
 
-/// @brief DELETE /api/v1/emulator/:id
+/// @brief DELETE /api/v1/emulator/{id}
 /// @brief Remove an emulator
 void EmulatorAPI::removeEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
@@ -297,14 +312,95 @@ void EmulatorAPI::removeEmulator(const HttpRequestPtr& req, std::function<void(c
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
 
-/// @brief POST /api/v1/emulator/:id/start
-/// @brief Start an emulator
-void EmulatorAPI::startEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
-                                const std::string& id) const
+///  @brief POST /api/v1/emulator/start
+/// @brief Create and start a new emulator
+/// @brief Request body (all optional):
+/// @brief {
+/// @brief   "symbolic_id": "my-emulator",
+/// @brief   "model": "48K" | "128K" | "PENTAGON" | etc,
+/// @brief   "ram_size": 128 (in KB, only valid for models that support it)
+/// @brief }
+void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
+                                std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    auto manager = EmulatorManager::GetInstance();
+
+    // Parse request body
+    auto json = req->getJsonObject();
+    std::string symbolicId = json ? (*json)["symbolic_id"].asString() : "";
+    std::string modelName = json ? (*json)["model"].asString() : "";
+    uint32_t ramSize = json && json->isMember("ram_size") ? (*json)["ram_size"].asUInt() : 0;
+
+    try
+    {
+        std::shared_ptr<Emulator> emulator;
+
+        // Create emulator with specified parameters
+        if (!modelName.empty() && ramSize > 0)
+        {
+            emulator = manager->CreateEmulatorWithModelAndRAM(symbolicId, modelName, ramSize);
+        }
+        else if (!modelName.empty())
+        {
+            emulator = manager->CreateEmulatorWithModel(symbolicId, modelName);
+        }
+        else
+        {
+            emulator = manager->CreateEmulator(symbolicId);
+        }
+
+        if (!emulator)
+        {
+            Json::Value error;
+            error["error"] = "Failed to create emulator";
+            error["message"] = "Emulator initialization failed";
+
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+
+        // Start the emulator
+        std::string emulatorId = emulator->GetId();
+        bool started = manager->StartEmulatorAsync(emulatorId);
+
+        Json::Value ret;
+        ret["id"] = emulatorId;
+        ret["symbolic_id"] = emulator->GetSymbolicId();
+        ret["state"] = stateToString(emulator->GetState());
+        ret["started"] = started;
+        ret["message"] = started ? "Emulator created and started" : "Emulator created but failed to start";
+
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        resp->setStatusCode(HttpStatusCode::k201Created);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "Failed to create and start emulator";
+        error["message"] = e.what();
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/start
+/// @brief Start an existing emulator
+void EmulatorAPI::startExistingEmulator(const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback,
+                                        const std::string& id) const
 {
     auto manager = EmulatorManager::GetInstance();
 
@@ -350,11 +446,12 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req, std::function<void(co
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
 
-/// @brief POST /api/v1/emulator/:id/stop
+/// @brief POST /api/v1/emulator/{id}/stop
 /// @brief Stop an emulator
 void EmulatorAPI::stopEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) const
@@ -403,11 +500,12 @@ void EmulatorAPI::stopEmulator(const HttpRequestPtr& req, std::function<void(con
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
 
-/// @brief POST /api/v1/emulator/:id/pause
+/// @brief POST /api/v1/emulator/{id}/pause
 /// @brief Pause an emulator
 void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
@@ -456,11 +554,12 @@ void EmulatorAPI::pauseEmulator(const HttpRequestPtr& req, std::function<void(co
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
 
-/// @brief POST /api/v1/emulator/:id/resume
+/// @brief POST /api/v1/emulator/{id}/resume
 /// @brief Resume an emulator
 void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                  const std::string& id) const
@@ -509,11 +608,12 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
 
-/// @brief POST /api/v1/emulator/:id/reset
+/// @brief POST /api/v1/emulator/{id}/reset
 /// @brief Reset an emulator
 void EmulatorAPI::resetEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
@@ -562,6 +662,7 @@ void EmulatorAPI::resetEmulator(const HttpRequestPtr& req, std::function<void(co
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }
@@ -598,6 +699,7 @@ void EmulatorAPI::handleEmulatorAction(const HttpRequestPtr& req,
         ret["state"] = stateToString(emulator->GetState());
 
         auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
         callback(resp);
     }
     catch (const std::exception& e)
@@ -609,6 +711,7 @@ void EmulatorAPI::handleEmulatorAction(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
     }
 }

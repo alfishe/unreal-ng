@@ -156,6 +156,7 @@ set(COMMON_SOURCES
     src/hello_world_api.h
     src/emulator_api.cpp
     src/emulator_api.h
+    src/openapi_spec.cpp
     src/api/lifecycle_api.cpp
     src/api/settings_api.cpp
     src/api/state_memory_api.cpp

@@ -41,10 +41,18 @@ docker run --name unreal-speccy-swagger-ui \
 **Important**: The OpenAPI specification at `/api/v1/openapi.json` is **manually maintained** and **NOT auto-generated**.
 
 **When making API changes:**
-1. Update the API endpoint code
-2. **Manually update** the OpenAPI JSON specification in `emulator_api.cpp`
-3. Test with Swagger UI to ensure documentation matches implementation
-4. Update HTML documentation and deployment guides
+1. Update the API endpoint code in the appropriate modular file:
+   - `api/lifecycle_api.cpp` - Emulator lifecycle management
+   - `api/tape_disk_api.cpp` - Tape and disk control
+   - `api/snapshot_api.cpp` - Snapshot management
+   - `api/settings_api.cpp` - Settings management
+   - `api/state_memory_api.cpp` - Memory state inspection
+   - `api/state_screen_api.cpp` - Screen state inspection
+   - `api/state_audio_api.cpp` - Audio state inspection
+2. **Manually update** the OpenAPI JSON specification in `openapi_spec.cpp`
+3. Add autodoc comments above the method implementation
+4. Test with Swagger UI to ensure documentation matches implementation
+5. Update HTML documentation and deployment guides
 
 **Failure to update the OpenAPI spec will result in:**
 - Documentation being out of sync with actual API
@@ -249,7 +257,13 @@ test -f dist/bin/resources/html/404.html || exit 1
 
 - `resources/README.md` - Resource file documentation
 - `CMakeLists.txt` - Build and installation rules
-- WebAPI source code search paths in:
+- `OPENAPI_MAINTENANCE.md` - OpenAPI specification maintenance guide
+- WebAPI modular implementation:
+  - `src/emulator_api.h` - Main API interface (with region markers)
+  - `src/emulator_api.cpp` - Core infrastructure
+  - `src/openapi_spec.cpp` - OpenAPI specification (638 lines, 52 endpoints)
+  - `src/api/` - Modular endpoint implementations
+- Resource loading in:
   - `src/emulator_api.cpp::loadHtmlFile()`
   - `src/automation-webapi.cpp::loadHtmlFile()`
 

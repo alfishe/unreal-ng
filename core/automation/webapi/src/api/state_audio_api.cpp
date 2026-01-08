@@ -48,6 +48,7 @@ void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -61,6 +62,7 @@ void EmulatorAPI::getStateAudioAY(const HttpRequestPtr& req, std::function<void(
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -156,6 +158,7 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -169,6 +172,7 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -187,6 +191,7 @@ void EmulatorAPI::getStateAudioAYIndex(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -324,6 +329,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -337,6 +343,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -355,6 +362,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -387,6 +395,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -399,6 +408,7 @@ void EmulatorAPI::getStateAudioAYRegister(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -556,6 +566,7 @@ void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& req, std::function<v
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -569,6 +580,7 @@ void EmulatorAPI::getStateAudioBeeper(const HttpRequestPtr& req, std::function<v
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -648,6 +660,7 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }

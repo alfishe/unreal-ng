@@ -8,10 +8,16 @@ get_filename_component(ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../" ABSOLUTE)
 set(SOURCES
     src/automation-cli.cpp
     src/cli-processor.cpp
-    src/commands/cli-processor-state.cpp
+    src/commands/cli-processor-instance.cpp
+    src/commands/cli-processor-debug.cpp
+    src/commands/cli-processor-breakpoint.cpp
+    src/commands/cli-processor-memory.cpp
+    src/commands/cli-processor-analyzer.cpp
+    src/commands/cli-processor-settings.cpp
     src/commands/cli-processor-tape.cpp
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-snapshot.cpp
+    src/commands/cli-processor-state.cpp
 )
 
 # Create the library

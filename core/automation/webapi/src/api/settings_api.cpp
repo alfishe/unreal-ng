@@ -19,7 +19,7 @@ namespace v1
 // Helper function declared in emulator_api.cpp
 extern void addCorsHeaders(HttpResponsePtr& resp);
 
-/// @brief GET /api/v1/emulator/:id/settings
+/// @brief GET /api/v1/emulator/{id}/settings
 /// @brief Get all settings for an emulator
 void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
@@ -49,6 +49,7 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -78,7 +79,7 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     callback(resp);
 }
 
-/// @brief GET /api/v1/emulator/:id/settings/:name
+/// @brief GET /api/v1/emulator/{id}/settings/{name}
 /// @brief Get a specific setting value
 void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id, const std::string& name) const
@@ -108,6 +109,7 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -159,7 +161,7 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
     callback(resp);
 }
 
-/// @brief PUT/POST /api/v1/emulator/:id/settings/:name
+/// @brief PUT/POST /api/v1/emulator/{id}/settings/{name}
 /// @brief Set a specific setting value
 void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                              const std::string& id, const std::string& name) const
@@ -189,6 +191,7 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -203,6 +206,7 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }

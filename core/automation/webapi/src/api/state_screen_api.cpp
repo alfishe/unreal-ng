@@ -48,6 +48,7 @@ void EmulatorAPI::getStateScreen(const HttpRequestPtr& req, std::function<void(c
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -98,6 +99,7 @@ void EmulatorAPI::getStateScreen(const HttpRequestPtr& req, std::function<void(c
     if (!verbose)
     {
         auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -202,6 +204,7 @@ void EmulatorAPI::getStateScreenMode(const HttpRequestPtr& req, std::function<vo
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
@@ -274,6 +277,7 @@ void EmulatorAPI::getStateScreenFlash(const HttpRequestPtr& req, std::function<v
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
         callback(resp);
         return;
     }
