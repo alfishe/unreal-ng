@@ -1,14 +1,14 @@
 #include "videowall/EmulatorTile.h"
 
-#include <emulator.h>
-#include <platform.h>
-
-#include <QDragEnterEvent>
 #include <QDragLeaveEvent>
-#include <QDropEvent>
 #include <QMimeData>
 #include <QPainter>
 #include <QTimer>
+
+#include "3rdparty/message-center/messagecenter.h"
+#include "emulator.h"
+#include "emulator/io/keyboard/keyboard.h"
+#include "keyboard/keyboardmanager.h"
 
 EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), _emulator(emulator)
 {
@@ -219,6 +219,52 @@ void EmulatorTile::mousePressEvent(QMouseEvent* event)
 {
     setFocus();
     QWidget::mousePressEvent(event);
+}
+
+void EmulatorTile::keyPressEvent(QKeyEvent* event)
+{
+    event->accept();
+
+    // Don't react on auto-repeat
+    if (!event->isAutoRepeat() && _emulator)
+    {
+        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
+
+        // Skip unknown keys
+        if (zxKey != 0)
+        {
+            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
+
+            // Send valid key combinations to emulator instance
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(MC_KEY_PRESSED, keyEvent);
+
+            qDebug() << "EmulatorTile: Key pressed, zxKey:" << QString::number(zxKey, 16);
+        }
+    }
+}
+
+void EmulatorTile::keyReleaseEvent(QKeyEvent* event)
+{
+    event->accept();
+
+    // Don't react on auto-repeat
+    if (!event->isAutoRepeat() && _emulator)
+    {
+        quint8 zxKey = KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(event->key(), event->modifiers());
+
+        // Skip unknown keys
+        if (zxKey != 0)
+        {
+            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
+
+            // Send valid key combinations to emulator instance
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(MC_KEY_RELEASED, keyEvent);
+
+            qDebug() << "EmulatorTile: Key released, zxKey:" << QString::number(zxKey, 16);
+        }
+    }
 }
 
 void EmulatorTile::handleVideoFrameRefresh()
