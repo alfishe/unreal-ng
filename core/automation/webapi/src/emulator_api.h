@@ -46,6 +46,23 @@ namespace api
                 ADD_METHOD_TO(EmulatorAPI::resumeEmulator, "/api/v1/emulator/{id}/resume", drogon::Post);
                 ADD_METHOD_TO(EmulatorAPI::resetEmulator, "/api/v1/emulator/{id}/reset", drogon::Post);
 
+                // Tape control
+                ADD_METHOD_TO(EmulatorAPI::loadTape, "/api/v1/emulator/{id}/tape/load", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::ejectTape, "/api/v1/emulator/{id}/tape/eject", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::playTape, "/api/v1/emulator/{id}/tape/play", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::stopTape, "/api/v1/emulator/{id}/tape/stop", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::rewindTape, "/api/v1/emulator/{id}/tape/rewind", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::getTapeInfo, "/api/v1/emulator/{id}/tape/info", drogon::Get);
+
+                // Disk control
+                ADD_METHOD_TO(EmulatorAPI::insertDisk, "/api/v1/emulator/{id}/disk/{drive}/insert", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::ejectDisk, "/api/v1/emulator/{id}/disk/{drive}/eject", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::getDiskInfo, "/api/v1/emulator/{id}/disk/{drive}/info", drogon::Get);
+
+                // Snapshot control
+                ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
+                ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
+
                 // Settings management
                 ADD_METHOD_TO(EmulatorAPI::getSettings, "/api/v1/emulator/{id}/settings", drogon::Get);
                 ADD_METHOD_TO(EmulatorAPI::getSetting, "/api/v1/emulator/{id}/settings/{name}", drogon::Get);
@@ -134,8 +151,50 @@ namespace api
                               const std::string &id) const;
 
             void resetEmulator(const drogon::HttpRequestPtr &req,
-                             std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                             std::function<void(const drogon::HttpResponsePtr &)>&& callback,
                              const std::string &id) const;
+
+            // Tape control
+            void loadTape(const drogon::HttpRequestPtr &req,
+                         std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                         const std::string &id) const;
+            void ejectTape(const drogon::HttpRequestPtr &req,
+                          std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                          const std::string &id) const;
+            void playTape(const drogon::HttpRequestPtr &req,
+                         std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                         const std::string &id) const;
+            void stopTape(const drogon::HttpRequestPtr &req,
+                         std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                         const std::string &id) const;
+            void rewindTape(const drogon::HttpRequestPtr &req,
+                           std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                           const std::string &id) const;
+            void getTapeInfo(const drogon::HttpRequestPtr &req,
+                            std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                            const std::string &id) const;
+
+            // Disk control
+            void insertDisk(const drogon::HttpRequestPtr &req,
+                           std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                           const std::string &id,
+                           const std::string &drive) const;
+            void ejectDisk(const drogon::HttpRequestPtr &req,
+                          std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                          const std::string &id,
+                          const std::string &drive) const;
+            void getDiskInfo(const drogon::HttpRequestPtr &req,
+                            std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                            const std::string &id,
+                            const std::string &drive) const;
+
+            // Snapshot control
+            void loadSnapshot(const drogon::HttpRequestPtr &req,
+                             std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                             const std::string &id) const;
+            void getSnapshotInfo(const drogon::HttpRequestPtr &req,
+                                std::function<void(const drogon::HttpResponsePtr &)>&& callback,
+                                const std::string &id) const;
 
             // Settings management
             void getSettings(const drogon::HttpRequestPtr &req,

@@ -88,7 +88,16 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Instance management commands
                         {"start", &CLIProcessor::HandleStart},
-                        {"stop", &CLIProcessor::HandleStop}};
+                        {"stop", &CLIProcessor::HandleStop},
+
+                        // Tape control commands
+                        {"tape", &CLIProcessor::HandleTape},
+
+                        // Disk control commands
+                        {"disk", &CLIProcessor::HandleDisk},
+
+                        // Snapshot control commands
+                        {"snapshot", &CLIProcessor::HandleSnapshot}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)

@@ -156,6 +156,8 @@ set(COMMON_SOURCES
     src/hello_world_api.h
     src/emulator_api.cpp
     src/emulator_api.h
+    src/api/tape_disk_api.cpp
+    src/api/snapshot_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
     src/automation-webapi.cpp
