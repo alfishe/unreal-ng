@@ -7,6 +7,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <emulator/memory/memory.h>
+#include <emulator/notifications.h>
 #include <emulator/platform.h>
 
 #include <algorithm>
@@ -694,11 +695,19 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
         }
     }
 
+    // Track the previous selection for the notification
+    std::string previousId = session.GetSelectedEmulatorId();
+
     // We have a valid ID at this point
     const_cast<ClientSession&>(session).SetSelectedEmulatorId(selectedId);
 
     // Also update our local reference to the emulator
     _emulator = emulatorManager->GetEmulator(selectedId);
+
+    // Send notification about selection change
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, selectedId);
+    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
 
     std::stringstream ss;
     ss << "Selected emulator: " << selectedId;
@@ -3660,6 +3669,12 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
                 if (!remainingIds.empty())
                 {
                     const_cast<ClientSession&>(session).SetSelectedEmulatorId(remainingIds[0]);
+
+                    // Send notification about selection change
+                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(actualId, remainingIds[0]);
+                    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+
                     ss << "Auto-selected first emulator: " << remainingIds[0] << NEWLINE;
                 }
                 else

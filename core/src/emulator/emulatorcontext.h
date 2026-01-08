@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include <atomic>
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
 #include "corestate.h"
@@ -74,8 +75,9 @@ public:
 	Screen* pScreen;
 
     // Audio callback (will be triggered after each video frame render and provide audio samples for host system)
-    void * pAudioManagerObj;
-    AudioCallback pAudioCallback;
+    // Using std::atomic to ensure proper memory ordering between UI thread (setting) and emulator thread (reading)
+    std::atomic<void*> pAudioManagerObj;
+    std::atomic<AudioCallback> pAudioCallback;
 
     // Sound manager
     SoundManager* pSoundManager;

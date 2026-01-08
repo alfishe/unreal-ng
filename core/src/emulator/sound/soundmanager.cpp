@@ -190,7 +190,11 @@ void SoundManager::handleFrameEnd()
     // Enqueue generated sound data via previously registered application callback
     // Note: Audio callbacks are cleared when emulator loses audio device access to prevent
     // multiple emulators from using the same audio device simultaneously
-    if (_context->pAudioCallback && _context->pAudioManagerObj)
+    // Use memory_order_acquire to ensure we see the latest values written by the UI thread
+    AudioCallback callback = _context->pAudioCallback.load(std::memory_order_acquire);
+    void* obj = _context->pAudioManagerObj.load(std::memory_order_acquire);
+
+    if (callback && obj)
     {
         // If muted, send silence instead of actual audio
         if (_mute)
@@ -201,7 +205,7 @@ void SoundManager::handleFrameEnd()
 
         try
         {
-            _context->pAudioCallback(_context->pAudioManagerObj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+            callback(obj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
         }
         catch (const std::exception& e)
         {

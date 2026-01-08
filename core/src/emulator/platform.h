@@ -19,9 +19,7 @@ constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SU
 // Examples: MainWindow constructor, automation listeners.
 constexpr char const* NC_EMULATOR_INSTANCE_CREATED = "EMULATOR_INSTANCE_CREATED"; // New emulator instance created (payload: emulator ID)
 constexpr char const* NC_EMULATOR_INSTANCE_DESTROYED = "EMULATOR_INSTANCE_DESTROYED"; // Emulator instance destroyed (payload: emulator ID)
-constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";     // Breakpoints added, removed, or modified (global change)
-constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";               // Labels added, removed, or modified (global change)
-
+constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGED";  // Emulator selection changed (payload: EmulatorSelectionPayload)
 
 // endregion </GLOBAL MessageCenter Notifications>
 
@@ -45,6 +43,9 @@ constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
+
+constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
+constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
 
 // endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
 

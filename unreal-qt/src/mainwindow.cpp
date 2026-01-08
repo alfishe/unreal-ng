@@ -21,6 +21,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
@@ -160,6 +161,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     ObserverCallbackMethod destroyCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceDestroyed);
     messageCenter.AddObserver(NC_EMULATOR_INSTANCE_DESTROYED, observerInstance, destroyCallback);
+
+    ObserverCallbackMethod selectionCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorSelectionChanged);
+    messageCenter.AddObserver(NC_EMULATOR_SELECTION_CHANGED, observerInstance, selectionCallback);
 
     qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
 
@@ -1947,6 +1952,13 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
 
             qDebug() << "MainWindow: Detected new emulator instance" << QString::fromStdString(createdId);
 
+            // Check if this is the emulator we already have adopted
+            if (_emulator && _emulator->GetId() == createdId)
+            {
+                qDebug() << "MainWindow: This is our already-adopted emulator, ignoring notification";
+                return;
+            }
+
             // Only try to adopt if we don't currently have an adopted emulator
             // This prevents switching to new emulators when we already have one adopted
             if (!_emulator)
@@ -1963,6 +1975,65 @@ void MainWindow::handleEmulatorInstanceCreated(int id, Message* message)
                          << "- new emulator" << QString::fromStdString(createdId) << "remains headless";
             }
         }
+    }
+}
+void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    // Handle emulator selection change from CLI or other sources
+    if (message && message->obj)
+    {
+        EmulatorSelectionPayload* payload = dynamic_cast<EmulatorSelectionPayload*>(message->obj);
+
+        if (payload)
+        {
+            // Convert uuid_t to string for logging and lookup
+            // IMPORTANT: Use uuid_unparse_lower to match EmulatorManager's lowercase storage
+            char newIdStr[37];
+            uuid_unparse_lower(payload->newEmulatorId, newIdStr);
+            std::string newId(newIdStr);
+
+            qDebug() << "MainWindow: Selection changed to" << QString::fromStdString(newId);
+
+            // Get the newly selected emulator
+            auto newEmulator = _emulatorManager->GetEmulator(newId);
+            if (newEmulator)
+            {
+                // Unsubscribe from current emulator's events
+                if (_emulator)
+                {
+                    qDebug() << "MainWindow: Releasing current emulator" << QString::fromStdString(_emulator->GetId());
+                    unsubscribeFromPerEmulatorEvents();
+                    deviceScreen->detach();
+                    _emulator->ClearAudioCallback();
+                }
+
+                // Adopt the newly selected emulator
+                _emulator = newEmulator;
+                qDebug() << "MainWindow: Adopted newly selected emulator" << QString::fromStdString(_emulator->GetId());
+
+                // Bind to the new emulator
+                subscribeToPerEmulatorEvents();
+
+                // Initialize device screen with new emulator's framebuffer
+                FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
+                deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+                bindEmulatorAudio(_emulator);
+
+                // Update menu states
+                updateMenuStates();
+            }
+            else
+            {
+                qWarning() << "MainWindow: Could not find emulator with ID" << QString::fromStdString(newId);
+            }
+        }
+    }
+    else
+    {
+        qWarning() << "[DEBUG] MainWindow::handleEmulatorSelectionChanged - Invalid message or payload!";
     }
 }
 
@@ -2032,6 +2103,10 @@ void MainWindow::unsubscribeFromMessageBus()
     ObserverCallbackMethod createCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorInstanceCreated);
     messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
+
+    ObserverCallbackMethod selectionCallback =
+        static_cast<ObserverCallbackMethod>(&MainWindow::handleEmulatorSelectionChanged);
+    messageCenter.RemoveObserver(NC_EMULATOR_SELECTION_CHANGED, observerInstance, selectionCallback);
 }
 
 void MainWindow::subscribeToPerEmulatorEvents()
@@ -2103,7 +2178,8 @@ void MainWindow::tryAdoptRemainingEmulator()
     // This prevents switching away from the currently adopted emulator when new ones are created
     if (_emulator)
     {
-        qDebug() << "MainWindow: Already have adopted emulator" << QString::fromStdString(_emulator->GetId()) << "- not adopting another";
+        qDebug() << "MainWindow: Already have adopted emulator" << QString::fromStdString(_emulator->GetId())
+                 << "- not adopting another";
         return;
     }
 
@@ -2137,7 +2213,8 @@ void MainWindow::tryAdoptRemainingEmulator()
     if (latestRunningEmulator)
     {
         // Adopt the most recently created running emulator
-        qDebug() << "MainWindow: Adopting latest running emulator" << QString::fromStdString(latestRunningEmulator->GetId());
+        qDebug() << "MainWindow: Adopting latest running emulator"
+                 << QString::fromStdString(latestRunningEmulator->GetId());
 
         // Set as our active emulator
         _emulator = latestRunningEmulator;
@@ -2192,7 +2269,8 @@ void MainWindow::tryAdoptRemainingEmulator()
         startButton->setEnabled(true);
         updateMenuStates();
 
-        qDebug() << "MainWindow: Successfully adopted latest running emulator" << QString::fromStdString(latestRunningEmulator->GetId());
+        qDebug() << "MainWindow: Successfully adopted latest running emulator"
+                 << QString::fromStdString(latestRunningEmulator->GetId());
     }
     else
     {

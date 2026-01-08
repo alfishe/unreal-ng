@@ -116,12 +116,6 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
 
 void AppSoundManager::audioCallback(void* obj, int16_t* samples, size_t numSamples)
 {
-    static int callCount = 0;
-    if (++callCount == 1)
-    {
-        qDebug() << "AppSoundManager::audioCallback() - First call received with" << numSamples << "samples";
-    }
-
     AppSoundManager* appSoundManager = (AppSoundManager*)obj;
     if (appSoundManager)
     {

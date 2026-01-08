@@ -532,16 +532,18 @@ FramebufferDescriptor Emulator::GetFramebuffer()
 
 void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
 {
-    _context->pAudioManagerObj = obj;
-    _context->pAudioCallback = callback;
+    // Use memory_order_release to ensure all previous writes are visible to the emulator thread
+    _context->pAudioManagerObj.store(obj, std::memory_order_release);
+    _context->pAudioCallback.store(callback, std::memory_order_release);
 
     MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
 }
 
 void Emulator::ClearAudioCallback()
 {
-    _context->pAudioManagerObj = nullptr;
-    _context->pAudioCallback = nullptr;
+    // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
+    _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+    _context->pAudioCallback.store(nullptr, std::memory_order_release);
 
     MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
 }
