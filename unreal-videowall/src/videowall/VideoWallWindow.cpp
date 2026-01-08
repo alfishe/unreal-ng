@@ -61,9 +61,36 @@ void VideoWallWindow::createDefaultPresets()
 
 void VideoWallWindow::addEmulatorTile()
 {
-    // TODO: Create emulator instance (Phase 2)
-    // For now, just add empty placeholder
-    _tileGrid->updateLayout();
+    if (!_emulatorManager)
+    {
+        qWarning() << "EmulatorManager not available";
+        return;
+    }
+
+    // Generate unique symbolic ID for this emulator
+    int tileIndex = _tileGrid->tiles().size();
+    QString symbolicId = QString("tile_%1").arg(tileIndex);
+
+    // Create emulator with error logging enabled to diagnose issues
+    auto emulator = _emulatorManager->CreateEmulator(symbolicId.toStdString(), LoggerLevel::LogError);
+
+    if (!emulator)
+    {
+        qWarning() << "Failed to create emulator for tile" << tileIndex;
+        return;
+    }
+
+    // Turn off debugging for minimal overhead
+    emulator->DebugOff();
+
+    // Create tile widget for this emulator
+    EmulatorTile* tile = new EmulatorTile(emulator, this);
+    _tileGrid->addTile(tile);
+
+    // Start the emulator
+    _emulatorManager->StartEmulatorAsync(emulator->GetId());
+
+    qDebug() << "Created emulator tile" << tileIndex << "with ID:" << QString::fromStdString(emulator->GetId());
 }
 
 void VideoWallWindow::removeEmulatorTile(int index)

@@ -218,3 +218,32 @@ message(STATUS "  ENABLE_CLI_AUTOMATION: ${ENABLE_CLI_AUTOMATION}")
 message(STATUS "Settings:")
 message(STATUS "  PROJECT_NAME: ${PROJECT_NAME}")
 message(STATUS "</unreal-videowall diagnostics>")
+
+# ========================================
+# Post-build: Copy all required resource files
+# ========================================
+# Copy fonts, configuration, and ROM files needed for emulator operation
+# This matches the setup from unreal-qt for consistency
+
+# Define data paths
+set(DATA_PATH "${ROOT_DIR}/data")
+set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+
+# Copy all required resources using modern CMake syntax
+add_custom_command(
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/fonts" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/fonts"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+    COMMENT "Copying runtime resource files (fonts, config, ROM) to output directory"
+)
+
+message(STATUS "Post-build: Will copy resources from ${DATA_PATH} to ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+message(STATUS "  - Fonts: ${DATA_PATH}/fonts")
+message(STATUS "  - Config: ${CONFIG_FILE}")
+message(STATUS "  - ROM: ${DATA_PATH}/rom and ${DATA_PATH}/testrom")

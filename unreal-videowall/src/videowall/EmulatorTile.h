@@ -3,8 +3,10 @@
 #include <QWidget>
 #include <memory>
 
+// Forward declarations
 class Emulator;
 class QImage;
+class QTimer;
 
 /**
  * @brief Widget representing a single emulator instance tile
@@ -40,13 +42,14 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private:
-    void handleVideoFrameRefresh(int id, void* message);
-    void subscribeToNotifications();
-    void unsubscribeFromNotifications();
+    void handleVideoFrameRefresh();       // Will implement in Phase 3
+    void subscribeToNotifications();      // Placeholder for Phase 3
+    void unsubscribeFromNotifications();  // Placeholder for Phase 3
     QImage convertFramebuffer();
 
     std::shared_ptr<Emulator> _emulator;
     bool _hasTileFocus = false;
+    QTimer* _refreshTimer = nullptr;
 
     // Fixed tile size: 256x192 pixels (ZX Spectrum screen, no border)
     static constexpr int TILE_WIDTH = 256;
