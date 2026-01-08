@@ -48,10 +48,11 @@ private:
     QImage convertFramebuffer();
 
     std::shared_ptr<Emulator> _emulator;
+    std::string _emulatorId;  // Cached emulator UUID for efficient lookups
     bool _hasTileFocus = false;
     QTimer* _refreshTimer = nullptr;
 
-    // Fixed tile size: 256x192 pixels (ZX Spectrum screen, no border)
-    static constexpr int TILE_WIDTH = 256;
-    static constexpr int TILE_HEIGHT = 192;
+    // Tile size: 512x384 pixels (ZX Spectrum 256x192 scaled 2x)
+    static constexpr int TILE_WIDTH = 512;
+    static constexpr int TILE_HEIGHT = 384;
 };

@@ -12,6 +12,8 @@
 EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) : QWidget(parent), _emulator(emulator)
 {
     setFixedSize(TILE_WIDTH, TILE_HEIGHT);
+    // Cache emulator UUID
+    _emulatorId = _emulator ? _emulator->GetUUID() : "";
     setFocusPolicy(Qt::StrongFocus);
     setAcceptDrops(true);
 
@@ -37,22 +39,28 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
 
     if (!_emulator)
     {
-        // Draw placeholder for empty tile
-        painter.fillRect(rect(), Qt::darkGray);
+        painter.fillRect(rect(), Qt::black);
         painter.setPen(Qt::white);
         painter.drawText(rect(), Qt::AlignCenter, "No Emulator");
         return;
     }
 
-    // Get full framebuffer (includes borders)
-    QImage fullFramebuffer = convertFramebuffer();
+    QImage image = convertFramebuffer();
+    if (!image.isNull())
+    {
+        // Extract central 256x192 screen from 352x288 framebuffer
+        QRectF sourceRect(48, 48, 256, 192);
 
-    // Extract the central 256x192 screen area from the full framebuffer
-    // For ZX48: framebuffer is 352x288, screen starts at offset (48, 48)
-    QRectF sourceRect(48, 48, TILE_WIDTH, TILE_HEIGHT);  // Source region in full framebuffer
-    QRectF targetRect(0, 0, TILE_WIDTH, TILE_HEIGHT);    // Target region in widget
+        // Scale 2x to fill 512x384 tile
+        QRectF targetRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
 
-    painter.drawImage(targetRect, fullFramebuffer, sourceRect);
+        // Use nearest-neighbor scaling (default)  // Nearest-neighbor for crisp pixels
+        painter.drawImage(targetRect, image, sourceRect);
+    }
+    else
+    {
+        painter.fillRect(rect(), Qt::black);
+    }
 
     // Draw focus border if focused
     if (_hasTileFocus)
@@ -124,6 +132,13 @@ void EmulatorTile::unsubscribeFromNotifications()
 
 QImage EmulatorTile::convertFramebuffer()
 {
+    // TODO: OPTIMIZATION OPPORTUNITIES (defer to Phase 6 or when scaling to 100+ tiles)
+    // 1. Async framebuffer copy: Use std::async to parallel-copy from multiple emulators
+    // 2. Local buffer: memcpy to tile-local buffer for thread safety and no tearing
+    // 3. MessageCenter notifications: Replace QTimer with NC_VIDEO_FRAME_REFRESH events
+    // 4. Batch updates: Coordinate all tiles to repaint together in single window update
+    // Current: Zero-copy direct read (fast, simple, works well for current scale)
+
     // Default: black image if no emulator
     QImage image(TILE_WIDTH, TILE_HEIGHT, QImage::Format_RGBA8888);
     image.fill(Qt::black);

@@ -36,10 +36,17 @@ public:
     /// Recalculate and apply grid layout
     void updateLayout();
 
+    /// Set explicit grid dimensions (bypasses automatic calculation)
+    void setGridDimensions(int cols, int rows);
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
     std::vector<EmulatorTile*> _tiles;
     EmulatorTile* _focusedTile = nullptr;
+
+    // Explicit grid dimensions (if set, overrides automatic calculation)
+    int _explicitCols = -1;
+    int _explicitRows = -1;
 };

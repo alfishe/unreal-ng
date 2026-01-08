@@ -58,10 +58,23 @@ void TileGrid::updateLayout()
         return;
     }
 
-    // Calculate grid layout
-    TileLayoutManager::GridLayout layout = TileLayoutManager::calculateLayout(_tiles.size());
+    int cols, rows;
 
-    // Position tiles in grid
+    // Use explicit dimensions if set, otherwise calculate from tile count
+    if (_explicitCols > 0 && _explicitRows > 0)
+    {
+        cols = _explicitCols;
+        rows = _explicitRows;
+    }
+    else
+    {
+        // Fallback to automatic calculation
+        TileLayoutManager::GridLayout layout = TileLayoutManager::calculateLayout(_tiles.size());
+        cols = layout.cols;
+        rows = layout.rows;
+    }
+
+    // Position tiles in grid (512x384 per tile)
     int x = 0;
     int y = 0;
     int col = 0;
@@ -72,19 +85,28 @@ void TileGrid::updateLayout()
 
         // Move to next column
         col++;
-        x += 256;
+        x += 512;  // 2x tile width
 
         // If we've filled a row, move to next row
-        if (col >= layout.cols)
+        if (col >= cols)
         {
             col = 0;
             x = 0;
-            y += 192;
+            y += 384;  // 2x tile height
         }
     }
 
     // Resize widget to fit grid
-    setMinimumSize(layout.windowWidth, layout.windowHeight);
+    int windowWidth = cols * 512;
+    int windowHeight = rows * 384;
+    setMinimumSize(windowWidth, windowHeight);
+}
+
+void TileGrid::setGridDimensions(int cols, int rows)
+{
+    _explicitCols = cols;
+    _explicitRows = rows;
+    updateLayout();
 }
 
 void TileGrid::resizeEvent(QResizeEvent* event)

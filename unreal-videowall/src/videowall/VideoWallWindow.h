@@ -36,6 +36,27 @@ public:
     /// Save current configuration as preset
     void savePreset(const QString& presetName);
 
+    /// Toggle frameless window mode (auto-preset)
+    void toggleFramelessMode();
+
+    /// Toggle fullscreen mode (auto-preset)
+    void toggleFullscreenMode();
+
+    /// Calculate optimal grid layout for screen size
+    void calculateAndApplyOptimalLayout(QSize screenSize);
+
+    // Window state restoration
+    void restoreSavedEmulators();
+
+    // Async batch creation
+    void createEmulatorsAsync(int total);
+    void createNextBatch();
+
+    // Platform-specific fullscreen methods
+    void toggleFullscreenMacOS();
+    void toggleFullscreenWindows();
+    void toggleFullscreenLinux();
+
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
@@ -53,4 +74,27 @@ private:
 
     // Configuration
     int _currentPresetIndex = -1;
+
+    // Window state
+    bool _isFrameless = false;
+    bool _isFullscreen = false;
+
+    // Track mode for auto-preset behavior
+    enum class WindowMode
+    {
+        Windowed,   // Manual tile management
+        Frameless,  // Auto-preset for frameless
+        Fullscreen  // Auto-preset for fullscreen
+    };
+    WindowMode _windowMode = WindowMode::Windowed;
+
+    // Saved state for restoration when exiting auto-preset modes
+    QRect _savedGeometry;
+    std::vector<std::string> _savedEmulatorIds;
+
+    // Async batch creation state
+    int _pendingEmulators = 0;
+    QTimer* _batchTimer = nullptr;
+    static constexpr int BATCH_SIZE = 4;
+    static constexpr int BATCH_DELAY_MS = 100;
 };
