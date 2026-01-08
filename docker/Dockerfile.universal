@@ -77,9 +77,9 @@ RUN python3 -m venv /tmp/venv && \
       AQT_HOST="linux_arm64"; \
       AQT_ARCH="linux_gcc_arm64"; \
     else \
-      # AMD64: Host is 'linux', Arch in manifest is 'gcc_64'
+      # AMD64: Host is 'linux', Arch in manifest is 'linux_gcc_64'
       AQT_HOST="linux"; \
-      AQT_ARCH="gcc_64"; \
+      AQT_ARCH="linux_gcc_64"; \
     fi && \
     # --- LOGIC END ---
     echo "Installing Qt ${QT_VERSION} for Host: $AQT_HOST / Arch: $AQT_ARCH" && \
