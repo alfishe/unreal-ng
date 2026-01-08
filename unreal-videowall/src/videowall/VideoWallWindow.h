@@ -45,6 +45,9 @@ public:
     /// Calculate optimal grid layout for screen size
     void calculateAndApplyOptimalLayout(QSize screenSize);
 
+    // Tile management
+    void removeLastTile();
+
     // Window state restoration
     void restoreSavedEmulators();
 

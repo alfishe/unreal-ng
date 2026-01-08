@@ -107,6 +107,28 @@ void VideoWallWindow::removeEmulatorTile(int index)
     // TODO: Implement in Phase 5
 }
 
+void VideoWallWindow::removeLastTile()
+{
+    const auto& tiles = _tileGrid->tiles();
+    if (tiles.empty())
+    {
+        qDebug() << "No tiles to remove";
+        return;
+    }
+
+    // Get last tile
+    EmulatorTile* lastTile = tiles.back();
+    std::shared_ptr<Emulator> emulator = lastTile->emulator();
+
+    // Remove from grid
+    _tileGrid->removeTile(lastTile);
+
+    // Destroy emulator
+    _emulatorManager->RemoveEmulator(emulator->GetUUID());
+
+    qDebug() << "Removed last tile:" << QString::fromStdString(emulator->GetUUID());
+}
+
 void VideoWallWindow::clearAllTiles()
 {
     _tileGrid->clearAllTiles();
@@ -124,17 +146,28 @@ void VideoWallWindow::savePreset(const QString& presetName)
 
 void VideoWallWindow::keyPressEvent(QKeyEvent* event)
 {
-    if (event->key() == Qt::Key_F10)
+    // Cmd+N: Add new emulator tile
+    if (event->key() == Qt::Key_N && event->modifiers() & Qt::ControlModifier)
+    {
+        addEmulatorTile();
+    }
+    // Cmd+Backspace: Remove last tile
+    else if (event->key() == Qt::Key_Backspace && event->modifiers() & Qt::ControlModifier)
+    {
+        removeLastTile();
+    }
+    // F10: Toggle frameless mode
+    else if (event->key() == Qt::Key_F10)
     {
         toggleFramelessMode();
     }
-    else if (event->key() == Qt::Key_F && event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier))
+    // Cmd+Shift+F: Toggle fullscreen mode
+    else if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
     {
         toggleFullscreenMode();
     }
     else
     {
-        // TODO: Route to focused tile (Phase 5)
         QMainWindow::keyPressEvent(event);
     }
 }
@@ -151,41 +184,59 @@ void VideoWallWindow::toggleFramelessMode()
     {
         // Restore previous windowed state
         _windowMode = WindowMode::Windowed;
-        _isFrameless = false;
+        // Exiting frameless - restore to windowed
+        _windowMode = WindowMode::Windowed;
 
-        // Restore geometry BEFORE changing flags
+        // Restore window flags and frame
         setWindowFlags(Qt::Window);
-        if (!_savedGeometry.isNull())
+
+        // Restore geometry BEFORE show
+        if (_savedGeometry.isValid())
         {
+            qDebug() << "Restoring geometry from frameless:" << _savedGeometry;
             setGeometry(_savedGeometry);
+
+            // LOCK the geometry - prevent TileGrid from resizing window
+            setFixedSize(_savedGeometry.size());
         }
         show();
 
-        // Restore saved emulators and remove excessive ones
-        restoreSavedEmulators();
-        qDebug() << "Frameless → windowed";
+        // Calculate optimal layout for RESTORED window size and apply it
+        QTimer::singleShot(100, this, [this]() {
+            // Unlock geometry first
+            setMinimumSize(0, 0);
+            setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
+            // Apply auto-layout for restored window size
+            calculateAndApplyOptimalLayout(_savedGeometry.size());
+            qDebug() << "Frameless → windowed: auto-layout applied for" << _savedGeometry.size();
+        });
     }
     else
     {
-        // Save current state
+        // Entering frameless - save current geometry FIRST
+        qDebug() << "BEFORE entering frameless:";
+        qDebug() << "  Current windowState():" << windowState();
+        qDebug() << "  geometry():" << geometry();
+        qDebug() << "  SAVED _savedGeometry:" << geometry();
+
         _savedGeometry = geometry();
-        _savedEmulatorIds.clear();
-        for (const auto* tile : _tileGrid->tiles())
-        {
-            _savedEmulatorIds.push_back(tile->emulator()->GetUUID());
-        }
 
         // Enter frameless mode
         _windowMode = WindowMode::Frameless;
-        _isFrameless = true;
-        QScreen* screen = window()->screen();
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
-        show();
-        setGeometry(screen->geometry());
-        calculateAndApplyOptimalLayout(screen->size());
-        qDebug() << "Windowed → frameless:" << _tileGrid->tiles().size();
+
+        QScreen* screen = window()->screen();
+        showNormal();
+
+        // Calculate layout after window state change
+        QTimer::singleShot(100, this, [this, screen]() {
+            calculateAndApplyOptimalLayout(screen->availableSize());
+            qDebug() << "Windowed → frameless:" << _tileGrid->tiles().size();
+        });
     }
 }
+
 void VideoWallWindow::toggleFullscreenMode()
 {
     // Platform-specific fullscreen handling (from unreal-qt)
