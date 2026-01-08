@@ -1008,6 +1008,9 @@ void MainWindow::handleStartButton()
             FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
             this->deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
 
+            // Bind emulator to device screen for UUID-tagged keyboard events
+            this->deviceScreen->setEmulator(_emulator);
+
             /*
             int scale = 8;
             int width = framebufferDesc.width * scale;
@@ -2019,6 +2022,9 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
                 // Initialize device screen with new emulator's framebuffer
                 FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
                 deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+
+                // Bind emulator to device screen for UUID-tagged keyboard events
+                deviceScreen->setEmulator(_emulator);
 
                 bindEmulatorAudio(_emulator);
 

@@ -60,6 +60,7 @@ COPY --from=dep-builder /opt/qt /opt/qt
 
 # Install CI tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     build-essential cmake git ninja-build locales \
     libgl1-mesa-dev libxkbcommon0 libx11-6 libx11-xcb1 libxcb1 \
     libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \

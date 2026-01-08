@@ -1,27 +1,24 @@
 #include "devicescreen.h"
-#include "ui_devicescreen.h"
-
 
 #include <QDebug>
 #include <QKeyEvent>
 #include <QPainter>
-
-#include "emulator/keyboardmanager.h"
-
 #include <cmath>
+
+#include "emulator/emulator.h"
+#include "emulator/keyboardmanager.h"
+#include "ui_devicescreen.h"
 static inline bool isFloatsEqual(float x, float y, float epsilon = 0.01f)
 {
     bool result = false;
 
-   if (fabsf(x - y) < epsilon)
-      result = true;
+    if (fabsf(x - y) < epsilon)
+        result = true;
 
-   return result;
+    return result;
 }
 
-DeviceScreen::DeviceScreen(QWidget *parent) :
-    QWidget(parent),
-    ui(new Ui::DeviceScreen)
+DeviceScreen::DeviceScreen(QWidget* parent) : QWidget(parent), ui(new Ui::DeviceScreen)
 {
     ui->setupUi(this);
 }
@@ -60,17 +57,17 @@ void DeviceScreen::refresh()
     update();
 }
 
-void DeviceScreen::handleExternalKeyPress(QKeyEvent *event)
+void DeviceScreen::handleExternalKeyPress(QKeyEvent* event)
 {
     keyPressEvent(event);
 }
 
-void DeviceScreen::handleExternalKeyRelease(QKeyEvent *event)
+void DeviceScreen::handleExternalKeyRelease(QKeyEvent* event)
 {
     keyReleaseEvent(event);
 }
 
-void DeviceScreen::paintEvent(QPaintEvent *event)
+void DeviceScreen::paintEvent(QPaintEvent* event)
 {
     QPainter painter = QPainter(this);
 
@@ -92,7 +89,7 @@ void DeviceScreen::paintEvent(QPaintEvent *event)
     }
 }
 
-void DeviceScreen::keyPressEvent(QKeyEvent *event)
+void DeviceScreen::keyPressEvent(QKeyEvent* event)
 {
     event->accept();
 
@@ -104,19 +101,35 @@ void DeviceScreen::keyPressEvent(QKeyEvent *event)
         // Skip unknown keys
         if (zxKey != 0)
         {
-            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
+            // Create keyboard event with optional UUID tagging for multi-instance routing
+            KeyboardEvent* keyEvent = nullptr;
+            if (_emulator)
+            {
+                // Tag event with emulator UUID for selective routing (multi-instance support)
+                std::string targetId = _emulator->GetUUID();
+                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED, targetId);
+            }
+            else
+            {
+                // Fallback to broadcast mode (backward compatible)
+                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_PRESSED);
+            }
 
             // Send valid key combinations to emulator instance
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             messageCenter.Post(MC_KEY_PRESSED, keyEvent);
         }
 
-        QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4").arg(event->key(), 2, 16).arg(event->key()).arg((int)event->modifiers(), 2, 16).arg(zxKey, 2, 16);
+        QString message = QString("DeviceScreen : keyPressEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
+                              .arg(event->key(), 2, 16)
+                              .arg(event->key())
+                              .arg((int)event->modifiers(), 2, 16)
+                              .arg(zxKey, 2, 16);
         qDebug() << message;
     }
 }
 
-void DeviceScreen::keyReleaseEvent(QKeyEvent *event)
+void DeviceScreen::keyReleaseEvent(QKeyEvent* event)
 {
     event->accept();
 
@@ -128,27 +141,40 @@ void DeviceScreen::keyReleaseEvent(QKeyEvent *event)
         // Skip unknown keys
         if (zxKey != 0)
         {
-            KeyboardEvent* keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
+            // Create keyboard event with optional UUID tagging for multi-instance routing
+            KeyboardEvent* keyEvent = nullptr;
+            if (_emulator)
+            {
+                // Tag event with emulator UUID for selective routing (multi-instance support)
+                std::string targetId = _emulator->GetUUID();
+                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED, targetId);
+            }
+            else
+            {
+                // Fallback to broadcast mode (backward compatible)
+                keyEvent = new KeyboardEvent(static_cast<uint8_t>(zxKey), KEY_RELEASED);
+            }
 
             // Send valid key combinations to emulator instance
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             messageCenter.Post(MC_KEY_RELEASED, keyEvent);
         }
 
-        QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4").arg(event->key(), 2, 16).arg(event->key()).arg((int)event->modifiers(), 2, 16).arg(zxKey, 2, 16);
+        QString message = QString("DeviceScreen : keyReleaseEvent, key : 0x%1 (%2), mods: 0x%3, zxKey: 0x%4")
+                              .arg(event->key(), 2, 16)
+                              .arg(event->key())
+                              .arg((int)event->modifiers(), 2, 16)
+                              .arg(zxKey, 2, 16);
         qDebug() << message;
     }
 }
 
-void DeviceScreen::mousePressEvent(QMouseEvent *event)
-{
+void DeviceScreen::mousePressEvent(QMouseEvent* event) {}
 
-}
-
-void DeviceScreen::resizeEvent(QResizeEvent *event)
+void DeviceScreen::resizeEvent(QResizeEvent* event)
 {
-    //int oldWidth = event->oldSize().width();
-    //int oldHeight = event->oldSize().height();
+    // int oldWidth = event->oldSize().width();
+    // int oldHeight = event->oldSize().height();
 
     float width = static_cast<float>(event->size().width());
     float height = static_cast<float>(event->size().height());
@@ -157,8 +183,8 @@ void DeviceScreen::resizeEvent(QResizeEvent *event)
 
     if (height * ratio < width)
     {
-      newWidth = static_cast<int>(height * ratio);
-      newHeight = static_cast<int>(height);
+        newWidth = static_cast<int>(height * ratio);
+        newHeight = static_cast<int>(height);
     }
     else
     {
@@ -170,5 +196,3 @@ void DeviceScreen::resizeEvent(QResizeEvent *event)
 
     QWidget::resizeEvent(event);
 }
-
-
