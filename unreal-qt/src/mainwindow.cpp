@@ -1985,6 +1985,7 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
     Q_UNUSED(id);
 
     // Handle emulator selection change from CLI or other sources
+    // This may be called from MessageCenter background thread, so marshal to main thread
     if (message && message->obj)
     {
         EmulatorSelectionPayload* payload = dynamic_cast<EmulatorSelectionPayload*>(message->obj);
@@ -2003,33 +2004,36 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
             auto newEmulator = _emulatorManager->GetEmulator(newId);
             if (newEmulator)
             {
-                // Unsubscribe from current emulator's events
-                if (_emulator)
-                {
-                    qDebug() << "MainWindow: Releasing current emulator" << QString::fromStdString(_emulator->GetId());
-                    unsubscribeFromPerEmulatorEvents();
-                    deviceScreen->detach();
-                    _emulator->ClearAudioCallback();
-                }
+                // Marshal UI binding to main thread (Qt menus/widgets must be modified on main thread)
+                QMetaObject::invokeMethod(this, [this, newId, newEmulator]() {
+                    // Unsubscribe from current emulator's events
+                    if (_emulator)
+                    {
+                        qDebug() << "MainWindow: Releasing current emulator" << QString::fromStdString(_emulator->GetId());
+                        unsubscribeFromPerEmulatorEvents();
+                        deviceScreen->detach();
+                        _emulator->ClearAudioCallback();
+                    }
 
-                // Adopt the newly selected emulator
-                _emulator = newEmulator;
-                qDebug() << "MainWindow: Adopted newly selected emulator" << QString::fromStdString(_emulator->GetId());
+                    // Adopt the newly selected emulator
+                    _emulator = newEmulator;
+                    qDebug() << "MainWindow: Adopted newly selected emulator" << QString::fromStdString(_emulator->GetId());
 
-                // Bind to the new emulator
-                subscribeToPerEmulatorEvents();
+                    // Bind to the new emulator
+                    subscribeToPerEmulatorEvents();
 
-                // Initialize device screen with new emulator's framebuffer
-                FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
-                deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
+                    // Initialize device screen with new emulator's framebuffer
+                    FramebufferDescriptor framebufferDesc = _emulator->GetFramebuffer();
+                    deviceScreen->init(framebufferDesc.width, framebufferDesc.height, framebufferDesc.memoryBuffer);
 
-                // Bind emulator to device screen for UUID-tagged keyboard events
-                deviceScreen->setEmulator(_emulator);
+                    // Bind emulator to device screen for UUID-tagged keyboard events
+                    deviceScreen->setEmulator(_emulator);
 
-                bindEmulatorAudio(_emulator);
+                    bindEmulatorAudio(_emulator);
 
-                // Update menu states
-                updateMenuStates();
+                    // Update menu states (MUST be on main thread)
+                    updateMenuStates();
+                }, Qt::QueuedConnection);
             }
             else
             {

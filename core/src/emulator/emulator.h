@@ -91,7 +91,7 @@ protected:
 
     // Emulator state
     volatile bool _isPaused = false;
-    volatile bool _isRunning = false;
+    std::atomic<bool> _isRunning{ false };  // Atomic to support idempotent Stop()
     volatile bool _isDebug = false;
     volatile bool _isReleased = false;
 
