@@ -9,7 +9,7 @@ project(unreal-videowall LANGUAGES CXX)
 set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features" FORCE)
 set(ENABLE_LUA_AUTOMATION OFF CACHE BOOL "Enable Lua automation" FORCE)
 set(ENABLE_PYTHON_AUTOMATION OFF CACHE BOOL "Enable Python automation" FORCE)
-set(ENABLE_WEBAPI_AUTOMATION OFF CACHE BOOL "Enable WebAPI automation" FORCE)
+set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
 # Specify the C++ standard
