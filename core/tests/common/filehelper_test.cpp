@@ -24,32 +24,126 @@ TEST_F(FileHelper_Test, GetExecutablePath)
     ASSERT_TRUE(FileHelper::FolderExists(exePath));
 }
 
+/// @brief Comprehensive test for GetFileExtension to ensure extensions are returned WITHOUT dot prefix
+/// This test covers snapshot formats (.sna, .z80), emulator files, edge cases, and special characters
 TEST_F(FileHelper_Test, GetFileExtension)
 {
     struct TestCase
     {
         std::string filename;
         std::string expected;
+        std::string description;
     };
 
     std::vector<TestCase> cases =
-            {
-        {"test.txt", "txt"},
-        {"archive.tar.gz", "gz"},
-        {"no_extension", ""},
-        {".hiddenfile", ""},
-        {"folder/file.jpeg", "jpeg"},
-        {"C:/path/to/file.exe", "exe"},
-        {"/unix/path/file", ""},
-        {"C:\\windows\\file.dll", "dll"},
-        {"complex.name.with.many.dots.bin", "bin"}
+    {
+        // Standard file extensions
+        {"test.txt", "txt", "Simple text file"},
+        {"document.pdf", "pdf", "PDF document"},
+        {"archive.zip", "zip", "Archive file"},
+        {"program.exe", "exe", "Executable"},
+        
+        // Multi-dot extensions
+        {"archive.tar.gz", "gz", "Compressed tar - should return last extension only"},
+        {"backup.2024.01.08.bak", "bak", "Multiple dots in filename"},
+        {"complex.name.with.many.dots.bin", "bin", "Many dots in filename"},
+        
+        // Snapshot formats (ZX Spectrum emulator)
+        {"game.sna", "sna", "48K/128K snapshot format"},
+        {"program.z80", "z80", "Z80 snapshot format"},
+        {"Dizzy X.sna", "sna", "Snapshot with space in name"},
+        {"/testdata/loaders/sna/action.sna", "sna", "Full path to snapshot"},
+        {"/testdata/loaders/z80/dizzyx.z80", "z80", "Full path to Z80 snapshot"},
+        
+        // Other emulator file formats
+        {"tape.tap", "tap", "Tape image"},
+        {"tape.tzx", "tzx", "TZX tape format"},
+        {"disk.trd", "trd", "TR-DOS disk image"},
+        {"disk.scl", "scl", "SCL disk image"},
+        {"symbols.sym", "sym", "Symbol file"},
+        
+        // Image formats
+        {"photo.jpg", "jpg", "JPEG image"},
+        {"photo.jpeg", "jpeg", "JPEG image (long ext)"},
+        {"image.png", "png", "PNG image"},
+        {"graphic.bmp", "bmp", "Bitmap image"},
+        {"icon.ico", "ico", "Icon file"},
+        
+        // No extension cases
+        {"no_extension", "", "Filename without extension"},
+        {"Makefile", "", "Build file without extension"},
+        {"README", "", "Readme without extension"},
+        {"/unix/path/file", "", "Unix path without extension"},
+        {"folder/subfolder/noext", "", "Nested path without extension"},
+        
+        // Hidden files (Unix/macOS)
+        {".hiddenfile", "", "Hidden file without extension"},
+        {".bashrc", "", "Hidden config file"},
+        {".gitignore", "", "Git ignore file"},
+        {".config.json", "json", "Hidden file with extension"},
+        
+        // Path variations
+        {"folder/file.jpeg", "jpeg", "Relative path with extension"},
+        {"C:/path/to/file.exe", "exe", "Windows absolute path"},
+        {"/unix/absolute/path/file.sh", "sh", "Unix absolute path"},
+        {"C:\\windows\\path\\file.dll", "dll", "Windows backslash path"},
+        {"../relative/../path/file.cpp", "cpp", "Complex relative path"},
+        
+        // Case sensitivity
+        {"FILE.TXT", "TXT", "Uppercase extension"},
+        {"File.TxT", "TxT", "Mixed case extension"},
+        {"test.SNA", "SNA", "Uppercase snapshot extension"},
+        
+        // Special characters in filename
+        {"file-with-dash.txt", "txt", "Dash in filename"},
+        {"file_with_underscore.log", "log", "Underscore in filename"},
+        {"file with spaces.dat", "dat", "Spaces in filename"},
+        {"file[brackets].bin", "bin", "Brackets in filename"},
+        {"file(parens).tmp", "tmp", "Parentheses in filename"},
+        
+        // Edge cases
+        {".", "", "Current directory"},
+        {"..", "", "Parent directory"},
+        {"...", "", "Triple dot"},
+        {"file.", "", "Trailing dot only"},
+        {"file..", "", "Trailing double dot"},
+        {".file.", "", "Hidden file with trailing dot"},
+        {"a.b.c.d.e", "e", "Many single-letter segments"},
+        
+        // Empty and single character extensions
+        {"test.a", "a", "Single letter extension"},
+        {"test.z80", "z80", "Three letter extension"},
+        {"test.jpeg", "jpeg", "Four letter extension"},
+        
+        // Numbers in extensions
+        {"backup.001", "001", "Numeric extension"},
+        {"split.7z", "7z", "Extension starting with number"},
+        {"file.mp3", "mp3", "Extension with number"}
     };
 
+    // Test each case
     for (const auto& test : cases)
     {
         std::string ext = FileHelper::GetFileExtension(test.filename);
-        ASSERT_EQ(ext, test.expected) << "For: " << test.filename;
+        
+        // Verify extension is returned WITHOUT dot prefix
+        ASSERT_FALSE(ext.empty() && ext[0] == '.') 
+            << "Extension should NOT start with dot for: " << test.filename;
+        
+        // Verify expected result
+        ASSERT_EQ(ext, test.expected) 
+            << "For: " << test.filename << " (" << test.description << ")";
+        
+        // Additional verification: if extension is not empty, it should not contain a dot
+        if (!ext.empty())
+        {
+            ASSERT_EQ(ext.find('.'), std::string::npos)
+                << "Extension should not contain dots for: " << test.filename;
+        }
     }
+    
+    // Summary output for debugging
+    std::cout << "GetFileExtension: Verified " << cases.size() << " test cases successfully" << std::endl;
 }
 
 TEST_F(FileHelper_Test, NormalizePath)

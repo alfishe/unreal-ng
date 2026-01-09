@@ -30,10 +30,13 @@ static std::string loadHtmlFile(const std::string& filename) {
         "./share/unreal-speccy/resources/html/",           // Relative to install prefix
     };
     
-    for (const auto& basePath : searchPaths) {
+    for (const auto& basePath : searchPaths)
+    {
         std::string fullPath = basePath + filename;
         std::ifstream file(fullPath);
-        if (file.is_open()) {
+
+        if (file.is_open())
+        {
             std::stringstream buffer;
             buffer << file.rdbuf();
             return buffer.str();
@@ -129,15 +132,56 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     drogon::HttpAppFramework& app = drogon::app();
 
+    // Setup global CORS support
+    // Handle CORS preflight (OPTIONS) requests
+    app.registerSyncAdvice([](const drogon::HttpRequestPtr &req) -> drogon::HttpResponsePtr {
+        if (req->method() == drogon::HttpMethod::Options)
+        {
+            auto resp = drogon::HttpResponse::newHttpResponse();
+            resp->setStatusCode(drogon::HttpStatusCode::k204NoContent);
+
+            // Set Access-Control-Allow-Origin
+            resp->addHeader("Access-Control-Allow-Origin", "*");
+
+            // Set Access-Control-Allow-Methods
+            resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+
+            // Set Access-Control-Allow-Headers - include what the client requests plus our defaults
+            const auto &requestHeaders = req->getHeader("Access-Control-Request-Headers");
+            if (!requestHeaders.empty())
+            {
+                resp->addHeader("Access-Control-Allow-Headers", requestHeaders);
+            }
+            else
+            {
+                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+            }
+
+            // Add caching for preflight requests (24 hours)
+            resp->addHeader("Access-Control-Max-Age", "86400");
+
+            return resp;
+        }
+        return {};
+    });
+
+    // Add CORS headers to all responses
+    app.registerPostHandlingAdvice(
+        [](const drogon::HttpRequestPtr &req, const drogon::HttpResponsePtr &resp) -> void {
+            resp->addHeader("Access-Control-Allow-Origin", "*");
+            resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+        });
+
     // Custom 404 page that guides users to API documentation
     // Load from external HTML file for easy maintenance
     std::string notFoundHtml = loadHtmlFile("404.html");
-    
+
     auto notFoundResp = drogon::HttpResponse::newHttpResponse();
     notFoundResp->setBody(notFoundHtml);
     notFoundResp->setContentTypeCode(drogon::ContentType::CT_TEXT_HTML);
     notFoundResp->setStatusCode(drogon::HttpStatusCode::k404NotFound);
-    
+
     app.setCustom404Page(notFoundResp);
 
     app.setLogPath("./")

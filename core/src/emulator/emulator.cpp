@@ -47,10 +47,8 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
         _featureManager = new FeatureManager(_context);
         _context->pFeatureManager = _featureManager;
 
-        MLOGDEBUG(
-            "Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", symbolicId.c_str(), level,
-            _emulatorId.c_str()
-        );
+        MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", symbolicId.c_str(),
+                  level, _emulatorId.c_str());
         MLOGDEBUG("Emulator::Init - context created");
     }
     else
@@ -557,20 +555,20 @@ void Emulator::Reset()
     // To avoid race conditions, we must pause the emulator during reset
     // (Z80 thread executing ROM code during reset can cause inconsistent state)
     bool wasRunning = _isRunning && !_isPaused;
-    
+
     if (wasRunning)
     {
         // Pause the emulator
         Pause();
-        
+
         // Give the emulator thread time to fully pause
         // (it needs to finish the current frame and enter pause loop)
         sleep_ms(20);
     }
-    
+
     // Now perform reset while paused (safe, no race condition)
     _core->Reset();
-    
+
     // Resume if it was running before
     if (wasRunning)
     {
@@ -736,6 +734,22 @@ bool Emulator::LoadSnapshot(const std::string& path)
 
     /// endregion </Info logging>
 
+    // Validate path exists
+    std::string absolutePath = FileHelper::AbsolutePath(path);
+    if (!FileHelper::FileExists(absolutePath))
+    {
+        MLOGERROR("Snapshot file not found: {}", absolutePath.c_str());
+        return false;
+    }
+
+    // Validate file extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+    if (ext != "z80" && ext != "sna")
+    {
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80 or .sna", ext.c_str());
+        return false;
+    }
+
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
@@ -744,11 +758,10 @@ bool Emulator::LoadSnapshot(const std::string& path)
         wasRunning = true;
     }
 
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
     if (ext == "sna")
     {
         /// region <Load SNA snapshot>
-        LoaderSNA loaderSna(_context, path);
+        LoaderSNA loaderSna(_context, absolutePath);
         result = loaderSna.load();
 
         /// region <Info logging>
@@ -765,7 +778,7 @@ bool Emulator::LoadSnapshot(const std::string& path)
     else if (ext == "z80")
     {
         /// region <Load Z80 snapshot>
-        LoaderZ80 loaderZ80(_context, path);
+        LoaderZ80 loaderZ80(_context, absolutePath);
         result = loaderZ80.load();
 
         /// region <Info logging>
@@ -778,6 +791,12 @@ bool Emulator::LoadSnapshot(const std::string& path)
         /// endregion </Info logging>
 
         /// endregion </Load Z80 snapshot>
+    }
+
+    // Store snapshot path on success
+    if (result)
+    {
+        _context->coreState.snapshotFilePath = absolutePath;
     }
 
     // Resume execution
@@ -795,9 +814,31 @@ bool Emulator::LoadTape(const std::string& path)
     bool result = false;
 
     MLOGEMPTY();
-    MLOGINFO("Inserting tape from file: '%s'", path.c_str());
+    MLOGINFO("Loading tape from file: '%s'", path.c_str());
 
-    _context->coreState.tapeFilePath = path;
+    // Validate and resolve path
+    std::string resolvedPath = FileHelper::AbsolutePath(path);
+
+    // Check file exists
+    if (!FileHelper::FileExists(resolvedPath))
+    {
+        MLOGERROR("LoadTape() - File not found: '%s'", path.c_str());
+        return false;
+    }
+
+    // Validate extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+    if (ext != "tap" && ext != "tzx")
+    {
+        MLOGERROR("LoadTape() - Invalid tape format: .%s (expected .tap or .tzx)", ext.c_str());
+        return false;
+    }
+
+    // Store validated path
+    _context->coreState.tapeFilePath = resolvedPath;
+
+    MLOGINFO("Tape file validated and ready: '%s'", resolvedPath.c_str());
+    result = true;
 
     return result;
 }
@@ -807,21 +848,36 @@ bool Emulator::LoadDisk(const std::string& path)
     bool result = false;
 
     MLOGEMPTY();
-    MLOGINFO("Inserting drive A: disk image from file: '%s'", path.c_str());
+    MLOGINFO("Loading disk image from file: '%s'", path.c_str());
 
-    _context->coreState.diskFilePaths[0] = path;
+    // Validate and resolve path
+    std::string resolvedPath = FileHelper::AbsolutePath(path);
 
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
+    // Check file exists
+    if (!FileHelper::FileExists(resolvedPath))
+    {
+        MLOGERROR("LoadDisk() - File not found: '%s'", path.c_str());
+        return false;
+    }
+
+    // Validate extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
     if (ext == "trd")
     {
-        LoaderTRD loaderTrd(_context, path);
+        LoaderTRD loaderTrd(_context, resolvedPath);
         if (loaderTrd.loadImage())
         {
             // FIXME: use active drive, not fixed A:
 
             /// region <Free memory from previous disk image>
-            _context->pBetaDisk->ejectDisk();
-            _context->coreState.diskDrives[0]->ejectDisk();
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
 
             DiskImage* diskImage = _context->coreState.diskImages[0];
 
@@ -835,7 +891,10 @@ bool Emulator::LoadDisk(const std::string& path)
             diskImage = loaderTrd.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
-            _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
 
             /// endregion </Load new disk image and mount it>
         }
@@ -849,8 +908,14 @@ bool Emulator::LoadDisk(const std::string& path)
             // FIXME: use active drive, not fixed A:
 
             /// region <Free memory from previous disk image>
-            _context->pBetaDisk->ejectDisk();
-            _context->coreState.diskDrives[0]->ejectDisk();
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
 
             DiskImage* diskImage = _context->coreState.diskImages[0];
 
@@ -864,7 +929,10 @@ bool Emulator::LoadDisk(const std::string& path)
             diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
-            _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
             /// endregion </Load new disk image and mount it>
         }
     }
@@ -965,9 +1033,8 @@ void Emulator::StepOver()
         return;
     }
 
-    MLOGDEBUG(
-        "Emulator::StepOver() - instruction requires step-over, next instruction at 0x%04X", nextInstructionAddress
-    );
+    MLOGDEBUG("Emulator::StepOver() - instruction requires step-over, next instruction at 0x%04X",
+              nextInstructionAddress);
 
     // Deactivate breakpoints within the called function's scope
     std::vector<std::pair<uint16_t, uint16_t>> exclusionRanges =
@@ -1047,9 +1114,8 @@ void Emulator::StepOver()
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
 
     // Continue execution, then wait for the lambda to signal completion
-    MLOGDEBUG(
-        "Emulator::StepOver() - Resuming execution to hit temporary breakpoint at 0x%04X", nextInstructionAddress
-    );
+    MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit temporary breakpoint at 0x%04X",
+              nextInstructionAddress);
     Resume();
 
     // We're waiting until breakpoint_handler lambda finishes

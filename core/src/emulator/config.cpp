@@ -326,17 +326,27 @@ bool Config::DetermineModel(const char* model, uint32_t ramsize)
 
 	CONFIG& config = _context->config;
 
+	// Null check for input parameter
+	if (model == nullptr)
+	{
+		return false;
+	}
+
 	// Search for model in lookup dictionary
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
 	{
-		if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+		// Null check before calling strlen to prevent crash
+		if (mem_model[i].ShortName != nullptr)
 		{
-			config.mem_model = mem_model[i].Model;
-			maxMemory = mem_model[i].AvailRAMs;
-			fullModelName = mem_model[i].FullName;
+			if (StringHelper::CompareCaseInsensitive(model, mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+			{
+				config.mem_model = mem_model[i].Model;
+				maxMemory = mem_model[i].AvailRAMs;
+				fullModelName = mem_model[i].FullName;
 
-			result = true;
-			break;
+				result = true;
+				break;
+			}
 		}
 	}
 
@@ -376,11 +386,21 @@ std::vector<TMemModel> Config::GetAvailableModels() const
 
 const TMemModel* Config::FindModelByShortName(const std::string& shortName) const
 {
+	// Handle empty or invalid input
+	if (shortName.empty())
+	{
+		return nullptr;
+	}
+
 	for (uint8_t i = 0; i < N_MM_MODELS; i++)
 	{
-		if (StringHelper::CompareCaseInsensitive(shortName.c_str(), mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+		// Null check before calling strlen to prevent crash
+		if (mem_model[i].ShortName != nullptr)
 		{
-			return &mem_model[i];
+			if (StringHelper::CompareCaseInsensitive(shortName.c_str(), mem_model[i].ShortName, strlen(mem_model[i].ShortName)) == 0)
+			{
+				return &mem_model[i];
+			}
 		}
 	}
 	return nullptr;

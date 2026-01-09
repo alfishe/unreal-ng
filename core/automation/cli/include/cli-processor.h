@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
 #include "platform-sockets.h"
 
 /**
@@ -49,7 +50,7 @@ public:
 private:
     SOCKET _clientSocket;
     std::string _selectedEmulatorId;  // ID of the currently selected emulator
-    bool _shouldClose;               // Flag indicating session should be closed
+    bool _shouldClose;                // Flag indicating session should be closed
 };
 
 /**
@@ -59,7 +60,7 @@ class CLIProcessor
 {
 public:
     // Newline constant (using CRLF for all platforms)
-        static constexpr const char* NEWLINE = "\r\n";
+    static constexpr const char* NEWLINE = "\r\n";
     // Define a member function pointer type for command handlers
     using CommandHandler = void (CLIProcessor::*)(const ClientSession&, const std::vector<std::string>&);
 
@@ -87,12 +88,13 @@ private:
     void HandleReset(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePause(const ClientSession& session, const std::vector<std::string>& args);
     void HandleResume(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCreate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepIn(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSteps(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
-    
+
     // Breakpoint command handlers
     void HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPList(const ClientSession& session, const std::vector<std::string>& args);
@@ -102,7 +104,7 @@ private:
     void HandleBPGroup(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
-    
+
     void HandleOpen(const ClientSession& session, const std::vector<std::string>& args);
     void HandleExit(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDummy(const ClientSession& session, const std::vector<std::string>& args);
@@ -110,13 +112,13 @@ private:
     void HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFeature(const ClientSession& session, const std::vector<std::string>& args);
-    
+
     // BASIC command handlers
     void HandleBasic(const ClientSession& session, const std::vector<std::string>& args);
-    
+
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);
-    
+
     // State inspection command handlers
     void HandleState(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStateMemory(const ClientSession& session, EmulatorContext* context);
@@ -131,7 +133,8 @@ private:
     void HandleStateAudio(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioAY(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioAYIndex(const ClientSession& session, EmulatorContext* context, const std::string& indexStr);
-    void HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& chipStr, const std::string& regStr);
+    void HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& chipStr,
+                                    const std::string& regStr);
     void HandleStateAudioBeeper(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
@@ -143,24 +146,53 @@ private:
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
-    
+
     // Helper method to resolve emulator from optional argument or stateless auto-selection
     // If args is not empty and first arg is an ID/index, resolves that emulator
     // Otherwise uses GetSelectedEmulator logic
-    std::shared_ptr<Emulator> ResolveEmulator(const ClientSession& session, const std::vector<std::string>& args, std::string& errorMessage);
-    
+    std::shared_ptr<Emulator> ResolveEmulator(const ClientSession& session, const std::vector<std::string>& args,
+                                              std::string& errorMessage);
+
     // Universal address parsing method for memory addresses and port numbers
     // Returns true if parsing was successful, false otherwise
     // The parsed address is stored in the 'result' parameter
     // maxValue specifies the maximum allowed value (default: 0xFFFF for 16-bit addresses)
     bool ParseAddress(const std::string& addressStr, uint16_t& result, uint16_t maxValue = 0xFFFF) const;
-    
+
     // Helper method to format text for terminal output (converts \n to \r\n)
     // This ensures proper line breaks in telnet/terminal clients
     static std::string FormatForTerminal(const std::string& text);
-    
+
     // Helper method to notify UI components that breakpoints have changed
     void onBreakpointsChanged();
+
+    // Tape control command handlers
+    void HandleTape(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowTapeHelp(const ClientSession& session);
+    void HandleTapeLoad(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                        const std::vector<std::string>& args);
+    void HandleTapeEject(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapePlay(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapeStop(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapeRewind(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
+    void HandleTapeInfo(const ClientSession& session, EmulatorContext* context);
+
+    // Disk control command handlers
+    void HandleDisk(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowDiskHelp(const ClientSession& session);
+    uint8_t ParseDriveParameter(const std::string& driveStr, std::string& errorMsg);
+    void HandleDiskInsert(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                          const std::vector<std::string>& args);
+    void HandleDiskEject(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                         const std::vector<std::string>& args);
+    void HandleDiskInfo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+
+    // Snapshot control command handlers
+    void HandleSnapshot(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowSnapshotHelp(const ClientSession& session);
+    void HandleSnapshotLoad(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                            const std::vector<std::string>& args);
+    void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;
