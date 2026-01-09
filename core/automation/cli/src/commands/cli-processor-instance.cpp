@@ -39,9 +39,10 @@ void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<
                 status += "Debug: " + std::string(emulator->IsDebug() ? "On" : "Off") + NEWLINE;
 
                 // Indicate if this is the currently selected emulator
-                // Check both the session's selected ID and our local _emulator reference
-                bool isSelected = (session.GetSelectedEmulatorId() == id) ||
-                                  (_emulator && _emulator->GetId() == id && session.GetSelectedEmulatorId().empty());
+                // Check the global selection from EmulatorManager
+                std::string selectedId = emulatorManager->GetSelectedEmulatorId();
+                bool isSelected = (selectedId == id) ||
+                                  (_emulator && _emulator->GetId() == id && selectedId.empty());
                 if (isSelected)
                 {
                     status += std::string("SELECTED") + NEWLINE;
@@ -95,10 +96,9 @@ void CLIProcessor::HandleList(const ClientSession& session, const std::vector<st
 
         if (emulator)
         {
-            // Mark the currently selected emulator
-            // Check both the session's selected ID and our local _emulator reference
-            bool isSelected = (session.GetSelectedEmulatorId() == id) ||
-                              (_emulator && _emulator->GetId() == id && session.GetSelectedEmulatorId().empty());
+            // Mark the selected emulator using global selection from EmulatorManager
+            std::string selectedId = emulatorManager->GetSelectedEmulatorId();
+            bool isSelected = (selectedId == id);
             std::string selectedMarker = isSelected ? "* " : "  ";
 
             response += selectedMarker + "[" + std::to_string(i + 1) + "] ";
@@ -227,18 +227,19 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
     }
 
     // Track the previous selection for the notification
-    std::string previousId = session.GetSelectedEmulatorId();
+    std::string previousId = emulatorManager->GetSelectedEmulatorId();
 
-    // We have a valid ID at this point
-    const_cast<ClientSession&>(session).SetSelectedEmulatorId(selectedId);
+    // Update global selection in EmulatorManager (this sends notification automatically)
+    bool success = emulatorManager->SetSelectedEmulatorId(selectedId);
+    
+    if (!success)
+    {
+        session.SendResponse("Error: Failed to select emulator: " + selectedId + std::string(NEWLINE));
+        return;
+    }
 
     // Also update our local reference to the emulator
     _emulator = emulatorManager->GetEmulator(selectedId);
-
-    // Send notification about selection change
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, selectedId);
-    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
 
     std::stringstream ss;
     ss << "Selected emulator: " << selectedId;
@@ -414,20 +415,11 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
 
         if (emulator)
         {
-            // Auto-select only if this is the first emulator
-            auto emulatorIds = emulatorManager->GetEmulatorIds();
-            bool shouldAutoSelect = (emulatorIds.size() == 1);
-
             std::stringstream ss;
             ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
             ss << "Model: " << modelName << NEWLINE;
             ss << "State: initialized (not started)" << NEWLINE;
-
-            if (shouldAutoSelect)
-            {
-                const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
-                ss << "Auto-selected as current emulator" << NEWLINE;
-            }
+            ss << "Note: Instance will be auto-selected when started" << NEWLINE;
 
             ss << "Use 'resume' or 'start' command to begin emulation" << NEWLINE;
             session.SendResponse(ss.str());
@@ -443,7 +435,8 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
             {
                 if (i > 0)
                     ss << ", ";
-                ss << models[i].ShortName;
+                // Guard against NULL ShortName
+                ss << (models[i].ShortName ? models[i].ShortName : "<unknown>");
             }
             ss << NEWLINE;
 
@@ -457,20 +450,11 @@ void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<
 
         if (emulator)
         {
-            // Auto-select only if this is the first emulator
-            auto emulatorIds = emulatorManager->GetEmulatorIds();
-            bool shouldAutoSelect = (emulatorIds.size() == 1);
-
             std::stringstream ss;
             ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
             ss << "Model: 48K (default)" << NEWLINE;
             ss << "State: initialized (not started)" << NEWLINE;
-
-            if (shouldAutoSelect)
-            {
-                const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
-                ss << "Auto-selected as current emulator" << NEWLINE;
-            }
+            ss << "Note: Instance will be auto-selected when started" << NEWLINE;
 
             ss << "Use 'resume' or 'start' command to begin emulation" << NEWLINE;
 
@@ -493,11 +477,64 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
 {
     if (!args.empty())
     {
-        // start <model> - create emulator with specific model
-        std::string modelName = args[0];
-
-        // Create emulator with the specified model
         auto* emulatorManager = EmulatorManager::GetInstance();
+        auto emulatorIds = emulatorManager->GetEmulatorIds();
+        std::string arg = args[0];
+        std::string targetId;
+        bool isExistingEmulator = false;
+
+        // Try to interpret as an index first
+        try
+        {
+            int index = std::stoi(arg);
+            if (index > 0 && static_cast<size_t>(index) <= emulatorIds.size())
+            {
+                targetId = emulatorIds[index - 1];  // Convert to 0-based
+                isExistingEmulator = true;
+            }
+        }
+        catch (const std::exception&)
+        {
+            // Not a valid index, check if it's a UUID
+            if (emulatorManager->HasEmulator(arg))
+            {
+                targetId = arg;
+                isExistingEmulator = true;
+            }
+        }
+
+        if (isExistingEmulator)
+        {
+            // Start existing emulator
+            auto emulator = emulatorManager->GetEmulator(targetId);
+            if (!emulator)
+            {
+                session.SendResponse("Error: Emulator not found: " + targetId + std::string(NEWLINE));
+                return;
+            }
+
+            if (emulator->IsRunning())
+            {
+                session.SendResponse("Emulator is already running: " + targetId + std::string(NEWLINE));
+                return;
+            }
+
+            bool startSuccess = emulatorManager->StartEmulatorAsync(targetId);
+            std::stringstream ss;
+            if (startSuccess)
+            {
+                ss << "Started emulator instance: " << targetId << NEWLINE;
+            }
+            else
+            {
+                ss << "Warning: Failed to start emulator: " << targetId << NEWLINE;
+            }
+            session.SendResponse(ss.str());
+            return;
+        }
+
+        // Not an existing emulator - treat as model name and create new emulator
+        std::string modelName = arg;
         auto emulator = emulatorManager->CreateEmulatorWithModel("", modelName);
 
         if (emulator)
@@ -506,7 +543,7 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             bool startSuccess = emulatorManager->StartEmulatorAsync(emulator->GetId());
 
             // Auto-select only if this is the first emulator, otherwise keep current selection
-            auto emulatorIds = emulatorManager->GetEmulatorIds();
+            emulatorIds = emulatorManager->GetEmulatorIds();
             bool shouldAutoSelect = (emulatorIds.size() == 1);  // Only auto-select if this is the only emulator
 
             std::stringstream ss;
@@ -514,24 +551,13 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             {
                 ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: " << modelName << NEWLINE;
-
-                if (shouldAutoSelect)
-                {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
-                    ss << "Auto-selected as current emulator" << NEWLINE;
-                }
+                // Note: EmulatorManager handles auto-selection automatically
             }
             else
             {
                 ss << "Created emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: " << modelName << NEWLINE;
                 ss << "Warning: Failed to start emulator automatically" << NEWLINE;
-
-                if (shouldAutoSelect)
-                {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
-                    ss << "Auto-selected as current emulator" << NEWLINE;
-                }
             }
 
             // Note: NC_EMULATOR_INSTANCE_CREATED notification is now automatically sent by EmulatorManager
@@ -551,7 +577,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             {
                 if (i > 0)
                     ss << ", ";
-                ss << models[i].ShortName;
+                // Guard against NULL ShortName
+                ss << (models[i].ShortName ? models[i].ShortName : "<unknown>");
             }
             ss << NEWLINE;
 
@@ -578,12 +605,7 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
             {
                 ss << "Started emulator instance: " << emulator->GetId() << NEWLINE;
                 ss << "Model: 48K (default)" << NEWLINE;
-
-                if (shouldAutoSelect)
-                {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
-                    ss << "Auto-selected as current emulator" << NEWLINE;
-                }
+                // Note: EmulatorManager handles auto-selection automatically
             }
             else
             {
@@ -593,7 +615,8 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
 
                 if (shouldAutoSelect)
                 {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(emulator->GetId());
+                    // Use EmulatorManager to set selection (sends notification automatically)
+                    emulatorManager->SetSelectedEmulatorId(emulator->GetId());
                     ss << "Auto-selected as current emulator" << NEWLINE;
                 }
             }
@@ -633,21 +656,22 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
                 ss << "Stopped emulator instance: " << actualId << NEWLINE;
 
                 // Clear selection if it was pointing to the stopped emulator
-                // Check both the session's selected ID and our local _emulator reference (same logic as list command)
+                // Check both the global selection and our local _emulator reference
+                std::string currentSelected = emulatorManager->GetSelectedEmulatorId();
                 bool wasSelected =
-                    (session.GetSelectedEmulatorId() == actualId) ||
-                    (_emulator && _emulator->GetId() == actualId && session.GetSelectedEmulatorId().empty());
+                    (currentSelected == actualId) ||
+                    (_emulator && _emulator->GetId() == actualId && currentSelected.empty());
 
                 if (wasSelected)
                 {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
+                    emulatorManager->SetSelectedEmulatorId("");
                     _emulator.reset();
 
                     // Auto-select the first remaining emulator (by creation time)
                     auto remainingIds = emulatorManager->GetEmulatorIds();
                     if (!remainingIds.empty())
                     {
-                        const_cast<ClientSession&>(session).SetSelectedEmulatorId(remainingIds[0]);
+                        emulatorManager->SetSelectedEmulatorId(remainingIds[0]);
                         ss << "Auto-selected first emulator: " << remainingIds[0] << NEWLINE;
                     }
                     else
@@ -704,11 +728,11 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
         ss << "Stopped " << stoppedCount << " emulator instance(s)" << NEWLINE;
 
         // Clear selection if it was pointing to a stopped emulator
-        std::string currentSelected = session.GetSelectedEmulatorId();
-        if (currentSelected != "none" &&
+        std::string currentSelected = emulatorManager->GetSelectedEmulatorId();
+        if (!currentSelected.empty() &&
             std::find(emulatorIds.begin(), emulatorIds.end(), currentSelected) != emulatorIds.end())
         {
-            const_cast<ClientSession&>(session).SetSelectedEmulatorId("none");
+            emulatorManager->SetSelectedEmulatorId("");
             // Also clear our cached emulator reference
             _emulator.reset();
             ss << "Cleared emulator selection" << NEWLINE;
@@ -766,13 +790,15 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
             ss << "Stopped emulator instance: " << actualId << NEWLINE;
 
             // Clear selection if it was pointing to this emulator
-            // Check both the session's selected ID and our local _emulator reference (same logic as list command)
-            bool wasSelected = (session.GetSelectedEmulatorId() == actualId) ||
-                               (_emulator && _emulator->GetId() == actualId && session.GetSelectedEmulatorId().empty());
+            // Check both the global selection and our local _emulator reference
+            std::string currentSelected = emulatorManager->GetSelectedEmulatorId();
+            bool wasSelected = (currentSelected == actualId) ||
+                               (_emulator && _emulator->GetId() == actualId && currentSelected.empty());
 
             if (wasSelected)
             {
-                const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
+                // Use EmulatorManager to clear selection (sends notification automatically)
+                emulatorManager->SetSelectedEmulatorId("");
                 // Also clear our cached emulator reference
                 _emulator.reset();
 
@@ -780,13 +806,8 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
                 auto remainingIds = emulatorManager->GetEmulatorIds();
                 if (!remainingIds.empty())
                 {
-                    const_cast<ClientSession&>(session).SetSelectedEmulatorId(remainingIds[0]);
-
-                    // Send notification about selection change
-                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-                    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(actualId, remainingIds[0]);
-                    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
-
+                    // Use EmulatorManager to set selection (sends notification automatically)
+                    emulatorManager->SetSelectedEmulatorId(remainingIds[0]);
                     ss << "Auto-selected first emulator: " << remainingIds[0] << NEWLINE;
                 }
                 else

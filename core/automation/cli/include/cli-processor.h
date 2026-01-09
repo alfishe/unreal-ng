@@ -16,21 +16,13 @@
 class ClientSession
 {
 public:
-    ClientSession(SOCKET clientSocket) : _clientSocket(clientSocket), _selectedEmulatorId(""), _shouldClose(false) {}
+    ClientSession(SOCKET clientSocket) : _clientSocket(clientSocket), _shouldClose(false) {}
 
     SOCKET GetSocket() const
     {
         return _clientSocket;
     }
 
-    const std::string& GetSelectedEmulatorId() const
-    {
-        return _selectedEmulatorId;
-    }
-    void SetSelectedEmulatorId(const std::string& id)
-    {
-        _selectedEmulatorId = id;
-    }
 
     // Send a response to the client
     void SendResponse(const std::string& message) const;
@@ -49,7 +41,6 @@ public:
 
 private:
     SOCKET _clientSocket;
-    std::string _selectedEmulatorId;  // ID of the currently selected emulator
     bool _shouldClose;                // Flag indicating session should be closed
 };
 

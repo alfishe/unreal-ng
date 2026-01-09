@@ -682,8 +682,14 @@ void Emulator::Resume()
 
 void Emulator::Stop()
 {
-    if (!_isRunning)
+    // Use atomic compare-exchange to ensure only ONE thread executes stop logic
+    // This prevents double-free of _asyncThread when Stop() is called multiple times
+    bool expected = true;
+    if (!_isRunning.compare_exchange_strong(expected, false, std::memory_order_acq_rel))
+    {
+        // Already stopped or another thread is currently stopping - safe to return
         return;
+    }
 
     // Request emulator to stop
     _stopRequested = true;
@@ -708,12 +714,11 @@ void Emulator::Stop()
         _asyncThread = nullptr;
     }
 
-    // Set emulator state
-    _isRunning = false;
+    // Clear remaining state
     _stopRequested = false;
     _isPaused = false;
 
-    // Broadcast notification - Emulator execution resumed
+    // Broadcast notification - Emulator stopped
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);

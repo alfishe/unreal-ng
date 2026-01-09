@@ -371,6 +371,12 @@ void EmulatorAPI::startEmulator(const HttpRequestPtr& req,
         std::string emulatorId = emulator->GetId();
         bool started = manager->StartEmulatorAsync(emulatorId);
 
+        // Explicitly select this emulator since it was explicitly started via WebAPI
+        if (started)
+        {
+            manager->SetSelectedEmulatorId(emulatorId);
+        }
+
         Json::Value ret;
         ret["id"] = emulatorId;
         ret["symbolic_id"] = emulator->GetSymbolicId();
@@ -420,6 +426,12 @@ void EmulatorAPI::startExistingEmulator(const HttpRequestPtr& req,
     try
     {
         bool success = manager->StartEmulatorAsync(id);
+
+        // Explicitly select this emulator since it was explicitly started via WebAPI
+        if (success)
+        {
+            manager->SetSelectedEmulatorId(id);
+        }
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";
