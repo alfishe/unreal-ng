@@ -476,9 +476,93 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/covox"]["get"]["tags"].append("Audio State (Active)");
     paths["/api/v1/emulator/state/audio/covox"]["get"]["responses"]["200"]["description"] = "Covox state";
 
-    paths["/api/v1/emulator/state/audio/channels"]["get"]["summary"] = "Get audio channels (active emulator)";
+    paths["/api/v1/emulator/state/audio/channels"][" get"]["summary"] = "Get audio channels (active emulator)";
     paths["/api/v1/emulator/state/audio/channels"]["get"]["tags"].append("Audio State (Active)");
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] = "Audio channels information";
+
+    // Python Interpreter Control endpoints
+    paths["/api/v1/python/exec"]["post"]["summary"] = "Execute Python code";
+    paths["/api/v1/python/exec"]["post"]["tags"].append("Python Interpreter");
+    paths["/api/v1/python/exec"]["post"]["description"] = "Execute Python code synchronously. Requires Python automation enabled at compile-time.";
+    paths["/api/v1/python/exec"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("code");
+    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["type"] = "string";
+    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["description"] = "Python code to execute";
+    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["example"] = "print('Hello from Python')";
+    paths["/api/v1/python/exec"]["post"]["responses"]["200"]["description"] = "Code executed successfully";
+    paths["/api/v1/python/exec"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterExecResponse";
+    paths["/api/v1/python/exec"]["post"]["responses"]["400"]["description"] = "Bad request - missing code parameter";
+    paths["/api/v1/python/exec"]["post"]["responses"]["500"]["description"] = "Execution error";
+    paths["/api/v1/python/exec"]["post"]["responses"]["503"]["description"] = "Python automation not available";
+
+    paths["/api/v1/python/file"]["post"]["summary"] = "Execute Python file";
+    paths["/api/v1/python/file"]["post"]["tags"].append("Python Interpreter");
+    paths["/api/v1/python/file"]["post"]["description"] = "Load and execute Python file from absolute path";
+    paths["/api/v1/python/file"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Absolute path to Python file (.py)";
+    paths["/api/v1/python/file"]["post"]["responses"]["200"]["description"] = "File executed successfully";
+    paths["/api/v1/python/file"]["post"]["responses"]["400"]["description"] = "Invalid file path";
+    paths["/api/v1/python/file"]["post"]["responses"]["404"]["description"] = "File not found";
+    paths["/api/v1/python/file"]["post"]["responses"]["500"]["description"] = "Execution error";
+    paths["/api/v1/python/file"]["post"]["responses"]["503"]["description"] = "Python automation not available";
+
+    paths["/api/v1/python/status"]["get"]["summary"] = "Get Python interpreter status";
+    paths["/api/v1/python/status"]["get"]["tags"].append("Python Interpreter");
+    paths["/api/v1/python/status"]["get"]["description"] = "Get current status and availability of Python interpreter";
+    paths["/api/v1/python/status"]["get"]["responses"]["200"]["description"] = "Status information";
+    paths["/api/v1/python/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterStatusResponse";
+
+    paths["/api/v1/python/stop"]["post"]["summary"] = "Stop Python execution";
+    paths["/api/v1/python/stop"]["post"]["tags"].append("Python Interpreter");
+    paths["/api/v1/python/stop"]["post"]["description"] = "Send interrupt signal to stop running Python code";
+    paths["/api/v1/python/stop"]["post"]["responses"]["200"]["description"] = "Interrupt signal sent";
+    paths["/api/v1/python/stop"]["post"]["responses"]["503"]["description"] = "Python automation not available";
+
+    // Lua Interpreter Control endpoints
+    paths["/api/v1/lua/exec"]["post"]["summary"] = "Execute Lua code";
+    paths["/api/v1/lua/exec"]["post"]["tags"].append("Lua Interpreter");
+    paths["/api/v1/lua/exec"]["post"]["description"] = "Execute Lua code synchronously. Requires Lua automation enabled at compile-time.";
+    paths["/api/v1/lua/exec"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("code");
+    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["type"] = "string";
+    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["description"] = "Lua code to execute";
+    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["example"] = "print('Hello from Lua')";
+    paths["/api/v1/lua/exec"]["post"]["responses"]["200"]["description"] = "Code executed successfully";
+    paths["/api/v1/lua/exec"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterExecResponse";
+    paths["/api/v1/lua/exec"]["post"]["responses"]["400"]["description"] = "Bad request - missing code parameter";
+    paths["/api/v1/lua/exec"]["post"]["responses"]["500"]["description"] = "Execution error";
+    paths["/api/v1/lua/exec"]["post"]["responses"]["503"]["description"] = "Lua automation not available";
+
+    paths["/api/v1/lua/file"]["post"]["summary"] = "Execute Lua file";
+    paths["/api/v1/lua/file"]["post"]["tags"].append("Lua Interpreter");
+    paths["/api/v1/lua/file"]["post"]["description"] = "Load and execute Lua file from absolute path";
+    paths["/api/v1/lua/file"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
+    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
+    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Absolute path to Lua file (.lua)";
+    paths["/api/v1/lua/file"]["post"]["responses"]["200"]["description"] = "File executed successfully";
+    paths["/api/v1/lua/file"]["post"]["responses"]["400"]["description"] = "Invalid file path";
+    paths["/api/v1/lua/file"]["post"]["responses"]["404"]["description"] = "File not found";
+    paths["/api/v1/lua/file"]["post"]["responses"]["500"]["description"] = "Execution error";
+    paths["/api/v1/lua/file"]["post"]["responses"]["503"]["description"] = "Lua automation not available";
+
+    paths["/api/v1/lua/status"]["get"]["summary"] = "Get Lua interpreter status";
+    paths["/api/v1/lua/status"]["get"]["tags"].append("Lua Interpreter");
+    paths["/api/v1/lua/status"]["get"]["description"] = "Get current status and availability of Lua interpreter";
+    paths["/api/v1/lua/status"]["get"]["responses"]["200"]["description"] = "Status information";
+    paths["/api/v1/lua/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterStatusResponse";
+
+    paths["/api/v1/lua/stop"]["post"]["summary"] = "Request Lua execution stop";
+    paths["/api/v1/lua/stop"]["post"]["tags"].append("Lua Interpreter");
+  paths["/api/v1/lua/stop"]["post"]["description"] = "Request Lua execution stop (requires cooperative script checking)";
+    paths["/api/v1/lua/stop"]["post"]["responses"]["200"]["description"] = "Stop request noted";
+    paths["/api/v1/lua/stop"]["post"]["responses"]["503"]["description"] = "Lua automation not available";
 
     spec["paths"] = paths;
 
@@ -596,6 +680,25 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SnapshotInfoResponse"]["properties"]["loaded"]["type"] = "boolean";
     schemas["SnapshotInfoResponse"]["properties"]["filename"]["type"] = "string";
 
+    // Interpreter Control schemas
+    schemas["InterpreterExecResponse"]["type"] = "object";
+    schemas["InterpreterExecResponse"]["description"] = "Interpreter code execution response";
+    schemas["InterpreterExecResponse"]["properties"]["success"]["type"] = "boolean";
+    schemas["InterpreterExecResponse"]["properties"]["message"]["type"] = "string";
+    schemas["InterpreterExecResponse"]["properties"]["error"]["type"] = "string";
+    schemas["InterpreterExecResponse"]["properties"]["output"]["type"] = "string";
+    schemas["InterpreterExecResponse"]["properties"]["output"]["description"] = "Captured stdout output from script execution";
+    schemas["InterpreterExecResponse"]["properties"]["path"]["type"] = "string";
+    schemas["InterpreterExecResponse"]["properties"]["path"]["description"] = "File path (for file execution)";
+
+    schemas["InterpreterStatusResponse"]["type"] = "object";
+    schemas["InterpreterStatusResponse"]["description"] = "Interpreter status information";
+    schemas["InterpreterStatusResponse"]["properties"]["available"]["type"] = "boolean";
+    schemas["InterpreterStatusResponse"]["properties"]["initialized"]["type"] = "boolean";
+    schemas["InterpreterStatusResponse"]["properties"]["status"]["type"] = "string";
+    schemas["InterpreterStatusResponse"]["properties"]["message"]["type"] = "string";
+    schemas["InterpreterStatusResponse"]["properties"]["error"]["type"] = "string";
+
     spec["components"]["schemas"] = schemas;
 
     // Tags
@@ -649,6 +752,16 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tag10AudioActive["name"] = "Audio State (Active)";
     tag10AudioActive["description"] = "Inspect audio hardware state (active/most recent emulator)";
     tags.append(tag10AudioActive);
+
+    Json::Value tagPythonInterpreter;
+    tagPythonInterpreter["name"] = "Python Interpreter";
+    tagPythonInterpreter["description"] = "Remote Python interpreter control";
+    tags.append(tagPythonInterpreter);
+
+    Json::Value tagLuaInterpreter;
+    tagLuaInterpreter["name"] = "Lua Interpreter";
+    tagLuaInterpreter["description"] = "Remote Lua interpreter control";
+    tags.append(tagLuaInterpreter);
 
     spec["tags"] = tags;
 

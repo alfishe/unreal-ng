@@ -156,7 +156,7 @@ private:
     bool _audioInitialized = false;  // Tracks if audio device is initialized
 
 #ifdef ENABLE_AUTOMATION
-    std::unique_ptr<Automation> _automation{nullptr};
+    Automation* _automation = nullptr;
 #endif  // ENABLE_AUTOMATION
 
     EmulatorManager* _emulatorManager = nullptr;

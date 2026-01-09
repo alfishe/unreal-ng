@@ -25,14 +25,53 @@
 #include "emulator/platform.h"
 #include "platform-sockets.h"
 
+/// region <ClientSession>
+
 // ClientSession implementation
 void ClientSession::SendResponse(const std::string& message) const
 {
     if (_clientSocket != INVALID_SOCKET)
     {
-        send(_clientSocket, message.c_str(), message.length(), 0);
+        send(_clientSocket, message.c_str(), static_cast<int>(message.length()), 0);
     }
 }
+
+std::string ClientSession::FormatForTerminal(const std::string& text)
+{
+    std::ostringstream result;
+    
+    for (size_t i = 0; i < text.length(); ++i)
+    {
+        char c = text[i];
+        
+        if (c == '\r')
+        {
+            // Handle CRLF (\r\n) - consume both and emit single NEWLINE
+            if (i + 1 < text.length() && text[i + 1] == '\n')
+            {
+                ++i; // Skip the \n
+            }
+            result << CLIProcessor::NEWLINE;
+        }
+        else if (c == '\n')
+        {
+            // Handle LFCR (\n\r) - consume both and emit single NEWLINE
+            if (i + 1 < text.length() && text[i + 1] == '\r')
+            {
+                ++i; // Skip the \r
+            }
+            result << CLIProcessor::NEWLINE;
+        }
+        else
+        {
+            result << c;
+        }
+    }
+    
+    return result.str();
+}
+
+/// endregion </ClientSession>
 
 // CLIProcessor implementation
 CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
@@ -98,7 +137,12 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"disk", &CLIProcessor::HandleDisk},
 
                         // Snapshot control commands
-                        {"snapshot", &CLIProcessor::HandleSnapshot}};
+                        {"snapshot", &CLIProcessor::HandleSnapshot},
+
+                        // Interpreter control commands
+                        {"python", &CLIProcessor::HandlePython},
+                        {"py", &CLIProcessor::HandlePython},  // Alias
+                        {"lua", &CLIProcessor::HandleLua}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)

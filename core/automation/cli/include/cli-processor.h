@@ -35,6 +35,9 @@ public:
     // Send a response to the client
     void SendResponse(const std::string& message) const;
 
+    // Format string for terminal output - replaces \n with NEWLINE constant
+    static std::string FormatForTerminal(const std::string& text);
+
     // Mark session for closure
     void MarkForClosure()
     {
@@ -112,6 +115,22 @@ private:
     void HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFeature(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Interpreter control command handlers (Python)
+    void HandlePython(const ClientSession& session, const std::vector<std::string>& args);
+    void executePythonCode(const ClientSession& session, const std::string& code);
+    void executePythonFile(const ClientSession& session, const std::string& path);
+    void showPythonStatus(const ClientSession& session);
+    void stopPythonExecution(const ClientSession& session);
+    void ShowPythonHelp(const ClientSession& session);
+
+    // Interpreter control command handlers (Lua)
+    void HandleLua(const ClientSession& session, const std::vector<std::string>& args);
+    void executeLuaCode(const ClientSession& session, const std::string& code);
+    void executeLuaFile(const ClientSession& session, const std::string& path);
+    void showLuaStatus(const ClientSession& session);
+    void stopLuaExecution(const ClientSession& session);
+    void ShowLuaHelp(const ClientSession& session);
 
     // BASIC command handlers
     void HandleBasic(const ClientSession& session, const std::vector<std::string>& args);

@@ -5,6 +5,34 @@
 
 #include <thread>
 
+// Include actual implementation headers (needed in .cpp for instantiation)
+#if ENABLE_LUA_AUTOMATION
+#include "lua/src/automation-lua.h"
+#endif
+
+#if ENABLE_PYTHON_AUTOMATION
+#include "python/src/automation-python.h"
+#endif
+
+#if ENABLE_WEBAPI_AUTOMATION
+#include "webapi/src/automation-webapi.h"
+#endif
+
+#if ENABLE_CLI_AUTOMATION
+#include "cli/include/automation-cli.h"
+#endif
+
+/// region <Singleton management>
+
+Automation& Automation::GetInstance()
+{
+    // Meyer's Singleton: thread-safe in C++11+, automatic lifetime management
+    static Automation instance;
+    return instance;
+}
+
+/// endregion </Singleton management>
+
 /// region <Methods>
 
 bool Automation::start()
@@ -32,6 +60,11 @@ bool Automation::start()
 
 void Automation::stop()
 {
+    if (_stopped)
+        return;
+
+    _stopped = true;
+
 #if ENABLE_LUA_AUTOMATION
     stopLua();
 #endif
