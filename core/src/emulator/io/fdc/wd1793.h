@@ -635,6 +635,9 @@ protected:
     
     // Force Interrupt command conditions (I0-I3 bits)
     uint8_t _interruptConditions = 0;   // Stores the interrupt condition flags from the Force Interrupt command
+    
+    // Debug logging state (instance-specific to avoid race conditions)
+    uint64_t _lastDebugLogTime = 0;     // Last time debug log was printed (prevents log spam)
 
     /// endregion </Fields>
 
