@@ -15,7 +15,7 @@ include(${ROOT_DIR}/cmake/func.cmake)
 
 
 set(PYTHON_BUILD_DIR "${CMAKE_BINARY_DIR}/python_build")
-add_subdirectory(3rdparty/cmake-python-build ${PYTHON_BUILD_DIR})
+#add_subdirectory(3rdparty/cmake-python-build ${PYTHON_BUILD_DIR})
 #include(build-python.cmake)
 
 # Turn on PYBIND option to find system Python
@@ -117,6 +117,14 @@ endif ()
 add_dependencies(${PROJECT_NAME}
     pybind11::pybind11
 )
+
+# Add core include directories to access emulator headers
+get_filename_component(CORE_SRC_DIR ${ROOT_DIR}/core/src ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(${PROJECT_NAME} PUBLIC
+    $<BUILD_INTERFACE:${CORE_SRC_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+
 
 # <Diagnostics>
 get_target_property(APP_SOURCES ${PROJECT_NAME} SOURCES)

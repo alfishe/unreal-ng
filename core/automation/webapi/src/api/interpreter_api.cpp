@@ -49,7 +49,19 @@ void InterpreterAPI::executePythonCode(const HttpRequestPtr& req,
     }
 
     // Parse request body
-    Json::Value requestBody = *req->getJsonObject();
+    auto jsonObject = req->getJsonObject();
+    if (!jsonObject)
+    {
+        Json::Value response;
+        response["success"] = false;
+        response["error"] = "Invalid JSON in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(response);
+        resp->setStatusCode(k400BadRequest);
+        callback(resp);
+        return;
+    }
+    
+    Json::Value requestBody = *jsonObject;
     if (!requestBody.isMember("code") || !requestBody["code"].isString())
     {
         Json::Value response;
@@ -104,7 +116,19 @@ void InterpreterAPI::executePythonFile(const HttpRequestPtr& req,
     }
 
     // Parse request body
-    Json::Value requestBody = *req->getJsonObject();
+    auto jsonObject = req->getJsonObject();
+    if (!jsonObject)
+    {
+        Json::Value response;
+        response["success"] = false;
+        response["error"] = "Invalid JSON in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(response);
+        resp->setStatusCode(k400BadRequest);
+        callback(resp);
+        return;
+    }
+    
+    Json::Value requestBody = *jsonObject;
     if (!requestBody.isMember("path") || !requestBody["path"].isString())
     {
         Json::Value response;
@@ -322,8 +346,20 @@ void InterpreterAPI::executeLuaCode(const HttpRequestPtr& req,
     }
 
     // Parse request body
-    Json::Value requestBody = *req->getJsonObject();
-    if (!requestBody.isMember("code") || !requestBody["code"].isString())
+    auto jsonObject = req->getJsonObject();
+    if (!jsonObject)
+    {
+        Json::Value response;
+        response["success"] = false;
+        response["error"] = "Invalid JSON in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(response);
+        resp->setStatusCode(k400BadRequest);
+        callback(resp);
+        return;
+    }
+    
+    Json::Value requestBody = *jsonObject;
+   if (!requestBody.isMember("code") || !requestBody["code"].isString())
     {
         Json::Value response;
         response["success"] = false;
@@ -377,7 +413,19 @@ void InterpreterAPI::executeLuaFile(const HttpRequestPtr& req,
     }
 
     // Parse request body
-    Json::Value requestBody = *req->getJsonObject();
+    auto jsonObject = req->getJsonObject();
+    if (!jsonObject)
+    {
+        Json::Value response;
+        response["success"] = false;
+        response["error"] = "Invalid JSON in request body";
+        auto resp = HttpResponse::newHttpJsonResponse(response);
+        resp->setStatusCode(k400BadRequest);
+        callback(resp);
+        return;
+    }
+    
+    Json::Value requestBody = *jsonObject;
     if (!requestBody.isMember("path") || !requestBody["path"].isString())
     {
         Json::Value response;

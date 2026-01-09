@@ -6,6 +6,7 @@
 #include <emulator/platform.h>
 #include <json/json.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -110,16 +111,21 @@ std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string&
 {
     auto manager = EmulatorManager::GetInstance();
 
-    // Try to parse as index first (check if it's numeric)
-    bool isNumeric = true;
+    // Try to parse as index first (check if ENTIRE string is numeric)
+    bool isNumeric = !idOrIndex.empty() && std::all_of(idOrIndex.begin(), idOrIndex.end(), ::isdigit);
     int index = -1;
-    try
+    
+    if (isNumeric)
     {
-        index = std::stoi(idOrIndex);
-    }
-    catch (const std::exception&)
-    {
-        isNumeric = false;
+        try
+        {
+            index = std::stoi(idOrIndex);
+        }
+        catch (const std::exception&)
+        {
+            // Overflow or other parsing error
+            isNumeric = false;
+        }
     }
 
     if (isNumeric && index >= 0)

@@ -198,6 +198,23 @@ void AutomationLua::threadFunc(AutomationLua* lua)
 
     // Initialize Lua state on this dedicated thread (single-threaded ownership)
     lua->_lua = new sol::state();
+    
+    // Enable all standard Lua libraries (os, io, math, string, table, etc.)
+    // This allows users to use os.execute, file I/O, and other standard Lua functionality
+    lua->_lua->open_libraries(
+        sol::lib::base,
+        sol::lib::package,
+        sol::lib::coroutine,
+        sol::lib::string,
+        sol::lib::os,
+        sol::lib::math,
+        sol::lib::table,
+        sol::lib::debug,
+        sol::lib::bit32,
+        sol::lib::io,
+        sol::lib::utf8
+    );
+    
     lua->_luaEmulator = new LuaEmulator();
     lua->_luaEmulator->registerType(*lua->_lua);
     

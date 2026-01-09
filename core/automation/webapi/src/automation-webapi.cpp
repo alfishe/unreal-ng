@@ -9,6 +9,7 @@
 #include <drogon/WebSocketController.h>
 #include "hello_world_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_api.h"           // Triggers auto-registration for API handlers
+#include "interpreter_api.h"        // Triggers auto-registration for Lua/Python API handlers
 #include "emulator_websocket.h"     // Triggers auto-registration for WebSocket handlers
 
 // Socket includes for port availability checking
@@ -197,11 +198,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
         return;
     }
 
-    LOG_INFO << "Starting server on port 8090.";
-    LOG_INFO << "API Documentation: http://localhost:8090/";
-    LOG_INFO << "Emulator API: http://localhost:8090/api/v1/emulator";
-    LOG_INFO << "OpenAPI Spec: http://localhost:8090/api/v1/openapi.json";
-    LOG_INFO << "WebSocket: ws://localhost:8090/api/v1/websocket";
+    // WebAPI server starting on port 8090 (silent startup)
 
     drogon::HttpAppFramework& app = drogon::app();
 
