@@ -28,6 +28,10 @@ protected:
 private:
     std::map<std::string, std::shared_ptr<Emulator>> _emulators;
     std::mutex _emulatorsMutex;
+    
+    // Global selection state (shared across CLI, WebAPI, UI)
+    std::string _selectedEmulatorId;
+    std::mutex _selectionMutex;
 
     // Private constructor for a singleton pattern
     EmulatorManager() = default;
@@ -105,6 +109,15 @@ public:
     /// @param emulatorId ID of the emulator to remove
     /// @return True if the emulator was removed, false if not found
     bool RemoveEmulator(const std::string& emulatorId);
+    
+    /// @brief Get the globally selected emulator ID (shared across CLI, WebAPI, UI)
+    /// @return ID of the currently selected emulator (empty string if none selected)
+    std::string GetSelectedEmulatorId();
+    
+    ///  @brief Set the globally selected emulator ID (shared across CLI, WebAPI, UI)
+    /// @param emulatorId ID of the emulator to select (empty string to clear selection)
+    /// @return True if selection was updated, false if emulator doesn't exist (unless clearing)
+    bool SetSelectedEmulatorId(const std::string& emulatorId);
 
     // Lifecycle control methods - UI should use these instead of direct Emulator calls
     /// @brief Start an emulator

@@ -132,8 +132,62 @@ The control architecture follows a layered Command Dispatcher pattern with clear
   - Provide response routing back to client
 - **Key Data**:
   - `_clientSocket`: Network handle for response delivery
-  - `_selectedEmulatorId`: Currently active emulator for this session
 - **Note**: WebAPI is stateless; emulator ID must be in each request path
+
+#### 2.5 Global Selection State ⭐
+
+**Critical Design Change (2026-01-09)**: Selection state is **globally shared** across all interfaces (CLI, WebAPI, UI), not per-session.
+
+**Architecture**:
+- **Single Source of Truth**: `EmulatorManager` maintains the globally selected emulator ID
+- **Automatic Notification**: Selection changes trigger `NC_EMULATOR_SELECTION_CHANGED` notifications
+- **Synchronized Binding**: All components (CLI display, UI screen/audio/keyboard) bind to the same emulator
+
+**Implementation**:
+```cpp
+class EmulatorManager {
+    std::string _selectedEmulatorId;  // Global selection state
+    std::mutex _selectionMutex;       // Thread-safe access
+    
+    std::string GetSelectedEmulatorId();        // CLI, UI, WebAPI use this
+    bool SetSelectedEmulatorId(const std::string& id);  // Updates + notifies
+};
+```
+
+**Selection Update Rules**:
+1. **Manual Selection**: `select <id>` command updates global state
+2. **Auto-Selection**: Starting the first/only running emulator auto-selects it
+3. **Removal**: Removing the selected emulator clears selection
+4. **Notification**: All selection changes send `NC_EMULATOR_SELECTION_CHANGED`
+
+**UI Binding**:
+- `MainWindow` subscribes to `NC_EMULATOR_SELECTION_CHANGED`
+- On notification, atomically rebinds all components to the same emulator:
+  - Screen (framebuffer)
+  - Audio (callback)
+  - Keyboard (UUID tagging)
+  - Menus (state)
+- Thread-safe: UI updates marshaled to Qt main thread via `QMetaObject::invokeMethod`
+
+**Example Flow**:
+```
+1. WebAPI: POST /emulator/start → creates instance #2, starts it
+2. EmulatorManager: Detects #2 is only running emulator
+3. EmulatorManager::StartEmulatorAsync → SetSelectedEmulatorId("#2")
+4. SetSelectedEmulatorId → sends NC_EMULATOR_SELECTION_CHANGED(prev="", new="#2")
+5. MainWindow receives notification on MessageCenter thread
+6. MainWindow marshals to Qt main thread, atomically binds screen/audio/keyboard to #2
+7. CLI: list → shows #2 with "*" marker (reads from EmulatorManager::GetSelectedEmulatorId())
+8. Result: CLI, UI, and WebAPI all see #2 as selected
+```
+
+**Benefits**:
+- ✅ Consistent selection across all interfaces
+- ✅ UI always binds to the correct running emulator
+- ✅ Keyboard events route to the same emulator shown on screen
+- ✅ Thread-safe with proper mutex protection
+
+**Migration Note**: Previously, `ClientSession` maintained per-session selection. This caused inconsistencies when WebAPI created emulators vs. CLI commands. Now all interfaces share the same global selection state.
 
 #### 3. Command Processor
 - **Purpose**: Parse and route commands to appropriate handlers

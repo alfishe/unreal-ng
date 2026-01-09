@@ -4,6 +4,7 @@
 #include "stdafx.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "3rdparty/message-center/eventqueue.h"
+#include "emulator/notifications.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -362,6 +363,23 @@ bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
         _emulators.erase(it);
         LOGINFO("EmulatorManager::RemoveEmulator - Removed emulator with ID '%s'", emulatorId.c_str());
 
+        // Clear selection if this was the selected emulator
+        {
+            std::lock_guard<std::mutex> selLock(_selectionMutex);
+            if (_selectedEmulatorId == emulatorId)
+            {
+                std::string previousId = _selectedEmulatorId;
+                _selectedEmulatorId = "";
+                
+                // Send notification about selection being cleared
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
+                messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+                
+                LOGINFO("EmulatorManager::RemoveEmulator - Cleared selection (was pointing to removed emulator)");
+            }
+        }
+        
         // Emit notification that instance was destroyed
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleTextPayload* payload = new SimpleTextPayload(emulatorId);
@@ -410,6 +428,43 @@ bool EmulatorManager::StartEmulatorAsync(const std::string& emulatorId)
         {
             it->second->StartAsync();
             LOGINFO("EmulatorManager::StartEmulatorAsync - Started emulator async with ID '%s'", emulatorId.c_str());
+            
+            // Re-evaluate selection after start
+            // Only change selection if current selection is invalid (stopped or non-existent)
+            bool shouldAutoSelect = false;
+            std::string currentSelection;
+            {
+                std::lock_guard<std::mutex> selLock(_selectionMutex);
+                currentSelection = _selectedEmulatorId;
+                
+                // Check if current selection is valid (exists and not stopped)
+                bool selectionIsValid = false;
+                if (!currentSelection.empty())
+                {
+                    auto selIt = _emulators.find(currentSelection);
+                    if (selIt != _emulators.end())
+                    {
+                        // Valid if running or paused (not stopped)
+                        selectionIsValid = selIt->second->IsRunning() || selIt->second->IsPaused();
+                    }
+                }
+                
+                // Auto-select if no valid selection
+                shouldAutoSelect = !selectionIsValid;
+            }
+            
+            if (shouldAutoSelect)
+            {
+                std::lock_guard<std::mutex> selLock(_selectionMutex);
+                std::string previousId = _selectedEmulatorId;
+                _selectedEmulatorId = emulatorId;
+                
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, emulatorId);
+                messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+                LOGINFO("EmulatorManager::StartEmulatorAsync - Auto-selected emulator '%s' (previous selection was invalid)", emulatorId.c_str());
+            }
+            
             return true;
         }
         else
@@ -434,6 +489,50 @@ bool EmulatorManager::StopEmulator(const std::string& emulatorId)
         {
             it->second->Stop();
             LOGINFO("EmulatorManager::StopEmulator - Stopped emulator with ID '%s'", emulatorId.c_str());
+            
+            // Re-evaluate selection after stop
+            // If we stopped the selected emulator, try to select another running/paused one
+            bool needsReselection = false;
+            {
+                std::lock_guard<std::mutex> selLock(_selectionMutex);
+                needsReselection = (_selectedEmulatorId == emulatorId);
+            }
+            
+            if (needsReselection)
+            {
+                // Find another running or paused emulator to select
+                std::string newSelection;
+                for (const auto& pair : _emulators)
+                {
+                    if (pair.first != emulatorId && 
+                        (pair.second->IsRunning() || pair.second->IsPaused()))
+                    {
+                        newSelection = pair.first;
+                        break;
+                    }
+                }
+                
+                // Update selection (may be empty if no other valid emulators)
+                {
+                    std::lock_guard<std::mutex> selLock(_selectionMutex);
+                    std::string previousId = _selectedEmulatorId;
+                    _selectedEmulatorId = newSelection;
+                    
+                    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                    EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, newSelection);
+                    messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+                    
+                    if (newSelection.empty())
+                    {
+                        LOGINFO("EmulatorManager::StopEmulator - Cleared selection (no other running/paused emulators)");
+                    }
+                    else
+                    {
+                        LOGINFO("EmulatorManager::StopEmulator - Auto-selected alternative emulator: '%s'", newSelection.c_str());
+                    }
+                }
+            }
+            
             return true;
         }
         else
@@ -585,6 +684,59 @@ std::shared_ptr<Emulator> EmulatorManager::GetMostRecentEmulator()
         });
     
     return recent->second;
+}
+
+std::string EmulatorManager::GetSelectedEmulatorId()
+{
+    std::lock_guard<std::mutex> lock(_selectionMutex);
+    return _selectedEmulatorId;
+}
+
+bool EmulatorManager::SetSelectedEmulatorId(const std::string& emulatorId)
+{
+    // Allow clearing selection (empty string)
+    if (emulatorId.empty())
+    {
+        std::lock_guard<std::mutex> lock(_selectionMutex);
+        std::string previousId = _selectedEmulatorId;
+        _selectedEmulatorId = "";
+        
+        // Send notification about selection change
+        if (!previousId.empty())
+        {
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, "");
+            messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+        }
+        
+        return true;
+    }
+    
+    // Verify emulator exists (allow selecting stopped emulators for explicit selection)
+    {
+        std::lock_guard<std::mutex> lock(_emulatorsMutex);
+        if (_emulators.find(emulatorId) == _emulators.end())
+        {
+            LOGDEBUG("EmulatorManager::SetSelectedEmulatorId - Emulator '%s' does not exist", emulatorId.c_str());
+            return false;
+        }
+    }
+    
+    // Update selection
+    {
+        std::lock_guard<std::mutex> lock(_selectionMutex);
+        std::string previousId = _selectedEmulatorId;
+        _selectedEmulatorId = emulatorId;
+        
+        // Send notification about selection change
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        EmulatorSelectionPayload* payload = new EmulatorSelectionPayload(previousId, emulatorId);
+        messageCenter.Post(NC_EMULATOR_SELECTION_CHANGED, payload);
+        
+        LOGINFO("EmulatorManager::SetSelectedEmulatorId - Selected emulator: '%s'", emulatorId.c_str());
+    }
+    
+    return true;
 }
 
 void EmulatorManager::ShutdownAllEmulators()

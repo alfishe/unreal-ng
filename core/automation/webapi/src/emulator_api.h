@@ -332,6 +332,11 @@ namespace api
             // @return Shared pointer to emulator, or nullptr if not found
             std::shared_ptr<Emulator> getEmulatorByIdOrIndex(const std::string& idOrIndex) const;
             
+            // Get emulator using global selection priority, then stateless fallback
+            // First checks globally selected emulator, then falls back to stateless behavior
+            // @return Shared pointer to emulator, or nullptr if no emulator can be selected
+            std::shared_ptr<Emulator> getEmulatorWithGlobalSelection() const;
+
             // Get emulator using stateless auto-selection
             // Auto-selects only if exactly one emulator exists (stateless behavior)
             // @return Shared pointer to emulator, or nullptr if 0 or 2+ emulators exist

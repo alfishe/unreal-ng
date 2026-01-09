@@ -741,11 +741,11 @@ void EmulatorAPI::getStateAudioChannels(const HttpRequestPtr& req,
 }
 
 /// @brief Audio state inspection (active emulator - no ID required)
-/// Uses stateless auto-selection: only works if exactly one emulator exists
+/// Uses global selection priority, then stateless fallback
 void EmulatorAPI::getStateAudioAYActive(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {
@@ -774,7 +774,7 @@ void EmulatorAPI::getStateAudioAYIndexActive(const HttpRequestPtr& req,
                                              std::function<void(const HttpResponsePtr&)>&& callback,
                                              const std::string& chip) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {
@@ -804,7 +804,7 @@ void EmulatorAPI::getStateAudioAYRegisterActive(const HttpRequestPtr& req,
                                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                                 const std::string& chip, const std::string& reg) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {
@@ -833,7 +833,7 @@ void EmulatorAPI::getStateAudioAYRegisterActive(const HttpRequestPtr& req,
 void EmulatorAPI::getStateAudioBeeperActive(const HttpRequestPtr& req,
                                             std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {
@@ -861,7 +861,7 @@ void EmulatorAPI::getStateAudioBeeperActive(const HttpRequestPtr& req,
 void EmulatorAPI::getStateAudioGSActive(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {
@@ -889,7 +889,7 @@ void EmulatorAPI::getStateAudioGSActive(const HttpRequestPtr& req,
 void EmulatorAPI::getStateAudioCovoxActive(const HttpRequestPtr& req,
                                            std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {
@@ -917,7 +917,7 @@ void EmulatorAPI::getStateAudioCovoxActive(const HttpRequestPtr& req,
 void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr& req,
                                               std::function<void(const HttpResponsePtr&)>&& callback) const
 {
-    auto emulator = getEmulatorStateless();
+    auto emulator = getEmulatorWithGlobalSelection();
 
     if (!emulator)
     {

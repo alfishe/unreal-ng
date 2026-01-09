@@ -140,6 +140,28 @@ std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string&
     }
 }
 
+/// @brief Helper method for emulator selection with global selection priority
+/// First checks for globally selected emulator, then falls back to stateless behavior
+/// Returns nullptr if no emulator can be selected (requires explicit selection)
+std::shared_ptr<Emulator> EmulatorAPI::getEmulatorWithGlobalSelection() const
+{
+    auto manager = EmulatorManager::GetInstance();
+
+    // First priority: Check if there's a globally selected emulator
+    std::string selectedId = manager->GetSelectedEmulatorId();
+    if (!selectedId.empty())
+    {
+        auto emulator = manager->GetEmulator(selectedId);
+        if (emulator)
+        {
+            return emulator;
+        }
+    }
+
+    // Second priority: Fallback to stateless behavior (only one emulator)
+    return getEmulatorStateless();
+}
+
 /// @brief Helper method for stateless emulator auto-selection
 /// Returns an emulator only if there's exactly one running (stateless behavior)
 /// Returns nullptr if there are 0 or 2+ emulators (requires explicit selection)

@@ -168,18 +168,24 @@ void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& com
     // Check for auto-selection of emulators if none is currently selected
     // This handles the case where emulators appear asynchronously after connection
     // In async mode, we auto-select only if there's exactly one emulator (stateless behavior)
-    if (session.GetSelectedEmulatorId().empty() && !_emulator)
+    if (!_emulator)
     {
         auto* emulatorManager = EmulatorManager::GetInstance();
         if (emulatorManager)
         {
             auto emulatorIds = emulatorManager->GetEmulatorIds();
+            auto selectedId = emulatorManager->GetSelectedEmulatorId();
 
-            // Auto-select only if there's exactly one emulator (stateless)
-            if (emulatorIds.size() == 1)
+            // Auto-select only if there's exactly one emulator and none is globally selected (stateless)
+            if (emulatorIds.size() == 1 && selectedId.empty())
             {
                 _emulator = emulatorManager->GetEmulator(emulatorIds[0]);
-                // Note: We don't persist the selection in the session for stateless behavior
+                // Note: We don't change global selection for stateless CLI behavior
+            }
+            // If there's already a global selection, use it
+            else if (!selectedId.empty())
+            {
+                _emulator = emulatorManager->GetEmulator(selectedId);
             }
         }
     }
@@ -251,10 +257,10 @@ std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession&
         return nullptr;
     }
 
-    // Get the selected emulator ID from the session
-    std::string selectedId = session.GetSelectedEmulatorId();
+    // Get the globally selected emulator ID
+    std::string selectedId = emulatorManager->GetSelectedEmulatorId();
 
-    // If a specific emulator is selected, try to use it
+    // If a specific emulator is globally selected, try to use it
     if (!selectedId.empty())
     {
         auto emulator = emulatorManager->GetEmulator(selectedId);
@@ -264,11 +270,11 @@ std::shared_ptr<Emulator> CLIProcessor::GetSelectedEmulator(const ClientSession&
             return _emulator;
         }
 
-        // Selected emulator no longer exists, clear the selection
-        const_cast<ClientSession&>(session).SetSelectedEmulatorId("");
+        // Selected emulator no longer exists, clear the global selection
+        emulatorManager->SetSelectedEmulatorId("");
     }
 
-    // No selection or selected emulator is gone - auto-select if only one emulator exists
+    // No global selection or selected emulator is gone - auto-select if only one emulator exists
     auto emulatorIds = emulatorManager->GetEmulatorIds();
 
     if (emulatorIds.size() == 1)
