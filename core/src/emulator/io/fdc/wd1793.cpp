@@ -330,10 +330,10 @@ void WD1793::processFDDIndexStrobe()
     }
 
     // Debug: Log if we're not getting any index pulses
-    static uint64_t lastDebugLogTime = 0;
-    if (_time - lastDebugLogTime > Z80_FREQUENCY)  // Log once per second
+    // Use instance member to avoid race conditions across multiple WD1793 instances
+    if (_time - _lastDebugLogTime > Z80_FREQUENCY)  // Log once per second
     {
-        lastDebugLogTime = _time;
+        _lastDebugLogTime = _time;
         double milliseconds = (static_cast<double>(_time) * 1000.0) / Z80_FREQUENCY;
         MLOGDEBUG("Motor state: %s, Disk inserted: %s, Index pulses: %u, Time: %.2f ms (%llu T-states)", motorOn ? "ON" : "OFF",
                   diskInserted ? "YES" : "NO", _indexPulseCounter, milliseconds, _time);
@@ -1045,11 +1045,32 @@ void WD1793::cmdReadSector(uint8_t value)
     */
 
     // Step 2: start sector reading (queue correspondent command to the FIFO)
-    FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this]() {
-        // Position to the sector requested
-        DiskImage* diskImage = this->_selectedDrive->getDiskImage();
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-        uint8_t sectorIndex = this->_sectorRegister - 1;
+    // Capture values to avoid dangling pointer issues when drive state changes
+    FSMEvent readSector(WDSTATE::S_READ_SECTOR, [this,
+        selectedDrive = _selectedDrive,
+        trackReg = _trackRegister,
+        sectorReg = _sectorRegister,
+        sideUp = _sideUp]() {
+        
+        // Validate pointers before use
+        if (!selectedDrive || !selectedDrive->isDiskInserted()) {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+        
+        DiskImage* diskImage = selectedDrive->getDiskImage();
+        if (!diskImage) {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+        
+        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(trackReg, sideUp);
+        if (!track) {
+            this->_statusRegister |= WDS_NOTFOUND;
+            return;
+        }
+        
+        uint8_t sectorIndex = sectorReg - 1;
         this->_sectorData = track->getDataForSector(sectorIndex);
         this->_rawDataBuffer = this->_sectorData;
         this->_bytesToRead = this->_sectorSize;
@@ -1077,11 +1098,32 @@ void WD1793::cmdWriteSector(uint8_t value)
     */
 
     // Step 2: start sector writing (queue correspondent command to the FIFO)
-    FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this]() {
-        // Position to the sector requested
-        DiskImage* diskImage = this->_selectedDrive->getDiskImage();
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-        this->_sectorData = track->getDataForSector(this->_sectorRegister - 1);
+    // Capture values to avoid dangling pointer issues when drive state changes
+    FSMEvent writeSector(WDSTATE::S_WRITE_SECTOR, [this,
+        selectedDrive = _selectedDrive,
+        trackReg = _trackRegister,
+        sectorReg = _sectorRegister,
+        sideUp = _sideUp]() {
+        
+        // Validate pointers before use
+        if (!selectedDrive || !selectedDrive->isDiskInserted()) {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+        
+        DiskImage* diskImage = selectedDrive->getDiskImage();
+        if (!diskImage) {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+        
+        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(trackReg, sideUp);
+        if (!track) {
+            this->_statusRegister |= WDS_NOTFOUND;
+            return;
+        }
+        
+        this->_sectorData = track->getDataForSector(sectorReg - 1);
         this->_rawDataBuffer = this->_sectorData;
     });
     _operationFIFO.push(writeSector);
@@ -1142,11 +1184,38 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    FSMEvent readTrack(WDSTATE::S_READ_TRACK, [this]() {
-        // Position to the track requested
-        DiskImage* diskImage = _selectedDrive->getDiskImage();
-        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(this->_trackRegister, this->_sideUp);
-        uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
+    // Capture values into the lambda to avoid dangling pointer issues when drive state changes
+    FSMEvent readTrack(WDSTATE::S_READ_TRACK, [this,
+        selectedDrive = _selectedDrive,
+        trackReg = _trackRegister,
+        sideUp = _sideUp]() {
+        // Validate pointers before use
+        if (!selectedDrive || !selectedDrive->isDiskInserted())
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+        
+        DiskImage* diskImage = selectedDrive->getDiskImage();
+        if (!diskImage)
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
+        
+        DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(trackReg, sideUp);
+        if (!track)
+        {
+            this->_statusRegister |= WDS_NOTFOUND;
+            return;
+        }
+        
+        uint8_t* rawTrackData = track->getRawTrackData(trackReg, sideUp);
+        if (!rawTrackData)
+        {
+            this->_statusRegister |= WDS_NOTRDY;
+            return;
+        }
 
         _bytesToRead = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
         _rawDataBuffer = rawTrackData;

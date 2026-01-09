@@ -1,0 +1,6 @@
+requests
+pytest
+openapi-spec-validator
+prance
+jsonschema
+faker
