@@ -1,7 +1,6 @@
-#include <../_helpers/test_path_helper.h>
+#include <_helpers/test_path_helper.h>
 #include <common/filehelper.h>
 #include <emulator/emulator.h>
-#include <emulator/emulatorcontext.h>
 #include <gtest/gtest.h>
 
 #include <fstream>
