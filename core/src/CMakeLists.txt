@@ -92,6 +92,22 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE ${SOURCE_DIR}/stdafx.h)
 # Link lzma library
 target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 
+# Link uuid library (Linux/Unix)
+if (UNIX AND NOT APPLE)
+    find_package(PkgConfig QUIET)
+    if (PKG_CONFIG_FOUND)
+        pkg_check_modules(UUID uuid)
+        if (UUID_FOUND)
+            target_include_directories(${PROJECT_NAME} PRIVATE ${UUID_INCLUDE_DIRS})
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${UUID_LIBRARIES})
+        else ()
+            target_link_libraries(${PROJECT_NAME} PRIVATE uuid)
+        endif ()
+    else ()
+        target_link_libraries(${PROJECT_NAME} PRIVATE uuid)
+    endif ()
+endif ()
+
 # Link all dependencies into static lib
 if (APPLE)
     target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
