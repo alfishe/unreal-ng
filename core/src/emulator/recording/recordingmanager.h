@@ -1,7 +1,11 @@
 #pragma once
-#include "stdafx.h"
+#include <memory>
+#include <vector>
 
 #include "emulator/platform.h"
+#include "encoder_base.h"
+#include "encoder_config.h"
+#include "stdafx.h"
 
 /// region <Forward declarations>
 class EmulatorContext;
@@ -14,42 +18,42 @@ struct FramebufferDescriptor;
 /// Recording mode determines how audio sources are handled
 enum class RecordingMode
 {
-    SingleTrack,    // Record final mixed output only (default)
-    MultiTrack,     // Record multiple audio sources to separate tracks
-    ChannelSplit,   // Record individual AY channels separately
-    AudioOnly       // Record audio without video
+    SingleTrack,   // Record final mixed output only (default)
+    MultiTrack,    // Record multiple audio sources to separate tracks
+    ChannelSplit,  // Record individual AY channels separately
+    AudioOnly      // Record audio without video
 };
 
 /// Audio source types for individual device/channel selection
 enum class AudioSourceType
 {
     // Master output
-    MasterMix,              // Final mixed output (all devices)
-    
+    MasterMix,  // Final mixed output (all devices)
+
     // Individual devices
-    Beeper,                 // Beeper output
-    AY1_All,                // AY chip #1 (all channels mixed)
-    AY2_All,                // AY chip #2 (all channels mixed)
-    AY3_All,                // AY chip #3 (all channels mixed)
-    COVOX,                  // COVOX/DAC output
-    GeneralSound,           // General Sound output
-    Moonsound,              // Moonsound/OPL4 output
-    
+    Beeper,        // Beeper output
+    AY1_All,       // AY chip #1 (all channels mixed)
+    AY2_All,       // AY chip #2 (all channels mixed)
+    AY3_All,       // AY chip #3 (all channels mixed)
+    COVOX,         // COVOX/DAC output
+    GeneralSound,  // General Sound output
+    Moonsound,     // Moonsound/OPL4 output
+
     // Individual AY channels (chip 1)
-    AY1_ChannelA,           // AY chip #1, channel A
-    AY1_ChannelB,           // AY chip #1, channel B
-    AY1_ChannelC,           // AY chip #1, channel C
-    
+    AY1_ChannelA,  // AY chip #1, channel A
+    AY1_ChannelB,  // AY chip #1, channel B
+    AY1_ChannelC,  // AY chip #1, channel C
+
     // Individual AY channels (chip 2)
-    AY2_ChannelA,           // AY chip #2, channel A
-    AY2_ChannelB,           // AY chip #2, channel B
-    AY2_ChannelC,           // AY chip #2, channel C
-    
+    AY2_ChannelA,  // AY chip #2, channel A
+    AY2_ChannelB,  // AY chip #2, channel B
+    AY2_ChannelC,  // AY chip #2, channel C
+
     // Individual AY channels (chip 3)
-    AY3_ChannelA,           // AY chip #3, channel A
-    AY3_ChannelB,           // AY chip #3, channel B
-    AY3_ChannelC,           // AY chip #3, channel C
-    
+    AY3_ChannelA,  // AY chip #3, channel A
+    AY3_ChannelB,  // AY chip #3, channel B
+    AY3_ChannelC,  // AY chip #3, channel C
+
     // Custom source (for future extensions)
     Custom
 };
@@ -57,14 +61,14 @@ enum class AudioSourceType
 /// Audio track configuration for multi-track recordings
 struct AudioTrackConfig
 {
-    std::string name;                    // Track name (for metadata)
-    AudioSourceType source;              // Audio source type
-    bool enabled = true;                 // Enable/disable track
-    float volume = 1.0f;                 // Volume multiplier (0.0 - 1.0)
-    int pan = 0;                         // Panning (-100 = left, 0 = center, +100 = right)
-    std::string codec = "aac";          // Audio codec for this track
-    uint32_t bitrate = 192;             // Bitrate in kbps
-    uint32_t sampleRate = 44100;        // Sample rate (Hz)
+    std::string name;             // Track name (for metadata)
+    AudioSourceType source;       // Audio source type
+    bool enabled = true;          // Enable/disable track
+    float volume = 1.0f;          // Volume multiplier (0.0 - 1.0)
+    int pan = 0;                  // Panning (-100 = left, 0 = center, +100 = right)
+    std::string codec = "aac";    // Audio codec for this track
+    uint32_t bitrate = 192;       // Bitrate in kbps
+    uint32_t sampleRate = 44100;  // Sample rate (Hz)
 };
 
 /// endregion </Recording types>
@@ -106,6 +110,9 @@ public:
 public:
     void Init();
     void Reset();
+
+    /// @brief Update cached feature flag state (called by FeatureManager)
+    void UpdateFeatureCache();
     /// endregion </Initialization>
 
     /// region <Recording control>
@@ -117,14 +124,9 @@ public:
     /// @param videoBitrate Video bitrate in kbps (0 = auto/default)
     /// @param audioBitrate Audio bitrate in kbps (0 = auto/default)
     /// @return true if recording started successfully
-    bool StartRecording(
-        const std::string& filename,
-        const std::string& videoCodec = "h264",
-        const std::string& audioCodec = "aac",
-        uint32_t videoBitrate = 0,
-        uint32_t audioBitrate = 0
-    );
-    
+    bool StartRecording(const std::string& filename, const std::string& videoCodec = "h264",
+                        const std::string& audioCodec = "aac", uint32_t videoBitrate = 0, uint32_t audioBitrate = 0);
+
     /// Start recording with full configuration (uses current mode and track settings)
     /// @param filename Output filename
     /// @return true if recording started successfully
@@ -140,10 +142,16 @@ public:
     void ResumeRecording();
 
     /// Check if currently recording
-    bool IsRecording() const { return _isRecording && !_isPaused; }
+    bool IsRecording() const
+    {
+        return _isRecording && !_isPaused;
+    }
 
     /// Check if recording is paused
-    bool IsPaused() const { return _isPaused; }
+    bool IsPaused() const
+    {
+        return _isPaused;
+    }
     /// endregion </Recording control>
 
     /// region <Frame/Audio capture>
@@ -158,6 +166,13 @@ public:
     /// @param samples Audio sample buffer (interleaved stereo, int16_t)
     /// @param sampleCount Number of samples (total, not per channel)
     void CaptureAudio(const int16_t* samples, size_t sampleCount);
+
+    /// @brief Called at each frame end with both video and audio data
+    /// Dispatches to all active encoders
+    /// @param framebuffer Video frame data
+    /// @param audioSamples Audio sample buffer
+    /// @param audioSampleCount Number of audio samples
+    void OnFrameEnd(const FramebufferDescriptor& framebuffer, const int16_t* audioSamples, size_t audioSampleCount);
     /// endregion </Frame/Audio capture>
 
     /// region <Statistics>
@@ -172,52 +187,70 @@ public:
         double averageFrameTime = 0.0;      // Average time per frame encode (ms)
     };
 
-    RecordingStats GetStats() const { return _stats; }
+    RecordingStats GetStats() const
+    {
+        return _stats;
+    }
     /// endregion </Statistics>
 
     /// region <Configuration>
 public:
     // Recording mode
     void SetRecordingMode(RecordingMode mode);
-    RecordingMode GetRecordingMode() const { return _recordingMode; }
-    
+    RecordingMode GetRecordingMode() const
+    {
+        return _recordingMode;
+    }
+
     // Video configuration
     void SetVideoEnabled(bool enabled);
-    bool IsVideoEnabled() const { return _videoEnabled; }
+    bool IsVideoEnabled() const
+    {
+        return _videoEnabled;
+    }
     void SetVideoResolution(uint32_t width, uint32_t height);
     void SetVideoFrameRate(float fps);
     void SetVideoCodec(const std::string& codec);
     void SetVideoBitrate(uint32_t kbps);
-    
+
     // Audio configuration (global)
     void SetAudioSampleRate(uint32_t sampleRate);
-    
+
     // Audio track management (for multi-track mode)
     void AddAudioTrack(const AudioTrackConfig& config);
     void RemoveAudioTrack(size_t index);
     void ClearAudioTracks();
-    size_t GetAudioTrackCount() const { return _audioTracks.size(); }
-    const AudioTrackConfig& GetAudioTrack(size_t index) const { return _audioTracks[index]; }
-    
+    size_t GetAudioTrackCount() const
+    {
+        return _audioTracks.size();
+    }
+    const AudioTrackConfig& GetAudioTrack(size_t index) const
+    {
+        return _audioTracks[index];
+    }
+
     // Simple audio source selection (for single-track mode)
     void SelectAudioSource(AudioSourceType source);
-    
+
     /// endregion </Configuration>
 
 protected:
     /// region <Internal state>
     EmulatorContext* _context = nullptr;
 
+    // Feature flag (cached from FeatureManager)
+    bool _featureEnabled = false;
+
     // Recording state
     bool _isRecording = false;
     bool _isPaused = false;
-    
+
     // Recording mode
     RecordingMode _recordingMode = RecordingMode::SingleTrack;
 
     // Configuration
     std::string _outputFilename;
-    
+
     // Video configuration
     bool _videoEnabled = true;
     std::string _videoCodec = "h264";
@@ -225,16 +258,16 @@ protected:
     uint32_t _videoWidth = 0;
     uint32_t _videoHeight = 0;
     float _videoFrameRate = 50.0f;  // ZX Spectrum native rate
-    
+
     // Audio configuration
     std::string _audioCodec = "aac";
     uint32_t _audioBitrate = 0;
     uint32_t _audioSampleRate = 44100;
     uint32_t _audioChannels = 2;  // Stereo
-    
+
     // Audio tracks (for multi-track mode)
     std::vector<AudioTrackConfig> _audioTracks;
-    
+
     // Selected audio source (for single-track mode)
     AudioSourceType _selectedSource = AudioSourceType::MasterMix;
 
@@ -244,6 +277,9 @@ protected:
 
     // Statistics
     RecordingStats _stats;
+
+    // Active encoders registry
+    std::vector<EncoderPtr> _activeEncoders;
     /// endregion </Internal state>
 
     /// region <Encoder interface (to be implemented)>
@@ -267,4 +303,3 @@ protected:
     void EncodeAudioSamples(const int16_t* samples, size_t sampleCount, double timestamp);
     /// endregion </Encoder interface (to be implemented)>
 };
-

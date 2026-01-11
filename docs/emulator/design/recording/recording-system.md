@@ -10,6 +10,35 @@ The Recording System provides flexible video and audio capture capabilities for 
 
 All recordings are based on **emulated time**, ensuring that turbo mode recordings play back at normal speed with correct timing.
 
+## Master Switch Feature
+
+The recording subsystem is guarded by the `recording` feature in `FeatureManager`:
+
+| Feature | ID | Alias | Default | Description |
+|---------|-----|-------|---------|-------------|
+| Recording | `recording` | `rec` | **OFF** | Enable recording subsystem (video, audio, GIF capture) |
+
+**Behavior:**
+- **OFF (default)**: RecordingManager API calls early-exit with zero CPU overhead. Heavy functionality disabled by default.
+- **ON**: RecordingManager is active and ready for recording commands.
+
+```cpp
+// Enable recording subsystem
+featureManager->setFeature("recording", true);
+
+// Now RecordingManager API is available
+recordingManager->StartRecording("gameplay.mp4");
+```
+
+**CLI/WebAPI:**
+```bash
+feature recording on   # Enable recording subsystem
+feature recording off  # Disable (default)
+```
+
+> **Note:** The `recording` feature is a **master switch only**. Individual recording actions (start, stop, codec selection) are API commands, not separate features.
+
+
 ## Architecture
 
 ### Core Components
@@ -268,6 +297,160 @@ std::cout << "Recorded " << stats.framesRecorded << " frames\n";
 std::cout << "Duration: " << stats.recordedDuration << " seconds\n";
 std::cout << "File size: " << stats.outputFileSize << " bytes\n";
 ```
+
+---
+
+## Frame Lifecycle Integration
+
+The RecordingManager is integrated into the emulator's main loop at specific hook points. Recording only occurs when the feature is enabled **and** a recording session is active.
+
+### Integration Points
+
+```mermaid
+sequenceDiagram
+    participant ML as MainLoop
+    participant SCR as Screen
+    participant SM as SoundManager
+    participant RM as RecordingManager
+    participant ENC as Encoders
+    
+    Note over ML,ENC: Normal Frame Cycle (always runs)
+    ML->>ML: RunFrame()
+    ML->>SCR: RenderFrame()
+    SCR-->>ML: framebuffer ready
+    ML->>ML: OnFrameEnd()
+    
+    Note over ML,ENC: Audio Generation (if sound enabled)
+    ML->>SM: handleFrameEnd()
+    SM->>SM: GenerateAudio()
+    SM-->>ML: audio buffer ready
+    
+    Note over ML,ENC: Recording Hook (only if recording active)
+    ML->>RM: IsRecording()?
+    alt Recording OFF (default)
+        RM-->>ML: false
+        Note right of ML: Skip capture (zero overhead)
+    else Recording ON
+        RM-->>ML: true
+        ML->>RM: CaptureFrame(framebuffer)
+        RM->>ENC: OnVideoFrame(fb, ts)
+        SM->>RM: CaptureAudio(buffer, samples)
+        RM->>ENC: OnAudioSamples(buffer, count, ts)
+    end
+```
+
+### Video Capture (MainLoop::OnFrameEnd)
+
+**File:** [`mainloop.cpp`](../../../../core/src/emulator/mainloop.cpp)
+
+```cpp
+void MainLoop::OnFrameEnd()
+{
+    // ... frame end processing ...
+
+    // Recording integration: Capture video frame if recording
+    if (_context->pRecordingManager && 
+        _context->pRecordingManager->IsRecording() && 
+        _context->pScreen)
+    {
+        try
+        {
+            _context->pRecordingManager->CaptureFrame(
+                _context->pScreen->GetFramebufferDescriptor());
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("RecordingManager::CaptureFrame failed: %s", e.what());
+        }
+    }
+}
+```
+
+### Audio Capture (SoundManager)
+
+**File:** [`soundmanager.cpp`](../../../../core/src/emulator/sound/soundmanager.cpp)
+
+```cpp
+void SoundManager::GenerateAudio()
+{
+    // ... audio generation ...
+
+    // Recording integration: Capture audio if recording
+    if (_context->pRecordingManager && 
+        _context->pRecordingManager->IsRecording())
+    {
+        _context->pRecordingManager->CaptureAudio(
+            _outBuffer, 
+            SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    }
+}
+```
+
+### RecordingManager Feature Guard
+
+**File:** [`recordingmanager.cpp`](../../../../core/src/emulator/recording/recordingmanager.cpp)
+
+```cpp
+// Feature flag check (default: OFF)
+bool RecordingManager::StartRecording(const std::string& filename, ...)
+{
+    if (!_featureEnabled)
+    {
+        MLOGWARNING("Recording feature is disabled. Enable with: feature recording on");
+        return false;
+    }
+    // ... start recording logic ...
+}
+
+// Early exit in frame capture path
+void RecordingManager::OnFrameEnd()
+{
+    if (!_featureEnabled)
+        return;  // Zero overhead when disabled
+    
+    // ... dispatch to encoders ...
+}
+```
+
+### Lifecycle Management (Core)
+
+**File:** [`core.cpp`](../../../../core/src/emulator/cpu/core.cpp)
+
+```cpp
+// Initialization: Register RecordingManager in context
+void Core::Initialize()
+{
+    _recordingManager = new RecordingManager(_context);
+    _context->pRecordingManager = _recordingManager;
+}
+
+// Cleanup: Unregister and destroy
+void Core::Cleanup()
+{
+    _context->pRecordingManager = nullptr;
+    delete _recordingManager;
+}
+```
+
+### Call Flow Summary
+
+| Hook Point | File | Condition | Action |
+|------------|------|-----------|--------|
+| Frame end | `mainloop.cpp:OnFrameEnd()` | Recording + Screen valid | `CaptureFrame()` |
+| Audio gen | `soundmanager.cpp` | Recording active | `CaptureAudio()` |
+| Init | `core.cpp` | Always | Register in context |
+| Cleanup | `core.cpp` | Always | Unregister, cleanup |
+
+### Default State
+
+| Component | Default | Notes |
+|-----------|---------|-------|
+| `Features::kRecording` | **OFF** | Master switch disabled |
+| `_featureEnabled` | `false` | Cached feature state |
+| `IsRecording()` | `false` | No active session |
+| CPU overhead | **Zero** | Early exits before any work |
+
+> **Important:** No recording occurs by default. The feature must be explicitly enabled AND a recording session started.
 
 ## Implementation Details
 

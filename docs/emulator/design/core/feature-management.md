@@ -61,6 +61,7 @@ Hot paths use cached booleans
 |---------|-----|-------|---------|----------|
 | **Sound Generation** | `sound` | `snd` | ON | Master audio toggle (saves ~18% CPU when OFF) |
 | **High-Quality DSP** | `soundhq` | `hq` | ON | FIR filters + oversampling (saves ~15% CPU when OFF) |
+| **Recording** | `recording` | `rec` | OFF | Master recording toggle (guards RecordingManager) |
 
 ---
 

@@ -524,7 +524,8 @@ void HttpAppFrameworkImpl::run()
         getLoop()->moveToCurrentThread();
     }
     LOG_TRACE << "Start to run...";
-    // Create dirs for cache files
+    // Create dirs for cache files - DISABLED to prevent unwanted folder creation
+    /*
     for (int i = 0; i < 256; ++i)
     {
         char dirName[4];
@@ -534,6 +535,7 @@ void HttpAppFrameworkImpl::run()
         });
         utils::createPath(getUploadPath() + "/tmp/" + dirName);
     }
+    */
     if (runAsDaemon_)
     {
         // go daemon!
