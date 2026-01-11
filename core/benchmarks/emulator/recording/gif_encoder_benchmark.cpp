@@ -1,6 +1,6 @@
 #include <benchmark/benchmark.h>
 
-#include "common/image/gifanimationhelper.h"
+#include "3rdparty/gif/gif.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/zx/screenzx.h"
@@ -29,16 +29,16 @@ static void BM_GIFWriteFrame_MainScreen(benchmark::State& state)
     // Create temp file for GIF output
     std::string tempFile = "/tmp/benchmark_test.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     // Benchmark loop
     for (auto _ : state)
     {
-        gifHelper.WriteFrame(framebuffer.data(), bufferSize);
+        GifWriteFrame(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2);
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     // Report metrics
     state.SetItemsProcessed(state.iterations());
@@ -82,16 +82,16 @@ static void BM_GIFWriteFrame_FullFrame(benchmark::State& state)
 
     std::string tempFile = "/tmp/benchmark_test_full.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     // Benchmark loop
     for (auto _ : state)
     {
-        gifHelper.WriteFrame(framebuffer.data(), bufferSize);
+        GifWriteFrame(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2);
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     // Report metrics
     state.SetItemsProcessed(state.iterations());
@@ -109,8 +109,8 @@ static void BM_GIFWriteFrame_HighChange(benchmark::State& state)
     std::vector<uint32_t> framebuffer(bufferSize);
     std::string tempFile = "/tmp/benchmark_test_change.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     uint32_t frame = 0;
 
@@ -127,11 +127,11 @@ static void BM_GIFWriteFrame_HighChange(benchmark::State& state)
             framebuffer[i] = (0xFF << 24) | (b << 16) | (g << 8) | r;
         }
 
-        gifHelper.WriteFrame(framebuffer.data(), bufferSize);
+        GifWriteFrame(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2);
         frame++;
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     state.SetItemsProcessed(state.iterations());
 }
@@ -159,8 +159,8 @@ static void BM_GIFWriteFrame_MenuScroll(benchmark::State& state)
     std::vector<uint32_t> framebuffer(bufferSize);
     std::string tempFile = "/tmp/benchmark_test_menu.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     int highlightedItem = 0;
 
@@ -197,13 +197,13 @@ static void BM_GIFWriteFrame_MenuScroll(benchmark::State& state)
             }
         }
 
-        gifHelper.WriteFrame(framebuffer.data(), bufferSize);
+        GifWriteFrame(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2);
 
         // Move highlight to next item (cycling)
         highlightedItem = (highlightedItem + 1) % menuItems;
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(state.iterations() * bufferSize * 4);
@@ -269,16 +269,16 @@ static void BM_GIFWriteFrame_FixedZX16_MainScreen(benchmark::State& state)
 
     std::string tempFile = "/tmp/benchmark_fixed_mainscreen.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     for (auto _ : state)
     {
         // Use fixed palette path - skips palette calculation
-        gifHelper.WriteFrameWithPalette(framebuffer.data(), bufferSize, &fixedPalette, false);
+        GifWriteFrameFast(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &fixedPalette, false);
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(state.iterations() * bufferSize * 4);
@@ -306,8 +306,8 @@ static void BM_GIFWriteFrame_FixedZX16_MenuScroll(benchmark::State& state)
 
     std::string tempFile = "/tmp/benchmark_fixed_menu.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     int highlightedItem = 0;
 
@@ -329,11 +329,11 @@ static void BM_GIFWriteFrame_FixedZX16_MenuScroll(benchmark::State& state)
             }
         }
 
-        gifHelper.WriteFrameWithPalette(framebuffer.data(), bufferSize, &fixedPalette, false);
+        GifWriteFrameFast(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &fixedPalette, false);
         highlightedItem = (highlightedItem + 1) % menuItems;
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     state.SetItemsProcessed(state.iterations());
     state.SetBytesProcessed(state.iterations() * bufferSize * 4);
@@ -354,8 +354,8 @@ static void BM_GIFWriteFrame_FixedZX16_HighChange(benchmark::State& state)
 
     std::string tempFile = "/tmp/benchmark_fixed_change.gif";
 
-    GIFAnimationHelper gifHelper;
-    gifHelper.StartAnimation(tempFile, width, height, 20);
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
 
     uint32_t frame = 0;
 
@@ -371,12 +371,443 @@ static void BM_GIFWriteFrame_FixedZX16_HighChange(benchmark::State& state)
             framebuffer[i] = (0xFF << 24) | (b << 16) | (g << 8) | r;
         }
 
-        gifHelper.WriteFrameWithPalette(framebuffer.data(), bufferSize, &fixedPalette, false);
+        GifWriteFrameFast(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &fixedPalette, false);
         frame++;
     }
 
-    gifHelper.StopAnimation();
+    GifEnd(&gifWriter);
 
     state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_GIFWriteFrame_FixedZX16_HighChange)->Iterations(100)->Unit(benchmark::kMicrosecond);
+
+// =============================================================================
+// OPT-1: Direct ZX Index Lookup Benchmarks
+// =============================================================================
+// These benchmarks test GifWriteFrameZX which uses direct O(1) palette index
+// lookup instead of k-d tree traversal. This is the fastest path for ZX content.
+
+/// @brief Benchmark ZX-optimized path - MainScreen (direct index lookup)
+static void BM_GIFWriteFrame_DirectZX_MainScreen(benchmark::State& state)
+{
+    const uint32_t width = 256;
+    const uint32_t height = 192;
+    const size_t bufferSize = width * height;
+
+    // Create test framebuffer with exact ZX Spectrum colors
+    std::vector<uint32_t> framebuffer(bufferSize);
+    for (size_t i = 0; i < bufferSize; i++)
+    {
+        uint8_t color = (i % 16);
+        uint8_t r = (color & 0x02) ? ((color & 0x08) ? 0xFF : 0xCD) : 0x00;
+        uint8_t g = (color & 0x04) ? ((color & 0x08) ? 0xFF : 0xCD) : 0x00;
+        uint8_t b = (color & 0x01) ? ((color & 0x08) ? 0xFF : 0xCD) : 0x00;
+        framebuffer[i] = (0xFF << 24) | (b << 16) | (g << 8) | r;
+    }
+
+    // Build fixed palette
+    GifPalette fixedPalette = {};
+    fixedPalette.bitDepth = 4;  // 16 colors
+
+    // Standard ZX Spectrum 16-color palette
+    const uint8_t zxColors[16][3] = {{0x00, 0x00, 0x00}, {0x00, 0x00, 0xCD}, {0xCD, 0x00, 0x00}, {0xCD, 0x00, 0xCD},
+                                     {0x00, 0xCD, 0x00}, {0x00, 0xCD, 0xCD}, {0xCD, 0xCD, 0x00}, {0xCD, 0xCD, 0xCD},
+                                     {0x00, 0x00, 0x00}, {0x00, 0x00, 0xFF}, {0xFF, 0x00, 0x00}, {0xFF, 0x00, 0xFF},
+                                     {0x00, 0xFF, 0x00}, {0x00, 0xFF, 0xFF}, {0xFF, 0xFF, 0x00}, {0xFF, 0xFF, 0xFF}};
+    for (int i = 0; i < 16; i++)
+    {
+        fixedPalette.r[i] = zxColors[i][0];
+        fixedPalette.g[i] = zxColors[i][1];
+        fixedPalette.b[i] = zxColors[i][2];
+    }
+    GifBuildPaletteTree(&fixedPalette);
+
+    std::string tempFile = "/tmp/benchmark_direct_zx_mainscreen.gif";
+
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
+
+    for (auto _ : state)
+    {
+        // Use ZX-optimized path with direct index lookup
+        GifWriteFrameZX(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &fixedPalette);
+    }
+
+    GifEnd(&gifWriter);
+
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * bufferSize * 4);
+}
+BENCHMARK(BM_GIFWriteFrame_DirectZX_MainScreen)->Iterations(250)->Unit(benchmark::kMicrosecond);
+
+/// @brief Benchmark ZX-optimized path - HighChange scenario
+static void BM_GIFWriteFrame_DirectZX_HighChange(benchmark::State& state)
+{
+    const uint32_t width = 256;
+    const uint32_t height = 192;
+    const size_t bufferSize = width * height;
+
+    std::vector<uint32_t> framebuffer(bufferSize);
+
+    // Build fixed palette
+    GifPalette fixedPalette = {};
+    fixedPalette.bitDepth = 4;
+
+    const uint8_t zxColors[16][3] = {{0x00, 0x00, 0x00}, {0x00, 0x00, 0xCD}, {0xCD, 0x00, 0x00}, {0xCD, 0x00, 0xCD},
+                                     {0x00, 0xCD, 0x00}, {0x00, 0xCD, 0xCD}, {0xCD, 0xCD, 0x00}, {0xCD, 0xCD, 0xCD},
+                                     {0x00, 0x00, 0x00}, {0x00, 0x00, 0xFF}, {0xFF, 0x00, 0x00}, {0xFF, 0x00, 0xFF},
+                                     {0x00, 0xFF, 0x00}, {0x00, 0xFF, 0xFF}, {0xFF, 0xFF, 0x00}, {0xFF, 0xFF, 0xFF}};
+    for (int i = 0; i < 16; i++)
+    {
+        fixedPalette.r[i] = zxColors[i][0];
+        fixedPalette.g[i] = zxColors[i][1];
+        fixedPalette.b[i] = zxColors[i][2];
+    }
+    GifBuildPaletteTree(&fixedPalette);
+
+    std::string tempFile = "/tmp/benchmark_direct_zx_highchange.gif";
+
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
+
+    int frame = 0;
+    for (auto _ : state)
+    {
+        // Every frame is completely different (worst case - maximum work)
+        for (size_t i = 0; i < bufferSize; i++)
+        {
+            uint8_t color = ((i + frame * 7) % 16);
+            uint8_t r = (color & 0x02) ? ((color & 0x08) ? 0xFF : 0xCD) : 0x00;
+            uint8_t g = (color & 0x04) ? ((color & 0x08) ? 0xFF : 0xCD) : 0x00;
+            uint8_t b = (color & 0x01) ? ((color & 0x08) ? 0xFF : 0xCD) : 0x00;
+            framebuffer[i] = (0xFF << 24) | (b << 16) | (g << 8) | r;
+        }
+
+        GifWriteFrameZX(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &fixedPalette);
+        frame++;
+    }
+
+    GifEnd(&gifWriter);
+
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_GIFWriteFrame_DirectZX_HighChange)->Iterations(100)->Unit(benchmark::kMicrosecond);
+
+// ================== Hash Table Lookup Benchmarks ==================
+
+/// @brief Benchmark hash table build time for 256 colors
+static void BM_HashLookup_Build256Colors(benchmark::State& state)
+{
+    GifPalette palette = {};
+    palette.bitDepth = 8;  // 256 colors
+    for (int i = 0; i < 256; i++)
+    {
+        palette.r[i] = i;
+        palette.g[i] = (i * 2) % 256;
+        palette.b[i] = (i * 3) % 256;
+    }
+
+    for (auto _ : state)
+    {
+        GifColorLookup lookup = {};
+        GifBuildColorLookup(&lookup, &palette);
+        benchmark::DoNotOptimize(lookup);
+    }
+
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_HashLookup_Build256Colors)->Iterations(10000)->Unit(benchmark::kNanosecond);
+
+/// @brief Benchmark hash table lookup time (single color)
+static void BM_HashLookup_SingleColor(benchmark::State& state)
+{
+    GifPalette palette = {};
+    palette.bitDepth = 8;
+    for (int i = 0; i < 256; i++)
+    {
+        palette.r[i] = i;
+        palette.g[i] = (i * 2) % 256;
+        palette.b[i] = (i * 3) % 256;
+    }
+
+    GifColorLookup lookup = {};
+    GifBuildColorLookup(&lookup, &palette);
+
+    // Test color in middle of hash table
+    uint32_t testColor = 0xFF800040;  // Some color
+
+    for (auto _ : state)
+    {
+        uint8_t index = GifGetColorIndex(&lookup, testColor);
+        benchmark::DoNotOptimize(index);
+    }
+
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_HashLookup_SingleColor)->Iterations(100000)->Unit(benchmark::kNanosecond);
+
+/// @brief Benchmark GifThresholdImageExact (hash lookup) vs GifThresholdImage (k-d tree)
+static void BM_ThresholdImage_HashLookup(benchmark::State& state)
+{
+    const uint32_t width = 352;
+    const uint32_t height = 288;
+    const size_t numPixels = width * height;
+
+    // Use emulator palette
+    const uint32_t emulatorABGR[16] = {
+        0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+        0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF,
+    };
+
+    GifPalette palette = {};
+    palette.bitDepth = 4;
+    for (int i = 0; i < 16; i++)
+    {
+        palette.r[i] = emulatorABGR[i] & 0xFF;
+        palette.g[i] = (emulatorABGR[i] >> 8) & 0xFF;
+        palette.b[i] = (emulatorABGR[i] >> 16) & 0xFF;
+    }
+    GifBuildPaletteTree(&palette);
+
+    GifColorLookup lookup = {};
+    GifBuildColorLookup(&lookup, &palette);
+
+    // Create framebuffer with cycling colors
+    std::vector<uint32_t> framebuffer(numPixels);
+    for (size_t i = 0; i < numPixels; i++)
+    {
+        framebuffer[i] = emulatorABGR[i % 16];
+    }
+
+    std::vector<uint8_t> output(numPixels * 4);
+
+    for (auto _ : state)
+    {
+        GifThresholdImageExact(nullptr, reinterpret_cast<uint8_t*>(framebuffer.data()), output.data(), width, height,
+                               &lookup, &palette);
+    }
+
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * numPixels * 4);
+}
+BENCHMARK(BM_ThresholdImage_HashLookup)->Iterations(500)->Unit(benchmark::kMicrosecond);
+
+/// @brief Benchmark k-d tree lookup for comparison
+static void BM_ThresholdImage_KdTree(benchmark::State& state)
+{
+    const uint32_t width = 352;
+    const uint32_t height = 288;
+    const size_t numPixels = width * height;
+
+    // Use emulator palette
+    const uint32_t emulatorABGR[16] = {
+        0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+        0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF,
+    };
+
+    GifPalette palette = {};
+    palette.bitDepth = 4;
+    for (int i = 0; i < 16; i++)
+    {
+        palette.r[i] = emulatorABGR[i] & 0xFF;
+        palette.g[i] = (emulatorABGR[i] >> 8) & 0xFF;
+        palette.b[i] = (emulatorABGR[i] >> 16) & 0xFF;
+    }
+    GifBuildPaletteTree(&palette);
+
+    // Create framebuffer with cycling colors
+    std::vector<uint32_t> framebuffer(numPixels);
+    for (size_t i = 0; i < numPixels; i++)
+    {
+        framebuffer[i] = emulatorABGR[i % 16];
+    }
+
+    std::vector<uint8_t> output(numPixels * 4);
+
+    for (auto _ : state)
+    {
+        GifThresholdImage(nullptr, reinterpret_cast<uint8_t*>(framebuffer.data()), output.data(), width, height,
+                          &palette);
+    }
+
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * numPixels * 4);
+}
+BENCHMARK(BM_ThresholdImage_KdTree)->Iterations(500)->Unit(benchmark::kMicrosecond);
+
+// ================== End-to-End Comparison Benchmarks ==================
+// All benchmarks use the same scenario for fair comparison
+
+/// @brief Benchmark end-to-end: Auto mode (baseline)
+static void BM_E2E_AutoMode(benchmark::State& state)
+{
+    const uint32_t width = 352;
+    const uint32_t height = 288;
+    const size_t bufferSize = width * height;
+
+    // Emulator palette
+    const uint32_t emulatorABGR[16] = {
+        0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+        0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF,
+    };
+
+    std::vector<uint32_t> framebuffer(bufferSize);
+    for (size_t i = 0; i < bufferSize; i++)
+    {
+        framebuffer[i] = emulatorABGR[i % 16];
+    }
+
+    std::string tempFile = "/tmp/benchmark_e2e_auto.gif";
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
+
+    for (auto _ : state)
+    {
+        GifWriteFrame(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2);
+    }
+
+    GifEnd(&gifWriter);
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * bufferSize * 4);
+}
+BENCHMARK(BM_E2E_AutoMode)->Iterations(250)->Unit(benchmark::kMicrosecond);
+
+/// @brief Benchmark end-to-end: Fixed palette with k-d tree
+static void BM_E2E_FixedPalette_KdTree(benchmark::State& state)
+{
+    const uint32_t width = 352;
+    const uint32_t height = 288;
+    const size_t bufferSize = width * height;
+
+    const uint32_t emulatorABGR[16] = {
+        0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+        0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF,
+    };
+
+    GifPalette palette = {};
+    palette.bitDepth = 4;
+    for (int i = 0; i < 16; i++)
+    {
+        palette.r[i] = emulatorABGR[i] & 0xFF;
+        palette.g[i] = (emulatorABGR[i] >> 8) & 0xFF;
+        palette.b[i] = (emulatorABGR[i] >> 16) & 0xFF;
+    }
+    GifBuildPaletteTree(&palette);
+
+    std::vector<uint32_t> framebuffer(bufferSize);
+    for (size_t i = 0; i < bufferSize; i++)
+    {
+        framebuffer[i] = emulatorABGR[i % 16];
+    }
+
+    std::string tempFile = "/tmp/benchmark_e2e_fixed_kdtree.gif";
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
+
+    for (auto _ : state)
+    {
+        GifWriteFrameFast(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &palette, false);
+    }
+
+    GifEnd(&gifWriter);
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * bufferSize * 4);
+}
+BENCHMARK(BM_E2E_FixedPalette_KdTree)->Iterations(250)->Unit(benchmark::kMicrosecond);
+
+/// @brief Benchmark end-to-end: Hash lookup (exact matching)
+static void BM_E2E_HashLookup(benchmark::State& state)
+{
+    const uint32_t width = 352;
+    const uint32_t height = 288;
+    const size_t bufferSize = width * height;
+
+    const uint32_t emulatorABGR[16] = {
+        0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA,
+        0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF,
+    };
+
+    GifPalette palette = {};
+    palette.bitDepth = 4;
+    for (int i = 0; i < 16; i++)
+    {
+        palette.r[i] = emulatorABGR[i] & 0xFF;
+        palette.g[i] = (emulatorABGR[i] >> 8) & 0xFF;
+        palette.b[i] = (emulatorABGR[i] >> 16) & 0xFF;
+    }
+    GifBuildPaletteTree(&palette);
+
+    GifColorLookup lookup = {};
+    GifBuildColorLookup(&lookup, &palette);
+
+    std::vector<uint32_t> framebuffer(bufferSize);
+    for (size_t i = 0; i < bufferSize; i++)
+    {
+        framebuffer[i] = emulatorABGR[i % 16];
+    }
+
+    std::string tempFile = "/tmp/benchmark_e2e_hash.gif";
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
+
+    for (auto _ : state)
+    {
+        GifWriteFrameExact(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &palette, &lookup);
+    }
+
+    GifEnd(&gifWriter);
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * bufferSize * 4);
+}
+BENCHMARK(BM_E2E_HashLookup)->Iterations(250)->Unit(benchmark::kMicrosecond);
+
+/// @brief Benchmark end-to-end: DirectZX (hardcoded ZX colors)
+static void BM_E2E_DirectZX(benchmark::State& state)
+{
+    const uint32_t width = 352;
+    const uint32_t height = 288;
+    const size_t bufferSize = width * height;
+
+    // Standard ZX colors for DirectZX (different from emulator palette!)
+    const uint8_t zxColors[16][3] = {
+        {0x00, 0x00, 0x00}, {0x00, 0x00, 0xCD}, {0xCD, 0x00, 0x00}, {0xCD, 0x00, 0xCD},
+        {0x00, 0xCD, 0x00}, {0x00, 0xCD, 0xCD}, {0xCD, 0xCD, 0x00}, {0xCD, 0xCD, 0xCD},
+        {0x00, 0x00, 0x00}, {0x00, 0x00, 0xFF}, {0xFF, 0x00, 0x00}, {0xFF, 0x00, 0xFF},
+        {0x00, 0xFF, 0x00}, {0x00, 0xFF, 0xFF}, {0xFF, 0xFF, 0x00}, {0xFF, 0xFF, 0xFF},
+    };
+
+    GifPalette palette = {};
+    palette.bitDepth = 4;
+    for (int i = 0; i < 16; i++)
+    {
+        palette.r[i] = zxColors[i][0];
+        palette.g[i] = zxColors[i][1];
+        palette.b[i] = zxColors[i][2];
+    }
+    GifBuildPaletteTree(&palette);
+
+    // Create ZX-compatible framebuffer
+    std::vector<uint32_t> framebuffer(bufferSize);
+    for (size_t i = 0; i < bufferSize; i++)
+    {
+        uint8_t color = i % 16;
+        uint8_t r = zxColors[color][0];
+        uint8_t g = zxColors[color][1];
+        uint8_t b = zxColors[color][2];
+        framebuffer[i] = (0xFF << 24) | (b << 16) | (g << 8) | r;
+    }
+
+    std::string tempFile = "/tmp/benchmark_e2e_directzx.gif";
+    GifWriter gifWriter = {};
+    GifBegin(&gifWriter, tempFile.c_str(), width, height, 2);
+
+    for (auto _ : state)
+    {
+        GifWriteFrameZX(&gifWriter, reinterpret_cast<uint8_t*>(framebuffer.data()), width, height, 2, &palette);
+    }
+
+    GifEnd(&gifWriter);
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * bufferSize * 4);
+}
+BENCHMARK(BM_E2E_DirectZX)->Iterations(250)->Unit(benchmark::kMicrosecond);

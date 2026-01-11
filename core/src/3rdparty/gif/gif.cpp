@@ -877,6 +877,149 @@ bool GifWriteFrameFast(GifWriter* writer, const uint8_t* image, uint32_t width, 
     return true;
 }
 
+// =============================================================================
+// OPT-1: Direct ZX Spectrum Palette Index Lookup
+// =============================================================================
+// O(1) lookup bypassing k-d tree for exact ZX Spectrum colors.
+// ZX Spectrum uses deterministic color encoding:
+//   - Normal intensity: R/G/B = 0x00 or 0xCD
+//   - Bright intensity: R/G/B = 0x00 or 0xFF
+//   - Color index = (bright ? 8 : 0) + (blue ? 1 : 0) + (red ? 2 : 0) + (green ? 4 : 0)
+// =============================================================================
+
+uint8_t GifGetZXPaletteIndexDirect(uint8_t r, uint8_t g, uint8_t b)
+{
+    // Detect bright intensity (any channel at 0xFF)
+    bool isBright = (r == 0xFF || g == 0xFF || b == 0xFF);
+    uint8_t base = isBright ? 8 : 0;
+
+    // Encode color bits using threshold at 0x80
+    // This handles both normal (0xCD) and bright (0xFF) intensities
+    uint8_t color = 0;
+    if (b >= 0x80)
+        color |= 0x01;  // Bit 0 = Blue
+    if (r >= 0x80)
+        color |= 0x02;  // Bit 1 = Red
+    if (g >= 0x80)
+        color |= 0x04;  // Bit 2 = Green
+
+    return base + color;
+}
+
+// Optimized threshold using direct ZX lookup
+// NOTE: Framebuffer is ABGR (little-endian): byte[0]=B, byte[1]=G, byte[2]=R
+void GifThresholdImageZX(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                         uint32_t height, GifPalette* pPal)
+{
+    uint32_t numPixels = width * height;
+
+    for (uint32_t ii = 0; ii < numPixels; ++ii)
+    {
+        // Delta detection: if pixel unchanged, mark transparent
+        if (lastFrame && lastFrame[0] == nextFrame[0] && lastFrame[1] == nextFrame[1] && lastFrame[2] == nextFrame[2])
+        {
+            outFrame[0] = lastFrame[0];
+            outFrame[1] = lastFrame[1];
+            outFrame[2] = lastFrame[2];
+            outFrame[3] = kGifTransIndex;
+        }
+        else
+        {
+            // Direct ZX palette lookup - O(1) instead of O(log n) k-d tree
+            // Framebuffer is BGRA (little-endian): [0]=B, [1]=G, [2]=R
+            uint8_t b = nextFrame[0];
+            uint8_t g = nextFrame[1];
+            uint8_t r = nextFrame[2];
+            uint8_t bestInd = GifGetZXPaletteIndexDirect(r, g, b);
+
+            // Write the resulting color to the output buffer
+            outFrame[0] = pPal->r[bestInd];
+            outFrame[1] = pPal->g[bestInd];
+            outFrame[2] = pPal->b[bestInd];
+            outFrame[3] = bestInd;
+        }
+
+        if (lastFrame)
+            lastFrame += 4;
+        outFrame += 4;
+        nextFrame += 4;
+    }
+}
+
+// =============================================================================
+// GifWriteFrameZX: Maximum performance path for ZX Spectrum content
+// =============================================================================
+// Combines:
+//   1. Fixed palette (no GifMakePalette)
+//   2. Direct index lookup O(1) (no k-d tree traversal)
+// This provides the fastest possible encoding for ZX Spectrum content.
+// =============================================================================
+
+bool GifWriteFrameZX(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                     GifPalette* palette)
+{
+    if (!writer->f || !palette)
+        return false;
+
+    const uint8_t* oldImage = writer->firstFrame ? nullptr : writer->oldImage;
+    writer->firstFrame = false;
+
+    // Check for identical frames (optimization)
+    if (writer->oldRawImage != nullptr && memcmp(writer->oldRawImage, image, width * height * 4) == 0)
+    {
+        // Write a minimal 1x1 frame to maintain timing
+        GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, 1, 1, delay, palette);
+    }
+    else
+    {
+        // Use ZX-optimized threshold with direct index lookup
+        GifThresholdImageZX(oldImage, image, writer->oldImage, width, height, palette);
+        GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, width, height, delay, palette);
+    }
+
+    // Track raw image for identical frame detection
+    if (writer->oldRawImage == nullptr)
+    {
+        writer->oldRawImage = new uint8_t[width * height * 4];
+    }
+    memcpy(writer->oldRawImage, image, width * height * 4);
+
+    return true;
+}
+
+// Writes a frame using hash lookup for exact color matching
+bool GifWriteFrameExact(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                        GifPalette* palette, const GifColorLookup* lookup)
+{
+    if (!writer->f || !palette || !lookup)
+        return false;
+
+    const uint8_t* oldImage = writer->firstFrame ? nullptr : writer->oldImage;
+    writer->firstFrame = false;
+
+    // Check for identical frames (optimization)
+    if (writer->oldRawImage != nullptr && memcmp(writer->oldRawImage, image, width * height * 4) == 0)
+    {
+        // Write a minimal 1x1 frame to maintain timing
+        GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, 1, 1, delay, palette);
+    }
+    else
+    {
+        // Use hash lookup for exact color matching
+        GifThresholdImageExact(oldImage, image, writer->oldImage, width, height, lookup, palette);
+        GifWriteLzwImage(writer->f, writer->oldImage, 0, 0, width, height, delay, palette);
+    }
+
+    // Track raw image for identical frame detection
+    if (writer->oldRawImage == nullptr)
+    {
+        writer->oldRawImage = new uint8_t[width * height * 4];
+    }
+    memcpy(writer->oldRawImage, image, width * height * 4);
+
+    return true;
+}
+
 // Writes the EOF code, closes the file handle, and frees temp memory used by a GIF.
 // Many if not most viewers will still display a GIF properly if the EOF code is missing,
 // but it's still a good idea to write it out.
@@ -896,4 +1039,126 @@ bool GifEnd(GifWriter* writer)
     writer->oldImage = NULL;
 
     return true;
+}
+
+// =============================================================================
+// Hash Table Color Lookup - O(1) exact color matching
+// =============================================================================
+// Uses FNV-1a hash with open addressing and linear probing
+// Table size is 512 (power of 2) for fast modulo via bitmask
+
+static inline uint32_t GifHashColor(uint32_t abgr)
+{
+    // FNV-1a hash for 32-bit value
+    uint32_t h = 2166136261u;
+    h = (h ^ (abgr & 0xFF)) * 16777619u;
+    h = (h ^ ((abgr >> 8) & 0xFF)) * 16777619u;
+    h = (h ^ ((abgr >> 16) & 0xFF)) * 16777619u;
+    h = (h ^ ((abgr >> 24) & 0xFF)) * 16777619u;
+    return h;
+}
+
+void GifBuildColorLookup(GifColorLookup* lookup, const GifPalette* pPal)
+{
+    if (!lookup || !pPal)
+        return;
+
+    // Clear table
+    memset(lookup->keys, 0, sizeof(lookup->keys));
+    memset(lookup->values, 0, sizeof(lookup->values));
+    memset(lookup->occupied, 0, sizeof(lookup->occupied));
+
+    int numColors = 1 << pPal->bitDepth;
+    lookup->numColors = (uint16_t)numColors;
+
+    // Insert each palette color
+    for (int i = 0; i < numColors; i++)
+    {
+        // Build ABGR color from palette RGB (alpha = 0xFF)
+        uint32_t abgr = 0xFF000000 | ((uint32_t)pPal->b[i] << 16) | ((uint32_t)pPal->g[i] << 8) | (uint32_t)pPal->r[i];
+
+        // Find slot using linear probing
+        uint32_t hash = GifHashColor(abgr);
+        uint32_t slot = hash & (GifColorLookup::TABLE_SIZE - 1);
+
+        while (lookup->occupied[slot] && lookup->keys[slot] != abgr)
+        {
+            slot = (slot + 1) & (GifColorLookup::TABLE_SIZE - 1);
+        }
+
+        lookup->keys[slot] = abgr;
+        lookup->values[slot] = (uint8_t)i;
+        lookup->occupied[slot] = true;
+    }
+
+    lookup->valid = true;
+}
+
+uint8_t GifGetColorIndex(const GifColorLookup* lookup, uint32_t abgrColor)
+{
+    if (!lookup || !lookup->valid)
+        return 0;
+
+    uint32_t hash = GifHashColor(abgrColor);
+    uint32_t slot = hash & (GifColorLookup::TABLE_SIZE - 1);
+
+    // Linear probe to find exact match
+    int probes = 0;
+    while (probes < GifColorLookup::TABLE_SIZE)
+    {
+        if (!lookup->occupied[slot])
+        {
+            // Empty slot means color not found
+            return 0;
+        }
+        if (lookup->keys[slot] == abgrColor)
+        {
+            return lookup->values[slot];
+        }
+        slot = (slot + 1) & (GifColorLookup::TABLE_SIZE - 1);
+        probes++;
+    }
+
+    return 0;  // Not found, return index 0
+}
+
+void GifThresholdImageExact(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                            uint32_t height, const GifColorLookup* lookup, GifPalette* pPal)
+{
+    uint32_t numPixels = width * height;
+
+    for (uint32_t i = 0; i < numPixels; ++i)
+    {
+        // if a previous color is available, and it matches the current color,
+        // set the pixel to transparent
+        if (lastFrame && lastFrame[0] == nextFrame[0] && lastFrame[1] == nextFrame[1] && lastFrame[2] == nextFrame[2])
+        {
+            outFrame[0] = lastFrame[0];
+            outFrame[1] = lastFrame[1];
+            outFrame[2] = lastFrame[2];
+            outFrame[3] = kGifTransIndex;
+        }
+        else
+        {
+            // Build ABGR from RGBA framebuffer (or BGRA on little-endian)
+            // Memory layout: [R, G, B, A] or [B, G, R, A] depending on platform
+            // The framebuffer is ABGR little-endian, so bytes are: [R, G, B, A]
+            uint32_t abgr = 0xFF000000 | ((uint32_t)nextFrame[2] << 16) |  // B
+                            ((uint32_t)nextFrame[1] << 8) |                // G
+                            (uint32_t)nextFrame[0];                        // R
+
+            uint8_t bestInd = GifGetColorIndex(lookup, abgr);
+
+            // Write the resulting color to the output buffer
+            outFrame[0] = pPal->r[bestInd];
+            outFrame[1] = pPal->g[bestInd];
+            outFrame[2] = pPal->b[bestInd];
+            outFrame[3] = bestInd;
+        }
+
+        if (lastFrame)
+            lastFrame += 4;
+        outFrame += 4;
+        nextFrame += 4;
+    }
 }

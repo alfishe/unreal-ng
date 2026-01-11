@@ -4,26 +4,27 @@
 
 #include "../encoder_base.h"
 #include "../encoder_config.h"
-#include "common/image/gifanimationhelper.h"
+#include "3rdparty/gif/gif.h"
 
 /// @brief GIF Animation Encoder
 ///
-/// Wraps GIFAnimationHelper to implement the EncoderBase interface.
 /// Produces animated GIF files from emulator video frames.
+/// Directly wraps gif.h functions for optimal performance.
 ///
 /// Features:
 /// - Video-only (GIF has no audio support)
 /// - 256-color palette with optional dithering
-/// - Fixed palette mode for ZX Spectrum (fast path)
+/// - Multiple palette modes for different use cases
+/// - Hash lookup for exact color matching
 /// - Configurable frame delay
-/// - Small file size for short clips
 /// - RAII cleanup guarantee
 /// - Path validation before recording
 ///
-/// Use cases:
-/// - Screenshots and short demos
-/// - Social media sharing
-/// - Quick game previews
+/// Optimization Modes:
+/// - Auto: Per-frame palette calculation (compatible with any content)
+/// - FixedZX16: Pre-built ZX Spectrum 16-color palette (fast)
+/// - FixedZX256: Pre-built 256-color palette for modern clones (fast)
+/// - HashLookup: Exact color matching with O(1) lookup (recommended)
 class GIFEncoder : public EncoderBase
 {
 public:
@@ -113,7 +114,11 @@ private:
     /// Build pre-computed 256-color palette for modern clones
     void BuildZXSpectrum256Palette();
 
-    GIFAnimationHelper _gifHelper;
+    /// Build hash lookup table from palette
+    void BuildHashLookup();
+
+    // GIF writer state (direct from gif.h)
+    GifWriter _gifWriter = {};
     bool _isRecording = false;
     uint64_t _framesEncoded = 0;
 
@@ -125,8 +130,10 @@ private:
     bool _dither = false;
 
     // Fixed palette (for FixedZX16/FixedZX256 modes)
-    GifPalette _fixedPalette;
+    GifPalette _fixedPalette = {};
+    GifColorLookup _colorLookup = {};
     bool _useFixedPalette = false;
+    bool _useHashLookup = false;
 
     // State
     std::string _filename;

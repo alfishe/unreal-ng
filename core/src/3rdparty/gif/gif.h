@@ -76,6 +76,29 @@ struct GifPalette
     uint8_t treeSplit[256];
 };
 
+// Hash table for O(1) exact color lookup
+// Uses open addressing with linear probing for simplicity
+// Size is 512 entries to keep load factor < 0.5 for 256 colors
+struct GifColorLookup
+{
+    static constexpr int TABLE_SIZE = 512;  // Power of 2 for fast modulo
+    uint32_t keys[TABLE_SIZE];              // ABGR color value
+    uint8_t values[TABLE_SIZE];             // Palette index
+    bool occupied[TABLE_SIZE];              // Whether slot is occupied
+    uint16_t numColors;                     // Number of colors in lookup (up to 256)
+    bool valid;                             // Whether lookup has been built
+};
+
+// Build hash lookup table from palette
+void GifBuildColorLookup(GifColorLookup* lookup, const GifPalette* pPal);
+
+// Get exact palette index for ABGR color (returns 0 if not found)
+uint8_t GifGetColorIndex(const GifColorLookup* lookup, uint32_t abgrColor);
+
+// Threshold image using hash lookup for exact color matching
+void GifThresholdImageExact(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                            uint32_t height, const GifColorLookup* lookup, GifPalette* pPal);
+
 // max, min, and abs functions
 int GifIMax(int l, int r);
 int GifIMin(int l, int r);
@@ -180,6 +203,25 @@ bool GifWriteFrameFast(GifWriter* writer, const uint8_t* image, uint32_t width, 
 
 // Builds a k-d tree for the palette (required for fast color lookup)
 void GifBuildPaletteTree(GifPalette* pPal);
+
+// Direct ZX Spectrum palette index lookup (O(1) - bypasses k-d tree)
+// Only valid for exact ZX Spectrum palette colors
+// Returns palette index 0-15 for standard ZX colors
+uint8_t GifGetZXPaletteIndexDirect(uint8_t r, uint8_t g, uint8_t b);
+
+// Optimized threshold for ZX Spectrum palette (uses direct lookup)
+void GifThresholdImageZX(const uint8_t* lastFrame, const uint8_t* nextFrame, uint8_t* outFrame, uint32_t width,
+                         uint32_t height, GifPalette* pPal);
+
+// Writes a frame using ZX-optimized direct palette lookup (fastest path for ZX content)
+// Combines fixed palette + direct index lookup for maximum performance
+bool GifWriteFrameZX(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                     GifPalette* palette);
+
+// Writes a frame using hash lookup for exact color matching (works with any palette)
+// Faster than k-d tree for fixed palettes, ensures exact color matching
+bool GifWriteFrameExact(GifWriter* writer, const uint8_t* image, uint32_t width, uint32_t height, uint32_t delay,
+                        GifPalette* palette, const GifColorLookup* lookup);
 
 // Writes the EOF code, closes the file handle, and frees temp memory used by a GIF.
 // Many if not most viewers will still display a GIF properly if the EOF code is missing,

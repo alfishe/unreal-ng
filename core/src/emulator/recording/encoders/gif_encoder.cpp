@@ -2,6 +2,7 @@
 
 #include <filesystem>
 
+#include "common/logger.h"
 #include "emulator/video/screen.h"
 
 GIFEncoder::~GIFEncoder()
@@ -70,15 +71,20 @@ bool GIFEncoder::Start(const std::string& filename, const EncoderConfig& config)
 
     // Build fixed palette if requested
     _useFixedPalette = false;
+    _useHashLookup = false;
     switch (_paletteMode)
     {
         case EncoderConfig::GifPaletteMode::FixedZX16:
             BuildZXSpectrum16Palette();
+            BuildHashLookup();
             _useFixedPalette = true;
+            _useHashLookup = true;
             break;
         case EncoderConfig::GifPaletteMode::FixedZX256:
             BuildZXSpectrum256Palette();
+            BuildHashLookup();
             _useFixedPalette = true;
+            _useHashLookup = true;
             break;
         case EncoderConfig::GifPaletteMode::Auto:
         default:
@@ -86,8 +92,12 @@ bool GIFEncoder::Start(const std::string& filename, const EncoderConfig& config)
             break;
     }
 
-    // Start GIF animation
-    _gifHelper.StartAnimation(filename, _width, _height, _delayMs);
+    // Start GIF animation (directly using gif.h)
+    if (!GifBegin(&_gifWriter, filename.c_str(), _width, _height, _delayMs / 10))
+    {
+        _lastError = "Failed to create output file";
+        return false;
+    }
 
     // Verify file was created (basic check)
     if (!std::filesystem::exists(filename, ec))
@@ -110,7 +120,7 @@ void GIFEncoder::Stop()
         return;
     }
 
-    _gifHelper.StopAnimation();
+    GifEnd(&_gifWriter);
     _isRecording = false;
 }
 
@@ -128,17 +138,23 @@ void GIFEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, [[maybe_
     }
 
     // Choose encoding path based on palette mode
-    if (_useFixedPalette)
+    if (_useHashLookup)
     {
-        // Fast path: use pre-built palette, skip per-frame palette calculation
-        _gifHelper.WriteFrameWithPalette(reinterpret_cast<uint32_t*>(framebuffer.memoryBuffer),
-                                         framebuffer.width * framebuffer.height, &_fixedPalette, _dither);
+        // Fastest path: use hash lookup for exact color matching
+        GifWriteFrameExact(&_gifWriter, reinterpret_cast<uint8_t*>(framebuffer.memoryBuffer), _width, _height,
+                           _delayMs / 10, &_fixedPalette, &_colorLookup);
+    }
+    else if (_useFixedPalette)
+    {
+        // Fast path: use pre-built palette with k-d tree lookup
+        GifWriteFrameFast(&_gifWriter, reinterpret_cast<uint8_t*>(framebuffer.memoryBuffer), _width, _height,
+                          _delayMs / 10, &_fixedPalette, _dither);
     }
     else
     {
-        // Original path: auto-calculate palette per frame
-        _gifHelper.WriteFrame(reinterpret_cast<uint32_t*>(framebuffer.memoryBuffer),
-                              framebuffer.width * framebuffer.height);
+        // Original path: auto-calculate palette per frame (default 8-bit = 256 colors)
+        GifWriteFrame(&_gifWriter, reinterpret_cast<uint8_t*>(framebuffer.memoryBuffer), _width, _height, _delayMs / 10,
+                      8, _dither);
     }
 
     _framesEncoded++;
@@ -196,7 +212,7 @@ void GIFEncoder::BuildZXSpectrum16Palette()
         }
     }
 
-    // Build k-d tree for fast color lookup
+    // Build k-d tree for fallback color lookup
     GifBuildPaletteTree(&_fixedPalette);
 }
 
@@ -241,6 +257,12 @@ void GIFEncoder::BuildZXSpectrum256Palette()
         idx++;
     }
 
-    // Build k-d tree for fast color lookup
+    // Build k-d tree for fallback color lookup
     GifBuildPaletteTree(&_fixedPalette);
+}
+
+void GIFEncoder::BuildHashLookup()
+{
+    // Build hash lookup table for O(1) exact color matching
+    GifBuildColorLookup(&_colorLookup, &_fixedPalette);
 }
