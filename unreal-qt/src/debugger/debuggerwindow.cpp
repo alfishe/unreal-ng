@@ -110,7 +110,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     /// region <Subscribe to events>
     // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow.
     // We do NOT subscribe to ANY global MessageCenter events here!
-    // 
+    //
     // Problem: Global events (NC_EXECUTION_BREAKPOINT, NC_EXECUTION_CPU_STEP, etc.)
     // don't carry emulator ID information. When multiple emulators exist, we can't
     // tell which emulator the event is from, leading to race conditions and crashes.
@@ -121,7 +121,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     //
     // For debugging events (breakpoints, steps), we rely on polling the emulator
     // state when updateState() is called, rather than reacting to global broadcasts.
-    
+
     /// endregion </Subscribe to events>
 }
 
@@ -140,7 +140,8 @@ DebuggerWindow::~DebuggerWindow()
 
 void DebuggerWindow::setEmulator(Emulator* emulator)
 {
-    qDebug() << "DebuggerWindow::setEmulator() - Setting emulator to" << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
+    qDebug() << "DebuggerWindow::setEmulator() - Setting emulator to"
+             << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
 
     _emulator = emulator;
 
@@ -228,8 +229,7 @@ void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
         switch (_emulatorState)
         {
             case StateUnknown:
-            case StateStopped:
-            {
+            case StateStopped: {
                 // When emulator is stopped:
                 // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
                 updateToolbarActions(false, false, false, false, false, false);
@@ -251,6 +251,7 @@ void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
 
                 ui->memorypagesWidget->reset();
                 ui->stackWidget->reset();
+                ui->disassemblerWidget->reset();  // Clear disassembler on stop
 
                 // Don't call updateState() since emulator is null
                 break;
@@ -261,7 +262,7 @@ void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
                 // When emulator is initialized:
                 // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(false, true, false, false, true, true);
-                updateState(); // Safe to update when initialized
+                updateState();  // Safe to update when initialized
                 break;
 
             case StateRun:
@@ -276,7 +277,7 @@ void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
                 // When emulator is paused:
                 // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(true, false, true, true, true, true);
-                updateState(); // Safe to update when paused
+                updateState();  // Safe to update when paused
                 break;
         }
     });
@@ -295,6 +296,7 @@ void DebuggerWindow::reset()
 
     ui->memorypagesWidget->reset();
     ui->stackWidget->reset();
+    ui->disassemblerWidget->reset();  // Clear disassembler content
 
     // Only update state if we have an emulator
     if (_emulator)
@@ -437,13 +439,12 @@ void DebuggerWindow::saveState()
 void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset,
                                           bool canManageBreakpoints, bool canManageLabels)
 {
-    qDebug() << "DebuggerWindow::updateToolbarActions(" << canContinue << "," << canPause << "," << canStep << "," << canReset << "," << canManageBreakpoints << "," << canManageLabels << ")";
+    qDebug() << "DebuggerWindow::updateToolbarActions(" << canContinue << "," << canPause << "," << canStep << ","
+             << canReset << "," << canManageBreakpoints << "," << canManageLabels << ")";
 
     // Defensive checks - ensure all actions exist before accessing them
-    if (!continueAction || !pauseAction || !resetAction ||
-        !stepInAction || !stepOverAction || !stepOutAction ||
-        !frameStepAction || !waitInterruptAction ||
-        !breakpointsAction || !labelsAction)
+    if (!continueAction || !pauseAction || !resetAction || !stepInAction || !stepOverAction || !stepOutAction ||
+        !frameStepAction || !waitInterruptAction || !breakpointsAction || !labelsAction)
     {
         qWarning() << "DebuggerWindow::updateToolbarActions - One or more actions are null!";
         return;
@@ -543,8 +544,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
         switch (_emulatorState)
         {
             case StateUnknown:
-            case StateStopped:
-            {
+            case StateStopped: {
                 // When emulator is stopped:
                 // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
                 updateToolbarActions(false, false, false, false, false, false);
@@ -576,7 +576,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is initialized:
                 // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(false, true, false, false, true, true);
-                updateState(); // Safe to update when initialized
+                updateState();  // Safe to update when initialized
                 break;
 
             case StateRun:
@@ -591,7 +591,7 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // When emulator is paused:
                 // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
                 updateToolbarActions(true, false, true, true, true, true);
-                updateState(); // Safe to update when paused
+                updateState();  // Safe to update when paused
                 break;
         }
     });

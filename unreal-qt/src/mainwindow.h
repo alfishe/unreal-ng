@@ -18,6 +18,7 @@
 #include "common/modulelogger.h"
 #include "debugger/debuggerwindow.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/guiemulatorcontext.h"
 #include "emulator/soundmanager.h"
@@ -160,9 +161,10 @@ private:
 #endif  // ENABLE_AUTOMATION
 
     EmulatorManager* _emulatorManager = nullptr;
+    EmulatorBinding* m_binding = nullptr;  // Central state binding for UI
     AppSoundManager* _soundManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
-    std::shared_ptr<Emulator> _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
 
     QPoint _lastCursorPos;
