@@ -337,6 +337,9 @@ void Emulator::Release()
 
     _isReleased = true;
 
+    // Mark as destroying to prevent new operations from other threads
+    SetState(StateDestroying);
+
     ReleaseNoGuard();
 }
 
@@ -730,6 +733,13 @@ void Emulator::Stop()
 
 bool Emulator::LoadSnapshot(const std::string& path)
 {
+    // Guard against operations during destruction (thread safety)
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("LoadSnapshot rejected - emulator is being destroyed");
+        return false;
+    }
+
     bool result = false;
 
     /// region <Info logging>
@@ -1268,6 +1278,11 @@ bool Emulator::IsRunning()
 bool Emulator::IsPaused()
 {
     return _isPaused;
+}
+
+bool Emulator::IsDestroying()
+{
+    return _state == StateDestroying || _isReleased;
 }
 
 bool Emulator::IsDebug()

@@ -1,17 +1,20 @@
 #include "automation-webapi.h"
 
-#include <thread>
-#include <fstream>
-#include <sstream>
-#include <vector>
 #include <drogon/HttpController.h>
 #include <drogon/WebSocketController.h>
-#include "hello_world_api.h"        // Triggers auto-registration for API handlers
-#include "emulator_api.h"           // Triggers auto-registration for API handlers
-#include "emulator_websocket.h"     // Triggers auto-registration for WebSocket handlers
+
+#include <fstream>
+#include <sstream>
+#include <thread>
+#include <vector>
+
+#include "emulator_api.h"        // Triggers auto-registration for API handlers
+#include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
+#include "hello_world_api.h"     // Triggers auto-registration for API handlers
 
 // Helper function to load HTML file from resources
-static std::string loadHtmlFile(const std::string& filename) {
+static std::string loadHtmlFile(const std::string& filename)
+{
     // Try multiple possible locations for the HTML resources
     std::vector<std::string> searchPaths = {
         // Development/Build paths
@@ -19,17 +22,17 @@ static std::string loadHtmlFile(const std::string& filename) {
         "../resources/html/",                        // One level up (from bin to build root)
         "./core/automation/webapi/resources/html/",  // Development/build from project root
         "../../resources/html/",                     // Two levels up
-        
+
         // macOS .app bundle path
-        "../Resources/html/",                        // From MacOS folder to Resources folder in .app bundle
-        "../../Resources/html/",                     // Alternative .app bundle structure
-        
+        "../Resources/html/",     // From MacOS folder to Resources folder in .app bundle
+        "../../Resources/html/",  // Alternative .app bundle structure
+
         // Standard installation paths
         "/usr/local/share/unreal-speccy/resources/html/",  // Unix standard install
         "/usr/share/unreal-speccy/resources/html/",        // Unix system install
         "./share/unreal-speccy/resources/html/",           // Relative to install prefix
     };
-    
+
     for (const auto& basePath : searchPaths)
     {
         std::string fullPath = basePath + filename;
@@ -42,11 +45,13 @@ static std::string loadHtmlFile(const std::string& filename) {
             return buffer.str();
         }
     }
-    
+
     // Fallback: return a minimal HTML page if file not found
     return "<!DOCTYPE html><html><head><title>Error</title></head><body>"
            "<h1>Resource Not Found</h1>"
-           "<p>Could not load HTML resource: " + filename + "</p>"
+           "<p>Could not load HTML resource: " +
+           filename +
+           "</p>"
            "<p>Searched paths: development builds, macOS .app bundle, standard installations</p>"
            "<p>Please ensure resources are properly installed.</p>"
            "</body></html>";
@@ -93,36 +98,36 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     pthread_setname_np(threadName);
 #endif
 #ifdef __linux__
-    #include <pthread.h>
-	pthread_setname_np(pthread_self(), threadName);
+#include <pthread.h>
+    pthread_setname_np(pthread_self(), threadName);
 #endif
 #if defined _WIN32 && defined MSVC
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
         GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
     if (setThreadDescription != nullptr)
     {
-	    wchar_t wname[24];
-	    size_t retval;
+        wchar_t wname[24];
+        size_t retval;
         mbstate_t conversion;
-        mbstowcs_s(&retval, wname, threadName, sizeof (threadName) / sizeof (threadName[0]), &conversion);
+        mbstowcs_s(&retval, wname, threadName, sizeof(threadName) / sizeof(threadName[0]), &conversion);
         setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
 
 #if defined _WIN32 && defined __GNUC__
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-            GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
+        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
     if (setThreadDescription != nullptr)
     {
         wchar_t wname[24];
         size_t retval;
         mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof (wname) / sizeof (wname[0])), &threadName, (size_t)(sizeof (threadName) / sizeof (threadName[0])), &conversion);
+        mbsrtowcs_s(&retval, wname, (size_t)(sizeof(wname) / sizeof(wname[0])), &threadName,
+                    (size_t)(sizeof(threadName) / sizeof(threadName[0])), &conversion);
         setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
     /// endregion </Make thread named for easy reading in debuggers>
-
 
     LOG_INFO << "Starting server on port 8090.";
     LOG_INFO << "API Documentation: http://localhost:8090/";
@@ -134,7 +139,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     // Setup global CORS support
     // Handle CORS preflight (OPTIONS) requests
-    app.registerSyncAdvice([](const drogon::HttpRequestPtr &req) -> drogon::HttpResponsePtr {
+    app.registerSyncAdvice([](const drogon::HttpRequestPtr& req) -> drogon::HttpResponsePtr {
         if (req->method() == drogon::HttpMethod::Options)
         {
             auto resp = drogon::HttpResponse::newHttpResponse();
@@ -147,7 +152,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
             resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
 
             // Set Access-Control-Allow-Headers - include what the client requests plus our defaults
-            const auto &requestHeaders = req->getHeader("Access-Control-Request-Headers");
+            const auto& requestHeaders = req->getHeader("Access-Control-Request-Headers");
             if (!requestHeaders.empty())
             {
                 resp->addHeader("Access-Control-Allow-Headers", requestHeaders);
@@ -166,12 +171,11 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     });
 
     // Add CORS headers to all responses
-    app.registerPostHandlingAdvice(
-        [](const drogon::HttpRequestPtr &req, const drogon::HttpResponsePtr &resp) -> void {
-            resp->addHeader("Access-Control-Allow-Origin", "*");
-            resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
-        });
+    app.registerPostHandlingAdvice([](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) -> void {
+        resp->addHeader("Access-Control-Allow-Origin", "*");
+        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+    });
 
     // Custom 404 page that guides users to API documentation
     // Load from external HTML file for easy maintenance
@@ -186,8 +190,18 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     app.setLogPath("./")
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
-        .disableSigtermHandling() // SIGTERM is handled by the main application (unreal-qt or testclient)
+        .disableSigtermHandling()  // SIGTERM is handled by the main application (unreal-qt or testclient)
         .addListener("0.0.0.0", 8090)
-        .setThreadNum(2)
-        .run();
+        .setThreadNum(2);
+
+    try
+    {
+        app.run();
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "WebAPI server failed to start: " << e.what();
+        LOG_ERROR << "Port 8090 may already be in use. WebAPI will be disabled.";
+        // Don't exit - just let the thread end gracefully
+    }
 }
