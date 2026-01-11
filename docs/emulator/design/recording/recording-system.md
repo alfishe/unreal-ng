@@ -10,6 +10,35 @@ The Recording System provides flexible video and audio capture capabilities for 
 
 All recordings are based on **emulated time**, ensuring that turbo mode recordings play back at normal speed with correct timing.
 
+## Master Switch Feature
+
+The recording subsystem is guarded by the `recording` feature in `FeatureManager`:
+
+| Feature | ID | Alias | Default | Description |
+|---------|-----|-------|---------|-------------|
+| Recording | `recording` | `rec` | **OFF** | Enable recording subsystem (video, audio, GIF capture) |
+
+**Behavior:**
+- **OFF (default)**: RecordingManager API calls early-exit with zero CPU overhead. Heavy functionality disabled by default.
+- **ON**: RecordingManager is active and ready for recording commands.
+
+```cpp
+// Enable recording subsystem
+featureManager->setFeature("recording", true);
+
+// Now RecordingManager API is available
+recordingManager->StartRecording("gameplay.mp4");
+```
+
+**CLI/WebAPI:**
+```bash
+feature recording on   # Enable recording subsystem
+feature recording off  # Disable (default)
+```
+
+> **Note:** The `recording` feature is a **master switch only**. Individual recording actions (start, stop, codec selection) are API commands, not separate features.
+
+
 ## Architecture
 
 ### Core Components
