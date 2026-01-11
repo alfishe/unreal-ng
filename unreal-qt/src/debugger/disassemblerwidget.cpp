@@ -457,11 +457,7 @@ void DisassemblerWidget::updateVisibleRange()
 
 void DisassemblerWidget::setEmulator(Emulator* emulator)
 {
-    if (m_emulator == emulator)
-    {
-        return;  // No change
-    }
-
+    // Always store the reference (may be called multiple times with same emulator)
     m_emulator = emulator;
 
     // HOTFIX: Only proceed with disassembly if emulator is in a ready state
@@ -475,7 +471,7 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
         {
             qDebug() << "DisassemblerWidget::setEmulator - emulator state" << state
                      << "not ready, deferring all operations";
-            // Just store the reference, don't trigger any disassembly
+            // Don't set up model yet, but store reference for later
             if (m_model)
             {
                 m_model->setEmulator(nullptr);  // Clear model safely
@@ -488,7 +484,7 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
     // Update the model with the new emulator (only if ready state)
     if (m_model)
     {
-        qDebug() << "Setting emulator on model";
+        qDebug() << "DisassemblerWidget::setEmulator - setting up model with ready emulator";
         m_model->setEmulator(emulator);
 
         // Dump model state for debugging

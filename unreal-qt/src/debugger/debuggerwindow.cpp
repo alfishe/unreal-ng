@@ -349,12 +349,12 @@ void DebuggerWindow::updateState()
                                                        _lastDisassembledPC, currentPC);
             qDebug() << message.c_str();
 
-            // Ensure disassembler widget has emulator reference (lazy setup on first state change)
-            // This is safe now because updateState() is only called from notifyEmulatorStateChanged()
-            // which means the emulator has passed through MessageCenter and is fully initialized
-            if (ui->disassemblerWidget && ui->disassemblerWidget->emulator() != _emulator)
+            // Ensure disassembler widget has emulator reference and is set up
+            // This is safe because updateState() is only called when emulator state is ready
+            // The widget's internal state check will prevent duplicate setup
+            if (ui->disassemblerWidget)
             {
-                qDebug() << "DebuggerWindow::updateState() - Setting up disassembler widget with emulator";
+                qDebug() << "DebuggerWindow::updateState() - Setting up disassembler widget";
                 ui->disassemblerWidget->setEmulator(_emulator);
             }
 

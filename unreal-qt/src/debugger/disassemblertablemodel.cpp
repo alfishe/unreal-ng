@@ -940,12 +940,8 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
 
             m_decodedInstructionsCache[addr] = decodedInstruction;
 
-            qDebug() << StringHelper::Format(
-                            "Disassembled at 0x%04X: %s %s | %s | %s", addr,
-                            decodedInstruction.label.empty() ? "" : "[" + decodedInstruction.label + "[",
-                            decodedInstruction.mnemonic.c_str(),
-                            decodedInstruction.annotation.empty() ? "" : decodedInstruction.annotation.c_str())
-                            .c_str();
+            qDebug() << "Disassembled at 0x" << QString::number(addr, 16).toUpper() << ":"
+                     << QString::fromStdString(decodedInstruction.mnemonic);
             return decodedInstruction;
         }
     }
