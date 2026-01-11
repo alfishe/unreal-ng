@@ -286,15 +286,15 @@ void VideoWallWindow::toggleFullscreenMacOS()
         }
         showNormal();
 
-        // Calculate optimal layout for RESTORED window size and apply it
+        // Smart resize after window state change
         QTimer::singleShot(100, this, [this]() {
             // Unlock geometry first
             setMinimumSize(0, 0);
             setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
 
-            // Apply auto-layout for restored window size
-            calculateAndApplyOptimalLayout(_savedGeometry.size());
-            qDebug() << "Fullscreen → windowed: auto-layout applied for" << _savedGeometry.size();
+            // Intelligently resize grid (removes only excess tiles)
+            resizeGridIntelligently(_savedGeometry.size());
+            qDebug() << "Fullscreen → windowed: resized to" << _savedGeometry.size();
         });
     }
     else
@@ -321,9 +321,9 @@ void VideoWallWindow::toggleFullscreenMacOS()
         QScreen* screen = window()->screen();
         showFullScreen();
 
-        // Calculate layout after fullscreen transition
+        // Smart resize after fullscreen transition
         QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->availableSize());
+            resizeGridIntelligently(screen->availableSize());
             qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
         });
     }
@@ -476,6 +476,70 @@ void VideoWallWindow::createNextBatch()
     {
         addEmulatorTile();
         _pendingEmulators--;
+    }
+}
+
+void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
+{
+    // Calculate target grid dimensions
+    int tilesWide = (screenSize.width() + 511) / 512;   // Ceiling division for 512px tiles
+    int tilesHigh = (screenSize.height() + 383) / 384;  // Ceiling division for 384px tiles
+    int targetTotal = tilesWide * tilesHigh;
+    int currentTotal = _tileGrid->tiles().size();
+
+    qDebug() << "Smart resize: current" << currentTotal << "tiles, target" << targetTotal << "tiles for" << screenSize;
+
+    // Set grid dimensions for proper layout
+    _tileGrid->setGridDimensions(tilesWide, tilesHigh);
+
+    if (targetTotal > currentTotal)
+    {
+        // Need MORE tiles - add them
+        int tilesToAdd = targetTotal - currentTotal;
+        qDebug() << "Adding" << tilesToAdd << "tiles to reach" << targetTotal;
+
+        for (int i = 0; i < tilesToAdd; i++)
+        {
+            addEmulatorTile();
+        }
+    }
+    else if (targetTotal < currentTotal)
+    {
+        // Need FEWER tiles - remove excess from the end
+        int tilesToRemove = currentTotal - targetTotal;
+        qDebug() << "Removing" << tilesToRemove << "excess tiles";
+
+        auto tiles = _tileGrid->tiles();  // Get copy of vector
+        for (int i = 0; i < tilesToRemove; i++)
+        {
+            // Remove from the end (newest tiles first)
+            int lastIndex = tiles.size() - 1;
+            if (lastIndex >= 0)
+            {
+                EmulatorTile* tile = tiles[lastIndex];
+                if (tile && tile->emulator())
+                {
+                    std::string emulatorId = tile->emulator()->GetUUID();
+
+                    // Stop and destroy emulator
+                    _emulatorManager->RemoveEmulator(emulatorId);
+
+                    // Remove from grid (this deletes the tile)
+                    _tileGrid->removeTile(tile);
+
+                    // Update our copy
+                    tiles = _tileGrid->tiles();
+
+                    qDebug() << "Removed excess tile:" << QString::fromStdString(emulatorId);
+                }
+            }
+        }
+    }
+    else
+    {
+        // Same number of tiles - just update layout
+        qDebug() << "Tile count unchanged, updating layout only";
+        _tileGrid->updateLayout();
     }
 }
 

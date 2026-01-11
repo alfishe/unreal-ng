@@ -1,5 +1,7 @@
 #include "videowall/TileGrid.h"
 
+#include <emulatormanager.h>
+
 #include <QResizeEvent>
 
 #include "videowall/EmulatorTile.h"
@@ -42,8 +44,19 @@ void TileGrid::clearAllTiles()
 {
     for (EmulatorTile* tile : _tiles)
     {
-        if (tile)
+        if (tile && tile->emulator())
         {
+            // Get the emulator UUID before deleting the tile
+            std::string emulatorId = tile->emulator()->GetUUID();
+
+            // Stop and destroy the emulator instance via EmulatorManager
+            EmulatorManager* manager = EmulatorManager::GetInstance();
+            if (manager)
+            {
+                manager->RemoveEmulator(emulatorId);
+            }
+
+            // Now delete the tile widget
             tile->deleteLater();
         }
     }

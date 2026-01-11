@@ -52,6 +52,9 @@ public:
     // Window state restoration
     void restoreSavedEmulators();
 
+    // Smart grid resizing (preserves existing tiles)
+    void resizeGridIntelligently(QSize screenSize);
+
     // Async batch creation
     void createEmulatorsAsync(int total);
     void createNextBatch();
