@@ -1,20 +1,40 @@
 #pragma once
-#include "stdafx.h"
-
-#include "common/logger.h"
+#include <cstring>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/logger.h"
 #include "emulator/platform.h"
-#include <cstring>
+#include "stdafx.h"
 
 // _ALWAYS_USE_LOGGING always override the behavior
 #if !defined(_CODE_UNDER_TEST) || defined(_ALWAYS_USE_LOGGING)
 
 // Write all Debug / Info logs if not under unit testing / benchmarking
-#define MLOGDEBUG(format, ...) _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGINFO(format, ...) _logger->Info(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGWARNING(format, ...) _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGERROR(format, ...) _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__)
+// Short-circuit evaluation: arguments only evaluated when logging is enabled at that level
+#define MLOGDEBUG(format, ...)                                          \
+    do                                                                  \
+    {                                                                   \
+        if (_logger->GetLevel() <= LoggerLevel::LogDebug)               \
+            _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+    } while (0)
+#define MLOGINFO(format, ...)                                          \
+    do                                                                 \
+    {                                                                  \
+        if (_logger->GetLevel() <= LoggerLevel::LogInfo)               \
+            _logger->Info(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+    } while (0)
+#define MLOGWARNING(format, ...)                                          \
+    do                                                                    \
+    {                                                                     \
+        if (_logger->GetLevel() <= LoggerLevel::LogWarning)               \
+            _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+    } while (0)
+#define MLOGERROR(format, ...)                                          \
+    do                                                                  \
+    {                                                                   \
+        if (_logger->GetLevel() <= LoggerLevel::LogError)               \
+            _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+    } while (0)
 #define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
 
 // Macros with custom submodule
@@ -32,10 +52,14 @@
 #define MLOGEMPTY_OVERRIDE_(submodule, ...) MLOGEMPTY_SUBMODULE(submodule, __VA_ARGS__)
 
 // Macros with optional submodule override (uses _SUBMODULE if not specified)
-#define MLOGDEBUG_OPT(submodule, format, ...) _logger->Debug(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGINFO_OPT(submodule, format, ...) _logger->Info(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGWARNING_OPT(submodule, format, ...) _logger->Warning(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGERROR_OPT(submodule, format, ...) _logger->Error(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGDEBUG_OPT(submodule, format, ...) \
+    _logger->Debug(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGINFO_OPT(submodule, format, ...) \
+    _logger->Info(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGWARNING_OPT(submodule, format, ...) \
+    _logger->Warning(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGERROR_OPT(submodule, format, ...) \
+    _logger->Error(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
 #define MLOGEMPTY_OPT(submodule, ...) _logger->EmptyLine(submodule ? submodule : _SUBMODULE, ##__VA_ARGS__)
 
 // Helper macro to make submodule optional
@@ -69,10 +93,14 @@
 #define MLOGEMPTY_OVERRIDE_(submodule, ...) MLOGEMPTY_SUBMODULE(submodule, __VA_ARGS__)
 
 // Macros with optional submodule override (uses _SUBMODULE if not specified)
-#define MLOGDEBUG_OPT(submodule, format, ...) _logger->Debug(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGINFO_OPT(submodule, format, ...) _logger->Info(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGWARNING_OPT(submodule, format, ...) _logger->Warning(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
-#define MLOGERROR_OPT(submodule, format, ...) _logger->Error(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGDEBUG_OPT(submodule, format, ...) \
+    _logger->Debug(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGINFO_OPT(submodule, format, ...) \
+    _logger->Info(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGWARNING_OPT(submodule, format, ...) \
+    _logger->Warning(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
+#define MLOGERROR_OPT(submodule, format, ...) \
+    _logger->Error(_MODULE, submodule ? submodule : _SUBMODULE, format, ##__VA_ARGS__)
 #define MLOGEMPTY_OPT(submodule, ...) _logger->EmptyLine(submodule ? submodule : _SUBMODULE, ##__VA_ARGS__)
 
 // Helper macro to make submodule optional
@@ -93,7 +121,7 @@
 //      LogDebug level set - LogDebug, LogInfo, LogWarning, LogError messages will be accepted. But not LogTrace.
 enum LoggerLevel : uint8_t
 {
-    LogUnknown = 0,     // Uninitialized state
+    LogUnknown = 0,  // Uninitialized state
     LogTrace = 1,
     LogDebug = 2,
     LogInfo = 3,
@@ -104,28 +132,29 @@ enum LoggerLevel : uint8_t
 
 struct LoggerSettings
 {
-    uint32_t modules;                       // Per module on/off flags
+    uint32_t modules;  // Per module on/off flags
 
     union
     {
         // Indexed access array
         // Allow all modules logging by default
-        uint16_t submodules[12] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+        uint16_t submodules[12] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+                                   0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 
         struct
         {
-            uint16_t unknownSubmodules;     // When module is unspecified - just a stub
-            uint16_t coreSubmodules;        // Core submodules on/off flags
-            uint16_t z80Submodules;         // Z80 submodules on/off flags
-            uint16_t memSubmodules;         // Memory submodules on/off flags
-            uint16_t ioSubmodules;          // I/O submodules on/off flags
-            uint16_t diskSubmodules;        // Disk submodules on/off flags
-            uint16_t soundSubmodules;       // Sound submodules on/off flags
-            uint16_t videoSubmodules;       // Video submodules on/off flags
-            uint16_t dmaSubmodules;         // DMA submodules on/off flags
-            uint16_t loaderSubmodules;      // Loader submodules on/off flags
-            uint16_t debuggerSubmodules;    // Memory submodules on/off flags
-            uint16_t disassemblerSubmodules;// Disassembler submodules on/off flags
+            uint16_t unknownSubmodules;       // When module is unspecified - just a stub
+            uint16_t coreSubmodules;          // Core submodules on/off flags
+            uint16_t z80Submodules;           // Z80 submodules on/off flags
+            uint16_t memSubmodules;           // Memory submodules on/off flags
+            uint16_t ioSubmodules;            // I/O submodules on/off flags
+            uint16_t diskSubmodules;          // Disk submodules on/off flags
+            uint16_t soundSubmodules;         // Sound submodules on/off flags
+            uint16_t videoSubmodules;         // Video submodules on/off flags
+            uint16_t dmaSubmodules;           // DMA submodules on/off flags
+            uint16_t loaderSubmodules;        // Loader submodules on/off flags
+            uint16_t debuggerSubmodules;      // Memory submodules on/off flags
+            uint16_t disassemblerSubmodules;  // Disassembler submodules on/off flags
         };
     };
 };
@@ -139,7 +168,7 @@ public:
     LoggerSettingsModulePayload(LoggerSettings& settings)
     {
         // Copy structure content
-        memcpy((void *)&_settings, (const void *)&settings, sizeof(LoggerSettings));
+        memcpy((void*)&_settings, (const void*)&settings, sizeof(LoggerSettings));
     }
     virtual ~LoggerSettingsModulePayload() = default;
 };
@@ -149,11 +178,12 @@ public:
 struct ModuleLoggerObserver
 {
 public:
-    //virtual void ObserverCallbackMethod(const char* buffer, size_t len) = 0;
+    // virtual void ObserverCallbackMethod(const char* buffer, size_t len) = 0;
 };
 
-typedef void (ModuleLoggerOutCallback)(const char* buffer, size_t len);                                           // Classic callback
-typedef void (ModuleLoggerObserver::* ModuleObserverObserverCallbackMethod)(const char* buffer, size_t len);      // Class method callback
+typedef void(ModuleLoggerOutCallback)(const char* buffer, size_t len);  // Classic callback
+typedef void (ModuleLoggerObserver::*ModuleObserverObserverCallbackMethod)(const char* buffer,
+                                                                           size_t len);  // Class method callback
 
 /// endregion </Structures
 
@@ -170,95 +200,34 @@ class ModuleLogger : public Observer
 
     static const char* moduleNames[12];
 
-    const char* submoduleCoreNames[4] =
-    {
-        "Generic",
-        "Config",
-        "Files",
-        "Mainloop"
-    };
+    const char* submoduleCoreNames[4] = {"Generic", "Config", "Files", "Mainloop"};
 
-    const char* submoduleZ80Names[10] =
-    {
-        "Generic",
-        "M1",
-        "Calls",
-        "Jumps",
-        "Interrupts",
-        "Bit",
-        "Arithmetics",
-        "Stack",
-        "Registers",
-        "I/O"
-    };
+    const char* submoduleZ80Names[10] = {"Generic", "M1",          "Calls", "Jumps",     "Interrupts",
+                                         "Bit",     "Arithmetics", "Stack", "Registers", "I/O"};
 
-    const char* submoduleMemoryNames[3] =
-    {
-        "Generic",
-        "ROM",
-        "RAM"
-    };
+    const char* submoduleMemoryNames[3] = {"Generic", "ROM", "RAM"};
 
-    const char* submoduleIONames[7] =
-    {
-        "Generic",
-        "In",
-        "Out",
-        "Keyboard",
-        "Tape",
-        "Kempston joystick",
-        "Kempston mouse"
-    };
+    const char* submoduleIONames[7] = {"Generic",       "In", "Out", "Keyboard", "Tape", "Kempston joystick",
+                                       "Kempston mouse"};
 
-    const char* submoduleDiskNames[3] =
-    {
-        "Generic",
-        "Floppy",
-        "HDD"
-    };
+    const char* submoduleDiskNames[3] = {"Generic", "Floppy", "HDD"};
 
-    const char* submoduleVideoNames[8] =
-    {
-        "Generic",
-        "ULA",
-        "ULA+",
-        "Misc.",
-        "ZX-Next",
-        "Profi",
-        "ATM",
-        "TSConf"
-    };
+    const char* submoduleVideoNames[8] = {"Generic", "ULA", "ULA+", "Misc.", "ZX-Next", "Profi", "ATM", "TSConf"};
 
-    const char* submoduleSoundNames[8] =
-    {
-        "Generic",
-        "Beeper",
-        "AY",
-        "TurboSound",
-        "TurboSound FM",
-        "General Sound",
-        "MoonSound",
-        "SAA1099"
-    };
+    const char* submoduleSoundNames[8] = {"Generic",       "Beeper",        "AY",        "TurboSound",
+                                          "TurboSound FM", "General Sound", "MoonSound", "SAA1099"};
 
-    const char* submoduleDMANames[1] =
-    {
+    const char* submoduleDMANames[1] = {
         "Generic",
     };
 
-    const char* submoduleLoaderNames[2] =
-    {
-        "SNA",
-        "Z80"
-    };
+    const char* submoduleLoaderNames[2] = {"SNA", "Z80"};
 
-    const char* submoduleDebuggerNames[1] =
-    {
+    const char* submoduleDebuggerNames[1] = {
         "Generic",
     };
 
-    const char* submoduleDisassemblerNames[1] =
-    {
+    const char* submoduleDisassemblerNames[1] = {
         "Generic",
     };
 
@@ -268,7 +237,8 @@ class ModuleLogger : public Observer
 protected:
     LoggerSettings _settings;
     volatile bool _mute = false;
-    LoggerLevel _level = LoggerLevel::LogTrace;                      // Allow all types of logging messages by default
+    LoggerLevel _level = LoggerLevel::LogTrace;  // Allow all types of logging messages by default
+    volatile bool _shutdown = false;             // Set to true when logger is being destroyed
 
     EmulatorContext* _context = nullptr;
     ModuleLoggerOutCallback* _outCallback = nullptr;
@@ -295,6 +265,10 @@ public:
     void TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t submodule);
     void TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t submodule);
     void SetLoggingLevel(LoggerLevel level);
+    LoggerLevel GetLevel() const
+    {
+        return _level;
+    }
 
     void SetLoggerOut(ModuleLoggerOutCallback callback);
     void SetLoggerOut(ModuleLoggerObserver* instance, ModuleObserverObserverCallbackMethod callback);
@@ -304,7 +278,7 @@ public:
 
     /// region <Methods>
 public:
-    template<typename Fmt, typename... Args>
+    template <typename Fmt, typename... Args>
     void Trace(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
         if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogTrace))
@@ -313,7 +287,7 @@ public:
         LogMessage(LoggerLevel::LogTrace, module, submodule, fmt, args...);
     }
 
-    template<typename Fmt, typename... Args>
+    template <typename Fmt, typename... Args>
     void Debug(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
         if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogDebug))
@@ -322,7 +296,7 @@ public:
         LogMessage(LoggerLevel::LogDebug, module, submodule, fmt, args...);
     }
 
-    template<typename Fmt, typename... Args>
+    template <typename Fmt, typename... Args>
     void Info(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
         if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogInfo))
@@ -331,7 +305,7 @@ public:
         LogMessage(LoggerLevel::LogInfo, module, submodule, fmt, args...);
     }
 
-    template<typename Fmt, typename... Args>
+    template <typename Fmt, typename... Args>
     void Warning(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
         if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogWarning))
@@ -340,7 +314,7 @@ public:
         LogMessage(LoggerLevel::LogWarning, module, submodule, fmt, args...);
     }
 
-    template<typename Fmt, typename... Args>
+    template <typename Fmt, typename... Args>
     void Error(PlatformModulesEnum module, uint16_t submodule, Fmt fmt, Args... args)
     {
         if (!IsLoggingEnabledForLogLevel(module, submodule, LoggerLevel::LogError))
@@ -391,7 +365,8 @@ protected:
 };
 
 //
-// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing /
+// benchmark purposes
 //
 #ifdef _CODE_UNDER_TEST
 
@@ -403,12 +378,12 @@ public:
 public:
     using ModuleLogger::_settings;
 
-    using ModuleLogger::IsLoggingEnabled;
     using ModuleLogger::GetModuleSubmoduleHexString;
     using ModuleLogger::GetSubmoduleNameCollection;
+    using ModuleLogger::IsLoggingEnabled;
 
-    using ModuleLogger::DumpModules;
     using ModuleLogger::DumpModuleName;
+    using ModuleLogger::DumpModules;
     using ModuleLogger::DumpResolveFlags;
 };
-#endif // _CODE_UNDER_TEST
+#endif  // _CODE_UNDER_TEST

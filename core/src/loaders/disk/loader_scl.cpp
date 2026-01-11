@@ -196,7 +196,9 @@ bool LoaderSCL::checkSCLFileCRC(uint8_t* data, size_t length)
         uint32_t crc = *((uint32_t*)crcData);
         uint32_t calculatedCRC = 0;
 
-        for (size_t i = 0; i < length - 4 - 1; i++)
+        // Checksum should cover all bytes EXCEPT the last 4 (which contain the CRC itself)
+        // This means bytes 0 to (length - 5) inclusive, which is (length - 4) iterations
+        for (size_t i = 0; i < length - 4; i++)
         {
             calculatedCRC += data[i];
         }

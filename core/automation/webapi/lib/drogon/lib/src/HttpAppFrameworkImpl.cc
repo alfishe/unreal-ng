@@ -184,7 +184,7 @@ static void TERMFunction(int sig)
 HttpAppFrameworkImpl::~HttpAppFrameworkImpl() noexcept
 {
 // Destroy the following objects before the loop destruction
-#ifndef _WIN32
+#if !defined(_WIN32) && !TARGET_OS_IOS
     sharedLibManagerPtr_.reset();
 #endif
     sessionManagerPtr_.reset();
@@ -236,7 +236,7 @@ const std::string &HttpAppFrameworkImpl::getImplicitPage() const
 {
     return StaticFileRouter::instance().getImplicitPage();
 }
-#ifndef _WIN32
+#if !defined(_WIN32) && !TARGET_OS_IOS
 HttpAppFramework &HttpAppFrameworkImpl::enableDynamicViewsLoading(
     const std::vector<std::string> &libPaths,
     const std::string &outputPath)
@@ -376,7 +376,7 @@ void HttpAppFrameworkImpl::addPlugin(
     Json::Value pluginConfig;
     pluginConfig["name"] = name;
     Json::Value deps(Json::arrayValue);
-    for (const auto dep : dependencies)
+    for (const auto &dep : dependencies)
     {
         deps.append(dep);
     }
@@ -391,7 +391,7 @@ void HttpAppFrameworkImpl::addPlugins(const Json::Value &configs)
     assert(!isRunning());
     assert(configs.isArray());
     auto &plugins = jsonRuntimeConfig_["plugins"];
-    for (const auto config : configs)
+    for (const auto &config : configs)
     {
         plugins.append(config);
     }
@@ -524,7 +524,8 @@ void HttpAppFrameworkImpl::run()
         getLoop()->moveToCurrentThread();
     }
     LOG_TRACE << "Start to run...";
-    // Create dirs for cache files
+    // Create dirs for cache files - DISABLED to prevent unwanted folder creation
+    /*
     for (int i = 0; i < 256; ++i)
     {
         char dirName[4];
@@ -534,6 +535,7 @@ void HttpAppFrameworkImpl::run()
         });
         utils::createPath(getUploadPath() + "/tmp/" + dirName);
     }
+    */
     if (runAsDaemon_)
     {
         // go daemon!
@@ -599,7 +601,7 @@ void HttpAppFrameworkImpl::run()
         LOG_INFO << "Start child process";
     }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !TARGET_OS_IOS
     if (!libFilePaths_.empty())
     {
         sharedLibManagerPtr_ =

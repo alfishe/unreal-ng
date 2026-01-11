@@ -554,7 +554,7 @@ void TcpConnectionImpl::sendFile(const char *fileName,
 {
     assert(fileName);
 #ifdef _WIN32
-    sendFile(utils::toNativePath(fileName).c_str(), offset, length);
+    sendFile(utils::toWidePath(fileName).c_str(), offset, length);
 #else   // _WIN32
     auto fileNode = BufferNode::newFileBufferNode(fileName, offset, length);
 
@@ -633,6 +633,10 @@ void TcpConnectionImpl::sendStream(
             if (node->remainingBytes() > 0 && n >= 0)
                 writeBufferList_.push_back(std::move(node));
             return;
+        }
+        else
+        {
+            writeBufferList_.push_back(std::move(node));
         }
     }
     else

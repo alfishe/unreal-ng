@@ -1,15 +1,17 @@
-#include "stdafx.h"
 #include "soundmanager.h"
 
+#include "base/featuremanager.h"
 #include "common/dumphelper.h"
-#include "common/stringhelper.h"
 #include "common/sound/audiohelper.h"
+#include "common/sound/audioutils.h"
+#include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
+#include "stdafx.h"
 
 /// region <Constructors / Destructors>
 
-SoundManager::SoundManager(EmulatorContext *context)
+SoundManager::SoundManager(EmulatorContext* context)
 {
     _context = context;
     _logger = context->pModuleLogger;
@@ -50,9 +52,9 @@ void SoundManager::reset()
     _prevRightValue = 0;
 
     // New wave file
-    //closeWaveFile();
-    //std::string filePath = "unreal.wav";
-    //openWaveFile(filePath);
+    // closeWaveFile();
+    // std::string filePath = "unreal.wav";
+    // openWaveFile(filePath);
 }
 
 void SoundManager::mute()
@@ -94,20 +96,21 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     size_t sampleIndex = (floor)((double)frameTState / ratio);
     */
 
-    size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / config.frame;
-    size_t sampleIndex = (frameTState *  SAMPLES_PER_FRAME) / config.frame;
+    uint32_t scaledFrame = config.frame * _context->emulatorState.current_z80_frequency_multiplier;
 
+    size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / scaledFrame;
+    size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / scaledFrame;
 
-
-    /// region <If we're over frame duration>
+    // region <If we're over frame duration>
     if (prevIndex >= 882)
     {
         _prevFrameTState = frameTState;
         return;
     }
+
     if (sampleIndex >= 882)
         sampleIndex = 881;
-    /// endregion <If we're over frame duration>
+    // endregion <If we're over frame duration>
 
     // Fill the gap between previous call and current
     if (sampleIndex > prevIndex)
@@ -117,6 +120,11 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
             _beeperBuffer[i * 2] = _prevLeftValue;
             _beeperBuffer[i * 2 + 1] = _prevRightValue;
         }
+    }
+    else
+    {
+        // Audio callback not active - this emulator doesn't have audio device access
+        // This is normal for headless emulators or emulators that lost audio device ownership
     }
 
     // Render current samples
@@ -135,6 +143,23 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     _prevFrane = _context->emulatorState.frame_counter;
 }
 
+// TurboSound/AY chip access for debugging
+SoundChip_AY8910* SoundManager::getAYChip(int index) const
+{
+    if (!_turboSound)
+        return nullptr;
+
+    return _turboSound->getChip(index);
+}
+
+int SoundManager::getAYChipCount() const
+{
+    if (!_turboSound)
+        return 0;
+
+    return _turboSound->getChipCount();
+}
+
 /// endregion </Methods>
 
 /// region <Emulation events>
@@ -148,7 +173,11 @@ void SoundManager::handleFrameStart()
 
 void SoundManager::handleStep()
 {
-   _turboSound->handleStep();
+    // Fast exit if sound generation disabled
+    if (!_feature_sound_enabled)
+        return;
+
+    _turboSound->handleStep();
 }
 
 void SoundManager::handleFrameEnd()
@@ -156,17 +185,97 @@ void SoundManager::handleFrameEnd()
     uint16_t* _ayBuffer = _turboSound->getAudioBuffer();
 
     /// region <Mix all channels to output buffer>
-    for (size_t i = 0; i < AUDIO_BUFFER_SAMPLES_PER_FRAME; i++)
-    {
-        _outBuffer[i] = _ayBuffer[i] + _beeperBuffer[i];
-    }
+    AudioUtils::MixAudio((const int16_t*)_ayBuffer, _beeperBuffer, _outBuffer, AUDIO_BUFFER_SAMPLES_PER_FRAME);
     /// endregion </Mix all channels to output buffer>
 
-    // Enqueue generated sound data via previously registered application callback
-    if (_context->pAudioCallback)
+    // Capture audio for recording BEFORE muting
+    // This ensures recordings get the actual audio, not silence
+    if (_context->pRecordingManager && _context->pRecordingManager->IsRecording())
     {
-        //_context->pAudioCallback(_context->pAudioManagerObj, _beeperBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
-        _context->pAudioCallback(_context->pAudioManagerObj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        _context->pRecordingManager->CaptureAudio(_outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+    }
+
+    // Enqueue generated sound data via previously registered application callback
+    // Note: Audio callbacks are cleared when emulator loses audio device access to prevent
+    // multiple emulators from using the same audio device simultaneously
+    // Use memory_order_acquire to ensure we see the latest values written by the UI thread
+    AudioCallback callback = _context->pAudioCallback.load(std::memory_order_acquire);
+    void* obj = _context->pAudioManagerObj.load(std::memory_order_acquire);
+
+    if (callback && obj)
+    {
+        // If muted, send silence instead of actual audio.
+        // No need to send silence if sound generation is disabled -
+        // buffer was already zeroed out in SoundManager::handleFrameStart() method
+        if (_feature_sound_enabled && _mute)
+        {
+            // Zero out the buffer (silence)
+            memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
+        }
+
+        try
+        {
+            callback(obj, _outBuffer, SAMPLES_PER_FRAME * AUDIO_CHANNELS);
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - audio callback failure shouldn't stop emulation
+            LOGERROR("SoundManager::handleFrameEnd - Audio callback failed: %s\n", e.what());
+        }
+        catch (...)
+        {
+            // Log error but don't crash - audio callback failure shouldn't stop emulation
+            LOGERROR("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
+        }
+    }
+}
+
+/// @brief Update feature cache flags from FeatureManager.
+///
+/// This method is automatically called by FeatureManager::onFeatureChanged() whenever
+/// sound-related feature states change. It updates cached boolean flags to avoid
+/// repeated hash map lookups in hot paths (handleStep is called ~70,000 times/frame).
+///
+/// @note Do NOT call directly - use FeatureManager API to change states.
+///
+/// **Triggered by (CLI):**
+/// ```bash
+/// feature sound off       # Disables sound generation (~18% CPU savings)
+/// feature sound on        # Re-enables sound generation
+/// feature soundhq off     # Switches to low-quality DSP (~15% CPU savings)
+/// feature soundhq on      # Switches to high-quality DSP (FIR + oversampling)
+/// ```
+///
+/// **Triggered by (API):**
+/// ```cpp
+/// context->pFeatureManager->setFeature("sound", false);
+/// context->pFeatureManager->setFeature("soundhq", true);
+/// ```
+///
+/// **Propagation Flow:**
+/// ```
+/// User CLI/API → FeatureManager::setFeature()
+///     ↓
+/// FeatureManager::onFeatureChanged()
+///     ↓
+/// SoundManager::UpdateFeatureCache()  ← YOU ARE HERE
+///     ↓
+/// _feature_sound_enabled, _feature_soundhq_enabled updated
+///     ↓
+/// Hot paths (handleStep) use cached flags
+/// ```
+void SoundManager::UpdateFeatureCache()
+{
+    if (_context && _context->pFeatureManager)
+    {
+        _feature_sound_enabled = _context->pFeatureManager->isEnabled(Features::kSoundGeneration);
+        _feature_soundhq_enabled = _context->pFeatureManager->isEnabled(Features::kSoundHQ);
+
+        // Propagate HQ flag to TurboSound
+        if (_turboSound)
+        {
+            _turboSound->setHQEnabled(_feature_soundhq_enabled);
+        }
     }
 }
 
@@ -177,13 +286,8 @@ bool SoundManager::openWaveFile(std::string& path)
 {
     bool result = false;
 
-    int res = tinywav_open_write(
-                &_tinyWav,
-                AUDIO_CHANNELS,
-                AUDIO_SAMPLING_RATE,
-                TW_INT16,
-                TW_INTERLEAVED,
-                path.c_str());
+    int res =
+        tinywav_open_write(&_tinyWav, AUDIO_CHANNELS, AUDIO_SAMPLING_RATE, TW_INT16, TW_INTERLEAVED, path.c_str());
 
     if (res == 0 && _tinyWav.file)
     {

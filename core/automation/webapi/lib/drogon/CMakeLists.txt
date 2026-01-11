@@ -25,7 +25,7 @@ CMAKE_DEPENDENT_OPTION(USE_SPDLOG "Allow using the spdlog logging library" OFF "
 
 set(DROGON_MAJOR_VERSION 1)
 set(DROGON_MINOR_VERSION 9)
-set(DROGON_PATCH_VERSION 10)
+set(DROGON_PATCH_VERSION 11)
 set(DROGON_VERSION
     ${DROGON_MAJOR_VERSION}.${DROGON_MINOR_VERSION}.${DROGON_PATCH_VERSION})
 set(DROGON_VERSION_STRING "${DROGON_VERSION}")
@@ -162,11 +162,20 @@ endif()
 if (DROGON_CXX_STANDARD EQUAL 17)
     message(STATUS "use c++17")
     # Check for partial implementation of c++17 (Windows/OSX only?)
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-    try_compile(check_filesystem_path ${CMAKE_BINARY_DIR}/cmaketest
-        ${PROJECT_SOURCE_DIR}/cmake/tests/check_has_std_filesystem_path.cc
-        CXX_STANDARD 17)
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE)
+    # Note: Don't set CMAKE_TRY_COMPILE_TARGET_TYPE to STATIC_LIBRARY for GCC-15+
+    # as it may cause linking issues with std::filesystem
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)
+        # GCC 15+ has full std::filesystem support, skip the check
+        message(STATUS "GCC 15+ detected, assuming full std::filesystem support")
+        set(check_filesystem_path TRUE)
+    else()
+        set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+        try_compile(check_filesystem_path ${CMAKE_BINARY_DIR}/cmaketest
+            ${PROJECT_SOURCE_DIR}/cmake/tests/check_has_std_filesystem_path.cc
+            CXX_STANDARD 17)
+        set(CMAKE_TRY_COMPILE_TARGET_TYPE)
+    endif()
+    
     if (NOT check_filesystem_path)
       message(FATAL_ERROR "The std::filesystem seems to be a partial implementation,"
         " please use a newer compiler")
@@ -187,9 +196,8 @@ endif()
 
 
 # jsoncpp
-find_package(Jsoncpp REQUIRED)
-target_link_libraries(${PROJECT_NAME} PUBLIC Jsoncpp_lib)
-list(APPEND INCLUDE_DIRS_FOR_DYNAMIC_VIEW ${JSONCPP_INCLUDE_DIRS})
+message(STATUS "Using jsoncpp target from parent project")
+target_link_libraries(${PROJECT_NAME} PUBLIC jsoncpp_static)
 
 # yamlcpp
 if(BUILD_YAML_CONFIG)
@@ -343,21 +351,21 @@ set(private_headers
     lib/src/ConfigAdapter.h
     lib/src/MultipartStreamParser.h)
 
-if (NOT WIN32)
+if (NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(DROGON_SOURCES
         ${DROGON_SOURCES}
         lib/src/SharedLibManager.cc)
     set(private_headers
         ${private_headers}
         lib/src/SharedLibManager.h)
-else (NOT WIN32)
+elseif(WIN32)
     set(DROGON_SOURCES
         ${DROGON_SOURCES}
         third_party/mman-win32/mman.c)
     set(private_headers
         ${private_headers}
         third_party/mman-win32/mman.h)
-endif (NOT WIN32)
+endif()
 
 if (BUILD_POSTGRESQL)
     # find postgres
@@ -524,6 +532,15 @@ if (BUILD_EXAMPLES)
 endif (BUILD_EXAMPLES)
 
 if (BUILD_CTL)
+    if (CMAKE_CROSSCOMPILING)
+        find_program(HOST_DROGON_CTL _drogon_ctl)
+        if (NOT HOST_DROGON_CTL)
+            message(FATAL_ERROR "_drogon_ctl not found on host system")
+        endif()
+        set(DROGON_CTL "${HOST_DROGON_CTL}")
+    else (CMAKE_CROSSCOMPILING)
+        set(DROGON_CTL "$<TARGET_FILE:_drogon_ctl>")
+    endif (CMAKE_CROSSCOMPILING)
     add_subdirectory(drogon_ctl)
 endif (BUILD_CTL)
 

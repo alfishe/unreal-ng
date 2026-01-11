@@ -179,10 +179,10 @@ protected:
         void setPanLeft(double value);
         void setPanRight(double value);
 
-        uint8_t volume() { return _volume; };
-        bool envelopeEnabled() { return _envelopeEnabled; }
-        bool toneEnabled() { return _toneEnabled; }
-        bool noiseEnabled() { return _noiseEnabled; };
+        uint8_t volume() const { return _volume; };
+        bool envelopeEnabled() const { return _envelopeEnabled; }
+        bool toneEnabled() const { return _toneEnabled; }
+        bool noiseEnabled() const { return _noiseEnabled; };
 
         double panLeft() { return _panLeft; }
         double panRight() { return _panRight; }
@@ -284,7 +284,7 @@ protected:
     public:
         int16_t period() { return (uint16_t)_period; }
         int8_t shape() { return _shape; }
-        int8_t out() { return _out; };
+        int8_t out() const { return _out; };
         /// endregion </Properties>
 
         /// region <Constructors / Destructors>
@@ -396,6 +396,16 @@ public:
     void writeRegister(uint8_t regAddr, uint8_t value);
 
     /// endregion </Methods>
+
+    /// region <Debug access methods>
+public:
+    // Access to internal state for debugging
+    const uint8_t* getRegisters() const { return _registers; }
+    const ToneGenerator* getToneGenerators() const { return _toneGenerators; }
+    const NoiseGenerator& getNoiseGenerator() const { return _noiseGenerator; }
+    const EnvelopeGenerator& getEnvelopeGenerator() const { return _envelopeGenerator; }
+    uint8_t getCurrentRegister() const { return _currentRegister; }
+    /// endregion </Debug access methods>
 
     /// region <PortDevice interface methods>
     uint8_t portDeviceInMethod(uint16_t port);

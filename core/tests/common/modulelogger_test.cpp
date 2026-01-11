@@ -1,7 +1,8 @@
-#include <common/modulelogger.h>
-#include "pch.h"
-
 #include "modulelogger_test.h"
+
+#include <common/modulelogger.h>
+
+#include "pch.h"
 
 /// region <SetUp / TearDown>
 
@@ -99,8 +100,7 @@ TEST_F(ModuleLogger_Test, DumpModules)
         "Loader",
         "Debugger",
         "Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler",
-        "<Unknown>, Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler"
-    };
+        "<Unknown>, Core, Z80, Memory, I/O, Disk, Video, Sound, DMA, Loader, Debugger, Disassembler"};
 
     for (int i = 0; i < refInputs.size(); i++)
     {
@@ -114,39 +114,51 @@ TEST_F(ModuleLogger_Test, DumpSettings)
     LoggerSettings settings;
     settings.modules = 0xFFFFFFFF;
     _moduleLogger->SetLoggingSettings(settings);
-    
+
     std::string result = _moduleLogger->DumpSettings();
-    std::string expected = "Module logger settings dump:\nCore: on\n<All>\nZ80: on\n<All>\nMemory: on\n<All>\nI/O: on\n<All>\nDisk: on\n<All>\nVideo: on\n<All>\nSound: on\n<All>\nDMA: on\n<All>\nLoader: on\n<All>\nDebugger: on\n<All>\nDisassembler: on\n<All>\n";
+    std::string expected =
+        "Module logger settings dump:\nCore: partial\n  Submodules:\n<All>\nZ80: partial\n  "
+        "Submodules:\n<All>\nMemory: partial\n  Submodules:\n<All>\nI/O: partial\n  Submodules:\n<All>\nDisk: "
+        "partial\n  Submodules:\n<All>\nVideo: partial\n  Submodules:\n<All>\nSound: partial\n  "
+        "Submodules:\n<All>\nDMA: partial\n  Submodules:\n<All>\nLoader: partial\n  Submodules:\n<All>\nDebugger: "
+        "partial\n  Submodules:\n<All>\nDisassembler: partial\n  Submodules:\n<All>\n";
     EXPECT_EQ(expected, result);
-    
-    settings.modules = 0x00000002; // Core module only
+
+    settings.modules = 0x00000002;  // Core module only
     _moduleLogger->SetLoggingSettings(settings);
-    
+
     result = _moduleLogger->DumpSettings();
-    expected = "Module logger settings dump:\nCore: on\n<All>\nZ80: off\nMemory: off\nI/O: off\nDisk: off\nVideo: off\nSound: off\nDMA: off\nLoader: off\nDebugger: off\nDisassembler: off\n";
+    expected =
+        "Module logger settings dump:\nCore: partial\n  Submodules:\n<All>\nZ80: off\n  Submodules:\n<All>\nMemory: "
+        "off\n  Submodules:\n<All>\nI/O: off\n  Submodules:\n<All>\nDisk: off\n  Submodules:\n<All>\nVideo: off\n  "
+        "Submodules:\n<All>\nSound: off\n  Submodules:\n<All>\nDMA: off\n  Submodules:\n<All>\nLoader: off\n  "
+        "Submodules:\n<All>\nDebugger: off\n  Submodules:\n<All>\nDisassembler: off\n  Submodules:\n<All>\n";
     EXPECT_EQ(expected, result);
 }
 
 TEST_F(ModuleLogger_Test, LogMessages)
 {
     LoggerSettings settings;
-    settings.modules = 0xFFFFFFFF; // Enable all modules
+    settings.modules = 0xFFFFFFFF;  // Enable all modules
     _moduleLogger->SetLoggingSettings(settings);
-    _moduleLogger->SetLoggingLevel(LoggerLevel::LogDebug); // Enable all levels
-    
+    _moduleLogger->SetLoggingLevel(LoggerLevel::LogDebug);  // Enable all levels
+
     // Test different log levels
     _moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_NONE, 0, "Test debug message");
     _moduleLogger->LogMessage(LoggerLevel::LogInfo, PlatformModulesEnum::MODULE_NONE, 0, "Test info message");
     _moduleLogger->LogMessage(LoggerLevel::LogWarning, PlatformModulesEnum::MODULE_NONE, 0, "Test warning message");
     _moduleLogger->LogMessage(LoggerLevel::LogError, PlatformModulesEnum::MODULE_NONE, 0, "Test error message");
-    
+
     // Test module-specific logging
     _moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_CORE, 0, "Core module debug message");
     _moduleLogger->LogMessage(LoggerLevel::LogInfo, PlatformModulesEnum::MODULE_Z80, 0, "Z80 module info message");
-    _moduleLogger->LogMessage(LoggerLevel::LogWarning, PlatformModulesEnum::MODULE_MEMORY, 0, "Memory module warning message");
+    _moduleLogger->LogMessage(LoggerLevel::LogWarning, PlatformModulesEnum::MODULE_MEMORY, 0,
+                              "Memory module warning message");
     _moduleLogger->LogMessage(LoggerLevel::LogError, PlatformModulesEnum::MODULE_IO, 0, "I/O module error message");
-    
+
     // Test logging with format arguments
-    _moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_NONE, 0, "Formatted message: %d %s", 42, "test");
-    _moduleLogger->LogMessage(LoggerLevel::LogInfo, PlatformModulesEnum::MODULE_CORE, 0, "Formatted module message: %d %s", 42, "test");
+    _moduleLogger->LogMessage(LoggerLevel::LogDebug, PlatformModulesEnum::MODULE_NONE, 0, "Formatted message: %d %s",
+                              42, "test");
+    _moduleLogger->LogMessage(LoggerLevel::LogInfo, PlatformModulesEnum::MODULE_CORE, 0,
+                              "Formatted module message: %d %s", 42, "test");
 }

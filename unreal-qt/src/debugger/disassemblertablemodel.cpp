@@ -4,8 +4,8 @@
 #include <QDebug>
 #include <QFont>
 #include <QFontMetrics>
-#include <QtGui/QColor>
 #include <QMutexLocker>
+#include <QtGui/QColor>
 #include <iomanip>
 #include <sstream>
 
@@ -97,7 +97,7 @@ void DisassemblerTableModel::refresh()
 
     // Begin model reset for the actual data loading
     beginResetModel();
-    
+
     // Load disassembly for the range
     loadDisassemblyRange(loadStart, loadEnd, currentPC);
 
@@ -137,8 +137,20 @@ void DisassemblerTableModel::setEmulator(Emulator* emulator)
         return;
     }
 
-    // If we have a valid emulator, load the initial range
-    if (m_emulator->GetContext() && m_emulator->GetContext()->pDebugManager)
+    // HOTFIX: Only trigger disassembly when emulator is in a ready state (Running or Paused)
+    // During initialization the emulator and memory are not yet set up properly
+    EmulatorStateEnum state = m_emulator->GetState();
+    bool isReadyState = (state == StateRun || state == StateResumed || state == StatePaused);
+
+    if (!isReadyState)
+    {
+        qDebug() << "Emulator state is" << state << "- deferring disassembly until running/paused";
+        emit dataChanged(createIndex(0, 0), createIndex(rowCount() - 1, columnCount() - 1));
+        return;
+    }
+
+    // If we have a valid emulator in ready state, load the initial range
+    if (m_emulator->GetContext() && m_emulator->GetContext()->pDebugManager && m_emulator->GetContext()->pCore)
     {
         qDebug() << "Setting initial visible range:" << QString::number(m_visibleStart, 16) << "to"
                  << QString::number(m_visibleEnd, 16);
@@ -146,8 +158,7 @@ void DisassemblerTableModel::setEmulator(Emulator* emulator)
     }
     else
     {
-        qWarning() << "Emulator context or debug manager not available";
-        // Still need to set the visible range to update the view
+        qWarning() << "Emulator context, debug manager, or core not available - deferring disassembly";
         emit dataChanged(createIndex(0, 0), createIndex(rowCount() - 1, columnCount() - 1));
     }
 }
@@ -209,8 +220,8 @@ QVariant DisassemblerTableModel::data(const QModelIndex& index, int role) const
     }
     catch (const std::exception& e)
     {
-        qCritical() << "Exception advancing iterator:" << e.what() 
-                    << "Row:" << index.row() << "Cache size:" << cacheSize;
+        qCritical() << "Exception advancing iterator:" << e.what() << "Row:" << index.row()
+                    << "Cache size:" << cacheSize;
         return QVariant();
     }
 
@@ -504,10 +515,10 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
         if (m_currentPC != 0xFFFF)
         {
             // Calculate start centered around PC, but ensure it doesn't go below 0
-            loadStart = (m_currentPC > MAX_RANGE/2) ? (m_currentPC - MAX_RANGE/2) : 0;
+            loadStart = (m_currentPC > MAX_RANGE / 2) ? (m_currentPC - MAX_RANGE / 2) : 0;
             // Calculate end based on start, ensuring we don't exceed MAX_RANGE
             loadEnd = loadStart + MAX_RANGE;
-            
+
             // If we go beyond address space, adjust both start and end
             if (loadEnd > 0xFFFF)
             {
@@ -515,13 +526,13 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
                 loadStart = (loadEnd > MAX_RANGE) ? (loadEnd - MAX_RANGE) : 0;
             }
             // Ensure we didn't make the range too small
-            if (loadEnd - loadStart < MAX_RANGE/2)
+            if (loadEnd - loadStart < MAX_RANGE / 2)
             {
                 loadStart = 0;
                 loadEnd = MAX_RANGE > 0xFFFF ? 0xFFFF : MAX_RANGE;
             }
 
-            qDebug() << "Adjusted disassembly range to center around PC:" 
+            qDebug() << "Adjusted disassembly range to center around PC:"
                      << QString("0x%1 - 0x%2").arg(loadStart, 4, 16, QChar('0')).arg(loadEnd, 4, 16, QChar('0'));
         }
         else
@@ -536,16 +547,17 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
                     loadStart = (loadEnd > MAX_RANGE) ? (loadEnd - MAX_RANGE) : 0;
                 }
             }
-            qDebug() << "Clamped disassembly range to:" 
+            qDebug() << "Clamped disassembly range to:"
                      << QString("0x%1 - 0x%2").arg(loadStart, 4, 16, QChar('0')).arg(loadEnd, 4, 16, QChar('0'));
         }
-        
+
         // Final sanity check to ensure we don't exceed MAX_RANGE
         if (loadEnd - loadStart > MAX_RANGE)
         {
             qWarning() << "Range still too large after adjustment, forcing to MAX_RANGE";
             loadEnd = loadStart + MAX_RANGE;
-            if (loadEnd > 0xFFFF) loadEnd = 0xFFFF;
+            if (loadEnd > 0xFFFF)
+                loadEnd = 0xFFFF;
         }
     }
 
@@ -555,7 +567,8 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
     {
         // Calculate a range centered on the PC with enough padding for table height
         uint16_t pcCenteredStart = (m_currentPC > DISASSEMBLY_RANGE) ? (m_currentPC - DISASSEMBLY_RANGE) : 0;
-        uint16_t pcCenteredEnd = (m_currentPC < (0xFFFF - DISASSEMBLY_RANGE)) ? (m_currentPC + DISASSEMBLY_RANGE) : 0xFFFF;
+        uint16_t pcCenteredEnd =
+            (m_currentPC < (0xFFFF - DISASSEMBLY_RANGE)) ? (m_currentPC + DISASSEMBLY_RANGE) : 0xFFFF;
 
         // Expand our load range to include the PC-centered range
         loadStart = std::min(loadStart, pcCenteredStart);
@@ -605,7 +618,8 @@ void DisassemblerTableModel::setVisibleRange(uint16_t start, uint16_t end)
         }
 
         // If the PC should be in range but isn't in the cache, force add it
-        if (m_currentPC >= loadStart && m_currentPC <= loadEnd && m_decodedInstructionsCache.find(m_currentPC) == m_decodedInstructionsCache.end())
+        if (m_currentPC >= loadStart && m_currentPC <= loadEnd &&
+            m_decodedInstructionsCache.find(m_currentPC) == m_decodedInstructionsCache.end())
         {
             qDebug() << "PC 0x" << QString::number(m_currentPC, 16)
                      << " should be in range but isn't in cache. Forcing add.";
@@ -777,6 +791,14 @@ void DisassemblerTableModel::disassembleForward(uint16_t start, uint16_t end)
 {
     assert(start < end);
 
+    // Comprehensive null safety - check all required components before disassembly
+    if (!m_emulator || !m_emulator->GetContext() || !m_emulator->GetContext()->pCore ||
+        !m_emulator->GetContext()->pDebugManager || !m_emulator->GetContext()->pMemory)
+    {
+        qWarning() << "Emulator not ready for disassembly - deferring";
+        return;
+    }
+
     qDebug() << StringHelper::Format("Disassembling forward from 0x%04X to 0x%04X", start, end).c_str();
 
     auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
@@ -802,6 +824,14 @@ void DisassemblerTableModel::disassembleForward(uint16_t start, uint16_t end)
 void DisassemblerTableModel::disassembleBackward(uint16_t pc, uint16_t end)
 {
     assert(pc > end && "End address must be less than PC");
+
+    // Comprehensive null safety - check all required components before disassembly
+    if (!m_emulator || !m_emulator->GetContext() || !m_emulator->GetContext()->pCore ||
+        !m_emulator->GetContext()->pDebugManager || !m_emulator->GetContext()->pMemory)
+    {
+        qWarning() << "Emulator not ready for backward disassembly - deferring";
+        return;
+    }
 
     auto* disassembler = m_emulator->GetContext()->pDebugManager->GetDisassembler().get();
     auto* memory = m_emulator->GetMemory();
@@ -857,11 +887,33 @@ void DisassemblerTableModel::disassembleBackward(uint16_t pc, uint16_t end)
 
 DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disassembler* disassembler, Memory* memory)
 {
+    // Validate all required components
+    if (!disassembler || !memory || !m_emulator || !m_emulator->GetContext() || !m_emulator->GetContext()->pCore)
+    {
+        qWarning() << "disassembleAt: Missing required component";
+        DecodedInstruction invalid;
+        invalid.isValid = false;
+        invalid.instructionAddr = addr;
+        invalid.fullCommandLen = 1;
+        invalid.mnemonic = "???";
+        return invalid;
+    }
+
     Z80Registers* registers = m_emulator->GetContext()->pCore->GetZ80();
+    if (!registers)
+    {
+        qWarning() << "disassembleAt: Z80 registers not available";
+        DecodedInstruction invalid;
+        invalid.isValid = false;
+        invalid.instructionAddr = addr;
+        invalid.fullCommandLen = 1;
+        invalid.mnemonic = "???";
+        return invalid;
+    }
 
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    size_t bytesToRead = std::min(static_cast<size_t>(Z80Disassembler::MAX_INSTRUCTION_LENGTH), 
-                                 static_cast<size_t>(0x10000 - addr));
+    size_t bytesToRead =
+        std::min(static_cast<size_t>(Z80Disassembler::MAX_INSTRUCTION_LENGTH), static_cast<size_t>(0x10000 - addr));
 
     try
     {
@@ -875,8 +927,8 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
         uint8_t commandLen = 0;
         DecodedInstruction decodedInstruction;
 
-        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, addr, &commandLen,
-                                                                               registers, memory, &decodedInstruction);
+        std::string disasm = disassembler->disassembleSingleCommandWithRuntime(buffer, addr, &commandLen, registers,
+                                                                               memory, &decodedInstruction);
 
         if (commandLen > 0 && commandLen <= Z80Disassembler::MAX_INSTRUCTION_LENGTH)
         {
@@ -887,12 +939,13 @@ DecodedInstruction DisassemblerTableModel::disassembleAt(uint16_t addr, Z80Disas
             decodedInstruction.isValid = true;
 
             m_decodedInstructionsCache[addr] = decodedInstruction;
-            
-            qDebug() << StringHelper::Format("Disassembled at 0x%04X: %s %s | %s | %s",
-                addr, 
-                decodedInstruction.label.empty() ? "" : "[" + decodedInstruction.label + "[",
-                decodedInstruction.mnemonic.c_str(),
-                decodedInstruction.annotation.empty() ? "" : decodedInstruction.annotation.c_str()).c_str();
+
+            qDebug() << StringHelper::Format(
+                            "Disassembled at 0x%04X: %s %s | %s | %s", addr,
+                            decodedInstruction.label.empty() ? "" : "[" + decodedInstruction.label + "[",
+                            decodedInstruction.mnemonic.c_str(),
+                            decodedInstruction.annotation.empty() ? "" : decodedInstruction.annotation.c_str())
+                            .c_str();
             return decodedInstruction;
         }
     }
@@ -934,8 +987,7 @@ void DisassemblerTableModel::dumpState() const
     for (auto it = m_decodedInstructionsCache.rbegin(); it != m_decodedInstructionsCache.rend() && count < 5; ++it)
     {
         const auto& [addr, instr] = *it;
-        qDebug() << "  0x" << QString::number(addr, 16) << ":" 
-                 << QString::fromStdString(instr.mnemonic) << "("
+        qDebug() << "  0x" << QString::number(addr, 16) << ":" << QString::fromStdString(instr.mnemonic) << "("
                  << QString::fromStdString(instr.annotation) << ")";
         count++;
     }

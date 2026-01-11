@@ -75,6 +75,10 @@ uint8_t Tape::handlePortIn()
     const uint32_t tState = _context->pCore->GetZ80()->t;
     [[maybe_unused]] uint8_t prevPortValue = _context->emulatorState.pFE;
 
+    // Scale t-state by speed multiplier for correct audio timing
+    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    uint32_t scaledTState = tState * speedMultiplier;
+
     if (_tapeStarted)
     {
         size_t clockCount = cpu.clock_count;
@@ -87,7 +91,7 @@ uint8_t Tape::handlePortIn()
         int16_t sample = _lpfFilter.filter(micSample);// Apply LPF filtering to remove high-frequency noise
         sample = _dcFilter.filter(sample);
 
-        _context->pSoundManager->updateDAC(tState, sample, sample);
+        _context->pSoundManager->updateDAC(scaledTState, sample, sample);
     }
     else
     {
@@ -153,6 +157,11 @@ void Tape::handlePortOut(uint8_t value)
     [[maybe_unused]] size_t clockCount = _context->pCore->GetZ80()->clock_count;
     uint32_t tState = _context->pCore->GetZ80()->t;
 
+    // Scale t-state by speed multiplier for correct audio pitch
+    // Beeper should play faster at higher speeds
+    uint8_t speedMultiplier = _context->emulatorState.current_z80_frequency_multiplier;
+    uint32_t scaledTState = tState * speedMultiplier;
+
     bool outBit = value & 0b0001'0000;
     [[maybe_unused]] bool micBit = value & 0b0000'1000;
 
@@ -163,7 +172,7 @@ void Tape::handlePortOut(uint8_t value)
         int16_t earSample = outBit ? 3000 : -3000;
         sample = _dcFilter.filter(earSample);   // Apply LPF filtering to remove high-frequency noise;
 
-        _context->pSoundManager->updateDAC(tState, sample, sample);
+        _context->pSoundManager->updateDAC(scaledTState, sample, sample);
     }
     else // Ignore outputs while tape is playing
     {

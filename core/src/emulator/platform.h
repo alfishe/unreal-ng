@@ -7,32 +7,51 @@
 #define EMUL_DEBUG
 #define TRASH_PAGE
 
-/// region <Notification center events>
+// region <Notification center events>
 constexpr char const* NC_LOGGER_SETTINGS_MODULES_CHANGE = "LOGGER_SETTINGS_MODULES";
 constexpr char const* NC_LOGGER_SETTINGS_SUBMODULES_CHANGE = "LOGGER_SETTINGS_SUBMODULES";
 
 
-constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator changed state (Initialized -> Run -> Pause -> Resume -> Release)
+// region <GLOBAL MessageCenter Notifications>
 
-constexpr char const* NC_SYSTEM_RESET = "RESET";                                // Event fired when system was reset
-constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Event fired when one single CPU step performed. Active in debug mode only.
-constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint fired
+// These events are broadcast globally and do not carry emulator instance identification.
+// Subscribe ONCE in application/component constructor, not per-emulator-instance.
+// Examples: MainWindow constructor, automation listeners.
+constexpr char const* NC_EMULATOR_INSTANCE_CREATED = "EMULATOR_INSTANCE_CREATED"; // New emulator instance created (payload: emulator ID)
+constexpr char const* NC_EMULATOR_INSTANCE_DESTROYED = "EMULATOR_INSTANCE_DESTROYED"; // Emulator instance destroyed (payload: emulator ID)
+constexpr char const* NC_EMULATOR_SELECTION_CHANGED = "EMULATOR_SELECTION_CHANGED";  // Emulator selection changed (payload: EmulatorSelectionPayload)
 
-constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio data for the current frame is ready
-constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video data for the current frame is ready
+// endregion </GLOBAL MessageCenter Notifications>
 
-constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio player callback notifies that buffer has less than half of its content
+// region <PER-EMULATOR-INSTANCE MessageCenter Notifications>
 
-constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";
-constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";
+// These events are broadcast BY specific emulator instances during their lifecycle.
+// When multiple emulators exist, all listeners receive events from ALL instances.
+// Listeners must filter events by emulator ID (if payload supports it) or by comparing
+// against their adopted emulator reference to avoid processing events from wrong instances.
+// Subscribe when adopting an emulator, unsubscribe when releasing it.
+constexpr char const* NC_EMULATOR_STATE_CHANGE = "LOGGER_EMULATOR_STATE";       // Emulator state change (Initialized/Run/Pause/Resume/Stop)
+constexpr char const* NC_SYSTEM_RESET = "RESET";                                // System reset event
+constexpr char const* NC_EXECUTION_CPU_STEP = "CPU_STEP";                       // Single CPU step executed (debug mode only)
+constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered
 
-constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";     // Request to open a file or file dialog
-constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";     // Notification that breakpoints have been added, removed, or modified
-constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                   // Notification that a label has been added, removed, or modified
+constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           // Audio frame ready (TODO: add emulator ID to payload)
+constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
+constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     // Audio buffer < 50% full
 
-/// endregion </Notification center events>
+constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
+constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
 
-/// region <Logging / Tracing data>
+constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
+
+constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
+constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
+
+// endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
+
+// endregion </Notification center events>
+
+// region <Logging / Tracing data>
 
 // High level modules
 enum PlatformModulesEnum : uint8_t
@@ -49,6 +68,7 @@ enum PlatformModulesEnum : uint8_t
     MODULE_LOADER               = 9,
     MODULE_DEBUGGER             = 10,
     MODULE_DISASSEMBLER         = 11,
+    MODULE_RECORDING            = 12,
 
     MODULE_ALL                  = 0xFF
 };
@@ -186,11 +206,20 @@ enum PlatformDisassemblerSubmodulesEnum : uint16_t
     SUBMODULE_DISASSEMBLER_ALL      = 0xFFFF
 };
 
-/// endregion </Logging / Tracing data>
+enum PlatformRecordingSubmodulesEnum : uint16_t
+{
+    SUBMODULE_RECORDING_NONE        = 0x0000,
+    SUBMODULE_RECORDING_MANAGER     = 0x0001,
+    SUBMODULE_RECORDING_ENCODER     = 0x0002,
 
-/// region <CPU runtime>
+    SUBMODULE_RECORDING_ALL         = 0xFFFF
+};
 
-/// endregion </CPU runtime>
+// endregion </Logging / Tracing data>
+
+// region <CPU runtime>
+
+// endregion </CPU runtime>
 
 #undef PAGE_SIZE
 const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x4000 or 16384)
@@ -382,6 +411,19 @@ struct CONFIG
 
 	uint8_t floatbus, floatdos;
 	bool portff;
+
+	/// Speed multiplier: 1x (default), 2x, 4x, 8x, or 16x
+	/// Multiplies the number of t-states executed per frame
+	uint8_t speed_multiplier = 1;
+
+	/// Turbo/Max speed mode - runs emulation as fast as possible
+	/// When enabled, disables audio synchronization for maximum performance
+	bool turbo_mode = false;
+
+	/// Generate audio samples even in turbo mode
+	/// Useful for video capture or when recording while in turbo mode
+	/// Audio will play at increased pitch due to faster execution
+	bool turbo_mode_audio = false;
 
 	int modem_port; //, modem_scheme;
 	int zifi_port;
@@ -722,6 +764,7 @@ struct EmulatorState
     uint32_t base_z80_frequency;                // x1 base CPU clock generator (in Hz)
     uint32_t current_z80_frequency;             // xN CPU clock generator (in Hz)
     uint8_t current_z80_frequency_multiplier;   // Frequency multiplier comparing to CPU base
+    uint8_t next_z80_frequency_multiplier;      // Queued multiplier to apply at next frame start (prevents mid-frame changes)
 
     /// endregion </Runtime CPU parameters
 

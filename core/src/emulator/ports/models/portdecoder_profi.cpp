@@ -21,8 +21,36 @@ PortDecoder_Profi::~PortDecoder_Profi()
 
 void PortDecoder_Profi::reset()
 {
+    // Profi 1024 ROM setup
+    // Similar to Spectrum 128K
+    // Bit 4 of port 0x7FFD: 0 = SOS ROM, 1 = 128K ROM
+
+    // Explicitly reset port states to ensure consistent reset behavior
+    EmulatorState& state = _context->emulatorState;
+    state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, SOS ROM, paging enabled)
+    state.pDFFD = 0x00;     // Reset port 0xDFFD (extended paging)
+    state.pBFFD = 0x00;     // Reset AY register select port
+    state.pFFFD = 0x00;     // Reset AY data port
+    state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+
+    // Set default 128K memory pages
+    Memory& memory = *_context->pMemory;
+    memory.SetROMMode(RM_SOS);      // SOS ROM at reset
+    memory.SetRAMPageToBank1(5);
+    memory.SetRAMPageToBank2(2);
+    memory.SetRAMPageToBank3(0);
+
+    // Set default border color to white
+    _screen->SetBorderColor(COLOR_WHITE);
+
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+
+    // Explicitly force screen to SCREEN_NORMAL
+    _screen->SetActiveScreen(SCREEN_NORMAL);
+
+    // Set default memory paging state
+    Port_7FFD(0x00, 0x0000);
 }
 
 uint8_t PortDecoder_Profi::DecodePortIn(uint16_t port, uint16_t pc)

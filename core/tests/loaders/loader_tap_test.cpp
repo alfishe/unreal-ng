@@ -5,6 +5,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/test_path_helper.h"
 
 /// region <SetUp / TearDown>
 
@@ -45,7 +46,7 @@ void LoaderTAP_Test::TearDown()
 
 TEST_F(LoaderTAP_Test, loadTAP)
 {
-    static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
+    static std::string testTapePath = TestPathHelper::GetTestDataPath("loaders/tap/action.tap");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
     constexpr size_t referenceBlockNumber = 6;
     const std::vector<size_t> referenceBlockSizes = { 19, 167, 19, 4338, 19, 27082 };
@@ -181,7 +182,7 @@ TEST_F(LoaderTAP_Test, isBlockValid)
 
 TEST_F(LoaderTAP_Test, readNextBlock)
 {
-    static std::string testTapePath = "../../../tests/loaders/tap/action.tap";
+    static std::string testTapePath = TestPathHelper::GetTestDataPath("loaders/tap/action.tap");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testTapePath);
     const size_t referenceBlockCount = 6;
 

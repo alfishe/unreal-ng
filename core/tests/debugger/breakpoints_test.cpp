@@ -2,25 +2,29 @@
 
 #include "breakpoints_test.h"
 
-#include <vector>
 #include "3rdparty/message-center/messagecenter.h"
-#include "common/dumphelper.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/cpu/z80.h"
 
 /// region <SetUp / TearDown>
 
 void BreakpointManager_test::SetUp()
 {
+    // Ensure complete isolation - dispose any existing MessageCenter from previous tests
+    MessageCenter::DisposeDefaultMessageCenter();
+
+    // Create fresh context and manager for each test
     _context = new EmulatorContext(LoggerLevel::LogError);
     _brkManager = new BreakpointManagerCUT(_context);
 }
 
 void BreakpointManager_test::TearDown()
 {
+    // Clean up test-specific resources first
     if (_brkManager)
     {
         delete _brkManager;
@@ -32,6 +36,10 @@ void BreakpointManager_test::TearDown()
         delete _context;
         _context = nullptr;
     }
+
+    // Force complete disposal of MessageCenter and all its observers
+    // This ensures no state leakage between tests
+    MessageCenter::DisposeDefaultMessageCenter();
 }
 
 /// endregion </Setup / TearDown>
@@ -119,14 +127,12 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
-        {
-            breakpointTriggered = true;
-
-            //sleep_ms(20);
-            emulator->Resume();
-        }
-    );
+    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
+    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+        breakpointTriggered = true;
+        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+    };
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -140,11 +146,16 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
 
     if (!breakpointTriggered)
     {
+        // Clean up before failing
+        messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+        emulator->Stop();
+        emulator->Release();
+        delete emulator;
         FAIL() << StringHelper::Format("Execution breakpoint on address: $%04X wasn't triggered", breakpointAddress) << std::endl;
     }
 
     /// region <Release>
-
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -165,13 +176,26 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
     bool init = emulator->Init();
-    emulator->DebugOn();
+
 
     EmulatorContext* context = emulator->GetContext();
     BreakpointManager* breakpointManager = emulator->GetBreakpointManager();
 
+    // Enable global debugging (memory debug interface, CPU level debug) + enable Breakpoints feature
+    emulator->DebugOn();
+
+    // Force features to false first, then true to ensure onFeatureChanged is called
+    context->pFeatureManager->setFeature(Features::kDebugMode, false);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, false);
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+
     // Transfer test Z80 command sequence to ROM space (From address $0000)
     Memory* memory = emulator->GetMemory();
+
+    // Manually update feature cache to ensure it's propagated
+    memory->UpdateFeatureCache();
+
     for (int i = 0; i < sizeof(testCommands) / sizeof (testCommands[0]); i++)
     {
         memory->DirectWriteToZ80Memory(i, testCommands[i]);
@@ -179,14 +203,12 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
-          {
-              breakpointTriggered = true;
-
-              //sleep_ms(20);
-              emulator->Resume();
-          }
-    );
+    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
+    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+        breakpointTriggered = true;
+        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+    };
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -197,7 +219,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     breakpoint->z80address = breakpointAddress;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(3);
+    emulator->RunNCPUCycles(50);
 
     if (!breakpointTriggered)
     {
@@ -205,7 +227,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     }
 
     /// region <Release>
-
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -227,13 +249,25 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
     bool init = emulator->Init();
-    emulator->DebugOn();
 
     EmulatorContext* context = emulator->GetContext();
     BreakpointManager* breakpointManager = emulator->GetBreakpointManager();
 
+    // Enable global debugging (memory debug interface, CPU level debug) + enable Breakpoints feature
+    emulator->DebugOn();
+
+    // Force features to false first, then true to ensure onFeatureChanged is called
+    context->pFeatureManager->setFeature(Features::kDebugMode, false);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, false);
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+
     // Transfer test Z80 command sequence to ROM space (From address $0000)
     Memory* memory = emulator->GetMemory();
+
+    // Manually update feature cache to ensure it's propagated
+    memory->UpdateFeatureCache();
+
     for (int i = 0; i < sizeof(testCommands) / sizeof (testCommands[0]); i++)
     {
         memory->DirectWriteToZ80Memory(i, testCommands[i]);
@@ -241,14 +275,12 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
-          {
-              breakpointTriggered = true;
-
-              //sleep_ms(20);
-              emulator->Resume();
-          }
-    );
+    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
+    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+        breakpointTriggered = true;
+        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+    };
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -259,7 +291,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     breakpoint->z80address = breakpointAddress;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(6, false);
+    emulator->RunNCPUCycles(50, false);
 
     if (!breakpointTriggered)
     {
@@ -267,7 +299,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     }
 
     /// region <Release>
-
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -280,11 +312,11 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     volatile bool breakpointTriggered = false;
     uint8_t testCommands[] =
     {
-        0xAF,                   // $0000 XOR A - Ensure A = 0
-        0xED, 0x70, 0x00, 0x00, // $0001 IN A, ($00)
-        0x76                    // $0005 HALT
+        0xAF,        // $0000 XOR A - Ensure A = 0
+        0xDB, 0x00,  // $0001 IN A,($00) - Read from port $00
+        0x76         // $0003 HALT
     };
-    uint8_t portNumber = 0x00;  // Test port input from port 0
+    uint8_t portNumber = 0x00;  // Test port input from port $00
 
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
@@ -294,8 +326,13 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     EmulatorContext* context = emulator->GetContext();
     BreakpointManager* breakpointManager = emulator->GetBreakpointManager();
 
+    // Enable global debugging (memory debug interface, CPU level debug) + enable Breakpoints feature
+    context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    context->pFeatureManager->setFeature(Features::kBreakpoints, true);
+
     // Transfer test Z80 command sequence to ROM space (From address $0000)
     Memory* memory = emulator->GetMemory();
+
     for (int i = 0; i < sizeof(testCommands) / sizeof(testCommands[0]); i++)
     {
         memory->DirectWriteToZ80Memory(i, testCommands[i]);
@@ -303,11 +340,12 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
-    {
+    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
+    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
         breakpointTriggered = true;
-        emulator->Resume();
-    });
+        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+    };
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -318,7 +356,7 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     breakpoint->z80address = portNumber;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(4, false);
+    emulator->RunNCPUCycles(20, false);
 
     if (!breakpointTriggered)
     {
@@ -326,6 +364,7 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     }
 
     /// region <Release>
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -353,6 +392,7 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
 
     // Transfer test Z80 command sequence to ROM space (From address $0000)
     Memory* memory = emulator->GetMemory();
+
     for (int i = 0; i < sizeof(testCommands) / sizeof(testCommands[0]); i++)
     {
         memory->DirectWriteToZ80Memory(i, testCommands[i]);
@@ -360,12 +400,12 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, [=, &breakpointTriggered](int id, Message* message) mutable
-          {
-              breakpointTriggered = true;
-              emulator->Resume();
-          }
-    );
+    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
+    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+        breakpointTriggered = true;
+        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+    };
+    messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
     /// endregion </Initialize>
 
@@ -376,7 +416,7 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
     breakpoint->z80address = portNumber;
     breakpointManager->AddBreakpoint(breakpoint);
 
-    emulator->RunNCPUCycles(4, false);
+    emulator->RunNCPUCycles(20, false);
 
     if (!breakpointTriggered)
     {
@@ -384,6 +424,7 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
     }
 
     /// region <Release>
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;

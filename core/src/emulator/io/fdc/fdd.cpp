@@ -39,6 +39,12 @@ FDD::FDD(EmulatorContext* context) : _context(context)
     }
     /// endregion </Debug Image initialization>
 }
+
+FDD::~FDD()
+{
+    // Note: FDD does not own the DiskImage, just holds a pointer
+    // DiskImage is managed by Emulator/CoreState and deleted elsewhere
+}
 /// endregion </Constructors / destructors>
 
 /// region <Methods>
@@ -67,6 +73,8 @@ void FDD::insertDisk(DiskImage* diskImage)
 
 void FDD::ejectDisk()
 {
+    // Note: FDD does not own the DiskImage, just holds a pointer to it
+    // The DiskImage is owned and managed by the Emulator/CoreState
     _diskImage = nullptr;
     _diskInserted = false;
 }
