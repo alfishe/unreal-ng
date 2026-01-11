@@ -120,6 +120,10 @@ void WD1793::internalReset()
     // Deassert output signals
     clearIntrq();
     clearDrq();
+
+    // Start in sleep mode - will wake on first port access
+    _sleeping = true;
+    _wakeTimestamp = 0;
 }
 
 void WD1793::process()
@@ -167,6 +171,28 @@ void WD1793::ejectDisk()
     if (_selectedDrive)
     {
         _selectedDrive->ejectDisk();
+    }
+}
+
+/// Wake FDD from sleep mode (called on port access)
+void WD1793::wakeUp()
+{
+    if (_sleeping)
+    {
+        _sleeping = false;
+        updateTimeFromEmulatorState();
+        _wakeTimestamp = _time;
+        MLOGDEBUG("WD1793 waking up from sleep mode");
+    }
+}
+
+/// Put FDD into sleep mode (called when idle for too long)
+void WD1793::enterSleepMode()
+{
+    if (!_sleeping)
+    {
+        _sleeping = true;
+        MLOGDEBUG("WD1793 entering sleep mode");
     }
 }
 
@@ -1957,6 +1983,23 @@ void WD1793::handleFrameStart()
 
 void WD1793::handleStep()
 {
+    // Skip processing if sleeping - major CPU optimization when FDD is idle
+    if (_sleeping)
+    {
+        return;
+    }
+
+    // Check if we should enter sleep mode (idle for too long with motor off)
+    if (_state == S_IDLE && _motorTimeoutTStates == 0)
+    {
+        updateTimeFromEmulatorState();
+        if (_time - _wakeTimestamp > SLEEP_AFTER_IDLE_TSTATES)
+        {
+            enterSleepMode();
+            return;
+        }
+    }
+
     // We need better precision to read data from the disk at 112 t-states per byte rate, so update FSM state after each
     // CPU command execution
     process();
@@ -1964,6 +2007,12 @@ void WD1793::handleStep()
 
 void WD1793::handleFrameEnd()
 {
+    // Skip processing if sleeping
+    if (_sleeping)
+    {
+        return;
+    }
+
     // Perform FSM update at least once per frame (20ms) even if no active I/O with FDC performed
     process();
 }
@@ -1983,6 +2032,9 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     // MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName.c_str());
 
     /// endregion </Debug print>
+
+    // Wake from sleep mode on port access
+    wakeUp();
 
     // Update FDC internal states
     process();
@@ -2058,6 +2110,9 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     MLOGINFO("Out port:0x%04X, value: 0x%02X pc: 0x%04X bank: %s", port, value, pc, memBankName.c_str());
 
     /// endregion </Debug print>
+
+    // Wake from sleep mode on port access
+    wakeUp();
 
     // Update FDC internal states
     process();
