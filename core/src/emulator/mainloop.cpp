@@ -1,25 +1,26 @@
-#include "stdafx.h"
-
-#include "common/modulelogger.h"
-
 #include "mainloop.h"
-#include "emulator.h"
-#include <algorithm>
-#include "3rdparty/message-center/eventqueue.h"
+
 #include <common/stringhelper.h>
+
+#include <algorithm>
+
+#include "3rdparty/message-center/eventqueue.h"
+#include "common/modulelogger.h"
 #include "common/timehelper.h"
+#include "emulator.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "stdafx.h"
 
 MainLoop::MainLoop(EmulatorContext* context)
 {
-	_context = context;
+    _context = context;
     _logger = context->pModuleLogger;
 
     // Auto-register mainloop in the context
     _context->pMainLoop = this;
 
-	_state = &_context->emulatorState;
-	_cpu = _context->pCore;
+    _state = &_context->emulatorState;
+    _cpu = _context->pCore;
     _screen = _context->pScreen;
     _soundManager = _context->pSoundManager;
 
@@ -46,11 +47,11 @@ MainLoop::~MainLoop()
     }
 
     _screen = nullptr;
-	_cpu = nullptr;
-	_state = nullptr;
-	_context = nullptr;
+    _cpu = nullptr;
+    _state = nullptr;
+    _context = nullptr;
 
-	MLOGDEBUG("MainLoop::~MainLoop()");
+    MLOGDEBUG("MainLoop::~MainLoop()");
 }
 
 //
@@ -76,16 +77,8 @@ void MainLoop::Run(volatile bool& stopRequested)
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
     messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
-    /// region <Debug>
-
-    // Initialize animation
-    [[maybe_unused]] FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
-    gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
-
-    /// endregion </Debug>
-
     /// region <Info logging>
-    static std::chrono::milliseconds timeout(20); // Set timeout for audio buffer refresh wait
+    static std::chrono::milliseconds timeout(20);  // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
     /// endregion </Info logging>
@@ -119,9 +112,9 @@ void MainLoop::Run(volatile bool& stopRequested)
         /// endregion </Handle Pause>
 
         /// region <Info logging>
-        //MLOGINFO("Frame recalculation time: %d us", duration1);
-        //std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
-        //std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
+        // MLOGINFO("Frame recalculation time: %d us", duration1);
+        // std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
+        // std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
         /// endregion </Info logging>
 
         // Synchronization strategy depends on turbo mode setting
@@ -132,7 +125,9 @@ void MainLoop::Run(volatile bool& stopRequested)
             // That means we're in sync between audio and video frames
             std::unique_lock<std::mutex> lock(_audioBufferMutex);
             auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-            _cv.wait_for(lock, timeout, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
+            _cv.wait_for(lock, timeout, [&moreAudioDataRequested] {
+                return moreAudioDataRequested.get().load(std::memory_order_acquire);
+            });
             _moreAudioDataRequested.store(false);
             lock.unlock();
         }
@@ -147,9 +142,6 @@ void MainLoop::Run(volatile bool& stopRequested)
     }
 
     MLOGINFO("Stop requested, exiting main loop");
-
-    // Stop animation recording and finalize the file
-    gifAnimationHelper.StopAnimation();
 
     _isRunning = false;
 }
@@ -199,7 +191,6 @@ void MainLoop::RunFrame()
 
     /// endregion </Frame start handlers>
 
-
     // Execute CPU cycles for single video frame
 
     ExecuteCPUFrameCycle();
@@ -210,7 +201,6 @@ void MainLoop::RunFrame()
 
     /// endregion </Frame end handlers
 
-
     // Process external periphery devices
 
     // Flush all generated data and buffers
@@ -220,38 +210,8 @@ void MainLoop::RunFrame()
     // RenderAudio();
 
     // Queue new frame data to Video/Audio encoding
-
-    /// region <DEBUG: save frame to disk as image>
-
-    static int i = 0;
-    //if (i % 100 == 0)
-    {
-        //screen.RenderOnlyMainScreen();
-
-        // Save frame if video memory was changed
-        //if (_state->video_memory_changed)
-        //    screen.SaveZXSpectrumNativeScreen();
-
-        // Save frame to GIF animation
-        if (_context && _context->pScreen)
-        {
-            Screen& screen = *_context->pScreen;
-            uint32_t* buffer;
-            size_t size;
-            screen.GetFramebufferData(&buffer, &size);
-            gifAnimationHelper.WriteFrame(buffer, size);
-        }
-    }
-    i++;
-
-    if (i >= 2000)
-    {
-        //gifAnimationHelper.StopAnimation();
-
-        //exit(1);
-    }
-
-    /// endregion <DEBUG: save frame to disk as image>
+    // Note: Recording is handled by RecordingManager via OnFrameEnd() callback
+    // when the recording feature is enabled
 }
 
 void MainLoop::OnFrameStart()
@@ -282,7 +242,6 @@ void MainLoop::OnFrameEnd()
     // Guard against null context during shutdown
     if (!_context)
         return;
-
 
     // Additional safety checks - ensure context integrity
     if (!_context->pScreen || !_context->pSoundManager)
@@ -359,7 +318,8 @@ void MainLoop::OnFrameEnd()
     {
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
-        messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                           new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
     }
     catch (const std::exception& e)
     {

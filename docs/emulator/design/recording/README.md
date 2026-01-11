@@ -33,14 +33,14 @@ Comprehensive documentation for the video and audio recording subsystem:
    - Performance optimization strategies
    - **Read this for encoder implementation**
 
-4. **[Encoder Architecture](encoder-architecture.md)** 🔧
+4. **[Encoder Architecture](encoders/encoder-architecture.md)** 🔧
    - EncoderBase interface abstraction
    - Encoder registry and dispatch flow
    - Feature flag integration
    - Envisioned encoders catalog
    - **Read this for encoder plugin design**
 
-5. **[Encoder Development Guideline](encoder-development-guideline.md)** 📖
+5. **[Encoder Development Guideline](encoders/encoder-development-guideline.md)** 📖
    - Required interface implementation
    - Error handling and validation patterns
    - RAII resource management
