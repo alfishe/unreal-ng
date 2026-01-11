@@ -1,10 +1,10 @@
 // OpenAPI Specification Handler
 // Extracted from emulator_api.cpp - 2026-01-08
 
-#include "emulator_api.h"
-
 #include <drogon/HttpResponse.h>
 #include <json/json.h>
+
+#include "emulator_api.h"
 
 using namespace drogon;
 using namespace api::v1;
@@ -68,19 +68,30 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // GET /api/v1/emulator/models
     paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
     paths["/api/v1/emulator/models"]["get"]["tags"].append("Emulator Management");
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["description"] = "List of available ZX Spectrum models with RAM configurations";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] = "object";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["count"]["type"] = "integer";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["count"]["description"] = "Total number of available models";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["type"] = "array";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["type"] = "object";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["properties"]["id"]["type"] = "integer";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["properties"]["name"]["type"] = "string";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["properties"]["full_name"]["type"] = "string";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["properties"]["default_ram_kb"]["type"] = "integer";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["properties"]["available_ram_sizes_kb"]["type"] = "array";
-    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["models"]["items"]["properties"]["available_ram_sizes_kb"]["items"]["type"] = "integer";
-
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["description"] =
+        "List of available ZX Spectrum models with RAM configurations";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["type"] =
+        "object";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["count"]["type"] = "integer";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["count"]["description"] = "Total number of available models";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["type"] = "array";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["type"] = "object";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["id"]["type"] = "integer";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["name"]["type"] = "string";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["full_name"]["type"] = "string";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["default_ram_kb"]["type"] = "integer";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["available_ram_sizes_kb"]["type"] = "array";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["available_ram_sizes_kb"]["items"]["type"] = "integer";
 
     // GET /api/v1/emulator/{id}
     paths["/api/v1/emulator/{id}"]["get"]["summary"] = "Get emulator details";
@@ -104,13 +115,18 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // POST /api/v1/emulator/start - Create and start a new emulator
     paths["/api/v1/emulator/start"]["post"]["tags"].append("Emulator Control");
     paths["/api/v1/emulator/start"]["post"]["summary"] = "Create and start a new emulator";
-    paths["/api/v1/emulator/start"]["post"]["description"] = "Creates a new emulator instance and immediately starts it";
+    paths["/api/v1/emulator/start"]["post"]["description"] =
+        "Creates a new emulator instance and immediately starts it";
     paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
-    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["symbolic_id"]["type"] = "string";
-    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["model"]["type"] = "string";
-    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["ram_size"]["type"] = "integer";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["symbolic_id"]["type"] = "string";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["model"]["type"] = "string";
+    paths["/api/v1/emulator/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["ram_size"]["type"] = "integer";
     paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["description"] = "Emulator created and started";
-    paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/EmulatorInfo";
+    paths["/api/v1/emulator/start"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/EmulatorInfo";
 
     // Control endpoints
     // POST /api/v1/emulator/{id}/start - Start existing emulator
@@ -160,8 +176,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Path to tape image file (.tap, .tzx)";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/tape/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["description"] = "Path to tape image file (.tap, .tzx)";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["200"]["description"] = "Tape loaded successfully";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["400"]["description"] = "Invalid path or file format";
     paths["/api/v1/emulator/{id}/tape/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
@@ -216,12 +234,17 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["name"] = "drive";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["description"] = "Drive letter (A-D) or number (0-3)";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["description"] =
+        "Drive letter (A-D) or number (0-3)";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Path to disk image file (.trd, .scl, .fdi, .udi)";
-    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["200"]["description"] = "Disk inserted successfully";
-    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["400"]["description"] = "Invalid path, file format, or drive parameter";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["description"] = "Path to disk image file (.trd, .scl, .fdi, .udi)";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["200"]["description"] =
+        "Disk inserted successfully";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["responses"]["400"]["description"] =
+        "Invalid path, file format, or drive parameter";
 
     paths["/api/v1/emulator/{id}/disk/{drive}/eject"]["post"]["summary"] = "Eject disk";
     paths["/api/v1/emulator/{id}/disk/{drive}/eject"]["post"]["tags"].append("Disk Control");
@@ -245,7 +268,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/info"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/info"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/disk/{drive}/info"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk/{drive}/info"]["get"]["responses"]["200"]["description"] = "Disk drive status information";
+    paths["/api/v1/emulator/{id}/disk/{drive}/info"]["get"]["responses"]["200"]["description"] =
+        "Disk drive status information";
 
     // Snapshot control endpoints
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["summary"] = "Load snapshot file";
@@ -254,10 +278,14 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Path to snapshot file (.z80, .sna)";
-    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["200"]["description"] = "Snapshot loaded successfully";
-    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["400"]["description"] = "Invalid path or file format";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["description"] = "Path to snapshot file (.z80, .sna)";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["200"]["description"] =
+        "Snapshot loaded successfully";
+    paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["400"]["description"] =
+        "Invalid path or file format";
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["summary"] = "Get snapshot status";
@@ -266,7 +294,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["responses"]["200"]["description"] = "Snapshot status information";
+    paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["responses"]["200"]["description"] =
+        "Snapshot status information";
 
     // Settings Management endpoints
     paths["/api/v1/emulator/{id}/settings"]["get"]["summary"] = "Get all emulator settings";
@@ -277,7 +306,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/settings"]["get"]["parameters"][0]["description"] = "Emulator UUID or index";
     paths["/api/v1/emulator/{id}/settings"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/settings"]["get"]["responses"]["200"]["description"] = "Settings list";
-    paths["/api/v1/emulator/{id}/settings"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/SettingsResponse";
+    paths["/api/v1/emulator/{id}/settings"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/SettingsResponse";
 
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["summary"] = "Get specific setting value";
     paths["/api/v1/emulator/{id}/settings/{name}"]["get"]["tags"].append("Settings Management");
@@ -302,9 +332,55 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["value"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["value"]["description"] = "New setting value";
+    paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["value"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["value"]["description"] = "New setting value";
     paths["/api/v1/emulator/{id}/settings/{name}"]["put"]["responses"]["200"]["description"] = "Setting updated";
+
+    // Feature Management endpoints
+    paths["/api/v1/emulator/{id}/features"]["get"]["summary"] = "List all emulator features";
+    paths["/api/v1/emulator/{id}/features"]["get"]["tags"].append("Feature Management");
+    paths["/api/v1/emulator/{id}/features"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/features"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/features"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/features"]["get"]["parameters"][0]["description"] = "Emulator UUID or index";
+    paths["/api/v1/emulator/{id}/features"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/features"]["get"]["responses"]["200"]["description"] = "Feature list";
+    paths["/api/v1/emulator/{id}/features"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/FeaturesResponse";
+
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["summary"] = "Get specific feature state";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["tags"].append("Feature Management");
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][1]["description"] =
+        "Feature name (e.g., sound, breakpoints, calltrace)";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["responses"]["200"]["description"] = "Feature state";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["get"]["responses"]["404"]["description"] = "Feature not found";
+
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["summary"] = "Enable or disable a feature";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["tags"].append("Feature Management");
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["description"] = "True to enable, false to disable";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["responses"]["200"]["description"] = "Feature state updated";
+    paths["/api/v1/emulator/{id}/feature/{name}"]["put"]["responses"]["404"]["description"] = "Feature not found";
 
     // Memory State endpoints
     paths["/api/v1/emulator/{id}/state/memory"]["get"]["summary"] = "Get memory overview";
@@ -346,7 +422,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["responses"]["200"]["description"] = "Screen mode information";
+    paths["/api/v1/emulator/{id}/state/screen/mode"]["get"]["responses"]["200"]["description"] =
+        "Screen mode information";
 
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["summary"] = "Get flash state";
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["tags"].append("Screen State");
@@ -354,7 +431,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["responses"]["200"]["description"] = "Flash state information";
+    paths["/api/v1/emulator/{id}/state/screen/flash"]["get"]["responses"]["200"]["description"] =
+        "Flash state information";
 
     // Audio state endpoints
     paths["/api/v1/emulator/{id}/state/audio/ay"]["get"]["summary"] = "Get AY chips overview";
@@ -432,7 +510,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["responses"]["200"]["description"] = "Audio channels information";
+    paths["/api/v1/emulator/{id}/state/audio/channels"]["get"]["responses"]["200"]["description"] =
+        "Audio channels information";
 
     // Active emulator endpoints (no ID required)
     paths["/api/v1/emulator/state/audio/ay"]["get"]["summary"] = "Get AY chips overview (active emulator)";
@@ -454,13 +533,15 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["name"] = "chip";
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["required"] = true;
-    paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][0]["schema"]["type"] =
+        "integer";
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["name"] = "reg";
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["description"] =
         "Register number (0-15)";
-    paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["parameters"][1]["schema"]["type"] =
+        "integer";
     paths["/api/v1/emulator/state/audio/ay/{chip}/register/{reg}"]["get"]["responses"]["200"]["description"] =
         "Register details";
 
@@ -478,7 +559,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 
     paths["/api/v1/emulator/state/audio/channels"][" get"]["summary"] = "Get audio channels (active emulator)";
     paths["/api/v1/emulator/state/audio/channels"]["get"]["tags"].append("Audio State (Active)");
-    paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] = "Audio channels information";
+    paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
+        "Audio channels information";
 
     // Python Interpreter Control endpoints
     paths["/api/v1/python/exec"]["post"]["summary"] = "Execute Python code";
@@ -595,6 +677,20 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SettingsResponse"]["description"] = "List of emulator settings";
     schemas["SettingsResponse"]["properties"]["settings"]["type"] = "object";
     schemas["SettingsResponse"]["properties"]["settings"]["additionalProperties"]["type"] = "string";
+
+    // Feature Management schemas
+    schemas["FeaturesResponse"]["type"] = "object";
+    schemas["FeaturesResponse"]["description"] = "List of all features";
+    schemas["FeaturesResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["FeaturesResponse"]["properties"]["features"]["type"] = "array";
+    schemas["FeaturesResponse"]["properties"]["features"]["items"]["$ref"] = "#/components/schemas/FeatureInfo";
+
+    schemas["FeatureInfo"]["type"] = "object";
+    schemas["FeatureInfo"]["description"] = "Feature information";
+    schemas["FeatureInfo"]["properties"]["id"]["type"] = "string";
+    schemas["FeatureInfo"]["properties"]["enabled"]["type"] = "boolean";
+    schemas["FeatureInfo"]["properties"]["description"]["type"] = "string";
+    schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 
     // Memory State schemas
     schemas["MemoryStateResponse"]["type"] = "object";
@@ -718,6 +814,11 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tag3Settings["description"] = "Emulator configuration and settings";
     tags.append(tag3Settings);
 
+    Json::Value tag3bFeatures;
+    tag3bFeatures["name"] = "Feature Management";
+    tag3bFeatures["description"] = "Runtime feature control (sound, breakpoints, debug modes)";
+    tags.append(tag3bFeatures);
+
     Json::Value tag4Tape;
     tag4Tape["name"] = "Tape Control";
     tag4Tape["description"] = "Tape image control and playback";
@@ -731,7 +832,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     Json::Value tag6Snapshot;
     tag6Snapshot["name"] = "Snapshot Control";
     tag6Snapshot["description"] = "Snapshot file loading and status";
-   tags.append(tag6Snapshot);
+    tags.append(tag6Snapshot);
 
     Json::Value tag7Memory;
     tag7Memory["name"] = "Memory State";
