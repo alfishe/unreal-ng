@@ -103,35 +103,43 @@ void EmulatorAPI::rootRedirect(const HttpRequestPtr& req, std::function<void(con
 // Note: CORS preflight (OPTIONS) is now handled globally via registerSyncAdvice
 // in automation-webapi.cpp and main.cpp
 
-
 /// @brief Helper method to get emulator by ID (UUID) or index (numeric)
 /// This does NOT auto-select; it returns nullptr if the specific ID/index is not found
 std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string& idOrIndex) const
 {
     auto manager = EmulatorManager::GetInstance();
 
-    // Try to parse as index first (check if it's numeric)
-    bool isNumeric = true;
-    int index = -1;
-    try
+    // Try to parse as index first (check if ENTIRE string is numeric)
+    // IMPORTANT: std::stoi("80c1a5ce-...") would succeed with value 80, incorrectly treating UUID as index
+    bool isNumeric = !idOrIndex.empty();
+    for (char c : idOrIndex)
     {
-        index = std::stoi(idOrIndex);
-    }
-    catch (const std::exception&)
-    {
-        isNumeric = false;
+        if (!std::isdigit(static_cast<unsigned char>(c)))
+        {
+            isNumeric = false;
+            break;
+        }
     }
 
-    if (isNumeric && index >= 0)
+    if (isNumeric)
     {
-        // It's a valid index, try to get by index
-        return manager->GetEmulatorByIndex(index);
+        try
+        {
+            int index = std::stoi(idOrIndex);
+            if (index >= 0)
+            {
+                // It's a valid index, try to get by index
+                return manager->GetEmulatorByIndex(index);
+            }
+        }
+        catch (const std::exception&)
+        {
+            // Should not happen since we validated all digits
+        }
     }
-    else
-    {
-        // It's not numeric or negative, treat as UUID
-        return manager->GetEmulator(idOrIndex);
-    }
+
+    // It's not numeric, treat as UUID
+    return manager->GetEmulator(idOrIndex);
 }
 
 /// @brief Helper method for emulator selection with global selection priority

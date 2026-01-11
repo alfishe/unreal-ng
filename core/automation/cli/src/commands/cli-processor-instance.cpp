@@ -1,15 +1,16 @@
 // CLI Instance Management Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
-#include "cli-processor.h"
-
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/notifications.h>
 #include <emulator/platform.h>
 
+#include <algorithm>
 #include <iostream>
 #include <sstream>
+
+#include "cli-processor.h"
 
 // HandleStatus - lines 495-543
 void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<std::string>& args)
@@ -41,8 +42,7 @@ void CLIProcessor::HandleStatus(const ClientSession& session, const std::vector<
                 // Indicate if this is the currently selected emulator
                 // Check the global selection from EmulatorManager
                 std::string selectedId = emulatorManager->GetSelectedEmulatorId();
-                bool isSelected = (selectedId == id) ||
-                                  (_emulator && _emulator->GetId() == id && selectedId.empty());
+                bool isSelected = (selectedId == id) || (_emulator && _emulator->GetId() == id && selectedId.empty());
                 if (isSelected)
                 {
                     status += std::string("SELECTED") + NEWLINE;
@@ -161,30 +161,42 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
     std::string selectedId;
 
     // Try to interpret as an index first
-    try
+    // IMPORTANT: Must validate entire string is numeric, not just prefix
+    bool allDigits = !selector.empty() && std::all_of(selector.begin(), selector.end(), ::isdigit);
+
+    if (allDigits)
     {
-        int index = std::stoi(selector);
-        if (index > 0 && index <= static_cast<int>(emulatorIds.size()))
+        try
         {
-            // Convert to 0-based index
-            size_t arrayIndex = static_cast<size_t>(index - 1);
-            if (arrayIndex < emulatorIds.size())
+            int index = std::stoi(selector);
+            if (index > 0 && index <= static_cast<int>(emulatorIds.size()))
             {
-                selectedId = emulatorIds[arrayIndex];
+                // Convert to 0-based index
+                size_t arrayIndex = static_cast<size_t>(index - 1);
+                if (arrayIndex < emulatorIds.size())
+                {
+                    selectedId = emulatorIds[arrayIndex];
+                }
+                else
+                {
+                    session.SendResponse(std::string("Error: Index out of bounds"));
+                    return;
+                }
             }
             else
             {
-                session.SendResponse(std::string("Error: Index out of bounds"));
+                session.SendResponse(std::string("Invalid emulator index. Use 'list' to see available emulators."));
                 return;
             }
         }
-        else
+        catch (const std::exception&)
         {
+            // Should not happen since we validated all digits, but handle gracefully
             session.SendResponse(std::string("Invalid emulator index. Use 'list' to see available emulators."));
             return;
         }
     }
-    catch (const std::exception&)
+    else
     {
         // Not a valid index, try as UUID or name
 
@@ -231,7 +243,7 @@ void CLIProcessor::HandleSelect(const ClientSession& session, const std::vector<
 
     // Update global selection in EmulatorManager (this sends notification automatically)
     bool success = emulatorManager->SetSelectedEmulatorId(selectedId);
-    
+
     if (!success)
     {
         session.SendResponse("Error: Failed to select emulator: " + selectedId + std::string(NEWLINE));
@@ -406,7 +418,7 @@ void CLIProcessor::HandleResume(const ClientSession& session, const std::vector<
 void CLIProcessor::HandleCreate(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto* emulatorManager = EmulatorManager::GetInstance();
-    
+
     if (!args.empty())
     {
         // create <model> - create emulator with specific model
@@ -484,23 +496,31 @@ void CLIProcessor::HandleStart(const ClientSession& session, const std::vector<s
         bool isExistingEmulator = false;
 
         // Try to interpret as an index first
-        try
+        // IMPORTANT: Must validate entire string is numeric, not just prefix
+        bool allDigits = !arg.empty() && std::all_of(arg.begin(), arg.end(), ::isdigit);
+
+        if (allDigits)
         {
-            int index = std::stoi(arg);
-            if (index > 0 && static_cast<size_t>(index) <= emulatorIds.size())
+            try
             {
-                targetId = emulatorIds[index - 1];  // Convert to 0-based
-                isExistingEmulator = true;
+                int index = std::stoi(arg);
+                if (index > 0 && static_cast<size_t>(index) <= emulatorIds.size())
+                {
+                    targetId = emulatorIds[index - 1];  // Convert to 0-based
+                    isExistingEmulator = true;
+                }
+            }
+            catch (const std::exception&)
+            {
+                // Should not happen since we validated all digits
             }
         }
-        catch (const std::exception&)
+
+        // If not a valid index, check if it's a UUID
+        if (!isExistingEmulator && emulatorManager->HasEmulator(arg))
         {
-            // Not a valid index, check if it's a UUID
-            if (emulatorManager->HasEmulator(arg))
-            {
-                targetId = arg;
-                isExistingEmulator = true;
-            }
+            targetId = arg;
+            isExistingEmulator = true;
         }
 
         if (isExistingEmulator)
@@ -658,9 +678,8 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
                 // Clear selection if it was pointing to the stopped emulator
                 // Check both the global selection and our local _emulator reference
                 std::string currentSelected = emulatorManager->GetSelectedEmulatorId();
-                bool wasSelected =
-                    (currentSelected == actualId) ||
-                    (_emulator && _emulator->GetId() == actualId && currentSelected.empty());
+                bool wasSelected = (currentSelected == actualId) ||
+                                   (_emulator && _emulator->GetId() == actualId && currentSelected.empty());
 
                 if (wasSelected)
                 {
@@ -743,17 +762,26 @@ void CLIProcessor::HandleStop(const ClientSession& session, const std::vector<st
     else
     {
         // Check if targetId is a number (index)
-        bool isIndex = true;
+        // IMPORTANT: Must validate entire string is numeric, not just prefix
+        // std::stoi("80c1a5ce-...") would succeed with value 80, incorrectly treating UUID as index
+        bool isIndex = false;
         int index = -1;
-        try
+
+        // First check if the string contains ONLY digits
+        bool allDigits = !targetId.empty() && std::all_of(targetId.begin(), targetId.end(), ::isdigit);
+
+        if (allDigits)
         {
-            index = std::stoi(targetId);
-            if (index < 1)
-                isIndex = false;  // Indices start from 1
-        }
-        catch (const std::exception&)
-        {
-            isIndex = false;
+            try
+            {
+                index = std::stoi(targetId);
+                if (index >= 1)
+                    isIndex = true;
+            }
+            catch (const std::exception&)
+            {
+                isIndex = false;
+            }
         }
 
         std::string actualId = targetId;
@@ -857,4 +885,3 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
 }
-
