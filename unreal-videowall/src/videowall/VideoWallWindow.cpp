@@ -87,7 +87,7 @@ void VideoWallWindow::createMenus()
     connect(framelessAction, &QAction::triggered, this, &VideoWallWindow::toggleFramelessMode);
 
     QAction* fullscreenAction = viewMenu->addAction(tr("F&ullscreen Mode"));
-    fullscreenAction->setShortcut(QKeySequence(Qt::Key_F11));
+    fullscreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
     fullscreenAction->setCheckable(true);
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
@@ -105,7 +105,7 @@ void VideoWallWindow::addEmulatorTile()
     if (emulator)
     {
         emulator->DebugOff();
-        // emulator->EnableTurboMode(false);  // Disable audio to prevent blocking
+        // emulator->getFeatures()->EnableAudio(false);
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);
