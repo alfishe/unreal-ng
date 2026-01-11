@@ -1,0 +1,91 @@
++-----------------------------------------------------------------------------+
+|                                                                             |
+|                           SuperCard Pro (.scp) Image File                   |
+|                                                                             |
++-----------------------------------------------------------------------------+
+|                            .scp File Header (0x00 - 0x0F)                     |
++------------------+----------------------------------------------------------+
+|  Offset (Bytes)  |                       Description                        |
++------------------+----------------------------------------------------------+
+|   0x00 - 0x02    |  'SCP' - File Identifier                                 |
+|      0x03        |  Version/Revision of SCP Software                        |
+|      0x04        |  Disk Type (Manufacturer and Machine)                    |
+|      0x05        |  Number of Revolutions per Track                         |
+|   0x06 - 0x07    |  Start and End Track Numbers                             |
+|      0x08        |  FLAGS (Index, TPI, RPM, Type, Mode, Footer, etc.)       |
+|      0x09        |  Bit Cell Time Width (Usually 0 for 16 bits)             |
+|      0x0A        |  Number of Heads in Image (0, 1, or 2)                   |
+|      0x0B        |  Capture Resolution (Multiplier of 25ns)                 |
+|   0x0C - 0x0F    |  32-bit Checksum of Data from 0x10 to EOF                |
++------------------+----------------------------------------------------------+
+|                                                                             |
+|                 Track Data Header (TDH) Offset Table (0x10 - 0x2AF)         |
+|             (An array of 32-bit pointers to each Track Data Header)         |
++------------------+----------------------------------------------------------+
+|   0x10 - 0x13    |  Offset to TDH for Track 0                               |
+|   0x14 - 0x17    |  Offset to TDH for Track 1                               |
+|      ...         |  ... (continues for all possible tracks)                 |
+|  0x2AC - 0x2AF   |  Offset to TDH for Track 167                             |
++------------------+----------------------------------------------------------+
+|                                       |                                     |
+|  (Offsets point to individual         |                                     |
+|   Track Data Headers)                 |                                     |
+|                                       V                                     |
++-----------------------------------------------------------------------------+
+|                      Track Data and Headers Area                            |
++-----------------------------------------------------------------------------+
+|                                                                             |
+|   +-----------------------------------------------------------------------+ |
+|   |                  Track Data Header (TDH) - Example for one track      | |
+|   +------------------+----------------------------------------------------+ |
+|   |  Offset (Bytes)  |                    Description                     | |
+|   +------------------+----------------------------------------------------+ |
+|   |   0x00 - 0x02    |  'TRK' - Header Identifier                          | |
+|   |      0x03        |  Track Number                                       | |
+|   +------------------+----------------------------------------------------+ |
+|   |                      Revolution Data Block 1                          | |
+|   |   0x04 - 0x07    |  Revolution Duration (in 25ns units)                | |
+|   |   0x08 - 0x0B    |  Track Length in Bitcells                           | |
+|   |   0x0C - 0x0F    |  Offset to Flux Data for this revolution            | |
+|   +------------------+----------------------------------------------------+ |
+|   |                      Revolution Data Block 2 (and so on...)           | |
+|   |      ...         |  ...                                                | |
+|   +------------------+----------------------------------------------------+ |
+|                                       |                                     |
+|                                       V                                     |
+|   +-----------------------------------------------------------------------+ |
+|   |                               Flux Data                               | |
+|   |     (A series of 16-bit values representing flux transition times)    | |
+|   +-----------------------------------------------------------------------+ |
+|                                                                             |
++-----------------------------------------------------------------------------+
+|                                                                             |
+|                     Optional ASCII Timestamp (variable length)              |
+|              (e.g., "1/05/2014 5:15:21 PM" - not guaranteed to exist)        |
+|                                                                             |
++-----------------------------------------------------------------------------+
+|                                                                             |
+|                         Optional Extension Footer                           |
+|      (Presence indicated by FOOTER bit in the main header's FLAGS)          |
++------------------+----------------------------------------------------------+
+|  Offset in Footer|                       Description                        |
++------------------+----------------------------------------------------------+
+|   0x00 - 0x03    |  Offset to Drive Manufacturer String                     |
+|   0x04 - 0x07    |  Offset to Drive Model String                            |
+|   0x08 - 0x0B    |  Offset to Drive Serial Number String                    |
+|   0x0C - 0x0F    |  Offset to User Name String                              |
+|   0x10 - 0x13    |  Offset to Creating Application Name String              |
+|   0x14 - 0x17    |  Offset to User Comments String                          |
+|   0x18 - 0x1F    |  Creation Timestamp (64-bit UTC)                         |
+|   0x20 - 0x27    |  Last Modification Timestamp (64-bit UTC)                |
+|      0x28        |  Creating Application Version                            |
+|      0x29        |  SuperCard Pro Hardware Version                          |
+|      0x2A        |  SuperCard Pro Firmware Version                          |
+|      0x2B        |  Image Format Revision                                   |
+|   0x2C - 0x2F    |  'FPCS' - Footer Identifier                              |
++------------------+----------------------------------------------------------+
+|                                                                             |
+|                     String Data for the Extension Footer                    |
+|       (UTF-8 encoded strings pointed to by the footer offsets)              |
+|                                                                             |
++-----------------------------------------------------------------------------+

@@ -31,6 +31,9 @@ public:
 
     void setEmulator(Emulator* emulator);
     Emulator* getEmulator();
+    
+    // Called by MainWindow to notify of emulator state changes
+    void notifyEmulatorStateChanged(EmulatorStateEnum newState);
 
     void reset();
 
@@ -83,26 +86,15 @@ protected:
     static constexpr const char* IM1_BREAKPOINT_GROUP = "_im1_interrupt_handler";  // Group for IM1 interrupt handler breakpoints
     static constexpr const char* IM2_BREAKPOINT_GROUP = "_im2_interrupt_handler";  // Group for IM2 interrupt handler breakpoints
     
-    // Helper method to determine if an instruction should be stepped over
-    bool shouldStepOver(uint16_t address);
-    
-    // Helper method to get the address of the next instruction
-    uint16_t getNextInstructionAddress(uint16_t address);
-    
-    // Helper method to restore deactivated breakpoints
-    void restoreDeactivatedBreakpoints();
-    
     // Fields
     Emulator* _emulator = nullptr;
     EmulatorStateEnum _emulatorState = EmulatorStateEnum::StateUnknown;
     bool _breakpointTriggered = false;
     size_t _curPageOffset;  // Currently displayed in hex view memory page offset
     uint16_t _stepOutBreakpointID = BRK_INVALID;  // Stores the ID of the temporary breakpoint used for step out
-    uint16_t _stepOverBreakpointID = BRK_INVALID;  // Stores the ID of the temporary breakpoint used for step over
     
     // Step operation state tracking
     bool _inStepOutOperation = false;  // Flag indicating we're in a step-out operation
-    bool _inStepOverOperation = false;  // Flag indicating we're in a step-over operation
     bool _waitingForInterrupt = false;  // Flag indicating we're waiting for an interrupt
     std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints
 

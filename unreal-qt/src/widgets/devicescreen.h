@@ -3,10 +3,13 @@
 
 #include <QImage>
 #include <QWidget>
+#include <memory>
+
+class Emulator;  // Forward declaration
 
 namespace Ui
 {
-    class DeviceScreen;
+class DeviceScreen;
 }
 
 class DeviceScreen : public QWidget
@@ -14,7 +17,7 @@ class DeviceScreen : public QWidget
     Q_OBJECT
 
 public:
-    explicit DeviceScreen(QWidget *parent = nullptr);
+    explicit DeviceScreen(QWidget* parent = nullptr);
     ~DeviceScreen() override;
 
 public:
@@ -29,17 +32,23 @@ public:
 
 public slots:
     void refresh();
-    void handleExternalKeyPress(QKeyEvent *event);
-    void handleExternalKeyRelease(QKeyEvent *event);
+    void handleExternalKeyPress(QKeyEvent* event);
+    void handleExternalKeyRelease(QKeyEvent* event);
+
+public:
+    void setEmulator(std::shared_ptr<Emulator> emulator)
+    {
+        _emulator = emulator;
+    }
 
 protected:
-    void paintEvent(QPaintEvent *event) override;
+    void paintEvent(QPaintEvent* event) override;
 
-    void keyPressEvent(QKeyEvent *event) override;
-    void keyReleaseEvent(QKeyEvent *event) override;
-    void mousePressEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
-    void resizeEvent(QResizeEvent *event) override;
+    void resizeEvent(QResizeEvent* event) override;
     using QWidget::heightForWidth;  // Bring method declaration from QWidget
     int heightForWidth(int width);
 
@@ -50,6 +59,8 @@ private:
     QImage* devicePixels = nullptr;
 
     float ratio = 352.0f / 288.0f;
+
+    std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
 };
 
-#endif // DEVICESCREEN_H
+#endif  // DEVICESCREEN_H

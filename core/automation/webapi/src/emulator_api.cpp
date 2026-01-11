@@ -1,270 +1,185 @@
 #include "emulator_api.h"
-#include <emulator/emulatormanager.h>
-#include <emulator/emulator.h>
+
 #include <drogon/HttpResponse.h>
+#include <emulator/emulator.h>
+#include <emulator/emulatormanager.h>
+#include <emulator/platform.h>
 #include <json/json.h>
+
+#include <fstream>
+#include <sstream>
 
 using namespace drogon;
 using namespace api::v1;
 
 namespace api
 {
-    namespace v1
+namespace v1
+{
+// Helper function to add CORS headers to responses
+void addCorsHeaders(HttpResponsePtr& resp)
+{
+    resp->addHeader("Access-Control-Allow-Origin", "*");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+}
+
+// Helper function to load HTML file from resources
+std::string loadHtmlFile(const std::string& filename)
+{
+    // Try multiple possible locations for the HTML resources
+    std::vector<std::string> searchPaths = {
+        // Development/Build paths
+        "./resources/html/",                         // In current directory (from bin when running)
+        "../resources/html/",                        // One level up (from bin to build root)
+        "./core/automation/webapi/resources/html/",  // Development/build from project root
+        "../../resources/html/",                     // Two levels up
+
+        // macOS .app bundle path
+        "../Resources/html/",     // From MacOS folder to Resources folder in .app bundle
+        "../../Resources/html/",  // Alternative .app bundle structure
+
+        // Standard installation paths
+        "/usr/local/share/unreal-speccy/resources/html/",  // Unix standard install
+        "/usr/share/unreal-speccy/resources/html/",        // Unix system install
+        "./share/unreal-speccy/resources/html/",           // Relative to install prefix
+    };
+
+    for (const auto& basePath : searchPaths)
     {
-        // Helper function to convert emulator state to string
-        std::string stateToString(EmulatorStateEnum state) {
-            switch (state) {
-                case StateInitialized: return "initialized";
-                case StateRun: return "running";
-                case StatePaused: return "paused";
-                case StateStopped: return "stopped";
-                default: return "unknown";
-            }
-        }
-
-        // GET /api/v1/emulator
-        // List all emulators
-        void EmulatorAPI::get(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
+        std::string fullPath = basePath + filename;
+        std::ifstream file(fullPath);
+        if (file.is_open())
         {
-            auto manager = EmulatorManager::GetInstance();
-            auto emulatorIds = manager->GetEmulatorIds();
-            
-            Json::Value ret;
-            Json::Value emulators(Json::arrayValue);
-            
-            for (const auto& id : emulatorIds) {
-                auto emulator = manager->GetEmulator(id);
-                if (emulator) {
-                    Json::Value emuInfo;
-                    emuInfo["id"] = id;
-                    emuInfo["state"] = stateToString(emulator->GetState());
-                    emuInfo["is_running"] = emulator->IsRunning();
-                    emuInfo["is_paused"] = emulator->IsPaused();
-                    emuInfo["is_debug"] = emulator->IsDebug();
-                    emulators.append(emuInfo);
-                }
-            }
-            
-            ret["emulators"] = emulators;
-            ret["count"] = static_cast<Json::UInt>(emulatorIds.size());
-            
-            auto resp = HttpResponse::newHttpJsonResponse(ret);
-            callback(resp);
-        }
-
-        // GET /api/v1/emulator/status
-        // Get overall emulator status
-        void EmulatorAPI::status(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
-        {
-            auto manager = EmulatorManager::GetInstance();
-            auto emulatorIds = manager->GetEmulatorIds();
-            
-            Json::Value ret;
-            ret["emulator_count"] = static_cast<Json::UInt>(emulatorIds.size());
-            
-            // Count emulators by state
-            Json::Value states(Json::objectValue);
-            for (const auto& id : emulatorIds) {
-                auto emulator = manager->GetEmulator(id);
-                if (emulator) {
-                    std::string state = stateToString(emulator->GetState());
-                    if (states.isMember(state)) {
-                        states[state] = states[state].asInt() + 1;
-                    } else {
-                        states[state] = 1;
-                    }
-                }
-            }
-            ret["states"] = states;
-            
-            auto resp = HttpResponse::newHttpJsonResponse(ret);
-            callback(resp);
-        }
-
-        // POST /api/v1/emulator
-        // Create a new emulator instance
-        void EmulatorAPI::createEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback) const
-        {
-            auto manager = EmulatorManager::GetInstance();
-            
-            // Parse request body
-            auto json = req->getJsonObject();
-            std::string symbolicId = json ? (*json)["symbolic_id"].asString() : "";
-            
-            try {
-                std::shared_ptr<Emulator> emulator;
-                if (symbolicId.empty()) {
-                    emulator = manager->CreateEmulator();
-                } else {
-                    emulator = manager->CreateEmulator(symbolicId);
-                }
-                
-                Json::Value ret;
-                ret["id"] = emulator->GetId();
-                ret["state"] = stateToString(emulator->GetState());
-                
-                auto resp = HttpResponse::newHttpJsonResponse(ret);
-                resp->setStatusCode(HttpStatusCode::k201Created);
-                callback(resp);
-            } catch (const std::exception& e) {
-                Json::Value error;
-                error["error"] = "Failed to create emulator";
-                error["message"] = e.what();
-                
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-                callback(resp);
-            }
-        }
-
-        // GET /api/v1/emulator/:id
-        // Get emulator details
-        void EmulatorAPI::getEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
-        {
-            auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
-            
-            if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
-                
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
-            }
-            
-            Json::Value ret;
-            ret["id"] = id;
-            ret["state"] = stateToString(emulator->GetState());
-            ret["is_running"] = emulator->IsRunning();
-            ret["is_paused"] = emulator->IsPaused();
-            ret["is_debug"] = emulator->IsDebug();
-            
-            auto resp = HttpResponse::newHttpJsonResponse(ret);
-            callback(resp);
-        }
-
-        // DELETE /api/v1/emulator/:id
-        // Remove an emulator
-        void EmulatorAPI::removeEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
-        {
-            auto manager = EmulatorManager::GetInstance();
-            
-            if (!manager->HasEmulator(id)) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
-                
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
-            }
-            
-            bool removed = manager->RemoveEmulator(id);
-            
-            Json::Value ret;
-            if (removed) {
-                ret["status"] = "success";
-                ret["message"] = "Emulator removed successfully";
-                
-                auto resp = HttpResponse::newHttpJsonResponse(ret);
-                resp->setStatusCode(HttpStatusCode::k200OK);
-                callback(resp);
-            } else {
-                ret["status"] = "error";
-                ret["message"] = "Failed to remove emulator";
-                
-                auto resp = HttpResponse::newHttpJsonResponse(ret);
-                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-                callback(resp);
-            }
-        }
-
-        // POST /api/v1/emulator/:id/start
-        // Start an emulator
-        void EmulatorAPI::startEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
-        {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->StartAsync();
-                return "Emulator started";
-            });
-        }
-
-        // POST /api/v1/emulator/:id/stop
-        // Stop an emulator
-        void EmulatorAPI::stopEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
-        {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->Stop();
-                return "Emulator stopped";
-            });
-        }
-
-        // POST /api/v1/emulator/:id/pause
-        // Pause an emulator
-        void EmulatorAPI::pauseEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
-        {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->Pause();
-                return "Emulator paused";
-            });
-        }
-
-        // POST /api/v1/emulator/:id/resume
-        // Resume an emulator
-        void EmulatorAPI::resumeEmulator(const HttpRequestPtr &req, std::function<void(const HttpResponsePtr &)> &&callback, const std::string &id) const
-        {
-            handleEmulatorAction(req, std::move(callback), id, [](std::shared_ptr<Emulator> emu) {
-                emu->Resume();
-                return "Emulator resumed";
-            });
-        }
-
-        // Helper method to handle emulator actions with common error handling
-        void EmulatorAPI::handleEmulatorAction(
-            const HttpRequestPtr &req,
-            std::function<void(const HttpResponsePtr &)> &&callback,
-            const std::string &id,
-            std::function<std::string(std::shared_ptr<Emulator>)> action) const
-        {
-            auto manager = EmulatorManager::GetInstance();
-            auto emulator = manager->GetEmulator(id);
-            
-            if (!emulator) {
-                Json::Value error;
-                error["error"] = "Not Found";
-                error["message"] = "Emulator with specified ID not found";
-                
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k404NotFound);
-                callback(resp);
-                return;
-            }
-            
-            try {
-                std::string message = action(emulator);
-                
-                Json::Value ret;
-                ret["status"] = "success";
-                ret["message"] = message;
-                ret["emulator_id"] = id;
-                ret["state"] = stateToString(emulator->GetState());
-                
-                auto resp = HttpResponse::newHttpJsonResponse(ret);
-                callback(resp);
-            } catch (const std::exception& e) {
-                Json::Value error;
-                error["error"] = "Operation failed";
-                error["message"] = e.what();
-                error["emulator_id"] = id;
-                
-                auto resp = HttpResponse::newHttpJsonResponse(error);
-                resp->setStatusCode(HttpStatusCode::k500InternalServerError);
-                callback(resp);
-            }
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            return buffer.str();
         }
     }
+
+    // Fallback: return a minimal HTML page if file not found
+    return "<!DOCTYPE html><html><head><title>Error</title></head><body>"
+           "<h1>Resource Not Found</h1>"
+           "<p>Could not load HTML resource: " +
+           filename +
+           "</p>"
+           "<p>Searched paths: development builds, macOS .app bundle, standard installations</p>"
+           "<p>Please ensure resources are properly installed.</p>"
+           "</body></html>";
 }
+
+// Helper function to convert emulator state to string
+std::string stateToString(EmulatorStateEnum state)
+{
+    switch (state)
+    {
+        case StateInitialized:
+            return "initialized";
+        case StateRun:
+            return "running";
+        case StatePaused:
+            return "paused";
+        case StateStopped:
+            return "stopped";
+        default:
+            return "unknown";
+    }
+}
+
+/// @brief GET /
+/// @brief Root redirect to OpenAPI documentation
+void EmulatorAPI::rootRedirect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    // Load HTML page from disk
+    std::string html = loadHtmlFile("index.html");
+
+    auto resp = HttpResponse::newHttpResponse();
+    resp->setBody(html);
+    resp->setContentTypeCode(ContentType::CT_TEXT_HTML);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// Note: CORS preflight (OPTIONS) is now handled globally via registerSyncAdvice
+// in automation-webapi.cpp and main.cpp
+
+/// @brief Helper method to get emulator by ID (UUID) or index (numeric)
+/// This does NOT auto-select; it returns nullptr if the specific ID/index is not found
+std::shared_ptr<Emulator> EmulatorAPI::getEmulatorByIdOrIndex(const std::string& idOrIndex) const
+{
+    auto manager = EmulatorManager::GetInstance();
+
+    // Try to parse as index first (check if ENTIRE string is numeric)
+    // IMPORTANT: std::stoi("80c1a5ce-...") would succeed with value 80, incorrectly treating UUID as index
+    bool isNumeric = !idOrIndex.empty();
+    for (char c : idOrIndex)
+    {
+        if (!std::isdigit(static_cast<unsigned char>(c)))
+        {
+            isNumeric = false;
+            break;
+        }
+    }
+
+    if (isNumeric)
+    {
+        try
+        {
+            int index = std::stoi(idOrIndex);
+            if (index >= 0)
+            {
+                // It's a valid index, try to get by index
+                return manager->GetEmulatorByIndex(index);
+            }
+        }
+        catch (const std::exception&)
+        {
+            // Should not happen since we validated all digits
+        }
+    }
+
+    // It's not numeric, treat as UUID
+    return manager->GetEmulator(idOrIndex);
+}
+
+/// @brief Helper method for emulator selection with global selection priority
+/// First checks for globally selected emulator, then falls back to stateless behavior
+/// Returns nullptr if no emulator can be selected (requires explicit selection)
+std::shared_ptr<Emulator> EmulatorAPI::getEmulatorWithGlobalSelection() const
+{
+    auto manager = EmulatorManager::GetInstance();
+
+    // First priority: Check if there's a globally selected emulator
+    std::string selectedId = manager->GetSelectedEmulatorId();
+    if (!selectedId.empty())
+    {
+        auto emulator = manager->GetEmulator(selectedId);
+        if (emulator)
+        {
+            return emulator;
+        }
+    }
+
+    // Second priority: Fallback to stateless behavior (only one emulator)
+    return getEmulatorStateless();
+}
+
+/// @brief Helper method for stateless emulator auto-selection
+/// Returns an emulator only if there's exactly one running (stateless behavior)
+/// Returns nullptr if there are 0 or 2+ emulators (requires explicit selection)
+std::shared_ptr<Emulator> EmulatorAPI::getEmulatorStateless() const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulatorIds = manager->GetEmulatorIds();
+
+    if (emulatorIds.size() == 1)
+    {
+        // Only one emulator - auto-select it (stateless behavior)
+        return manager->GetEmulator(emulatorIds[0]);
+    }
+
+    // 0 or 2+ emulators - return nullptr
+    return nullptr;
+}
+}  // namespace v1
+}  // namespace api

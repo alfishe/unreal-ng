@@ -1,23 +1,24 @@
 #pragma once
-#include "stdafx.h"
-
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/io/hdd/hdd.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
-#include "emulator/ports/ports.h"
 #include "emulator/memory/rom.h"
-#include "emulator/io/hdd/hdd.h"
+#include "emulator/ports/ports.h"
 #include "emulator/sound/soundmanager.h"
+#include "emulator/recording/recordingmanager.h"
 #include "emulator/video/screen.h"
-#include "emulator/emulatorcontext.h"
+#include "stdafx.h"
+
 
 class ModuleLogger;
 class MessageCenter;
 class Z80;
 class PortDecoder;
-//class VG93;
+// class VG93;
 class WD1793;
 
 class Core
@@ -39,7 +40,7 @@ public:
 protected:
     EmulatorContext* _context = nullptr;
     EmulatorState* _state = nullptr;
-    const CONFIG* _config = nullptr;
+    CONFIG* _config = nullptr;
 
     Z80* _z80 = nullptr;
     Memory* _memory = nullptr;
@@ -48,9 +49,10 @@ protected:
     ROM* _rom = nullptr;
     Keyboard* _keyboard = nullptr;
     Tape* _tape = nullptr;
-    //VG93* _betaDisk = nullptr;
+    // VG93* _betaDisk = nullptr;
     WD1793* _betaDisk = nullptr;
     SoundManager* _sound = nullptr;
+    RecordingManager* _recordingManager = nullptr;
     HDD* _hdd = nullptr;
     VideoControl* _video = nullptr;
     Screen* _screen = nullptr;
@@ -61,7 +63,7 @@ protected:
 
     /// region <Constructors / Destructors>
 public:
-    Core() = delete;			        // Disable default constructor. C++ 11 feature
+    Core() = delete;                 // Disable default constructor. C++ 11 feature
     Core(EmulatorContext* context);  // Only constructor with context param is allowed
     virtual ~Core();
     /// endregion </Constructors / Destructors
@@ -72,10 +74,22 @@ public:
     /// endregion </Initialization>
 
     /// region <Properties>
-    Z80* GetZ80() { return _z80; }
-    Memory* GetMemory() { return _memory; }
-    Ports* GetPorts() { return _ports; }
-    ROM* GetROM() { return _rom; }
+    Z80* GetZ80()
+    {
+        return _z80;
+    }
+    Memory* GetMemory()
+    {
+        return _memory;
+    }
+    Ports* GetPorts()
+    {
+        return _ports;
+    }
+    ROM* GetROM()
+    {
+        return _rom;
+    }
 
     /// endregion </Properties>
 
@@ -95,6 +109,15 @@ public:
     uint32_t GetCPUFrequency();
     uint16_t GetCPUFrequencyMultiplier();
 
+    // Speed multiplier control: 1x (default), 2x, 4x, 8x, 16x
+    void SetSpeedMultiplier(uint8_t multiplier);
+    uint8_t GetSpeedMultiplier() const;
+
+    // Turbo/Max speed mode control
+    void EnableTurboMode(bool withAudio = false);
+    void DisableTurboMode();
+    bool IsTurboMode() const;
+
     void CPUFrameCycle();
     void AdjustFrameCounters();
 
@@ -104,15 +127,16 @@ public:
 };
 
 //
-// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing /
+// benchmark purposes
 //
 #ifdef _CODE_UNDER_TEST
 
 class CoreCUT : public Core
 {
 public:
-    CoreCUT(EmulatorContext *context) : Core(context) {};
+    CoreCUT(EmulatorContext* context) : Core(context) {};
 
     using Core::_z80;
 };
-#endif // _CODE_UNDER_TEST
+#endif  // _CODE_UNDER_TEST

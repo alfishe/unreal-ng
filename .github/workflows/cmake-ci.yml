@@ -20,52 +20,36 @@ on:
 
 env:
   BUILD_TYPE: Release
-  CCACHE_DIR: /tmp/ccache
-  LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
+  # LD_LIBRARY_PATH is already set correctly inside the Docker image,
+  # so we don't need to override it here.
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        qt-version: [6.5.0]
+    runs-on: ubuntu-latest # <--- The VM that runs Docker
+
+    # 1. TELL GITHUB TO RUN INSIDE YOUR IMAGE
+    container:             # <--- Custom environment inside the VM
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake git wget tar
-
-
-      - name: Build and install ICU 56 from source
-        run: |
-          wget -q https://github.com/unicode-org/icu/releases/download/release-56-1/icu4c-56_1-src.tgz
-          tar -xzf icu4c-56_1-src.tgz
-          cd icu/source
-          ./configure --prefix=/usr/local
-          make -j$(nproc)
-          sudo make install
-          sudo ldconfig
-          # Verify installation
-          ls -l /usr/local/lib/libicui18n.so*
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v3
-        with:
-          version: ${{ matrix.qt-version }}
-          host: 'linux'
-          target: 'desktop'
-          arch: 'gcc_64'
-          modules: 'qtmultimedia qt5compat'
-
       - name: Build project
         run: |
-          cd ${{ github.workspace }}/unreal-qt
-          mkdir build
-          cd build
-          cmake ..
-          make -j$(nproc)
+          # 2. FIX GIT PERMISSIONS
+          # GitHub mounts the code as a volume; git inside the container 
+          # requires this to trust the directory ownership.
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+
+          # 3. BUILD
+          # Based on your previous script, source is in 'unreal-qt' folder
+          cd unreal-qt
+          
+          # Use Ninja (installed in your image) for faster builds
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          cmake --build build --parallel

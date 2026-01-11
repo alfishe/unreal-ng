@@ -102,3 +102,33 @@ quint8 KeyboardManager::mapQtKeyToEmulatorKey(int qtKey)
 
     return result;
 }
+
+quint8 KeyboardManager::mapQtKeyToEmulatorKeyWithModifiers(int qtKey, Qt::KeyboardModifiers modifiers)
+{
+    quint8 result = ZXKEY_NONE;
+    
+    // Map shifted number keys back to base keys
+    // When SHIFT+1 is pressed, Qt sends Qt::Key_Exclam instead of Qt::Key_1
+    // We need to map these back so SHIFT+1 works correctly in the ZX Spectrum
+    if (modifiers & Qt::ShiftModifier)
+    {
+        switch (qtKey)
+        {
+            case Qt::Key_Exclam:        qtKey = Qt::Key_1; break;  // ! -> 1
+            case Qt::Key_At:            qtKey = Qt::Key_2; break;  // @ -> 2  
+            case Qt::Key_NumberSign:    qtKey = Qt::Key_3; break;  // # -> 3
+            case Qt::Key_Dollar:        qtKey = Qt::Key_4; break;  // $ -> 4
+            case Qt::Key_Percent:       qtKey = Qt::Key_5; break;  // % -> 5
+            case Qt::Key_AsciiCircum:   qtKey = Qt::Key_6; break;  // ^ -> 6
+            case Qt::Key_Ampersand:     qtKey = Qt::Key_7; break;  // & -> 7
+            case Qt::Key_Asterisk:      qtKey = Qt::Key_8; break;  // * -> 8
+            case Qt::Key_ParenLeft:     qtKey = Qt::Key_9; break;  // ( -> 9
+            case Qt::Key_ParenRight:    qtKey = Qt::Key_0; break;  // ) -> 0
+            default:
+                break;
+        }
+    }
+    
+    result = mapQtKeyToEmulatorKey(qtKey);
+    return result;
+}

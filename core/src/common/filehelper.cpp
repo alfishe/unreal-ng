@@ -32,23 +32,23 @@ std::string FileHelper::GetExecutablePath()
     std::vector<char> buffer(4096);
     DWORD length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (length == 0 || length == buffer.size())
-        return {}; // error
+        return {};  // error
     exePath = std::filesystem::path(buffer.data());
 
 #elif defined(__APPLE__)
     uint32_t size = 0;
-    _NSGetExecutablePath(nullptr, &size); // get the size needed
+    _NSGetExecutablePath(nullptr, &size);  // get the size needed
     std::vector<char> buffer(size);
     if (_NSGetExecutablePath(buffer.data(), &size) != 0)
-        return {}; // error
+        return {};  // error
     exePath = std::filesystem::path(buffer.data()).lexically_normal();
 
 #elif defined(__linux__)
     std::vector<char> buffer(4096);
     ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
     if (length == -1)
-        return {}; // error
-    buffer[length] = '\0'; // readlink doesn't null-terminate
+        return {};          // error
+    buffer[length] = '\0';  // readlink doesn't null-terminate
     exePath = std::filesystem::path(buffer.data());
 #else
     #error "Unsupported platform"
@@ -68,14 +68,14 @@ std::string FileHelper::GetResourcesPath()
 #elif defined(__APPLE__)
     // On macOS, check if we're inside an app bundle
     std::string execPath = GetExecutablePath();
-    
+
     // Check if we're in an app bundle (path contains .app/Contents/MacOS)
     if (execPath.find(".app/Contents/MacOS") != std::string::npos)
     {
         // We're in an app bundle, resources should be in Contents/Resources
         fs::path path(execPath);
-        path = path.parent_path(); // Move from MacOS to Contents
-        path /= "Resources";      // Move to Resources directory
+        path = path.parent_path();  // Move from MacOS to Contents
+        path /= "Resources";        // Move to Resources directory
         resourcesPath = path.string();
     }
     else
@@ -88,7 +88,7 @@ std::string FileHelper::GetResourcesPath()
     // On Linux, resources are in the same directory as the executable
     resourcesPath = GetExecutablePath();
 #else
-    #error "Unsupported platform"
+#error "Unsupported platform"
 #endif
 
     return resourcesPath;
@@ -97,7 +97,7 @@ std::string FileHelper::GetResourcesPath()
 std::string FileHelper::NormalizePath(const std::string& path, char separator)
 {
     if (separator == L'\0')
-            separator = GetPathSeparator();
+        separator = GetPathSeparator();
 
     std::string result = path;
 
@@ -121,7 +121,14 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
 
     try
     {
-        fs::path absolutePath = fs::path(path);
+        // On Unix/macOS, normalize backslashes to forward slashes first
+        // This ensures paths like "\\opt\\path" are recognized as absolute paths
+        std::string normalizedPath = path;
+#ifndef _WIN32
+        std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+#endif
+
+        fs::path absolutePath = fs::path(normalizedPath);
 
         if (resolveSymlinks)
         {
@@ -150,7 +157,7 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
     catch (const std::exception& e)
     {
         // Handle error (e.g., path doesn't exist)
-        //throw std::runtime_error("Failed to get absolute path and resolve symlinks: " + std::string(e.what()));
+        // throw std::runtime_error("Failed to get absolute path and resolve symlinks: " + std::string(e.what()));
     }
 
     return result;
@@ -164,7 +171,7 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
         result = NormalizePath(result);
     }
     return result;
-#else // Unix-like systems (Linux and macOS)
+#else  // Unix-like systems (Linux and macOS)
     char buffer[PATH_MAX];
     char* resolved = realpath(path.c_str(), buffer);
     if (resolved != nullptr)
@@ -172,7 +179,7 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
         result = std::string(resolved);
         result = NormalizePath(result);
     }
-    else if (errno == ENOENT) // Path doesn't exist, but might be valid
+    else if (errno == ENOENT)  // Path doesn't exist, but might be valid
     {
         // Try to resolve the parent directory
         size_t lastSlash = path.find_last_of('/');
@@ -189,11 +196,11 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
         }
 
         // If parent directory resolution fails, handle as before
-        if (path[0] == '/') // Absolute path
+        if (path[0] == '/')  // Absolute path
         {
             result = path;
         }
-        else // Relative path, convert to absolute
+        else  // Relative path, convert to absolute
         {
             char cwd[PATH_MAX];
             if (getcwd(cwd, sizeof(cwd)) != nullptr)
@@ -213,11 +220,13 @@ std::string FileHelper::PathCombine(const std::string& path1, const std::string&
     std::string result;
 
     // Handle empty paths
-    if (path1.empty()) return path2;
-    if (path2.empty()) return path1;
+    if (path1.empty())
+        return path2;
+    if (path2.empty())
+        return path1;
 
     // Combine paths
-    char separator = '/'; // Use forward slash as universal separator
+    char separator = '/';  // Use forward slash as universal separator
 
     // Check if path1 ends with separator or path2 starts with one
     bool path1_has_sep = !path1.empty() && (path1.back() == '/' || path1.back() == '\\');
@@ -256,33 +265,33 @@ std::string FileHelper::PathCombine(const std::string& path1, const std::string&
 
 std::string FileHelper::PathCombine(const std::string& path1, const char* path2)
 {
-	string pathPart2 = path2;
-	return PathCombine(path1, pathPart2);
+    string pathPart2 = path2;
+    return PathCombine(path1, pathPart2);
 }
 
 bool FileHelper::IsFile(const std::string& path)
 {
-	bool result = FileExists(path);
+    bool result = FileExists(path);
 
-	return result;
+    return result;
 }
 
 bool FileHelper::IsFolder(const std::string& path)
 {
-	bool result = FolderExists(path);
+    bool result = FolderExists(path);
 
-	return result;
+    return result;
 }
 
 bool FileHelper::FileExists(const std::string& path)
 {
-    std::error_code ec; // To avoid throwing exceptions
+    std::error_code ec;  // To avoid throwing exceptions
     return fs::is_regular_file(path, ec) && !ec;
 }
 
 bool FileHelper::FolderExists(const std::string& path)
 {
-    std::error_code ec; // To avoid throwing exceptions
+    std::error_code ec;  // To avoid throwing exceptions
     return fs::is_directory(path, ec) && !ec;
 }
 
@@ -341,9 +350,9 @@ std::string FileHelper::GetFileExtension(const std::string& path)
 
 std::string FileHelper::PrintablePath(const std::string& path)
 {
-	string result = path;
+    string result = path;
 
-	return result;
+    return result;
 }
 
 FILE* FileHelper::OpenExistingFile(const std::string& path, const char* mode)

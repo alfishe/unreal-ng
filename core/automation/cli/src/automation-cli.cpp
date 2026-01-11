@@ -223,7 +223,14 @@ void AutomationCLI::run()
 
             if (activity < 0 && errno != EINTR)
             {
-                std::cerr << "select() error: " << strerror(errno) << std::endl;
+                if (errno == EBADF)
+                {
+                    std::cerr << "Select error: Bad file descriptor (socket may be closed)" << std::endl;
+                }
+                else
+                {
+                    std::cerr << "select() error: " << strerror(errno) << std::endl;
+                }
                 break;
             }
 
@@ -256,11 +263,34 @@ void AutomationCLI::run()
             {
                 std::lock_guard<std::mutex> lock(_clientSocketsMutex);
                 auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](int sock) {
+                    // First check if socket is still valid (not already closed)
+                    if (sock == INVALID_SOCKET)
+                    {
+                        return true; // Remove invalid sockets
+                    }
+
                     fd_set set;
                     FD_ZERO(&set);
                     FD_SET(sock, &set);
                     timeval tv = {0, 0};
-                    return select(sock + 1, &set, NULL, NULL, &tv) == 1 && recv(sock, nullptr, 0, MSG_PEEK) == 0;
+
+                    // Use select to check if socket is readable
+                    int selectResult = select(sock + 1, &set, NULL, NULL, &tv);
+                    if (selectResult < 0)
+                    {
+                        // select() failed - socket is likely closed or invalid
+                        return true;
+                    }
+
+                    if (selectResult == 1 && FD_ISSET(sock, &set))
+                    {
+                        // Socket is readable, check if it's closed by attempting to peek
+                        char dummy;
+                        int recvResult = recv(sock, &dummy, 1, MSG_PEEK);
+                        return recvResult == 0; // recv returns 0 when connection is closed
+                    }
+
+                    return false; // Socket appears to be still connected
                 });
 
                 if (it != _activeClientSockets.end())
@@ -272,6 +302,7 @@ void AutomationCLI::run()
                             close(*i);
                         }
                     }
+
                     _activeClientSockets.erase(it, _activeClientSockets.end());
                 }
             }
@@ -289,82 +320,6 @@ void AutomationCLI::run()
         _serverSocket = INVALID_SOCKET;
     }
 
-    std::cout << "=== CLI Server ===" << std::endl;
-    std::cout << "Status:  Listening on port " << _port << std::endl;
-    std::cout << "Connect: telnet localhost " << _port << std::endl;
-    std::cout << "==================" << std::endl;
-
-    while (!_stopThread)
-    {
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(_serverSocket, &readfds);
-
-        struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-
-        int activity = select(_serverSocket + 1, &readfds, nullptr, nullptr, &tv);
-
-        // Check if we should stop
-        if (_stopThread)
-        {
-            break;
-        }
-
-        if (activity < 0)
-        {
-            int errorCode = getLastSocketError();
-#ifdef _WIN32
-            if (errorCode == WSAEINTR)
-#else
-            if (errorCode == EINTR)
-#endif
-            {
-                // Interrupted system call, just retry
-                continue;
-            }
-            std::cerr << "select error: " << strerror(errorCode) << std::endl;
-            break;
-        }
-
-        if (activity == 0)
-        {
-            // Timeout, check stop flag and continue
-            continue;
-        }
-
-        if (FD_ISSET(_serverSocket, &readfds))
-        {
-            // Accept a new client connection
-            sockaddr_in clientAddr{};
-            socklen_t clientLen = sizeof(clientAddr);
-            SOCKET clientSocket = accept(_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
-
-            if (clientSocket == INVALID_SOCKET)
-            {
-                std::cerr << "Failed to accept connection: " << strerror(getLastSocketError()) << std::endl;
-                continue;
-            }
-
-            std::cout << "Client connected from " << inet_ntoa(clientAddr.sin_addr) << ":" << ntohs(clientAddr.sin_port)
-                      << std::endl;
-
-            // Handle the client connection in a separate method
-            // This method will handle all command processing until the client disconnects
-            handleClientConnection(clientSocket);
-        }
-    }
-
-    if (_serverSocket != INVALID_SOCKET)
-    {
-        close(_serverSocket);
-        _serverSocket = INVALID_SOCKET;
-    }
-
-    // Cleanup platform sockets
-    cleanupSockets();
-
     std::cout << "CLI server stopped" << std::endl;
 }
 
@@ -381,19 +336,19 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
     std::string lineBuffer;
     const std::string prompt = "> ";
 
-    // Send welcome message
-    std::string welcomeMsg = "Welcome to the Unreal Emulator CLI." + std::string(NEWLINE) +
-                             "Type 'help' for commands." + std::string(NEWLINE);
-    send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
+    // Set the socket to non-blocking mode
+    if (!setSocketNonBlocking(clientSocket))
+    {
+        std::cerr << "Failed to set client socket to non-blocking mode" << std::endl;
+        close(clientSocket);
+        return;
+    }
 
     // Add this client socket to the active connections list
     {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
         _activeClientSockets.push_back(clientSocket);
     }
-
-    // Set socket to non-blocking mode
-    setSocketNonBlocking(clientSocket);
 
     // Configure telnet client for character-at-a-time mode with local echo
     unsigned char telnetInit[] =
@@ -406,72 +361,29 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
     };
     send(clientSocket, (const char*)telnetInit, sizeof(telnetInit), 0);
 
-    // Set the socket to non-blocking mode using our helper function
-    if (!setSocketNonBlocking(clientSocket))
-    {
-        std::cerr << "Failed to set client socket to non-blocking mode" << std::endl;
-        close(clientSocket);
-        return;
-    }
-
     // Create a new session for this client
     ClientSession session(clientSocket);
 
     // Create a CLI processor for this client
     auto processor = createProcessor();
 
-    // Track if we've shown the welcome message
-    static bool hasShownWelcome = false;
-
-    // Send welcome message only once
-    if (!hasShownWelcome)
-    {
-        std::string welcomeMsg = "Welcome to the Unreal Emulator CLI." + std::string(NEWLINE) +
-                                 "Type 'help' for commands." + std::string(NEWLINE);
-        send(clientSocket, welcomeMsg.c_str(), welcomeMsg.length(), 0);
-        hasShownWelcome = true;
-    }
-
-    // Send initial prompt
-    send(clientSocket, prompt.c_str(), prompt.length(), 0);
-
-    // Track if we've processed any commands yet
-    bool isFirstCommand = true;
-
-    // Force initialization of the EmulatorManager BEFORE sending welcome message
+    // Force initialization of the EmulatorManager
     auto* emulatorManager = EmulatorManager::GetInstance();
     if (emulatorManager)
     {
         // Force a refresh of emulator instances
         auto mostRecent = emulatorManager->GetMostRecentEmulator();
-
-        // Get all emulator IDs
         auto emulatorIds = emulatorManager->GetEmulatorIds();
 
-        // Initialize the processor with a dummy command but don't send it to the client
+        // Initialize the processor
         processor->InitializeProcessor();
-
-        // Send welcome message with prompt
-        SendResponse(clientSocket, "Welcome to the Unreal Emulator CLI. Type 'help' for commands.", true);
-    }
-    else
-    {
-        std::cout << "Failed to initialize EmulatorManager!" << std::endl;
-
-        // Send error message
-        std::string errorMsg = "Error: Failed to initialize emulator. Please try again later.\n";
-        send(clientSocket, errorMsg.c_str(), errorMsg.length(), 0);
-        return;
     }
 
-    // Set socket to non-blocking mode to avoid hanging
-    setSocketNonBlocking(clientSocket);
+    // Send welcome message with prompt
+    SendResponse(clientSocket, "Welcome to the Unreal Emulator CLI. Type 'help' for commands.", true);
 
     unsigned char buffer[1024];
     ssize_t bytesRead;
-
-    // Set socket to non-blocking mode
-    setSocketNonBlocking(clientSocket);
 
     while (!_stopThread)
     {
@@ -493,7 +405,11 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
         {
             if (errno == EINTR)
                 continue;  // Interrupted by signal
-            std::cerr << "Select error: " << strerror(getLastSocketError()) << std::endl;
+            if (errno == EBADF) {
+                std::cerr << "Select error: Bad file descriptor (client socket closed)" << std::endl;
+            } else {
+                std::cerr << "Select error: " << strerror(getLastSocketError()) << std::endl;
+            }
             break;
         }
 
@@ -571,12 +487,32 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                         // Process the command
                         processor->ProcessCommand(session, lineBuffer);
                         lineBuffer.clear();
+
+                        // Check if session should be closed (e.g., exit command)
+                        if (session.ShouldClose())
+                        {
+                            std::cout << "CLI session marked for closure by command" << std::endl;
+                            break; // Exit the processing loop to close the connection
+                        }
+
+                        // Send newline and prompt for next command
+                        std::string promptStr = std::string(NEWLINE) + "> ";
+                        send(clientSocket, promptStr.c_str(), promptStr.length(), 0);
                     }
                     catch (const std::exception& e)
                     {
                         std::string errorMsg = "Error: " + std::string(e.what()) + NEWLINE;
                         send(clientSocket, errorMsg.c_str(), errorMsg.length(), 0);
+                        
+                        // Send newline and prompt even after error
+                        std::string promptStr = std::string(NEWLINE) + "> ";
+                        send(clientSocket, promptStr.c_str(), promptStr.length(), 0);
                     }
+                }
+                else
+                {
+                    // Empty line, just send prompt again (no extra newline needed, already echoed)
+                    send(clientSocket, "> ", 2, 0);
                 }
                 continue;
             }
@@ -589,6 +525,13 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
                 char ch = static_cast<char>(c);
                 send(clientSocket, &ch, 1, 0);
             }
+        }
+
+        // Check if session should be closed (e.g., exit command was processed)
+        if (session.ShouldClose())
+        {
+            std::cout << "Closing session as requested by command" << std::endl;
+            break;
         }
 
         // Check if socket was closed by the command handler (e.g., exit/quit)
@@ -604,19 +547,14 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
             std::cout << "Socket error detected, closing connection" << std::endl;
             break;
         }
+    }
 
-        // Send prompt for next command if we don't have one already
-        if (lineBuffer.empty())
-        {
-            if (!isFirstCommand)
-            {
-                std::string newPrompt = std::string(NEWLINE) + "> ";
-                send(clientSocket, newPrompt.c_str(), newPrompt.length(), 0);
-            }
-            else
-            {
-                isFirstCommand = false;
-            }
+    // Remove socket from active sockets list before closing
+    {
+        std::lock_guard<std::mutex> lock(_clientSocketsMutex);
+        auto it = std::find(_activeClientSockets.begin(), _activeClientSockets.end(), clientSocket);
+        if (it != _activeClientSockets.end()) {
+            _activeClientSockets.erase(it);
         }
     }
 

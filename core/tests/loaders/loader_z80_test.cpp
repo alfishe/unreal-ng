@@ -4,6 +4,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/test_path_helper.h"
 
 /// region <SetUp / TearDown>
 
@@ -44,7 +45,7 @@ void LoaderZ80_Test::TearDown()
 
 TEST_F(LoaderZ80_Test, validateSnapshotFile)
 {
-    static std::string testSnapshotPath = "../../../tests/loaders/z80/newbench.z80";
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testSnapshotPath);
 
     LoaderZ80CUT loader(_context, testSnapshotPath);
@@ -65,7 +66,7 @@ TEST_F(LoaderZ80_Test, validateSnapshotFile)
 
 TEST_F(LoaderZ80_Test, stageLoad)
 {
-    static std::string testSnapshotPath = "../../../tests/loaders/z80/newbench.z80";
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testSnapshotPath);
 
     LoaderZ80CUT loader(_context, testSnapshotPath);
@@ -78,7 +79,7 @@ TEST_F(LoaderZ80_Test, stageLoad)
 
 TEST_F(LoaderZ80_Test, load)
 {
-    static std::string testSnapshotPath = "../../../tests/loaders/z80/newbench.z80";
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/z80/newbench.z80");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testSnapshotPath);
 
     LoaderZ80CUT loader(_context, testSnapshotPath);

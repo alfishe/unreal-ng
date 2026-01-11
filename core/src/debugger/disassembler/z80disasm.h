@@ -125,18 +125,19 @@ constexpr uint32_t OF_MEMADR = (1UL << 4);          // operand contains memory a
 constexpr uint32_t OF_CONDITION = (1UL << 5);       // operation checks condition
 constexpr uint32_t OF_RELJUMP = (1UL << 6);         // opcode uses relative jump offset as operand
 constexpr uint32_t OF_VAR_T = (1UL << 7);           // operation takes variable number of t-states (i.e. cycles)
-constexpr uint32_t OF_JUMP = (1UL << 8);            // operand is jump or call address
-constexpr uint32_t OF_RET = (1UL << 9);             // operation will take next PC address from stack
-constexpr uint32_t OF_RST = (1UL << 10);            // operation will jump to pre-defined address (RST n)
-constexpr uint32_t OF_FLAGS_AFFECTED = (1UL << 11); // Instruction modifies flags
-constexpr uint32_t OF_FLAGS_ALL = (1UL << 12);      // All flags affected (like AND, OR, XOR)
-constexpr uint32_t OF_FLAGS_SZ = (1UL << 13);       // Only S and Z flags affected
-constexpr uint32_t OF_REG_EXCHANGE = (1UL << 14);   // Register exchange operations (EX)
-constexpr uint32_t OF_BLOCK = (1UL << 15);          // Block operations (LDI, LDIR, etc.)
-constexpr uint32_t OF_IO = (1UL << 16);             // I/O operations (IN, OUT)
-constexpr uint32_t OF_INTERRUPT = (1UL << 17);      // Interrupt-related (EI, DI, IM)
-constexpr uint32_t OF_DJNZ = (1UL << 18);           // DJNZ instruction
-constexpr uint32_t OF_INDIRECT = (1UL << 19);       // Command uses indirect addressing (via one register pairs)
+constexpr uint32_t OF_JUMP = (1UL << 8);            // operand is jump address (JP, JR)
+constexpr uint32_t OF_CALL = (1UL << 9);            // operand is call address (CALL)
+constexpr uint32_t OF_RET = (1UL << 10);            // operation will take next PC address from stack
+constexpr uint32_t OF_RST = (1UL << 11);            // operation will jump to pre-defined address (RST n)
+constexpr uint32_t OF_FLAGS_AFFECTED = (1UL << 12); // Instruction modifies flags
+constexpr uint32_t OF_FLAGS_ALL = (1UL << 13);      // All flags affected (like AND, OR, XOR)
+constexpr uint32_t OF_FLAGS_SZ = (1UL << 14);       // Only S and Z flags affected
+constexpr uint32_t OF_REG_EXCHANGE = (1UL << 15);   // Register exchange operations (EX)
+constexpr uint32_t OF_BLOCK = (1UL << 16);          // Block operations (LDI, LDIR, etc.)
+constexpr uint32_t OF_IO = (1UL << 17);             // I/O operations (IN, OUT)
+constexpr uint32_t OF_INTERRUPT = (1UL << 18);      // Interrupt-related (EI, DI, IM)
+constexpr uint32_t OF_DJNZ = (1UL << 19);           // DJNZ instruction
+constexpr uint32_t OF_INDIRECT = (1UL << 20);       // Command uses indirect addressing (via one register pairs)
 
 namespace OpFlags
 {

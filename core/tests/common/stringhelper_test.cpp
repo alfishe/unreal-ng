@@ -43,11 +43,11 @@ TEST_F(StringHelper_Test, Compare)
         int result = StringHelper::Compare(test[0][i], test[1][i]);
         if (i % 2 == 0)
         {
-                EXPECT_EQ(result, 0);
+            EXPECT_EQ(result, 0);
         }
         else
         {
-                EXPECT_NE(result, 0);
+            EXPECT_NE(result, 0);
         }
     }
 }
@@ -134,7 +134,7 @@ TEST_F(StringHelper_Test, WideStringToString)
 {
     std::string reference = "Test";
 
-    std:: string result = StringHelper::WideStringToString(L"Test");
+    std::string result = StringHelper::WideStringToString(L"Test");
 
     if (result != reference)
     {
@@ -417,11 +417,12 @@ TEST_F(StringHelper_Test, Format)
         const char* str2 = "const char ptr";
         std::string str3 = "std::string";
         const std::string str4 = "const std::string";
-        std::string& str5 = str3;  // reference to existing string
+        std::string& str5 = str3;        // reference to existing string
         const std::string& str6 = str4;  // const reference
-        
+
         std::string result = StringHelper::Format(format, str1, str2, str3, str4, str5, str6);
-        std::string reference = "[char array] [const char ptr] [std::string] [const std::string] [std::string] [const std::string]";
+        std::string reference =
+            "[char array] [const char ptr] [std::string] [const std::string] [std::string] [const std::string]";
         EXPECT_EQ(reference, result) << "Test case 6a failed";
     }
 
@@ -594,7 +595,7 @@ TEST_F(StringHelper_Test, ToHex)
 
 TEST_F(StringHelper_Test, ToHexWithPrefix)
 {
-    // Test case 1: Basic hex with prefix (uppercase)
+    // Test case 1: Basic hex with default prefix (uppercase)
     {
         uint8_t value = 0x1A;
         std::string expected = "0x1A";
@@ -610,7 +611,7 @@ TEST_F(StringHelper_Test, ToHexWithPrefix)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 3: Custom prefix (uppercase)
+    // Test case 3: Custom prefix "hex:" (uppercase)
     {
         uint8_t value = 0x1A;
         std::string expected = "hex:1A";
@@ -618,7 +619,7 @@ TEST_F(StringHelper_Test, ToHexWithPrefix)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 4: Custom prefix (lowercase)
+    // Test case 4: Custom prefix "hex:" (lowercase)
     {
         uint8_t value = 0x1A;
         std::string expected = "hex:1a";
@@ -626,7 +627,7 @@ TEST_F(StringHelper_Test, ToHexWithPrefix)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 5: 32-bit value with custom prefix (uppercase)
+    // Test case 5: 32-bit value with custom prefix "addr:" (uppercase)
     {
         uint32_t value = 0x1A2B3C4D;
         std::string expected = "addr:1A2B3C4D";
@@ -634,11 +635,155 @@ TEST_F(StringHelper_Test, ToHexWithPrefix)
         EXPECT_EQ(result, expected);
     }
 
-    // Test case 6: 32-bit value with custom prefix (lowercase)
+    // Test case 6: 32-bit value with custom prefix "addr:" (lowercase)
     {
         uint32_t value = 0x1A2B3C4D;
         std::string expected = "addr:1a2b3c4d";
         std::string result = StringHelper::ToHexWithPrefix(value, "addr:", false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 7: ZX Spectrum assembler prefix "#" (uppercase)
+    {
+        uint8_t value = 0xFF;
+        std::string expected = "#FF";
+        std::string result = StringHelper::ToHexWithPrefix(value, "#");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 8: ZX Spectrum assembler prefix "#" (lowercase)
+    {
+        uint8_t value = 0xFF;
+        std::string expected = "#ff";
+        std::string result = StringHelper::ToHexWithPrefix(value, "#", false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 9: Alternative prefix "$" (6502/Commodore convention)
+    {
+        uint16_t value = 0xC000;
+        std::string expected = "$C000";
+        std::string result = StringHelper::ToHexWithPrefix(value, "$");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 10: Empty prefix
+    {
+        uint8_t value = 0xAB;
+        std::string expected = "AB";
+        std::string result = StringHelper::ToHexWithPrefix(value, "");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 11: int8_t (signed byte)
+    {
+        int8_t value = -1;  // 0xFF in two's complement
+        std::string expected = "0xFF";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 12: int16_t (signed word)
+    {
+        int16_t value = -256;  // 0xFF00 in two's complement
+        std::string expected = "0xFF00";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 13: int32_t (signed dword)
+    {
+        int32_t value = -1;  // 0xFFFFFFFF in two's complement
+        std::string expected = "0xFFFFFFFF";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 14: int64_t (signed qword)
+    {
+        int64_t value = -1;  // 0xFFFFFFFFFFFFFFFF in two's complement
+        std::string expected = "0xFFFFFFFFFFFFFFFF";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 15: uint16_t edge case (0x0000)
+    {
+        uint16_t value = 0x0000;
+        std::string expected = "0x0000";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 16: uint16_t edge case (0xFFFF)
+    {
+        uint16_t value = 0xFFFF;
+        std::string expected = "0xFFFF";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 17: uint32_t edge case (0x00000000)
+    {
+        uint32_t value = 0x00000000;
+        std::string expected = "0x00000000";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 18: uint32_t edge case (0xFFFFFFFF)
+    {
+        uint32_t value = 0xFFFFFFFF;
+        std::string expected = "0xFFFFFFFF";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 19: uint64_t edge case (0x0000000000000000)
+    {
+        uint64_t value = 0x0000000000000000;
+        std::string expected = "0x0000000000000000";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 20: uint64_t edge case (0xFFFFFFFFFFFFFFFF)
+    {
+        uint64_t value = 0xFFFFFFFFFFFFFFFF;
+        std::string expected = "0xFFFFFFFFFFFFFFFF";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 21: uint64_t with mixed case
+    {
+        uint64_t value = 0x123456789ABCDEF0;
+        std::string expected = "0x123456789ABCDEF0";
+        std::string result = StringHelper::ToHexWithPrefix(value);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 22: uint64_t with mixed case (lowercase)
+    {
+        uint64_t value = 0x123456789ABCDEF0;
+        std::string expected = "0x123456789abcdef0";
+        std::string result = StringHelper::ToHexWithPrefix(value, "0x", false);
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 23: Long prefix string
+    {
+        uint8_t value = 0x42;
+        std::string expected = "VALUE:42";
+        std::string result = StringHelper::ToHexWithPrefix(value, "VALUE:");
+        EXPECT_EQ(result, expected);
+    }
+
+    // Test case 24: Single character prefix "h" (Intel hex convention)
+    {
+        uint16_t value = 0x1234;
+        std::string expected = "h1234";
+        std::string result = StringHelper::ToHexWithPrefix(value, "h");
         EXPECT_EQ(result, expected);
     }
 }
