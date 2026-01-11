@@ -71,20 +71,32 @@ void SoundChip_TurboSound::handleStep()
             }
             else
             {
-                // ========== LOW QUALITY MODE (10-20% CPU of high) ==========
-                // Direct chip output, no FIR filters, no oversampling
+                // ========== LOW QUALITY MODE (saves ~15% CPU vs HQ) ==========
+                // Same chip update rate as HQ (8x oversampling) for correct frequencies
+                // BUT: skip expensive FIR filtering, use simple averaging instead
 
-                _x += _clockStep;
+                double leftSum = 0.0;
+                double rightSum = 0.0;
 
-                if (_x >= 1.0)
+                // Run same oversampling loop as HQ mode for proper chip timing
+                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
                 {
-                    _x -= 1.0;
-                    updateState(true);
+                    _x += _clockStep;
+
+                    if (_x >= 1.0)
+                    {
+                        _x -= 1.0;
+                        updateState(true);  // Same chip update as HQ
+                    }
+
+                    // Accumulate samples (simple averaging instead of FIR)
+                    leftSum += _chip0->mixedLeft() + _chip1->mixedLeft();
+                    rightSum += _chip0->mixedRight() + _chip1->mixedRight();
                 }
 
-                // Direct chip output with simple mixing (no FIR)
-                leftSample = (_chip0->outLeft() + _chip1->outLeft());
-                rightSample = (_chip0->outRight() + _chip1->outRight());
+                // Simple averaging (no FIR filtering) - faster but lower quality
+                leftSample = (leftSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
+                rightSample = (rightSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
             }
 
             // Store samples in output buffer
@@ -96,9 +108,7 @@ void SoundChip_TurboSound::handleStep()
     _lastTStates = scaledCurrentTStates;
 }
 
-void SoundChip_TurboSound::handleFrameEnd()
-{
-}
+void SoundChip_TurboSound::handleFrameEnd() {}
 
 /// endregion </Emulation events>
 
