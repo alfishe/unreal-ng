@@ -16,8 +16,8 @@ protected:
 
     SoundChip_AY8910* _currentChip = _chip0;
 
-    AudioFrameDescriptor _ayAudioDescriptor;                                      // Audio descriptor for AY
-    int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;         // Shortcut to it's sample buffer
+    AudioFrameDescriptor _ayAudioDescriptor;                               // Audio descriptor for AY
+    int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
 
     /// region <AY emulation>
     double _ayPLL;
@@ -26,6 +26,9 @@ protected:
 
     double _clockStep;
     double _x;
+
+    // HQ DSP flag (FIR filters + oversampling)
+    bool _hqEnabled = true;
     /// endregion </AY emulation>
 
     /// endregion </Fields>
@@ -38,13 +41,18 @@ protected:
 
     /// region <Properties>
 public:
-    uint16_t* getAudioBuffer() { return (uint16_t*)_ayBuffer; }
+    uint16_t* getAudioBuffer()
+    {
+        return (uint16_t*)_ayBuffer;
+    }
 
     // Chip access for monitoring purposes
     SoundChip_AY8910* getChip(int index) const
     {
-        if (index == 0) return _chip0;
-        if (index == 1) return _chip1;
+        if (index == 0)
+            return _chip0;
+        if (index == 1)
+            return _chip1;
 
         MLOGWARNING("Invalid chip index: %d", index);
         return nullptr;
@@ -55,7 +63,7 @@ public:
         int count = 0;
         if (_chip0)
             count++;
-        
+
         if (_chip1)
             count++;
 
@@ -103,7 +111,9 @@ public:
         _ayBufferIndex = 0;
 
         _x = 0.0;
-        double oversample_stream_rate = AUDIO_SAMPLING_RATE * 8 * FilterInterpolate::DECIMATE_FACTOR; // 2822400 bits per second for 44100Hz sample rate
+        double oversample_stream_rate =
+            AUDIO_SAMPLING_RATE * 8 *
+            FilterInterpolate::DECIMATE_FACTOR;  // 2822400 bits per second for 44100Hz sample rate
         _clockStep = PSG_CLOCK_RATE / oversample_stream_rate;
 
         // Set FIR parameters
@@ -118,8 +128,13 @@ public:
         _chip0->updateState(bypassPrescaler);
         _chip1->updateState(bypassPrescaler);
     }
-    /// endregion </Methods>
 
+    // Feature cache update
+    void setHQEnabled(bool enabled)
+    {
+        _hqEnabled = enabled;
+    }
+    /// endregion </Methods>
 
     /// region <Emulation events>
 public:

@@ -1,15 +1,15 @@
 #include "featuremanager.h"
 
-#include "3rdparty/simpleini/simpleini.h"
-#include "emulator/emulatorcontext.h"
-#include "emulator/cpu/core.h"
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <iostream>
 
-FeatureManager::FeatureManager(EmulatorContext* context)
-    : _context(context)
+#include "3rdparty/simpleini/simpleini.h"
+#include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
+
+FeatureManager::FeatureManager(EmulatorContext* context) : _context(context)
 {
     setDefaults();
 }
@@ -163,6 +163,21 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
+    registerFeature({Features::kSoundGeneration,
+                     Features::kSoundGenerationAlias,
+                     Features::kSoundGenerationDesc,
+                     true,
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+    registerFeature({Features::kSoundHQ,
+                     Features::kSoundHQAlias,
+                     Features::kSoundHQDesc,
+                     true,
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     _dirty = false;
 }
 
@@ -191,7 +206,7 @@ void FeatureManager::loadFromFile(const std::string& path)
         const char* section = entry.pItem;
         auto it = _features.find(section);
         if (it == _features.end())
-            continue; // Only override registered features
+            continue;  // Only override registered features
         FeatureInfo& f = it->second;
 
         const char* state = ini.GetValue(section, "state", nullptr);
@@ -249,7 +264,13 @@ void FeatureManager::onFeatureChanged()
         // Synchronize master switch with feature changes
         _context->pCore->GetZ80()->isDebugMode = _features[Features::kDebugMode].enabled;
     }
-    
+
+    // Update feature cache in SoundManager if it exists
+    if (_context && _context->pSoundManager)
+    {
+        _context->pSoundManager->UpdateFeatureCache();
+    }
+
     if (_dirty)
     {
         saveToFile(kFeaturesIni);
@@ -288,7 +309,8 @@ const FeatureManager::FeatureInfo* FeatureManager::findFeature(const std::string
 {
     // Try to find the feature by its canonical id
     auto it = _features.find(idOrAlias);
-    if (it != _features.end()) return &it->second;
+    if (it != _features.end())
+        return &it->second;
 
     // If not found, try to resolve as an alias
     auto ait = _aliases.find(idOrAlias);
@@ -296,9 +318,10 @@ const FeatureManager::FeatureInfo* FeatureManager::findFeature(const std::string
     {
         // Look up the canonical id from the alias and return the feature if it exists
         auto fit = _features.find(ait->second);
-        if (fit != _features.end()) return &fit->second;
+        if (fit != _features.end())
+            return &fit->second;
     }
-    
+
     // Feature not found
     return nullptr;
 }

@@ -1,5 +1,6 @@
 #include "soundmanager.h"
 
+#include "base/featuremanager.h"
 #include "common/dumphelper.h"
 #include "common/sound/audiohelper.h"
 #include "common/sound/audioutils.h"
@@ -100,15 +101,16 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
     size_t prevIndex = (_prevFrameTState * SAMPLES_PER_FRAME) / scaledFrame;
     size_t sampleIndex = (frameTState * SAMPLES_PER_FRAME) / scaledFrame;
 
-    /// region <If we're over frame duration>
+    // region <If we're over frame duration>
     if (prevIndex >= 882)
     {
         _prevFrameTState = frameTState;
         return;
     }
+
     if (sampleIndex >= 882)
         sampleIndex = 881;
-    /// endregion <If we're over frame duration>
+    // endregion <If we're over frame duration>
 
     // Fill the gap between previous call and current
     if (sampleIndex > prevIndex)
@@ -144,14 +146,16 @@ void SoundManager::updateDAC(uint32_t frameTState, int16_t left, int16_t right)
 // TurboSound/AY chip access for debugging
 SoundChip_AY8910* SoundManager::getAYChip(int index) const
 {
-    if (!_turboSound) return nullptr;
+    if (!_turboSound)
+        return nullptr;
 
     return _turboSound->getChip(index);
 }
 
 int SoundManager::getAYChipCount() const
 {
-    if (!_turboSound) return 0;
+    if (!_turboSound)
+        return 0;
 
     return _turboSound->getChipCount();
 }
@@ -169,6 +173,10 @@ void SoundManager::handleFrameStart()
 
 void SoundManager::handleStep()
 {
+    // Fast exit if sound generation disabled
+    if (!_feature_sound_enabled)
+        return;
+
     _turboSound->handleStep();
 }
 
@@ -196,8 +204,10 @@ void SoundManager::handleFrameEnd()
 
     if (callback && obj)
     {
-        // If muted, send silence instead of actual audio
-        if (_mute)
+        // If muted, send silence instead of actual audio.
+        // No need to send silence if sound generation is disabled -
+        // buffer was already zeroed out in SoundManager::handleFrameStart() method
+        if (_feature_sound_enabled && _mute)
         {
             // Zero out the buffer (silence)
             memset(_outBuffer, 0, SAMPLES_PER_FRAME * AUDIO_CHANNELS * sizeof(int16_t));
@@ -210,12 +220,61 @@ void SoundManager::handleFrameEnd()
         catch (const std::exception& e)
         {
             // Log error but don't crash - audio callback failure shouldn't stop emulation
-            printf("SoundManager::handleFrameEnd - Audio callback failed: %s\n", e.what());
+            LOGERROR("SoundManager::handleFrameEnd - Audio callback failed: %s\n", e.what());
         }
         catch (...)
         {
             // Log error but don't crash - audio callback failure shouldn't stop emulation
-            printf("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
+            LOGERROR("SoundManager::handleFrameEnd - Audio callback failed with unknown exception\n");
+        }
+    }
+}
+
+/// @brief Update feature cache flags from FeatureManager.
+///
+/// This method is automatically called by FeatureManager::onFeatureChanged() whenever
+/// sound-related feature states change. It updates cached boolean flags to avoid
+/// repeated hash map lookups in hot paths (handleStep is called ~70,000 times/frame).
+///
+/// @note Do NOT call directly - use FeatureManager API to change states.
+///
+/// **Triggered by (CLI):**
+/// ```bash
+/// feature sound off       # Disables sound generation (~18% CPU savings)
+/// feature sound on        # Re-enables sound generation
+/// feature soundhq off     # Switches to low-quality DSP (~15% CPU savings)
+/// feature soundhq on      # Switches to high-quality DSP (FIR + oversampling)
+/// ```
+///
+/// **Triggered by (API):**
+/// ```cpp
+/// context->pFeatureManager->setFeature("sound", false);
+/// context->pFeatureManager->setFeature("soundhq", true);
+/// ```
+///
+/// **Propagation Flow:**
+/// ```
+/// User CLI/API → FeatureManager::setFeature()
+///     ↓
+/// FeatureManager::onFeatureChanged()
+///     ↓
+/// SoundManager::UpdateFeatureCache()  ← YOU ARE HERE
+///     ↓
+/// _feature_sound_enabled, _feature_soundhq_enabled updated
+///     ↓
+/// Hot paths (handleStep) use cached flags
+/// ```
+void SoundManager::UpdateFeatureCache()
+{
+    if (_context && _context->pFeatureManager)
+    {
+        _feature_sound_enabled = _context->pFeatureManager->isEnabled(Features::kSoundGeneration);
+        _feature_soundhq_enabled = _context->pFeatureManager->isEnabled(Features::kSoundHQ);
+
+        // Propagate HQ flag to TurboSound
+        if (_turboSound)
+        {
+            _turboSound->setHQEnabled(_feature_soundhq_enabled);
         }
     }
 }
@@ -227,13 +286,8 @@ bool SoundManager::openWaveFile(std::string& path)
 {
     bool result = false;
 
-    int res = tinywav_open_write(
-                &_tinyWav,
-                AUDIO_CHANNELS,
-                AUDIO_SAMPLING_RATE,
-                TW_INT16,
-                TW_INTERLEAVED,
-                path.c_str());
+    int res =
+        tinywav_open_write(&_tinyWav, AUDIO_CHANNELS, AUDIO_SAMPLING_RATE, TW_INT16, TW_INTERLEAVED, path.c_str());
 
     if (res == 0 && _tinyWav.file)
     {

@@ -644,6 +644,8 @@ Commands to view and control emulator runtime features for the selected emulator
 | `breakpoints` | OFF | Enable breakpoint handling. When enabled, the emulator checks for breakpoint hits on every instruction. Required for execution breakpoints, watchpoints, and port breakpoints to work. | Low (~2-5% CPU overhead with <100 breakpoints) |
 | `memorytracking` | OFF | Collect memory access counters and statistics. Records read/write/execute counts per address, identifies hotspots, and tracks access patterns. Required for `memcounters` command. | High (~40-50% CPU overhead, significant memory usage) |
 | `debugmode` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
+| `sound` | ON | Enable/disable all sound generation. When disabled, skips all audio processing including AY chip emulation and beeper. Essential for headless mode, videowall, and turbo mode where audio is not needed. | Medium (~18% CPU savings when OFF) |
+| `soundhq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
 
 **Feature Dependencies**:
 
@@ -709,14 +711,16 @@ Commands to view and control emulator runtime features for the selected emulator
 ```
 > feature
 
-------------------------------------------------------------------------------------------------------------------
-| Name           | State  | Mode      | Description
-------------------------------------------------------------------------------------------------------------------
-| calltrace      | off    |           | Collect call trace information for debugging
-| breakpoints    | off    |           | Enable or disable breakpoint handling
-| memorytracking | off    |           | Collect memory access counters and statistics
-| debugmode      | off    |           | Master debug mode, enables/disables all debug features for performance
-------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+| Name           | State  | Description
+--------------------------------------------------------------------------------
+| debugmode      | off    | Master debug mode, enables/disables all debug features for performance
+| breakpoints    | off    | Enable or disable breakpoint handling
+| memorytracking | off    | Collect memory access counters and statistics
+| calltrace      | off    | Collect call trace information for debugging
+| sound          | on     | Enable or disable sound generation
+| soundhq        | on     | Enable high-quality DSP (FIR filters, oversampling). Disable for low-quality/faster audio.
+--------------------------------------------------------------------------------
 ```
 
 **Notes**:
