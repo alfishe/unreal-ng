@@ -1035,11 +1035,16 @@ void MainWindow::handleStartButton()
             unsubscribeFromPerEmulatorEvents();
             subscribeToPerEmulatorEvents();
 
+            // Bind the emulator to our central binding
+            // DebuggerWindow receives state via signals from m_binding
+            if (m_binding)
+            {
+                m_binding->bind(_emulator.get());
+            }
+
             // Notify debugger about new emulator instance
-            // Debugger will subscribe to required event messages from emulator core (like execution state changes)
+            // Note: DebuggerWindow receives state via EmulatorBinding signals
             debuggerWindow->setEmulator(_emulator.get());
-            // Notify debugger of current state (should be StateInitialized at this point)
-            debuggerWindow->notifyEmulatorStateChanged(_emulator->GetState());
 
             // Pass active emulator reference to menu manager
             if (_menuManager)
@@ -1723,12 +1728,8 @@ void MainWindow::handleEmulatorStateChanged(int id, Message* message)
             // (since messages don't carry emulator ID, we can't tell which emulator it's from)
             if (_emulator->GetState() == newState)
             {
-                // Confirmed: This state change is from OUR emulator
-                // Notify debugger window (it's fully dependent on us for state management)
-                if (debuggerWindow)
-                {
-                    debuggerWindow->notifyEmulatorStateChanged(newState);
-                }
+                // Note: DebuggerWindow receives state via EmulatorBinding signals
+                // No need to manually notify here
             }
 
             if (newState == StateStopped && _emulator->GetState() == StateStopped)
@@ -1833,11 +1834,10 @@ void MainWindow::handleEmulatorStateChanged(int id, Message* message)
                                         }
 
                                         // Pass emulator reference to debugger
+                                        // Note: DebuggerWindow receives state via EmulatorBinding signals
                                         if (debuggerWindow)
                                         {
                                             debuggerWindow->setEmulator(_emulator.get());
-                                            // Notify debugger of current state
-                                            debuggerWindow->notifyEmulatorStateChanged(_emulator->GetState());
                                         }
 
                                         // Pass emulator reference to menu manager

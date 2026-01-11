@@ -108,19 +108,26 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     ui->hexView->setOptions(options);
 
     /// region <Subscribe to events>
-    // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow.
+    // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow via EmulatorBinding.
     // We do NOT subscribe to ANY global MessageCenter events here!
     //
     // Problem: Global events (NC_EXECUTION_BREAKPOINT, NC_EXECUTION_CPU_STEP, etc.)
     // don't carry emulator ID information. When multiple emulators exist, we can't
     // tell which emulator the event is from, leading to race conditions and crashes.
     //
-    // Solution: DebuggerWindow only reacts to explicit method calls from MainWindow
-    // or from user interactions (button clicks). The emulator we're tracking is set
-    // via setEmulator(), and all our actions operate on that specific instance.
-    //
-    // For debugging events (breakpoints, steps), we rely on polling the emulator
-    // state when updateState() is called, rather than reacting to global broadcasts.
+    // Solution: DebuggerWindow receives state via EmulatorBinding signals from MainWindow.
+    // Child widgets are connected to DebuggerWindow dispatch signals.
+
+    // Connect dispatch signals to child widgets (hierarchical pattern)
+    connect(this, &DebuggerWindow::readyForChildren, ui->disassemblerWidget, &DisassemblerWidget::refresh);
+    connect(this, &DebuggerWindow::readyForChildren, ui->registersWidget, &RegistersWidget::refresh);
+    connect(this, &DebuggerWindow::readyForChildren, ui->stackWidget, &StackWidget::refresh);
+    connect(this, &DebuggerWindow::readyForChildren, ui->memorypagesWidget, &MemoryPagesWidget::refresh);
+
+    connect(this, &DebuggerWindow::notReadyForChildren, ui->disassemblerWidget, &DisassemblerWidget::reset);
+    connect(this, &DebuggerWindow::notReadyForChildren, ui->registersWidget, &RegistersWidget::reset);
+    connect(this, &DebuggerWindow::notReadyForChildren, ui->stackWidget, &StackWidget::reset);
+    connect(this, &DebuggerWindow::notReadyForChildren, ui->memorypagesWidget, &MemoryPagesWidget::reset);
 
     /// endregion </Subscribe to events>
 }
@@ -296,15 +303,7 @@ void DebuggerWindow::onBindingReady()
 {
     qDebug() << "DebuggerWindow::onBindingReady()";
 
-    // Update widget state from cached binding data
-    if (m_binding)
-    {
-        ui->disassemblerWidget->refresh();
-        ui->registersWidget->refresh();
-        ui->stackWidget->refresh();
-        ui->memorypagesWidget->refresh();
-    }
-
+    // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
 }
 
@@ -312,97 +311,11 @@ void DebuggerWindow::onBindingNotReady()
 {
     qDebug() << "DebuggerWindow::onBindingNotReady()";
 
-    // Clear widgets
-    ui->disassemblerWidget->reset();
-    ui->registersWidget->reset();
-    ui->stackWidget->reset();
-    ui->memorypagesWidget->reset();
+    // Clear hexView (not connected to signal)
     ui->hexView->reset();
 
+    // Dispatch to children via signal (widgets are connected to notReadyForChildren)
     emit notReadyForChildren();
-}
-
-void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)
-{
-    // This is called directly by MainWindow, not via MessageCenter
-    // We trust that MainWindow is notifying us about the correct emulator
-
-    // Safety check: If we have no emulator reference, ignore state changes
-    // This prevents crashes when the debugger window has been cleared but
-    // state change notifications are still in flight
-    if (!_emulator)
-    {
-        qDebug() << "DebuggerWindow::notifyEmulatorStateChanged(" << getEmulatorStateName(newState)
-                 << ") - IGNORED: No emulator reference";
-        return;
-    }
-
-    _emulatorState = newState;
-    qDebug() << "DebuggerWindow::notifyEmulatorStateChanged(" << getEmulatorStateName(_emulatorState) << ")";
-
-    dispatchToMainThread([this]() {
-        // Additional safety check - ensure we still have an emulator and debugger window is valid
-        if (!_emulator)
-        {
-            qDebug() << "DebuggerWindow::notifyEmulatorStateChanged callback - emulator already cleared, skipping";
-            return;
-        }
-
-        switch (_emulatorState)
-        {
-            case StateUnknown:
-            case StateStopped: {
-                // When emulator is stopped:
-                // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
-                updateToolbarActions(false, false, false, false, false, false);
-
-                // Emulator already stopped working.
-                // Time to disable all rendering activities and set controls to initial inactive state
-                _emulator = nullptr;
-
-                // Don't call reset() here since emulator is now null
-                // Just clear the UI manually without trying to read emulator state
-                ui->registersWidget->reset();
-                ui->hexView->reset();
-
-                QHexOptions options = ui->hexView->options();
-                options.linelength = 8;
-                options.addresswidth = 4;
-                options.flags = QHexFlags::HSeparator | QHexFlags::VSeparator;
-                ui->hexView->setOptions(options);
-
-                ui->memorypagesWidget->reset();
-                ui->stackWidget->reset();
-                ui->disassemblerWidget->reset();  // Clear disassembler on stop
-
-                // Don't call updateState() since emulator is null
-                break;
-            }
-
-            case StateInitialized:
-            default:
-                // When emulator is initialized:
-                // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
-                updateToolbarActions(false, true, false, false, true, true);
-                updateState();  // Safe to update when initialized
-                break;
-
-            case StateRun:
-            case StateResumed:
-                // When emulator is running:
-                // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON)
-                updateToolbarActions(false, true, false, true, true, true);
-                // DO NOT call updateState() while running - race condition!
-                break;
-
-            case StatePaused:
-                // When emulator is paused:
-                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
-                updateToolbarActions(true, false, true, true, true, true);
-                updateState();  // Safe to update when paused
-                break;
-        }
-    });
 }
 
 void DebuggerWindow::reset()

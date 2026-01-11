@@ -39,10 +39,6 @@ public:
     // Set the EmulatorBinding this window receives state from
     void setBinding(EmulatorBinding* binding);
 
-    // DEPRECATED: Called by MainWindow to notify of emulator state changes
-    // Will be replaced by binding signals
-    void notifyEmulatorStateChanged(EmulatorStateEnum newState);
-
     void reset();
 
     /// region <Helper methods>
