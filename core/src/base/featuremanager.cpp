@@ -52,17 +52,23 @@ void FeatureManager::clear()
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
-    auto* f = findFeature(idOrAlias);
-    if (f && f->enabled != enabled)
+    auto* feature = findFeature(idOrAlias);
+    if (feature)
     {
-        f->enabled = enabled;
-        _dirty = true;
+        bool valueChanged = (feature->enabled != enabled);
+        feature->enabled = enabled;
+
+        // Always call onFeatureChanged() to ensure caches are synchronized,
+        // even if the value didn't change. This handles the edge case where
+        // UpdateFeatureCache() was never called during initialization.
+        // Only mark dirty if value actually changed (for persistence purposes).
+        if (valueChanged)
+        {
+            _dirty = true;
+        }
+
         onFeatureChanged();
-        return true;
-    }
-    else if (f)
-    {
-        // Feature found but no change needed
+
         return true;
     }
     else
@@ -78,15 +84,15 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setMode(const std::string& idOrAlias, const std::string& mode)
 {
-    auto* f = findFeature(idOrAlias);
-    if (f && f->mode != mode)
+    auto* feature = findFeature(idOrAlias);
+    if (feature && feature->mode != mode)
     {
-        f->mode = mode;
+        feature->mode = mode;
         _dirty = true;
         onFeatureChanged();
         return true;
     }
-    else if (f)
+    else if (feature)
     {
         // Feature found but no change needed
         return true;
@@ -103,8 +109,8 @@ bool FeatureManager::setMode(const std::string& idOrAlias, const std::string& mo
 /// @return Current mode of the feature, or empty string if not found
 std::string FeatureManager::getMode(const std::string& idOrAlias) const
 {
-    const auto* f = findFeature(idOrAlias);
-    return f ? f->mode : "";
+    const auto* feature = findFeature(idOrAlias);
+    return feature ? feature->mode : "";
 }
 
 /// @brief Query if a feature is enabled by id or alias.
@@ -112,8 +118,8 @@ std::string FeatureManager::getMode(const std::string& idOrAlias) const
 /// @return true if the feature is enabled, false otherwise or if not found
 bool FeatureManager::isEnabled(const std::string& idOrAlias) const
 {
-    const auto* f = findFeature(idOrAlias);
-    return f ? f->enabled : false;
+    const auto* feature = findFeature(idOrAlias);
+    return feature ? feature->enabled : false;
 }
 
 /// @brief List all features and their metadata.
@@ -135,6 +141,7 @@ void FeatureManager::setDefaults()
 {
     // Example: register default features here. Extend as needed.
     clear();
+
     registerFeature({Features::kDebugMode,
                      Features::kDebugModeAlias,
                      Features::kDebugModeDesc,
@@ -224,7 +231,7 @@ void FeatureManager::loadFromFile(const std::string& path)
         }
     }
 
-    // Features state fully match settings file
+    // Features state fully match the settings file
     _dirty = false;
 
     // Recalculate all cached flags
@@ -256,7 +263,7 @@ void FeatureManager::saveToFile(const std::string& path) const
 /// Automatically saves to features.ini if any changes were made.
 void FeatureManager::onFeatureChanged()
 {
-    // Update feature cache in Memory class if it exists
+    // Update the feature cache in Memory class if it exists
     if (_context && _context->pCore && _context->pCore->GetMemory())
     {
         _context->pCore->GetMemory()->UpdateFeatureCache();
