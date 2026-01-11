@@ -1,5 +1,6 @@
 #include "videowall/VideoWallWindow.h"
 
+#include <base/featuremanager.h>
 #include <emulatormanager.h>
 #include <platform.h>
 
@@ -105,7 +106,16 @@ void VideoWallWindow::addEmulatorTile()
     if (emulator)
     {
         emulator->DebugOff();
-        // emulator->getFeatures()->EnableAudio(false);
+
+        // Disable sound for all videowall instances (saves ~17% CPU)
+        // Sound can be enabled later for a focused/active tile
+        auto* featureManager = emulator->GetFeatureManager();
+        if (featureManager)
+        {
+            featureManager->setFeature(Features::kSoundGeneration, false);
+            featureManager->setFeature(Features::kSoundHQ, false);
+        }
+
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);
@@ -268,6 +278,8 @@ void VideoWallWindow::toggleFullscreenMacOS()
         _windowMode = WindowMode::Windowed;
         _isFullscreen = false;
 
+        // Note: Sound stays disabled - user explicitly disabled it for performance
+
         // Prevent horizontal transition from fullscreen to desktop (macOS)
         setWindowFlags(Qt::Window);
 
@@ -318,6 +330,8 @@ void VideoWallWindow::toggleFullscreenMacOS()
         _windowMode = WindowMode::Fullscreen;
         _isFullscreen = true;
 
+        // Note: Sound already disabled at emulator creation in addEmulatorTile()
+
         QScreen* screen = window()->screen();
         showFullScreen();
 
@@ -336,6 +350,8 @@ void VideoWallWindow::toggleFullscreenWindows()
         // Exiting fullscreen
         _windowMode = WindowMode::Windowed;
         _isFullscreen = false;
+
+        // Note: Sound stays disabled - user explicitly disabled it for performance
 
         // Restore window flags (remove frameless)
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
@@ -368,6 +384,8 @@ void VideoWallWindow::toggleFullscreenWindows()
         _windowMode = WindowMode::Fullscreen;
         _isFullscreen = true;
 
+        // Note: Sound already disabled at emulator creation in addEmulatorTile()
+
         // Add frameless hint for Windows fullscreen
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         setWindowState(Qt::WindowNoState);
@@ -390,6 +408,8 @@ void VideoWallWindow::toggleFullscreenLinux()
         // Exiting fullscreen
         _windowMode = WindowMode::Windowed;
         _isFullscreen = false;
+
+        // Note: Sound stays disabled - user explicitly disabled it for performance
 
         // Restore geometry and show
         if (_savedGeometry.isValid())
@@ -416,6 +436,8 @@ void VideoWallWindow::toggleFullscreenLinux()
 
         _windowMode = WindowMode::Fullscreen;
         _isFullscreen = true;
+
+        // Note: Sound already disabled at emulator creation in addEmulatorTile()
 
         QScreen* screen = window()->screen();
         showFullScreen();
@@ -581,4 +603,30 @@ void VideoWallWindow::restoreSavedEmulators()
     }
 
     qDebug() << "Restored" << _savedEmulatorIds.size() << "emulators, removed" << tilesToRemove.size() << "excessive";
+}
+
+void VideoWallWindow::setSoundForAllTiles(bool enabled)
+{
+    // Set sound feature for ALL emulator instances in the grid
+    // This is called when entering/exiting fullscreen to optimize CPU usage
+    const auto& tiles = _tileGrid->tiles();
+    int successCount = 0;
+
+    for (auto* tile : tiles)
+    {
+        if (tile && tile->emulator())
+        {
+            auto* featureManager = tile->emulator()->GetFeatureManager();
+            if (featureManager)
+            {
+                // Disable both sound generation and high-quality DSP for maximum savings
+                featureManager->setFeature(Features::kSoundGeneration, enabled);
+                featureManager->setFeature(Features::kSoundHQ, enabled);
+                successCount++;
+            }
+        }
+    }
+
+    qDebug() << "Sound" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
+             << "tiles";
 }

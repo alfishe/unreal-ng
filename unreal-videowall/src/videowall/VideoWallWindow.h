@@ -73,6 +73,9 @@ private:
     void createMenus();
     void createDefaultPresets();
 
+    /// Set sound feature for all tiles (performance optimization)
+    void setSoundForAllTiles(bool enabled);
+
     // UI Components
     TileGrid* _tileGrid = nullptr;
 

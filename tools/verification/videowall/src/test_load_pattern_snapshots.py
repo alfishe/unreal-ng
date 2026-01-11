@@ -266,19 +266,11 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str) -> bool:
     assignments = generate_pattern_assignments(grid, pattern, snapshots)
     log("✓ Pattern assignments generated")
 
-    # Step 5: Disable sound on all instances
-    log("Step 5: Disabling sound on all instances...")
-    sound_success = 0
-    for emu_id in assignments.keys():
-        if client.disable_sound(emu_id):
-            sound_success += 1
-        else:
-            log(f"  ✗ Failed to disable sound on {emu_id[:8]}...")
+    # Note: Sound is now disabled at emulator creation in VideoWallWindow::addEmulatorTile()
+    # No need to disable sound via WebAPI anymore
 
-    log(f"Sound disabled on {sound_success}/48 instances")
-
-    # Step 6: Load snapshots according to pattern
-    log(f"Step 6: Loading snapshots using {pattern.value} pattern...")
+    # Step 5: Load snapshots according to pattern
+    log(f"Step 5: Loading snapshots using {pattern.value} pattern...")
     load_success = 0
 
     for emu_id, snapshot_path in assignments.items():
@@ -292,8 +284,8 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str) -> bool:
             log("  ✗ Failed to load snapshot")
     log(f"Snapshots loaded on {load_success}/48 instances")
 
-    # Step 7: Ensure all instances are running
-    log("Step 7: Ensuring all instances are running...")
+    # Step 6: Ensure all instances are running
+    log("Step 6: Ensuring all instances are running...")
     start_success = 0
 
     for emu_id in assignments.keys():
@@ -332,12 +324,11 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str) -> bool:
     log(f"  Description:       {get_pattern_description(pattern)}")
     log(f"  Total instances:   48")
     log(f"  Available snapshots: {len(snapshots)}")
-    log(f"  Sound disabled:    {sound_success}/48")
     log(f"  Snapshots loaded:  {load_success}/48")
     log(f"  Running/resumed:   {start_success}/48")
 
     # Determine overall success
-    all_passed = (sound_success == 48 and load_success == 48 and start_success == 48)
+    all_passed = (load_success == 48 and start_success == 48)
 
     if all_passed:
         log("\n✅ TEST PASSED: Pattern loaded successfully")

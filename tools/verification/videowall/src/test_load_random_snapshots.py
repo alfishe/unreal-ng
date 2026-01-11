@@ -86,20 +86,11 @@ def run_test(base_url: str, whitelist_file: str) -> bool:
     
     emulator_ids = [emu['id'] for emu in emulators]
     
-    # Step 2: Disable sound on all instances
-    log("\nStep 2: Disabling sound on all instances...")
-    sound_success = 0
-    for emu_id in emulator_ids:
-        if client.disable_sound(emu_id):
-            log(f"  ✓ Disabled sound on {emu_id[:8]}...")
-            sound_success += 1
-        else:
-            log(f"  ✗ Failed to disable sound on {emu_id[:8]}...")
+    # Note: Sound is now disabled at emulator creation in VideoWallWindow::addEmulatorTile()
+    # No need to disable sound via WebAPI anymore
     
-    log(f"Sound disabled on {sound_success}/{len(emulator_ids)} instances")
-    
-    # Step 3: Load random snapshots to each instance
-    log("\nStep 3: Loading random snapshots to each instance...")
+    # Step 2: Load random snapshots to each instance
+    log("\nStep 2: Loading random snapshots to each instance...")
     
     # Get random snapshots for each emulator
     snapshots = testdata.get_random_snapshots(len(emulator_ids))
@@ -117,8 +108,8 @@ def run_test(base_url: str, whitelist_file: str) -> bool:
     
     log(f"Snapshots loaded on {load_success}/{len(emulator_ids)} instances")
     
-    # Step 4: Ensure all instances are started/unpaused
-    log("\nStep 4: Ensuring all instances are started/running...")
+    # Step 3: Ensure all instances are started/unpaused
+    log("\nStep 3: Ensuring all instances are started/running...")
     
     start_success = 0
     for emu_id in emulator_ids:
@@ -156,13 +147,11 @@ def run_test(base_url: str, whitelist_file: str) -> bool:
     log("TEST SUMMARY")
     log("=" * 50)
     log(f"  Total instances:    {len(emulator_ids)}")
-    log(f"  Sound disabled:     {sound_success}/{len(emulator_ids)}")
     log(f"  Snapshots loaded:   {load_success}/{len(emulator_ids)}")
     log(f"  Running/resumed:    {start_success}/{len(emulator_ids)}")
     
     # Determine overall success
-    all_passed = (sound_success == len(emulator_ids) and 
-                  load_success == len(emulator_ids) and 
+    all_passed = (load_success == len(emulator_ids) and 
                   start_success == len(emulator_ids))
     
     if all_passed:
