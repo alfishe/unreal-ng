@@ -184,6 +184,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
+    registerFeature({Features::kRecording,
+                     Features::kRecordingAlias,
+                     Features::kRecordingDesc,
+                     false,  // OFF by default - heavy functionality
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     _dirty = false;
 }

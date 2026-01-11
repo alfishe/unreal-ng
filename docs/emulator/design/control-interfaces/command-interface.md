@@ -646,6 +646,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `debugmode` | OFF | Master debug mode switch. When enabled, activates all debug features (calltrace, breakpoints, memorytracking). When disabled, deactivates all debug features for maximum performance. Convenient toggle for entering/exiting debug sessions. | High (sum of all enabled debug features) |
 | `sound` | ON | Enable/disable all sound generation. When disabled, skips all audio processing including AY chip emulation and beeper. Essential for headless mode, videowall, and turbo mode where audio is not needed. | Medium (~18% CPU savings when OFF) |
 | `soundhq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
+| `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
 
 **Feature Dependencies**:
 
