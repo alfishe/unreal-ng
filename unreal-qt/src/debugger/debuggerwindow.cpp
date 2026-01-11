@@ -197,7 +197,129 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
 
 Emulator* DebuggerWindow::getEmulator()
 {
+    // Prefer binding if available
+    if (m_binding && m_binding->isBound())
+    {
+        return m_binding->emulator();
+    }
     return _emulator;
+}
+
+void DebuggerWindow::setBinding(EmulatorBinding* binding)
+{
+    // Disconnect from old binding
+    if (m_binding)
+    {
+        disconnect(m_binding, nullptr, this, nullptr);
+    }
+
+    m_binding = binding;
+
+    if (m_binding)
+    {
+        // Connect to binding signals
+        connect(m_binding, &EmulatorBinding::bound, this, &DebuggerWindow::onBindingBound);
+        connect(m_binding, &EmulatorBinding::unbound, this, &DebuggerWindow::onBindingUnbound);
+        connect(m_binding, &EmulatorBinding::stateChanged, this, &DebuggerWindow::onBindingStateChanged);
+        connect(m_binding, &EmulatorBinding::ready, this, &DebuggerWindow::onBindingReady);
+        connect(m_binding, &EmulatorBinding::notReady, this, &DebuggerWindow::onBindingNotReady);
+
+        qDebug() << "DebuggerWindow: Connected to EmulatorBinding";
+
+        // If binding already has an emulator, sync state
+        if (m_binding->isBound())
+        {
+            _emulator = m_binding->emulator();
+            _emulatorState = m_binding->state();
+            if (m_binding->isReady())
+            {
+                onBindingReady();
+            }
+        }
+    }
+    else
+    {
+        _emulator = nullptr;
+        reset();
+    }
+}
+
+void DebuggerWindow::onBindingBound()
+{
+    qDebug() << "DebuggerWindow::onBindingBound()";
+    if (m_binding)
+    {
+        _emulator = m_binding->emulator();
+        // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
+        updateToolbarActions(false, true, false, false, true, true);
+    }
+}
+
+void DebuggerWindow::onBindingUnbound()
+{
+    qDebug() << "DebuggerWindow::onBindingUnbound()";
+    _emulator = nullptr;
+    reset();
+    emit notReadyForChildren();
+}
+
+void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
+{
+    qDebug() << "DebuggerWindow::onBindingStateChanged(" << getEmulatorStateName(state) << ")";
+    _emulatorState = state;
+
+    // Update toolbar based on state
+    switch (state)
+    {
+        case StatePaused:
+            // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+            updateToolbarActions(true, false, true, true, true, true);
+            break;
+        case StateRun:
+            // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
+            updateToolbarActions(false, true, false, true, true, true);
+            break;
+        case StateStopped:
+        case StateUnknown:
+            // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
+            updateToolbarActions(false, false, false, false, false, false);
+            break;
+        default:
+            break;
+    }
+
+    // Dispatch to children
+    emit stateChangedForChildren(state);
+}
+
+void DebuggerWindow::onBindingReady()
+{
+    qDebug() << "DebuggerWindow::onBindingReady()";
+
+    // Update widget state from cached binding data
+    if (m_binding)
+    {
+        ui->disassemblerWidget->refresh();
+        ui->registersWidget->refresh();
+        ui->stackWidget->refresh();
+        ui->memorypagesWidget->refresh();
+    }
+
+    emit readyForChildren();
+}
+
+void DebuggerWindow::onBindingNotReady()
+{
+    qDebug() << "DebuggerWindow::onBindingNotReady()";
+
+    // Clear widgets
+    ui->disassemblerWidget->reset();
+    ui->registersWidget->reset();
+    ui->stackWidget->reset();
+    ui->memorypagesWidget->reset();
+    ui->hexView->reset();
+
+    emit notReadyForChildren();
 }
 
 void DebuggerWindow::notifyEmulatorStateChanged(EmulatorStateEnum newState)

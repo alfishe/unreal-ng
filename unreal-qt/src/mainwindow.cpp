@@ -101,6 +101,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     // Instantiate debugger window
     debuggerWindow = new DebuggerWindow();
+    debuggerWindow->setBinding(m_binding);  // Connect to central binding
     debuggerWindow->reset();
     debuggerWindow->show();
 
@@ -311,6 +312,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
     {
         // Clear audio callback before releasing emulator reference
         _emulator->ClearAudioCallback();
+
+        // Unbind from central binding
+        if (m_binding)
+        {
+            m_binding->unbind();
+        }
 
         std::string emulatorId = _emulator->GetId();
         _emulatorManager->RemoveEmulator(emulatorId);
@@ -2257,12 +2264,17 @@ void MainWindow::tryAdoptRemainingEmulator()
             }
         }
 
-        // Pass emulator reference to debugger
+        // Bind the emulator to our central binding
+        // DebuggerWindow receives state via signals from m_binding
+        if (m_binding)
+        {
+            m_binding->bind(_emulator.get());
+        }
+
+        // Legacy: pass emulator reference to debugger (for direct access during transition)
         if (debuggerWindow)
         {
             debuggerWindow->setEmulator(_emulator.get());
-            // Notify debugger of current state
-            debuggerWindow->notifyEmulatorStateChanged(_emulator->GetState());
         }
 
         // Pass emulator reference to menu manager
