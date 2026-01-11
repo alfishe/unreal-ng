@@ -1484,49 +1484,16 @@ void MainWindow::handleStopEmulator()
 {
     if (_emulator)
     {
-        // Full cleanup like the main button
         startButton->setEnabled(false);
 
-        // Note: Audio device keeps running - it will just output silence when emulator stops
-
-        // Unsubscribe from PER-EMULATOR events BEFORE stopping emulator
-        // (to avoid our own state change handler clearing _emulator while we're still using it)
-        unsubscribeFromPerEmulatorEvents();
-
-        // Stop emulator instance - use EmulatorManager for lifecycle
+        // Stop emulator first (it's running)
         std::string emulatorId = _emulator->GetId();
         _emulatorManager->StopEmulator(emulatorId);
 
-        // Detach framebuffer
-        deviceScreen->detach();
-
-        // Clear audio callback before releasing emulator
-        if (_emulator)
-        {
-            _emulator->ClearAudioCallback();
-        }
-
-        // Remove emulator from manager
-        _emulatorManager->RemoveEmulator(_emulator->GetId());
-        _emulator = nullptr;
+        // Use canonical release flow (unbinds, clears all pointers, removes from manager)
+        releaseEmulator();
 
         _lastFrameCount = 0;
-
-        // Clear emulator reference from debugger
-        if (debuggerWindow)
-        {
-            debuggerWindow->setEmulator(nullptr);
-        }
-
-        // Update UI
-        if (startButton)
-        {
-            startButton->setText("Start");
-            startButton->setEnabled(true);
-        }
-
-        updateMenuStates();
-        qDebug() << "MainWindow::handleStopEmulator - Menu states updated";
 
         qDebug() << "Emulator stopped and cleaned up";
 
@@ -1666,147 +1633,24 @@ void MainWindow::handleEmulatorStateChanged(int id, Message* message)
 
             if (newState == StateStopped && _emulator->GetState() == StateStopped)
             {
-                // Confirmed: OUR emulator stopped
-                // Get the emulator ID before clearing reference
+                // Confirmed: OUR emulator stopped externally
                 std::string stoppedId = _emulator->GetId();
+                qDebug() << "MainWindow::handleEmulatorStateChanged - Emulator" << QString::fromStdString(stoppedId)
+                         << "stopped externally";
 
-                // Unsubscribe from PER-EMULATOR events before clearing reference
-                // This prevents double subscriptions when adopting a new emulator
-                unsubscribeFromPerEmulatorEvents();
-
-                // Detach screen to show default gray when emulator stops
+                // Use canonical release flow on main thread
                 QMetaObject::invokeMethod(
                     this,
                     [this]() {
-                        if (deviceScreen)
+                        if (_emulator)
                         {
-                            deviceScreen->detach();
+                            releaseEmulator();
                         }
+
+                        // Try to adopt another running emulator
+                        tryAdoptRemainingEmulator();
                     },
                     Qt::QueuedConnection);
-
-                // Clear emulator reference from debugger
-                if (debuggerWindow)
-                {
-                    debuggerWindow->setEmulator(nullptr);
-                }
-
-                // Clear audio callback before releasing emulator reference
-                if (_emulator)
-                {
-                    _emulator->ClearAudioCallback();
-                }
-
-                // Clear emulator reference to allow adoption of new emulators
-                _emulator = nullptr;
-
-                // Update UI button state immediately
-                QMetaObject::invokeMethod(
-                    this,
-                    [this]() {
-                        if (!_emulator)
-                        {
-                            startButton->setText("Start");
-                            startButton->setEnabled(true);
-                        }
-                    },
-                    Qt::QueuedConnection);
-
-                // Check if there are other running emulators we should adopt
-                auto* emulatorManager = EmulatorManager::GetInstance();
-                auto emulatorIds = emulatorManager->GetEmulatorIds();
-
-                bool foundReplacement = false;
-                for (const auto& candidateId : emulatorIds)
-                {
-                    if (candidateId != stoppedId)  // Skip the one that just stopped
-                    {
-                        auto candidateEmulator = emulatorManager->GetEmulator(candidateId);
-                        if (candidateEmulator && candidateEmulator->IsRunning())
-                        {
-                            // Found a running emulator - adopt it
-                            foundReplacement = true;
-                            qDebug() << "MainWindow: Adopting running emulator" << QString::fromStdString(candidateId)
-                                     << "after" << QString::fromStdString(stoppedId) << "stopped";
-
-                            // Trigger adoption via the existing instance created handler logic
-                            QMetaObject::invokeMethod(
-                                this,
-                                [this, candidateId]() {
-                                    auto* emulatorManager = EmulatorManager::GetInstance();
-                                    auto emulator = emulatorManager->GetEmulator(candidateId);
-
-                                    if (emulator && !_emulator)
-                                    {
-                                        // Set as our active emulator
-                                        _emulator = emulator;
-
-                                        // Bind audio callback to adopted emulator
-                                        bindEmulatorAudio(_emulator);
-
-                                        // Subscribe to per-emulator events
-                                        // Unsubscribe first to prevent duplicate subscriptions
-                                        unsubscribeFromPerEmulatorEvents();
-                                        subscribeToPerEmulatorEvents();
-
-                                        // Initialize device screen
-                                        auto* context = _emulator->GetContext();
-                                        if (context && context->pScreen)
-                                        {
-                                            try
-                                            {
-                                                auto& framebufferDesc = context->pScreen->GetFramebufferDescriptor();
-                                                deviceScreen->init(framebufferDesc.width, framebufferDesc.height,
-                                                                   framebufferDesc.memoryBuffer);
-                                            }
-                                            catch (const std::exception& e)
-                                            {
-                                                qWarning() << "Failed to initialize device screen:" << e.what();
-                                            }
-                                        }
-
-                                        // Pass emulator reference to debugger
-                                        // Note: DebuggerWindow receives state via EmulatorBinding signals
-                                        if (debuggerWindow)
-                                        {
-                                            debuggerWindow->setEmulator(_emulator.get());
-                                        }
-
-                                        // Pass emulator reference to menu manager
-                                        if (_menuManager)
-                                        {
-                                            _menuManager->setActiveEmulator(_emulator);
-                                        }
-
-                                        // Update UI state
-                                        // Show "Stop" if emulator is running or paused (i.e., active)
-                                        if (emulator->IsRunning() || emulator->IsPaused())
-                                        {
-                                            startButton->setText("Stop");
-                                        }
-                                        else
-                                        {
-                                            startButton->setText("Start");
-                                        }
-                                        startButton->setEnabled(true);
-                                        updateMenuStates();
-
-                                        qDebug() << "MainWindow: Adopted running emulator"
-                                                 << QString::fromStdString(candidateId);
-                                    }
-                                },
-                                Qt::QueuedConnection);
-
-                            break;  // Only adopt one emulator
-                        }
-                    }
-                }
-
-                if (!foundReplacement)
-                {
-                    qDebug() << "MainWindow: No replacement emulator found after" << QString::fromStdString(stoppedId)
-                             << "stopped - UI detached";
-                }
             }
         }
     }
@@ -1816,7 +1660,7 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
 {
     Q_UNUSED(id);
 
-    // Handle emulator instance destruction (from CLI, WebAPI, or UI)
+    // Handle emulator instance destruction (from CLI, WebAPI, or external sources)
     if (message && message->obj)
     {
         SimpleTextPayload* payload = dynamic_cast<SimpleTextPayload*>(message->obj);
@@ -1824,18 +1668,21 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
         {
             std::string destroyedId = payload->_payloadText;
 
-            // Check if this was our active emulator - BEFORE queuing to main thread
-            // to avoid race condition where _emulator might be cleared by the time lambda runs
+            // Check if this was our active emulator
             bool wasOurEmulator = (_emulator && _emulator->GetId() == destroyedId);
 
             if (wasOurEmulator)
             {
-                // Update UI on main thread
+                qDebug() << "MainWindow::handleEmulatorInstanceDestroyed - Our emulator"
+                         << QString::fromStdString(destroyedId) << "destroyed externally";
+
+                // Use canonical release flow on main thread
+                // Note: releaseEmulator() will call RemoveEmulator but emulator may already be gone
+                // from manager - that's OK, the cleanup is still needed for our UI bindings
                 QMetaObject::invokeMethod(
                     this,
                     [this, destroyedId]() {
                         // Double-check _emulator still exists and matches
-                        // (it might have been cleared by stop button handler already)
                         if (!_emulator || _emulator->GetId() != destroyedId)
                         {
                             qDebug() << "MainWindow: Emulator" << QString::fromStdString(destroyedId)
@@ -1843,38 +1690,35 @@ void MainWindow::handleEmulatorInstanceDestroyed(int id, Message* message)
                             return;
                         }
 
-                        // Note: Audio device keeps running - it will just output silence when no emulator is active
+                        // Use canonical release (unbinds, clears pointers)
+                        // Note: Don't call RemoveEmulator since it's already being destroyed
+                        // Just do the UI cleanup portion
+                        if (m_binding)
+                        {
+                            m_binding->unbind();
+                        }
 
-                        // Unsubscribe from per-emulator events
-                        unsubscribeFromPerEmulatorEvents();
-
-                        // Detach framebuffer
-                        deviceScreen->detach();
-
-                        // Clear emulator reference from menu manager
                         if (_menuManager)
                         {
                             _menuManager->setActiveEmulator(nullptr);
                         }
 
-                        // Clear emulator reference from debugger
                         if (debuggerWindow)
                         {
                             debuggerWindow->setEmulator(nullptr);
                         }
 
-                        // Clear emulator reference
-                        _emulator.reset();
+                        deviceScreen->detach();
+                        unsubscribeFromPerEmulatorEvents();
+                        // Note: Don't call _emulator->ClearAudioCallback() - emulator is already being destroyed
+                        _emulator = nullptr;
 
-                        // Update UI state
                         startButton->setText("Start");
-                        startButton->setEnabled(true);
                         updateMenuStates();
 
-                        qDebug() << "MainWindow: Active emulator instance" << QString::fromStdString(destroyedId)
-                                 << "destroyed externally - fully unbound from UI";
+                        qDebug() << "MainWindow: Emulator" << QString::fromStdString(destroyedId) << "unbound from UI";
 
-                        // Check if there are other running emulators to adopt
+                        // Try to adopt another running emulator
                         tryAdoptRemainingEmulator();
                     },
                     Qt::QueuedConnection);
