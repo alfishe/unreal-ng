@@ -142,10 +142,13 @@ private:
     /// @param emulator The emulator to adopt
     void adoptEmulator(std::shared_ptr<Emulator> emulator);
 
-    /// @brief Release the currently adopted emulator.
-    /// This is the SINGLE point of emulator unbinding. All emulator release
-    /// (stop, destroy, or selection-changed) must go through here.
-    /// Handles: unbinding, audio cleanup, screen detach, debugger reset, and UI state.
+    /// @brief Unbind from the currently adopted emulator without destroying it.
+    /// Used when switching to a different emulator - old emulator keeps running headless.
+    void unbindFromEmulator();
+
+    /// @brief Release and destroy the currently adopted emulator.
+    /// This is the SINGLE point of emulator destruction. Use for stop, destroy, or close.
+    /// Handles: unbinding, audio cleanup, screen detach, debugger reset, UI state, and emulator destruction.
     void releaseEmulator();
 
     // Platform-specific initialization methods

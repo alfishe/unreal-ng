@@ -43,10 +43,16 @@ void EmulatorBinding::bind(Emulator* emulator)
     // Subscribe to per-emulator MessageCenter events
     subscribeToMessageCenter();
 
-    // Check initial state and cache if ready
-    updateReadyState();
+    // Get initial state BEFORE emitting bound() so listeners see correct state
+    m_state = m_emulator->GetState();
 
+    // Notify listeners that we're bound (BEFORE ready signal)
+    // This allows DebuggerWindow to set _emulator before ready() fires
     emit bound();
+
+    // Check initial state and cache if ready
+    // This may emit ready() - but now bound() has already fired
+    updateReadyState();
 
     qDebug() << "EmulatorBinding: Bound to emulator" << QString::fromStdString(emulator->GetId());
 }
@@ -183,10 +189,12 @@ void EmulatorBinding::onMessageCenterEvent(int id, Message* message)
             }
             else if (!isNowReady && wasReady)
             {
-                // Transitioning away from ready state
+                // Transitioning away from ready state (Paused → Running)
+                // Keep stale data visible - don't emit notReady()
+                // notReady() is only for unbind or initial bind to running emulator
                 m_isReady = false;
                 emit stateChanged(newState);
-                emit notReady();
+                // Note: Intentionally NOT emitting notReady() here - widgets keep their last data
             }
             else
             {

@@ -162,21 +162,16 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
         // Load debugger state from disk
         loadState();
 
-        qDebug() << "DebuggerWindow::setEmulator() - Updating toolbar actions";
-
-        // Initially disable all actions, including breakpoints and labels
-        // (Continue: OFF, Pause: OFF, Step: OFF, Reset: OFF, Breakpoints: OFF, Labels: OFF)
-        updateToolbarActions(false, false, false, false, false, false);
-
         qDebug() << "DebuggerWindow::setEmulator() - Checking emulator state";
 
-        // Only update state if emulator is not actively running (to avoid race conditions)
-        // If it's running, we'll get a state change notification soon and update then
+        // Set toolbar based on actual emulator state
         EmulatorStateEnum state = _emulator->GetState();
+        onBindingStateChanged(state);
+
+        // Update widget state if emulator is not actively running
         if (state != StateRun && state != StateResumed)
         {
             qDebug() << "DebuggerWindow::setEmulator() - Updating debugger state (safe)";
-            // Safe to update state for paused, stopped, or initialized emulators
             updateState();
         }
         else
