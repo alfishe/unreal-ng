@@ -4,7 +4,7 @@ Qt application for displaying multiple ZX Spectrum emulator instances in a video
 
 ## Features
 
-- Multiple emulator instances displayed as tiles (256x192 pixels each)
+- Multiple emulator instances displayed as tiles (192x192 pixels each, 1:1 aspect ratio)
 - Auto-arranging grid layout
 - 4K display support (15×11 = 165 tiles)
 - Keyboard focus per tile

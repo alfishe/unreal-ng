@@ -28,9 +28,22 @@ python test_load_random_snapshots.py --url http://localhost:8090 --whitelist ../
 
 To allow all snapshots (no restriction), create an empty whitelist file or omit the whitelist entirely but ensure the default `../whitelist.txt` contains all desired snapshots.
 
-### Pattern Loading (8x6 Videowall)
+### Pattern Loading (Dynamic Videowall)
 
-For fullscreen videowall mode with 48 instances arranged in an 8x6 grid, use the pattern loading script. This script uses the same whitelist filtering as the random loading script.
+For fullscreen videowall mode, use the pattern loading script. Grid dimensions are calculated dynamically using ceiling division.
+
+#### Grid Configurations
+
+| Resolution | Tile Size | Cols | Rows | Total |
+|------------|-----------|------|------|-------|
+| 4K (3840×2160) | 256×196 | 15 | 12 | **180** |
+| QHD (2560×1600) | 256×196 | 10 | 9 | **90** |
+| FullHD (1920×1080) | 256×196 | 8 | 6 | **48** |
+| 4K (3840×2160) | 512×384 | 8 | 6 | **48** |
+| QHD (2560×1600) | 512×384 | 5 | 5 | **25** |
+| FullHD (1920×1080) | 512×384 | 4 | 3 | **12** |
+
+> **Note**: Grid uses ceiling division: `cols = ceil(screenWidth / tileWidth)`, `rows = ceil(screenHeight / tileHeight)`
 
 ```bash
 cd src
@@ -41,9 +54,9 @@ python test_load_pattern_snapshots.py --url http://localhost:8090 --pattern spir
 
 | Pattern | Description |
 |---------|-------------|
-| `all_same` | All 48 instances load the same snapshot |
-| `columns` | Same snapshot per column (6 instances each) |
-| `rows` | Same snapshot per row (8 instances each) |
+| `all_same` | All 165 instances load the same snapshot |
+| `columns` | Same snapshot per column (11 instances each) |
+| `rows` | Same snapshot per row (15 instances each) |
 | `diagonal_down` | Diagonal lines (top-right to bottom-left) |
 | `diagonal_up` | Diagonal lines (top-left to bottom-right) |
 | `circles` | Concentric circles from center outward |
@@ -119,7 +132,7 @@ Filenames must match exactly, including case and extension. The extension is req
 | Script | Description |
 |--------|-------------|
 | `test_load_random_snapshots.py` | Load random snapshots to all instances, disable sound, ensure all running. Supports whitelist filtering of allowed snapshots. |
-| `test_load_pattern_snapshots.py` | Load snapshots in various patterns to 8x6 videowall (48 instances). Requires fullscreen mode. Supports whitelist filtering. |
+| `test_load_pattern_snapshots.py` | Load snapshots in visual patterns to fullscreen videowall. Grid dimensions detected dynamically. Supports whitelist filtering. |
 | `cycle_patterns.sh` | Automatically cycle through all patterns with configurable delay. Requires fullscreen videowall mode. |
 
 ## Architecture

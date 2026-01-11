@@ -57,6 +57,12 @@ void VideoWallWindow::setupUI()
 {
     _tileGrid = new TileGrid(this);
     setCentralWidget(_tileGrid);
+
+    // Set black background to hide gaps at screen edges
+    _tileGrid->setAutoFillBackground(true);
+    QPalette pal = _tileGrid->palette();
+    pal.setColor(QPalette::Window, Qt::black);
+    _tileGrid->setPalette(pal);
 }
 
 void VideoWallWindow::createMenus()
@@ -92,11 +98,20 @@ void VideoWallWindow::createMenus()
     fullscreenAction->setCheckable(true);
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
+
+    viewMenu->addSeparator();
+
+    QAction* screenHQAction = viewMenu->addAction(tr("Toggle Screen &HQ"));
+    screenHQAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
+    connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
 }
 
 void VideoWallWindow::createDefaultPresets()
 {
-    // TODO: Implement preset creation in Phase 6
+    // Presets are configuration snapshots that can be recalled
+    // For now, presets are planned for future implementation
+    // They would store: tile count, layout, loaded snapshots per tile
+    qDebug() << "Default presets not yet implemented";
 }
 
 void VideoWallWindow::addEmulatorTile()
@@ -114,6 +129,9 @@ void VideoWallWindow::addEmulatorTile()
         {
             featureManager->setFeature(Features::kSoundGeneration, false);
             featureManager->setFeature(Features::kSoundHQ, false);
+
+            // Enable screen HQ by default for better quality
+            featureManager->setFeature(Features::kScreenHQ, _screenHQEnabled);
         }
 
         emulator->StartAsync();
@@ -125,7 +143,26 @@ void VideoWallWindow::addEmulatorTile()
 
 void VideoWallWindow::removeEmulatorTile(int index)
 {
-    // TODO: Implement in Phase 5
+    const auto& tiles = _tileGrid->tiles();
+    if (index < 0 || index >= static_cast<int>(tiles.size()))
+    {
+        qDebug() << "Invalid tile index:" << index;
+        return;
+    }
+
+    EmulatorTile* tile = tiles[index];
+    std::shared_ptr<Emulator> emulator = tile->emulator();
+
+    // Remove from grid
+    _tileGrid->removeTile(tile);
+
+    // Destroy emulator
+    if (emulator)
+    {
+        _emulatorManager->RemoveEmulator(emulator->GetUUID());
+    }
+
+    qDebug() << "Removed tile at index" << index;
 }
 
 void VideoWallWindow::removeLastTile()
@@ -157,12 +194,16 @@ void VideoWallWindow::clearAllTiles()
 
 void VideoWallWindow::loadPreset(const QString& presetName)
 {
-    // TODO: Implement in Phase 6
+    // Presets would load a saved configuration from disk
+    // For now, this is planned for future implementation
+    qDebug() << "loadPreset not yet implemented:" << presetName;
 }
 
 void VideoWallWindow::savePreset(const QString& presetName)
 {
-    // TODO: Implement in Phase 6
+    // Presets would save current configuration to disk
+    // For now, this is planned for future implementation
+    qDebug() << "savePreset not yet implemented:" << presetName;
 }
 
 void VideoWallWindow::keyPressEvent(QKeyEvent* event)
@@ -195,7 +236,8 @@ void VideoWallWindow::keyPressEvent(QKeyEvent* event)
 
 void VideoWallWindow::keyReleaseEvent(QKeyEvent* event)
 {
-    // TODO: Route to focused tile (Phase 5)
+    // Key events routed to focused tile via EmulatorTile::keyReleaseEvent
+    // The tile with focus receives events directly from Qt
     QMainWindow::keyReleaseEvent(event);
 }
 
@@ -252,7 +294,7 @@ void VideoWallWindow::toggleFramelessMode()
 
         // Calculate layout after window state change
         QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->availableSize());
+            calculateAndApplyOptimalLayout(screen->size());
             qDebug() << "Windowed → frameless:" << _tileGrid->tiles().size();
         });
     }
@@ -337,7 +379,7 @@ void VideoWallWindow::toggleFullscreenMacOS()
 
         // Smart resize after fullscreen transition
         QTimer::singleShot(100, this, [this, screen]() {
-            resizeGridIntelligently(screen->availableSize());
+            resizeGridIntelligently(screen->size());
             qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
         });
     }
@@ -395,7 +437,7 @@ void VideoWallWindow::toggleFullscreenWindows()
 
         // Calculate layout after fullscreen transition
         QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->availableSize());
+            calculateAndApplyOptimalLayout(screen->size());
             qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
         });
     }
@@ -444,7 +486,7 @@ void VideoWallWindow::toggleFullscreenLinux()
 
         // Calculate layout after fullscreen transition
         QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->availableSize());
+            calculateAndApplyOptimalLayout(screen->size());
             qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
         });
     }
@@ -454,13 +496,14 @@ void VideoWallWindow::calculateAndApplyOptimalLayout(QSize screenSize)
 {
     clearAllTiles();
 
-    // Calculate grid using CEILING division - if ANY pixels left over, add another tile (will be clipped)
-    int tilesWide = (screenSize.width() + 511) / 512;   // Ceiling division for 512px tiles
-    int tilesHigh = (screenSize.height() + 383) / 384;  // Ceiling division for 384px tiles
-    int total = tilesWide * tilesHigh;
+    // Calculate grid dynamically from screen size and configured tile size
+    auto layout = TileLayoutManager::getFullscreenLayout(screenSize.width(), screenSize.height());
+    int tilesWide = layout.cols;
+    int tilesHigh = layout.rows;
+    int total = layout.totalTiles;
 
-    qDebug() << "Grid (2x scale, ceiling):" << tilesWide << "×" << tilesHigh << "=" << total << "emulators for"
-             << screenSize;
+    qDebug() << "Grid (dynamic):" << tilesWide << "×" << tilesHigh << "=" << total << "tiles"
+             << "(" << TILE_WIDTH << "x" << TILE_HEIGHT << "px each) for" << screenSize;
 
     // Set explicit grid dimensions so TileGrid uses screen-based layout
     _tileGrid->setGridDimensions(tilesWide, tilesHigh);
@@ -503,10 +546,11 @@ void VideoWallWindow::createNextBatch()
 
 void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
 {
-    // Calculate target grid dimensions
-    int tilesWide = (screenSize.width() + 511) / 512;   // Ceiling division for 512px tiles
-    int tilesHigh = (screenSize.height() + 383) / 384;  // Ceiling division for 384px tiles
-    int targetTotal = tilesWide * tilesHigh;
+    // Calculate grid dynamically from screen size and configured tile size
+    auto layout = TileLayoutManager::getFullscreenLayout(screenSize.width(), screenSize.height());
+    int tilesWide = layout.cols;
+    int tilesHigh = layout.rows;
+    int targetTotal = layout.totalTiles;
     int currentTotal = _tileGrid->tiles().size();
 
     qDebug() << "Smart resize: current" << currentTotal << "tiles, target" << targetTotal << "tiles for" << screenSize;
@@ -629,4 +673,30 @@ void VideoWallWindow::setSoundForAllTiles(bool enabled)
 
     qDebug() << "Sound" << (enabled ? "enabled" : "disabled") << "for" << successCount << "/" << tiles.size()
              << "tiles";
+}
+
+void VideoWallWindow::toggleScreenHQForAllTiles()
+{
+    // Togglescreen HQ state
+    _screenHQEnabled = !_screenHQEnabled;
+
+    // Apply to all existing tiles
+    const auto& tiles = _tileGrid->tiles();
+    int successCount = 0;
+
+    for (auto* tile : tiles)
+    {
+        if (tile && tile->emulator())
+        {
+            auto* featureManager = tile->emulator()->GetFeatureManager();
+            if (featureManager)
+            {
+                featureManager->setFeature(Features::kScreenHQ, _screenHQEnabled);
+                successCount++;
+            }
+        }
+    }
+
+    qDebug() << "Screen HQ" << (_screenHQEnabled ? "enabled" : "disabled") << "for" << successCount << "/"
+             << tiles.size() << "tiles";
 }

@@ -3,6 +3,8 @@
 #include <QWidget>
 #include <memory>
 
+#include "videowall/TileLayoutManager.h"  // TILE_WIDTH, TILE_HEIGHT
+
 // Forward declarations
 class Emulator;
 class QImage;
@@ -59,7 +61,5 @@ private:
     QTimer* _refreshTimer = nullptr;
     QTimer* _blinkTimer = nullptr;  // Timer for blink effect
 
-    // Tile size: 512x384 pixels (ZX Spectrum 256x192 scaled 2x)
-    static constexpr int TILE_WIDTH = 512;
-    static constexpr int TILE_HEIGHT = 384;
+    // Tile size from TileLayoutManager.h: TILE_WIDTH x TILE_HEIGHT
 };

@@ -76,6 +76,9 @@ private:
     /// Set sound feature for all tiles (performance optimization)
     void setSoundForAllTiles(bool enabled);
 
+    /// Toggle screen HQ feature for all tiles (Cmd+S)
+    void toggleScreenHQForAllTiles();
+
     // UI Components
     TileGrid* _tileGrid = nullptr;
 
@@ -110,4 +113,7 @@ private:
     QTimer* _batchTimer = nullptr;
     static constexpr int BATCH_SIZE = 4;
     static constexpr int BATCH_DELAY_MS = 100;
+
+    // Screen HQ toggle state (default: enabled)
+    bool _screenHQEnabled = true;
 };

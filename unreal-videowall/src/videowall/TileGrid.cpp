@@ -87,7 +87,7 @@ void TileGrid::updateLayout()
         rows = layout.rows;
     }
 
-    // Position tiles in grid (512x384 per tile)
+    // Position tiles in grid using configured tile size
     int x = 0;
     int y = 0;
     int col = 0;
@@ -98,20 +98,20 @@ void TileGrid::updateLayout()
 
         // Move to next column
         col++;
-        x += 512;  // 2x tile width
+        x += TILE_WIDTH;
 
         // If we've filled a row, move to next row
         if (col >= cols)
         {
             col = 0;
             x = 0;
-            y += 384;  // 2x tile height
+            y += TILE_HEIGHT;
         }
     }
 
     // Resize widget to fit grid
-    int windowWidth = cols * 512;
-    int windowHeight = rows * 384;
+    int windowWidth = cols * TILE_WIDTH;
+    int windowHeight = rows * TILE_HEIGHT;
     setMinimumSize(windowWidth, windowHeight);
 }
 
