@@ -1,8 +1,6 @@
 // CLI Settings and Feature Commands
 // Extracted from cli-processor.cpp - 2026-01-08
 
-#include "cli-processor.h"
-
 #include <base/featuremanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
@@ -10,6 +8,8 @@
 
 #include <iostream>
 #include <sstream>
+
+#include "cli-processor.h"
 
 // HandleSetting - lines 3137-3388
 void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector<std::string>& args)
@@ -297,27 +297,21 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
         // Print all features in a table
         const int name_width = 15;
         const int state_width = 7;
-        const int mode_width = 10;
-        const int desc_width = 60;
         const std::string separator =
-            "----------------------------------------------------------------------------------------------------------"
-            "--------";
+            "--------------------------------------------------------------------------------";
 
         out << separator << NEWLINE;
         out << "| " << std::left << std::setw(name_width) << "Name"
             << "| " << std::left << std::setw(state_width) << "State"
-            << "| " << std::left << std::setw(mode_width) << "Mode"
             << "| " << std::left << "Description" << NEWLINE;
         out << separator << NEWLINE;
 
         for (const auto& f : featureManager->listFeatures())
         {
             std::string state_str = f.enabled ? Features::kStateOn : Features::kStateOff;
-            std::string mode_str = f.mode.empty() ? "" : f.mode;
 
             out << "| " << std::left << std::setw(name_width) << f.id << "| " << std::left << std::setw(state_width)
-                << state_str << "| " << std::left << std::setw(mode_width) << mode_str << "| " << std::left
-                << f.description << NEWLINE;
+                << state_str << "| " << std::left << f.description << NEWLINE;
         }
         out << separator << NEWLINE;
 
@@ -411,4 +405,3 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
         << NEWLINE << "  feature save" << NEWLINE << "  feature" << NEWLINE;
     session.SendResponse(out.str());
 }
-

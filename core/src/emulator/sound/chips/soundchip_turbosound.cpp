@@ -34,33 +34,70 @@ void SoundChip_TurboSound::handleStep()
             int16_t leftSample;
             int16_t rightSample;
 
-            // Start oversampling block for both chip FIR filters
-            _chip0->firLeft().startOversamplingBlock();
-            _chip0->firRight().startOversamplingBlock();
-            _chip1->firLeft().startOversamplingBlock();
-            _chip1->firRight().startOversamplingBlock();
-
-            // Oversample and apply LPF FIR
-            for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+            if (_hqEnabled)
             {
-                _x += _clockStep;
+                // ========== HIGH QUALITY MODE (default) ==========
+                // 192-tap FIR filter + 8x oversampling + DC filtering
 
-                if (_x >= 1.0)
+                // Start oversampling block for both chip FIR filters
+                _chip0->firLeft().startOversamplingBlock();
+                _chip0->firRight().startOversamplingBlock();
+                _chip1->firLeft().startOversamplingBlock();
+                _chip1->firRight().startOversamplingBlock();
+
+                // Oversample and apply LPF FIR
+                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
                 {
-                    _x -= 1.0;
+                    _x += _clockStep;
 
-                    // Update both chips state synchronously
-                    updateState(true);
+                    if (_x >= 1.0)
+                    {
+                        _x -= 1.0;
+
+                        // Update both chips state synchronously
+                        updateState(true);
+                    }
+
+                    _chip0->firLeft().recalculateInterpolationCoefficients(j, _chip0->mixedLeft());
+                    _chip0->firRight().recalculateInterpolationCoefficients(j, _chip0->mixedRight());
+                    _chip1->firLeft().recalculateInterpolationCoefficients(j, _chip1->mixedLeft());
+                    _chip1->firRight().recalculateInterpolationCoefficients(j, _chip1->mixedRight());
                 }
 
-                _chip0->firLeft().recalculateInterpolationCoefficients(j, _chip0->mixedLeft());
-                _chip0->firRight().recalculateInterpolationCoefficients(j, _chip0->mixedRight());
-                _chip1->firLeft().recalculateInterpolationCoefficients(j, _chip1->mixedLeft());
-                _chip1->firRight().recalculateInterpolationCoefficients(j, _chip1->mixedRight());
+                leftSample =
+                    (_chip0->firLeft().endOversamplingBlock() + _chip1->firLeft().endOversamplingBlock()) * INT16_MAX;
+                rightSample =
+                    (_chip0->firRight().endOversamplingBlock() + _chip1->firRight().endOversamplingBlock()) * INT16_MAX;
             }
+            else
+            {
+                // ========== LOW QUALITY MODE (saves ~15% CPU vs HQ) ==========
+                // Same chip update rate as HQ (8x oversampling) for correct frequencies
+                // BUT: skip expensive FIR filtering, use simple averaging instead
 
-            leftSample = (_chip0->firLeft().endOversamplingBlock()  + _chip1->firLeft().endOversamplingBlock()) * INT16_MAX;
-            rightSample = (_chip0->firRight().endOversamplingBlock() + _chip1->firRight().endOversamplingBlock()) * INT16_MAX;
+                double leftSum = 0.0;
+                double rightSum = 0.0;
+
+                // Run same oversampling loop as HQ mode for proper chip timing
+                for (int j = FilterInterpolate::DECIMATE_FACTOR - 1; j >= 0; j--)
+                {
+                    _x += _clockStep;
+
+                    if (_x >= 1.0)
+                    {
+                        _x -= 1.0;
+                        updateState(true);  // Same chip update as HQ
+                    }
+
+                    // Accumulate samples (simple averaging instead of FIR)
+                    leftSum += _chip0->mixedLeft() + _chip1->mixedLeft();
+                    rightSum += _chip0->mixedRight() + _chip1->mixedRight();
+                }
+
+                // Simple averaging (no FIR filtering) - faster but lower quality
+                leftSample = (leftSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
+                rightSample = (rightSum / FilterInterpolate::DECIMATE_FACTOR) * INT16_MAX;
+            }
 
             // Store samples in output buffer
             _ayBuffer[_ayBufferIndex++] = leftSample;
@@ -71,9 +108,7 @@ void SoundChip_TurboSound::handleStep()
     _lastTStates = scaledCurrentTStates;
 }
 
-void SoundChip_TurboSound::handleFrameEnd()
-{
-}
+void SoundChip_TurboSound::handleFrameEnd() {}
 
 /// endregion </Emulation events>
 

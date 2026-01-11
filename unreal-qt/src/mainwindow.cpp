@@ -1992,11 +1992,8 @@ void MainWindow::handleEmulatorSelectionChanged(int id, Message* message)
 
         if (payload)
         {
-            // Convert uuid_t to string for logging and lookup
-            // IMPORTANT: Use uuid_unparse_lower to match EmulatorManager's lowercase storage
-            char newIdStr[37];
-            uuid_unparse_lower(payload->newEmulatorId, newIdStr);
-            std::string newId(newIdStr);
+            // Use cross-platform UUID class's toString() method
+            std::string newId = payload->newEmulatorId.toString();
 
             qDebug() << "MainWindow: Selection changed to" << QString::fromStdString(newId);
 
