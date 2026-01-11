@@ -36,13 +36,14 @@ enum EmulatorStateEnum : uint8_t
     StateRun,
     StatePaused,
     StateResumed,
-    StateStopped
+    StateStopped,
+    StateDestroying  // Prevents new operations during destruction
 };
 
 inline const char* getEmulatorStateName(EmulatorStateEnum value)
 {
-    static const char* names[] = { "StateUnknown", "StateInitialized", "StateRun",
-                                   "StatePaused",  "StateResumed",     "StateStopped" };
+    static const char* names[] = {"StateUnknown", "StateInitialized", "StateRun",       "StatePaused",
+                                  "StateResumed", "StateStopped",     "StateDestroying"};
 
     return names[value];
 };
@@ -69,7 +70,7 @@ protected:
     EmulatorStateEnum _state = StateUnknown;
     mutable std::mutex _stateMutex;
 
-    std::atomic<bool> _initialized{ false };
+    std::atomic<bool> _initialized{false};
     mutable std::mutex _mutexInitialization;
 
     std::thread* _asyncThread = nullptr;
@@ -91,7 +92,7 @@ protected:
 
     // Emulator state
     volatile bool _isPaused = false;
-    std::atomic<bool> _isRunning{ false };  // Atomic to support idempotent Stop()
+    std::atomic<bool> _isRunning{false};  // Atomic to support idempotent Stop()
     volatile bool _isDebug = false;
     volatile bool _isReleased = false;
 
@@ -187,6 +188,7 @@ public:
     // Status methods
     bool IsRunning();
     bool IsPaused();
+    bool IsDestroying();  // Thread-safe check for destruction state
     bool IsDebug();
     std::string GetStatistics();
     std::string GetInstanceInfo();
