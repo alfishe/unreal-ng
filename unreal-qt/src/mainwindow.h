@@ -83,6 +83,9 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void updateMenuStates();
+
+    // Binding state handler
+    void onBindingStateChanged(EmulatorStateEnum state);
     // endregion <Slots>
 
     // region <QWidget events override>
@@ -131,6 +134,19 @@ private:
 
     // Bind audio callback to emulator (audio device runs continuously)
     void bindEmulatorAudio(std::shared_ptr<Emulator> emulator);
+
+    /// @brief Adopt an emulator as the active emulator for this window.
+    /// This is the SINGLE point of emulator binding. All emulator adoption
+    /// (UI-triggered, automation-triggered, or selection-changed) must go through here.
+    /// Handles: binding, audio, screen, debugger, menu, and UI state.
+    /// @param emulator The emulator to adopt
+    void adoptEmulator(std::shared_ptr<Emulator> emulator);
+
+    /// @brief Release the currently adopted emulator.
+    /// This is the SINGLE point of emulator unbinding. All emulator release
+    /// (stop, destroy, or selection-changed) must go through here.
+    /// Handles: unbinding, audio cleanup, screen detach, debugger reset, and UI state.
+    void releaseEmulator();
 
     // Platform-specific initialization methods
     void initializePlatformMacOS();

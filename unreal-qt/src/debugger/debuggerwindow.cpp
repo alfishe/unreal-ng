@@ -130,6 +130,9 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(this, &DebuggerWindow::notReadyForChildren, ui->memorypagesWidget, &MemoryPagesWidget::reset);
 
     /// endregion </Subscribe to events>
+
+    // Start with toolbar disabled - will be enabled when emulator is adopted and running
+    updateToolbarActions(false, false, false, false, false, false);
 }
 
 DebuggerWindow::~DebuggerWindow()
@@ -257,8 +260,9 @@ void DebuggerWindow::onBindingBound()
     if (m_binding)
     {
         _emulator = m_binding->emulator();
-        // (Continue: OFF, Pause: ON, Step: OFF, Reset: OFF, Breakpoints: ON, Labels: ON)
-        updateToolbarActions(false, true, false, false, true, true);
+        _emulatorState = m_binding->state();
+        // Delegate to state handler - toolbar enabled based on actual state
+        onBindingStateChanged(_emulatorState);
     }
 }
 
