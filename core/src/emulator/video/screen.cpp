@@ -4,6 +4,7 @@
 
 #include <cassert>
 
+#include "base/featuremanager.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
@@ -467,6 +468,28 @@ void Screen::RenderOnlyMainScreen()
     return;
 }
 
+/// @brief Render entire screen in a single pass when ScreenHQ=OFF
+/// Called by MainLoop::OnFrameEnd() to provide batch rendering when per-t-state
+/// rendering is bypassed. Base implementation uses RenderOnlyMainScreen;
+/// ScreenZX overrides this with RenderScreen_Batch8 for optimal performance.
+void Screen::RenderFrameBatch()
+{
+    // Default: fall back to simple full-screen render
+    // ScreenZX overrides with optimized RenderScreen_Batch8()
+    RenderOnlyMainScreen();
+}
+
+/// @brief Update cached feature flag state from FeatureManager
+/// This is called automatically by FeatureManager::onFeatureChanged() whenever
+/// any feature state changes. Components cache flags for performance.
+void Screen::UpdateFeatureCache()
+{
+    if (_context && _context->pFeatureManager)
+    {
+        _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
+    }
+}
+
 void Screen::SaveScreen()
 {
     ImageHelper::SaveFrameToPNG_Async(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width,
@@ -692,6 +715,33 @@ void Screen::DrawScreenBorder(uint32_t n)
 /// \param borderColor
 void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
 {
+    // =============================================================================
+    // SCREENHQ OPTIMIZATION BYPASS
+    // =============================================================================
+    // When ScreenHQ feature is disabled (OFF), we skip the per-t-state rendering
+    // loop entirely. This bypasses ~70,000 Draw() calls per frame (one per t-state).
+    //
+    // WHAT IS BYPASSED:
+    //   - The for loop below that calls Draw(tstate) for each t-state in the period
+    //   - Draw() -> TstateCoordLUT lookup + pixel color calculation + framebuffer write
+    //   - All per-t-state attribute reads for "racing the beam" multicolor effects
+    //
+    // WHAT HAPPENS INSTEAD:
+    //   - MainLoop::OnFrameEnd() calls Screen::RenderFrameBatch()
+    //   - Which calls ScreenZX::RenderScreen_Batch8() for 25x faster batch rendering
+    //   - Entire 256x192 screen is rendered in one pass using 8-pixel symbols
+    //
+    // TRADE-OFF:
+    //   - ScreenHQ=ON (default): Per-t-state, demo multicolor effects work, ~343μs/frame
+    //   - ScreenHQ=OFF: Batch 8-pixel, multicolor breaks, ~13μs/frame (25x faster)
+    //
+    // See: docs/inprogress/2026-01-11-performance-optimizations/phase-4-5-execution-log.md
+    // =============================================================================
+    if (!_feature_screenhq_enabled)
+    {
+        return;  // Skip per-t-state rendering; batch render happens at frame end
+    }
+
     /// region <Sanity checks>
     constexpr int MAX_FRAME_DURATION_TOLERANCE = 100;  // We can allow up to 100 t-state cycles after frame ends since
                                                        // CPU can be in the middle of current command proceesing

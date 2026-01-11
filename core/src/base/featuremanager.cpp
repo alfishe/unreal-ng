@@ -9,6 +9,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/recording/recordingmanager.h"
+#include "emulator/video/screen.h"
 
 FeatureManager::FeatureManager(EmulatorContext* context) : _context(context)
 {
@@ -185,6 +186,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
+    registerFeature({Features::kScreenHQ,
+                     Features::kScreenHQAlias,
+                     Features::kScreenHQDesc,
+                     true,  // ON by default - demo compatibility
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
     registerFeature({Features::kRecording,
                      Features::kRecordingAlias,
                      Features::kRecordingDesc,
@@ -290,6 +298,12 @@ void FeatureManager::onFeatureChanged()
     if (_context && _context->pRecordingManager)
     {
         _context->pRecordingManager->UpdateFeatureCache();
+    }
+
+    // Update feature cache in Screen (for ScreenHQ toggle) if it exists
+    if (_context && _context->pScreen)
+    {
+        _context->pScreen->UpdateFeatureCache();
     }
 
     if (_dirty)

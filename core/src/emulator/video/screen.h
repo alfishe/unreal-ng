@@ -398,6 +398,29 @@ public:
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
     virtual void RenderOnlyMainScreen();
+
+    /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)
+    /// Called by MainLoop::OnFrameEnd() instead of per-t-state Draw() calls.
+    /// Override in ScreenZX to use RenderScreen_Batch8 for 25x faster rendering.
+    virtual void RenderFrameBatch();
+
+    /// region <Feature cache - ScreenHQ>
+    /// @brief Update cached feature flag state (called by FeatureManager::onFeatureChanged)
+    /// Components cache their feature flags for performance to avoid map lookups in hot paths.
+    void UpdateFeatureCache();
+
+    /// @brief Check if ScreenHQ mode is enabled (per-t-state rendering for demo compatibility)
+    /// When false, batch 8-pixel rendering is used for performance
+    bool IsScreenHQEnabled() const
+    {
+        return _feature_screenhq_enabled;
+    }
+
+protected:
+    // Cached feature flag (updated by UpdateFeatureCache)
+    bool _feature_screenhq_enabled = true;  // Default ON for demo compatibility
+    /// endregion </Feature cache>
+
     virtual void SaveScreen();
     virtual void SaveZXSpectrumNativeScreen();
 

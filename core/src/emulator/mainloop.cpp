@@ -247,6 +247,23 @@ void MainLoop::OnFrameEnd()
     if (!_context->pScreen || !_context->pSoundManager)
         return;
 
+    // =========================================================================
+    // SCREENHQ=OFF BATCH RENDERING
+    // =========================================================================
+    // When ScreenHQ feature is disabled, per-t-state Draw() calls are skipped
+    // in Screen::DrawPeriod(). Instead, we render the entire screen here in
+    // one batch using RenderScreen_Batch8() - approximately 25x faster.
+    //
+    // This MUST happen BEFORE we capture the frame for recording or display,
+    // as the framebuffer would otherwise be empty (no per-t-state rendering).
+    //
+    // See: docs/inprogress/2026-01-11-performance-optimizations/phase-4-5-execution-log.md
+    // =========================================================================
+    if (!_context->pScreen->IsScreenHQEnabled())
+    {
+        _context->pScreen->RenderFrameBatch();
+    }
+
     // Basic sanity check for context corruption
     if (_context->config.frame == 0 || _context->config.frame > 100000)
         return;  // Invalid frame timing suggests corruption
