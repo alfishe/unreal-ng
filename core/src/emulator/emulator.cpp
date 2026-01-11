@@ -1,33 +1,33 @@
-#include <loaders/snapshot/loader_z80.h>
-#include <loaders/disk/loader_trd.h>
-#include <loaders/disk/loader_scl.h>
-#include <random>
-#include <sstream>
-#include <iomanip>
-#include <thread>
-#include <chrono>
-#include <functional>
-
 #include "emulator.h"
 
+#include <loaders/disk/loader_scl.h>
+#include <loaders/disk/loader_trd.h>
+#include <loaders/snapshot/loader_z80.h>
+
+#include <chrono>
+#include <functional>
+#include <iomanip>
+#include <random>
+#include <sstream>
+#include <thread>
+
+#include "3rdparty/message-center/messagecenter.h"
+#include "base/featuremanager.h"
 #include "common/filehelper.h"
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
+#include "common/timehelper.h"
+#include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
-#include "debugger/breakpoints/breakpointmanager.h"
-#include "base/featuremanager.h"
-#include "3rdparty/message-center/messagecenter.h"
-#include "loaders/snapshot/loader_sna.h"
 #include "emulator/io/fdc/wd1793.h"
-#include "loaders/snapshot/uns/loader_uns.h"
+#include "loaders/snapshot/loader_sna.h"
 #include "loaders/snapshot/uns/dto/snapshot_dto.h"
+#include "loaders/snapshot/uns/loader_uns.h"
 
 /// region <Constructors / Destructors>
 
-Emulator::Emulator(LoggerLevel level) : Emulator("", level)
-{
-}
+Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
 Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 {
@@ -49,8 +49,8 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
         _featureManager = new FeatureManager(_context);
         _context->pFeatureManager = _featureManager;
 
-        MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", 
-                 symbolicId.c_str(), level, _emulatorId.c_str());
+        MLOGDEBUG("Emulator::Emulator(symbolicId='%s', level=%d) - Instance created with UUID: %s", symbolicId.c_str(),
+                  level, _emulatorId.c_str());
         MLOGDEBUG("Emulator::Init - context created");
     }
     else
@@ -63,6 +63,13 @@ Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 Emulator::~Emulator()
 {
     MLOGDEBUG("Emulator::~Emulator()");
+
+    // Ensure resources are released if Release() wasn't called explicitly
+    if (_initialized.load(std::memory_order_acquire))
+    {
+        Release();
+    }
+
     if (_featureManager)
     {
         delete _featureManager;
@@ -84,10 +91,10 @@ bool Emulator::Init()
     }
 
     bool result = false;
-    
+
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
-    
+
     // Double-check after acquiring the lock
     if (_initialized.load(std::memory_order_relaxed))
     {
@@ -95,13 +102,13 @@ bool Emulator::Init()
         throw std::logic_error("Emulator::Init() - already initialized (race condition detected)");
     }
 
-	// Ensure that MessageCenter instance is up and running
+    // Ensure that MessageCenter instance is up and running
     [[maybe_unused]] MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter(true);
 
-	// Get host system info
-	GetSystemInfo();
+    // Get host system info
+    GetSystemInfo();
 
-	// Load configuration
+    // Load configuration
     _config = new Config(_context);
     if (_config != nullptr)
     {
@@ -150,7 +157,7 @@ bool Emulator::Init()
     {
         ROM& rom = *_core->GetROM();
 
-        //std::string rompath = rom.GetROMFilename();
+        // std::string rompath = rom.GetROMFilename();
         result = rom.LoadROM();
 
         if (result)
@@ -169,17 +176,16 @@ bool Emulator::Init()
     }
 
     // Create and initialize additional peripheral devices
-    ;	// Tape
-    ;	// HDD/CD
-    ;	// ZiFi
-    ;	// GS / NGS
+    ;  // Tape
+    ;  // HDD/CD
+    ;  // ZiFi
+    ;  // GS / NGS
 
     // Create and initialize Debugger and related components
-    ;	// Debugger
+    ;  // Debugger
 
     // Create and initialize Scripting support
-    ;	// Scripting host (Python or Lua?)
-
+    ;  // Scripting host (Python or Lua?)
 
     // Create and initialize main emulator loop
     if (result)
@@ -189,13 +195,13 @@ bool Emulator::Init()
         _mainloop = new MainLoop(_context);
         if (_mainloop != nullptr)
         {
-                MLOGDEBUG("Emulator::Init - mainloop created");
+            MLOGDEBUG("Emulator::Init - mainloop created");
 
-                result = true;
+            result = true;
         }
         else
         {
-                MLOGERROR("Emulator::Init - mainloop creation failed");
+            MLOGERROR("Emulator::Init - mainloop creation failed");
         }
     }
 
@@ -234,8 +240,8 @@ bool Emulator::Init()
 
     if (!_core)
     {
-	    std::string error = "CPU was not created";
-	    throw std::logic_error(error);
+        std::string error = "CPU was not created";
+        throw std::logic_error(error);
     }
 
     if (!_context->pCore)
@@ -297,16 +303,16 @@ bool Emulator::Init()
     // Reset CPU and set-up all ports / ROM and RAM pages
     if (result)
     {
-            _core->Reset();
+        _core->Reset();
 
-            // Init default video render
-            _context->pScreen->InitFrame();
+        // Init default video render
+        _context->pScreen->InitFrame();
 
-            // Ensure all logger messages displayed
-            _context->pModuleLogger->Flush();
+        // Ensure all logger messages displayed
+        _context->pModuleLogger->Flush();
 
-            // Mark as initialized at the very last moment
-            _initialized = true;
+        // Mark as initialized at the very last moment
+        _initialized = true;
     }
 
     // Release all created resources if any of initialization steps failed
@@ -324,11 +330,27 @@ void Emulator::Release()
     // Lock mutex until exiting current scope
     std::lock_guard<std::mutex> lock(_mutexInitialization);
 
+    // Guard against double-release (thread safety)
+    if (_isReleased)
+    {
+        MLOGDEBUG("Emulator::Release - Already released, ignoring");
+        return;
+    }
+
+    _isReleased = true;
+
+    // Mark as destroying to prevent new operations from other threads
+    SetState(StateDestroying);
+
     ReleaseNoGuard();
 }
 
 void Emulator::ReleaseNoGuard()
 {
+    // Guard against null context (shouldn't happen, but be safe)
+    if (!_context)
+        return;
+
     // Release debug manager (and related components)
     if (_context->pDebugManager)
     {
@@ -374,7 +396,6 @@ void Emulator::ReleaseNoGuard()
 
     /// endregion </Release additional peripheral devices>
 
-
     // Release CPU subsystem core (it will release all main peripherals)
     _context->pCore = nullptr;
     if (_core != nullptr)
@@ -406,8 +427,8 @@ void Emulator::ReleaseNoGuard()
 //
 void Emulator::GetSystemInfo()
 {
-	HOST& host = _context->host;
-    
+    HOST& host = _context->host;
+
     // Initialize host structure members
     memset(host.cpu_model, 0, sizeof(host.cpu_model));
     host.mmx = 0;
@@ -418,25 +439,26 @@ void Emulator::GetSystemInfo()
 
 #if defined(__x86__) || defined(__x86_64__)
     char cpuString[49];
-	cpuString[0] = '\0';
+    cpuString[0] = '\0';
 
-	SystemHelper::GetCPUString(cpuString);
-	LOGINFO("CPU ID: %s", cpuString);
+    SystemHelper::GetCPUString(cpuString);
+    LOGINFO("CPU ID: %s", cpuString);
 
-	[[maybe_unused]] unsigned cpuver = SystemHelper::GetCPUID(1, 0);	// Read Highest Function Parameter and ManufacturerID
-	unsigned features = SystemHelper::GetCPUID(1, 1);	// Read Processor Info and Feature Bits
-	host.mmx = (features >> 23) & 1;
-	host.sse = (features >> 25) & 1;
-	host.sse2 = (features >> 26) & 1;
-	MLOGINFO("MMX:%s, SSE:%s, SSE2:%s", host.mmx ? "YES" : "NO", host.sse ? "YES" : "NO", host.sse2 ? "YES" : "NO");
+    [[maybe_unused]] unsigned cpuver =
+        SystemHelper::GetCPUID(1, 0);                  // Read Highest Function Parameter and ManufacturerID
+    unsigned features = SystemHelper::GetCPUID(1, 1);  // Read Processor Info and Feature Bits
+    host.mmx = (features >> 23) & 1;
+    host.sse = (features >> 25) & 1;
+    host.sse2 = (features >> 26) & 1;
+    MLOGINFO("MMX:%s, SSE:%s, SSE2:%s", host.mmx ? "YES" : "NO", host.sse ? "YES" : "NO", host.sse2 ? "YES" : "NO");
 
-	host.cpufq = SystemHelper::GetCPUFrequency();
-#elif defined(__arm__) || defined (__aarch64__)
-    #ifdef __APPLE__
+    host.cpufq = SystemHelper::GetCPUFrequency();
+#elif defined(__arm__) || defined(__aarch64__)
+#ifdef __APPLE__
 
-        size_t size = sizeof(host.cpu_model);
-        sysctlbyname("machdep.cpu.brand_string", &host.cpu_model, &size, NULL, 0);
-    #endif
+    size_t size = sizeof(host.cpu_model);
+    sysctlbyname("machdep.cpu.brand_string", &host.cpu_model, &size, NULL, 0);
+#endif
 #endif
 
     MLOGINFO("CPU model: %s", host.cpu_model);
@@ -451,10 +473,30 @@ BaseFrequency_t Emulator::GetSpeed()
 
 void Emulator::SetSpeed(BaseFrequency_t speed)
 {
-    _context->coreState.baseFreqMultiplier = speed;
+    _core->SetCPUClockSpeed(speed);
 }
 
-///region <Integration interfaces>
+void Emulator::SetSpeedMultiplier(uint8_t multiplier)
+{
+    _core->SetSpeedMultiplier(multiplier);
+}
+
+void Emulator::EnableTurboMode(bool withAudio)
+{
+    _core->EnableTurboMode(withAudio);
+}
+
+void Emulator::DisableTurboMode()
+{
+    _core->DisableTurboMode();
+}
+
+bool Emulator::IsTurboMode() const
+{
+    return _core->IsTurboMode();
+}
+
+/// region <Integration interfaces>
 
 EmulatorContext* Emulator::GetContext()
 {
@@ -493,28 +535,54 @@ FramebufferDescriptor Emulator::GetFramebuffer()
 
 void Emulator::SetAudioCallback(void* obj, AudioCallback callback)
 {
-    _context->pAudioManagerObj = obj;
-    _context->pAudioCallback = callback;
+    // Use memory_order_release to ensure all previous writes are visible to the emulator thread
+    _context->pAudioManagerObj.store(obj, std::memory_order_release);
+    _context->pAudioCallback.store(callback, std::memory_order_release);
+
+    MLOGINFO("Emulator::SetAudioCallback() - Audio callback set: obj=%p, callback=%p", obj, (void*)callback);
 }
 
-///endregion </Integration interfaces>
+void Emulator::ClearAudioCallback()
+{
+    // Use memory_order_release to ensure the nullptr writes are visible to the emulator thread
+    _context->pAudioManagerObj.store(nullptr, std::memory_order_release);
+    _context->pAudioCallback.store(nullptr, std::memory_order_release);
 
-//region Regular workflow
+    MLOGINFO("Emulator::ClearAudioCallback() - Audio callback cleared for emulator %s", _emulatorId.c_str());
+}
+
+/// endregion </Integration interfaces>
+
+// region Regular workflow
 
 void Emulator::Reset()
 {
-	_core->Reset();
+    // To avoid race conditions, we must pause the emulator during reset
+    // (Z80 thread executing ROM code during reset can cause inconsistent state)
+    bool wasRunning = _isRunning && !_isPaused;
+
+    if (wasRunning)
+    {
+        // Pause the emulator
+        Pause();
+
+        // Give the emulator thread time to fully pause
+        // (it needs to finish the current frame and enter pause loop)
+        sleep_ms(20);
+    }
+
+    // Now perform reset while paused (safe, no race condition)
+    _core->Reset();
+
+    // Resume if it was running before
+    if (wasRunning)
+    {
+        Resume();
+    }
 }
 
 void Emulator::Start()
 {
-    // Skip if already running
-    if (_isRunning)
-    {
-        MLOGWARNING("Emulator::Start() - already running");
-        return;
-    }
-
     // Skip if not initialized
     if (!_initialized)
     {
@@ -522,6 +590,7 @@ void Emulator::Start()
         return;
     }
 
+    // Set running state (may already be set by StartAsync() - that's OK)
     _isPaused = false;
     _isRunning = true;
     _stopRequested = false;
@@ -545,9 +614,14 @@ void Emulator::StartAsync()
     if (_asyncThread)
         Stop();
 
+    // Set running state immediately to prevent race conditions with UI state updates
+    // This ensures that IsRunning() returns true immediately after StartAsync() returns
+    _isPaused = false;
+    _isRunning = true;
+    _stopRequested = false;
+
     // Start new thread with name 'emulator' and execute Start() method from it
-    _asyncThread = new std::thread([this]()
-    {
+    _asyncThread = new std::thread([this]() {
         ThreadHelper::setThreadName("emulator");
 
         this->Start();
@@ -559,14 +633,23 @@ void Emulator::Pause()
     if (_isPaused)
         return;
 
+    if (!_isRunning || !_mainloop)
+    {
+        // Cannot pause if not running or mainloop not initialized
+        return;
+    }
+
     _isPaused = true;
-    _isRunning = false;
+    // NOTE: Do NOT set _isRunning = false here!
+    // The emulator thread is still active, just paused.
+    // Setting _isRunning = false would cause Stop() to skip _asyncThread->join(),
+    // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
 
     _mainloop->Pause();
-    
+
     // Update state
     SetState(StatePaused);
-    
+
     // Broadcast notification - Emulator execution paused
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
@@ -580,12 +663,21 @@ void Emulator::Resume()
         return;
     }
 
-	_stopRequested = false;
-	_isPaused = false;
+    if (!_mainloop)
+    {
+        // Cannot resume if mainloop not initialized
+        return;
+    }
 
-	_mainloop->Resume();
+    _stopRequested = false;
+    _isPaused = false;
 
-	_isRunning = true;
+    _mainloop->Resume();
+
+    _isRunning = true;
+
+    // Update state
+    SetState(StateResumed);
 
     // Broadcast notification - Emulator execution resumed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -595,8 +687,14 @@ void Emulator::Resume()
 
 void Emulator::Stop()
 {
-    if (!_isRunning)
+    // Use atomic compare-exchange to ensure only ONE thread executes stop logic
+    // This prevents double-free of _asyncThread when Stop() is called multiple times
+    bool expected = true;
+    if (!_isRunning.compare_exchange_strong(expected, false, std::memory_order_acq_rel))
+    {
+        // Already stopped or another thread is currently stopping - safe to return
         return;
+    }
 
     // Request emulator to stop
     _stopRequested = true;
@@ -608,37 +706,42 @@ void Emulator::Stop()
         _isPaused = false;
     }
 
+    // TODO: handle IO shutting down
+    // FDC: flush changes to disk image(s)
+    // HDD: flush changes and unmount
+    // Fully shut down video / sound
 
-	// TODO: handle IO shutting down
-	// FDC: flush changes to disk image(s)
-	// HDD: flush changes and unmount
-	// Fully shut down video / sound
-
-	// If executed in async thread - wait for thread finish and destroy it
-	if (_asyncThread && _asyncThread->joinable())
+    // If executed in async thread - wait for thread finish and destroy it
+    if (_asyncThread && _asyncThread->joinable())
     {
-	    _asyncThread->join();
-	    delete _asyncThread;
-	    _asyncThread = nullptr;
+        _asyncThread->join();
+        delete _asyncThread;
+        _asyncThread = nullptr;
     }
 
-	// Set emulator state
-    _isRunning = false;
-	_stopRequested = false;
-	_isPaused = false;
+    // Clear remaining state
+    _stopRequested = false;
+    _isPaused = false;
 
-    // Broadcast notification - Emulator execution resumed
+    // Broadcast notification - Emulator stopped
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     SimpleNumberPayload* payload = new SimpleNumberPayload(StateStopped);
     messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
 }
 
-//endregion
+// endregion
 
 /// region <File operations>
 
-bool Emulator::LoadSnapshot(const std::string &path)
+bool Emulator::LoadSnapshot(const std::string& path)
 {
+    // Guard against operations during destruction (thread safety)
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("LoadSnapshot rejected - emulator is being destroyed");
+        return false;
+    }
+
     bool result = false;
 
     /// region <Info logging>
@@ -648,6 +751,22 @@ bool Emulator::LoadSnapshot(const std::string &path)
 
     /// endregion </Info logging>
 
+    // Validate path exists
+    std::string absolutePath = FileHelper::AbsolutePath(path);
+    if (!FileHelper::FileExists(absolutePath))
+    {
+        MLOGERROR("Snapshot file not found: {}", absolutePath.c_str());
+        return false;
+    }
+
+    // Validate file extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+    if (ext != "z80" && ext != "sna")
+    {
+        MLOGERROR("Invalid snapshot format: {}. Expected .z80 or .sna", ext.c_str());
+        return false;
+    }
+
     // Pause execution
     bool wasRunning = false;
     if (!IsPaused())
@@ -656,11 +775,10 @@ bool Emulator::LoadSnapshot(const std::string &path)
         wasRunning = true;
     }
 
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
     if (ext == "sna")
     {
         /// region <Load SNA snapshot>
-        LoaderSNA loaderSna(_context, path);
+        LoaderSNA loaderSna(_context, absolutePath);
         result = loaderSna.load();
 
         /// region <Info logging>
@@ -677,7 +795,7 @@ bool Emulator::LoadSnapshot(const std::string &path)
     else if (ext == "z80")
     {
         /// region <Load Z80 snapshot>
-        LoaderZ80 loaderZ80(_context, path);
+        LoaderZ80 loaderZ80(_context, absolutePath);
         result = loaderZ80.load();
 
         /// region <Info logging>
@@ -707,6 +825,12 @@ bool Emulator::LoadSnapshot(const std::string &path)
         }
     }
 
+    // Store snapshot path on success
+    if (result)
+    {
+        _context->coreState.snapshotFilePath = absolutePath;
+    }
+
     // Resume execution
     if (wasRunning)
     {
@@ -717,38 +841,75 @@ bool Emulator::LoadSnapshot(const std::string &path)
     return result;
 }
 
-bool Emulator::LoadTape(const std::string &path)
+bool Emulator::LoadTape(const std::string& path)
 {
     bool result = false;
 
     MLOGEMPTY();
-    MLOGINFO("Inserting tape from file: '%s'", path.c_str());
+    MLOGINFO("Loading tape from file: '%s'", path.c_str());
 
-    _context->coreState.tapeFilePath = path;
+    // Validate and resolve path
+    std::string resolvedPath = FileHelper::AbsolutePath(path);
+
+    // Check file exists
+    if (!FileHelper::FileExists(resolvedPath))
+    {
+        MLOGERROR("LoadTape() - File not found: '%s'", path.c_str());
+        return false;
+    }
+
+    // Validate extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+    if (ext != "tap" && ext != "tzx")
+    {
+        MLOGERROR("LoadTape() - Invalid tape format: .%s (expected .tap or .tzx)", ext.c_str());
+        return false;
+    }
+
+    // Store validated path
+    _context->coreState.tapeFilePath = resolvedPath;
+
+    MLOGINFO("Tape file validated and ready: '%s'", resolvedPath.c_str());
+    result = true;
 
     return result;
 }
 
-bool Emulator::LoadDisk(const std::string &path)
+bool Emulator::LoadDisk(const std::string& path)
 {
     bool result = false;
 
     MLOGEMPTY();
-    MLOGINFO("Inserting drive A: disk image from file: '%s'", path.c_str());
+    MLOGINFO("Loading disk image from file: '%s'", path.c_str());
 
-    _context->coreState.diskFilePaths[0] = path;
+    // Validate and resolve path
+    std::string resolvedPath = FileHelper::AbsolutePath(path);
 
-    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(path));
+    // Check file exists
+    if (!FileHelper::FileExists(resolvedPath))
+    {
+        MLOGERROR("LoadDisk() - File not found: '%s'", path.c_str());
+        return false;
+    }
+
+    // Validate extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
     if (ext == "trd")
     {
-        LoaderTRD loaderTrd(_context, path);
+        LoaderTRD loaderTrd(_context, resolvedPath);
         if (loaderTrd.loadImage())
         {
             // FIXME: use active drive, not fixed A:
 
             /// region <Free memory from previous disk image>
-            _context->pBetaDisk->ejectDisk();
-            _context->coreState.diskDrives[0]->ejectDisk();
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
 
             DiskImage* diskImage = _context->coreState.diskImages[0];
 
@@ -762,7 +923,10 @@ bool Emulator::LoadDisk(const std::string &path)
             diskImage = loaderTrd.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
-            _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
 
             /// endregion </Load new disk image and mount it>
         }
@@ -776,8 +940,14 @@ bool Emulator::LoadDisk(const std::string &path)
             // FIXME: use active drive, not fixed A:
 
             /// region <Free memory from previous disk image>
-            _context->pBetaDisk->ejectDisk();
-            _context->coreState.diskDrives[0]->ejectDisk();
+            if (_context->pBetaDisk)
+            {
+                _context->pBetaDisk->ejectDisk();
+            }
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->ejectDisk();
+            }
 
             DiskImage* diskImage = _context->coreState.diskImages[0];
 
@@ -791,7 +961,10 @@ bool Emulator::LoadDisk(const std::string &path)
             diskImage = loader.getImage();
             _context->coreState.diskImages[0] = diskImage;
 
-            _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            if (_context->coreState.diskDrives[0])
+            {
+                _context->coreState.diskDrives[0]->insertDisk(diskImage);
+            }
             /// endregion </Load new disk image and mount it>
         }
     }
@@ -801,8 +974,7 @@ bool Emulator::LoadDisk(const std::string &path)
 
 /// endregion </File operations>
 
-
-//region Controlled flow
+// region Controlled flow
 
 void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
@@ -810,11 +982,11 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     [[maybe_unused]] Z80& z80 = *_core->GetZ80();
     [[maybe_unused]] Memory& memory = *_context->pMemory;
 
-	// TODO: synchronize with all timings within frame and I/O
+    // TODO: synchronize with all timings within frame and I/O
 
     z80.Z80Step(skipBreakpoints);
     z80.OnCPUStep();
-    
+
     // Notify the debugger that a step has been performed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
@@ -893,10 +1065,12 @@ void Emulator::StepOver()
         return;
     }
 
-    MLOGDEBUG("Emulator::StepOver() - instruction requires step-over, next instruction at 0x%04X", nextInstructionAddress);
+    MLOGDEBUG("Emulator::StepOver() - instruction requires step-over, next instruction at 0x%04X",
+              nextInstructionAddress);
 
     // Deactivate breakpoints within the called function's scope
-    std::vector<std::pair<uint16_t, uint16_t>> exclusionRanges = disassembler->getStepOverExclusionRanges(currentPC, memory, 5);
+    std::vector<std::pair<uint16_t, uint16_t>> exclusionRanges =
+        disassembler->getStepOverExclusionRanges(currentPC, memory, 5);
     std::vector<uint16_t> deactivatedBreakpoints;
     const auto& allBreakpoints = bpManager->GetAllBreakpoints();
     for (const auto& [bpId, bp] : allBreakpoints)
@@ -928,7 +1102,8 @@ void Emulator::StepOver()
     {
         MLOGERROR("Emulator::StepOver() - failed to set breakpoint at 0x%04X", nextInstructionAddress);
         // Restore any deactivated breakpoints before failing
-        for (uint16_t id : deactivatedBreakpoints) bpManager->ActivateBreakpoint(id);
+        for (uint16_t id : deactivatedBreakpoints)
+            bpManager->ActivateBreakpoint(id);
         RunSingleCPUCycle(true);
         return;
     }
@@ -943,35 +1118,36 @@ void Emulator::StepOver()
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     std::function<void(int, Message*)> breakpoint_handler;
 
-    breakpoint_handler = 
-        [this, bpManager, stepOverBreakpointID, deactivatedBreakpoints, fm, originalDebugMode, originalBreakpoints](int /*id*/, Message* message) mutable
+    breakpoint_handler = [this, bpManager, stepOverBreakpointID, deactivatedBreakpoints, fm, originalDebugMode,
+                          originalBreakpoints](int /*id*/, Message* message) mutable {
+        if (!message || !message->obj)
+            return;
+
+        auto payload = static_cast<SimpleNumberPayload*>(message->obj);
+        uint16_t triggeredBreakpointID = static_cast<uint16_t>(payload->_payloadNumber);
+
+        if (triggeredBreakpointID == stepOverBreakpointID)
         {
-            if (!message || !message->obj) return;
-
-            auto payload = static_cast<SimpleNumberPayload*>(message->obj);
-            uint16_t triggeredBreakpointID = static_cast<uint16_t>(payload->_payloadNumber);
-
-            if (triggeredBreakpointID == stepOverBreakpointID)
+            MLOGDEBUG("Emulator::StepOver() - lambda cleanup started for breakpoint ID %d", stepOverBreakpointID);
+            bpManager->RemoveBreakpointByID(stepOverBreakpointID);
+            for (uint16_t deactivatedId : deactivatedBreakpoints)
             {
-                MLOGDEBUG("Emulator::StepOver() - lambda started for breakpoint ID %d", stepOverBreakpointID);
-                bpManager->RemoveBreakpointByID(stepOverBreakpointID);
-                for (uint16_t deactivatedId : deactivatedBreakpoints)
-                {
-                    bpManager->ActivateBreakpoint(deactivatedId);
-                }
-                fm->setFeature(Features::kDebugMode, originalDebugMode);
-                fm->setFeature(Features::kBreakpoints, originalBreakpoints);
-                
-                // Signal the StepOver finalizer that processing is done and we cal wrap up
-                _stepOverSyncEvent.Signal();
-                MLOGDEBUG("Emulator::StepOver() - lambda finished.");
+                bpManager->ActivateBreakpoint(deactivatedId);
             }
-        };
+            fm->setFeature(Features::kDebugMode, originalDebugMode);
+            fm->setFeature(Features::kBreakpoints, originalBreakpoints);
+
+            // Signal the StepOver finalizer that processing is done and we cal wrap up
+            _stepOverSyncEvent.Signal();
+            MLOGDEBUG("Emulator::StepOver() - lambda finished.");
+        }
+    };
 
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
 
     // Continue execution, then wait for the lambda to signal completion
-    MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit temporary breakpoint at 0x%04X", nextInstructionAddress);
+    MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit temporary breakpoint at 0x%04X",
+              nextInstructionAddress);
     Resume();
 
     // We're waiting until breakpoint_handler lambda finishes
@@ -1018,9 +1194,9 @@ Z80State* Emulator::GetZ80State()
     return static_cast<Z80State*>(_z80);
 }
 
-//endregion
+// endregion
 
-//region Status
+// region Status
 
 // Identity and state methods
 const std::string& Emulator::GetId() const
@@ -1053,8 +1229,7 @@ std::string Emulator::GetUptimeString() const
     auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count() % 60;
 
     std::ostringstream ss;
-    ss << std::setw(2) << std::setfill('0') << hours << ":"
-       << std::setw(2) << std::setfill('0') << minutes << ":"
+    ss << std::setw(2) << std::setfill('0') << hours << ":" << std::setw(2) << std::setfill('0') << minutes << ":"
        << std::setw(2) << std::setfill('0') << seconds;
     return ss.str();
 }
@@ -1094,37 +1269,42 @@ std::string Emulator::GetInstanceInfo()
 {
     std::time_t createdTime = std::chrono::system_clock::to_time_t(_createdAt);
     std::time_t lastActivityTime = std::chrono::system_clock::to_time_t(_lastActivity);
-    
+
     std::ostringstream ss;
     ss << "UUID: " << _emulatorId << "\n"
        << "Symbolic ID: " << (_symbolicId.empty() ? "[not set]" : _symbolicId) << "\n"
-       << "Created at: " << std::ctime(&createdTime)
-       << "Last activity: " << std::ctime(&lastActivityTime)
+       << "Created at: " << std::ctime(&createdTime) << "Last activity: " << std::ctime(&lastActivityTime)
        << "Uptime: " << GetUptimeString() << "\n"
        << "State: " << getEmulatorStateName(_state);
-    
+
     // ctime adds a newline, so we need to remove the last one
     std::string result = ss.str();
-    if (!result.empty() && result[result.length()-1] == '\n') {
-        result.erase(result.length()-1);
+    if (!result.empty() && result[result.length() - 1] == '\n')
+    {
+        result.erase(result.length() - 1);
     }
-    
+
     return result;
 }
 
 bool Emulator::IsRunning()
 {
-	return _isRunning;
+    return _isRunning;
 }
 
 bool Emulator::IsPaused()
 {
-	return _isPaused;
+    return _isPaused;
+}
+
+bool Emulator::IsDestroying()
+{
+    return _state == StateDestroying || _isReleased;
 }
 
 bool Emulator::IsDebug()
 {
-	return _isDebug;
+    return _isDebug;
 }
 
 std::string Emulator::GetStatistics()
@@ -1137,7 +1317,8 @@ std::string Emulator::GetStatistics()
     std::string cpuState = string(StringHelper::Trim(dump));
 
     std::string result = StringHelper::Format("  Frame: %d\n", state.frame_counter);
-    result += StringHelper::Format("  CPU cycles: %s\n", StringHelper::FormatWithThousandsDelimiter(z80.cycle_count).c_str());
+    result +=
+        StringHelper::Format("  CPU cycles: %s\n", StringHelper::FormatWithThousandsDelimiter(z80.cycle_count).c_str());
     result += StringHelper::Format("  Memory:\n    %s\n", memory.DumpMemoryBankInfo().c_str());
     result += StringHelper::Format("  CPU: %s", cpuState.c_str());
 
@@ -1182,4 +1363,4 @@ std::string Emulator::GenerateUUID()
     return ss.str();
 }
 
-//endregion
+// endregion

@@ -41,13 +41,6 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
-# Set include paths for compiler
-include_directories(
-    ${SOURCE_DIR}/
-    ${SOURCE_DIR}/common
-    ${SOURCE_DIR}/emulator
-)
-
 # liblzma
 add_subdirectory(3rdparty/liblzma)
 
@@ -82,8 +75,14 @@ if (ENABLE_MEMORY_MAPPING)
     if (USE_FILE_MAPPING)
         target_compile_definitions(${PROJECT_NAME} PRIVATE USE_FILE_MAPPING)
     endif ()
-
 endif ()
+
+# Set include paths for compiler
+target_include_directories(${PROJECT_NAME} PUBLIC
+    ${SOURCE_DIR}/
+    ${SOURCE_DIR}/common
+    ${SOURCE_DIR}/emulator
+)
 
 
 # 'stdafx.h' is our precompiled header

@@ -62,7 +62,7 @@ int main()
 
     automation.start();
 
-    Emulator emulator;
+    Emulator emulator("automation");
     bool result = emulator.Init();
 
     if (result)

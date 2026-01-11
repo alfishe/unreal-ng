@@ -1,14 +1,20 @@
 #pragma once
-#include "stdafx.h"
-
 #include <string>
+
+#include "stdafx.h"
 
 /// region <Helper formatters>
 class ThousandsDelimiterPunct : public std::numpunct<char>
 {
 protected:
-    virtual char do_thousands_sep() const { return ','; }
-    virtual std::string do_grouping() const { return "\03"; }
+    virtual char do_thousands_sep() const
+    {
+        return ',';
+    }
+    virtual std::string do_grouping() const
+    {
+        return "\03";
+    }
 };
 /// endregion </Helper formatters>
 
@@ -44,7 +50,10 @@ public:
     static std::string ToHex(T n, bool upperCase = false)
     {
         const char* hex = upperCase ? "0123456789ABCDEF" : "0123456789abcdef";
-        if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
+        // Handle char types explicitly (char, signed char, unsigned char)
+        // Note: char is a distinct type from int8_t and uint8_t in C++
+        if constexpr (std::is_same_v<T, char> || std::is_same_v<T, signed char> || std::is_same_v<T, unsigned char> ||
+                      std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
         {
             char buf[3];
             uint8_t val = static_cast<uint8_t>(n);
@@ -124,77 +133,13 @@ public:
     /// @param upperCase If true, use uppercase hex digits (default true).
     /// @return std::string Hex string with prefix.
     template <typename T>
-    static std::string ToHexWithPrefix(T n, const char* prefix = "#", bool upperCase = true)
+    static std::string ToHexWithPrefix(T n, const char* prefix = "0x", bool upperCase = true)
     {
-        const char* hex = upperCase ? "0123456789ABCDEF" : "0123456789abcdef";
-        if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>)
-        {
-            char buf[4];
-            buf[0] = prefix[0];
-            uint8_t val = static_cast<uint8_t>(n);
-            buf[1] = hex[(val >> 4) & 0xF];
-            buf[2] = hex[val & 0xF];
-            buf[3] = 0;
-            return std::string(buf);
-        }
-        else if constexpr (std::is_same_v<T, uint16_t> || std::is_same_v<T, int16_t>)
-        {
-            char buf[6];
-            buf[0] = prefix[0];
-            uint16_t val = static_cast<uint16_t>(n);
-            buf[1] = hex[(val >> 12) & 0xF];
-            buf[2] = hex[(val >> 8) & 0xF];
-            buf[3] = hex[(val >> 4) & 0xF];
-            buf[4] = hex[val & 0xF];
-            buf[5] = 0;
-            return std::string(buf);
-        }
-        else if constexpr (std::is_same_v<T, uint32_t> || std::is_same_v<T, int32_t>)
-        {
-            char buf[10];
-            buf[0] = prefix[0];
-            uint32_t val = static_cast<uint32_t>(n);
-            buf[1] = hex[(val >> 28) & 0xF];
-            buf[2] = hex[(val >> 24) & 0xF];
-            buf[3] = hex[(val >> 20) & 0xF];
-            buf[4] = hex[(val >> 16) & 0xF];
-            buf[5] = hex[(val >> 12) & 0xF];
-            buf[6] = hex[(val >> 8) & 0xF];
-            buf[7] = hex[(val >> 4) & 0xF];
-            buf[8] = hex[val & 0xF];
-            buf[9] = 0;
-            return std::string(buf);
-        }
-        else if constexpr (std::is_same_v<T, uint64_t> || std::is_same_v<T, int64_t>)
-        {
-            char buf[18];
-            buf[0] = prefix[0];
-            uint64_t val = static_cast<uint64_t>(n);
-            buf[1]  = hex[(val >> 60) & 0xF];
-            buf[2]  = hex[(val >> 56) & 0xF];
-            buf[3]  = hex[(val >> 52) & 0xF];
-            buf[4]  = hex[(val >> 48) & 0xF];
-            buf[5]  = hex[(val >> 44) & 0xF];
-            buf[6]  = hex[(val >> 40) & 0xF];
-            buf[7]  = hex[(val >> 36) & 0xF];
-            buf[8]  = hex[(val >> 32) & 0xF];
-            buf[9]  = hex[(val >> 28) & 0xF];
-            buf[10] = hex[(val >> 24) & 0xF];
-            buf[11] = hex[(val >> 20) & 0xF];
-            buf[12] = hex[(val >> 16) & 0xF];
-            buf[13] = hex[(val >> 12) & 0xF];
-            buf[14] = hex[(val >> 8) & 0xF];
-            buf[15] = hex[(val >> 4) & 0xF];
-            buf[16] = hex[val & 0xF];
-            buf[17] = 0;
-            return std::string(buf);
-        }
-        else
-        {
-            std::stringstream ss;
-            ss << prefix << ToHex(n, upperCase);
-            return ss.str();
-        }
+        // Use stringstream to properly handle multi-character prefixes
+        // This ensures prefixes like "0x", "hex:", "addr:" work correctly
+        std::stringstream ss;
+        ss << prefix << ToHex(n, upperCase);
+        return ss.str();
     }
 
     static std::string FormatWithThousandsDelimiter(int64_t n);
@@ -257,7 +202,7 @@ private:
     // Helper function to convert std::string to const char*
     static const char* ConvertArg(const std::string& s)
     {
-        //std::cout << "Converting std::string to const char*: " << s << std::endl;
+        // std::cout << "Converting std::string to const char*: " << s << std::endl;
 
         return s.c_str();
     }
@@ -290,12 +235,14 @@ private:
     static std::string Format_Impl(const std::string& format, Args... args)
     {
         // Early return for empty format string
-        if (format.empty()) {
+        if (format.empty())
+        {
             return "";
         }
 
         // Handle case with no arguments (just return the format string as-is)
-        if constexpr (sizeof...(Args) == 0) {
+        if constexpr (sizeof...(Args) == 0)
+        {
             return format;
         }
 
@@ -313,22 +260,26 @@ private:
 
         // Calculate required buffer size with actual arguments
         size_t size = snprintf(nullptr, 0, format.c_str(), args...) + 1;
-        if (size <= 1) {  // size <= 1 means either error or empty result
+        if (size <= 1)
+        {  // size <= 1 means either error or empty result
             return format;
         }
 
-        try {
+        try
+        {
             std::unique_ptr<char[]> buf(new char[size]);
             int written = snprintf(buf.get(), size, format.c_str(), args...);
 
-            if (written < 0 || static_cast<size_t>(written) >= size) {
+            if (written < 0 || static_cast<size_t>(written) >= size)
+            {
                 // Formatting error occurred
                 return format;
             }
 
             result.assign(buf.get(), written);
         }
-        catch (...) {
+        catch (...)
+        {
             // Memory allocation failed
             return format;
         }

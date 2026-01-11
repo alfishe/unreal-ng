@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.10)
 project(trantor)
 
 option(BUILD_DOC "Build Doxygen documentation" OFF)
@@ -14,7 +14,7 @@ list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules/)
 
 set(TRANTOR_MAJOR_VERSION 1)
 set(TRANTOR_MINOR_VERSION 5)
-set(TRANTOR_PATCH_VERSION 23)
+set(TRANTOR_PATCH_VERSION 25)
 set(TRANTOR_VERSION ${TRANTOR_MAJOR_VERSION}.${TRANTOR_MINOR_VERSION}.${TRANTOR_PATCH_VERSION})
 
 include(GNUInstallDirs)
@@ -244,7 +244,7 @@ if(USE_SPDLOG)
 endif(USE_SPDLOG)
 if(HAVE_SPDLOG)
   target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog_header_only)
-  target_compile_definitions(${PROJECT_NAME} PUBLIC TRANTOR_SPDLOG_SUPPORT SPDLOG_FMT_EXTERNAL FMT_HEADER_ONLY)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC TRANTOR_SPDLOG_SUPPORT SPDLOG_FMT_EXTERNAL_HO FMT_HEADER_ONLY)
 endif(HAVE_SPDLOG)
 
 set(HAVE_C-ARES NO)

@@ -12,6 +12,7 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QTextBlock>
 #include <QVBoxLayout>
 #include <QThread>

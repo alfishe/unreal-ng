@@ -193,9 +193,37 @@ bool LoaderSNA::load48kToStaging()
         rewind(_file);
 
         // Read SNA common header
-        [[maybe_unused]] size_t headerRead = fread(&_header, sizeof(_header), 1, _file);
+        if (fread(&_header, sizeof(_header), 1, _file) != 1)
+        {
+            return false;
+        }
 
         _borderColor = _header.border & 0b0000'0111;
+
+        // Read 48K RAM (3 x 16KB pages)
+        // Bank 5 [4000:7FFF]
+        if (fread(&_memoryPages[5], PAGE_SIZE, 1, _file) != 1)
+        {
+            return false;
+        }
+        _memoryPagesUsed[5] = true;
+
+        // Bank 2 [8000:BFFF]
+        if (fread(&_memoryPages[2], PAGE_SIZE, 1, _file) != 1)
+        {
+            return false;
+        }
+        _memoryPagesUsed[2] = true;
+
+        // Bank 0 [C000:FFFF]
+        if (fread(&_memoryPages[0], PAGE_SIZE, 1, _file) != 1)
+        {
+            return false;
+        }
+        _memoryPagesUsed[0] = true;
+
+        _stagingLoaded = true;
+        result = true;
     }
 
     return result;

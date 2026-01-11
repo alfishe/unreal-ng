@@ -14,7 +14,8 @@
 
 #include <trantor/utils/Logger.h>
 #include "Socket.h"
-#include <assert.h>
+#include <cassert>
+#include <stdexcept>
 #include <sys/types.h>
 #ifdef _WIN32
 #include <ws2tcpip.h>
@@ -65,7 +66,10 @@ void Socket::bindAddress(const InetAddress &localaddr)
     else
     {
         LOG_SYSERR << ", Bind address failed at " << localaddr.toIpPort();
-        exit(1);
+        // PATCHED: Throw exception instead of exit(1) to allow graceful
+        // handling
+        throw std::runtime_error("Failed to bind to port " +
+                                 localaddr.toIpPort());
     }
 }
 void Socket::listen()
@@ -75,7 +79,9 @@ void Socket::listen()
     if (ret < 0)
     {
         LOG_SYSERR << "listen failed";
-        exit(1);
+        // PATCHED: Throw exception instead of exit(1) to allow graceful
+        // handling
+        throw std::runtime_error("Socket listen failed");
     }
 }
 int Socket::accept(InetAddress *peeraddr)

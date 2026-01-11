@@ -23,8 +23,36 @@ PortDecoder_Spectrum3::~PortDecoder_Spectrum3()
 
 void PortDecoder_Spectrum3::reset()
 {
+    // ZX-Spectrum +2A/+2B/+3 ROM pages
+    // 0 - SOS128 <-- Set after reset
+    // 1 - SOS48
+
+    // Explicitly reset port states to ensure consistent reset behavior
+    EmulatorState& state = _context->emulatorState;
+    state.p7FFD = 0x00;     // Reset port 0x7FFD to default (Screen 0, RAM bank 0, ROM 0, paging enabled)
+    state.p1FFD = 0x00;     // Reset port 0x1FFD (special paging)
+    state.pBFFD = 0x00;     // Reset AY register select port
+    state.pFFFD = 0x00;     // Reset AY data port
+    state.pFE = 0xFF;       // Reset ULA port (border white, no sound)
+
+    // Set default 120K memory pages
+    Memory& memory = *_context->pMemory;
+    memory.SetROMPage(0);
+    memory.SetRAMPageToBank1(5);
+    memory.SetRAMPageToBank2(2);
+    memory.SetRAMPageToBank3(0);
+
+    // Set default border color to white
+    _screen->SetBorderColor(COLOR_WHITE);
+
     // Reset memory paging lock latch
     _7FFD_Locked = false;
+
+    // Explicitly force screen to SCREEN_NORMAL
+    _screen->SetActiveScreen(SCREEN_NORMAL);
+
+    // Set default memory paging state
+    Port_7FFD(0x00, 0x0000);
 }
 
 uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)

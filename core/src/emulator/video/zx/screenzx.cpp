@@ -1,19 +1,27 @@
 #include "screenzx.h"
 
+#include <cassert>
+
 #include "common/stringhelper.h"
 #include "emulator/cpu/z80.h"
 
-#include <cassert>
-
 /// region <Constructors / Destructors>
 
-ScreenZX::ScreenZX(EmulatorContext *context) : Screen(context)
+ScreenZX::ScreenZX(EmulatorContext* context) : Screen(context)
 {
     SetVideoMode(M_PENTAGON128K);
     CreateTables();
 }
 
 /// endregion </Constructors / Destructors>
+
+/// @brief Override SetVideoMode to regenerate LUT when mode changes
+/// This ensures the TstateCoordLUT is always in sync with the current video mode
+void ScreenZX::SetVideoMode(VideoModeEnum mode)
+{
+    Screen::SetVideoMode(mode);  // Call base class to update _mode and _rasterState
+    CreateTimingTable();         // Regenerate timing tables including LUT
+}
 
 /// region <Genuine ZX-Spectrum ULA specifics>
 
@@ -42,8 +50,8 @@ void ScreenZX::CreateTables()
     // Pre-calculate RGBA colors from ULA format
     for (int idx = 0; idx < 0x100; idx++)
     {
-        _rgbaColors[idx] = TransformZXSpectrumColorsToRGBA(idx, true);          // Normal state colors
-        _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);    // Flashing state colors
+        _rgbaColors[idx] = TransformZXSpectrumColorsToRGBA(idx, true);        // Normal state colors
+        _rgbaFlashColors[idx] = TransformZXSpectrumColorsToRGBA(idx, false);  // Flashing state colors
     }
 
     // Screen mode dependent
@@ -98,33 +106,112 @@ void ScreenZX::CreateTimingTable()
 
     /// endregion </Line renderer in screen area>
 
-
     // 0. Invisible - VSync and VBlank
 
     // 1. Top segment - top border only
     for (int lines = 0; lines < rasterDescriptor.screenOffsetTop; lines++)
     {
-
     }
 
     // 2. Middle segment - border on sides and screen area
     int screenBottom = rasterDescriptor.screenOffsetTop + rasterDescriptor.screenHeight;
     for (int lines = rasterDescriptor.screenOffsetTop; lines < screenBottom; lines++)
     {
-
     }
 
     // 3. Bottom segment - bottom border only
     for (int lines = screenBottom; lines < rasterDescriptor.fullFrameHeight; lines++)
     {
-
     }
 
     // Contention memory access pattern
     // See: https://worldofspectrum.org/faq/reference/48kreference.htm#Contention
     // See: https://faqwiki.zxnet.co.uk/wiki/Contended_memory
     //
+
+    // Build t-state coordinate LUT for current mode
+    CreateTstateLUT();
 };
+
+/// Pre-compute coordinate lookup table for each t-state in current video mode
+/// This eliminates expensive division/modulo operations from the hot path
+/// Called from CreateTimingTable() on mode change
+void ScreenZX::CreateTstateLUT()
+{
+    const RasterDescriptor& rd = rasterDescriptors[_mode];
+    const uint32_t maxFrameTiming = _rasterState.maxFrameTiming;
+
+    // Clear LUT first
+    memset(_tstateLUT, 0, sizeof(_tstateLUT));
+
+    for (uint32_t t = 0; t < maxFrameTiming && t < MAX_FRAME_TSTATES; t++)
+    {
+        TstateCoordLUT& entry = _tstateLUT[t];
+
+        // Calculate framebuffer coordinates
+        const int framebufferX = (t % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
+        const int framebufferY = t / _rasterState.tstatesPerLine - (rd.vSyncLines + rd.vBlankLines);
+
+        if (framebufferY >= 0 && framebufferY < rd.fullFrameHeight && framebufferX < rd.fullFrameWidth)
+        {
+            entry.framebufferX = static_cast<uint16_t>(framebufferX);
+            entry.framebufferY = static_cast<uint16_t>(framebufferY);
+
+            // Check if within ZX screen area
+            if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
+            {
+                const uint16_t pixelX = framebufferX;
+
+                if (pixelX >= rd.screenOffsetLeft && pixelX < (rd.screenOffsetLeft + rd.screenWidth))
+                {
+                    const uint16_t zxX = pixelX - rd.screenOffsetLeft;
+                    const uint16_t zxY = (t - _rasterState.screenAreaStart) / _rasterState.tstatesPerLine;
+
+                    if (zxX <= 255 && zxY < 192)
+                    {
+                        entry.zxX = zxX;
+                        entry.zxY = static_cast<uint8_t>(zxY);
+                        entry.symbolX = static_cast<uint8_t>(zxX / 8);
+                        entry.pixelXBit = static_cast<uint8_t>(zxX % 8);
+                        entry.renderType = RT_SCREEN;
+                        entry.screenOffset = _screenLineOffsets[zxY];
+                        entry.attrOffset = _attrLineOffsets[zxY];
+                    }
+                    else
+                    {
+                        // Should not happen for valid t-states
+                        entry.renderType = RT_BORDER;
+                        entry.zxX = UINT16_MAX;
+                        entry.zxY = 255;
+                    }
+                }
+                else
+                {
+                    // Left/right border within screen lines
+                    entry.renderType = RT_BORDER;
+                    entry.zxX = UINT16_MAX;
+                    entry.zxY = 255;
+                }
+            }
+            else
+            {
+                // Top/bottom border
+                entry.renderType = RT_BORDER;
+                entry.zxX = UINT16_MAX;
+                entry.zxY = 255;
+            }
+        }
+        else
+        {
+            // Invisible area (VSync, VBlank, HSync, HBlank)
+            entry.framebufferX = UINT16_MAX;
+            entry.framebufferY = 0;
+            entry.renderType = RT_BLANK;
+            entry.zxX = UINT16_MAX;
+            entry.zxY = 255;
+        }
+    }
+}
 
 // ZX-Spectrum 48k ULA screen addressing:
 // Where: X - 5'bits [0:31] - X-coordinate in 1x8 blocks, Y - 8'bits [0:191] - Y coordinate in pixel lines
@@ -132,8 +219,8 @@ void ScreenZX::CreateTimingTable()
 // Coord. bits:     0    1    0   Y7   Y6   Y2   Y1   Y0   Y5   Y4   Y3   X4   X3   X2   X1   X0
 
 // Alternative view:
-// Where: C - 5'bits [0:31] - column coordinate in 1x8 blocks, L - 5'bits [0:31] - Line number, P - 3'bits [0:7] - pixel row within the line
-// Address bits:   15   14   13   12   11   10    9    8    7    6    5    4    3    2    1    0
+// Where: C - 5'bits [0:31] - column coordinate in 1x8 blocks, L - 5'bits [0:31] - Line number, P - 3'bits [0:7] - pixel
+// row within the line Address bits:   15   14   13   12   11   10    9    8    7    6    5    4    3    2    1    0
 // Coord. bits:     0    1    0   L4   L3   P2   P1   P0   L2   L1   L0   C4   C3   C2   C1   C0
 
 /// Calculate address in Z80 address space for pixel with coordinates (x, y)
@@ -181,7 +268,6 @@ uint16_t ScreenZX::CalculateXYScreenAddressOptimized(uint8_t x, uint8_t y, uint1
     return baseAddress + _screenLineOffsets[y] + (x >> 3);
 }
 
-
 // ZX-Spectrum 48k ULA color addressing:
 // Where: L - 5'bits [0:24] - Line coordinate, C - 5'bits [0:31] - Column coordinate
 // Address bits:   15   14   13   12   11   10    9    8    7    6    5    4    3    2    1    0
@@ -210,7 +296,8 @@ uint16_t ScreenZX::CalculateXYColorAttrAddress(uint8_t x, uint8_t y, uint16_t ba
     return result;
 }
 
-/// Lookup table optimized to calculate address in Z80 address space for color atrributes corresponding to pixel with coordinates (x, y)
+/// Lookup table optimized to calculate address in Z80 address space for color atrributes corresponding to pixel with
+/// coordinates (x, y)
 /// \param x X-coordinate
 /// \param y Y-coordinate
 /// \param baseAddress Screen base address (0x4000 for ZX48 screen (Bank 5) and 0xC000 (Bank 7)). Default value: 0x4000
@@ -246,16 +333,19 @@ uint32_t ScreenZX::TransformZXSpectrumColorsToRGBA(uint8_t attribute, bool isPix
 {
     // ABGR32 (Little-endian) or RGBA32 (Big-endian)
     // Alpha - #FF - opaque, #00 - transparent
-    static uint32_t palette[2][8] =
-    {   // LSB ABGR encoded colors
+    static uint32_t palette[2][8] = {
+        // LSB ABGR encoded colors
         //     Black,       Blue,        Red,    Magenta,      Green,       Cyan,     Yellow,      White
-        { 0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC, 0xFFCACACA },  // Brightness = 0
-        { 0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF }   // Brightness = 1
+        {0xFF000000, 0xFFC72200, 0xFF1628D6, 0xFFC733D4, 0xFF25C500, 0xFFC9C700, 0xFF2AC8CC,
+         0xFFCACACA},  // Brightness = 0
+        {0xFF000000, 0xFFFB2B00, 0xFF1C33FF, 0xFFFC40FF, 0xFF2FF900, 0xFFFEFB00, 0xFF36FCFF, 0xFFFFFFFF}
+        // Brightness = 1
     };
     //    { // MSB RGBA encoded colors
     //        //     Black,       Blue,        Red,    Magenta,      Green,       Cyan,     Yellow,      White
-    //        { 0x000000FF, 0x0022C7FF, 0xD62816FF, 0xD433C7FF, 0x00C525FF, 0x00C7C9FF, 0xCCC82AFF, 0xCACACAFF },  // Brightness = 0
-    //        { 0x000000FF, 0x002BFBFF, 0xFF331CFF, 0xFF40FCFF, 0x00F92FFF, 0x00FBFEFF, 0xFFFC36FF, 0xFFFFFFFF }   // Brightness = 1
+    //        { 0x000000FF, 0x0022C7FF, 0xD62816FF, 0xD433C7FF, 0x00C525FF, 0x00C7C9FF, 0xCCC82AFF, 0xCACACAFF },  //
+    //        Brightness = 0 { 0x000000FF, 0x002BFBFF, 0xFF331CFF, 0xFF40FCFF, 0x00F92FFF, 0x00FBFEFF, 0xFFFC36FF,
+    //        0xFFFFFFFF }   // Brightness = 1
     //    };
 
     uint32_t result = 0;
@@ -374,7 +464,8 @@ bool ScreenZX::TransformTstateToZXCoords(uint32_t tstate, uint16_t* zxX, uint16_
         RasterDescriptor rasterDescriptor = rasterDescriptors[_mode];
         const uint16_t pixelX = (tstate % _rasterState.tstatesPerLine) * _rasterState.pixelsPerTState;
 
-        if (pixelX >= rasterDescriptor.screenOffsetLeft && pixelX < (rasterDescriptor.screenOffsetLeft + rasterDescriptor.screenWidth))
+        if (pixelX >= rasterDescriptor.screenOffsetLeft &&
+            pixelX < (rasterDescriptor.screenOffsetLeft + rasterDescriptor.screenWidth))
         {
             // Translate framebuffer coordinate to ZX screen coordinate by subtracting left border width
             const uint16_t x = pixelX - rasterDescriptor.screenOffsetLeft;
@@ -444,11 +535,14 @@ RenderTypeEnum ScreenZX::GetLineRenderTypeByTiming(uint32_t tstate)
         CONFIG& config = _context->config;
         if (_rasterState.maxFrameTiming <= config.frame)
         {
-            MLOGWARNING("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate, _rasterState.maxFrameTiming - 1);
+            MLOGWARNING("GetRenderTypeByTiming: t-state %d is outside of acceptable frame timings [0; %d]", tstate,
+                        _rasterState.maxFrameTiming - 1);
         }
         else
         {
-            std::string error = StringHelper::Format("tstate: %d is out of config.frame: %d (_rasterState.maxFrametiming: %d)", tstate, config.frame, _rasterState.maxFrameTiming);
+            std::string error =
+                StringHelper::Format("tstate: %d is out of config.frame: %d (_rasterState.maxFrametiming: %d)", tstate,
+                                     config.frame, _rasterState.maxFrameTiming);
             throw std::logic_error(error);
         }
     }
@@ -463,7 +557,8 @@ RenderTypeEnum ScreenZX::GetRenderType(uint16_t line, uint16_t col)
     /// region <Sanity checks>
     if (col >= _rasterState.tstatesPerLine)
     {
-        std::string error = StringHelper::Format("col: %d cannot be greater than tstatesPerLine: %d", _rasterState.tstatesPerLine);
+        std::string error =
+            StringHelper::Format("col: %d cannot be greater than tstatesPerLine: %d", _rasterState.tstatesPerLine);
         throw std::logic_error(error);
     }
     /// endregion </Sanity checks>
@@ -515,7 +610,8 @@ void ScreenZX::UpdateScreen()
 {
     Screen& screen = *this;
 
-    // Border color is latched in PortDecoder (or model-specific override) after each 'out (#FE)' port command and stored in Screen object property
+    // Border color is latched in PortDecoder (or model-specific override) after each 'out (#FE)' port command and
+    // stored in Screen object property
     [[maybe_unused]] uint8_t borderColor = screen.GetBorderColor();
 
     // Get current t-state (value corresponds to CPU cycles relative to current video frame)
@@ -529,12 +625,67 @@ void ScreenZX::UpdateScreen()
 }
 
 /// Render for single t-state (ULA draws 2 pixels per each t-state)
+/// LUT-optimized version - pre-computed coordinates eliminate division/modulo
 /// @param tstate Clock time mark
 void ScreenZX::Draw(uint32_t tstate)
 {
+    if (_mode == M_NUL || tstate >= _rasterState.maxFrameTiming || tstate >= MAX_FRAME_TSTATES)
+    {
+        return;
+    }
+
+    const TstateCoordLUT& lut = _tstateLUT[tstate];
+
+    // Skip invisible area
+    if (lut.renderType == RT_BLANK)
+    {
+        return;
+    }
+
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    const size_t framebufferOffset = lut.framebufferY * rasterDescriptor.fullFrameWidth + lut.framebufferX;
+
+    if (lut.renderType == RT_SCREEN)
+    {
+        // Render two sequential screen pixels using branch-free color selection
+        uint8_t* zxScreen = _activeScreenMemoryOffset;
+        uint8_t pixels = *(zxScreen + lut.screenOffset + lut.symbolX);
+        uint8_t attributes = *(zxScreen + lut.attrOffset + lut.symbolX);
+        uint32_t colorInk = _rgbaColors[attributes];
+        uint32_t colorPaper = _rgbaFlashColors[attributes];
+
+        // Branch-free first pixel:
+        // 1. Extract pixel bit and shift to bit 7 position
+        // 2. Arithmetic right shift by 7 extends the sign bit to all 32 bits
+        // 3. Result is 0xFFFFFFFF (ink) or 0x00000000 (paper)
+        uint32_t bit0 = (pixels << lut.pixelXBit) & 0x80;
+        uint32_t mask0 = static_cast<uint32_t>(-static_cast<int32_t>(bit0 >> 7));
+        framebufferARGB[framebufferOffset] = (colorInk & mask0) | (colorPaper & ~mask0);
+
+        // Branch-free second pixel
+        uint32_t bit1 = (pixels << (lut.pixelXBit + 1)) & 0x80;
+        uint32_t mask1 = static_cast<uint32_t>(-static_cast<int32_t>(bit1 >> 7));
+        framebufferARGB[framebufferOffset + 1] = (colorInk & mask1) | (colorPaper & ~mask1);
+    }
+    else
+    {
+        // Render border (2 pixels)
+        uint32_t borderColor = _rgbaColors[_borderColor];
+        framebufferARGB[framebufferOffset] = borderColor;
+        framebufferARGB[framebufferOffset + 1] = borderColor;
+    }
+}
+
+/// Original Draw implementation (for benchmarking comparison)
+/// Uses runtime division/modulo for coordinate calculation
+/// @param tstate Clock time mark
+void ScreenZX::DrawOriginal(uint32_t tstate)
+{
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
     const uint16_t tstatesPerLine = rasterDescriptor.pixelsPerLine / 2;
-    const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+    const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines +
+                                                      rasterDescriptor.fullFrameHeight);
 
     if (_mode != M_NUL && tstate < maxFrameTiming)
     {
@@ -546,18 +697,19 @@ void ScreenZX::Draw(uint32_t tstate)
         if (TransformTstateToFramebufferCoords(tstate, &destX, &destY))
         {
             uint32_t* framebufferARGB = (uint32_t*)((void*)(_framebuffer.memoryBuffer));
-            size_t framebufferARGBSize = _framebuffer.memoryBufferSize / sizeof (uint32_t);
+            size_t framebufferARGBSize = _framebuffer.memoryBufferSize / sizeof(uint32_t);
 
             if (TransformTstateToZXCoords(tstate, &zxX, &zxY))
             {
                 // Render two sequential pixels
-                // It is guaranteed that both pixels are within the same line and ZX-Spectrum pixel byte / attribute byte
+                // It is guaranteed that both pixels are within the same line and ZX-Spectrum pixel byte / attribute
+                // byte
                 for (uint16_t x = zxX; x <= zxX + 1; x++, destX++)
                 {
                     const uint8_t symbolX = x / 8;
                     const uint8_t pixelXBit = x % 8;
 
-                    uint8_t *zxScreen = _activeScreenMemoryOffset;
+                    uint8_t* zxScreen = _activeScreenMemoryOffset;
                     uint8_t pixels = *(zxScreen + _screenLineOffsets[zxY] + symbolX);
                     uint8_t attributes = *(zxScreen + _attrLineOffsets[zxY] + symbolX);
                     uint32_t colorInk = _rgbaColors[attributes];
@@ -572,7 +724,8 @@ void ScreenZX::Draw(uint32_t tstate)
                     }
                     else
                     {
-                        std::string error = StringHelper::Format("Framebuffer overflow - tstate: %d, destX: %d, destY: %d", tstate, destX, destY);
+                        std::string error = StringHelper::Format(
+                            "Framebuffer overflow - tstate: %d, destX: %d, destY: %d", tstate, destX, destY);
                         throw std::logic_error(error);
                     }
                 }
@@ -594,6 +747,160 @@ void ScreenZX::Draw(uint32_t tstate)
     }
 }
 
+/// LUT-based Draw with ternary color selection (Phase 2 baseline for Phase 3 benchmark)
+/// @deprecated Kept for benchmarking comparison only
+/// @param tstate Clock time mark
+void ScreenZX::DrawLUT_Ternary(uint32_t tstate)
+{
+    if (_mode == M_NUL || tstate >= _rasterState.maxFrameTiming || tstate >= MAX_FRAME_TSTATES)
+    {
+        return;
+    }
+
+    const TstateCoordLUT& lut = _tstateLUT[tstate];
+
+    if (lut.renderType == RT_BLANK)
+    {
+        return;
+    }
+
+    const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
+    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+    const size_t framebufferOffset = lut.framebufferY * rasterDescriptor.fullFrameWidth + lut.framebufferX;
+
+    if (lut.renderType == RT_SCREEN)
+    {
+        uint8_t* zxScreen = _activeScreenMemoryOffset;
+        uint8_t pixels = *(zxScreen + lut.screenOffset + lut.symbolX);
+        uint8_t attributes = *(zxScreen + lut.attrOffset + lut.symbolX);
+        uint32_t colorInk = _rgbaColors[attributes];
+        uint32_t colorPaper = _rgbaFlashColors[attributes];
+
+        // Ternary color selection (Phase 2 version - branching)
+        framebufferARGB[framebufferOffset] = ((pixels << lut.pixelXBit) & 0x80) ? colorInk : colorPaper;
+        framebufferARGB[framebufferOffset + 1] = ((pixels << (lut.pixelXBit + 1)) & 0x80) ? colorInk : colorPaper;
+    }
+    else
+    {
+        uint32_t borderColor = _rgbaColors[_borderColor];
+        framebufferARGB[framebufferOffset] = borderColor;
+        framebufferARGB[framebufferOffset + 1] = borderColor;
+    }
+}
+
+/// region <ScreenHQ=OFF optimizations - Phase 4-5>
+
+/// @brief Render 8 pixels at once (scalar version) - ScreenHQ=OFF only
+/// Uses branch-free arithmetic to select ink/paper colors
+/// @warning Breaks demo multicolor effects that modify attributes mid-scanline
+void ScreenZX::DrawBatch8_Scalar(uint8_t zxY, uint8_t symbolX, uint32_t* destPtr)
+{
+    uint8_t* zxScreen = _activeScreenMemoryOffset;
+    uint8_t pixels = *(zxScreen + _screenLineOffsets[zxY] + symbolX);
+    uint8_t attributes = *(zxScreen + _attrLineOffsets[zxY] + symbolX);
+
+    uint32_t colorInk = _rgbaColors[attributes];
+    uint32_t colorPaper = _rgbaFlashColors[attributes];
+
+    // Branch-free pixel selection using arithmetic masks
+    // For each bit: mask = 0xFFFFFFFF if bit is set, 0x00000000 otherwise
+    for (int i = 0; i < 8; i++)
+    {
+        uint32_t bit = (pixels >> (7 - i)) & 1;
+        uint32_t mask = static_cast<uint32_t>(-static_cast<int32_t>(bit));
+        destPtr[i] = (colorInk & mask) | (colorPaper & ~mask);
+    }
+}
+
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+
+/// @brief Render 8 pixels at once using ARM NEON SIMD - ScreenHQ=OFF only
+/// Processes 4 pixels per NEON instruction (2 instructions for 8 pixels)
+/// @warning Breaks demo multicolor effects that modify attributes mid-scanline
+void ScreenZX::DrawBatch8_NEON(uint8_t zxY, uint8_t symbolX, uint32_t* destPtr)
+{
+    uint8_t* zxScreen = _activeScreenMemoryOffset;
+    uint8_t pixels = *(zxScreen + _screenLineOffsets[zxY] + symbolX);
+    uint8_t attributes = *(zxScreen + _attrLineOffsets[zxY] + symbolX);
+
+    uint32_t colorInk = _rgbaColors[attributes];
+    uint32_t colorPaper = _rgbaFlashColors[attributes];
+
+    // Broadcast colors to 4-wide vectors
+    uint32x4_t vInk = vdupq_n_u32(colorInk);
+    uint32x4_t vPaper = vdupq_n_u32(colorPaper);
+
+    // Create masks for first 4 pixels (bits 7,6,5,4)
+    uint32x4_t masks0 = {static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 7) & 1)),
+                         static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 6) & 1)),
+                         static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 5) & 1)),
+                         static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 4) & 1))};
+
+    // Create masks for last 4 pixels (bits 3,2,1,0)
+    uint32x4_t masks1 = {static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 3) & 1)),
+                         static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 2) & 1)),
+                         static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 1) & 1)),
+                         static_cast<uint32_t>(-static_cast<int32_t>((pixels >> 0) & 1))};
+
+    // Select colors using bitwise select: vbslq selects from vInk where mask is 1, vPaper where 0
+    vst1q_u32(destPtr, vbslq_u32(masks0, vInk, vPaper));
+    vst1q_u32(destPtr + 4, vbslq_u32(masks1, vInk, vPaper));
+}
+#endif
+
+/// @brief Render entire screen using batch 8-pixel method - ScreenHQ=OFF only
+/// Iterates through all 32x192 character cells and renders 8 pixels each
+/// @warning Breaks demo multicolor effects - only use when ScreenHQ feature is disabled
+void ScreenZX::RenderScreen_Batch8()
+{
+    if (_mode == M_NUL || _framebuffer.memoryBuffer == nullptr)
+    {
+        return;
+    }
+
+    const RasterDescriptor& rd = rasterDescriptors[_mode];
+    uint32_t* framebufferARGB = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
+
+    // Calculate screen area offset in framebuffer
+    const uint32_t screenStartX = rd.screenOffsetLeft;
+    const uint32_t screenStartY = rd.screenOffsetTop;
+
+    // Render all 192 lines x 32 character columns
+    for (uint8_t y = 0; y < 192; y++)
+    {
+        uint32_t* linePtr = framebufferARGB + (screenStartY + y) * rd.fullFrameWidth + screenStartX;
+
+        for (uint8_t symbolX = 0; symbolX < 32; symbolX++)
+        {
+#ifdef __ARM_NEON
+            DrawBatch8_NEON(y, symbolX, linePtr + symbolX * 8);
+#else
+            DrawBatch8_Scalar(y, symbolX, linePtr + symbolX * 8);
+#endif
+        }
+    }
+}
+
+/// endregion </ScreenHQ=OFF optimizations>
+
+// =============================================================================
+// SCREENHQ=OFF FRAME BATCH RENDER
+// =============================================================================
+// This method is called by MainLoop::OnFrameEnd() when ScreenHQ=OFF.
+// It replaces ~70,000 per-t-state Draw() calls with a single batch render.
+//
+// PERFORMANCE: RenderScreen_Batch8 completes in ~13μs vs ~343μs for per-t-state
+//              That's a 25x speedup for the screen rendering phase.
+//
+// TRADE-OFF: Multicolor effects that change attributes mid-scanline will break,
+//            as we read attributes only once per 8-pixel character symbol.
+// =============================================================================
+void ScreenZX::RenderFrameBatch()
+{
+    RenderScreen_Batch8();
+}
+
 ///
 /// Convert ZX-Spectrum screen (pixel area only) to RGBA framebuffer
 ///
@@ -605,16 +912,19 @@ void ScreenZX::RenderOnlyMainScreen()
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
 
     // Validate required mode(s) set and framebuffer allocated
-    if (rasterDescriptor.screenWidth == 0 || rasterDescriptor.screenHeight == 0 || _framebuffer.memoryBuffer == nullptr || _framebuffer.memoryBufferSize == 0)
+    if (rasterDescriptor.screenWidth == 0 || rasterDescriptor.screenHeight == 0 ||
+        _framebuffer.memoryBuffer == nullptr || _framebuffer.memoryBufferSize == 0)
         return;
 
     // Get host memory address for selected ZX-Spectrum screen (Bank 5 for Normal and Bank 7 for Shadow screen modes)
     uint8_t* zxScreen = _activeScreenMemoryOffset;
-    //uint8_t* zxScreen = memory.RemapAddressToCurrentBank(0x4000);
+    // uint8_t* zxScreen = memory.RemapAddressToCurrentBank(0x4000);
     [[maybe_unused]] uint8_t ramPage = memory.GetRAMPageFromAddress(zxScreen);
     if (zxScreen != bank5Base && zxScreen != bank7Base)
     {
-        MLOGERROR("ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x", zxScreen, bank5Base, bank7Base);
+        MLOGERROR(
+            "ScreenZX::RenderOnlyMainScreen - Unknown screen memory is selected 0x%08x. Bank 5: 0x%08x; Bank 7: 0x%08x",
+            zxScreen, bank5Base, bank7Base);
         throw std::logic_error("Invalid screen memory");
     }
 
@@ -638,7 +948,8 @@ void ScreenZX::RenderOnlyMainScreen()
 
                 for (int destX = 0; destX < 8; destX++)
                 {
-                    offset = (rasterDescriptor.screenOffsetTop + y) * rasterDescriptor.fullFrameWidth + (rasterDescriptor.screenOffsetLeft + x * 8 + destX);
+                    offset = (rasterDescriptor.screenOffsetTop + y) * rasterDescriptor.fullFrameWidth +
+                             (rasterDescriptor.screenOffsetLeft + x * 8 + destX);
                     if (offset < (int)(size / sizeof(uint32_t)))
                     {
                         // Write RGBA pixel to framebuffer with x,y coordinates and calculated color
@@ -646,7 +957,10 @@ void ScreenZX::RenderOnlyMainScreen()
                     }
                     else
                     {
-                        MLOGWARNING("RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, size: %d, offset: %d", framebuffer, size, offset);
+                        MLOGWARNING(
+                            "RenderOnlyMainScreen: offset calculated is out of range for the framebuffer. FB: %lx, "
+                            "size: %d, offset: %d",
+                            framebuffer, size, offset);
                         throw std::logic_error("Framebuffer invalid offset");
                     }
                 }
@@ -664,7 +978,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
     const uint32_t borderColor = _rgbaColors[color];
 
     uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
-    [[maybe_unused]] const size_t framebufferARGBSizePixels = _framebuffer.memoryBufferSize / sizeof (uint32_t);
+    [[maybe_unused]] const size_t framebufferARGBSizePixels = _framebuffer.memoryBufferSize / sizeof(uint32_t);
 
     VideoModeEnum mode = GetVideoMode();
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[mode];
@@ -731,7 +1045,8 @@ std::string ScreenZX::DumpRenderForTState(uint32_t tstate)
     const uint32_t configFrameDuration = config.frame;
     const RasterDescriptor& rasterDescriptor = rasterDescriptors[_mode];
     const uint16_t tstatesPerLine = rasterDescriptor.pixelsPerLine / 2;
-    const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines + rasterDescriptor.fullFrameHeight);
+    const uint32_t maxFrameTiming = tstatesPerLine * (rasterDescriptor.vSyncLines + rasterDescriptor.vBlankLines +
+                                                      rasterDescriptor.fullFrameHeight);
     const uint8_t line = tstate / tstatesPerLine;
     const uint8_t column = tstate % tstatesPerLine;
 
@@ -739,7 +1054,6 @@ std::string ScreenZX::DumpRenderForTState(uint32_t tstate)
     RenderTypeEnum posType = _screenLineRenderers[column];
     std::string lineTypeName = GetRenderTypeName(lineType);
     std::string posTypeName = GetRenderTypeName(posType);
-
 
     ss << StringHelper::Format("T-State: %05d", tstate) << std::endl;
     ss << StringHelper::Format("config.frame: %05d raster: %05d", configFrameDuration, maxFrameTiming) << std::endl;

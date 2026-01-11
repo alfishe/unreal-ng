@@ -853,13 +853,13 @@ OpCode Z80Disassembler::ddOpcodes[256]
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret po" },                  // 0xE0
     { OF_NONE, 14, 0, 0, "pop ix" },                                 // 0xE1
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp po,:2" },   // 0xE2
-    { OF_DISP, 23, 0, 0, "ex (sp),ix" },                             // 0xE3
+    { OF_INDIRECT, 23, 0, 0, "ex (sp),ix" },                         // 0xE3
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 21, 14, "call po,:2" }, // 0xE4
     { OF_NONE, 15, 0, 0, "push ix" },                                // 0xE5
     { OF_MBYTE,  8, 0, 0, "and :1" },                                // 0xE6
     { OF_RST, 15, 0, 0, "rst #20" },                                 // 0xE7
     { OF_RET | OF_CONDITION,  0, 15, 9, "ret pe" },                  // 0xE8
-    { OF_JUMP | OF_DISP,  8, 0, 0, "jp (ix)" },                      // 0xE9
+    { OF_JUMP | OF_INDIRECT,  8, 0, 0, "jp (ix)" },                  // 0xE9
     { OF_JUMP | OF_CONDITION | OF_MWORD,  0, 14, 14, "jp pe,:2" },   // 0xEA
     { OF_NONE,  4, 0, 0, "ex de,hl" },                               // 0xEB
     { OF_CALL | OF_CONDITION | OF_MWORD, 0, 17, 10, "call pe,:2" },  // 0xEC
@@ -2049,13 +2049,16 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const std::vect
         }
 
         // Look up and set a label for this instruction if available
-        auto labelManager = _context->pDebugManager->GetLabelManager();
-        if (labelManager)
+        if (_context->pDebugManager)
         {
-            std::shared_ptr<Label> label = labelManager->GetLabelByZ80Address(decodedInstruction.instructionAddr);
-            if (label && !label->name.empty())
+            auto labelManager = _context->pDebugManager->GetLabelManager();
+            if (labelManager)
             {
-                decodedInstruction.label = label->name;
+                std::shared_ptr<Label> label = labelManager->GetLabelByZ80Address(decodedInstruction.instructionAddr);
+                if (label && !label->name.empty())
+                {
+                    decodedInstruction.label = label->name;
+                }
             }
         }
 
@@ -2480,7 +2483,7 @@ DecodedInstruction Z80Disassembler::decodeInstruction(const std::vector<uint8_t>
     result.opcode = opcode;
 
     // Set instruction type flags
-    result.hasJump = hasJump || (opcode.flags & OF_RST) != 0;
+    result.hasJump = hasJump || (opcode.flags & OF_RST) != 0 || (opcode.flags & OF_CALL) != 0;
     result.hasRelativeJump = hasRelativeJump;
     result.hasReturn = hasReturn;
     result.hasByteOperand = hasByteArgument;
@@ -2812,44 +2815,56 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
     while (pos < len)
     {
         // Look for operand placeholder
-        if (mnemonic[pos] == ':' && (pos + 1 < len) && (mnemonic[pos + 1] == '1' || mnemonic[pos + 1] == '2'))
+        if (mnemonic[pos] == ':' && (pos + 1 < len))
         {
-            uint8_t operandSize = mnemonic[pos + 1] - '0';
-
-            /// region <Sanity checks>
-            if (operandSize == 0 || operandSize > 2)
+            char nextChar = mnemonic[pos + 1];
+            if (nextChar >= '0' && nextChar <= '9')
             {
-                throw std::logic_error("Z80Disassembler::formatOperandString - invalid operand size");
+                uint8_t operandSize = nextChar - '0';
+
+                /// region <Sanity checks>
+                if (operandSize == 0 || operandSize > 2)
+                {
+                    std::string message = StringHelper::Format(
+                        "Z80 cannot have operand size longer than WORD (2 bytes). In '%s' detected: %d",
+                        mnemonic.c_str(), operandSize);
+                    throw std::logic_error(message);
+                }
+                if (i >= values.size())
+                {
+                    throw std::logic_error("Z80Disassembler::formatOperandString - not enough operand values");
+                }
+                /// endregion </Sanity checks>
+
+                // Format operand value
+                std::string operand;
+                switch (operandSize)
+                {
+                    case 1:
+                        // For relative jumps, format as signed
+                        if (decoded.hasRelativeJump)
+                            operand = StringHelper::ToHexWithPrefix((int8_t)(values[i]), HEX_PREFIX);
+                        else
+                            operand = StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX);
+                        break;
+                    case 2:
+                        operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
+                        break;
+                }
+
+                // Uppercase the operand and append
+                for (char& c : operand)
+                    c = toupper(c);
+
+                result += operand;
+                pos += 2;  // Skip ":N"
+                ++i;
             }
-            if (i >= values.size())
+            else
             {
-                throw std::logic_error("Z80Disassembler::formatOperandString - not enough operand values");
+                // Not a valid operand placeholder, treat as literal text
+                result += mnemonic[pos++];
             }
-            /// endregion </Sanity checks>
-
-            // Format operand value
-            std::string operand;
-            switch (operandSize)
-            {
-                case 1:
-                    // For relative jumps, format as signed
-                    if (decoded.hasRelativeJump)
-                        operand = StringHelper::ToHexWithPrefix((int8_t)(values[i]), HEX_PREFIX);
-                    else
-                        operand = StringHelper::ToHexWithPrefix((uint8_t)(values[i]), HEX_PREFIX);
-                    break;
-                case 2:
-                    operand = StringHelper::ToHexWithPrefix(values[i], HEX_PREFIX);
-                    break;
-            }
-
-            // Uppercase the operand and append
-            for (char& c : operand)
-                c = toupper(c);
-
-            result += operand;
-            pos += 2;  // Skip ":N"
-            ++i;
         }
         else
         {

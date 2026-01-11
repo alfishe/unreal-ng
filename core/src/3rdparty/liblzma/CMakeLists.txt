@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.10)
 
 project(lzma VERSION 19.0
                   DESCRIPTION "Cross-platform decompiler for scenes.image file."

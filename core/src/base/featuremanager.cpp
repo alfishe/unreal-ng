@@ -1,15 +1,17 @@
 #include "featuremanager.h"
 
-#include "3rdparty/simpleini/simpleini.h"
-#include "emulator/emulatorcontext.h"
-#include "emulator/cpu/core.h"
 #include <algorithm>
 #include <cassert>
 #include <filesystem>
 #include <iostream>
 
-FeatureManager::FeatureManager(EmulatorContext* context)
-    : _context(context)
+#include "3rdparty/simpleini/simpleini.h"
+#include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/recording/recordingmanager.h"
+#include "emulator/video/screen.h"
+
+FeatureManager::FeatureManager(EmulatorContext* context) : _context(context)
 {
     setDefaults();
 }
@@ -52,17 +54,23 @@ void FeatureManager::clear()
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 {
-    auto* f = findFeature(idOrAlias);
-    if (f && f->enabled != enabled)
+    auto* feature = findFeature(idOrAlias);
+    if (feature)
     {
-        f->enabled = enabled;
-        _dirty = true;
+        bool valueChanged = (feature->enabled != enabled);
+        feature->enabled = enabled;
+
+        // Always call onFeatureChanged() to ensure caches are synchronized,
+        // even if the value didn't change. This handles the edge case where
+        // UpdateFeatureCache() was never called during initialization.
+        // Only mark dirty if value actually changed (for persistence purposes).
+        if (valueChanged)
+        {
+            _dirty = true;
+        }
+
         onFeatureChanged();
-        return true;
-    }
-    else if (f)
-    {
-        // Feature found but no change needed
+
         return true;
     }
     else
@@ -78,15 +86,15 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
 /// @return true if the feature was found and updated, false if feature not found
 bool FeatureManager::setMode(const std::string& idOrAlias, const std::string& mode)
 {
-    auto* f = findFeature(idOrAlias);
-    if (f && f->mode != mode)
+    auto* feature = findFeature(idOrAlias);
+    if (feature && feature->mode != mode)
     {
-        f->mode = mode;
+        feature->mode = mode;
         _dirty = true;
         onFeatureChanged();
         return true;
     }
-    else if (f)
+    else if (feature)
     {
         // Feature found but no change needed
         return true;
@@ -103,8 +111,8 @@ bool FeatureManager::setMode(const std::string& idOrAlias, const std::string& mo
 /// @return Current mode of the feature, or empty string if not found
 std::string FeatureManager::getMode(const std::string& idOrAlias) const
 {
-    const auto* f = findFeature(idOrAlias);
-    return f ? f->mode : "";
+    const auto* feature = findFeature(idOrAlias);
+    return feature ? feature->mode : "";
 }
 
 /// @brief Query if a feature is enabled by id or alias.
@@ -112,8 +120,8 @@ std::string FeatureManager::getMode(const std::string& idOrAlias) const
 /// @return true if the feature is enabled, false otherwise or if not found
 bool FeatureManager::isEnabled(const std::string& idOrAlias) const
 {
-    const auto* f = findFeature(idOrAlias);
-    return f ? f->enabled : false;
+    const auto* feature = findFeature(idOrAlias);
+    return feature ? feature->enabled : false;
 }
 
 /// @brief List all features and their metadata.
@@ -135,6 +143,7 @@ void FeatureManager::setDefaults()
 {
     // Example: register default features here. Extend as needed.
     clear();
+
     registerFeature({Features::kDebugMode,
                      Features::kDebugModeAlias,
                      Features::kDebugModeDesc,
@@ -163,6 +172,35 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
+    registerFeature({Features::kSoundGeneration,
+                     Features::kSoundGenerationAlias,
+                     Features::kSoundGenerationDesc,
+                     true,
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+    registerFeature({Features::kSoundHQ,
+                     Features::kSoundHQAlias,
+                     Features::kSoundHQDesc,
+                     true,
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+    registerFeature({Features::kScreenHQ,
+                     Features::kScreenHQAlias,
+                     Features::kScreenHQDesc,
+                     true,  // ON by default - demo compatibility
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+    registerFeature({Features::kRecording,
+                     Features::kRecordingAlias,
+                     Features::kRecordingDesc,
+                     false,  // OFF by default - heavy functionality
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     _dirty = false;
 }
 
@@ -191,7 +229,7 @@ void FeatureManager::loadFromFile(const std::string& path)
         const char* section = entry.pItem;
         auto it = _features.find(section);
         if (it == _features.end())
-            continue; // Only override registered features
+            continue;  // Only override registered features
         FeatureInfo& f = it->second;
 
         const char* state = ini.GetValue(section, "state", nullptr);
@@ -209,7 +247,7 @@ void FeatureManager::loadFromFile(const std::string& path)
         }
     }
 
-    // Features state fully match settings file
+    // Features state fully match the settings file
     _dirty = false;
 
     // Recalculate all cached flags
@@ -241,7 +279,7 @@ void FeatureManager::saveToFile(const std::string& path) const
 /// Automatically saves to features.ini if any changes were made.
 void FeatureManager::onFeatureChanged()
 {
-    // Update feature cache in Memory class if it exists
+    // Update the feature cache in Memory class if it exists
     if (_context && _context->pCore && _context->pCore->GetMemory())
     {
         _context->pCore->GetMemory()->UpdateFeatureCache();
@@ -249,7 +287,25 @@ void FeatureManager::onFeatureChanged()
         // Synchronize master switch with feature changes
         _context->pCore->GetZ80()->isDebugMode = _features[Features::kDebugMode].enabled;
     }
-    
+
+    // Update feature cache in SoundManager if it exists
+    if (_context && _context->pSoundManager)
+    {
+        _context->pSoundManager->UpdateFeatureCache();
+    }
+
+    // Update feature cache in RecordingManager if it exists
+    if (_context && _context->pRecordingManager)
+    {
+        _context->pRecordingManager->UpdateFeatureCache();
+    }
+
+    // Update feature cache in Screen (for ScreenHQ toggle) if it exists
+    if (_context && _context->pScreen)
+    {
+        _context->pScreen->UpdateFeatureCache();
+    }
+
     if (_dirty)
     {
         saveToFile(kFeaturesIni);
@@ -288,7 +344,8 @@ const FeatureManager::FeatureInfo* FeatureManager::findFeature(const std::string
 {
     // Try to find the feature by its canonical id
     auto it = _features.find(idOrAlias);
-    if (it != _features.end()) return &it->second;
+    if (it != _features.end())
+        return &it->second;
 
     // If not found, try to resolve as an alias
     auto ait = _aliases.find(idOrAlias);
@@ -296,9 +353,10 @@ const FeatureManager::FeatureInfo* FeatureManager::findFeature(const std::string
     {
         // Look up the canonical id from the alias and return the feature if it exists
         auto fit = _features.find(ait->second);
-        if (fit != _features.end()) return &fit->second;
+        if (fit != _features.end())
+            return &fit->second;
     }
-    
+
     // Feature not found
     return nullptr;
 }

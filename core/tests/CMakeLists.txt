@@ -119,6 +119,11 @@ target_link_libraries(${PROJECT_NAME}
     core
 )
 
+# Enable CTest for Google Test discovery
+enable_testing()
+include(GoogleTest)
+gtest_discover_tests(${PROJECT_NAME})
+
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")
 set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
