@@ -17,9 +17,9 @@ All recordings are based on **emulated time**, ensuring that turbo mode recordin
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                   RecordingManager                          │
-│  - Lifecycle management (Start/Stop/Pause/Resume)          │
-│  - Configuration (codecs, bitrate, formats)                │
-│  - Multi-track coordination                                │
+│  - Lifecycle management (Start/Stop/Pause/Resume)           │
+│  - Configuration (codecs, bitrate, formats)                 │
+│  - Multi-track coordination                                 │
 └──────────────┬────────────────────────────┬─────────────────┘
                │                            │
        ┌───────▼────────┐          ┌────────▼────────┐
@@ -29,8 +29,8 @@ All recordings are based on **emulated time**, ensuring that turbo mode recordin
        └───────┬────────┘          └────────┬────────┘
                │                            │
        ┌───────▼────────────────────────────▼─────────┐
-       │           EncoderInterface                    │
-       │  - FFmpeg/libav integration (future)          │
+       │           EncoderInterface                   │
+       │  - FFmpeg/libav integration (future)         │
        │  - Video codec (H.264, H.265, VP9, etc.)     │
        │  - Audio codec (AAC, MP3, FLAC, WAV, etc.)   │
        │  - Container muxing (MP4, MKV, AVI, etc.)    │
