@@ -15,7 +15,7 @@ public:
     static std::string GetResourcesPath();
     static std::string NormalizePath(const std::string& path, char separator);
     static std::string NormalizePath(const std::string& path);
-    static std::string AbsolutePath(const std::string& path, bool resolveSymlinks = false);
+    static std::string AbsolutePath(const std::string& path, bool resolveSymlinks = true);
     static std::string PathCombine(const std::string& path1, const std::string& path2);
     static std::string PathCombine(const std::string& path1, const char* path2);
 

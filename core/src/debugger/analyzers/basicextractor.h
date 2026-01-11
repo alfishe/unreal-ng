@@ -8,7 +8,7 @@ enum NumericFormat : uint8_t
     FloatingPoint = 1
 };
 
-#pragma pack(push, 1) // Set struct packing to 1 byte alignment
+#pragma pack(push, 1)  // Set struct packing to 1 byte alignment
 
 struct NumericValue
 {
@@ -26,25 +26,23 @@ struct NumericValue
 
         struct FloatingPointFormat
         {
-            std::uint8_t exponent;  // Exponent + 128 (0 -> e=-128, 255 -> e=127)
-            std::uint32_t mantissa; // Big-endian mantissa
+            std::uint8_t exponent;   // Exponent + 128 (0 -> e=-128, 255 -> e=127)
+            std::uint32_t mantissa;  // Big-endian mantissa
         } floatingPoint;
     };
 };
 
-#pragma pack(pop) // Restore the default struct packing
+#pragma pack(pop)  // Restore the default struct packing
 
+class Memory;
 
-/// Extracts BASIC program and formats it as ASCII for display / analysis use
-/// Inspired by https://github.com/FuseEmulator/fuse-emulator-svn/blob/master/fuse-utils/listbasic.c
-class BasicExtractor
+struct BasicExtractor
 {
     /// region <Constants>
 public:
-// ZX Spectrum 48/128 BASIC Tokens
-/// @see http://fileformats.archiveteam.org/wiki/Sinclair_BASIC_tokenized_file
-    static constexpr const char* BasicTokens[] =
-    {
+    /// ZX Spectrum 48/128 BASIC Tokens
+    /// @see http://fileformats.archiveteam.org/wiki/Sinclair_BASIC_tokenized_file
+    static constexpr const char* BasicTokens[] = {
         " SPECTRUM ",   // 0xA3
         " PLAY ",       // 0xA4
         "RND",          // 0xA5
@@ -143,6 +141,10 @@ public:
 
 public:
     std::string extractBasic(uint8_t* data, size_t len);
+
+    /// Extracts BASIC program from the provided Memory instance using system variables PROG and VARS
+    /// @param memory Pointer to the emulator memory instance
+    std::string extractFromMemory(Memory* memory);
 
 protected:
     void detokenize();

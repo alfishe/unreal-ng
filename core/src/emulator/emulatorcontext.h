@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include <atomic>
 #include "common/modulelogger.h"
 #include "emulator/platform.h"
 #include "corestate.h"
@@ -16,6 +17,7 @@ class WD1793;
 class PortDecoder;
 class Screen;
 class SoundManager;
+class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
@@ -73,11 +75,15 @@ public:
 	Screen* pScreen;
 
     // Audio callback (will be triggered after each video frame render and provide audio samples for host system)
-    void * pAudioManagerObj;
-    AudioCallback pAudioCallback;
+    // Using std::atomic to ensure proper memory ordering between UI thread (setting) and emulator thread (reading)
+    std::atomic<void*> pAudioManagerObj;
+    std::atomic<AudioCallback> pAudioCallback;
 
     // Sound manager
     SoundManager* pSoundManager;
+
+    // Recording manager (video/audio capture for recordings)
+    RecordingManager* pRecordingManager;
 
 	// Debug manager (includes Breakpoints, Labels and Disassembler)
 	DebugManager* pDebugManager;

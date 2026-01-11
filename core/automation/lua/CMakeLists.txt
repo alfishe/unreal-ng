@@ -137,10 +137,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-# Link with unrealng::core if available as PUBLIC so it's available to dependents
-if(TARGET unrealng::core)
-    target_link_libraries(${PROJECT_NAME} PUBLIC unrealng::core)
-endif()
+# Note: core library is linked by the parent project (unreal-qt)
+# Static libraries should only use headers, not link dependencies
 
 #------------------------------------------------------------------------------
 # Export targets (disabled for now due to core dependency issues)

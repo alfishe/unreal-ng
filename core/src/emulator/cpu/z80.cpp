@@ -288,26 +288,46 @@ void Z80::Z80FrameCycle()
     [[maybe_unused]] Z80& cpu = *this;
     [[maybe_unused]] EmulatorState& state = _context->emulatorState;
 
-    // Video Interrupt position calculation
+    // Apply queued speed multiplier change at frame boundary (if any)
+    // This prevents mid-frame timing inconsistencies
+    if (state.next_z80_frequency_multiplier != state.current_z80_frequency_multiplier)
+    {
+        uint8_t oldMultiplier = state.current_z80_frequency_multiplier;
+        state.current_z80_frequency_multiplier = state.next_z80_frequency_multiplier;
+        state.current_z80_frequency = state.base_z80_frequency * state.current_z80_frequency_multiplier;
+
+        // Reset rate to normal - counter represents actual t-states
+        // Speed multipliers are handled by adjusting frame duration and timings
+        cpu.rate = 256;
+
+        MLOGINFO("Z80::Z80FrameCycle - Applied queued speed multiplier: %dx -> %dx (%.2f MHz, rate=%d)",
+                 oldMultiplier, state.current_z80_frequency_multiplier,
+                 state.current_z80_frequency / 1'000'000.0, cpu.rate);
+    }
+
+    // Scale frame duration by speed multiplier
+    uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;
+
+    // Video Interrupt position calculation - scale by multiplier for Z80 timing
     bool int_occurred = false;
-    unsigned int_start = config.intstart;
-    unsigned int_end = config.intstart + config.intlen;
+    unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
+    unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
 
     cpu.haltpos = 0;
 
     // INT interrupt handling lasts for more than 1 frame
-    if (int_end >= config.frame)
+    if (int_end >= frameLimit)
     {
-        int_end -= config.frame;
+        int_end -= frameLimit;
         cpu.int_pending = true;
         int_occurred = true;
     }
 
-    // Cover whole frame (control by clock cycles)
-    while (cpu.t < config.frame)
+    // Cover whole frame (control by effective t-states)
+    while (cpu.t < frameLimit)
     {
         // Handle interrupts if arrived
-        ProcessInterrupts(int_occurred, int_start, config.intlen);
+        ProcessInterrupts(int_occurred, int_start, int_end);
 
         // Perform single Z80 command cycle
         Z80Step();

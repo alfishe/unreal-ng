@@ -3,6 +3,7 @@
 #include "common/filehelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "_helpers/test_path_helper.h"
 
 /// region <SetUp / TearDown>
 
@@ -43,7 +44,7 @@ void LoaderSNA_Test::TearDown()
 
 TEST_F(LoaderSNA_Test, validate)
 {
-    static std::string testSnapshotPath = "../../../tests/loaders/sna/multifix.sna";
+    static std::string testSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
     std::string absoluteSnapshotPath = FileHelper::AbsolutePath(testSnapshotPath);
 
     LoaderSNACUT loader(_context, testSnapshotPath);
@@ -64,10 +65,10 @@ TEST_F(LoaderSNA_Test, validate)
 
 TEST_F(LoaderSNA_Test, is48kSnapshot)
 {
-    static std::string test48kSnapshotPath = "../../../tests/loaders/sna/48k.sna";
+    static std::string test48kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/48k.sna");
     std::string absolute48kSnapshotPath = FileHelper::AbsolutePath(test48kSnapshotPath);
 
-    static std::string test128kSnapshotPath = "../../../tests/loaders/sna/multifix.sna";
+    static std::string test128kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
     std::string absolute128kSnapshotPath = FileHelper::AbsolutePath(test128kSnapshotPath);
 
     /// region <Positive cases>
@@ -101,10 +102,10 @@ TEST_F(LoaderSNA_Test, is48kSnapshot)
 
 TEST_F(LoaderSNA_Test, is128kSnapshot)
 {
-    static std::string test48kSnapshotPath = "../../../tests/loaders/sna/48k.sna";
+    static std::string test48kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/48k.sna");
     std::string absolute48kSnapshotPath = FileHelper::AbsolutePath(test48kSnapshotPath);
 
-    static std::string test128kSnapshotPath = "../../../tests/loaders/sna/multifix.sna";
+    static std::string test128kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
     std::string absolute128kSnapshotPath = FileHelper::AbsolutePath(test128kSnapshotPath);
 
     /// region <Positive cases>
@@ -148,7 +149,7 @@ TEST_F(LoaderSNA_Test, load48kToStaging)
 
 TEST_F(LoaderSNA_Test, load128kToStaging)
 {
-    static std::string test128kSnapshotPath = "../../../tests/loaders/sna/multifix.sna";
+    static std::string test128kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
     std::string absolute128kSnapshotPath = FileHelper::AbsolutePath(test128kSnapshotPath);
 
     LoaderSNACUT loader(_context, absolute128kSnapshotPath);
@@ -177,7 +178,7 @@ TEST_F(LoaderSNA_Test, load128kToStaging)
 
 TEST_F(LoaderSNA_Test, applySnapshotFromStaging)
 {
-    static std::string test128kSnapshotPath = "../../../tests/loaders/sna/multifix.sna";
+    static std::string test128kSnapshotPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
     std::string absolute128kSnapshotPath = FileHelper::AbsolutePath(test128kSnapshotPath);
     //cout << absolute128kSnapshotPath << endl;
 

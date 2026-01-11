@@ -169,8 +169,8 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySinus)
 
     ComplexArray1D pcmInput;
     ComplexArray1D fftOutput;
-    pcmInput.reserve(N);
-    fftOutput.reserve(N);
+    pcmInput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
+    fftOutput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
 
     /// region <Generate input signal>
 
@@ -235,8 +235,8 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySquare)
 
     ComplexArray1D pcmInput;
     ComplexArray1D fftOutput;
-    pcmInput.reserve(N);
-    fftOutput.reserve(N);
+    pcmInput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
+    fftOutput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
 
     /// region <Generate input signal>
 

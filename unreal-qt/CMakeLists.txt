@@ -39,39 +39,96 @@ endif ()
 # ========================================
 
 # Default Qt paths (can be overridden via command line)
+set(QT_FOUND_PATH "")
+
+# Check if QT_INSTALL_PATH is defined and not empty
 if (NOT DEFINED QT_INSTALL_PATH)
+    set(QT_INSTALL_PATH "")
+endif()
+
+if (QT_INSTALL_PATH STREQUAL "")
     if (APPLE)  # macOS
-        list(APPEND QT_INSTALL_PATH
-            "$ENV{HOME}/Qt/6.5.0/macos"
+        # Check common Qt6 versions in ~/Qt (most recent first)
+        set(QT_POSSIBLE_PATHS
+            "$ENV{HOME}/Qt/6.9.3/macos"
             "$ENV{HOME}/Qt/6.5.3/macos"
-            "$ENV{HOME}/Qt/6.9.0/macos"
+            "$ENV{HOME}/Qt/6.5.0/macos"
             "$ENV{QTDIR}"
         )
     elseif (UNIX AND NOT APPLE)  # Linux
-        list(APPEND QT_INSTALL_PATH
-            "$ENV{HOME}/Qt/6.5.0/gcc_64"
+        set(QT_POSSIBLE_PATHS
+            "$ENV{HOME}/Qt/6.9.3/gcc_64"
             "$ENV{HOME}/Qt/6.5.3/gcc_64"
-            "$ENV{HOME}/Qt/6.9.0/gcc_64"
+            "$ENV{HOME}/Qt/6.5.0/gcc_64"
             "$ENV{QTDIR}"
         )
     elseif (WIN32)  # Windows
-        set(QT_INSTALL_PATH "C:/Qt/6.5.0/msvc2019_64")
+        set(QT_POSSIBLE_PATHS
+            "C:/Qt/6.9.3/msvc2019_64"
+            "C:/Qt/6.5.3/msvc2019_64"
+            "C:/Qt/6.5.0/msvc2019_64"
+            "$ENV{QTDIR}"
+        )
     endif ()
+    
+    # Try to find Qt6Config.cmake in possible paths
+    foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+            message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
+            break()
+        endif()
+    endforeach()
 else ()
-    message(STATUS "Using user-specified Qt path: ${QT_INSTALL_PATH}")
+    # User specified a path (could be a list or single path)
+    # In CMake, lists are semicolon-separated, so we can iterate directly
+    # Check each path in the list (works for both single path and list)
+    foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+        # Remove any whitespace
+        string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
+        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+            message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
+            break()
+        else()
+            message(STATUS "Checking Qt path: ${POSSIBLE_PATH} (Qt6Config.cmake not found)")
+        endif()
+    endforeach()
 endif ()
 
-# Allow overriding via -DQT_INSTALL_PATH=...
-set(QT_INSTALL_PATH "${QT_INSTALL_PATH}" CACHE PATH "Path to Qt installation")
+# If still not found, provide helpful error message
+if(NOT QT_FOUND_PATH)
+    message(WARNING "Qt6 not found. Please install Qt6 or set QT_INSTALL_PATH manually.")
+    if(DEFINED QT_INSTALL_PATH AND NOT QT_INSTALL_PATH STREQUAL "")
+        message(WARNING "Checked user-specified paths:")
+        foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+            message(WARNING "  - ${POSSIBLE_PATH}")
+        endforeach()
+    else()
+        message(WARNING "Checked standard paths:")
+        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+            message(WARNING "  - ${POSSIBLE_PATH}")
+        endforeach()
+    endif()
+endif()
 
-# Append Qt path to CMAKE_PREFIX_PATH
-list(APPEND CMAKE_PREFIX_PATH "${QT_INSTALL_PATH}")
+# Allow overriding via -DQT_INSTALL_PATH=...
+set(QT_INSTALL_PATH "${QT_FOUND_PATH}" CACHE PATH "Path to Qt installation")
+
+# Append Qt path to CMAKE_PREFIX_PATH if found
+if(QT_FOUND_PATH)
+    list(APPEND CMAKE_PREFIX_PATH "${QT_FOUND_PATH}")
+    message(STATUS "Added Qt path to CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
+endif()
 
 # Qt specific settings
 find_package(Qt6 REQUIRED)
 find_package(Qt6 COMPONENTS Gui REQUIRED)
 find_package(Qt6 COMPONENTS Multimedia REQUIRED)
 find_package(Qt6 COMPONENTS Widgets REQUIRED)
+
+# Enable CTest for test discovery (inherited from core/tests)
+enable_testing()
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC OFF)
 set(CMAKE_AUTOUIC OFF)
@@ -192,16 +249,16 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        unrealng::core
-        unrealng::automation
+        # unrealng::core # REMOVED - comes through automation
+        unrealng::automation # This brings in core as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
     )
     
     # Link Winsock on Windows for automation
-    if(WIN32)
+    if (WIN32)
         target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
-    endif()
+    endif ()
 else ()
     # Link without automation
     target_link_libraries(${PROJECT_NAME} PRIVATE 
@@ -210,7 +267,7 @@ else ()
         Qt6::Multimedia
         QHexView
 
-        unrealng::core
+        unrealng::core  # Keep this when automation is disabled
         Threads::Threads
     )
 endif ()

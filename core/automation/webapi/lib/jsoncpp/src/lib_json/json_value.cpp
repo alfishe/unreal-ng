@@ -435,6 +435,7 @@ Value::Value(const Value& other) {
 
 Value::Value(Value&& other) noexcept {
   initBasic(nullValue);
+  value_.uint_ = 0;  // Initialize union to silence GCC 15 warning
   swap(other);
 }
 

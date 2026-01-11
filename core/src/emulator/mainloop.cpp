@@ -1,24 +1,26 @@
-#include "stdafx.h"
-
-#include "common/modulelogger.h"
-
 #include "mainloop.h"
-#include <algorithm>
-#include "3rdparty/message-center/eventqueue.h"
+
 #include <common/stringhelper.h>
+
+#include <algorithm>
+
+#include "3rdparty/message-center/eventqueue.h"
+#include "common/modulelogger.h"
 #include "common/timehelper.h"
+#include "emulator.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "stdafx.h"
 
 MainLoop::MainLoop(EmulatorContext* context)
 {
-	_context = context;
+    _context = context;
     _logger = context->pModuleLogger;
 
     // Auto-register mainloop in the context
     _context->pMainLoop = this;
 
-	_state = &_context->emulatorState;
-	_cpu = _context->pCore;
+    _state = &_context->emulatorState;
+    _cpu = _context->pCore;
     _screen = _context->pScreen;
     _soundManager = _context->pSoundManager;
 
@@ -38,15 +40,18 @@ MainLoop::~MainLoop()
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
     messageCenter.RemoveObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
-    // De-register mainloop from the context
-    _context->pMainLoop = nullptr;
+    // De-register mainloop from the context (if context still exists)
+    if (_context)
+    {
+        _context->pMainLoop = nullptr;
+    }
 
     _screen = nullptr;
-	_cpu = nullptr;
-	_state = nullptr;
-	_context = nullptr;
+    _cpu = nullptr;
+    _state = nullptr;
+    _context = nullptr;
 
-	MLOGDEBUG("MainLoop::~MainLoop()");
+    MLOGDEBUG("MainLoop::~MainLoop()");
 }
 
 //
@@ -72,17 +77,11 @@ void MainLoop::Run(volatile bool& stopRequested)
     ObserverCallbackMethod callback = static_cast<ObserverCallbackMethod>(&MainLoop::handleAudioBufferHalfFull);
     messageCenter.AddObserver(NC_AUDIO_BUFFER_HALF_FULL, observerInstance, callback);
 
-    /// region <Debug>
-
-    // Initialize animation
-    [[maybe_unused]] FramebufferDescriptor& framebuffer = _screen->GetFramebufferDescriptor();
-    gifAnimationHelper.StartAnimation("unreal.gif", framebuffer.width, framebuffer.height, 20);
-
-    /// endregion </Debug>
-
-    static std::chrono::milliseconds timeout(20); // Set timeout for audio buffer refresh wait
+    /// region <Info logging>
+    static std::chrono::milliseconds timeout(20);  // Set timeout for audio buffer refresh wait
     uint64_t lastRun = 0;
     [[maybe_unused]] uint64_t betweenIterations = 0;
+    /// endregion </Info logging>
 
     while (!stopRequested)
     {
@@ -98,32 +97,51 @@ void MainLoop::Run(volatile bool& stopRequested)
 
             while (_pauseRequested)
             {
-              sleep_ms(20);
+                // React on stop request while paused
+                if (stopRequested)
+                {
+                    MLOGINFO("Stop requested while paused");
+                    break;  // Exit pause loop
+                }
+
+                sleep_ms(20);
             }
 
-            continue;
+            continue;  // Either we'll render next frame or exit main loop via stopRequested check
         }
         /// endregion </Handle Pause>
 
-        //MLOGINFO("Frame recalculation time: %d us", duration1);
-        //std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
-        //std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
+        /// region <Info logging>
+        // MLOGINFO("Frame recalculation time: %d us", duration1);
+        // std::cout << StringHelper::Format("Frame recalculation time: %d us", duration1) << std::endl;
+        // std::cout << StringHelper::Format("Between iterations: %d us", betweenIterations) << std::endl;
+        /// endregion </Info logging>
 
-        // Wait until audio callback requests more data and buffer is about half-full
-        // That means we're in sync between audio and video frames
-        std::unique_lock<std::mutex> lock(_audioBufferMutex);
-        auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
-        _cv.wait_for(lock, timeout, [&moreAudioDataRequested]{ return moreAudioDataRequested.get().load(std::memory_order_acquire); });
-        _moreAudioDataRequested.store(false);
-        lock.unlock();
+        // Synchronization strategy depends on turbo mode setting
+        const CONFIG& config = _context->config;
+        if (!config.turbo_mode)
+        {
+            // Normal mode: Wait until audio callback requests more data and buffer is about half-full
+            // That means we're in sync between audio and video frames
+            std::unique_lock<std::mutex> lock(_audioBufferMutex);
+            auto moreAudioDataRequested = std::ref(_moreAudioDataRequested);
+            _cv.wait_for(lock, timeout, [&moreAudioDataRequested] {
+                return moreAudioDataRequested.get().load(std::memory_order_acquire);
+            });
+            _moreAudioDataRequested.store(false);
+            lock.unlock();
+        }
+        else
+        {
+            // Turbo mode: Run as fast as possible without audio synchronization
+            // Optional: Yield CPU to prevent 100% core usage if desired
+            // std::this_thread::yield();
+        }
 
         lastRun = startTime;
     }
 
     MLOGINFO("Stop requested, exiting main loop");
-
-    // Stop animation recording and finalize the file
-    gifAnimationHelper.StopAnimation();
 
     _isRunning = false;
 }
@@ -150,7 +168,15 @@ void MainLoop::Resume()
 void MainLoop::RunFrame()
 {
     /// region <Sanity checks>
+    // Check for null context - return early if context is destroyed (during shutdown)
+    if (!_context)
+        return;
+
+    if (!_context->pScreen)
+        return;
+
 #ifdef _DEBUG
+    // Additional debug-only validation
     if (!_context)
         throw std::logic_error("MainLoop::RunFrame - context undefined");
 
@@ -165,7 +191,6 @@ void MainLoop::RunFrame()
 
     /// endregion </Frame start handlers>
 
-
     // Execute CPU cycles for single video frame
 
     ExecuteCPUFrameCycle();
@@ -176,7 +201,6 @@ void MainLoop::RunFrame()
 
     /// endregion </Frame end handlers
 
-
     // Process external periphery devices
 
     // Flush all generated data and buffers
@@ -186,39 +210,16 @@ void MainLoop::RunFrame()
     // RenderAudio();
 
     // Queue new frame data to Video/Audio encoding
-
-    /// region <DEBUG: save frame to disk as image>
-
-    static int i = 0;
-    //if (i % 100 == 0)
-    {
-        //screen.RenderOnlyMainScreen();
-
-        // Save frame if video memory was changed
-        //if (_state->video_memory_changed)
-        //    screen.SaveZXSpectrumNativeScreen();
-
-        // Save frame to GIF animation
-        Screen& screen = *_context->pScreen;
-        uint32_t* buffer;
-        size_t size;
-        screen.GetFramebufferData(&buffer, &size);
-        gifAnimationHelper.WriteFrame(buffer, size);
-    }
-    i++;
-
-    if (i >= 2000)
-    {
-        //gifAnimationHelper.StopAnimation();
-
-        //exit(1);
-    }
-
-    /// endregion <DEBUG: save frame to disk as image>
+    // Note: Recording is handled by RecordingManager via OnFrameEnd() callback
+    // when the recording feature is enabled
 }
 
 void MainLoop::OnFrameStart()
 {
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
     _screen->InitFrame();
@@ -226,6 +227,10 @@ void MainLoop::OnFrameStart()
 
 void MainLoop::OnCPUStep()
 {
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
     _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
 
     _context->pBetaDisk->handleStep();
@@ -234,17 +239,110 @@ void MainLoop::OnCPUStep()
 
 void MainLoop::OnFrameEnd()
 {
+    // Guard against null context during shutdown
+    if (!_context)
+        return;
+
+    // Additional safety checks - ensure context integrity
+    if (!_context->pScreen || !_context->pSoundManager)
+        return;
+
+    // =========================================================================
+    // SCREENHQ=OFF BATCH RENDERING
+    // =========================================================================
+    // When ScreenHQ feature is disabled, per-t-state Draw() calls are skipped
+    // in Screen::DrawPeriod(). Instead, we render the entire screen here in
+    // one batch using RenderScreen_Batch8() - approximately 25x faster.
+    //
+    // This MUST happen BEFORE we capture the frame for recording or display,
+    // as the framebuffer would otherwise be empty (no per-t-state rendering).
+    //
+    // See: docs/inprogress/2026-01-11-performance-optimizations/phase-4-5-execution-log.md
+    // =========================================================================
+    if (!_context->pScreen->IsScreenHQEnabled())
+    {
+        _context->pScreen->RenderFrameBatch();
+    }
+
+    // Basic sanity check for context corruption
+    if (_context->config.frame == 0 || _context->config.frame > 100000)
+        return;  // Invalid frame timing suggests corruption
+
     // Update counters
     _context->emulatorState.t_states += _context->config.frame;
 
     // Trigger events for peripherals
-    _context->pTape->handleFrameEnd();
-    _context->pBetaDisk->handleFrameEnd();
-    _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+    if (_context->pTape)
+    {
+        try
+        {
+            _context->pTape->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("Tape::handleFrameEnd failed: %s", e.what());
+        }
+    }
+    if (_context->pBetaDisk)
+    {
+        try
+        {
+            _context->pBetaDisk->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("BetaDisk::handleFrameEnd failed: %s", e.what());
+        }
+    }
+
+    // Audio generation: Skip in turbo mode unless explicitly requested
+    const CONFIG& config = _context->config;
+    if (!config.turbo_mode || config.turbo_mode_audio)
+    {
+        if (_context->pSoundManager)
+        {
+            try
+            {
+                _context->pSoundManager->handleFrameEnd();  // Sound manager will call audio callback by itself
+            }
+            catch (const std::exception& e)
+            {
+                // Log error but don't crash - audio failure shouldn't stop emulation
+                MLOGERROR("SoundManager::handleFrameEnd failed: %s", e.what());
+            }
+        }
+    }
+
+    // Capture video frame for recording (if recording is active)
+    // This is called AFTER UpdateScreen() has rendered the current frame
+    // In turbo mode, this captures every emulated frame for correct timing
+    if (_context->pRecordingManager && _context->pRecordingManager->IsRecording() && _context->pScreen)
+    {
+        try
+        {
+            _context->pRecordingManager->CaptureFrame(_context->pScreen->GetFramebufferDescriptor());
+        }
+        catch (const std::exception& e)
+        {
+            // Log error but don't crash - recording failure shouldn't stop emulation
+            MLOGERROR("RecordingManager::CaptureFrame failed: %s", e.what());
+        }
+    }
 
     // Notify that video frame is composed and ready for rendering
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_VIDEO_FRAME_REFRESH, new SimpleNumberPayload(_context->emulatorState.frame_counter));
+    // Send per-instance frame refresh event with emulator ID for filtering
+    try
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        std::string emulatorId = _context->pEmulator ? _context->pEmulator->GetId() : "";
+        messageCenter.Post(NC_VIDEO_FRAME_REFRESH,
+                           new EmulatorFramePayload(emulatorId, _context->emulatorState.frame_counter));
+    }
+    catch (const std::exception& e)
+    {
+        // Log error but don't crash - message center failure shouldn't stop emulation
+        MLOGERROR("MessageCenter post failed: %s", e.what());
+    }
 }
 
 void MainLoop::handleAudioBufferHalfFull([[maybe_unused]] int id, [[maybe_unused]] Message* message)
