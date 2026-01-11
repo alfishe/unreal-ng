@@ -1,8 +1,7 @@
-#include "stdafx.h"
-
 #include "gifanimationhelper.h"
 
 #include "common/logger.h"
+#include "stdafx.h"
 
 void GIFAnimationHelper::StartAnimation(std::string filename, unsigned width, unsigned height, unsigned delayMs)
 {
@@ -27,14 +26,30 @@ void GIFAnimationHelper::StopAnimation()
 
 void GIFAnimationHelper::WriteFrame(uint32_t* buffer, [[maybe_unused]] size_t size)
 {
-    (void)size; // Mark as intentionally unused
+    (void)size;  // Mark as intentionally unused
 
     if (_started)
     {
-        GifWriteFrame(&_gifWriter, (uint8_t *)buffer, _width, _height, _delayMs / 10);
+        GifWriteFrame(&_gifWriter, (uint8_t*)buffer, _width, _height, _delayMs / 10);
     }
     else
     {
         LOGWARNING("GIFAnimationHelper::WriteFrame - Unable to write frame. Animation not started properly.");
+    }
+}
+
+void GIFAnimationHelper::WriteFrameWithPalette(uint32_t* buffer, [[maybe_unused]] size_t size, GifPalette* palette,
+                                               bool dither)
+{
+    (void)size;  // Mark as intentionally unused
+
+    if (_started)
+    {
+        GifWriteFrameFast(&_gifWriter, (uint8_t*)buffer, _width, _height, _delayMs / 10, palette, dither);
+    }
+    else
+    {
+        LOGWARNING(
+            "GIFAnimationHelper::WriteFrameWithPalette - Unable to write frame. Animation not started properly.");
     }
 }

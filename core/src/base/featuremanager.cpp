@@ -8,6 +8,7 @@
 #include "3rdparty/simpleini/simpleini.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/recording/recordingmanager.h"
 
 FeatureManager::FeatureManager(EmulatorContext* context) : _context(context)
 {
@@ -283,6 +284,12 @@ void FeatureManager::onFeatureChanged()
     if (_context && _context->pSoundManager)
     {
         _context->pSoundManager->UpdateFeatureCache();
+    }
+
+    // Update feature cache in RecordingManager if it exists
+    if (_context && _context->pRecordingManager)
+    {
+        _context->pRecordingManager->UpdateFeatureCache();
     }
 
     if (_dirty)

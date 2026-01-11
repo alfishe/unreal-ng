@@ -1,5 +1,6 @@
 #include "recordingmanager.h"
 
+#include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screen.h"
@@ -10,11 +11,16 @@ static const char* GetRecordingModeString(RecordingMode mode)
 {
     switch (mode)
     {
-        case RecordingMode::SingleTrack: return "SingleTrack";
-        case RecordingMode::MultiTrack: return "MultiTrack";
-        case RecordingMode::ChannelSplit: return "ChannelSplit";
-        case RecordingMode::AudioOnly: return "AudioOnly";
-        default: return "Unknown";
+        case RecordingMode::SingleTrack:
+            return "SingleTrack";
+        case RecordingMode::MultiTrack:
+            return "MultiTrack";
+        case RecordingMode::ChannelSplit:
+            return "ChannelSplit";
+        case RecordingMode::AudioOnly:
+            return "AudioOnly";
+        default:
+            return "Unknown";
     }
 }
 
@@ -22,32 +28,50 @@ static const char* GetAudioSourceName(AudioSourceType source)
 {
     switch (source)
     {
-        case AudioSourceType::MasterMix: return "MasterMix";
-        case AudioSourceType::Beeper: return "Beeper";
-        case AudioSourceType::AY1_All: return "AY1_All";
-        case AudioSourceType::AY2_All: return "AY2_All";
-        case AudioSourceType::AY3_All: return "AY3_All";
-        case AudioSourceType::COVOX: return "COVOX";
-        case AudioSourceType::GeneralSound: return "GeneralSound";
-        case AudioSourceType::Moonsound: return "Moonsound";
-        case AudioSourceType::AY1_ChannelA: return "AY1_ChannelA";
-        case AudioSourceType::AY1_ChannelB: return "AY1_ChannelB";
-        case AudioSourceType::AY1_ChannelC: return "AY1_ChannelC";
-        case AudioSourceType::AY2_ChannelA: return "AY2_ChannelA";
-        case AudioSourceType::AY2_ChannelB: return "AY2_ChannelB";
-        case AudioSourceType::AY2_ChannelC: return "AY2_ChannelC";
-        case AudioSourceType::AY3_ChannelA: return "AY3_ChannelA";
-        case AudioSourceType::AY3_ChannelB: return "AY3_ChannelB";
-        case AudioSourceType::AY3_ChannelC: return "AY3_ChannelC";
-        case AudioSourceType::Custom: return "Custom";
-        default: return "Unknown";
+        case AudioSourceType::MasterMix:
+            return "MasterMix";
+        case AudioSourceType::Beeper:
+            return "Beeper";
+        case AudioSourceType::AY1_All:
+            return "AY1_All";
+        case AudioSourceType::AY2_All:
+            return "AY2_All";
+        case AudioSourceType::AY3_All:
+            return "AY3_All";
+        case AudioSourceType::COVOX:
+            return "COVOX";
+        case AudioSourceType::GeneralSound:
+            return "GeneralSound";
+        case AudioSourceType::Moonsound:
+            return "Moonsound";
+        case AudioSourceType::AY1_ChannelA:
+            return "AY1_ChannelA";
+        case AudioSourceType::AY1_ChannelB:
+            return "AY1_ChannelB";
+        case AudioSourceType::AY1_ChannelC:
+            return "AY1_ChannelC";
+        case AudioSourceType::AY2_ChannelA:
+            return "AY2_ChannelA";
+        case AudioSourceType::AY2_ChannelB:
+            return "AY2_ChannelB";
+        case AudioSourceType::AY2_ChannelC:
+            return "AY2_ChannelC";
+        case AudioSourceType::AY3_ChannelA:
+            return "AY3_ChannelA";
+        case AudioSourceType::AY3_ChannelB:
+            return "AY3_ChannelB";
+        case AudioSourceType::AY3_ChannelC:
+            return "AY3_ChannelC";
+        case AudioSourceType::Custom:
+            return "Custom";
+        default:
+            return "Unknown";
     }
 }
 
 /// endregion </Helper functions>
 
-RecordingManager::RecordingManager(EmulatorContext* context)
-    : _context(context)
+RecordingManager::RecordingManager(EmulatorContext* context) : _context(context)
 {
     // Initialize logger from context
     _logger = context->pModuleLogger;
@@ -97,17 +121,29 @@ void RecordingManager::Reset()
     _stats = RecordingStats();
 }
 
+void RecordingManager::UpdateFeatureCache()
+{
+    if (_context && _context->pFeatureManager)
+    {
+        _featureEnabled = _context->pFeatureManager->isEnabled(Features::kRecording);
+        MLOGDEBUG("RecordingManager::UpdateFeatureCache - recording feature = %s", _featureEnabled ? "ON" : "OFF");
+    }
+}
+
 /// endregion </Initialization>
 
 /// region <Recording control>
 
-bool RecordingManager::StartRecording(
-    const std::string& filename,
-    const std::string& videoCodec,
-    const std::string& audioCodec,
-    uint32_t videoBitrate,
-    uint32_t audioBitrate)
+bool RecordingManager::StartRecording(const std::string& filename, const std::string& videoCodec,
+                                      const std::string& audioCodec, uint32_t videoBitrate, uint32_t audioBitrate)
 {
+    // Feature guard - early exit if recording disabled
+    if (!_featureEnabled)
+    {
+        MLOGWARNING("RecordingManager::StartRecording - Recording disabled (feature 'recording' = off)");
+        return false;
+    }
+
     if (_isRecording)
     {
         MLOGWARNING("RecordingManager::StartRecording - Already recording, stop current recording first");
@@ -115,14 +151,14 @@ bool RecordingManager::StartRecording(
     }
 
     MLOGINFO("RecordingManager::StartRecording - Starting recording to '%s'", filename.c_str());
-    
+
     // Determine if video-only or audio-only based on codec parameters
     _videoEnabled = !videoCodec.empty();
     _videoCodec = videoCodec;
     _audioCodec = audioCodec;
     _videoBitrate = videoBitrate;
     _audioBitrate = audioBitrate;
-    
+
     MLOGINFO("  Mode: %s", _videoEnabled ? "Video+Audio" : "Audio-Only");
     if (_videoEnabled)
     {
@@ -146,7 +182,7 @@ bool RecordingManager::StartRecording(
         MLOGINFO("  Resolution: %ux%u @ %.2f fps", _videoWidth, _videoHeight, _videoFrameRate);
     }
     MLOGINFO("  Audio: %u Hz, %u channels", _audioSampleRate, _audioChannels);
-    
+
     // Setup default single-track configuration if no tracks configured
     if (_audioTracks.empty())
     {
@@ -157,7 +193,7 @@ bool RecordingManager::StartRecording(
         defaultTrack.bitrate = audioBitrate > 0 ? audioBitrate : 192;
         _audioTracks.push_back(defaultTrack);
     }
-    
+
     MLOGINFO("  Audio tracks: %zu", _audioTracks.size());
 
     // Initialize encoder
@@ -206,16 +242,15 @@ bool RecordingManager::StartRecordingEx(const std::string& filename)
 
     if (_videoEnabled)
     {
-        MLOGINFO("  Video: %s, %ux%u @ %.2f fps, %u kbps", 
-                 _videoCodec.c_str(), _videoWidth, _videoHeight, _videoFrameRate, _videoBitrate);
+        MLOGINFO("  Video: %s, %ux%u @ %.2f fps, %u kbps", _videoCodec.c_str(), _videoWidth, _videoHeight,
+                 _videoFrameRate, _videoBitrate);
     }
 
     // Log audio track configuration
     for (size_t i = 0; i < _audioTracks.size(); i++)
     {
         const AudioTrackConfig& track = _audioTracks[i];
-        MLOGINFO("  Track %zu: %s [%s, %u kbps]", 
-                 i, track.name.c_str(), track.codec.c_str(), track.bitrate);
+        MLOGINFO("  Track %zu: %s [%s, %u kbps]", i, track.name.c_str(), track.codec.c_str(), track.bitrate);
     }
 
     // Initialize encoder
@@ -340,6 +375,38 @@ void RecordingManager::CaptureAudio(const int16_t* samples, size_t sampleCount)
     _emulatedAudioSampleCount += sampleCount;
 }
 
+void RecordingManager::OnFrameEnd(const FramebufferDescriptor& framebuffer, const int16_t* audioSamples,
+                                  size_t audioSampleCount)
+{
+    // Feature guard - early exit if recording disabled
+    if (!_featureEnabled)
+    {
+        return;
+    }
+
+    // Skip if no active encoders
+    if (_activeEncoders.empty())
+    {
+        return;
+    }
+
+    // Calculate timestamp based on emulated frame count
+    double timestamp = static_cast<double>(_emulatedFrameCount) / _videoFrameRate;
+
+    // Dispatch to all active encoders
+    for (auto& encoder : _activeEncoders)
+    {
+        if (encoder->IsRecording())
+        {
+            encoder->OnVideoFrame(framebuffer, timestamp);
+            encoder->OnAudioSamples(audioSamples, audioSampleCount, timestamp);
+        }
+    }
+
+    // Update frame count for timestamp calculation
+    _emulatedFrameCount++;
+}
+
 /// endregion </Frame/Audio capture>
 
 /// region <Configuration>
@@ -441,8 +508,8 @@ void RecordingManager::AddAudioTrack(const AudioTrackConfig& config)
     }
 
     _audioTracks.push_back(config);
-    MLOGINFO("RecordingManager::AddAudioTrack - Added track '%s' (source: %s)", 
-             config.name.c_str(), GetAudioSourceName(config.source));
+    MLOGINFO("RecordingManager::AddAudioTrack - Added track '%s' (source: %s)", config.name.c_str(),
+             GetAudioSourceName(config.source));
 }
 
 void RecordingManager::RemoveAudioTrack(size_t index)
@@ -539,7 +606,8 @@ void RecordingManager::FinalizeEncoder()
     //   - Average encoding time
 }
 
-void RecordingManager::EncodeVideoFrame([[maybe_unused]] const FramebufferDescriptor& framebuffer, [[maybe_unused]] double timestamp)
+void RecordingManager::EncodeVideoFrame([[maybe_unused]] const FramebufferDescriptor& framebuffer,
+                                        [[maybe_unused]] double timestamp)
 {
     // TODO: Convert framebuffer to encoder format
     //   - RGB/RGBA → YUV420 (for most codecs)
@@ -560,7 +628,8 @@ void RecordingManager::EncodeVideoFrame([[maybe_unused]] const FramebufferDescri
     // MLOGDEBUG("RecordingManager::EncodeVideoFrame - Frame %llu @ %.3f sec", _emulatedFrameCount, timestamp);
 }
 
-void RecordingManager::EncodeAudioSamples([[maybe_unused]] const int16_t* samples, [[maybe_unused]] size_t sampleCount, [[maybe_unused]] double timestamp)
+void RecordingManager::EncodeAudioSamples([[maybe_unused]] const int16_t* samples, [[maybe_unused]] size_t sampleCount,
+                                          [[maybe_unused]] double timestamp)
 {
     // TODO: Resample if needed
     //   - Convert sample rate if encoder rate differs
@@ -581,4 +650,3 @@ void RecordingManager::EncodeAudioSamples([[maybe_unused]] const int16_t* sample
 }
 
 /// endregion </Encoder interface (STUBS - to be implemented)>
-
