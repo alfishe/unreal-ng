@@ -3,6 +3,10 @@
 #include <emulatormanager.h>
 #include <platform.h>
 
+#ifdef ENABLE_AUTOMATION
+#include <automation/automation.h>
+#endif
+
 #include <QAction>
 #include <QApplication>
 #include <QKeyEvent>
@@ -20,6 +24,13 @@
 VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 {
     _emulatorManager = EmulatorManager::GetInstance();
+
+#ifdef ENABLE_AUTOMATION
+    // Initialize automation modules (WebAPI, CLI, Python, Lua)
+    _automation = std::make_unique<Automation>();
+    _automation->start();
+    qDebug() << "Automation modules initialized and started";
+#endif  // ENABLE_AUTOMATION
 
     setupUI();
     createMenus();
@@ -94,7 +105,7 @@ void VideoWallWindow::addEmulatorTile()
     if (emulator)
     {
         emulator->DebugOff();
-        emulator->EnableTurboMode(false);  // Disable audio to prevent blocking
+        // emulator->EnableTurboMode(false);  // Disable audio to prevent blocking
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);

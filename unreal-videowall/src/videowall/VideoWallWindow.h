@@ -6,6 +6,7 @@
 
 class TileGrid;
 class EmulatorManager;
+class Automation;
 
 /**
  * @brief Main window for the video wall application
@@ -74,6 +75,9 @@ private:
 
     // Emulator management (singleton, not owned)
     EmulatorManager* _emulatorManager = nullptr;
+
+    // Automation system (WebAPI, CLI, Python, Lua)
+    std::unique_ptr<Automation> _automation;
 
     // Configuration
     int _currentPresetIndex = -1;
