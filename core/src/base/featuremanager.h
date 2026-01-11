@@ -25,6 +25,7 @@ constexpr const char* const kBreakpoints = "breakpoints";
 constexpr const char* const kCallTrace = "calltrace";
 constexpr const char* const kSoundGeneration = "sound";
 constexpr const char* const kSoundHQ = "soundhq";
+constexpr const char* const kRecording = "recording";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -33,6 +34,7 @@ constexpr const char* const kBreakpointsAlias = "bp";
 constexpr const char* const kCallTraceAlias = "ct";
 constexpr const char* const kSoundGenerationAlias = "snd";
 constexpr const char* const kSoundHQAlias = "hq";
+constexpr const char* const kRecordingAlias = "rec";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -42,6 +44,7 @@ constexpr const char* const kCallTraceDesc = "Collect call trace information for
 constexpr const char* const kSoundGenerationDesc = "Enable or disable sound generation";
 constexpr const char* const kSoundHQDesc =
     "Enable high-quality DSP (FIR filters, oversampling). Disable for low-quality/faster audio.";
+constexpr const char* const kRecordingDesc = "Enable recording subsystem (video, audio, GIF capture)";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";
