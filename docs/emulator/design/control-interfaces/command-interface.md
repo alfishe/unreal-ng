@@ -648,6 +648,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `soundhq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
 | `screenhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
 | `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
+| `sharedmemory` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. Alias: `shm`. | Low (startup overhead when enabled, minimal runtime impact) |
 
 **Feature Dependencies**:
 
@@ -724,6 +725,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | soundhq        | on     | Enable high-quality DSP (FIR filters, oversampling). Disable for low-quality/faster audio.
 | screenhq       | on     | Enable per-t-state video for demo multicolor effects. Disable for 25x faster batch rendering.
 | recording      | off    | Enable recording subsystem (video, audio, GIF capture).
+| sharedmemory   | off    | Export emulator memory via shared memory for external tool access.
 --------------------------------------------------------------------------------
 ```
 

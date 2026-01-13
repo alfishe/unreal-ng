@@ -61,7 +61,9 @@ Hot paths use cached booleans
 |---------|-----|-------|---------|----------|
 | **Sound Generation** | `sound` | `snd` | ON | Master audio toggle (saves ~18% CPU when OFF) |
 | **High-Quality DSP** | `soundhq` | `hq` | ON | FIR filters + oversampling (saves ~15% CPU when OFF) |
+| **Screen HQ** | `screenhq` | `vhq` | ON | Per-t-state video rendering for multicolor demos |
 | **Recording** | `recording` | `rec` | OFF | Master recording toggle (guards RecordingManager) |
+| **Shared Memory** | `sharedmemory` | `shm` | OFF | Export emulator memory for external tool access |
 
 ---
 
@@ -110,6 +112,45 @@ Hot paths use cached booleans
 | OFF | - | Silent, no processing | +18% savings |
 | ON | OFF | Economy mode (direct output) | +15% savings |
 | ON | ON | HQ mode (FIR + oversampling) | Baseline |
+
+---
+
+### Shared Memory Toggle (`sharedmemory`)
+
+**Purpose:** Export emulator memory via POSIX shared memory (`shm_open`) or Windows shared memory for external tool access.
+
+**ON (Shared Memory):**
+- Memory allocated via shared memory object
+- Accessible by external tools (debuggers, memory viewers)
+- Unique per-instance: `/zxspectrum_memory-<instance-id>` (POSIX) or `Local\zxspectrum_memory-<instance-id>` (Windows)
+- Instance ID derived from emulator UUID (last 12 characters)
+- Slightly higher allocation overhead
+
+**OFF (Heap Memory - Default):**
+- Standard heap allocation (`new[]`)
+- Faster startup, lower overhead
+- Memory private to emulator process
+
+**Runtime Transition Behavior:**
+
+| Transition | Action | Memory Content |
+|------------|--------|----------------|
+| OFF → ON | Allocate shared memory, copy heap content, free heap | **Preserved** |
+| ON → OFF | Allocate heap, copy shared memory content, unmap shared | **Preserved** |
+| ON → ON | No-op | Unchanged |
+| OFF → OFF | No-op | Unchanged |
+
+**Implementation Notes:**
+- Memory content is always preserved during transitions
+- Failed shared memory allocation falls back to heap gracefully
+- Derived pointers (`_ramBase`, `_romBase`, etc.) are updated automatically
+- Supports per-emulator instance control
+
+**Use Cases:**
+- External memory viewers / analyzers
+- Real-time memory debugging with external tools
+- Benchmarking (disable for accurate measurements)
+- Headless automation (disable for simplicity)
 
 ---
 
