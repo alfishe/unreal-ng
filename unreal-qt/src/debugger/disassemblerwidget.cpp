@@ -14,8 +14,8 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include <QMouseEvent>
 #include <QPointer>
 #include <QTextBlock>
-#include <QVBoxLayout>
 #include <QThread>
+#include <QVBoxLayout>
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
@@ -291,7 +291,7 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
         // Store the instruction address before updating currentAddress
         uint16_t instructionAddress = currentAddress;
-        
+
         // Update current address for next iteration
         currentAddress += commandLen;
         pcPhysicalAddress += commandLen;
@@ -350,12 +350,12 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
     std::string value = ss.str();
 
     // Check if we're in the main thread and the widget is still valid
-    if (QThread::currentThread() != QCoreApplication::instance()->thread()) {
+    if (QThread::currentThread() != QCoreApplication::instance()->thread())
+    {
         qWarning() << "setDisassemblerAddress called from non-main thread";
         // Schedule the update to happen in the main thread
-        QMetaObject::invokeMethod(this, [this, value]() {
-            setDisassemblerAddress(m_displayAddress);
-        }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(
+            this, [this, value]() { setDisassemblerAddress(m_displayAddress); }, Qt::QueuedConnection);
         return;
     }
 
@@ -673,9 +673,11 @@ void DisassemblerWidget::returnToCurrentPC()
 
 void DisassemblerWidget::reset()
 {
+    qDebug() << "DisassemblerWidget::reset() called";
     m_disassemblyTextEdit->setPlainText("<Disassembly goes here>");
     m_currentPC = 0;
     m_displayAddress = 0;
+    m_addressMap.clear();
 
     // Reset to default scroll mode (Command)
     m_scrollMode = ScrollMode::Command;
@@ -686,6 +688,9 @@ void DisassemblerWidget::reset()
 
     // Clear any highlights
     m_disassemblyTextEdit->setExtraSelections(QList<QTextEdit::ExtraSelection>());
+
+    // Force visual update
+    m_disassemblyTextEdit->update();
 }
 
 void DisassemblerWidget::updateBankIndicator(uint16_t address)

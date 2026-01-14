@@ -169,6 +169,22 @@ public:
     /// region <Snapshot helpers>
 public:
     virtual void FillBorderWithColor(uint8_t color) override;
+
+    /// @brief Optimized FillBorderWithColor using row-based std::fill_n
+    /// Much faster than pixel-by-pixel loops - fills entire rows at once
+    void FillBorderWithColor_Optimized(uint8_t color);
+
+    /// @brief Original FillBorderWithColor implementation for benchmarking
+    /// @deprecated Kept for performance comparison only
+    void FillBorderWithColor_Original(uint8_t color);
+
+    /// @brief Optimized RenderOnlyMainScreen using batch 8-pixel method
+    /// Reuses RenderScreen_Batch8() for SIMD-accelerated rendering
+    void RenderOnlyMainScreen_Optimized();
+
+    /// @brief Original RenderOnlyMainScreen implementation for benchmarking
+    /// @deprecated Kept for performance comparison only
+    void RenderOnlyMainScreen_Original();
     /// endregion </Snapshot helpers>
 
     /// region <Debug info>
@@ -232,5 +248,12 @@ public:
     using ScreenZX::_screenLineOffsets;
     using ScreenZX::_tstateLUT;
     using ScreenZX::CreateTstateLUT;
+
+    // Snapshot helpers - optimized vs original for benchmarking
+    using ScreenZX::FillBorderWithColor;
+    using ScreenZX::FillBorderWithColor_Optimized;
+    using ScreenZX::FillBorderWithColor_Original;
+    using ScreenZX::RenderOnlyMainScreen_Optimized;
+    using ScreenZX::RenderOnlyMainScreen_Original;
 };
 #endif  // _CODE_UNDER_TEST || _CODE_UNDER_BENCHMARK

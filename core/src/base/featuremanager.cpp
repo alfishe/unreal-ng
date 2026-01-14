@@ -200,6 +200,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
+    registerFeature({Features::kSharedMemory,
+                     Features::kSharedMemoryAlias,
+                     Features::kSharedMemoryDesc,
+                     false,  // OFF by default - opt-in for external tool access
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
 
     _dirty = false;
 }

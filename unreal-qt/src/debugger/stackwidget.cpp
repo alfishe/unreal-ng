@@ -1,15 +1,15 @@
 #include "stackwidget.h"
-#include "ui_stackwidget.h"
 
-#include "debuggerwindow.h"
 #include "common/stringhelper.h"
+#include "debuggerwindow.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "ui_stackwidget.h"
 
-StackWidget::StackWidget(QWidget *parent) : QWidget(parent), ui(new Ui::StackWidget)
+StackWidget::StackWidget(QWidget* parent) : QWidget(parent), ui(new Ui::StackWidget)
 {
     // Instantiate all child widgets (UI form auto-generated)
     ui->setupUi(this);
@@ -29,15 +29,12 @@ StackWidget::StackWidget(QWidget *parent) : QWidget(parent), ui(new Ui::StackWid
     connect(sp1Value, SIGNAL(doubleClicked()), this, SLOT(sp1Value_doubleClicked()));
     connect(sp2Value, SIGNAL(doubleClicked()), this, SLOT(sp2Value_doubleClicked()));
     connect(sp3Value, SIGNAL(doubleClicked()), this, SLOT(sp3Value_doubleClicked()));
-    
+
     // Set up context menus for stack addresses
     setupContextMenus();
 }
 
-StackWidget::~StackWidget()
-{
-
-}
+StackWidget::~StackWidget() {}
 
 // Helper methods
 Emulator* StackWidget::getEmulator()
@@ -70,11 +67,11 @@ bool StackWidget::eventFilter(QObject* obj, QEvent* event)
     {
         QContextMenuEvent* contextEvent = static_cast<QContextMenuEvent*>(event);
         QLabel* label = qobject_cast<QLabel*>(obj);
-        
+
         if (label)
         {
             int stackIndex = -1;
-            
+
             // Determine which stack address was right-clicked
             if (label == sp0Value)
                 stackIndex = 0;
@@ -86,13 +83,13 @@ bool StackWidget::eventFilter(QObject* obj, QEvent* event)
                 stackIndex = 3;
             else
                 return QWidget::eventFilter(obj, event);
-            
+
             // Show context menu for this stack address
             showStackAddressContextMenu(label, stackIndex, contextEvent->globalPos());
             return true;
         }
     }
-    
+
     // Pass the event to the parent class
     return QWidget::eventFilter(obj, event);
 }
@@ -103,37 +100,35 @@ void StackWidget::showStackAddressContextMenu(QLabel* label, int stackIndex, con
     uint16_t stackValues[4] = {};
     readStackIntoArray(stackValues, 4);
     uint16_t address = stackValues[stackIndex];
-    
+
     QMenu contextMenu("Stack Address Actions", this);
-    
+
     // Create actions
     QAction* jumpToAction = new QAction("Jump to in Disassembly", &contextMenu);
     QAction* showInMemoryAction = new QAction("Show in Memory View", &contextMenu);
-    
+
     // Add actions to menu
     contextMenu.addAction(jumpToAction);
     contextMenu.addAction(showInMemoryAction);
-    
+
     // Connect actions
-    connect(jumpToAction, &QAction::triggered, [this, address]() {
-        emit jumpToAddressInDisassembly(address);
-    });
-    
-    connect(showInMemoryAction, &QAction::triggered, [this, address]() {
-        emit changeMemoryViewZ80Address(address);
-    });
-    
+    connect(jumpToAction, &QAction::triggered, [this, address]() { emit jumpToAddressInDisassembly(address); });
+
+    connect(showInMemoryAction, &QAction::triggered, [this, address]() { emit changeMemoryViewZ80Address(address); });
+
     // Show the menu at the cursor position
     contextMenu.exec(pos);
 }
 
-
 void StackWidget::reset()
 {
-    if (getEmulator())
-    {
-        refresh();
-    }
+    // Clear labels without reading from emulator
+    // (reset is called when emulator is being released, so don't access it)
+    sp0Value->setText("----");
+    sp1Value->setText("----");
+    sp2Value->setText("----");
+    sp3Value->setText("----");
+    update();
 }
 
 void StackWidget::refresh()
