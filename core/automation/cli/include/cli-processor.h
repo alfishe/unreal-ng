@@ -3,11 +3,13 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 
+#include <iomanip>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "batch-command-processor.h"
 #include "platform-sockets.h"
 
 /**
@@ -22,7 +24,6 @@ public:
     {
         return _clientSocket;
     }
-
 
     // Send a response to the client
     void SendResponse(const std::string& message) const;
@@ -39,9 +40,14 @@ public:
         return _shouldClose;
     }
 
+    /// @brief Batch mode state
+    mutable bool batchModeActive = false;             ///< True when collecting batch commands
+    mutable std::vector<BatchCommand> batchCommands;  ///< Queued batch commands
+    mutable std::string batchPrompt;                  ///< Prompt to display during batch mode
+
 private:
     SOCKET _clientSocket;
-    bool _shouldClose;                // Flag indicating session should be closed
+    bool _shouldClose;  // Flag indicating session should be closed
 };
 
 /**
@@ -184,6 +190,18 @@ private:
     void HandleSnapshotLoad(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
                             const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
+
+    // Batch command handlers
+    void HandleBatch(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowBatchHelp(const ClientSession& session);
+    void HandleBatchStart(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBatchExecute(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBatchCancel(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBatchList(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBatchStatus(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBatchCommands(const ClientSession& session, const std::vector<std::string>& args);
+    void AddToBatch(const ClientSession& session, const std::string& emulatorId, const std::string& command,
+                    const std::string& arg1, const std::string& arg2);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

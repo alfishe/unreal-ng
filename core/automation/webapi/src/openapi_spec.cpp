@@ -562,6 +562,32 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
         "Audio channels information";
 
+    // Batch Execution endpoints
+    paths["/api/v1/batch/execute"]["post"]["summary"] = "Execute batch commands in parallel";
+    paths["/api/v1/batch/execute"]["post"]["description"] =
+        "Execute multiple commands across emulator instances using a 4-thread pool. ~2-3ms for 48 instances.";
+    paths["/api/v1/batch/execute"]["post"]["tags"].append("Batch Execution");
+    paths["/api/v1/batch/execute"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/batch/execute"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchExecuteRequest";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["200"]["description"] = "All commands succeeded";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchResult";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["207"]["description"] =
+        "Partial success (some commands failed)";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["207"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchResult";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["400"]["description"] =
+        "Invalid request (missing emulator/command, command not batchable)";
+
+    paths["/api/v1/batch/commands"]["get"]["summary"] = "List batchable commands";
+    paths["/api/v1/batch/commands"]["get"]["description"] =
+        "Returns list of command names that can be used in batch execution";
+    paths["/api/v1/batch/commands"]["get"]["tags"].append("Batch Execution");
+    paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["description"] = "List of batchable commands";
+    paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchableCommandsResponse";
+
     spec["paths"] = paths;
 
     // Components/Schemas
@@ -692,6 +718,41 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SnapshotInfoResponse"]["properties"]["loaded"]["type"] = "boolean";
     schemas["SnapshotInfoResponse"]["properties"]["filename"]["type"] = "string";
 
+    // Batch command schemas
+    schemas["BatchCommand"]["type"] = "object";
+    schemas["BatchCommand"]["description"] = "A single command in a batch";
+    schemas["BatchCommand"]["required"].append("emulator");
+    schemas["BatchCommand"]["required"].append("command");
+    schemas["BatchCommand"]["properties"]["emulator"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["emulator"]["description"] = "Emulator ID, UUID, or index";
+    schemas["BatchCommand"]["properties"]["command"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["command"]["description"] =
+        "Command name: load-snapshot, reset, pause, resume, feature";
+    schemas["BatchCommand"]["properties"]["arg1"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["arg1"]["description"] = "First argument (e.g., file path, feature name)";
+    schemas["BatchCommand"]["properties"]["arg2"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["arg2"]["description"] = "Second argument (e.g., on/off for feature)";
+
+    schemas["BatchExecuteRequest"]["type"] = "object";
+    schemas["BatchExecuteRequest"]["description"] = "Batch execution request";
+    schemas["BatchExecuteRequest"]["required"].append("commands");
+    schemas["BatchExecuteRequest"]["properties"]["commands"]["type"] = "array";
+    schemas["BatchExecuteRequest"]["properties"]["commands"]["items"]["$ref"] = "#/components/schemas/BatchCommand";
+
+    schemas["BatchResult"]["type"] = "object";
+    schemas["BatchResult"]["description"] = "Batch execution result";
+    schemas["BatchResult"]["properties"]["success"]["type"] = "boolean";
+    schemas["BatchResult"]["properties"]["total"]["type"] = "integer";
+    schemas["BatchResult"]["properties"]["succeeded"]["type"] = "integer";
+    schemas["BatchResult"]["properties"]["failed"]["type"] = "integer";
+    schemas["BatchResult"]["properties"]["duration_ms"]["type"] = "number";
+    schemas["BatchResult"]["properties"]["results"]["type"] = "array";
+
+    schemas["BatchableCommandsResponse"]["type"] = "object";
+    schemas["BatchableCommandsResponse"]["description"] = "List of batchable commands";
+    schemas["BatchableCommandsResponse"]["properties"]["commands"]["type"] = "array";
+    schemas["BatchableCommandsResponse"]["properties"]["count"]["type"] = "integer";
+
     spec["components"]["schemas"] = schemas;
 
     // Tags
@@ -750,6 +811,11 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tag10AudioActive["name"] = "Audio State (Active)";
     tag10AudioActive["description"] = "Inspect audio hardware state (active/most recent emulator)";
     tags.append(tag10AudioActive);
+
+    Json::Value tag11Batch;
+    tag11Batch["name"] = "Batch Execution";
+    tag11Batch["description"] = "Execute multiple commands in parallel across emulator instances";
+    tags.append(tag11Batch);
 
     spec["tags"] = tags;
 

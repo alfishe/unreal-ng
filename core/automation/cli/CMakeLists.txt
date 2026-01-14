@@ -18,6 +18,7 @@ set(SOURCES
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
+    src/commands/cli-processor-batch.cpp
 )
 
 # Create the library
@@ -28,6 +29,7 @@ add_library(${PROJECT_NAME} STATIC ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${ROOT_DIR}/core/src  # For core headers
 )
 

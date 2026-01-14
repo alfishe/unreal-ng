@@ -98,7 +98,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"disk", &CLIProcessor::HandleDisk},
 
                         // Snapshot control commands
-                        {"snapshot", &CLIProcessor::HandleSnapshot}};
+                        {"snapshot", &CLIProcessor::HandleSnapshot},
+
+                        // Batch command execution
+                        {"batch", &CLIProcessor::HandleBatch}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -493,6 +496,13 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Batch Command Execution:" << NEWLINE;
+    oss << "  batch start              - Enter batch mode" << NEWLINE;
+    oss << "  batch execute            - Execute all queued commands in parallel" << NEWLINE;
+    oss << "  batch cancel             - Cancel batch and exit batch mode" << NEWLINE;
+    oss << "  batch list               - List queued commands" << NEWLINE;
+    oss << "  batch commands           - List batchable command names" << NEWLINE;
     oss << NEWLINE;
     oss << "Type any command followed by -h or --help for more information.";
 

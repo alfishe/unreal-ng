@@ -165,6 +165,7 @@ set(COMMON_SOURCES
     src/api/state_audio_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
+    src/api/batch_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
     src/automation-webapi.cpp
@@ -227,6 +228,7 @@ else () # Called from upper level CMake => build static library
 
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
         ${JSONCPP_INCLUDE_DIRS}
         ${ROOT_DIR}/core/src
     )

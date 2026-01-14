@@ -122,6 +122,11 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovoxActive, "/api/v1/emulator/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannelsActive, "/api/v1/emulator/state/audio/channels", drogon::Get);
     // endregion Audio State
+
+    // region Batch Command Execution (implementation: api/batch_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::executeBatch, "/api/v1/batch/execute", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getBatchableCommands, "/api/v1/batch/commands", drogon::Get);
+    // endregion Batch Command Execution
     METHOD_LIST_END
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
@@ -311,6 +316,18 @@ public:
     void getStateAudioChannelsActive(const drogon::HttpRequestPtr& req,
                                      std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
     // endregion Audio State Methods
+
+    // region Batch Command Execution Methods (implementation: api/batch_api.cpp)
+    /// @brief Execute batch commands in parallel
+    /// POST /api/v1/batch/execute
+    void executeBatch(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+
+    /// @brief Get list of batchable commands
+    /// GET /api/v1/batch/commands
+    void getBatchableCommands(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+    // endregion Batch Command Execution Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:
