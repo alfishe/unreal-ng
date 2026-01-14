@@ -1,32 +1,20 @@
 #include "memoryaccesstracker.h"
+
+#include "base/featuremanager.h"
 #include "calltrace.h"
 #include "filesystem"
 #include "memory.h"
-#include "base/featuremanager.h"
 
 // Constructor
 MemoryAccessTracker::MemoryAccessTracker(Memory* memory, EmulatorContext* context) : _memory(memory), _context(context)
 {
-    // Initialize vectors with appropriate sizes
-    _z80ReadCounters.resize(PAGE_SIZE * 4, 0);     // 64KB for Z80 address space
-    _z80WriteCounters.resize(PAGE_SIZE * 4, 0);    // 64KB for Z80 address space
-    _z80ExecuteCounters.resize(PAGE_SIZE * 4, 0);  // 64KB for Z80 address space
+    // NOTE: Vector allocation is deferred until memory tracking is actually enabled.
+    // This avoids ~64MB allocation + initialization overhead for non-debug use cases.
+    // See AllocateCounters() for the lazy allocation implementation.
 
-    _physReadCounters.resize(PAGE_SIZE * MAX_PAGES, 0);     // All physical memory
-    _physWriteCounters.resize(PAGE_SIZE * MAX_PAGES, 0);    // All physical memory
-    _physExecuteCounters.resize(PAGE_SIZE * MAX_PAGES, 0);  // All physical memory
-
-    _pageReadCounters.resize(MAX_PAGES, 0);     // Per-page counters
-    _pageWriteCounters.resize(MAX_PAGES, 0);    // Per-page counters
-    _pageExecuteCounters.resize(MAX_PAGES, 0);  // Per-page counters
-
-    _pageReadMarks.resize(MAX_PAGES / 8, 0);     // Page access flags
-    _pageWriteMarks.resize(MAX_PAGES / 8, 0);    // Page access flags
-    _pageExecuteMarks.resize(MAX_PAGES / 8, 0);  // Page access flags
-
-    // Initialize feature cache - all boolean permission flags will be recalculated
+    // Initialize feature cache - will allocate counters if tracking is enabled
     UpdateFeatureCache();
-    
+
     _disassembler = std::make_unique<Z80Disassembler>(context);
 }
 
@@ -46,6 +34,12 @@ void MemoryAccessTracker::Initialize(TrackingMode mode)
 // Reset all counters and statistics
 void MemoryAccessTracker::ResetCounters()
 {
+    // Skip if counters haven't been allocated yet (lazy allocation)
+    if (!_isAllocated)
+    {
+        return;
+    }
+
     // Reset Z80 address space counters
     std::fill(_z80ReadCounters.begin(), _z80ReadCounters.end(), 0);
     std::fill(_z80WriteCounters.begin(), _z80WriteCounters.end(), 0);
@@ -112,13 +106,30 @@ void MemoryAccessTracker::UpdateFeatureCache()
     if (fm)
     {
         bool debugMode = fm->isEnabled(Features::kDebugMode);
+        bool wasTrackingEnabled = _feature_memorytracking_enabled;
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_calltrace_enabled = debugMode && fm->isEnabled(Features::kCallTrace);
-        
+
+        // Lazy allocation: allocate counters only when tracking is first enabled
+        if (_feature_memorytracking_enabled && !_isAllocated)
+        {
+            AllocateCounters();
+        }
+        // Deallocation: free counters when tracking is disabled to reclaim memory
+        else if (!_feature_memorytracking_enabled && wasTrackingEnabled && _isAllocated)
+        {
+            DeallocateCounters();
+        }
+
         // Create call trace buffer if needed
         if (_feature_calltrace_enabled && !_callTraceBuffer)
         {
             _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+        }
+        // Free call trace buffer when disabled
+        else if (!_feature_calltrace_enabled && _callTraceBuffer)
+        {
+            _callTraceBuffer.reset();
         }
     }
     else
@@ -126,6 +137,71 @@ void MemoryAccessTracker::UpdateFeatureCache()
         _feature_memorytracking_enabled = false;
         _feature_calltrace_enabled = false;
     }
+}
+
+// Allocate counter vectors (lazy allocation - only called when tracking is enabled)
+void MemoryAccessTracker::AllocateCounters()
+{
+    if (_isAllocated)
+    {
+        return;  // Already allocated
+    }
+
+    // Allocate Z80 address space counters (64KB each)
+    _z80ReadCounters.resize(PAGE_SIZE * 4, 0);
+    _z80WriteCounters.resize(PAGE_SIZE * 4, 0);
+    _z80ExecuteCounters.resize(PAGE_SIZE * 4, 0);
+
+    // Allocate physical memory counters (full physical memory)
+    _physReadCounters.resize(PAGE_SIZE * MAX_PAGES, 0);
+    _physWriteCounters.resize(PAGE_SIZE * MAX_PAGES, 0);
+    _physExecuteCounters.resize(PAGE_SIZE * MAX_PAGES, 0);
+
+    // Allocate page-level counters
+    _pageReadCounters.resize(MAX_PAGES, 0);
+    _pageWriteCounters.resize(MAX_PAGES, 0);
+    _pageExecuteCounters.resize(MAX_PAGES, 0);
+
+    // Allocate page access flags
+    _pageReadMarks.resize(MAX_PAGES / 8, 0);
+    _pageWriteMarks.resize(MAX_PAGES / 8, 0);
+    _pageExecuteMarks.resize(MAX_PAGES / 8, 0);
+
+    _isAllocated = true;
+}
+
+// Deallocate counter vectors (called when tracking is disabled to free memory)
+void MemoryAccessTracker::DeallocateCounters()
+{
+    if (!_isAllocated)
+    {
+        return;  // Not allocated
+    }
+
+    // Use swap with empty vectors to ensure memory is actually freed
+    // (clear() doesn't guarantee memory deallocation)
+    std::vector<uint32_t>().swap(_z80ReadCounters);
+    std::vector<uint32_t>().swap(_z80WriteCounters);
+    std::vector<uint32_t>().swap(_z80ExecuteCounters);
+
+    std::vector<uint32_t>().swap(_physReadCounters);
+    std::vector<uint32_t>().swap(_physWriteCounters);
+    std::vector<uint32_t>().swap(_physExecuteCounters);
+
+    std::vector<uint32_t>().swap(_pageReadCounters);
+    std::vector<uint32_t>().swap(_pageWriteCounters);
+    std::vector<uint32_t>().swap(_pageExecuteCounters);
+
+    std::vector<uint8_t>().swap(_pageReadMarks);
+    std::vector<uint8_t>().swap(_pageWriteMarks);
+    std::vector<uint8_t>().swap(_pageExecuteMarks);
+
+    // Reset bank marks
+    _z80BankReadMarks = 0;
+    _z80BankWriteMarks = 0;
+    _z80BankExecuteMarks = 0;
+
+    _isAllocated = false;
 }
 
 // Add a monitored memory region with the specified options
@@ -1161,8 +1237,8 @@ std::string MemoryAccessTracker::GenerateSegmentReport() const
     return ss.str();
 }
 
-std::string MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const std::string& format, bool singleFile,
-                                         const std::vector<std::string>& filterPages)
+std::string MemoryAccessTracker::SaveAccessData(const std::string& outputPath, const std::string& format,
+                                                bool singleFile, const std::vector<std::string>& filterPages)
 {
     namespace fs = std::filesystem;
 
