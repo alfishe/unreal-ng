@@ -5,6 +5,7 @@
 #include <cmath>
 #include <random>
 
+#include "_helpers/test_path_helper.h"
 #include "_helpers/testtiminghelper.h"
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
@@ -1869,8 +1870,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     size_t sectorDataIndex = 0;
 
     /// region <Load disk image>
-    std::string filepath = "testdata/loaders/trd/EyeAche.trd";
-    filepath = FileHelper::AbsolutePath(filepath, true);
+    std::string filepath = TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd");
     LoaderTRDCUT trdLoader(_context, filepath);
     bool imageLoaded = trdLoader.loadImage();
 
