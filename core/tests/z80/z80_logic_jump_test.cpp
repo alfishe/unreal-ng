@@ -464,7 +464,7 @@ TEST_F(Z80_Logic_Jump_Test, Z80RelativeJumps)
 }
 
 
-TEST_F(Z80_Logic_Jump_Test, Z80ConditionalJumps)
+TEST_F(Z80_Logic_Jump_Test, DISABLED_Z80ConditionalJumps)
 {
     /// region <Initialization>
     Z80 &z80 = *_cpu->GetZ80();

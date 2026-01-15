@@ -59,6 +59,29 @@ void Z80_Test::DumpFirst256ROMBytes()
     std::string dump = DumpHelper::HexDumpBuffer(memory, 256);
     std::cout << dump << std::endl;
 }
+
+void Z80_Test::ResetCPUAndMemory()
+{
+    Z80& z80 = *_cpu->GetZ80();
+    z80.Reset();
+
+    // Reset all other registers to 0 for a predictable state
+    z80.bc = 0;
+    z80.de = 0;
+    z80.hl = 0;
+    z80.ix = 0;
+    z80.iy = 0;
+    z80.alt.af = 0;
+    z80.alt.bc = 0;
+    z80.alt.de = 0;
+    z80.alt.hl = 0;
+
+    // Reset memory banking to default 48k layout
+    _cpu->GetMemory()->DefaultBanksFor48k();
+
+    // Clear emulator state flags (like CF_TRDOS)
+    _context->emulatorState.flags = 0;
+}
 /// endregion </Helper methods>
 
 TEST_F(Z80_Test, Z80Reset)
@@ -106,7 +129,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings)
         const std::string message = StringHelper::Format("Opcode: 0x%02X", i);
 
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Prepare instruction in ROM (0x0000 address)
         OpDescriptor& descriptor = _opcode->_noprefix[i];
@@ -156,7 +179,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_ED)
         std::string message = StringHelper::Format("Opcode: 0xED 0x%02X", i);
 
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Prepare instruction in ROM (0x0000 address)
         OpDescriptor& descriptor = _opcode->_prefixED[i];
@@ -204,7 +227,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_CB)
         std::string message = StringHelper::Format("Opcode: 0xCB 0x%02X", i);
 
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Prepare instruction in ROM (0x0000 address)
         OpDescriptor& descriptor = _opcode->_prefixCB[i];
@@ -251,7 +274,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DD)
                                           // using 1 byte counter due to inability to utilize overflow flag
     {
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Skip unpopulated test table entries
         OpDescriptor& descriptor = _opcode->_prefixDD[i];
@@ -302,7 +325,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DDCB)
                                           // using 1 byte counter due to inability to utilize overflow flag
     {
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Skip unpopulated test table entries
         OpDescriptor& descriptor = _opcode->_prefixDDCB[i];
@@ -353,7 +376,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FD)
                                           // using 1 byte counter due to inability to utilize overflow flag
     {
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Skip unpopulated test table entries
         OpDescriptor& descriptor = _opcode->_prefixFD[i];
@@ -404,7 +427,7 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
                                           // using 1 byte counter due to inability to utilize overflow flag
     {
         // Perform reset to get clean results for each instruction
-        z80.Reset();
+        ResetCPUAndMemory();
 
         // Skip unpopulated test table entries
         OpDescriptor& descriptor = _opcode->_prefixFDCB[i];
