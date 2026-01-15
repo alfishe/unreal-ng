@@ -1,24 +1,24 @@
-#include "stdafx.h"
 #include "portdecoder.h"
 
-#include "common/modulelogger.h"
+#include <cassert>
 
 #include "common/collectionhelper.h"
+#include "common/modulelogger.h"
 #include "common/stringhelper.h"
-#include "debugger/debugmanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
-#include "emulator/emulator.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/memory/memoryaccesstracker.h"
-#include "emulator/sound/beeper.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
+#include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/models/portdecoder_scorpion256.h"
-#include "emulator/ports/models/portdecoder_spectrum48.h"
 #include "emulator/ports/models/portdecoder_spectrum128.h"
-#include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_spectrum3.h"
-#include <cassert>
+#include "emulator/ports/models/portdecoder_spectrum48.h"
+#include "emulator/sound/beeper.h"
+#include "stdafx.h"
 
 /// region <Constructors / Destructors>
 PortDecoder::PortDecoder(EmulatorContext* context)
@@ -78,7 +78,8 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             break;
         default:
             LOGERROR("PortDecoder::GetPortDecoderForModel - Unknown model: %d", model);
-            throw std::logic_error(StringHelper::Format("PortDecoder::GetPortDecoderForModel - unknown model %d", model));
+            throw std::logic_error(
+                StringHelper::Format("PortDecoder::GetPortDecoderForModel - unknown model %d", model));
             break;
     }
 
@@ -95,38 +96,41 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
 
     /// region <Port In breakpoint logic>
 
-    Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCore->GetZ80();
-    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-
-    uint16_t breakpointID = brk.HandlePortIn(addr);
-    if (breakpointID != BRK_INVALID)
+    if (_context->pDebugManager != nullptr)
     {
-        // Request to pause emulator
-        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
-        emulator.Pause();
+        Emulator& emulator = *_context->pEmulator;
+        Z80& z80 = *_context->pCore->GetZ80();
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        // Broadcast notification - breakpoint triggered
-        MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+        uint16_t breakpointID = brk.HandlePortIn(addr);
+        if (breakpointID != BRK_INVALID)
+        {
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
 
-        // Wait until emulator resumed externally (by debugger or scripting engine)
-        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-        z80.WaitUntilResumed();
+            // Broadcast notification - breakpoint triggered
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+            z80.WaitUntilResumed();
+        }
     }
 
     /// endregion </Port In breakpoint logic>
-    
+
     // Get the result from the peripheral device
     result = PeripheralPortIn(addr);
-    
+
     // Track port read access if memory access tracker is available
     if (_memory && _memory->_memoryAccessTracker)
     {
         // Get the current PC as caller address
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
-        
+
         // Track port read access
         _memory->_memoryAccessTracker->TrackPortRead(addr, result, callerAddress);
     }
@@ -138,38 +142,41 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
 {
     /// region <Port Out breakpoint logic>
 
-    Emulator& emulator = *_context->pEmulator;
-    Z80& z80 = *_context->pCore->GetZ80();
-    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-
-    uint16_t breakpointID = brk.HandlePortOut(addr);
-    if (breakpointID != BRK_INVALID)
+    if (_context->pDebugManager != nullptr)
     {
-        // Request to pause emulator
-        // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
-        emulator.Pause();
+        Emulator& emulator = *_context->pEmulator;
+        Z80& z80 = *_context->pCore->GetZ80();
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
-        // Broadcast notification - breakpoint triggered
-        MessageCenter &messageCenter = MessageCenter::DefaultMessageCenter();
-        SimpleNumberPayload *payload = new SimpleNumberPayload(breakpointID);
-        messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+        uint16_t breakpointID = brk.HandlePortOut(addr);
+        if (breakpointID != BRK_INVALID)
+        {
+            // Request to pause emulator
+            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            emulator.Pause();
 
-        // Wait until emulator resumed externally (by debugger or scripting engine)
-        // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-        z80.WaitUntilResumed();
+            // Broadcast notification - breakpoint triggered
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+
+            // Wait until emulator resumed externally (by debugger or scripting engine)
+            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
+            z80.WaitUntilResumed();
+        }
     }
 
     /// endregion </Port Out breakpoint logic>
-    
+
     // Forward the port write to the peripheral device
     PeripheralPortOut(addr, value);
-    
+
     // Track port write access if memory access tracker is available
     if (_memory && _memory->_memoryAccessTracker)
     {
         // Get the current PC as caller address
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
-        
+
         // Track port write access
         _memory->_memoryAccessTracker->TrackPortWrite(addr, value, callerAddress);
     }
@@ -194,9 +201,9 @@ bool PortDecoder::IsFEPort(uint16_t port)
     /// endregion </Override submodule>
 
     // Any even port will be decoded as #FE
-    static const uint16_t port_FE_full    = 0b0000'0000'1111'1110;
-    static const uint16_t port_FE_mask    = 0b0000'0000'0000'0001;
-    static const uint16_t port_FE_match   = 0b0000'0000'0000'0000;
+    static const uint16_t port_FE_full = 0b0000'0000'1111'1110;
+    static const uint16_t port_FE_mask = 0b0000'0000'0000'0001;
+    static const uint16_t port_FE_match = 0b0000'0000'0000'0000;
 
     // Compile-time check
     static_assert((port_FE_full & port_FE_mask) == port_FE_match && "Mask pattern incorrect");
@@ -310,7 +317,7 @@ bool PortDecoder::RegisterPortHandler(uint16_t port, PortDevice* device)
     {
         if (!key_exists(_portDevices, port))
         {
-            _portDevices.insert( { port, device });
+            _portDevices.insert({port, device});
         }
         else
         {
@@ -352,7 +359,8 @@ uint8_t PortDecoder::PeripheralPortIn(uint16_t port)
         // Determine RAM/ROM page where code executed from
         uint16_t pc = _context->pCore->GetZ80()->m1_pc;  // Use IN command PC, not the next one (z80->pc)
         std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(), port);
+        MLOGWARNING("[In] [PC:%04X%s] Port: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(),
+                    port);
     }
 
     return result;
@@ -379,7 +387,8 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
         // Determine RAM/ROM page where code executed from
         uint16_t pc = _context->pCore->GetZ80()->m1_pc;  // Use OUT command PC, not the next one (z80->pc)
         std::string currentMemoryPage = GetPCAddressLocator(pc);
-        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc, currentMemoryPage.c_str(), port, value);
+        MLOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X - no peripheral device to handle", pc,
+                    currentMemoryPage.c_str(), port, value);
     }
 }
 
@@ -422,11 +431,13 @@ std::string PortDecoder::DumpPortValue(uint16_t refPort, uint16_t port, uint8_t 
 
     if (comment != nullptr)
     {
-        result = StringHelper::Format("[Out] [%s] Port #%04X, decoded as #%04X value: 0x%02X (%s)", pcString.c_str(), port, refPort, value, comment);
+        result = StringHelper::Format("[Out] [%s] Port #%04X, decoded as #%04X value: 0x%02X (%s)", pcString.c_str(),
+                                      port, refPort, value, comment);
     }
     else
     {
-        result = StringHelper::Format("[Out] [%s] Port #%04X, decoded as #%04X value: 0x%02X", pcString.c_str(), port, refPort, value);
+        result = StringHelper::Format("[Out] [%s] Port #%04X, decoded as #%04X value: 0x%02X", pcString.c_str(), port,
+                                      refPort, value);
     }
 
     return result;
@@ -438,7 +449,8 @@ std::string PortDecoder::Dump_FE_value(uint8_t value)
     bool beeperBit = value & 0b0001'0000;
     std::string colorText = Screen::GetColorName(borderColor);
 
-    std::string result = StringHelper::Format("Border color: %d (%s); Beeper: %d", borderColor, colorText.c_str(), beeperBit);
+    std::string result =
+        StringHelper::Format("Border color: %d (%s); Beeper: %d", borderColor, colorText.c_str(), beeperBit);
 
     return result;
 }

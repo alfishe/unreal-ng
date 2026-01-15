@@ -183,7 +183,7 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     /// endregion </Memory access tracking>
 
     /// region <Read breakpoint logic>
-    if (_feature_breakpoints_enabled)
+    if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
         Z80& z80 = *_context->pCore->GetZ80();
@@ -262,7 +262,7 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     }
 
     /// region <Write breakpoint logic>
-    if (_feature_breakpoints_enabled)
+    if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
         Z80& z80 = *_context->pCore->GetZ80();

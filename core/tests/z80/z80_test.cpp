@@ -1,30 +1,29 @@
-#include "pch.h"
-
 #include "z80_test.h"
 
 #include "common/dumphelper.h"
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
+#include "pch.h"
 
 /// region <SetUp / TearDown>
 
 void Z80_Test::SetUp()
 {
-	// Instantiate emulator with all peripherals, but no configuration loaded
-	_context = new EmulatorContext(LoggerLevel::LogError); // Filter out all messages with level below error
+    // Instantiate emulator with all peripherals, but no configuration loaded
+    _context = new EmulatorContext(LoggerLevel::LogError);  // Filter out all messages with level below error
 
-	_cpu = new Core(_context);
-	if (_cpu->Init())
-	{
+    _cpu = new Core(_context);
+    if (_cpu->Init())
+    {
         // Use Spectrum48K / Pentagon memory layout
         _cpu->GetMemory()->DefaultBanksFor48k();
 
         // Instantiate opcode test helper
         _opcode = new OpcodeTest();
     }
-	else
+    else
     {
-	    throw std::logic_error("Z80_Test::SetUp - _core->Init() failed");
+        throw std::logic_error("Z80_Test::SetUp - _core->Init() failed");
     }
 }
 
@@ -36,17 +35,17 @@ void Z80_Test::TearDown()
         _opcode = nullptr;
     }
 
-	if (_cpu != nullptr)
-	{
-		delete _cpu;
-		_cpu = nullptr;
-	}
+    if (_cpu != nullptr)
+    {
+        delete _cpu;
+        _cpu = nullptr;
+    }
 
-	if (_context != nullptr)
-	{
-		delete _context;
-		_context = nullptr;
-	}
+    if (_context != nullptr)
+    {
+        delete _context;
+        _context = nullptr;
+    }
 }
 
 /// endregion </Setup / TearDown>
@@ -64,101 +63,103 @@ void Z80_Test::DumpFirst256ROMBytes()
 
 TEST_F(Z80_Test, Z80Reset)
 {
-	Z80* cpu = _cpu->GetZ80();
-	
-	cpu->Reset();
-	EXPECT_EQ(cpu->pc, 0x0000);
-	EXPECT_EQ(cpu->sp, 0xFFFF);
-	EXPECT_EQ(cpu->af, 0xFFFF);
+    Z80* cpu = _cpu->GetZ80();
 
-	EXPECT_EQ(cpu->ir_, 0x0000);
-	EXPECT_EQ(cpu->int_flags, 0);
-	EXPECT_EQ(cpu->int_pending, false);
-	EXPECT_EQ(cpu->int_gate, true);
-	EXPECT_EQ(cpu->last_branch, 0x0000);
+    cpu->Reset();
+    EXPECT_EQ(cpu->pc, 0x0000);
+    EXPECT_EQ(cpu->sp, 0xFFFF);
+    EXPECT_EQ(cpu->af, 0xFFFF);
 
-	// Reset procedure should take 3 clock cycles
+    EXPECT_EQ(cpu->ir_, 0x0000);
+    EXPECT_EQ(cpu->int_flags, 0);
+    EXPECT_EQ(cpu->int_pending, false);
+    EXPECT_EQ(cpu->int_gate, true);
+    EXPECT_EQ(cpu->last_branch, 0x0000);
+
+    // Reset procedure should take 3 clock cycles
     EXPECT_EQ(cpu->t, 3);
-	EXPECT_EQ(cpu->cycle_count, 3);
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test no-prefix opcode instructions
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t is used since MSVC and GCC compilers are going crazy for 1 byte type and type overflow condition wnen comparing with 0xFF after increment to 0x00 and loosing overflow flag
-	{
+    // Test no-prefix opcode instructions
+    for (uint16_t i = 0; i <= 0xFF;
+         i++)  // uint16_t is used since MSVC and GCC compilers are going crazy for 1 byte type and type overflow
+               // condition wnen comparing with 0xFF after increment to 0x00 and loosing overflow flag
+    {
         // Exclude prefixed command prefixes
-		if (i == 0xCB || i == 0xDD || i == 0xED || i == 0xFD)
-			continue;
+        if (i == 0xCB || i == 0xDD || i == 0xED || i == 0xFD)
+            continue;
 
         const std::string message = StringHelper::Format("Opcode: 0x%02X", i);
 
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_noprefix[i];
+        // Prepare instruction in ROM (0x0000 address)
+        OpDescriptor& descriptor = _opcode->_noprefix[i];
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0x00, (uint8_t)i, memory);
-            EXPECT_EQ(len, descriptor.bytes) << message << std::endl;;
+            EXPECT_EQ(len, descriptor.bytes) << message << std::endl;
+            ;
         }
         catch (const char* err)
         {
             FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-        EXPECT_EQ(z80.t, z80.cycle_count);
-	}
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings_ED)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test 0xED prefixed opcodes
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t required since C++ compilers unable to make loop [0:255] working using 1 byte counter due to inability to utilize overflow flag
-	{
+    // Test 0xED prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)  // uint16_t required since C++ compilers unable to make loop [0:255] working
+                                          // using 1 byte counter due to inability to utilize overflow flag
+    {
         std::string message = StringHelper::Format("Opcode: 0xED 0x%02X", i);
 
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_prefixED[i];
+        // Prepare instruction in ROM (0x0000 address)
+        OpDescriptor& descriptor = _opcode->_prefixED[i];
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0xED, (uint8_t)i, memory);
@@ -168,44 +169,45 @@ TEST_F(Z80_Test, Z80OpcodeTimings_ED)
             FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-	}
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings_CB)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test 0xCB prefixed opcodes
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t required since C++ compilers unable to make loop [0:255] working using 1 byte counter due to inability to utilize overflow flag
-	{
+    // Test 0xCB prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)  // uint16_t required since C++ compilers unable to make loop [0:255] working
+                                          // using 1 byte counter due to inability to utilize overflow flag
+    {
         std::string message = StringHelper::Format("Opcode: 0xCB 0x%02X", i);
 
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_prefixCB[i];
+        // Prepare instruction in ROM (0x0000 address)
+        OpDescriptor& descriptor = _opcode->_prefixCB[i];
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0xCB, (uint8_t)i, memory);
@@ -215,43 +217,47 @@ TEST_F(Z80_Test, Z80OpcodeTimings_CB)
             FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-	}
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings_DD)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
-	static char message[256];
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
+    static char message[256];
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test 0xDD prefixed opcodes
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t required since C++ compilers unable to make loop [0:255] working using 1 byte counter due to inability to utilize overflow flag
-	{
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+    // Test 0xDD prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)  // uint16_t required since C++ compilers unable to make loop [0:255] working
+                                          // using 1 byte counter due to inability to utilize overflow flag
+    {
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_prefixDD[i];
+        // Skip unpopulated test table entries
+        OpDescriptor& descriptor = _opcode->_prefixDD[i];
+        if (descriptor.bytes == 0)
+            continue;
+
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0xDD, (uint8_t)i, memory);
@@ -261,44 +267,48 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DD)
             FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xDD 0x%02X", i);
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-	}
+        snprintf(message, sizeof message, "Opcode: 0xDD 0x%02X", i);
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings_DDCB)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
-	static char message[256];
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
+    static char message[256];
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test 0xDD 0xCB prefixed opcodes
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t required since C++ compilers unable to make loop [0:255] working using 1 byte counter due to inability to utilize overflow flag
-	{
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+    // Test 0xDD 0xCB prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)  // uint16_t required since C++ compilers unable to make loop [0:255] working
+                                          // using 1 byte counter due to inability to utilize overflow flag
+    {
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_prefixDDCB[i];
+        // Skip unpopulated test table entries
+        OpDescriptor& descriptor = _opcode->_prefixDDCB[i];
+        if (descriptor.bytes == 0)
+            continue;
+
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0xDD, (uint8_t)i, memory, 0xCB);
@@ -308,91 +318,99 @@ TEST_F(Z80_Test, Z80OpcodeTimings_DDCB)
             FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xDD 0xCB 0x%02X", i);
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-	}
+        snprintf(message, sizeof message, "Opcode: 0xDD 0xCB 0x%02X", i);
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings_FD)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
-	static char message[256];
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
+    static char message[256];
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test 0xFD prefixed opcodes
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t required since C++ compilers unable to make loop [0:255] working using 1 byte counter due to inability to utilize overflow flag
-	{
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+    // Test 0xFD prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)  // uint16_t required since C++ compilers unable to make loop [0:255] working
+                                          // using 1 byte counter due to inability to utilize overflow flag
+    {
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_prefixFD[i];
-		try
-		{
-            uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t) i, memory);
-        }
-		catch (const char* err)
+        // Skip unpopulated test table entries
+        OpDescriptor& descriptor = _opcode->_prefixFD[i];
+        if (descriptor.bytes == 0)
+            continue;
+
+        try
         {
-		    FAIL() << err << std::endl;
+            uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t)i, memory);
+        }
+        catch (const char* err)
+        {
+            FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xFD 0x%02X", i);
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-	}
+        snprintf(message, sizeof message, "Opcode: 0xFD 0x%02X", i);
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }
 
 TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
 {
-	Z80& z80 = *_cpu->GetZ80();
-	uint32_t start_cycles = 0;
-	uint32_t finish_cycles = 0;
-	uint32_t delta_cycles = 0;
-	static char message[256];
+    Z80& z80 = *_cpu->GetZ80();
+    uint32_t start_cycles = 0;
+    uint32_t finish_cycles = 0;
+    uint32_t delta_cycles = 0;
+    static char message[256];
 
-	// Use 48k (SOS) ROM for testing purposes
-	uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
-	if (memory == nullptr)
-	{
-		FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
-	}
+    // Use 48k (SOS) ROM for testing purposes
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    if (memory == nullptr)
+    {
+        FAIL() << "memory->base_sos_rom not initialized correctly" << std::endl;
+    }
 
-	// Test 0xFD 0xCB prefixed opcodes
-	for (uint16_t i = 0; i <= 0xFF; i++)	// uint16_t required since C++ compilers unable to make loop [0:255] working using 1 byte counter due to inability to utilize overflow flag
-	{
-		// Perform reset to get clean results for each instruction
-		z80.Reset();
+    // Test 0xFD 0xCB prefixed opcodes
+    for (uint16_t i = 0; i <= 0xFF; i++)  // uint16_t required since C++ compilers unable to make loop [0:255] working
+                                          // using 1 byte counter due to inability to utilize overflow flag
+    {
+        // Perform reset to get clean results for each instruction
+        z80.Reset();
 
-		// Prepare instruction in ROM (0x0000 address)
-		OpDescriptor& descriptor = _opcode->_prefixFDCB[i];
+        // Skip unpopulated test table entries
+        OpDescriptor& descriptor = _opcode->_prefixFDCB[i];
+        if (descriptor.bytes == 0)
+            continue;
+
         try
         {
             uint8_t len = _opcode->PrepareInstruction(0xFD, (uint8_t)i, memory, 0xCB);
@@ -402,17 +420,17 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
             FAIL() << err << std::endl;
         }
 
-		// Capture clock cycle counter before instruction execution
-		start_cycles = z80.cycle_count;
+        // Capture clock cycle counter before instruction execution
+        start_cycles = z80.t;
 
-		// Execute single instruction
-		z80.Z80Step();
+        // Execute single instruction
+        z80.Z80Step();
 
-		// Measure instruction execution in clock cycles
-		finish_cycles = z80.cycle_count;
-		delta_cycles = finish_cycles - start_cycles;
+        // Measure instruction execution in clock cycles
+        finish_cycles = z80.t;
+        delta_cycles = finish_cycles - start_cycles;
 
-		snprintf(message, sizeof message, "Opcode: 0xFD 0xCB 0x%02X", i);
-		EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
-	}
+        snprintf(message, sizeof message, "Opcode: 0xFD 0xCB 0x%02X", i);
+        EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
+    }
 }

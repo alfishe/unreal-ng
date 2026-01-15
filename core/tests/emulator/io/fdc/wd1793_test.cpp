@@ -1874,11 +1874,12 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
     LoaderTRDCUT trdLoader(_context, filepath);
     bool imageLoaded = trdLoader.loadImage();
 
-    EXPECT_EQ(imageLoaded, true) << "Test TRD image was not loaded: " << filepath;
+    // Use ASSERT to terminate test early if disk image fails to load - prevents null pointer crash
+    ASSERT_EQ(imageLoaded, true) << "Test TRD image was not loaded: " << filepath;
 
     DiskImage* diskImage = trdLoader.getImage();
 
-    EXPECT_NE(diskImage, nullptr);
+    ASSERT_NE(diskImage, nullptr) << "Disk image is null after loading";
     /// endregion </Load disk image>
 
     WD1793CUT fdc(_context);
