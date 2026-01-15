@@ -73,13 +73,6 @@ void WD1793::reset()
 {
     // Reset all fields and states
     internalReset();
-
-    // Execute RESTORE command
-    uint8_t restoreValue = 0b0000'1111;
-    _lastDecodedCmd = WD_CMD_RESTORE;
-    _commandRegister = restoreValue;
-    _lastCmdValue = restoreValue;
-    cmdRestore(restoreValue);
 }
 
 void WD1793::internalReset()
@@ -662,16 +655,14 @@ uint8_t WD1793::getStatusRegister()
 
         if (_lost_data)
             _statusRegister |= WDS_LOSTDATA;
-        // DRQ (bit 1) for all Type II and III commands is driven by an FDC state machine
-        // But since beta128 register is used to hold chip DRQ output signal - get it from there
-        if (_beta128Register & DRQ)
+        if (_drq_out)
         {
             _statusRegister |= WDS_DRQ;
         }
         else
         {
             _statusRegister &= ~WDS_DRQ;
-        };
+        }
     }
 
     // BUSY (bit 0) is driven by an FDC state machine and set directly during command processing
@@ -944,9 +935,17 @@ void WD1793::cmdRestore(uint8_t value)
     // Direction must always be out (towards Track 0)
     _stepDirectionIn = false;
 
+    // Check if already at track 0 - if so, complete immediately
+    if (_selectedDrive->isTrack00())
+    {
+        _trackRegister = 0;
+        type1CommandVerify();
+        return;
+    }
+
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSM(WDSTATE::S_STEP);
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
 }
 
 /// This command assumes that Track Register contains the track number of the current position
@@ -965,6 +964,14 @@ void WD1793::cmdSeek(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType1Command();
+
+    // Check if already at target track - if so, complete immediately
+    if (_trackRegister == _dataRegister)
+    {
+        _selectedDrive->setTrack(_trackRegister);
+        type1CommandVerify();
+        return;
+    }
 
     _stepDirectionIn = _dataRegister > _trackRegister;
 
@@ -1620,8 +1627,17 @@ void WD1793::processStep()
     }
     /// endregion </Check for step limits>
 
-    // We've reached head target position
-    if (_trackRegister == _dataRegister)
+    // Early termination checks (before any stepping occurs)
+    // RESTORE: Check if already at track 0 via TR00 signal
+    if (_lastDecodedCmd == WD_CMD_RESTORE && _selectedDrive->isTrack00())
+    {
+        _trackRegister = 0;
+        _selectedDrive->setTrack(0);
+        type1CommandVerify();
+        return;
+    }
+    // SEEK: Check if already at target track (trackRegister == dataRegister)
+    if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister == _dataRegister)
     {
         _selectedDrive->setTrack(_trackRegister);
         type1CommandVerify();
@@ -1632,9 +1648,14 @@ void WD1793::processStep()
     int8_t stepCorrection = _stepDirectionIn ? 1 : -1;
 
     // Apply changes to the WD1793 Track Register
-    _trackRegister += stepCorrection;
+    // SEEK/RESTORE always update Track Register; STEP commands only if 'u' bit is set
+    if (_lastDecodedCmd == WD_CMD_SEEK || _lastDecodedCmd == WD_CMD_RESTORE ||
+        (_lastCmdValue & 0x10))
+    {
+        _trackRegister += stepCorrection;
+    }
 
-    // Apply changes to FDD state
+    // Apply changes to FDD state (physical movement always happens)
     uint8_t fddTrack = _selectedDrive->getTrack();
     fddTrack += stepCorrection;
     _selectedDrive->setTrack(fddTrack);
@@ -1890,7 +1911,9 @@ void WD1793::processWriteByte()
 
         if (_bytesToWrite > 0)
         {
-            // DRQ is already set from previous state
+            // Raise DRQ to request the next byte from the host
+            raiseDrq();
+            
             // Transition to next byte write state
             transitionFSMWithDelay(WD1793::S_WRITE_BYTE, WD93_TSTATES_PER_FDC_BYTE);
         }

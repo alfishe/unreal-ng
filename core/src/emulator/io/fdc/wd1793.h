@@ -910,6 +910,7 @@ protected:
         uint8_t result = _dataRegister;
 
         _drq_served = true;
+        clearDrq();
 
         return result;
     }
@@ -921,6 +922,7 @@ protected:
         // If we're on Read or Write operation and data was requested by asserting DRQ - we need to mark that request
         // fulfilled
         _drq_served = true;
+        clearDrq();
     }
 
     /// endregion </State machine handlers>
