@@ -137,8 +137,8 @@ These signals dictate the physical actions of the FDD.
 
 #### 11. `READY`
 
-*   **Nature:** Level input (typically active high means ready).
-*   **Purpose:** Indicates the general readiness of the selected FDD. This usually means the motor is at speed and a disk is inserted correctly.
+*   **Nature:** Level input (active LOW means ready; active HIGH means not ready).
+*   **Purpose:** Indicates the general readiness of the selected FDD. When LOW, the drive is ready (motor at speed, disk inserted correctly). Status bit S7 (NOT READY) is the inverted state of this input.
 *   **FDC Interpretation:**
     *   **Type I Commands:** Performed regardless of the `READY` state.
     *   **Type II & III Commands:** `READY` must be active *before* the command is initiated. If not, the command is aborted, and an `INTRQ` is generated with the Not Ready status bit (S7) set.
