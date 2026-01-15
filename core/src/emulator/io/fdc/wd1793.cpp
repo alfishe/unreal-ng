@@ -108,6 +108,10 @@ void WD1793::internalReset()
     _lastTime = 0;
     _diffTime = 0;
 
+    // Clear Force Interrupt condition monitoring
+    _interruptConditions = 0;
+    _prevReady = false;
+
     clearAllErrors();
 
     // Deassert output signals
@@ -129,6 +133,10 @@ void WD1793::process()
 
     // Maintain FDD motor state
     processFDDMotorState();
+
+    // Monitor Force Interrupt conditions (I0, I1, I2)
+    // I2 is handled in processFDDIndexStrobe(), I0/I1 are handled here
+    processForceInterruptConditions();
 
     // Process counters and timeouts
     // - DRQ (Data Request) serving timeout
@@ -263,6 +271,49 @@ void WD1793::processFDDMotorState()
     }
 }
 
+/// Monitor Force Interrupt conditions I0 and I1 (ready state transitions)
+/// I0: Not-Ready to Ready transition
+/// I1: Ready to Not-Ready transition  
+/// I2 is monitored in processFDDIndexStrobe()
+void WD1793::processForceInterruptConditions()
+{
+    // Skip if no interrupt conditions are being monitored
+    if (_interruptConditions == 0)
+    {
+        return;
+    }
+
+    // Get current ready state
+    bool currentReady = isReady();
+    
+    // Check for I0: Not-Ready to Ready transition
+    if (_interruptConditions & WD_FORCE_INTERRUPT_NOT_READY)
+    {
+        if (!_prevReady && currentReady)
+        {
+            MLOGINFO("Force Interrupt I0: INTRQ raised on Not-Ready->Ready transition");
+            raiseIntrq();
+            // Clear the I0 condition after triggering
+            _interruptConditions &= ~WD_FORCE_INTERRUPT_NOT_READY;
+        }
+    }
+
+    // Check for I1: Ready to Not-Ready transition
+    if (_interruptConditions & WD_FORCE_INTERRUPT_READY)
+    {
+        if (_prevReady && !currentReady)
+        {
+            MLOGINFO("Force Interrupt I1: INTRQ raised on Ready->Not-Ready transition");
+            raiseIntrq();
+            // Clear the I1 condition after triggering
+            _interruptConditions &= ~WD_FORCE_INTERRUPT_READY;
+        }
+    }
+
+    // Update previous ready state for next cycle
+    _prevReady = currentReady;
+}
+
 /// Emulate disk rotation and index strobe changes
 void WD1793::processFDDIndexStrobe()
 {
@@ -292,6 +343,15 @@ void WD1793::processFDDIndexStrobe()
 
             MLOGDEBUG("Index pulse #%u detected at T-state: %llu. Motor timeout remaining: %d T-states (%.2f ms)",
                       _indexPulseCounter, _time, _motorTimeoutTStates, _motorTimeoutTStates * 1000.0 / Z80_FREQUENCY);
+
+            // Force Interrupt I2 condition: generate interrupt on each index pulse
+            if (_interruptConditions & WD_FORCE_INTERRUPT_INDEX_PULSE)
+            {
+                MLOGINFO("Force Interrupt I2: INTRQ raised on index pulse #%u", _indexPulseCounter);
+                raiseIntrq();
+                // Clear the I2 condition after triggering (per datasheet behavior)
+                _interruptConditions &= ~WD_FORCE_INTERRUPT_INDEX_PULSE;
+            }
         }
 
         // Debug log for index pulse state changes
@@ -1269,7 +1329,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
 // Bit0 (J0) = 1 - Not-Ready to Ready transition
 // Bit1 (J1) = 1 - Ready to Not-Ready transition
 // Bit2 (J2) = 1 - Index pulse
-// Bit2 (J3) = 1 - Immediate interrupt
+// Bit3 (J3) = 1 - Immediate interrupt
 // If all bits [0:3] are not set (= 0) - terminate with no interrupt
 /// @details Upon receipt of any command, except the Force Interrupt command, the Busy Status bit is set and the
 /// rest of the status bits are updated or cleared for the new command.
@@ -1287,76 +1347,71 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     WDSTATE prevState = _state;
     [[maybe_unused]] WDSTATE prevState2 = _state2;
 
-    // Ensure we have only relevant parameter bits
-    value &= 0b0000'1111;
-    if (value != 0)
-    {
-        // Handling interrupts in decreasing priority
-
-        if (value & WD_FORCE_INTERRUPT_IMMEDIATE)  // Bit3 (J3) - Immediate interrupt
-        {
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)  // Bit2 (J2) - Every index pulse
-        {
-            // Not fully implemented
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_READY)  // Bit1 (J1) - Ready to Not-Ready transition
-        {
-            // Not fully implemented
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_NOT_READY)  // Bit0 (J0) - Not-Ready to Ready transition
-        {
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-    }
-    else  // Terminate with no interrupt
-    {
-        // Currently executed command is terminated and a BUSY flag is reset
-        _state = S_IDLE;
-        _state2 = S_IDLE;
-        _delayTStates = 0;
-
-        _statusRegister &= ~WDS_BUSY;  // Deactivate a busy flag
-        raiseIntrq();
-    }
+    // Terminate any current command - always happens regardless of I0-I3 flags
+    _state = S_IDLE;
+    _state2 = S_IDLE;
+    _delayTStates = 0;
+    _statusRegister &= ~WDS_BUSY;
+    clearDrq();
 
     // Clear operations FIFO
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
-    // Set status register according Type 1 command layout
+    // Extract only the interrupt condition bits (I0-I3)
+    value &= 0b0000'1111;
+
+    // Store interrupt conditions for monitoring (I0, I1, I2)
+    // I3 is handled immediately, so we only store I0-I2
+    _interruptConditions = value & 0b0000'0111;  // Mask out I3, keep I0, I1, I2
+
+    if (value == 0)  // $D0 - Terminate with NO interrupt
+    {
+        // Per datasheet: "If I0-I3 = 0, there is no interrupt generated but the current 
+        // command is terminated and busy is reset."
+        // DO NOT raise INTRQ - this is the key behavior for $D0
+        MLOGINFO("Force Interrupt $D0: Terminate without INTRQ");
+    }
+    else
+    {
+        // At least one interrupt condition is set
+        
+        if (value & WD_FORCE_INTERRUPT_IMMEDIATE)  // Bit3 (I3) - Immediate interrupt
+        {
+            // Immediate interrupt - generate INTRQ now
+            raiseIntrq();
+            MLOGINFO("Force Interrupt I3: Immediate interrupt");
+        }
+        else
+        {
+            // I0, I1, or I2 set - interrupt will be generated when condition occurs
+            // The actual interrupt generation happens in process() via monitoring
+            
+            if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)  // Bit2 (I2)
+            {
+                MLOGINFO("Force Interrupt I2: Interrupt on next index pulse");
+            }
+            
+            if (value & WD_FORCE_INTERRUPT_READY)  // Bit1 (I1)
+            {
+                // Store current ready state for transition detection
+                MLOGINFO("Force Interrupt I1: Interrupt on Ready->Not-Ready transition");
+            }
+            
+            if (value & WD_FORCE_INTERRUPT_NOT_READY)  // Bit0 (I0)
+            {
+                // Store current ready state for transition detection
+                MLOGINFO("Force Interrupt I0: Interrupt on Not-Ready->Ready transition");
+            }
+        }
+    }
+
+    // Update status register based on whether a command was executing
     if (noCommandExecuted)
     {
+        // Per datasheet: "If the Force Interrupt command is received when there is not a current 
+        // command under execution, the Busy Status bit is reset and the rest of the status bits 
+        // are updated or cleared. In this case, Status reflects the Type I commands."
         _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED);
         _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
@@ -1377,6 +1432,9 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     }
     else
     {
+        // Per datasheet: "If the Force Interrupt Command is received when there is a current 
+        // command under execution, the Busy status bit is reset, and the rest of the status 
+        // bits are unchanged."
         MLOGINFO("<<== FORCE_INTERRUPT, command interrupted");
         MLOGINFO("  Command: %s", getWD_COMMANDName(_lastDecodedCmd));
         MLOGINFO("  State: %s, State2: %s\n", WDSTATEToString(prevState).c_str(), WDSTATEToString(prevState2).c_str());

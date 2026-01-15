@@ -2184,19 +2184,335 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
 
 /// region <FORCE_INTERRUPT>
 
-TEST_F(WD1793_Test, DISABLED_ForceInterrupt_NotReadyToReady)
+/// Test Force Interrupt I0: Not-Ready to Ready transition
+/// Per WD1793 datasheet: I0=1 generates interrupt when drive transitions from Not-Ready to Ready
+TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
 {
-    FAIL() << "Not implemented yet";
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    // Disable all logging except error messages
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // De-activate WD1793 reset, Set active drive A, Select MFM / double density mode
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Start with NO disk inserted (Not-Ready state)
+    fdc._selectedDrive->ejectDisk();
+    
+    // Reset WDC internal time marks
+    fdc.resetTime();
+
+    // Pre-check: verify not ready
+    EXPECT_FALSE(fdc.isReady()) << "Drive should not be ready with no disk";
+
+    /// region <Send Force Interrupt command with I0=1>
+    {
+        const uint8_t forceInterruptCommand = 0b1101'0001;  // I0=1: Not-Ready to Ready transition
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+        
+        EXPECT_EQ(decodedCommand, WD1793::WD_CMD_FORCE_INTERRUPT);
+
+        // Send command to FDC
+        fdc._commandRegister = forceInterruptCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+        fdc.cmdForceInterrupt(commandValue);
+    }
+    /// endregion
+
+    // Verify I0 condition is set
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 
+              WD1793::WD_FORCE_INTERRUPT_NOT_READY) << "I0 condition should be set";
+    
+    // Verify no INTRQ yet (condition not triggered)
+    bool INTRQ_before = fdc._beta128status & WD1793::INTRQ;
+    EXPECT_FALSE(INTRQ_before) << "INTRQ should not be set before transition";
+
+    // Simulate some cycles - no interrupt should happen yet
+    for (size_t clk = 0; clk < TSTATES_IN_MS * 10; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+    }
+
+    // Still no interrupt (no transition occurred)
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should not be set without transition";
+
+    // Now trigger the Not-Ready to Ready transition
+    // Create and insert a disk image
+    DiskImage* diskImage = new DiskImage(80, 2);  // 80 cylinders, 2 sides
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc.startFDDMotor();
+
+    // Set _prevReady to false to ensure transition detection
+    fdc._prevReady = false;
+
+    // Process once to detect the transition
+    fdc._time += TEST_INCREMENT_TSTATES;
+    fdc.process();
+
+    // Verify INTRQ is now set
+    bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
+    EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after Not-Ready->Ready transition";
+    
+    // Verify I0 condition was cleared after triggering
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 0) 
+        << "I0 condition should be cleared after triggering";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
 }
 
-TEST_F(WD1793_Test, DISABLED_ForceInterrupt_ReadyToNotReady)
+/// Test Force Interrupt I1: Ready to Not-Ready transition
+/// Per WD1793 datasheet: I1=1 generates interrupt when drive transitions from Ready to Not-Ready
+TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
 {
-    FAIL() << "Not implemented yet";
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // De-activate WD1793 reset, Set active drive A
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Start with disk inserted (Ready state)
+    DiskImage* diskImage = new DiskImage(80, 2);  // 80 cylinders, 2 sides
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc.startFDDMotor();
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+
+    // Pre-check: verify ready
+    EXPECT_TRUE(fdc.isReady()) << "Drive should be ready with disk inserted";
+
+    /// region <Send Force Interrupt command with I1=1>
+    {
+        const uint8_t forceInterruptCommand = 0b1101'0010;  // I1=1: Ready to Not-Ready transition
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+
+        fdc._commandRegister = forceInterruptCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+        fdc.cmdForceInterrupt(commandValue);
+    }
+    /// endregion
+
+    // Verify I1 condition is set
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 
+              WD1793::WD_FORCE_INTERRUPT_READY) << "I1 condition should be set";
+
+    // Set _prevReady to true to ensure we can detect the transition
+    fdc._prevReady = true;
+
+    // Verify no INTRQ yet
+    fdc.clearIntrq();
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should not be set before transition";
+
+    // Trigger the Ready to Not-Ready transition - eject the disk
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+
+    // Process once to detect the transition
+    fdc._time += TEST_INCREMENT_TSTATES;
+    fdc.process();
+
+    // Verify INTRQ is now set
+    bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
+    EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after Ready->Not-Ready transition";
+    
+    // Verify I1 condition was cleared after triggering
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 0) 
+        << "I1 condition should be cleared after triggering";
 }
 
-TEST_F(WD1793_Test, DISABLED_ForceInterrupt_IndexPulse)
+/// Test Force Interrupt I2: Index pulse interrupt
+/// Per WD1793 datasheet: I2=1 generates interrupt on each index pulse
+TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
 {
-    FAIL() << "Not implemented yet";
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // De-activate WD1793 reset, Set active drive A
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Insert disk and start motor (required for index pulses)
+    DiskImage* diskImage = new DiskImage(80, 2);  // 80 cylinders, 2 sides
+    fdc._selectedDrive->insertDisk(diskImage);
+    
+    // Use prolongFDDMotorRotation() which sets proper motor timeout
+    fdc.prolongFDDMotorRotation();
+
+    // Reset WDC internal time marks - motor timeout is already set
+    fdc.resetTime();
+    
+    // Ensure motor timeout is restored after reset
+    fdc.prolongFDDMotorRotation();
+
+    /// region <Send Force Interrupt command with I2=1>
+    {
+        const uint8_t forceInterruptCommand = 0b1101'0100;  // I2=1: Index pulse interrupt
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+
+        fdc._commandRegister = forceInterruptCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+        fdc.cmdForceInterrupt(commandValue);
+    }
+    /// endregion
+
+    // Verify I2 condition is set
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 
+              WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE) << "I2 condition should be set";
+
+    // Clear any existing INTRQ
+    fdc.clearIntrq();
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should be cleared";
+
+    // Record initial index pulse counter
+    size_t initialPulseCount = fdc._indexPulseCounter;
+    
+    // Verify motor is on
+    EXPECT_TRUE(fdc._selectedDrive->getMotor()) << "Motor should be running";
+    EXPECT_GT(fdc._motorTimeoutTStates, 0) << "Motor timeout should be set";
+
+    // Simulate until we hit an index pulse (one full disk rotation = 200ms = 700,000 t-states)
+    // We need to run until we detect a rising edge of the index pulse
+    bool foundIndexPulse = false;
+    size_t lastTime = 0;
+    for (size_t clk = 0; clk < Z80_FREQUENCY / 5 + 10000; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc._lastTime = lastTime;  // Set last time for proper diffTime calculation
+        lastTime = clk;
+        fdc.process();
+
+        // Check if we got an index pulse
+        if (fdc._indexPulseCounter > initialPulseCount)
+        {
+            foundIndexPulse = true;
+            break;
+        }
+    }
+
+    EXPECT_TRUE(foundIndexPulse) << "Should have detected an index pulse";
+
+    // Verify INTRQ is now set
+    bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
+    EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after index pulse";
+    
+    // Verify I2 condition was cleared after triggering
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0) 
+        << "I2 condition should be cleared after triggering";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test Force Interrupt I3: Immediate interrupt
+/// Per WD1793 datasheet: I3=1 generates interrupt immediately
+TEST_F(WD1793_Test, ForceInterrupt_ImmediateInterrupt)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // De-activate WD1793 reset
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+    
+    // Clear any existing INTRQ
+    fdc.clearIntrq();
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should be cleared initially";
+
+    /// region <Send Force Interrupt command with I3=1>
+    {
+        const uint8_t forceInterruptCommand = 0b1101'1000;  // I3=1: Immediate interrupt
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+
+        EXPECT_EQ(decodedCommand, WD1793::WD_CMD_FORCE_INTERRUPT);
+
+        fdc._commandRegister = forceInterruptCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+        fdc.cmdForceInterrupt(commandValue);
+    }
+    /// endregion
+
+    // Verify INTRQ is immediately set (no need to process)
+    bool INTRQ = fdc._beta128status & WD1793::INTRQ;
+    EXPECT_TRUE(INTRQ) << "INTRQ should be set immediately for I3=1";
+    
+    // Verify controller is in idle state
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Controller should be in IDLE state";
+    
+    // Verify BUSY is cleared
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
+}
+
+/// Test Force Interrupt D0: Terminate with NO interrupt
+/// Per WD1793 datasheet: If I0-I3=0, command is terminated but NO interrupt is generated
+TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterrupt)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // De-activate WD1793 reset
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+
+    // Reset WDC internal time marks
+    fdc.resetTime();
+    
+    // Clear any existing INTRQ
+    fdc.clearIntrq();
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should be cleared initially";
+
+    /// region <Send Force Interrupt command with I0-I3=0 (D0 = 0xD0)>
+    {
+        const uint8_t forceInterruptCommand = 0b1101'0000;  // D0: All I flags = 0
+        WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+        uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+
+        EXPECT_EQ(decodedCommand, WD1793::WD_CMD_FORCE_INTERRUPT);
+        EXPECT_EQ(commandValue, 0) << "Command value should be 0 for $D0";
+
+        fdc._commandRegister = forceInterruptCommand;
+        fdc._lastDecodedCmd = decodedCommand;
+        fdc.cmdForceInterrupt(commandValue);
+    }
+    /// endregion
+
+    // KEY TEST: Verify INTRQ is NOT set for $D0
+    bool INTRQ = fdc._beta128status & WD1793::INTRQ;
+    EXPECT_FALSE(INTRQ) << "INTRQ should NOT be set for $D0 (terminate without interrupt)";
+    
+    // Verify controller is in idle state
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Controller should be in IDLE state";
+    
+    // Verify BUSY is cleared
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
+    
+    // Verify no interrupt conditions are set for monitoring
+    EXPECT_EQ(fdc._interruptConditions, 0) << "No interrupt conditions should be set for $D0";
 }
 
 TEST_F(WD1793_Test, ForceInterrupt_Terminate)

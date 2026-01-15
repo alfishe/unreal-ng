@@ -671,6 +671,7 @@ protected:
 
     // Force Interrupt command conditions (I0-I3 bits)
     uint8_t _interruptConditions = 0;  // Stores the interrupt condition flags from the Force Interrupt command
+    bool _prevReady = false;           // Previous drive ready state (for I0/I1 transition detection)
 
     // Debug logging state (instance-specific to avoid race conditions)
     uint64_t _lastDebugLogTime = 0;  // Last time debug log was printed (prevents log spam)
@@ -745,6 +746,7 @@ protected:
     void processFDDIndexStrobe();
     void prolongFDDMotorRotation();
     void processCountersAndTimeouts();
+    void processForceInterruptConditions();  // Monitor Force Interrupt I0/I1 conditions
     void startFDDMotor();
     void stopFDDMotor();
     void loadHead();
@@ -1073,6 +1075,11 @@ public:
     using WD1793::enterSleepMode;
     using WD1793::isSleeping;
     using WD1793::wakeUp;
+
+    // Force Interrupt condition fields and methods
+    using WD1793::_prevReady;
+    using WD1793::isReady;
+    using WD1793::processForceInterruptConditions;
 };
 
 #endif  // _CODE_UNDER_TEST
