@@ -2025,6 +2025,240 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 }
 /// endregion </READ_SECTOR>
 
+/// region <READ_TRACK>
+
+/// Test Read Track command - reads entire raw track (6250 bytes)
+/// Per WD1793 datasheet: Read Track starts reading after first index pulse and reads all 6250 bytes
+TEST_F(WD1793_Test, FSM_CMD_Read_Track)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds max
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;  // Larger steps for efficiency
+    static constexpr size_t const RAW_TRACK_SIZE = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    // Create and format a fresh disk image (avoids _diskImage pointer issues with loaded images)
+    DiskImage diskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
+    
+    // Write some non-zero data to track 0 for verification
+    DiskImage::Track* refTrack = diskImage.getTrack(0);
+    ASSERT_NE(refTrack, nullptr) << "Track 0 should exist";
+    for (int i = 0; i < 16; i++)
+    {
+        uint8_t* sectorData = refTrack->getDataForSector(i);
+        for (int j = 0; j < 256; j++)
+        {
+            sectorData[j] = static_cast<uint8_t>((i << 4) | (j & 0x0F));
+        }
+    }
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // De-activate WD1793 reset, Set active drive A, MFM mode
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Start motor to enable index pulse generation
+    fdc._selectedDrive->setMotor(true);
+    fdc.prolongFDDMotorRotation();  // Keep motor running during test
+
+    // Buffer for raw track data
+    std::vector<uint8_t> rawTrackData(RAW_TRACK_SIZE, 0);
+    size_t bytesRead = 0;
+
+    // Read Track command
+    const uint8_t readTrackCommand = 0b1110'0000;  // Read Track command
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(readTrackCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, readTrackCommand);
+    EXPECT_EQ(decodedCommand, WD1793CUT::WD_CMD_READ_TRACK);
+
+    // Setup for track 0, side 0
+    fdc._commandRegister = readTrackCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    fdc._sideUp = false;
+
+    // Trigger FDC command
+    fdc.cmdReadTrack(commandValue);
+
+    /// region <Simulation loop>
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc._lastTime = clk > TEST_INCREMENT_TSTATES ? clk - TEST_INCREMENT_TSTATES : 0;
+        fdc.process();
+
+        // Fetch data bytes when DRQ is asserted
+        if (fdc._beta128status & WD1793::DRQ)
+        {
+            if (bytesRead < RAW_TRACK_SIZE)
+            {
+                rawTrackData[bytesRead++] = fdc.readDataRegister();
+            }
+        }
+
+        // Check if command finished
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+    /// endregion </Simulation loop>
+
+    // Verify all bytes were read
+    EXPECT_EQ(bytesRead, RAW_TRACK_SIZE) << "Should read all " << RAW_TRACK_SIZE << " bytes";
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "FDC should be in IDLE state";
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
+
+    // Verify some data was actually read (not all zeros)
+    size_t nonZeroBytes = 0;
+    for (size_t i = 0; i < RAW_TRACK_SIZE && i < 256; i++)
+    {
+        if (rawTrackData[i] != 0) nonZeroBytes++;
+    }
+    EXPECT_GT(nonZeroBytes, 0) << "Track data should not be all zeros";
+}
+
+/// Test Write Track (Format) command - formats entire track with 6250 bytes
+/// Per WD1793 datasheet: Write Track starts after index pulse and writes until next index pulse
+TEST_F(WD1793_Test, FSM_CMD_Write_Track)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds max
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;  // Larger steps for efficiency
+    static constexpr size_t const RAW_TRACK_SIZE = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    // Create and format a fresh disk image
+    DiskImage diskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // De-activate WD1793 reset, Set active drive A, MFM mode
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Start motor to enable index pulse generation
+    fdc._selectedDrive->setMotor(true);
+    fdc.prolongFDDMotorRotation();
+
+    size_t bytesWritten = 0;
+    size_t formatDataIndex = 0;
+
+    // Simple format pattern: gap bytes (0x4E), then sync (0x00), then address marks
+    // For simplicity, we'll just write gap bytes for the entire track
+    std::vector<uint8_t> formatData(RAW_TRACK_SIZE, 0x4E);  // Fill with gap bytes
+
+    // Write Track command
+    const uint8_t writeTrackCommand = 0b1111'0000;  // Write Track command
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeTrackCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeTrackCommand);
+    EXPECT_EQ(decodedCommand, WD1793CUT::WD_CMD_WRITE_TRACK);
+
+    // Setup for track 0, side 0
+    fdc._commandRegister = writeTrackCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    fdc._sideUp = false;
+
+    // Trigger FDC command
+    fdc.cmdWriteTrack(commandValue);
+
+    /// region <Simulation loop>
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc._lastTime = clk > TEST_INCREMENT_TSTATES ? clk - TEST_INCREMENT_TSTATES : 0;
+        fdc.process();
+
+        // Feed data bytes when DRQ is asserted
+        if (fdc._beta128status & WD1793::DRQ)
+        {
+            if (formatDataIndex < RAW_TRACK_SIZE)
+            {
+                fdc.writeDataRegister(formatData[formatDataIndex++]);
+                bytesWritten++;
+            }
+        }
+
+        // Check if command finished
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+    /// endregion </Simulation loop>
+
+    // Verify bytes were written (may not be exactly 6250 depending on timing)
+    EXPECT_GT(bytesWritten, 0) << "Should write some bytes";
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "FDC should be in IDLE state";
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_WRITEPROTECTED) << "Write protect should not be set";
+}
+
+/// Test Write Track with write-protected disk - should reject immediately
+TEST_F(WD1793_Test, FSM_CMD_Write_Track_WriteProtect)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    // Create and format a fresh disk image
+    DiskImage diskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // Set write protection
+    fdc._selectedDrive->setWriteProtect(true);
+
+    // De-activate WD1793 reset, Set active drive A, MFM mode
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Write Track command
+    const uint8_t writeTrackCommand = 0b1111'0000;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeTrackCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeTrackCommand);
+
+    // Setup for track 0, side 0
+    fdc._commandRegister = writeTrackCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    fdc._sideUp = false;
+
+    // Trigger FDC command - should fail immediately due to write protect
+    fdc.cmdWriteTrack(commandValue);
+
+    // Process until IDLE or timeout
+    for (int i = 0; i < 100; i++)
+    {
+        fdc._time = i * 100;
+        fdc.process();
+        if (fdc._state == WD1793::S_IDLE) break;
+    }
+
+    // Verify write protect rejection
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_WRITEPROTECTED) << "Write protect status should be set";
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "FDC should be in IDLE state";
+}
+/// endregion </READ_TRACK>
+
 /// region <WRITE_SECTOR>
 TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
 {
@@ -2179,6 +2413,243 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_Single)
     }
 
     /// endregion </For all tracks and sectors>
+}
+
+/// Test Write Sector write protect rejection
+/// Per WD1793 datasheet: If disk is write protected, command should terminate with WDS_WRITEPROTECTED status
+TEST_F(WD1793_Test, FSM_CMD_Write_Sector_WriteProtect)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    /// region <Create empty disk image>
+    DiskImage diskImage = DiskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    ASSERT_EQ(imageFormatted, true) << "Empty test TRD image was not formatted";
+    /// endregion </Create empty disk image>
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // Enable write protection on the drive
+    fdc._selectedDrive->setWriteProtect(true);
+
+    // De-activate WD1793 reset, Set active drive A, Select MFM / double density mode
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Set up for sector write
+    const uint8_t writeSectorCommand = WD1793CUT::WD_COMMAND_BITS::WD_CMD_BITS_WRITE_SECTOR;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeSectorCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorCommand);
+    
+    fdc._commandRegister = writeSectorCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    fdc._sectorRegister = 1;
+
+    // Try to write to write-protected disk
+    fdc.cmdWriteSector(commandValue);
+
+    // The command should immediately terminate with WRITE PROTECT status
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_WRITEPROTECTED) << "Write protect status should be set";
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "Controller should not be busy after rejection";
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Controller should be in IDLE state after immediate termination";
+
+    // Clean up
+    fdc._selectedDrive->setWriteProtect(false);
+}
+
+/// Test Write Sector with multi-sector flag (m=1)
+/// Per WD1793 datasheet: When m=1, FDC continues to write consecutive sectors
+TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds max
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 10;
+    static constexpr size_t const SECTORS_TO_WRITE = 4;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    /// region <Create empty disk image>
+    DiskImage diskImage = DiskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
+    /// endregion </Create empty disk image>
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // De-activate WD1793 reset, Set active drive A
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Prepare test data - each sector has different pattern
+    uint8_t testData[SECTORS_TO_WRITE][TRD_SECTORS_SIZE_BYTES];
+    for (size_t sector = 0; sector < SECTORS_TO_WRITE; sector++)
+    {
+        for (size_t i = 0; i < TRD_SECTORS_SIZE_BYTES; i++)
+        {
+            testData[sector][i] = static_cast<uint8_t>((sector + 1) * 0x10 + (i & 0x0F));
+        }
+    }
+
+    // Write Sector command with multi-sector flag (m=1, bit 4)
+    const uint8_t writeSectorMultiCommand = WD1793CUT::WD_COMMAND_BITS::WD_CMD_BITS_WRITE_SECTOR | 0b0001'0000;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeSectorMultiCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorMultiCommand);
+
+    // Setup for writing starting at track 0, sector 1
+    fdc._commandRegister = writeSectorMultiCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    fdc._sectorRegister = 1;
+    fdc._sideUp = false;
+    
+    // Track current sector being written
+    size_t currentSector = 0;
+    size_t byteInSector = 0;
+
+    // Trigger FDC command
+    fdc.cmdWriteSector(commandValue);
+
+    /// region <Simulation loop>
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+
+        // Feed data when DRQ is active
+        if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+        {
+            if (currentSector < SECTORS_TO_WRITE && byteInSector < TRD_SECTORS_SIZE_BYTES)
+            {
+                fdc.writeDataRegister(testData[currentSector][byteInSector]);
+                byteInSector++;
+                
+                if (byteInSector >= TRD_SECTORS_SIZE_BYTES)
+                {
+                    // Move to next sector
+                    currentSector++;
+                    byteInSector = 0;
+                }
+            }
+        }
+
+        fdc.process();
+
+        // Check if command finished
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+    /// endregion </Simulation loop>
+
+    // Verify all sectors were written
+    EXPECT_EQ(currentSector, SECTORS_TO_WRITE) << "Should have written " << SECTORS_TO_WRITE << " sectors";
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "FDC should be in IDLE state";
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
+
+    // Verify written data matches
+    DiskImage::Track* track = diskImage.getTrack(0);
+    for (size_t sector = 0; sector < SECTORS_TO_WRITE; sector++)
+    {
+        uint8_t* sectorData = track->getDataForSector(sector);
+        ASSERT_TRUE(areUint8ArraysEqual(testData[sector], sectorData, TRD_SECTORS_SIZE_BYTES))
+            << "Sector " << sector << " data mismatch";
+    }
+}
+
+/// Test Write Sector with Deleted Data Mark (a0=1)
+/// Per WD1793 datasheet: WDS_RECORDTYPE (bit 5) reflects written data mark type
+TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 10;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    /// region <Create empty disk image>
+    DiskImage diskImage = DiskImage(80, 2);
+    LoaderTRDCUT loaderTrd(_context, "test.trd");
+    bool imageFormatted = loaderTrd.format(&diskImage);
+    ASSERT_TRUE(imageFormatted) << "Empty test TRD image was not formatted";
+    /// endregion </Create empty disk image>
+
+    WD1793CUT fdc(_context);
+    fdc._selectedDrive->insertDisk(&diskImage);
+
+    // De-activate WD1793 reset, Set active drive A
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    // Prepare test data
+    uint8_t sectorData[TRD_SECTORS_SIZE_BYTES];
+    for (size_t i = 0; i < TRD_SECTORS_SIZE_BYTES; i++)
+    {
+        sectorData[i] = static_cast<uint8_t>(i);
+    }
+    size_t byteIndex = 0;
+
+    // Write Sector command with Deleted Data Mark flag (a0=1, bit 0)
+    const uint8_t writeSectorDeletedCommand = WD1793CUT::WD_COMMAND_BITS::WD_CMD_BITS_WRITE_SECTOR | 0b0000'0001;
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeSectorDeletedCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorDeletedCommand);
+
+    // Verify command decodes correctly
+    EXPECT_EQ(decodedCommand, WD1793CUT::WD_CMD_WRITE_SECTOR);
+    EXPECT_TRUE(commandValue & 0x01) << "a0 bit should be set for deleted data mark";
+
+    // Setup for writing
+    fdc._commandRegister = writeSectorDeletedCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc._trackRegister = 0;
+    fdc._selectedDrive->setTrack(0);
+    fdc._sectorRegister = 1;
+    fdc._sideUp = false;
+
+    // Trigger FDC command
+    fdc.cmdWriteSector(commandValue);
+
+    // Verify _useDeletedDataMark was set
+    EXPECT_TRUE(fdc._useDeletedDataMark) << "_useDeletedDataMark should be set for a0=1";
+
+    /// region <Simulation loop>
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+
+        // Feed data when DRQ is active
+        if (fdc._state == WD1793::S_WRITE_BYTE && fdc._drq_out && !fdc._drq_served)
+        {
+            if (byteIndex < TRD_SECTORS_SIZE_BYTES)
+            {
+                fdc.writeDataRegister(sectorData[byteIndex++]);
+            }
+        }
+
+        fdc.process();
+
+        // Check if command finished
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+    /// endregion </Simulation loop>
+
+    // Verify completion
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "FDC should be in IDLE state";
+    EXPECT_EQ(byteIndex, TRD_SECTORS_SIZE_BYTES) << "All bytes should have been written";
+
+    // Verify WDS_RECORDTYPE (bit 5) is set for deleted data mark
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_RECORDTYPE) 
+        << "WDS_RECORDTYPE should be set for deleted data mark (F8)";
 }
 /// endregion </WRITE_SECTOR>
 
