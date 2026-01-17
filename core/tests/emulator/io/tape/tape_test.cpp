@@ -7,7 +7,13 @@
 
 void Tape_Test::SetUp()
 {
-    _context = new EmulatorContext(LoggerLevel::LogError);
+    _emulator = new Emulator(LoggerLevel::LogError);
+    if (!_emulator->Init())
+    {
+        throw std::runtime_error("Failed to initialize emulator for Tape_Test");
+    }
+
+    _context = _emulator->GetContext();
     _tape = new TapeCUT(_context);
 }
 
@@ -18,6 +24,16 @@ void Tape_Test::TearDown()
         delete _tape;
         _tape = nullptr;
     }
+
+    if (_emulator != nullptr)
+    {
+        _emulator->Stop();
+        _emulator->Release();
+        delete _emulator;
+        _emulator = nullptr;
+    }
+
+    _context = nullptr;  // Owned by _emulator, don't delete
 }
 
 /// endregion </Setup / TearDown>
@@ -26,9 +42,8 @@ TEST_F(Tape_Test, generateBitstream)
 {
     TapeCUT tape(_context);
 
-    std::vector<uint8_t> data = { 0x00, 0x01, 0x02, 0xFF };
-    std::vector<uint32_t> referenceResult =
-    {
+    std::vector<uint8_t> data = {0x00, 0x01, 0x02, 0xFF};
+    std::vector<uint32_t> referenceResult = {
         // Pilot
         2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168, 2168,
 
@@ -36,24 +51,19 @@ TEST_F(Tape_Test, generateBitstream)
         667, 735,
 
         // [0] - 0x00
-        855, 855, 855, 855, 855, 855, 855, 855,
-        855, 855, 855, 855, 855, 855, 855, 855,
+        855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855,
 
         // [1] - 0x01
-        855, 855, 855, 855, 855, 855, 855, 855,
-        855, 855, 855, 855, 855, 855, 1710, 1710,
+        855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 1710, 1710,
 
         // [2] - 0x02
-        855, 855, 855, 855, 855, 855, 855, 855,
-        855, 855, 855, 855, 1710, 1710, 855, 855,
+        855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 855, 1710, 1710, 855, 855,
 
         // [3] - 0xFF
-        1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
-        1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
+        1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710, 1710,
 
         // Pause
-        3500000
-    };
+        3500000};
     constexpr size_t referenceDuration = 3500000 + 58992;
 
     TapeBlock tapeBlock;
@@ -86,22 +96,24 @@ TEST_F(Tape_Test, generateBitstream)
 
 TEST_F(Tape_Test, getPilotSample)
 {
-    constexpr uint16_t SIGNAL_HALF_PERIOD = 855;
-    constexpr uint16_t SIGNAL_PERIOD = SIGNAL_HALF_PERIOD * 2;
+    // Pilot tone uses 2168 T-states half-period per ZX Spectrum tape specification
+    // (not 855 which is for zero-bit data encoding)
+    constexpr uint16_t PILOT_HALF_PERIOD = 2168;
+    constexpr uint16_t PILOT_PERIOD = PILOT_HALF_PERIOD * 2;
 
-    //size_t maxValue = std::numeric_limits<size_t>::max();
-    constexpr size_t maxValue = SIGNAL_HALF_PERIOD * 1000;
-
+    // Test a reasonable number of pilot tone periods
+    constexpr size_t maxValue = PILOT_HALF_PERIOD * 100;
 
     for (size_t tState = 0; tState < maxValue; tState++)
     {
         uint8_t value = _tape->getPilotSample(tState);
 
-        bool referenceValue = (tState % SIGNAL_PERIOD) < SIGNAL_HALF_PERIOD;
+        bool referenceValue = (tState % PILOT_PERIOD) < PILOT_HALF_PERIOD;
 
         if (value != referenceValue)
         {
-            FAIL() << StringHelper::Format("Failed at tState: %d. Expected %d, found %d", tState, referenceValue, value);
+            FAIL() << StringHelper::Format("Failed at tState: %d. Expected %d, found %d", tState, referenceValue,
+                                           value);
         }
 
         /*

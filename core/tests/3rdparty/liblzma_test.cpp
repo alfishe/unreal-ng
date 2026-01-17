@@ -35,7 +35,7 @@ protected:
     {
         fs::path current = startPath;
         int depth = 0;
-        const int maxDepth = 10; // Prevent infinite loops
+        const int maxDepth = 20; // Support deep build hierarchies (e.g., core/tests/cmake-build-release/bin/)
         
         // Look up the directory tree until we find the project root
         while (current.has_parent_path() && depth < maxDepth)
@@ -46,9 +46,15 @@ protected:
             bool hasTestData = fs::exists(current / "testdata");
             bool hasUnrealQt = fs::exists(current / "unreal-qt");
             bool hasCore = fs::exists(current / "core");
+            bool hasGit = fs::exists(current / ".git");
+            bool hasCMake = fs::exists(current / "CMakeLists.txt");
             
             // If we find all or most of the characteristic folders, this is likely the project root
-            if ((hasSrc && hasData && hasTestData) || (hasSrc && hasUnrealQt) || (hasCore && hasUnrealQt))
+            // Added .git check as a strong indicator of project root
+            if ((hasSrc && hasData && hasTestData) || 
+                (hasSrc && hasUnrealQt) || 
+                (hasCore && hasUnrealQt) ||
+                (hasGit && (hasCore || hasUnrealQt)))
             {
                 return current;
             }
@@ -58,7 +64,7 @@ protected:
         }
         
         // If we reach here, we couldn't find the project root
-        throw std::runtime_error("Could not find project root directory");
+        throw std::runtime_error("Could not find project root directory. Started at: " + startPath.string());
     }
 
     // Helper function to generate random data

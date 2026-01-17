@@ -30,7 +30,8 @@ def api_client():
 def active_emulator(api_client):
     """Creates a temporary emulator instance for testing and cleans it up."""
     # Setup: Create and start an emulator
-    response = api_client.create_and_start_emulator(model="ZX48K", ram_size=48)
+    # Use PENTAGON for disk tests - 48K doesn't have disk drives
+    response = api_client.create_and_start_emulator(model="PENTAGON")
     emulator_id = response["id"]
     
     # Wait for it to be running

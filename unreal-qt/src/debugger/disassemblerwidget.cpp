@@ -144,27 +144,43 @@ Emulator* DisassemblerWidget::getEmulator()
 
 EmulatorContext* DisassemblerWidget::getEmulatorContext()
 {
-    return m_debuggerWindow->getEmulator()->GetContext();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    return emu ? emu->GetContext() : nullptr;
 }
 
 Memory* DisassemblerWidget::getMemory()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullptr;
+    EmulatorContext* ctx = emu->GetContext();
+    return ctx ? ctx->pMemory : nullptr;
 }
 
 Z80Registers* DisassemblerWidget::getZ80Registers()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullptr;
+    EmulatorContext* ctx = emu->GetContext();
+    if (!ctx || !ctx->pCore) return nullptr;
+    return ctx->pCore->GetZ80();
 }
 
 std::unique_ptr<Z80Disassembler>& DisassemblerWidget::getDisassembler()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pDebugManager->GetDisassembler();
+    // Static empty unique_ptr for null case
+    static std::unique_ptr<Z80Disassembler> nullDisassembler;
+    
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullDisassembler;
+    EmulatorContext* ctx = emu->GetContext();
+    if (!ctx || !ctx->pDebugManager) return nullDisassembler;
+    return ctx->pDebugManager->GetDisassembler();
 }
 
 BreakpointManager* DisassemblerWidget::getBreakpointManager() const
 {
-    return m_debuggerWindow->getEmulator()->GetBreakpointManager();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    return emu ? emu->GetBreakpointManager() : nullptr;
 }
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
