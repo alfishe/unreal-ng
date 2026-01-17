@@ -7,6 +7,8 @@
 class TileGrid;
 class EmulatorManager;
 class Automation;
+class EmulatorTile;
+class AppSoundManager;
 
 /**
  * @brief Main window for the video wall application
@@ -68,10 +70,20 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
 
+private slots:
+    /// Handle tile click for audio binding (toggle)
+    void onTileClicked(EmulatorTile* tile);
+
 private:
     void setupUI();
     void createMenus();
     void createDefaultPresets();
+
+    /// Bind audio device to the specified tile's emulator
+    void bindAudioToTile(EmulatorTile* tile);
+    
+    /// Unbind audio from current tile (mute)
+    void unbindAudioFromTile();
 
     /// Set sound feature for all tiles (performance optimization)
     void setSoundForAllTiles(bool enabled);
@@ -84,6 +96,12 @@ private:
 
     // Emulator management (singleton, not owned)
     EmulatorManager* _emulatorManager = nullptr;
+
+    // Sound manager for audio binding
+    AppSoundManager* _soundManager = nullptr;
+
+    // Currently audio-bound tile (only one at a time)
+    EmulatorTile* _audioBoundTile = nullptr;
 
     // Automation system (WebAPI, CLI, Python, Lua)
     std::unique_ptr<Automation> _automation;

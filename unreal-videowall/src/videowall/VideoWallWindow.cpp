@@ -19,6 +19,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "emulator/soundmanager.h"
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileGrid.h"
 
@@ -32,6 +33,18 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
     _automation->start();
     qDebug() << "Automation modules initialized and started";
 #endif  // ENABLE_AUTOMATION
+
+    // Initialize sound manager for audio binding to focused tile
+    _soundManager = new AppSoundManager();
+    if (_soundManager->init())
+    {
+        _soundManager->start();
+        qDebug() << "Sound manager initialized and started";
+    }
+    else
+    {
+        qWarning() << "Failed to initialize sound manager";
+    }
 
     setupUI();
     createMenus();
@@ -51,7 +64,17 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
     setWindowTitle(tr("Unreal Speccy Video Wall"));
 }
 
-VideoWallWindow::~VideoWallWindow() {}
+VideoWallWindow::~VideoWallWindow()
+{
+    // Clean up sound manager
+    if (_soundManager)
+    {
+        _soundManager->stop();
+        _soundManager->deinit();
+        delete _soundManager;
+        _soundManager = nullptr;
+    }
+}
 
 void VideoWallWindow::setupUI()
 {
@@ -137,6 +160,10 @@ void VideoWallWindow::addEmulatorTile()
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);
+        
+        // Connect tile click signal for audio binding (only on user click, not Qt auto-focus)
+        connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
+        
         _tileGrid->addTile(tile);
     }
 }
@@ -699,4 +726,88 @@ void VideoWallWindow::toggleScreenHQForAllTiles()
 
     qDebug() << "Screen HQ" << (_screenHQEnabled ? "enabled" : "disabled") << "for" << successCount << "/"
              << tiles.size() << "tiles";
+}
+
+void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
+{
+    if (!_soundManager || !tile || !tile->emulator())
+    {
+        qWarning() << "VideoWallWindow::bindAudioToTile - Invalid parameters";
+        return;
+    }
+
+    auto emulator = tile->emulator();
+
+    // Unbind from previous tile if different
+    if (_audioBoundTile && _audioBoundTile != tile && _audioBoundTile->emulator())
+    {
+        auto prevEmulator = _audioBoundTile->emulator();
+
+        // Clear audio callback from previous emulator
+        prevEmulator->ClearAudioCallback();
+
+        // Disable sound generation for previous tile (saves CPU)
+        if (auto* fm = prevEmulator->GetFeatureManager())
+        {
+            fm->setFeature(Features::kSoundGeneration, false);
+        }
+
+        qDebug() << "Audio unbound from tile:" << QString::fromStdString(prevEmulator->GetUUID());
+    }
+
+    // Enable sound generation for focused tile
+    if (auto* fm = emulator->GetFeatureManager())
+    {
+        fm->setFeature(Features::kSoundGeneration, true);
+    }
+
+    // Bind audio callback to new emulator
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback);
+
+    _audioBoundTile = tile;
+    qDebug() << "Audio bound to tile:" << QString::fromStdString(emulator->GetUUID());
+}
+
+void VideoWallWindow::onTileClicked(EmulatorTile* tile)
+{
+    // Toggle behavior: if clicking already-bound tile, unbind (mute)
+    if (_audioBoundTile == tile)
+    {
+        unbindAudioFromTile();
+        // Clear Qt focus so tile loses visual highlight (blue border)
+        tile->clearFocus();
+    }
+    else
+    {
+        // Clear focus from previous tile if any
+        if (_audioBoundTile)
+        {
+            _audioBoundTile->clearFocus();
+        }
+        bindAudioToTile(tile);
+        // Set focus to show blue border on selected tile
+        tile->setFocus();
+    }
+}
+
+void VideoWallWindow::unbindAudioFromTile()
+{
+    if (!_audioBoundTile || !_audioBoundTile->emulator())
+    {
+        return;
+    }
+
+    auto emulator = _audioBoundTile->emulator();
+
+    // Clear audio callback
+    emulator->ClearAudioCallback();
+
+    // Disable sound generation (saves CPU)
+    if (auto* fm = emulator->GetFeatureManager())
+    {
+        fm->setFeature(Features::kSoundGeneration, false);
+    }
+
+    qDebug() << "Audio unbound from tile:" << QString::fromStdString(emulator->GetUUID());
+    _audioBoundTile = nullptr;
 }

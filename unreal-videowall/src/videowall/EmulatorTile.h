@@ -35,6 +35,10 @@ public:
         return _hasTileFocus;
     }
 
+signals:
+    /// Emitted when user clicks this tile (NOT on Qt auto-focus)
+    void tileClicked(EmulatorTile* tile);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;

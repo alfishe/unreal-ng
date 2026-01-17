@@ -97,6 +97,8 @@ void EmulatorTile::paintEvent(QPaintEvent* event)
 void EmulatorTile::focusInEvent(QFocusEvent* event)
 {
     _hasTileFocus = true;
+    // NOTE: Do NOT emit signal here - this triggers on Qt auto-focus (window transitions)
+    // Audio binding should only happen from user clicks (mousePressEvent)
     update();
     QWidget::focusInEvent(event);
 }
@@ -217,7 +219,8 @@ void EmulatorTile::dropEvent(QDropEvent* event)
 
 void EmulatorTile::mousePressEvent(QMouseEvent* event)
 {
-    setFocus();
+    // Emit click signal - VideoWallWindow handles focus and audio binding
+    emit tileClicked(this);
     QWidget::mousePressEvent(event);
 }
 
