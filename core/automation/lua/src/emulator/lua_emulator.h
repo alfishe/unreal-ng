@@ -5,6 +5,8 @@
 #include <emulator/memory/memory.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
+#include <debugger/analyzers/basic-lang/basicencoder.h>
+#include <debugger/analyzers/basic-lang/basicextractor.h>
 
 class LuaEmulator
 {
@@ -85,6 +87,130 @@ public:
             ctx->coreState.diskFilePaths[drive] = "<blank>";
             
             return true;
+        });
+
+        // BASIC control functions
+        // basic_run([command]) -> table {success, message, basic_mode}
+        // Execute a BASIC command (defaults to "RUN" if no command specified)
+        lua.set_function("basic_run", [this](sol::this_state L, sol::optional<std::string> cmd) -> sol::table {
+            sol::state_view lua(L);
+            sol::table result = lua.create_table();
+            if (!_emulator) {
+                result["success"] = false;
+                result["message"] = "No emulator available";
+                return result;
+            }
+            
+            Memory* memory = _emulator->GetMemory();
+            if (!memory) {
+                result["success"] = false;
+                result["message"] = "Memory subsystem not available";
+                return result;
+            }
+            
+            std::string command = cmd.value_or("RUN");
+            
+            // Check if we're on 128K menu
+            auto state = BasicEncoder::detectState(memory);
+            if (state == BasicEncoder::BasicState::Menu128K) {
+                BasicEncoder::navigateToBasic128K(memory);
+                BasicEncoder::injectEnter(memory);
+                result["success"] = true;
+                result["message"] = "Detected 128K menu, navigating to BASIC. Retry command after transition.";
+                result["state"] = "menu_transition";
+                return result;
+            }
+            
+            // Inject and execute command
+            std::string injResult = BasicEncoder::injectCommand(memory, command);
+            BasicEncoder::injectEnter(memory);
+            
+            result["success"] = true;
+            result["command"] = command;
+            result["message"] = "Command injected and executed";
+            result["basic_mode"] = (state == BasicEncoder::BasicState::Basic48K) ? "48K" : "128K";
+            
+            return result;
+        });
+
+        // basic_inject(program) -> bool
+        // Inject a BASIC program into memory without executing
+        lua.set_function("basic_inject", [this](const std::string& program) -> bool {
+            if (!_emulator) return false;
+            Memory* memory = _emulator->GetMemory();
+            if (!memory) return false;
+            
+            BasicEncoder encoder;
+            return encoder.loadProgram(memory, program);
+        });
+
+        // basic_extract() -> string
+        // Extract the current BASIC program from memory
+        lua.set_function("basic_extract", [this]() -> std::string {
+            if (!_emulator) return "";
+            Memory* memory = _emulator->GetMemory();
+            if (!memory) return "";
+            
+            BasicExtractor extractor;
+            return extractor.extractFromMemory(memory);
+        });
+
+        // basic_clear() -> bool
+        // Clear the BASIC program in memory (equivalent to NEW command)
+        lua.set_function("basic_clear", [this]() -> bool {
+            if (!_emulator) return false;
+            Memory* memory = _emulator->GetMemory();
+            if (!memory) return false;
+            
+            BasicEncoder encoder;
+            return encoder.loadProgram(memory, "");
+        });
+
+        // basic_state() -> table {state, in_editor, ready_for_commands}
+        // Get the current BASIC environment state
+        lua.set_function("basic_state", [this](sol::this_state L) -> sol::table {
+            sol::state_view lua(L);
+            sol::table result = lua.create_table();
+            if (!_emulator) {
+                result["state"] = "unknown";
+                result["in_editor"] = false;
+                result["ready_for_commands"] = false;
+                return result;
+            }
+            
+            Memory* memory = _emulator->GetMemory();
+            if (!memory) {
+                result["state"] = "unknown";
+                result["in_editor"] = false;
+                result["ready_for_commands"] = false;
+                return result;
+            }
+            
+            auto state = BasicEncoder::detectState(memory);
+            bool isInEditor = BasicEncoder::isInBasicEditor(memory);
+            
+            result["in_editor"] = isInEditor;
+            
+            switch (state) {
+                case BasicEncoder::BasicState::Menu128K:
+                    result["state"] = "menu128k";
+                    result["ready_for_commands"] = false;
+                    break;
+                case BasicEncoder::BasicState::Basic128K:
+                    result["state"] = "basic128k";
+                    result["ready_for_commands"] = true;
+                    break;
+                case BasicEncoder::BasicState::Basic48K:
+                    result["state"] = "basic48k";
+                    result["ready_for_commands"] = true;
+                    break;
+                default:
+                    result["state"] = "unknown";
+                    result["ready_for_commands"] = false;
+                    break;
+            }
+            
+            return result;
         });
 
         // Set the emulator instance in the Lua environment

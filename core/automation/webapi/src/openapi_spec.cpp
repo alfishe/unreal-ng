@@ -452,6 +452,76 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["responses"]["200"]["description"] =
         "Snapshot status information";
 
+    // BASIC Control endpoints
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["summary"] = "Execute BASIC command";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["description"] = 
+        "Inject and execute a BASIC command. If no command specified, executes RUN. "
+        "Automatically handles 128K menu navigation if needed.";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["command"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["command"]["description"] = "BASIC command to execute (e.g., 'FORMAT \"a\"', 'RUN', 'LIST')";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["description"] = 
+        "Command injected and executed";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["404"]["description"] = "Emulator not found";
+
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["summary"] = "Inject BASIC program";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["description"] = 
+        "Inject a multi-line BASIC program into memory without executing. "
+        "Lines should be separated by newlines and include line numbers.";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["program"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["program"]["description"] = "BASIC program text (e.g., '10 PRINT \"HELLO\"\\n20 GOTO 10')";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["200"]["description"] = 
+        "Program injected successfully";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["400"]["description"] = 
+        "Missing program parameter";
+
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["summary"] = "Extract BASIC program";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["description"] = 
+        "Extract the current BASIC program from emulator memory as plain text.";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["responses"]["200"]["description"] = 
+        "BASIC program as text";
+
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["summary"] = "Clear BASIC program";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["description"] = 
+        "Clear the BASIC program in memory (equivalent to NEW command).";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["responses"]["200"]["description"] = 
+        "Program cleared";
+
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["summary"] = "Get BASIC environment state";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["description"] = 
+        "Get the current BASIC environment state (48K/128K mode, menu vs editor, ready for commands).";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["description"] = 
+        "BASIC state information";
+
     // Settings Management endpoints
     paths["/api/v1/emulator/{id}/settings"]["get"]["summary"] = "Get all emulator settings";
     paths["/api/v1/emulator/{id}/settings"]["get"]["tags"].append("Settings Management");

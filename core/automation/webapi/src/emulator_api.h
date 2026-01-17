@@ -92,6 +92,15 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
     // endregion Tape/Disk/Snapshot Control
 
+    // region BASIC Control (implementation: api/basic_api.cpp)
+    // BASIC command execution and program management
+    ADD_METHOD_TO(EmulatorAPI::basicRun, "/api/v1/emulator/{id}/basic/run", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::basicInject, "/api/v1/emulator/{id}/basic/inject", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::basicExtract, "/api/v1/emulator/{id}/basic/extract", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::basicClear, "/api/v1/emulator/{id}/basic/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::basicState, "/api/v1/emulator/{id}/basic/state", drogon::Get);
+    // endregion BASIC Control
+
     // region Settings Management (implementation: api/settings_api.cpp)
     // Settings management
     ADD_METHOD_TO(EmulatorAPI::getSettings, "/api/v1/emulator/{id}/settings", drogon::Get);
@@ -270,6 +279,19 @@ public:
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
+
+    // region BASIC Control Methods (implementation: api/basic_api.cpp)
+    void basicRun(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void basicInject(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void basicExtract(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void basicClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void basicState(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    // endregion BASIC Control Methods
 
     // region Settings Management Methods (implementation: api/settings_api.cpp)
     // Settings management

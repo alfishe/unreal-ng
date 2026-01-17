@@ -165,6 +165,7 @@ set(COMMON_SOURCES
     src/api/state_audio_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
+    src/api/basic_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
     src/automation-webapi.cpp
