@@ -910,8 +910,13 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
+            
+            // Store file path for API queries
+            _context->coreState.diskFilePaths[0] = resolvedPath;
 
             /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded TRD disk
         }
     }
 
@@ -948,7 +953,13 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
+            
+            // Store file path for API queries
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            
             /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded SCL disk
         }
     }
 
@@ -1301,7 +1312,7 @@ std::string Emulator::GetStatistics()
 
     std::string result = StringHelper::Format("  Frame: %d\n", state.frame_counter);
     result +=
-        StringHelper::Format("  CPU cycles: %s\n", StringHelper::FormatWithThousandsDelimiter(z80.cycle_count).c_str());
+        StringHelper::Format("  t (frame-relative): %s\n", StringHelper::FormatWithThousandsDelimiter(z80.t).c_str());
     result += StringHelper::Format("  Memory:\n    %s\n", memory.DumpMemoryBankInfo().c_str());
     result += StringHelper::Format("  CPU: %s", cpuState.c_str());
 

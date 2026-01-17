@@ -2,7 +2,9 @@
 
 ## Overview
 
-Command Code: **`101m SPCE a0`** (e.g., `0xA8` for single sector, side 0, 15ms delay, normal DAM)
+Command Code: **`101m S E C a0`** (Bit 4=m, Bit 3=S, Bit 2=E, Bit 1=C, Bit 0=a0)
+
+Example: `0xA8` = single sector, side 0, 15ms delay, no side compare, normal DAM
 
 The Write Sector command locates a specific sector ID field on the disk and, if found and valid, writes a new data field (including preamble, DAM, data bytes supplied by the host, and CRC) immediately following it. Handshaking with the host for data bytes occurs via the DRQ signal.
 

@@ -100,6 +100,7 @@ public:
     bool isTrack00() { return _track == 0; }
     bool isIndex() { return _index; }
     bool isWriteProtect() { return _writeProtect; }
+    void setWriteProtect(bool protect) { _writeProtect = protect; }
     bool isReady() { return _ready; }
 
     bool isDiskInserted() { return _diskInserted; }

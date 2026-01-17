@@ -4,15 +4,23 @@ Dump shared memory pages from ZX-Spectrum Emulator
 
 This script connects to the emulator's shared memory and dumps all memory pages
 into separate files, organized by memory region type (ROM, RAM, CACHE, MISC).
+
+Usage:
+    # Auto-select single emulator
+    python dump_shared_memory.py
+    
+    # Specify emulator by index or ID
+    python dump_shared_memory.py --emulator 1
+    python dump_shared_memory.py --emulator abc123def456
 """
 
 import os
 import sys
 import argparse
-import psutil
 import mmap
 import hashlib
 import platform
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple, BinaryIO
@@ -21,12 +29,25 @@ from typing import Optional, Dict, List, Tuple, BinaryIO
 IS_WINDOWS = platform.system() == 'Windows'
 IS_MACOS = platform.system() == 'Darwin'
 IS_LINUX = platform.system() == 'Linux'
-if IS_WINDOWS:
-    import win32con
-    import win32api
-    import pywintypes
-else:
-    import posix_ipc
+
+# Import the emulator discovery module
+try:
+    from emulator_discovery import (
+        discover_emulators, select_emulator, connect_to_shared_memory,
+        add_emulator_args, discover_and_select, cleanup_shared_memory,
+        EmulatorInfo
+    )
+    USE_WEBAPI_DISCOVERY = True
+except ImportError:
+    print("Warning: emulator_discovery module not found, using legacy PID-based discovery")
+    USE_WEBAPI_DISCOVERY = False
+    import psutil
+    if IS_WINDOWS:
+        import win32con
+        import win32api
+        import pywintypes
+    else:
+        import posix_ipc
 
 # Import PIL for image processing
 try:
@@ -34,60 +55,6 @@ try:
 except ImportError:
     print("Warning: PIL/Pillow not installed. Screen extraction will be disabled.")
     print("Install with: pip install pillow")
-
-def find_emulator_process() -> Optional[int]:
-    """Find a running emulator process and return its PID.
-    
-    Searches for processes with names 'unreal-ng' or 'unreal-qt' across all platforms.
-    
-    Returns:
-        int or None: PID of the emulator process if found, None otherwise
-    """
-    # Define the target process names to look for
-    target_names = ['unreal-ng', 'unreal-qt']
-    
-    if IS_WINDOWS:
-        # Windows: Look for exact executable names with .exe extension
-        windows_targets = [name + '.exe' for name in target_names] + target_names
-        
-        for proc in psutil.process_iter(['pid', 'exe', 'name']):
-            try:
-                # Check executable name
-                if proc.info.get('exe'):
-                    exe_name = os.path.basename(proc.info['exe'])
-                    if exe_name in windows_targets:
-                        return proc.info['pid']
-                        
-                # Fallback to process name
-                if proc.info.get('name') and proc.info['name'] in windows_targets:
-                    return proc.info['pid']
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-    else:
-        # Unix/Linux/macOS: Check executable names and command line
-        for proc in psutil.process_iter(['pid', 'exe', 'name', 'cmdline']):
-            try:
-                # Check executable name
-                if proc.info.get('exe'):
-                    exe_name = os.path.basename(proc.info['exe'])
-                    if exe_name in target_names:
-                        return proc.info['pid']
-                        
-                # Check process name
-                if proc.info.get('name') and proc.info['name'] in target_names:
-                    return proc.info['pid']
-                    
-                # Check command line for exact matches
-                if proc.info.get('cmdline'):
-                    for cmd in proc.info['cmdline']:
-                        # Check for exact name or path ending with the name
-                        for name in target_names:
-                            if cmd == name or cmd.endswith('/' + name):
-                                return proc.info['pid']
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-                
-    return None
 
 def _connect_to_shared_memory_windows(pid: int):
     """Connect to the emulator's shared memory on Windows."""
@@ -266,7 +233,7 @@ def _connect_to_shared_memory_linux(pid):
 
     return None
 
-def connect_to_shared_memory(pid: int):
+def _connect_to_shared_memory_legacy(pid: int):
     """Connect to the emulator's shared memory.
     
     Args:
@@ -788,9 +755,19 @@ def main() -> int:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_folder = f"memory_dump_{timestamp}"
 
-    parser = argparse.ArgumentParser(description='Dump ZX-Spectrum emulator memory to files')
+    parser = argparse.ArgumentParser(
+        description='Dump ZX-Spectrum emulator memory to files',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                          # Auto-select if single emulator
+  %(prog)s --emulator 1             # Select first emulator
+  %(prog)s --emulator abc123        # Select by ID suffix
+  %(prog)s -o my_dump -v            # Custom output, verbose
+"""
+    )
     parser.add_argument('-o', '--output', default=output_folder,
-                      help='Output directory (default: memory_dump)')
+                      help='Output directory (default: memory_dump_<timestamp>)')
     parser.add_argument('--no-screens', action='store_true',
                       help='Do not extract screen images')
     parser.add_argument('--no-skip-empty', dest='skip_empty', action='store_false',
@@ -800,24 +777,46 @@ def main() -> int:
                       action='store_true',
                       help='Enable verbose output (shows progress and details)')
     
+    # Add WebAPI emulator discovery arguments if available
+    if USE_WEBAPI_DISCOVERY:
+        add_emulator_args(parser)
+    
     args = parser.parse_args()
-    
-    # Find the emulator process
-    pid = find_emulator_process()
-    if not pid:
-        print("Error: Could not find the emulator process. Please make sure the emulator is running.")
-        return 1
-    
-    if args.verbose:
-        print(f"Found emulator process with PID: {pid}")
     
     # Initialize shm to None for the finally block
     shm = None
+    
     try:
-        # Connect to shared memory
-        shm = connect_to_shared_memory(pid)
-        if not shm:
-            return 1
+        if USE_WEBAPI_DISCOVERY:
+            # Use WebAPI-based discovery
+            emulator = discover_and_select(args)
+            if not emulator:
+                return 1
+            
+            if args.verbose:
+                print(f"Selected emulator: {emulator.display_name}")
+            
+            # Connect to shared memory using instance ID
+            shm = connect_to_shared_memory(emulator)
+            if not shm:
+                print("\nTip: Make sure the 'sharedmemory' feature is enabled:")
+                print("     feature sharedmemory on")
+                return 1
+        else:
+            # Legacy: Find emulator by PID
+            pid = find_emulator_process()
+            if not pid:
+                print("Error: Could not find the emulator process.")
+                print("Please make sure the emulator is running.")
+                return 1
+            
+            if args.verbose:
+                print(f"Found emulator process with PID: {pid}")
+            
+            # Connect to shared memory using PID (legacy)
+            shm = _connect_to_shared_memory_legacy(pid)
+            if not shm:
+                return 1
             
         # Dump memory pages
         if args.verbose:
@@ -840,7 +839,7 @@ def main() -> int:
         
     finally:
         # Ensure shared memory is properly closed
-        cleanup_shared_memory(shm, verbose=args.verbose)
+        cleanup_shared_memory(shm, verbose=args.verbose if hasattr(args, 'verbose') else False)
 
 if __name__ == "__main__":
     sys.exit(main())

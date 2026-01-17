@@ -1,18 +1,16 @@
-#include "stdafx.h"
-
-#include "common/modulelogger.h"
-
 #include "core.h"
+
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include "emulator/io/fdc/wd1793.h"
+
+#include "common/modulelogger.h"
 #include "emulator/io/fdc/vg93.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
 #include "emulator/video/zx/screenzx.h"
-
-
+#include "stdafx.h"
 
 // Instantiate Core tables as static (only one instance per process)
 CPUTables Core::_cpuTables;
@@ -52,18 +50,18 @@ bool Core::Init()
 
     /// region <Frequency>
 
-    uint32_t baseFrequency = 3'500'000; // Make 3.5MHz by default
+    uint32_t baseFrequency = 3'500'000;  // Make 3.5MHz by default
 
     // See: https://k1.spdns.de/Develop/Projects/zxsp-osx/Info/nocash%20Sinclair%20ZX%20Specs.html
     // See: https://worldofspectrum.org/faq/reference/128kreference.htm
     switch (_context->config.mem_model)
     {
-        [[maybe_unused]] MM_SPECTRUM48:
-            baseFrequency = 3'500'000;
-            break;
-        [[maybe_unused]] MM_SPECTRUM128:
-            baseFrequency = 3'546'900;
-            break;
+    [[maybe_unused]] MM_SPECTRUM48:
+        baseFrequency = 3'500'000;
+        break;
+    [[maybe_unused]] MM_SPECTRUM128:
+        baseFrequency = 3'546'900;
+        break;
         default:
             baseFrequency = 3'500'000;
             break;
@@ -229,7 +227,7 @@ bool Core::Init()
         result = false;
 
         // Create Video controller
-        VideoModeEnum mode = M_ZX48; // Make ZX the default video mode on start
+        VideoModeEnum mode = M_ZX48;  // Make ZX the default video mode on start
         _screen = VideoController::GetScreenForMode(mode, _context);
         if (_screen)
         {
@@ -251,7 +249,7 @@ bool Core::Init()
         _z80 = new Z80(_context);
         if (_z80)
         {
-            UseFastMemoryInterface();    // Use fast memory interface by default
+            UseFastMemoryInterface();  // Use fast memory interface by default
 
             result = true;
         }
@@ -415,32 +413,32 @@ void Core::UseDebugMemoryInterface()
 
 void Core::Reset()
 {
-	MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-	int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
-	messageCenter.Post(topicID, new SimpleTextPayload("Core reset started"));
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    int topicID = messageCenter.RegisterTopic(NC_SYSTEM_RESET);
+    messageCenter.Post(topicID, new SimpleTextPayload("Core reset started"));
 
-	// Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-	_mode = static_cast<ROMModeEnum>(_config->reset_rom);
+    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
+    _mode = static_cast<ROMModeEnum>(_config->reset_rom);
 
-	// Reset main Z80 Core and all peripherals
-	_z80->Reset();					// Main Z80
-	_memory->Reset();               // Memory
-	_keyboard->Reset();             // Keyboard
-	_sound->reset();				// All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
-	_screen->Reset();               // Reset all video subsystem
-    _tape->reset();                 // Reset tape loader state
-    _betaDisk->reset();             // BetaDisk floppy controller
-	_hdd->Reset();					// Reset IDE controller
-    _portDecoder->reset();          // Reset peripheral port decoder
+    // Reset main Z80 Core and all peripherals
+    _z80->Reset();          // Main Z80
+    _memory->Reset();       // Memory
+    _keyboard->Reset();     // Keyboard
+    _sound->reset();        // All sound devices (AY(s), COVOX, MoonSound, GS) and sound subsystem
+    _screen->Reset();       // Reset all video subsystem
+    _tape->reset();         // Reset tape loader state
+    _betaDisk->reset();     // BetaDisk floppy controller
+    _hdd->Reset();          // Reset IDE controller
+    _portDecoder->reset();  // Reset peripheral port decoder
 
-	// Input controllers reset
-	//input.atm51.reset();
-	// input.buffer.Enable(false);
+    // Input controllers reset
+    // input.atm51.reset();
+    // input.buffer.Enable(false);
 
-	// Reset counters
+    // Reset counters
     _state->frame_counter = 0;
 
-	messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
+    messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
 
 void Core::Pause()
@@ -463,11 +461,11 @@ void Core::Resume()
 //
 void Core::SetCPUClockSpeed(uint8_t multiplier)
 {
-	if (multiplier == 0)
-	{
-		LOGERROR("Core::SetCPUClockSpeed - Z80 clock frequency multiplier cannot be 0");
-		assert(false);
-	}
+    if (multiplier == 0)
+    {
+        LOGERROR("Core::SetCPUClockSpeed - Z80 clock frequency multiplier cannot be 0");
+        assert(false);
+    }
 
     _z80->rate = (256 / multiplier);
 }
@@ -494,7 +492,7 @@ uint16_t Core::GetCPUFrequencyMultiplier()
 void Core::SetSpeedMultiplier(uint8_t multiplier)
 {
     // Validate multiplier is one of allowed values (use static list)
-    static const std::array<uint8_t, 5> allowedMultipliers = { 1, 2, 4, 8, 16 };
+    static const std::array<uint8_t, 5> allowedMultipliers = {1, 2, 4, 8, 16};
     if (std::find(allowedMultipliers.begin(), allowedMultipliers.end(), multiplier) == allowedMultipliers.end())
     {
         LOGERROR("Core::SetSpeedMultiplier - Speed multiplier must be one of {1,2,4,8,16} (got %d)", multiplier);
@@ -522,15 +520,15 @@ void Core::EnableTurboMode(bool withAudio)
 {
     _context->config.turbo_mode = true;
     _context->config.turbo_mode_audio = withAudio;
-    
+
     // Always mute audible output in turbo mode to avoid chipmunk sounds
     // Audio generation may still occur if withAudio=true (for recording)
     if (_context->pSoundManager)
     {
         _context->pSoundManager->mute();
     }
-    
-    MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)", 
+
+    MLOGINFO("Core::EnableTurboMode - Turbo mode enabled (audio generation: %s, audible: MUTED)",
              withAudio ? "ON" : "OFF");
 }
 
@@ -540,13 +538,13 @@ void Core::EnableTurboMode(bool withAudio)
 void Core::DisableTurboMode()
 {
     _context->config.turbo_mode = false;
-    
+
     // Restore audible output
     if (_context->pSoundManager)
     {
         _context->pSoundManager->unmute();
     }
-    
+
     MLOGINFO("Core::DisableTurboMode - Turbo mode disabled, audio unmuted");
 }
 
@@ -560,29 +558,27 @@ bool Core::IsTurboMode() const
 
 void Core::CPUFrameCycle()
 {
-	// Execute Z80 cycle
-	if (_z80->isDebugMode)
-	{
-		// Use advanced (but slow) memory access interface when Debugger is on
-		UseDebugMemoryInterface();
-		_z80->Z80FrameCycle();
-	}
-	else
-	{
-		// Use fast memory access when no Debugger used
-		UseFastMemoryInterface();
-		_z80->Z80FrameCycle();
-	}
+    // Execute Z80 cycle
+    if (_z80->isDebugMode)
+    {
+        // Use advanced (but slow) memory access interface when Debugger is on
+        UseDebugMemoryInterface();
+        _z80->Z80FrameCycle();
+    }
+    else
+    {
+        // Use fast memory access when no Debugger used
+        UseFastMemoryInterface();
+        _z80->Z80FrameCycle();
+    }
 
     uint32_t t = _context->pCore->GetZ80()->t;
     MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
 
-#ifdef ENABLE_MEMORY_MAPPING
-    // Sync memory content to disk memory-mapped files
+    // Sync memory content to disk (if shared memory mapping is enabled)
     _memory->SyncToDisk();
-#endif
 }
 
 /// Perform corrections after each frame rendered
@@ -591,7 +587,7 @@ void Core::AdjustFrameCounters()
     /// region <Input parameters validation>
     // Calculate scaled frame limit based on speed multiplier
     uint32_t scaledFrame = _config->frame * _state->current_z80_frequency_multiplier;
-    
+
     if (_z80->t < scaledFrame)
         return;
     /// endregion </Input parameters validation>
@@ -606,5 +602,5 @@ void Core::AdjustFrameCounters()
 
 void Core::UpdateScreen()
 {
-	GetZ80()->OnCPUStep();
+    GetZ80()->OnCPUStep();
 }

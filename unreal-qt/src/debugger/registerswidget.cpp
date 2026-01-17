@@ -58,17 +58,25 @@ Emulator* RegistersWidget::getEmulator()
 
 EmulatorContext* RegistersWidget::getEmulatorContext()
 {
-    return m_debuggerWindow->getEmulator()->GetContext();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    return emu ? emu->GetContext() : nullptr;
 }
 
 Memory* RegistersWidget::getMemory()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pMemory;
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullptr;
+    EmulatorContext* ctx = emu->GetContext();
+    return ctx ? ctx->pMemory : nullptr;
 }
 
 Z80Registers* RegistersWidget::getRegisters()
 {
-    return m_debuggerWindow->getEmulator()->GetContext()->pCore->GetZ80();
+    Emulator* emu = m_debuggerWindow->getEmulator();
+    if (!emu) return nullptr;
+    EmulatorContext* ctx = emu->GetContext();
+    if (!ctx || !ctx->pCore) return nullptr;
+    return ctx->pCore->GetZ80();
 }
 
 void RegistersWidget::setupContextMenus()
@@ -95,6 +103,10 @@ bool RegistersWidget::eventFilter(QObject* obj, QEvent* event)
         
         if (label)
         {
+            // Guard against null m_z80Registers
+            if (!m_z80Registers)
+                return QWidget::eventFilter(obj, event);
+            
             uint16_t address = 0;
             
             // Determine which register was right-clicked
@@ -204,6 +216,13 @@ void RegistersWidget::refresh()
     }
     else
     {
+        // Guard against null m_z80Registers
+        if (!m_z80Registers)
+        {
+            reset();
+            return;
+        }
+        
         QString flagString = Z80::DumpFlags(m_z80Registers->f).c_str();
 
         ui->valAF->setText(QStringLiteral("%1").arg(m_z80Registers->af, 4, 16, QLatin1Char('0')).toUpper());
