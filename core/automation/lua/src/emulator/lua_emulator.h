@@ -2,6 +2,9 @@
 
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
+#include <emulator/memory/memory.h>
+#include <emulator/io/fdc/fdd.h>
+#include <emulator/io/fdc/diskimage.h>
 
 class LuaEmulator
 {
@@ -30,6 +33,50 @@ public:
           "is_running", &Emulator::IsRunning,
           "is_paused", &Emulator::IsPaused
         );
+
+        // Disk inspection functions (simplified - complex operations via WebAPI)
+        // disk_is_inserted(drive) -> bool
+        lua.set_function("disk_is_inserted", [this](int drive) -> bool {
+            if (!_emulator || drive < 0 || drive > 3) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
+            return ctx->coreState.diskDrives[drive]->isDiskInserted();
+        });
+
+        // disk_get_path(drive) -> string
+        lua.set_function("disk_get_path", [this](int drive) -> std::string {
+            if (!_emulator || drive < 0 || drive > 3) return "";
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return "";
+            return ctx->coreState.diskFilePaths[drive];
+        });
+
+        // disk_create(drive, [cylinders], [sides]) -> bool
+        // Creates a blank unformatted disk and inserts it into the specified drive
+        lua.set_function("disk_create", [this](int drive, sol::optional<int> cyl, sol::optional<int> sides) -> bool {
+            if (!_emulator || drive < 0 || drive > 3) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->coreState.diskDrives[drive]) return false;
+            
+            uint8_t cylinders = cyl.value_or(80);
+            uint8_t numSides = sides.value_or(2);
+            
+            // Validate parameters
+            if (cylinders != 40 && cylinders != 80) return false;
+            if (numSides != 1 && numSides != 2) return false;
+            
+            // Create blank disk image
+            DiskImage* diskImage = new DiskImage(cylinders, numSides);
+            
+            // Insert into drive
+            FDD* fdd = ctx->coreState.diskDrives[drive];
+            fdd->insertDisk(diskImage);
+            
+            // Update path tracking
+            ctx->coreState.diskFilePaths[drive] = "<blank>";
+            
+            return true;
+        });
 
         // Set the emulator instance in the Lua environment
         lua["emulator"] = _emulator;

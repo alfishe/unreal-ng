@@ -61,7 +61,7 @@ class UnrealApiClient:
     def delete_emulator(self, emulator_id):
         """DELETE /api/v1/emulator/{id}"""
         resp = self.session.delete(self._url(f"/api/v1/emulator/{emulator_id}"))
-        return self._handle_response(resp, expected_status=204)
+        return self._handle_response(resp, expected_status=[200, 204])
 
     # --- Emulator Control ---
     def create_and_start_emulator(self, symbolic_id=None, model="ZX48", ram_size=None):
@@ -138,6 +138,12 @@ class UnrealApiClient:
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/insert"), json=data)
         return self._handle_response(resp)
 
+    def create_disk(self, emulator_id, drive, cylinders=80, sides=2):
+        """POST /api/v1/emulator/{id}/disk/{drive}/create - Create blank unformatted disk"""
+        data = {"cylinders": cylinders, "sides": sides}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/create"), json=data)
+        return self._handle_response(resp)
+
     def eject_disk(self, emulator_id, drive):
         """POST /api/v1/emulator/{id}/disk/{drive}/eject"""
         resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/eject"))
@@ -146,6 +152,55 @@ class UnrealApiClient:
     def get_disk_info(self, emulator_id, drive):
         """GET /api/v1/emulator/{id}/disk/{drive}/info"""
         resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/info"))
+        return self._handle_response(resp)
+
+    # --- Disk Inspection ---
+    def list_disk_drives(self, emulator_id):
+        """GET /api/v1/emulator/{id}/disk - List all drives with status"""
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/disk"))
+        return self._handle_response(resp)
+
+    def read_disk_sector(self, emulator_id, drive, cylinder, side, sector):
+        """GET /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"""
+        resp = self.session.get(
+            self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/sector/{cylinder}/{side}/{sector}")
+        )
+        return self._handle_response(resp)
+
+    def read_disk_sector_raw(self, emulator_id, drive, cylinder, side, sector):
+        """GET /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"""
+        resp = self.session.get(
+            self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/sector/{cylinder}/{side}/{sector}/raw")
+        )
+        return self._handle_response(resp)
+
+    def read_disk_track(self, emulator_id, drive, cylinder, side):
+        """GET /api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"""
+        resp = self.session.get(
+            self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/track/{cylinder}/{side}")
+        )
+        return self._handle_response(resp)
+
+    def read_disk_track_raw(self, emulator_id, drive, cylinder, side):
+        """GET /api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"""
+        resp = self.session.get(
+            self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/track/{cylinder}/{side}/raw")
+        )
+        return self._handle_response(resp)
+
+    def get_disk_image(self, emulator_id, drive):
+        """GET /api/v1/emulator/{id}/disk/{drive}/image - Full disk image dump"""
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/image"))
+        return self._handle_response(resp)
+
+    def get_disk_sysinfo(self, emulator_id, drive):
+        """GET /api/v1/emulator/{id}/disk/{drive}/sysinfo - TR-DOS system sector"""
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/sysinfo"))
+        return self._handle_response(resp)
+
+    def get_disk_catalog(self, emulator_id, drive):
+        """GET /api/v1/emulator/{id}/disk/{drive}/catalog - Disk file listing"""
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/disk/{drive}/catalog"))
         return self._handle_response(resp)
 
     # --- Snapshot Control ---
