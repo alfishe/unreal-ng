@@ -18,6 +18,7 @@
 #include "common/modulelogger.h"
 #include "debugger/debuggerwindow.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/guiemulatorcontext.h"
 #include "emulator/soundmanager.h"
@@ -82,6 +83,9 @@ private slots:
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
     void updateMenuStates();
+
+    // Binding state handler
+    void onBindingStateChanged(EmulatorStateEnum state);
     // endregion <Slots>
 
     // region <QWidget events override>
@@ -131,6 +135,22 @@ private:
     // Bind audio callback to emulator (audio device runs continuously)
     void bindEmulatorAudio(std::shared_ptr<Emulator> emulator);
 
+    /// @brief Adopt an emulator as the active emulator for this window.
+    /// This is the SINGLE point of emulator binding. All emulator adoption
+    /// (UI-triggered, automation-triggered, or selection-changed) must go through here.
+    /// Handles: binding, audio, screen, debugger, menu, and UI state.
+    /// @param emulator The emulator to adopt
+    void adoptEmulator(std::shared_ptr<Emulator> emulator);
+
+    /// @brief Unbind from the currently adopted emulator without destroying it.
+    /// Used when switching to a different emulator - old emulator keeps running headless.
+    void unbindFromEmulator();
+
+    /// @brief Release and destroy the currently adopted emulator.
+    /// This is the SINGLE point of emulator destruction. Use for stop, destroy, or close.
+    /// Handles: unbinding, audio cleanup, screen detach, debugger reset, UI state, and emulator destruction.
+    void releaseEmulator();
+
     // Platform-specific initialization methods
     void initializePlatformMacOS();
     void initializePlatformWindows();
@@ -160,9 +180,10 @@ private:
 #endif  // ENABLE_AUTOMATION
 
     EmulatorManager* _emulatorManager = nullptr;
+    EmulatorBinding* m_binding = nullptr;  // Central state binding for UI
     AppSoundManager* _soundManager = nullptr;
     GUIEmulatorContext* _guiContext = nullptr;
-    std::shared_ptr<Emulator> _emulator = nullptr;
+    std::shared_ptr<Emulator> _emulator = nullptr;  // TODO: Remove after full binding migration
     uint32_t _lastFrameCount = 0;
 
     QPoint _lastCursorPos;

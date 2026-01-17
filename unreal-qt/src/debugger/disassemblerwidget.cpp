@@ -7,6 +7,7 @@
 #include <QScrollBar>
 #include <QTableView>
 #include <QTextBlock>
+#include <QThread>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 

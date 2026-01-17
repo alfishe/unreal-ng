@@ -1,15 +1,15 @@
-#include "stdafx.h"
-
 #include "tape.h"
+
 #include "common/stringhelper.h"
-#include "emulator/emulatorcontext.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/tape/loader_tap.h"
+#include "stdafx.h"
 
 /// region <Constructors / destructors>
 
-Tape::Tape(EmulatorContext *context) : _lpfFilter(6000, AUDIO_SAMPLING_RATE)
+Tape::Tape(EmulatorContext* context) : _lpfFilter(6000, AUDIO_SAMPLING_RATE)
 {
     _context = context;
     _logger = _context->pModuleLogger;
@@ -17,9 +17,7 @@ Tape::Tape(EmulatorContext *context) : _lpfFilter(6000, AUDIO_SAMPLING_RATE)
     reset();
 }
 
-Tape::~Tape()
-{
-}
+Tape::~Tape() {}
 
 /// endregion </Constructors / destructors>
 
@@ -45,7 +43,6 @@ void Tape::stopTape()
     _currentClockCount = 0;
 }
 /// endregion </Tape control methods>
-
 
 void Tape::reset()
 {
@@ -81,14 +78,15 @@ uint8_t Tape::handlePortIn()
 
     if (_tapeStarted)
     {
-        size_t clockCount = cpu.clock_count;
+        // Use monotonic counter for tape timing (t_states + t)
+        uint64_t clockCount = _context->emulatorState.t_states + cpu.t;
 
         bool tapeBit = getTapeStreamBit(clockCount);
         result = (uint8_t)tapeBit << 6;
 
         // Only mic sound is heard to prevent clicks from keyboard polling out (#FE)
         int16_t micSample = tapeBit ? 1000 : -1000;
-        int16_t sample = _lpfFilter.filter(micSample);// Apply LPF filtering to remove high-frequency noise
+        int16_t sample = _lpfFilter.filter(micSample);  // Apply LPF filtering to remove high-frequency noise
         sample = _dcFilter.filter(sample);
 
         _context->pSoundManager->updateDAC(scaledTState, sample, sample);
@@ -108,7 +106,8 @@ uint8_t Tape::handlePortIn()
         }
 
         // Galois LFSR with 16-bit register
-        // The polynomial used in this implementation is x^16 + x^5 + x^3 + x^2 + 1, which has a maximal period of 2^16-1, or 65,535 values
+        // The polynomial used in this implementation is x^16 + x^5 + x^3 + x^2 + 1, which has a maximal period of
+        // 2^16-1, or 65,535 values
         uint16_t bit = (prngState >> 0) ^ (prngState >> 2) ^ (prngState >> 3) ^ (prngState >> 5);
         prngState = (prngState >> 1) | (bit << 15);
 
@@ -153,8 +152,8 @@ uint8_t Tape::handlePortIn()
 
 void Tape::handlePortOut(uint8_t value)
 {
-    // Fetch clock counter for precise timing
-    [[maybe_unused]] size_t clockCount = _context->pCore->GetZ80()->clock_count;
+    // Fetch absolute timing (unused in this function)
+    [[maybe_unused]] uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
     uint32_t tState = _context->pCore->GetZ80()->t;
 
     // Scale t-state by speed multiplier for correct audio pitch
@@ -170,19 +169,19 @@ void Tape::handlePortOut(uint8_t value)
     {
         // Use only EAR output sound
         int16_t earSample = outBit ? 3000 : -3000;
-        sample = _dcFilter.filter(earSample);   // Apply LPF filtering to remove high-frequency noise;
+        sample = _dcFilter.filter(earSample);  // Apply LPF filtering to remove high-frequency noise;
 
         _context->pSoundManager->updateDAC(scaledTState, sample, sample);
     }
-    else // Ignore outputs while tape is playing
+    else  // Ignore outputs while tape is playing
     {
         // Use only tape sound
-        //int16_t micSample = micBit ? 1000: -1000;
-        //sample = micSample;
+        // int16_t micSample = micBit ? 1000: -1000;
+        // sample = micSample;
     }
 
-    //MLOGINFO("%09ld, %d", clockCount, value);
-    //MLOGINFO("[Out] [%09ld] Value: %d", clockCount, value);
+    // MLOGINFO("%09ld, %d", clockCount, value);
+    // MLOGINFO("[Out] [%09ld] Value: %d", clockCount, value);
 }
 
 /// endregion </Port events>
@@ -193,8 +192,8 @@ void Tape::handlePortOut(uint8_t value)
 /// If we have previous tape block played, then we can generate bitstream for the next block
 void Tape::handleFrameStart()
 {
-    // Fetch clock counter for precise timing
-    size_t clockCount = _context->pCore->GetZ80()->clock_count;
+    // Use monotonic counter for tape timing (t_states + t)
+    uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
 
     if (_tapeStarted && !_tapeBlocks.empty())
     {
@@ -244,8 +243,8 @@ void Tape::handleFrameStart()
 
 void Tape::handleFrameEnd()
 {
-    // Fetch clock counter for precise timing
-    [[maybe_unused]] size_t clockCount = _context->pCore->GetZ80()->clock_count;
+    // Fetch absolute timing (unused in this function)
+    [[maybe_unused]] uint64_t clockCount = _context->emulatorState.t_states + _context->pCore->GetZ80()->t;
 }
 
 /// endregion </Emulation events>
@@ -262,7 +261,7 @@ bool Tape::getTapeStreamBit(uint64_t clockCount)
     {
         // Determine position within bit stream
         // Find correspondent pulse timings record and then count up to its value
-        TapeBlock &block = *_currentTapeBlock;
+        TapeBlock& block = *_currentTapeBlock;
         uint32_t currentPulseDuration = block.edgePulseTimings[_currentOffsetWithinPulse];
 
         // Forward playback for the whole deltaTime period
@@ -322,14 +321,9 @@ bool Tape::generateBitstreamForStandardBlock(TapeBlock& tapeBlock)
 
     bool isHeader = tapeBlock.type == TAP_BLOCK_FLAG_HEADER;
 
-    size_t totalBlockDuration = generateBitstream(tapeBlock,
-                                                  PILOT_TONE_HALF_PERIOD,
-                                                  PILOT_SYNCHRO_1,
-                                                  PILOT_SYNCHRO_2,
-                                                  ZERO_ENCODE_HALF_PERIOD,
-                                                  ONE_ENCODE_HALF_PERIOD,
-                                                  isHeader ? PILOT_DURATION_HEADER : PILOT_DURATION_DATA,
-                                                  1000);
+    size_t totalBlockDuration =
+        generateBitstream(tapeBlock, PILOT_TONE_HALF_PERIOD, PILOT_SYNCHRO_1, PILOT_SYNCHRO_2, ZERO_ENCODE_HALF_PERIOD,
+                          ONE_ENCODE_HALF_PERIOD, isHeader ? PILOT_DURATION_HEADER : PILOT_DURATION_DATA, 1000);
 
     if (totalBlockDuration > 0)
     {
@@ -339,25 +333,20 @@ bool Tape::generateBitstreamForStandardBlock(TapeBlock& tapeBlock)
     return result;
 }
 
-size_t Tape::generateBitstream(TapeBlock& tapeBlock,
-                               uint16_t pilotHalfPeriod_tStates,
-                               uint16_t synchro1_tStates,
-                               uint16_t synchro2_tStates,
-                               uint16_t zeroEncodingHalfPeriod_tState,
-                               uint16_t oneEncodingHalfPeriod_tStates,
-                               size_t pilotLength_periods,
-                               size_t pause_ms)
+size_t Tape::generateBitstream(TapeBlock& tapeBlock, uint16_t pilotHalfPeriod_tStates, uint16_t synchro1_tStates,
+                               uint16_t synchro2_tStates, uint16_t zeroEncodingHalfPeriod_tState,
+                               uint16_t oneEncodingHalfPeriod_tStates, size_t pilotLength_periods, size_t pause_ms)
 {
     size_t result = 0;
     size_t len = tapeBlock.data.size();
 
     // Calculate collection size to fit all edge time intervals
     size_t resultSize = 0;
-    resultSize += (pilotLength_periods * 2);    // Each pilot signal period is encoded as 2 edges
-    resultSize += 2;                            // Two sync pulses at the end of pilot
-    resultSize += (len * 8 * 2);                // Each byte split to bits and each bit encoded as 2 edges
+    resultSize += (pilotLength_periods * 2);  // Each pilot signal period is encoded as 2 edges
+    resultSize += 2;                          // Two sync pulses at the end of pilot
+    resultSize += (len * 8 * 2);              // Each byte split to bits and each bit encoded as 2 edges
     if (pause_ms > 0)
-        resultSize += 1;                        // Pause is just a marker so single edge is sufficient
+        resultSize += 1;  // Pause is just a marker so single edge is sufficient
 
     tapeBlock.edgePulseTimings.reserve(resultSize);
 
@@ -403,7 +392,6 @@ size_t Tape::generateBitstream(TapeBlock& tapeBlock,
     }
 
     /// endregion </Data paramBytes>
-
 
     /// region <Pause>
 

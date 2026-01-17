@@ -177,6 +177,15 @@ private:
     void HandleDiskEject(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
                          const std::vector<std::string>& args);
     void HandleDiskInfo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    
+    // Disk inspection command handlers
+    void HandleDiskList(const ClientSession& session, EmulatorContext* context);
+    void HandleDiskSector(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleDiskTrack(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleDiskSysinfo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleDiskCatalog(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleDiskCreate(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                          const std::vector<std::string>& args);
 
     // Snapshot control command handlers
     void HandleSnapshot(const ClientSession& session, const std::vector<std::string>& args);
