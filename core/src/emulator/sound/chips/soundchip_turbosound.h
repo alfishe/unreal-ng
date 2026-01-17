@@ -14,7 +14,7 @@ protected:
     SoundChip_AY8910* _chip0 = nullptr;
     SoundChip_AY8910* _chip1 = nullptr;
 
-    SoundChip_AY8910* _currentChip = _chip0;
+    SoundChip_AY8910* _currentChip = nullptr;
 
     AudioFrameDescriptor _ayAudioDescriptor;                               // Audio descriptor for AY
     int16_t* const _ayBuffer = (int16_t*)_ayAudioDescriptor.memoryBuffer;  // Shortcut to it's sample buffer
@@ -77,6 +77,7 @@ public:
     {
         _chip0 = new SoundChip_AY8910(_context);
         _chip1 = new SoundChip_AY8910(_context);
+        _currentChip = _chip0;  // Initialize after chips are created
     }
 
     virtual ~SoundChip_TurboSound()

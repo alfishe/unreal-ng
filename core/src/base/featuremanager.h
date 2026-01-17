@@ -27,6 +27,7 @@ constexpr const char* const kSoundGeneration = "sound";
 constexpr const char* const kSoundHQ = "soundhq";
 constexpr const char* const kScreenHQ = "screenhq";
 constexpr const char* const kRecording = "recording";
+constexpr const char* const kSharedMemory = "sharedmemory";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -37,6 +38,7 @@ constexpr const char* const kSoundGenerationAlias = "snd";
 constexpr const char* const kSoundHQAlias = "hq";
 constexpr const char* const kScreenHQAlias = "vhq";
 constexpr const char* const kRecordingAlias = "rec";
+constexpr const char* const kSharedMemoryAlias = "shm";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -49,6 +51,8 @@ constexpr const char* const kSoundHQDesc =
 constexpr const char* const kScreenHQDesc =
     "Enable per-t-state video rendering for demo multicolor effects. Disable for batch 8-pixel rendering (25x faster).";
 constexpr const char* const kRecordingDesc = "Enable recording subsystem (video, audio, GIF capture)";
+constexpr const char* const kSharedMemoryDesc =
+    "Export emulator memory via shared memory for external tool access. Disable for benchmarking/headless usage.";
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";
