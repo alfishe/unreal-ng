@@ -1,0 +1,92 @@
+How the 128K BASIC Line Editor Works
+The 128K editor is a full-screen, multi-line editor. Unlike the 48K's single-line E-LINE buffer, the 128K editor maintains a virtual representation of the editable text on the screen in a complex set of buffers.
+1. The Editing Process: A Major Architectural Shift
+The editor's logic resides in ROM 0, but it uses a large workspace in the top 5KB of RAM bank 7 ($EC00 onwards).
+The Edit Buffers (in RAM Bank 7): The core of the new editor is a set of three buffers that collectively hold the text of a potentially very long BASIC line:
+Screen Line Edit Buffer ($EC16): This is the main buffer, representing the 20-21 visible rows of the editing area on the screen. It's not a simple text buffer; it's a structured record of 21 rows, each containing 32 character columns and 3 data bytes describing the row's properties (e.g., "is this the first row of a BASIC line?", "does it span to the next row?").
+Above-Screen Line Edit Buffer ($F9DE): Holds parts of a long line that have scrolled off the top of the screen.
+Below-Screen Line Edit Buffer ($F6F8): Holds parts of a long line that have scrolled off the bottom of the screen.
+The Cursor: The simple K-CUR pointer is replaced by a row/column system stored in the editor's workspace:
+Cursor Row/Column ($F6EE, $F6EF): These two bytes store the visual row and column of the cursor within the 20-row editing area.
+The Keyboard Input Loop: The main loop for the 128K editor is at L2653. It's more sophisticated than the 48K version:
+It waits for a key press using the same LAST-K/FLAGS mechanism as the 48K ROM.
+The routine L2669 (Process Key Press) takes the key code and looks it up in an action table (L2537 for editing keys, L2577 for menu keys).
+Printable Character: For a normal character, the Handle Key Press Character Code routine (L28F1) is called. This invokes L2E81 to insert the character into the correct position in the Screen Line Edit Buffer, shifting text to the right and potentially wrapping it onto the next line.
+Editing Key: A key like DELETE (L292B) calls L2F12 to remove a character and shift the rest of the line's text left, pulling text up from subsequent lines if necessary.
+ENTER Key: Pressing ENTER calls the handler at L2944. This is the crucial step that begins the finalization process.
+Finalizing the Line (Post-Tokenization): This is the most significant difference from the 48K ROM. Tokenization is not done on the fly.
+The ENTER handler (L2944) checks if the line has been altered (flag at bit 3 of $EC0D).
+If altered, it calls L2C8E (Insert line into program).
+L2C8E calls the master tokenizer routine L3C67 (Tokenize the typed BASIC line).
+This routine reads the plain ASCII text from the screen buffers, character by character.
+It assembles potential keywords into the Keyword Conversion Buffer ($FD74).
+When a delimiter (like a space) is found, it calls L3F7E to identify if the buffer contains a valid keyword.
+If it's a keyword, the corresponding token is written to a temporary workspace pointed to by $FD82.
+If it's not a keyword (e.g., a variable name), the plain text is copied over.
+Numbers are also parsed from ASCII text to their 5-byte float representation during this stage.
+Once the entire line is tokenized into this temporary workspace, the ROM calls the 48K ROM's E_LINE_NO ($19FB) and MAIN-ADD ($155D, via a parser call) routines to validate the line number and move the fully-tokenized line into the main BASIC PROG area.
+2. The 128K Tokenization Process
+The 128K editor is fundamentally different from the 48K's MODE-based system.
+Always in 'L' Mode: The 128K editor effectively always operates in "Letter" mode. You type out the full keyword, like P-R-I-N-T.
+Post-Processing: As described above, the tokenization happens after you press ENTER. The ROM parses the text you typed, identifies keywords, and replaces them with their single-byte tokens in a separate buffer before finalizing the line.
+Context Sensitivity: This method allows for more intelligent parsing. However, the disassembly notes point out bugs, such as incorrectly tokenizing >=, <=, and <> even when they appear inside REM statements or string literals. It also handles the REM : PRINT sequence differently than the 48K ROM.
+3. Summary of Key System Variables (in RAM Bank 7)
+Variable/Buffer	Address (Hex)	Description
+Editor Flags	$EC0D	A set of flags controlling editor state (e.g., Bit 1=Menu displayed, Bit 3=Line altered, Bit 6=Using lower screen).
+Screen Line Edit Buffer	$EC16	The primary workspace holding the 21 visible rows of editable text.
+Cursor Row	$F6EE	The current row of the cursor (0-19).
+Cursor Column	$F6EF	The current column of the cursor (0-31).
+Below-Screen Buffer	$F6F8	Holds text that has scrolled off the bottom of the editor.
+Above-Screen Buffer	$F9DE	Holds text that has scrolled off the top of the editor.
+Keyword Conversion Buffer	$FD74	A small temporary buffer where words are assembled to be checked against the keyword list.
+Workspace Line Pointer	$FD82	Points to the insertion point in the temporary buffer where the final, tokenized line is being constructed.
+How to Emulate Typing a Pre-Tokenized Bytestream
+Method 1: Simulating Keystrokes (Recommended for Simplicity)
+This method is nearly identical to the 48K version but with one critical difference: you must provide the full ASCII text for keywords. The 128K editor's parser will handle the tokenization.
+Prepare the Bytestream: This is the sequence of ASCII codes as if typed by a user.
+10 PRINT "HI" becomes 31 30 20 50 52 49 4E 54 20 22 48 49 22 0D.
+RUN becomes 52 55 4E 0D.
+The Injection Loop: Use the exact same LAST-K / FLAGS handshake mechanism as described for the 48K Spectrum. The 128K editor's main loop at L2653 also waits on this flag.
+code
+Code
+// Pseudocode for 128K key injection
+function inject_128k_line(ascii_bytestream):
+  for each byte in ascii_bytestream:
+    // Wait until ROM is ready
+    while (PEEK(23653) & 32) != 0:
+      emulator.run_one_frame_slice()
+
+    // Inject the ASCII character
+    POKE(23560, byte)
+
+    // Signal new key
+    POKE(23653, PEEK(23653) OR 32)
+  
+  // Let the ROM process the key press
+  emulator.run_one_frame_slice()
+Method 2: Direct Buffer Population and Parser Trigger (Advanced)
+This method bypasses the keyboard loop entirely for maximum speed. It's more complex because you have to correctly set up the 128K editor's multi-buffer environment.
+Prepare the Bytestream: The stream is plain ASCII text, ending with a carriage return (0x0D).
+For RUN, the bytestream is 52 55 4E 0D.
+Set Up the Environment (in RAM Bank 7):
+First, page in RAM Bank 7.
+Call L28BE (Reset Cursor Position) to set the editor to a clean, full-screen state.
+Get the address of the Screen Line Edit Buffer ($EC16).
+POKE your ASCII bytestream into the first row of this buffer.
+Update the row's data bytes. For a simple, single-line command, the flag byte (at offset 32) should be 0x09 (First Row + Last Row).
+Set the cursor position variables ($F6EE, $F6EF) to point just after the last character of your text.
+Set the "line altered" flag: POKE($EC0D, PEEK($EC0D) OR 8).
+Page RAM Bank 0 back in.
+Trigger the Parser: Call the ENTER key handler directly.
+emulate_call(0x2944)
+The ENTER handler will see the "line altered" flag, call the tokenizer (L3C67), which reads the text you placed in the screen buffer, tokenizes it into the workspace ($FD82), and then calls the 48K ROM routines to parse and execute it.
+This method is significantly more involved than the 48K equivalent due to the complexity of the screen buffer structure, but it correctly leverages the 128K ROM's native editor logic. For most emulation purposes, the simpler keystroke injection (Method 1) is sufficient and more robust.
+Summary: 48K Editor vs. 128K Editor
+Feature	48K BASIC Editor	128K BASIC Editor
+Editing Buffer	Single, linear buffer (E-LINE).	Multi-buffer system representing the screen (Screen Line Edit Buffer, etc.).
+Editing Area	Bottom 2 lines of the screen.	Full screen (20 rows).
+Tokenization	Real-time, based on MODE. Pressing 'P' in 'K' mode inserts token 0xF5.	Post-processing. User types plain text. ENTER triggers a routine that parses text and replaces keywords with tokens.
+Number Conversion	Post-processing (after ENTER).	Post-processing (after ENTER, during tokenization).
+Emulation (Keys)	Inject tokens for keywords.	Inject full ASCII text for keywords.
+Emulation (Buffer)	Populate E-LINE, set CH-ADD, call LINE-SCAN.	Populate Screen Line Edit Buffer, set cursor vars, set "altered" flag, call ENTER handler.
+Complexity	Simple, efficient, limited.	Complex, powerful, but with its own set of bugs (e.g., REM : handling).
