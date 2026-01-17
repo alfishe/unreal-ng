@@ -66,8 +66,26 @@ public:
 
     // Disk control
     ADD_METHOD_TO(EmulatorAPI::insertDisk, "/api/v1/emulator/{id}/disk/{drive}/insert", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::createDisk, "/api/v1/emulator/{id}/disk/{drive}/create", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::ejectDisk, "/api/v1/emulator/{id}/disk/{drive}/eject", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getDiskInfo, "/api/v1/emulator/{id}/disk/{drive}/info", drogon::Get);
+    
+    // Disk inspection - drive listing
+    ADD_METHOD_TO(EmulatorAPI::getDiskDrives, "/api/v1/emulator/{id}/disk", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDiskDrive, "/api/v1/emulator/{id}/disk/{drive}", drogon::Get);
+    
+    // Disk inspection - sector data
+    ADD_METHOD_TO(EmulatorAPI::getDiskSector, "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDiskSectorRaw, "/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw", drogon::Get);
+    
+    // Disk inspection - track data
+    ADD_METHOD_TO(EmulatorAPI::getDiskTrack, "/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDiskTrackRaw, "/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw", drogon::Get);
+    
+    // Disk inspection - whole image and system info
+    ADD_METHOD_TO(EmulatorAPI::getDiskImage, "/api/v1/emulator/{id}/disk/{drive}/image", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDiskSysinfo, "/api/v1/emulator/{id}/disk/{drive}/sysinfo", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDiskCatalog, "/api/v1/emulator/{id}/disk/{drive}/catalog", drogon::Get);
 
     // Snapshot control
     ADD_METHOD_TO(EmulatorAPI::loadSnapshot, "/api/v1/emulator/{id}/snapshot/load", drogon::Post);
@@ -200,13 +218,44 @@ public:
     void getTapeInfo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id) const;
 
-    // Disk control
     void insertDisk(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id, const std::string& drive) const;
+    void createDisk(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id, const std::string& drive) const;
     void ejectDisk(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id, const std::string& drive) const;
     void getDiskInfo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                      const std::string& id, const std::string& drive) const;
+    
+    // Disk inspection - drive listing
+    void getDiskDrives(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void getDiskDrive(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& drive) const;
+    
+    // Disk inspection - sector data
+    void getDiskSector(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id, const std::string& drive,
+                       const std::string& cyl, const std::string& side, const std::string& sec) const;
+    void getDiskSectorRaw(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id, const std::string& drive,
+                          const std::string& cyl, const std::string& side, const std::string& sec) const;
+    
+    // Disk inspection - track data
+    void getDiskTrack(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& drive,
+                      const std::string& cyl, const std::string& side) const;
+    void getDiskTrackRaw(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id, const std::string& drive,
+                         const std::string& cyl, const std::string& side) const;
+    
+    // Disk inspection - whole image and system info
+    void getDiskImage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id, const std::string& drive) const;
+    void getDiskSysinfo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id, const std::string& drive) const;
+    void getDiskCatalog(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id, const std::string& drive) const;
 
     // Snapshot control
     void loadSnapshot(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

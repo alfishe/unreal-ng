@@ -22,9 +22,9 @@ These two signals are fundamental to the asynchronous, interrupt-driven operatio
 
 #### INTRQ (Interrupt Request)
 
-*   **Nature:** Active-low, open-drain output. It requires an external pull-up resistor.
+*   **Nature:** Active-HIGH output (active HIGH on WD1793/1794 which have true data bus; active LOW on WD1791/1792 which have inverted data bus).
 *   **Purpose:** `INTRQ` alerts the host processor that the FDC requires attention, typically because a command has finished or a specific pre-programmed condition has been met.
-*   **Assertion (INTRQ goes Low):**
+*   **Assertion (INTRQ goes HIGH on WD1793):**
     1.  **Command Completion (Type I, II, III):**
         *   **General Principle:** "At the completion of every command an INTRQ is generated." This applies whether the command completes successfully or encounters an error.
         *   **Type I (Restore, Seek, Step, Step In, Step Out):**

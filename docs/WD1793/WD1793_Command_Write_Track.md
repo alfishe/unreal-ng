@@ -54,6 +54,7 @@ The following details the sequence of events involving the FDC and the host CPU 
     *   **Failure:** If the host fails to write the first byte within this window (`No` from `HAS DRQ BEEN SERVICED?`), the FDC aborts the command, sets the Lost Data status bit (S2), resets Busy, and generates INTRQ (`SET INTRQ LOST DATA RESET BUSY`).
 
 4.  **Synchronize to Index Pulse (FDC Internal):**
+    *   **Sequence:** DRQ asserted → 3 byte-time delay → check if DRQ serviced (abort if not) → wait for Index Pulse → begin writing.
     *   **Event:** If the first byte was successfully received (`Yes` from `HAS DRQ BEEN SERVICED?`), the FDC waits for the rising edge of the physical `INDEX PULSE` signal from the drive (`HAS INDEX PULSE OCCURED?`).
     *   **Purpose:** Ensures writing starts precisely at the beginning of the track. The FDC holds the first byte internally until this synchronization occurs.
 
@@ -176,12 +177,12 @@ During the "Write Track" command, the WD179X treats most bytes received from the
 | Byte from Host (Hex) | FM Action (DDEN=1)                     | MFM Action (DDEN=0)                         | Purpose during Formatting                     |
 | :------------------- | :------------------------------------- | :------------------------------------------ | :-------------------------------------------- |
 | `00` - `F4`          | Write byte with normal FM clock (`FF`) | Write byte with normal MFM encoding         | Write normal data, gap bytes, sync bytes    |
-| `F5`                 | *Not Allowed*                          | Write `A1*` (MFM Sync Mark), **Preset CRC** | Start MFM IDAM or DAM, prepare for CRC calc |
-| `F6`                 | *Not Allowed*                          | Write `C2**` (MFM Index Mark)               | Write part of MFM Index Address Mark        |
+| `F5`                 | Write `F5` with `FF` clock (normal data) | Write `A1*` (MFM Sync Mark), **Preset CRC** | Start MFM IDAM or DAM, prepare for CRC calc |
+| `F6`                 | Write `F6` with `FF` clock (normal data) | Write `C2**` (MFM Index Mark)               | Write part of MFM Index Address Mark        |
 | `F7`                 | **Generate & Write 2 CRC Bytes**       | **Generate & Write 2 CRC Bytes**            | Write CRC for preceding ID or Data field    |
 | `F8` - `FB`          | Write byte with `C7` clock, Preset CRC | Write byte normally (MFM)                   | Write FM DAM/IDAM, prepare for CRC calc     |
 | `FC`                 | Write byte with `D7` clock             | Write byte normally (MFM)                   | Write FM Index Address Mark                 |
-| `FD`                 | Write byte with `FF` clock             | Write byte normally (MFM)                   | (Typically unused special FM pattern)       |
+| `FD`                 | Write byte with `FF` clock (normal data) | Write byte normally (MFM)                   | Normal data byte (not a special control byte) |
 | `FE`                 | Write byte with `C7` clock, Preset CRC | Write byte normally (MFM)                   | Write FM ID Address Mark, prepare for CRC   |
 | `FF`                 | Write byte with `FF` clock             | Write byte normally (MFM)                   | Write FM Gap bytes                          |
 

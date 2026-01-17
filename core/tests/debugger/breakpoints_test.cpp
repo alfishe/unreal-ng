@@ -1,14 +1,17 @@
-#include "pch.h"
-
 #include "breakpoints_test.h"
+
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
-#include "emulator/cpu/z80.h"
+#include "pch.h"
 
 /// region <SetUp / TearDown>
 
@@ -44,7 +47,6 @@ void BreakpointManager_test::TearDown()
 
 /// endregion </Setup / TearDown>
 
-
 TEST_F(BreakpointManager_test, addMemoryBreakpoint)
 {
     const size_t initialCount = _brkManager->GetBreakpointsCount();
@@ -65,7 +67,8 @@ TEST_F(BreakpointManager_test, addMemoryBreakpoint)
 
     if (finalCount != expectedCount)
     {
-        std::string message = StringHelper::Format("Add breakpoint failed. Expected %d breakpoints after add, detected %d", expectedCount, finalCount);
+        std::string message = StringHelper::Format(
+            "Add breakpoint failed. Expected %d breakpoints after add, detected %d", expectedCount, finalCount);
         FAIL() << message;
     }
 }
@@ -78,8 +81,8 @@ TEST_F(BreakpointManager_test, addPortBreakpoint)
     // Create port breakpoint descriptor
     BreakpointDescriptor breakpoint;
     breakpoint.type = BreakpointTypeEnum::BRK_IO;
-    breakpoint.ioType = BRK_IO_IN; // Test with port input breakpoint
-    breakpoint.z80address = 0xFE; // Test with port 0xFE
+    breakpoint.ioType = BRK_IO_IN;  // Test with port input breakpoint
+    breakpoint.z80address = 0xFE;   // Test with port 0xFE
 
     // Add the breakpoint
     uint16_t brkID = _brkManager->AddBreakpoint(&breakpoint);
@@ -93,7 +96,8 @@ TEST_F(BreakpointManager_test, addPortBreakpoint)
     const size_t finalCount = _brkManager->GetBreakpointsCount();
     if (finalCount != expectedCount)
     {
-        std::string message = StringHelper::Format("Add breakpoint failed. Expected %d breakpoints after add, detected %d", expectedCount, finalCount);
+        std::string message = StringHelper::Format(
+            "Add breakpoint failed. Expected %d breakpoints after add, detected %d", expectedCount, finalCount);
         FAIL() << message;
     }
 
@@ -113,7 +117,7 @@ TEST_F(BreakpointManager_test, addPortBreakpoint)
 
 TEST_F(BreakpointManager_test, executionBreakpoint)
 {
-    volatile bool breakpointTriggered = false;
+    std::atomic<bool> breakpointTriggered{false};
     uint16_t breakpointAddress = 0x0000;
 
     /// region <Initialize>
@@ -129,7 +133,7 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
     auto handler = [&breakpointTriggered, z80](int id, Message* message) {
-        breakpointTriggered = true;
+        breakpointTriggered.store(true);
         z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
@@ -144,18 +148,27 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
 
     emulator->RunSingleCPUCycle(false);
 
-    if (!breakpointTriggered)
+    // Wait for async callback to execute (max 200ms)
+    auto start = std::chrono::steady_clock::now();
+    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Remove observer BEFORE checking result to prevent callback accessing invalid memory
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+
+    if (!breakpointTriggered.load())
     {
         // Clean up before failing
-        messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
         emulator->Stop();
         emulator->Release();
         delete emulator;
-        FAIL() << StringHelper::Format("Execution breakpoint on address: $%04X wasn't triggered", breakpointAddress) << std::endl;
+        FAIL() << StringHelper::Format("Execution breakpoint on address: $%04X wasn't triggered", breakpointAddress)
+               << std::endl;
     }
 
     /// region <Release>
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -164,19 +177,17 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
 
 TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 {
-    volatile bool breakpointTriggered = false;
-    uint8_t testCommands[] =
-    {
-        0x21, 0x00, 0x40,       // $0000 LD HL, $4000
-        0x7E,                   // $0003 LD A, (HL)
-        0x76                    // $0004 HALT
+    std::atomic<bool> breakpointTriggered{false};
+    uint8_t testCommands[] = {
+        0x21, 0x00, 0x40,  // $0000 LD HL, $4000
+        0x7E,              // $0003 LD A, (HL)
+        0x76               // $0004 HALT
     };
-    uint16_t breakpointAddress = 0x4000;    // Let's break on $4000 memory address read
+    uint16_t breakpointAddress = 0x4000;  // Let's break on $4000 memory address read
 
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
     bool init = emulator->Init();
-
 
     EmulatorContext* context = emulator->GetContext();
     BreakpointManager* breakpointManager = emulator->GetBreakpointManager();
@@ -196,7 +207,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     // Manually update feature cache to ensure it's propagated
     memory->UpdateFeatureCache();
 
-    for (int i = 0; i < sizeof(testCommands) / sizeof (testCommands[0]); i++)
+    for (int i = 0; i < sizeof(testCommands) / sizeof(testCommands[0]); i++)
     {
         memory->DirectWriteToZ80Memory(i, testCommands[i]);
     }
@@ -205,7 +216,7 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
     auto handler = [&breakpointTriggered, z80](int id, Message* message) {
-        breakpointTriggered = true;
+        breakpointTriggered.store(true);
         z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
@@ -221,13 +232,26 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 
     emulator->RunNCPUCycles(50);
 
-    if (!breakpointTriggered)
+    // Wait for async callback to execute (max 200ms)
+    auto start = std::chrono::steady_clock::now();
+    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
     {
-        FAIL() << StringHelper::Format("Memory read breakpoint on address: $%04X wasn't triggered", breakpointAddress) << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Remove observer BEFORE checking result to prevent callback accessing invalid memory
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+
+    if (!breakpointTriggered.load())
+    {
+        emulator->Stop();
+        emulator->Release();
+        delete emulator;
+        FAIL() << StringHelper::Format("Memory read breakpoint on address: $%04X wasn't triggered", breakpointAddress)
+               << std::endl;
     }
 
     /// region <Release>
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -236,15 +260,15 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 
 TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 {
-    volatile bool breakpointTriggered = false;
+    std::atomic<bool> breakpointTriggered{false};
     uint8_t testCommands[] =
     {
-        0x21, 0x00, 0x40,       // $0000 LD HL, $4000
-        0x3E, 0xA3,             // $0003 LD A, $A3
-        0x77,                   // $0005 LD (HL), A
-        0x76                    // $0006 HALT
+        0x21, 0x00, 0x40,  // $0000 LD HL, $4000
+        0x3E, 0xA3,        // $0003 LD A, $A3
+        0x77,              // $0005 LD (HL), A
+        0x76               // $0006 HALT
     };
-    uint16_t breakpointAddress = 0x4000;    // Let's break on $4000 memory address read
+    uint16_t breakpointAddress = 0x4000;  // Let's break on $4000 memory address read
 
     /// region <Initialize>
     Emulator* emulator = new Emulator(LoggerLevel::LogError);
@@ -268,7 +292,7 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     // Manually update feature cache to ensure it's propagated
     memory->UpdateFeatureCache();
 
-    for (int i = 0; i < sizeof(testCommands) / sizeof (testCommands[0]); i++)
+    for (int i = 0; i < sizeof(testCommands) / sizeof(testCommands[0]); i++)
     {
         memory->DirectWriteToZ80Memory(i, testCommands[i]);
     }
@@ -276,8 +300,9 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
-    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
-        breakpointTriggered = true;
+    auto handler = [&breakpointTriggered, z80](int id, Message* message)
+    {
+        breakpointTriggered.store(true);
         z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
@@ -293,23 +318,35 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
     emulator->RunNCPUCycles(50, false);
 
-    if (!breakpointTriggered)
+    // Wait for async callback to execute (max 200ms)
+    auto start = std::chrono::steady_clock::now();
+    while (!breakpointTriggered.load() && std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
     {
-        FAIL() << StringHelper::Format("Memory write breakpoint on address: $%04X wasn't triggered", breakpointAddress) << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Remove observer BEFORE checking result to prevent callback accessing invalid memory
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+
+    if (!breakpointTriggered.load())
+    {
+        emulator->Stop();
+        emulator->Release();
+        delete emulator;
+        FAIL() << StringHelper::Format("Memory write breakpoint on address: $%04X wasn't triggered", breakpointAddress)
+               << std::endl;
     }
 
     /// region <Release>
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
     /// endregion </Release>
 }
 
-
 TEST_F(BreakpointManager_test, portInBreakpoint)
 {
-    volatile bool breakpointTriggered = false;
+    std::atomic<bool> breakpointTriggered{false};
     uint8_t testCommands[] =
     {
         0xAF,        // $0000 XOR A - Ensure A = 0
@@ -342,7 +379,7 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
     auto handler = [&breakpointTriggered, z80](int id, Message* message) {
-        breakpointTriggered = true;
+        breakpointTriggered.store(true);
         z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
@@ -358,13 +395,26 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
 
     emulator->RunNCPUCycles(20, false);
 
-    if (!breakpointTriggered)
+    // Wait for async callback to execute (max 200ms)
+    auto start = std::chrono::steady_clock::now();
+    while (!breakpointTriggered.load() && 
+           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
     {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Remove observer BEFORE checking result to prevent callback accessing invalid memory
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+
+    if (!breakpointTriggered.load())
+    {
+        emulator->Stop();
+        emulator->Release();
+        delete emulator;
         FAIL() << StringHelper::Format("Port input breakpoint on port: $%02X wasn't triggered", portNumber) << std::endl;
     }
 
     /// region <Release>
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
@@ -373,12 +423,12 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
 
 TEST_F(BreakpointManager_test, portOutBreakpoint)
 {
-    volatile bool breakpointTriggered = false;
+    std::atomic<bool> breakpointTriggered{false};
     uint8_t testCommands[] =
     {
-        0xAF,                   // $0000 XOR A - Ensure A = 0
-        0xD3, 0xFE,             // $0001 OUT ($FE), A
-        0x76                    // $0003 HALT
+        0xAF,        // $0000 XOR A - Ensure A = 0
+        0xD3, 0xFE,  // $0001 OUT ($FE), A
+        0x76         // $0003 HALT
     };
     uint8_t portNumber = 0xFE;  // Test port output to port 0xFE
 
@@ -402,7 +452,7 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Z80* z80 = emulator->GetContext()->pCore->GetZ80();
     auto handler = [&breakpointTriggered, z80](int id, Message* message) {
-        breakpointTriggered = true;
+        breakpointTriggered.store(true);
         z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
@@ -418,13 +468,26 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
 
     emulator->RunNCPUCycles(20, false);
 
-    if (!breakpointTriggered)
+    // Wait for async callback to execute (max 200ms)
+    auto start = std::chrono::steady_clock::now();
+    while (!breakpointTriggered.load() && 
+           std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200))
     {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // Remove observer BEFORE checking result to prevent callback accessing invalid memory
+    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+
+    if (!breakpointTriggered.load())
+    {
+        emulator->Stop();
+        emulator->Release();
+        delete emulator;
         FAIL() << StringHelper::Format("Port output breakpoint on port: $%02X wasn't triggered", portNumber) << std::endl;
     }
 
     /// region <Release>
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
     emulator->Stop();
     emulator->Release();
     delete emulator;
