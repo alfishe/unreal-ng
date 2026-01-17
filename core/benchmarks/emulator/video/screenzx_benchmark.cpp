@@ -498,3 +498,121 @@ static void BM_RenderScreen_PerPixel(benchmark::State& state)
 BENCHMARK(BM_RenderScreen_PerPixel)->Iterations(100);
 
 /// endregion </Phase 4-5: Batch 8-Pixel Benchmarks>
+
+/// region <FillBorderWithColor Benchmarks>
+
+/// @brief Benchmark for original FillBorderWithColor (pixel-by-pixel loops)
+static void BM_FillBorderWithColor_Original(benchmark::State& state)
+{
+    /// region <SetUp>
+    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);
+    Core* cpu = new Core(context);
+    [[maybe_unused]] bool initResult = cpu->Init();
+    cpu->GetMemory()->DefaultBanksFor48k();
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->InitFrame();
+    /// endregion </Setup>
+
+    for (auto _ : state)
+    {
+        for (uint8_t color = 0; color < 8; color++)
+        {
+            screenzx->FillBorderWithColor_Original(color);
+        }
+    }
+
+    /// region <TearDown>
+    delete screenzx;
+    delete cpu;
+    delete context;
+    /// endregion </Teardown>
+}
+BENCHMARK(BM_FillBorderWithColor_Original)->Iterations(100);
+
+/// @brief Benchmark for optimized FillBorderWithColor (row-based std::fill_n)
+static void BM_FillBorderWithColor_Optimized(benchmark::State& state)
+{
+    /// region <SetUp>
+    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);
+    Core* cpu = new Core(context);
+    [[maybe_unused]] bool initResult = cpu->Init();
+    cpu->GetMemory()->DefaultBanksFor48k();
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->InitFrame();
+    /// endregion </Setup>
+
+    for (auto _ : state)
+    {
+        for (uint8_t color = 0; color < 8; color++)
+        {
+            screenzx->FillBorderWithColor_Optimized(color);
+        }
+    }
+
+    /// region <TearDown>
+    delete screenzx;
+    delete cpu;
+    delete context;
+    /// endregion </Teardown>
+}
+BENCHMARK(BM_FillBorderWithColor_Optimized)->Iterations(100);
+
+/// endregion </FillBorderWithColor Benchmarks>
+
+/// region <RenderOnlyMainScreen Comparison Benchmarks>
+
+/// @brief Benchmark for original RenderOnlyMainScreen (per-pixel with offset calculation)
+static void BM_RenderOnlyMainScreen_Original(benchmark::State& state)
+{
+    /// region <SetUp>
+    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);
+    Core* cpu = new Core(context);
+    [[maybe_unused]] bool initResult = cpu->Init();
+    cpu->GetMemory()->DefaultBanksFor48k();
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->InitFrame();
+    /// endregion </Setup>
+
+    for (auto _ : state)
+    {
+        screenzx->RenderOnlyMainScreen_Original();
+    }
+
+    /// region <TearDown>
+    delete screenzx;
+    delete cpu;
+    delete context;
+    /// endregion </Teardown>
+}
+BENCHMARK(BM_RenderOnlyMainScreen_Original)->Iterations(100);
+
+/// @brief Benchmark for optimized RenderOnlyMainScreen (uses RenderScreen_Batch8)
+static void BM_RenderOnlyMainScreen_Optimized(benchmark::State& state)
+{
+    /// region <SetUp>
+    EmulatorContext* context = new EmulatorContext(LoggerLevel::LogError);
+    Core* cpu = new Core(context);
+    [[maybe_unused]] bool initResult = cpu->Init();
+    cpu->GetMemory()->DefaultBanksFor48k();
+
+    ScreenZXCUT* screenzx = new ScreenZXCUT(context);
+    screenzx->InitFrame();
+    /// endregion </Setup>
+
+    for (auto _ : state)
+    {
+        screenzx->RenderOnlyMainScreen_Optimized();
+    }
+
+    /// region <TearDown>
+    delete screenzx;
+    delete cpu;
+    delete context;
+    /// endregion </Teardown>
+}
+BENCHMARK(BM_RenderOnlyMainScreen_Optimized)->Iterations(100);
+
+/// endregion </RenderOnlyMainScreen Comparison Benchmarks>

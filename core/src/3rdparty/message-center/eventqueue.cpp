@@ -370,6 +370,11 @@ void EventQueue::Dispatch(int id, Message* message)
     if (message == nullptr)
         return;
 
+    // Lock observers to prevent concurrent modification during iteration
+    // This is critical: RemoveObserver() can be called from another thread
+    // while we're iterating, causing use-after-free crashes.
+    std::lock_guard<std::mutex> lock(m_mutexObservers);
+
     ObserverVectorPtr observers = GetObservers(id);
 
     if (observers != nullptr)
