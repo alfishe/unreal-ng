@@ -648,6 +648,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `soundhq` | ON | High-quality DSP mode. When enabled, uses 192-tap FIR filters and 8x oversampling for audiophile-grade sound. When disabled, uses direct chip output for faster but lower quality audio. Only affects AY chip output. | Low-Medium (~15% CPU savings when OFF) |
 | `screenhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
 | `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
+| `sharedmemory` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. Alias: `shm`. | Low (startup overhead when enabled, minimal runtime impact) |
 
 **Feature Dependencies**:
 
@@ -724,6 +725,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | soundhq        | on     | Enable high-quality DSP (FIR filters, oversampling). Disable for low-quality/faster audio.
 | screenhq       | on     | Enable per-t-state video for demo multicolor effects. Disable for 25x faster batch rendering.
 | recording      | off    | Enable recording subsystem (video, audio, GIF capture).
+| sharedmemory   | off    | Export emulator memory via shared memory for external tool access.
 --------------------------------------------------------------------------------
 ```
 
@@ -1120,15 +1122,61 @@ Inspect tape device status, position, and current operation. Essential for debug
 
 #### 6.5 Disk Device State
 
-Inspect disk drive status, disk geometry, and current operations. Supports Beta Disk, +3, and modern interfaces.
+Inspect disk drive status, disk geometry, data contents, and current operations. Supports Beta Disk (WD1793), +3 (µPD765A), and modern interfaces. All disk commands operate on the currently selected emulator instance.
+
+**Multi-Drive Architecture:**
+- Each emulator instance has 4 drives (A-D / 0-3)
+- Commands accept drive letter (A-D) or index (0-3)
+- If only one disk is mounted, auto-select for commands without explicit drive
+- `disk select` sets default drive for subsequent commands
+
+##### 6.5.1 Drive Management
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
-| `state disk [drive]` | | `[A\|B\|C\|D]` | Show disk status for specified drive (or all drives):<br/>• Disk inserted: filename<br/>• Format: TRD, SCL, FDI, UDI, DSK<br/>• Geometry: tracks, sides, sectors per track<br/>• Write protection status<br/>• Current track/sector position<br/>• Motor state<br/>• FDC busy/idle state | 🔮 Planned |
-| `state disk geometry [drive]` | | `[A\|B\|C\|D]` | Show disk geometry details:<br/>• Total tracks<br/>• Heads (sides)<br/>• Sectors per track<br/>• Bytes per sector<br/>• Total capacity<br/>• Format identification | 🔮 Planned |
-| `state disk catalog [drive]` | `state disk dir` | `[A\|B\|C\|D]` | Show disk catalog (file list) if DOS detected:<br/>• **TR-DOS**: File name, type, length, start address<br/>• **+3DOS**: CP/M directory listing<br/>• **ESXDOS**: FAT directory listing<br/>Automatically detects DOS type. | 🔮 Planned |
-| `state disk fdc` | | | Show FDC (Floppy Disk Controller) state:<br/>• Controller type (WD1793, µPD765A)<br/>• Current command<br/>• Status register<br/>• Track/sector registers<br/>• DMA state (if applicable) | 🔮 Planned |
-| `state disk dos` | | | Detect and identify disk operating system:<br/>• DOS type: TR-DOS, +3DOS, G+DOS, ESXDOS, etc.<br/>• Version<br/>• Boot sector signature<br/>• System tracks<br/>• References detected DOS type documentation | 🔮 Planned |
+| `disk` | `disk list` | | List all drives (A-D). Shows: mounted/empty, file path, write protect, FDC state | ✅ WebAPI |
+| `disk select <drive>` | | `A-D` or `0-3` | Select drive for subsequent commands. Affects all disk commands without explicit drive argument. | 🔮 Planned |
+| `disk <drive>` | | `A-D` or `0-3` | Show detailed info for specific drive:<br/>• Filename and format (TRD/SCL/FDI)<br/>• Geometry: tracks, sides, sectors/track<br/>• FDC state: track/sector registers, status | 🔮 Planned |
+
+##### 6.5.2 Logical Data Access (Parsed/Structured)
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `disk sector [drv] <cyl> <side> <sec>` | | `[A-D]` `0-79` `0-1` `>=1` | Read parsed sector data:<br/>• Address Mark: cyl, head, sector, size<br/>• ID CRC and validity<br/>• Data (256 bytes, hex dump)<br/>• Data CRC and validity | ✅ WebAPI |
+| `disk track [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Track summary (16 sectors):<br/>• Per-sector: logical number, CRC status<br/>• Interleave table<br/>• Bad sector indicators | ✅ WebAPI |
+| `disk sysinfo [drv]` | | `[A-D]` | Parse TR-DOS system sector (T0/S9):<br/>• Disk type (80T DS/SS, 40T DS/SS)<br/>• Label, file count, free sectors<br/>• First free track/sector<br/>• Signature validity (0x10) | ✅ WebAPI |
+| `disk catalog [drv]` | `disk dir` | `[A-D]` | Show disk catalog (file list):<br/>• **TR-DOS**: name, type, length, start<br/>• **+3DOS**: CP/M directory<br/>• **ESXDOS**: FAT listing | ✅ WebAPI |
+
+##### 6.5.3 Raw Data Access (Byte-Level)
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `disk sector raw [drv] <cyl> <side> <sec>` | | `[A-D]` `0-79` `0-1` `>=1` | Raw sector bytes:<br/>• Gaps, sync bytes, address marks<br/>• Full MFM structure as written by FDC | ✅ WebAPI |
+| `disk track raw [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Raw track bytes (6250 bytes):<br/>• Complete MFM stream<br/>• Hex dump format | ✅ WebAPI |
+| `disk image [drv]` | | `[A-D]` | Whole image binary dump:<br/>• All tracks concatenated<br/>• Base64 encoded for transport | ✅ WebAPI |
+
+##### 6.5.4 FDC State and Debug
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `disk fdc` | `state disk fdc` | | Show FDC (WD1793) state:<br/>• Current command and FSM state<br/>• Status register (0x1F)<br/>• Track/Sector/Data registers<br/>• DRQ/INTRQ signals | 🔮 Planned |
+| `disk reindex [drv] <cyl> <side>` | | `[A-D]` `0-79` `0-1` | Force sector re-indexing (debug):<br/>• Rebuilds logical sector map from raw data<br/>• Fixes Shadow Sector Hazard | 🔮 Planned |
+
+**WebAPI Endpoints:**
+
+All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| GET | `/disk` | List all drives status |
+| GET | `/disk/{drive}` | Drive info (geometry, filename, FDC state) |
+| GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}` | Logical sector (256b + metadata) |
+| GET | `/disk/{drive}/sector/{cyl}/{side}/{sec}/raw` | Raw sector bytes (388b) |
+| GET | `/disk/{drive}/track/{cyl}/{side}` | Track summary (16 sectors) |
+| GET | `/disk/{drive}/track/{cyl}/{side}/raw` | Raw track (6250b, base64) |
+| GET | `/disk/{drive}/image` | Whole image binary (base64) |
+| GET | `/disk/{drive}/sysinfo` | TR-DOS system sector parsed |
+| GET | `/disk/{drive}/catalog` | Disk catalog/directory |
 
 #### 6.6 Screen Configuration
 

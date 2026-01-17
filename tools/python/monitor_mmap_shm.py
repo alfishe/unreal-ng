@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 """
-Memory Map Monitor for ZX-Spectrum Emulator
+Memory Map Monitor for ZX-Spectrum Emulator (Shared Memory)
 
-This script monitors the memory map file (/tmp/zxspectrum_memory<pid>) for changes
+This script monitors the emulator's shared memory for changes
 and displays which memory pages are being modified in real-time.
+
+Usage:
+    # Auto-select single emulator
+    python monitor_mmap_shm.py
+    
+    # Specify emulator by index or ID
+    python monitor_mmap_shm.py --emulator 1
+    python monitor_mmap_shm.py --emulator abc123def456
 """
 
 import sys
 import time
-import psutil
 import mmap
 import os
 import platform
+import argparse
 from pathlib import Path
 from typing import Optional, Dict, Set, Tuple, Callable, Any
 
@@ -20,14 +28,26 @@ IS_WINDOWS = platform.system() == 'Windows'
 IS_MACOS = platform.system() == 'Darwin'
 IS_LINUX = platform.system() == 'Linux'
 
-if IS_WINDOWS:
-    import win32con
-    import win32api
-    import win32file
-    import win32security
-    import pywintypes
-else:
-    import posix_ipc
+# Import the emulator discovery module
+try:
+    from emulator_discovery import (
+        discover_emulators, select_emulator, connect_to_shared_memory,
+        add_emulator_args, discover_and_select, cleanup_shared_memory,
+        EmulatorInfo
+    )
+    USE_WEBAPI_DISCOVERY = True
+except ImportError:
+    print("Warning: emulator_discovery module not found, using legacy PID-based discovery")
+    USE_WEBAPI_DISCOVERY = False
+    import psutil
+    if IS_WINDOWS:
+        import win32con
+        import win32api
+        import win32file
+        import win32security
+        import pywintypes
+    else:
+        import posix_ipc
 
 # Debug mode flag - set to True to enable detailed debug output
 DEBUG_MODE = False
@@ -352,7 +372,7 @@ def _connect_to_shared_memory_linux(pid):
 
     return None
 
-def connect_to_shared_memory(pid: int):
+def _connect_to_shared_memory_legacy(pid: int):
     """Connect to the emulator's shared memory.
     
     Args:
@@ -384,7 +404,7 @@ def find_shared_memory() -> Optional[Tuple[int, mmap.mmap]]:
         print(f"Found emulator process with PID: {pid}")
         
         # Connect to shared memory
-        shm = connect_to_shared_memory(pid)
+        shm = _connect_to_shared_memory_legacy(pid)
         if not shm:
             print("Failed to connect to shared memory.")
             return None
@@ -397,9 +417,39 @@ def find_shared_memory() -> Optional[Tuple[int, mmap.mmap]]:
         traceback.print_exc()
         return None
 
-def is_process_running(pid: int) -> bool:
-    """Check if a process with the given PID is running."""
-    return psutil.pid_exists(pid)
+def is_emulator_running(emulator_id) -> bool:
+    """Check if an emulator is still running.
+    
+    Args:
+        emulator_id: Either a numeric PID (legacy) or emulator ID suffix (WebAPI)
+    
+    Returns:
+        True if running, False otherwise
+    """
+    if USE_WEBAPI_DISCOVERY:
+        # Use WebAPI to check if emulator is still available
+        try:
+            import requests
+            # Try to get emulator list from WebAPI
+            response = requests.get("http://localhost:8090/api/v1/emulator", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                emulators = data.get('emulators', data if isinstance(data, list) else [])
+                # Check if our emulator ID suffix is still in the list
+                for emu in emulators:
+                    emu_id = emu.get('id', '') if isinstance(emu, dict) else str(emu)
+                    if emu_id.endswith(str(emulator_id)):
+                        return True
+                return False  # Emulator not found in list
+            return False  # API returned error
+        except Exception:
+            return False  # Connection failed - emulator likely stopped
+    
+    # Legacy mode - use psutil with PID
+    try:
+        return psutil.pid_exists(emulator_id)
+    except NameError:
+        return True  # psutil not imported, assume running
 
 # clear_screen() is now defined in the console helpers section above
 
@@ -425,7 +475,7 @@ def get_page_display_name(page_num: int) -> str:
     region, rel_page = get_page_info(page_num)
     return f"{region}{rel_page:3d} (0x{page_num * PAGE_SIZE:06x})"
 
-def monitor_shared_memory(pid: int, shm: mmap.mmap, update_interval: float = 0.02):  # 50Hz = 20ms
+def monitor_shared_memory(emulator_id, shm: mmap.mmap, update_interval: float = 0.02):  # 50Hz = 20ms
     """Monitor the shared memory region for changes with a clean, updating display."""
     global prev_pages
     
@@ -473,7 +523,7 @@ def monitor_shared_memory(pid: int, shm: mmap.mmap, update_interval: float = 0.0
     def print_header():
         """Print the header section on line 1."""
         shm_type = "Windows" if IS_WINDOWS else "macOS" if IS_MACOS else "Linux" if IS_LINUX else "Unknown"
-        print_at_line(1, f"Monitoring {shm_type} shared memory (PID: {pid})", clear=True)
+        print_at_line(1, f"Monitoring {shm_type} shared memory (ID: {emulator_id})", clear=True)
     
     def print_time():
         """Print the current time on line 2."""
@@ -532,7 +582,7 @@ def monitor_shared_memory(pid: int, shm: mmap.mmap, update_interval: float = 0.0
                 last_memory_check = current_time
                 
                 # Check if process is still running
-                if not is_process_running(pid):
+                if not is_emulator_running(emulator_id):
                     print("\n\033[91mProcess is no longer running!\033[0m")
                     break
                 
@@ -679,17 +729,75 @@ def monitor_shared_memory(pid: int, shm: mmap.mmap, update_interval: float = 0.0
 
 def main():
     """Main function."""
-    print("ZX-Spectrum Memory Map Monitor")
-    print("----------------------------\n")
+    parser = argparse.ArgumentParser(
+        description='Monitor ZX-Spectrum emulator memory for changes',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                          # Auto-select if single emulator
+  %(prog)s --emulator 1             # Select first emulator
+  %(prog)s --emulator abc123        # Select by ID suffix
+"""
+    )
     
-    # Find and monitor the shared memory
-    result = find_shared_memory()
-    if result is None:
-        return 1
+    # Add WebAPI emulator discovery arguments if available
+    if USE_WEBAPI_DISCOVERY:
+        add_emulator_args(parser)
+    
+    args = parser.parse_args()
+    
+    print("ZX-Spectrum Memory Map Monitor (Shared Memory)")
+    print("=" * 48 + "\n")
+    
+    shm = None
+    emulator_id = None
+    
+    try:
+        if USE_WEBAPI_DISCOVERY:
+            # Use WebAPI-based discovery
+            emulator = discover_and_select(args)
+            if not emulator:
+                return 1
+            
+            print(f"Selected emulator: {emulator.display_name}")
+            emulator_id = emulator.shm_suffix
+            
+            # Connect to shared memory using instance ID
+            shm = connect_to_shared_memory(emulator)
+            if not shm:
+                print("\nTip: Make sure the 'sharedmemory' feature is enabled:")
+                print("     feature sharedmemory on")
+                return 1
+            
+            # Start monitoring
+            monitor_shared_memory(emulator_id, shm)
+        else:
+            # Legacy: Find and monitor the shared memory using PID
+            result = find_shared_memory()
+            if result is None:
+                return 1
+                
+            pid, shm = result
+            monitor_shared_memory(pid, shm)
         
-    pid, shm = result
-    monitor_shared_memory(pid, shm)
-    return 0
+        return 0
+        
+    except KeyboardInterrupt:
+        print("\nMonitoring stopped by user")
+        return 0
+    except Exception as e:
+        print(f"\nError: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        # Ensure shared memory is properly closed
+        if shm is not None:
+            try:
+                if hasattr(shm, 'close') and not getattr(shm, 'closed', True):
+                    shm.close()
+            except:
+                pass
 
 if __name__ == "__main__":
     sys.exit(main())

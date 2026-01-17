@@ -31,6 +31,7 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _stateHandlers[S_WRITE_BYTE] = &WD1793::processWriteByte;
     _stateHandlers[S_READ_CRC] = &WD1793::processReadCRC;
     _stateHandlers[S_WRITE_CRC] = &WD1793::processWriteCRC;
+    _stateHandlers[S_WAIT_INDEX] = &WD1793::processWaitIndex;
     _stateHandlers[S_END_COMMAND] = &WD1793::processEndCommand;
 
     // TODO: remove collector once WD1793 logic is fully implemented and tested
@@ -73,13 +74,6 @@ void WD1793::reset()
 {
     // Reset all fields and states
     internalReset();
-
-    // Execute RESTORE command
-    uint8_t restoreValue = 0b0000'1111;
-    _lastDecodedCmd = WD_CMD_RESTORE;
-    _commandRegister = restoreValue;
-    _lastCmdValue = restoreValue;
-    cmdRestore(restoreValue);
 }
 
 void WD1793::internalReset()
@@ -115,6 +109,13 @@ void WD1793::internalReset()
     _lastTime = 0;
     _diffTime = 0;
 
+    // Clear Force Interrupt condition monitoring
+    _interruptConditions = 0;
+    _prevReady = false;
+
+    // Clear Type 2 command state
+    _useDeletedDataMark = false;
+
     clearAllErrors();
 
     // Deassert output signals
@@ -136,6 +137,10 @@ void WD1793::process()
 
     // Maintain FDD motor state
     processFDDMotorState();
+
+    // Monitor Force Interrupt conditions (I0, I1, I2)
+    // I2 is handled in processFDDIndexStrobe(), I0/I1 are handled here
+    processForceInterruptConditions();
 
     // Process counters and timeouts
     // - DRQ (Data Request) serving timeout
@@ -270,6 +275,49 @@ void WD1793::processFDDMotorState()
     }
 }
 
+/// Monitor Force Interrupt conditions I0 and I1 (ready state transitions)
+/// I0: Not-Ready to Ready transition
+/// I1: Ready to Not-Ready transition  
+/// I2 is monitored in processFDDIndexStrobe()
+void WD1793::processForceInterruptConditions()
+{
+    // Skip if no interrupt conditions are being monitored
+    if (_interruptConditions == 0)
+    {
+        return;
+    }
+
+    // Get current ready state
+    bool currentReady = isReady();
+    
+    // Check for I0: Not-Ready to Ready transition
+    if (_interruptConditions & WD_FORCE_INTERRUPT_NOT_READY)
+    {
+        if (!_prevReady && currentReady)
+        {
+            MLOGINFO("Force Interrupt I0: INTRQ raised on Not-Ready->Ready transition");
+            raiseIntrq();
+            // Clear the I0 condition after triggering
+            _interruptConditions &= ~WD_FORCE_INTERRUPT_NOT_READY;
+        }
+    }
+
+    // Check for I1: Ready to Not-Ready transition
+    if (_interruptConditions & WD_FORCE_INTERRUPT_READY)
+    {
+        if (_prevReady && !currentReady)
+        {
+            MLOGINFO("Force Interrupt I1: INTRQ raised on Ready->Not-Ready transition");
+            raiseIntrq();
+            // Clear the I1 condition after triggering
+            _interruptConditions &= ~WD_FORCE_INTERRUPT_READY;
+        }
+    }
+
+    // Update previous ready state for next cycle
+    _prevReady = currentReady;
+}
+
 /// Emulate disk rotation and index strobe changes
 void WD1793::processFDDIndexStrobe()
 {
@@ -299,6 +347,15 @@ void WD1793::processFDDIndexStrobe()
 
             MLOGDEBUG("Index pulse #%u detected at T-state: %llu. Motor timeout remaining: %d T-states (%.2f ms)",
                       _indexPulseCounter, _time, _motorTimeoutTStates, _motorTimeoutTStates * 1000.0 / Z80_FREQUENCY);
+
+            // Force Interrupt I2 condition: generate interrupt on each index pulse
+            if (_interruptConditions & WD_FORCE_INTERRUPT_INDEX_PULSE)
+            {
+                MLOGINFO("Force Interrupt I2: INTRQ raised on index pulse #%u", _indexPulseCounter);
+                raiseIntrq();
+                // Clear the I2 condition after triggering (per datasheet behavior)
+                _interruptConditions &= ~WD_FORCE_INTERRUPT_INDEX_PULSE;
+            }
         }
 
         // Debug log for index pulse state changes
@@ -662,16 +719,14 @@ uint8_t WD1793::getStatusRegister()
 
         if (_lost_data)
             _statusRegister |= WDS_LOSTDATA;
-        // DRQ (bit 1) for all Type II and III commands is driven by an FDC state machine
-        // But since beta128 register is used to hold chip DRQ output signal - get it from there
-        if (_beta128Register & DRQ)
+        if (_drq_out)
         {
             _statusRegister |= WDS_DRQ;
         }
         else
         {
             _statusRegister &= ~WDS_DRQ;
-        };
+        }
     }
 
     // BUSY (bit 0) is driven by an FDC state machine and set directly during command processing
@@ -944,9 +999,17 @@ void WD1793::cmdRestore(uint8_t value)
     // Direction must always be out (towards Track 0)
     _stepDirectionIn = false;
 
+    // Check if already at track 0 - if so, complete immediately
+    if (_selectedDrive->isTrack00())
+    {
+        _trackRegister = 0;
+        type1CommandVerify();
+        return;
+    }
+
     // FSM will transition across steps (making required wait cycles as needed):
     // S_STEP -> S_VERIFY -> S_IDLE
-    transitionFSM(WDSTATE::S_STEP);
+    transitionFSMWithDelay(WDSTATE::S_STEP, _steppingMotorRate * TSTATES_PER_MS);
 }
 
 /// This command assumes that Track Register contains the track number of the current position
@@ -965,6 +1028,14 @@ void WD1793::cmdSeek(uint8_t value)
     MLOGINFO(message.c_str());
 
     startType1Command();
+
+    // Check if already at target track - if so, complete immediately
+    if (_trackRegister == _dataRegister)
+    {
+        _selectedDrive->setTrack(_trackRegister);
+        type1CommandVerify();
+        return;
+    }
 
     _stepDirectionIn = _dataRegister > _trackRegister;
 
@@ -1103,6 +1174,32 @@ void WD1793::cmdWriteSector(uint8_t value)
 
     startType2Command();
 
+    // Per WD1793 datasheet: Check write protect before writing
+    // If write protected, terminate immediately with WP status
+    if (_selectedDrive->isWriteProtect())
+    {
+        MLOGINFO("Write Sector: Write protect detected - command terminated");
+        _statusRegister |= WDS_WRITEPROTECTED;
+        _statusRegister &= ~WDS_BUSY;  // Clear BUSY since command is terminated
+        _state = S_IDLE;
+        _state2 = S_IDLE;
+        raiseIntrq();  // Raise interrupt to signal completion
+        return;
+    }
+
+    // Decode command bits:
+    // Bit 0 (a0): 0 = Normal Data Mark (FB), 1 = Deleted Data Mark (F8)
+    // Bit 4 (m):  0 = Single sector, 1 = Multiple sectors
+    bool useDeletedDataMark = (value & CMD_WRITE_DEL) != 0;
+    bool multiSector = (value & CMD_MULTIPLE) != 0;
+    
+    // Store the data mark type for use when sector writing completes
+    _useDeletedDataMark = useDeletedDataMark;
+
+    MLOGINFO("  Data Mark: %s, Multi-sector: %s", 
+             useDeletedDataMark ? "Deleted (F8)" : "Normal (FB)",
+             multiSector ? "Yes" : "No");
+
     // Step 1: search for ID address mark
     /*
     FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID,
@@ -1184,16 +1281,28 @@ void WD1793::cmdReadTrack(uint8_t value)
 
     startType3Command();
 
-    // Get raw track data pointer
+    // Get raw track data pointer - validate early
     DiskImage* diskImage = _selectedDrive->getDiskImage();
-    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp);
-    uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
+    if (!diskImage)
+    {
+        _statusRegister |= WDS_NOTRDY;
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
 
+    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp);
+    if (!track)
+    {
+        _statusRegister |= WDS_NOTFOUND;
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    uint8_t* rawTrackData = track->getRawTrackData(_trackRegister, _sideUp);
     if (!rawTrackData)
     {
         // Handle error - invalid track
         _statusRegister |= WDS_NOTRDY;
-
         transitionFSM(S_END_COMMAND);
         return;
     }
@@ -1234,20 +1343,88 @@ void WD1793::cmdReadTrack(uint8_t value)
                        });
     _operationFIFO.push(readTrack);
 
-    // Start FSM playback using FIFO queue
-    transitionFSM(WDSTATE::S_FETCH_FIFO);
+    // Per WD1793 datasheet: Wait for index pulse before starting to read
+    // Store the target state in _state2 for processWaitIndex to use
+    _state2 = S_READ_TRACK;
+    
+    // Transition to wait for index pulse
+    transitionFSM(WDSTATE::S_WAIT_INDEX);
 }
 
 void WD1793::cmdWriteTrack(uint8_t value)
 {
-    std::cout << "Command Write Track: " << static_cast<int>(value) << std::endl;
+    std::string message =
+        StringHelper::Format("Command Write Track: %d | %s", value, StringHelper::FormatBinary(value).c_str());
+    MLOGINFO(message.c_str());
 
-    // Set DRQ immediately as the FDC is ready to receive the first track byte when INDEX PULSE is detected
-    // Subsequent bytes will be requested by setting DRQ after each byte transfer
+    startType3Command();
+
+    // Check write protect first (per datasheet)
+    if (_selectedDrive->isWriteProtect())
+    {
+        _statusRegister |= WDS_WRITEPROTECTED;
+        MLOGINFO("Write Track: Disk is write protected");
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    // Get track for writing - validate early
+    DiskImage* diskImage = _selectedDrive->getDiskImage();
+    if (!diskImage)
+    {
+        _statusRegister |= WDS_NOTRDY;
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp);
+    if (!track)
+    {
+        _statusRegister |= WDS_NOTFOUND;
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    // Set DRQ to request first byte from host (per datasheet: "wait for DRQ service")
     raiseDrq();
 
-    // Start command execution via FSM
-    startType3Command();
+    // Capture values into the lambda to avoid dangling pointer issues
+    FSMEvent writeTrack(WDSTATE::S_WRITE_TRACK,
+                        [this, selectedDrive = _selectedDrive, trackReg = _trackRegister, sideUp = _sideUp]() {
+                            // Validate pointers before use
+                            if (!selectedDrive || !selectedDrive->isDiskInserted())
+                            {
+                                this->_statusRegister |= WDS_NOTRDY;
+                                return;
+                            }
+
+                            DiskImage* diskImage = selectedDrive->getDiskImage();
+                            if (!diskImage)
+                            {
+                                this->_statusRegister |= WDS_NOTRDY;
+                                return;
+                            }
+
+                            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(trackReg, sideUp);
+                            if (!track)
+                            {
+                                this->_statusRegister |= WDS_NOTFOUND;
+                                return;
+                            }
+
+                            _bytesToWrite = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
+                            _rawDataBuffer = reinterpret_cast<uint8_t*>(&track->sectors[0]);
+                            _rawDataBufferIndex = 0;
+                            _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
+                        });
+    _operationFIFO.push(writeTrack);
+
+    // Per WD1793 datasheet: Wait for index pulse before starting to write
+    // Store the target state in _state2 for processWaitIndex to use
+    _state2 = S_WRITE_TRACK;
+
+    // Transition to wait for index pulse
+    transitionFSM(WDSTATE::S_WAIT_INDEX);
 }
 
 /// Execute Force Interrupt command
@@ -1262,7 +1439,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
 // Bit0 (J0) = 1 - Not-Ready to Ready transition
 // Bit1 (J1) = 1 - Ready to Not-Ready transition
 // Bit2 (J2) = 1 - Index pulse
-// Bit2 (J3) = 1 - Immediate interrupt
+// Bit3 (J3) = 1 - Immediate interrupt
 // If all bits [0:3] are not set (= 0) - terminate with no interrupt
 /// @details Upon receipt of any command, except the Force Interrupt command, the Busy Status bit is set and the
 /// rest of the status bits are updated or cleared for the new command.
@@ -1280,76 +1457,71 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     WDSTATE prevState = _state;
     [[maybe_unused]] WDSTATE prevState2 = _state2;
 
-    // Ensure we have only relevant parameter bits
-    value &= 0b0000'1111;
-    if (value != 0)
-    {
-        // Handling interrupts in decreasing priority
-
-        if (value & WD_FORCE_INTERRUPT_IMMEDIATE)  // Bit3 (J3) - Immediate interrupt
-        {
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)  // Bit2 (J2) - Every index pulse
-        {
-            // Not fully implemented
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_READY)  // Bit1 (J1) - Ready to Not-Ready transition
-        {
-            // Not fully implemented
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-
-        if (value & WD_FORCE_INTERRUPT_NOT_READY)  // Bit0 (J0) - Not-Ready to Ready transition
-        {
-            _state = S_IDLE;
-            _state2 = S_IDLE;
-            _delayTStates = 0;
-
-            _statusRegister &= ~WDS_BUSY;
-            raiseIntrq();
-            clearDrq();
-        }
-    }
-    else  // Terminate with no interrupt
-    {
-        // Currently executed command is terminated and a BUSY flag is reset
-        _state = S_IDLE;
-        _state2 = S_IDLE;
-        _delayTStates = 0;
-
-        _statusRegister &= ~WDS_BUSY;  // Deactivate a busy flag
-        raiseIntrq();
-    }
+    // Terminate any current command - always happens regardless of I0-I3 flags
+    _state = S_IDLE;
+    _state2 = S_IDLE;
+    _delayTStates = 0;
+    _statusRegister &= ~WDS_BUSY;
+    clearDrq();
 
     // Clear operations FIFO
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
-    // Set status register according Type 1 command layout
+    // Extract only the interrupt condition bits (I0-I3)
+    value &= 0b0000'1111;
+
+    // Store interrupt conditions for monitoring (I0, I1, I2)
+    // I3 is handled immediately, so we only store I0-I2
+    _interruptConditions = value & 0b0000'0111;  // Mask out I3, keep I0, I1, I2
+
+    if (value == 0)  // $D0 - Terminate with NO interrupt
+    {
+        // Per datasheet: "If I0-I3 = 0, there is no interrupt generated but the current 
+        // command is terminated and busy is reset."
+        // DO NOT raise INTRQ - this is the key behavior for $D0
+        MLOGINFO("Force Interrupt $D0: Terminate without INTRQ");
+    }
+    else
+    {
+        // At least one interrupt condition is set
+        
+        if (value & WD_FORCE_INTERRUPT_IMMEDIATE)  // Bit3 (I3) - Immediate interrupt
+        {
+            // Immediate interrupt - generate INTRQ now
+            raiseIntrq();
+            MLOGINFO("Force Interrupt I3: Immediate interrupt");
+        }
+        else
+        {
+            // I0, I1, or I2 set - interrupt will be generated when condition occurs
+            // The actual interrupt generation happens in process() via monitoring
+            
+            if (value & WD_FORCE_INTERRUPT_INDEX_PULSE)  // Bit2 (I2)
+            {
+                MLOGINFO("Force Interrupt I2: Interrupt on next index pulse");
+            }
+            
+            if (value & WD_FORCE_INTERRUPT_READY)  // Bit1 (I1)
+            {
+                // Store current ready state for transition detection
+                MLOGINFO("Force Interrupt I1: Interrupt on Ready->Not-Ready transition");
+            }
+            
+            if (value & WD_FORCE_INTERRUPT_NOT_READY)  // Bit0 (I0)
+            {
+                // Store current ready state for transition detection
+                MLOGINFO("Force Interrupt I0: Interrupt on Not-Ready->Ready transition");
+            }
+        }
+    }
+
+    // Update status register based on whether a command was executing
     if (noCommandExecuted)
     {
+        // Per datasheet: "If the Force Interrupt command is received when there is not a current 
+        // command under execution, the Busy Status bit is reset and the rest of the status bits 
+        // are updated or cleared. In this case, Status reflects the Type I commands."
         _statusRegister &= ~(WDS_CRCERR | WDS_SEEKERR | WDS_HEADLOADED);
         _statusRegister |= !_selectedDrive->isDiskInserted() ? WDS_NOTRDY : 0x00;
         _statusRegister |= _selectedDrive->isWriteProtect() ? WDS_WRITEPROTECTED : 0x00;
@@ -1370,6 +1542,9 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     }
     else
     {
+        // Per datasheet: "If the Force Interrupt Command is received when there is a current 
+        // command under execution, the Busy status bit is reset, and the rest of the status 
+        // bits are unchanged."
         MLOGINFO("<<== FORCE_INTERRUPT, command interrupted");
         MLOGINFO("  Command: %s", getWD_COMMANDName(_lastDecodedCmd));
         MLOGINFO("  State: %s, State2: %s\n", WDSTATEToString(prevState).c_str(), WDSTATEToString(prevState2).c_str());
@@ -1620,8 +1795,17 @@ void WD1793::processStep()
     }
     /// endregion </Check for step limits>
 
-    // We've reached head target position
-    if (_trackRegister == _dataRegister)
+    // Early termination checks (before any stepping occurs)
+    // RESTORE: Check if already at track 0 via TR00 signal
+    if (_lastDecodedCmd == WD_CMD_RESTORE && _selectedDrive->isTrack00())
+    {
+        _trackRegister = 0;
+        _selectedDrive->setTrack(0);
+        type1CommandVerify();
+        return;
+    }
+    // SEEK: Check if already at target track (trackRegister == dataRegister)
+    if (_lastDecodedCmd == WD_CMD_SEEK && _trackRegister == _dataRegister)
     {
         _selectedDrive->setTrack(_trackRegister);
         type1CommandVerify();
@@ -1632,9 +1816,14 @@ void WD1793::processStep()
     int8_t stepCorrection = _stepDirectionIn ? 1 : -1;
 
     // Apply changes to the WD1793 Track Register
-    _trackRegister += stepCorrection;
+    // SEEK/RESTORE always update Track Register; STEP commands only if 'u' bit is set
+    if (_lastDecodedCmd == WD_CMD_SEEK || _lastDecodedCmd == WD_CMD_RESTORE ||
+        (_lastCmdValue & 0x10))
+    {
+        _trackRegister += stepCorrection;
+    }
 
-    // Apply changes to FDD state
+    // Apply changes to FDD state (physical movement always happens)
     uint8_t fddTrack = _selectedDrive->getTrack();
     fddTrack += stepCorrection;
     _selectedDrive->setTrack(fddTrack);
@@ -1871,12 +2060,17 @@ void WD1793::processWriteSector()
 
 void WD1793::processWriteByte()
 {
-    if (false && !_drq_served)
+    // Lost Data detection: if host didn't provide data in time, set error and terminate
+    // Per WD1793 datasheet: If DRQ is not serviced in time, data is lost
+    if (_drq_out && !_drq_served)
     {
-        // Data was not fetched by CPU from Data Register
+        // Data was not provided by CPU to Data Register in time
         // Set LOST_DATA error and terminate
+        MLOGWARNING("Write Sector: Lost Data - DRQ not serviced in time");
         _statusRegister |= WDS_LOSTDATA;
+        raiseLostData();
         transitionFSM(WDSTATE::S_END_COMMAND);
+        return;
     }
 
     if (_rawDataBuffer)
@@ -1890,26 +2084,26 @@ void WD1793::processWriteByte()
 
         if (_bytesToWrite > 0)
         {
-            // DRQ is already set from previous state
+            // Raise DRQ to request the next byte from the host
+            raiseDrq();
+            
             // Transition to next byte write state
             transitionFSMWithDelay(WD1793::S_WRITE_BYTE, WD93_TSTATES_PER_FDC_BYTE);
         }
         else
         {
-            // No more bytes to read
+            // No more bytes to write
             // Clear DRQ since DR is no longer empty
             _statusRegister &= ~WDS_DRQ;
             clearDrq();
 
             /// region <Set WDS_RECORDTYPE bit depending on Data Address Mark>
 
-            // TODO: fetch real state from DiskImage::Track
-            bool isDataMarkDeleted = false;
-
-            // Status bit 5
-            // 1 - Deleted Data Mark
-            // 0 - Data Mark
-            if (isDataMarkDeleted)
+            // Use the data mark type that was set when the command was issued
+            // Status bit 5:
+            // 1 - Deleted Data Mark (F8)
+            // 0 - Data Mark (FB)
+            if (_useDeletedDataMark)
             {
                 _statusRegister |= WDS_RECORDTYPE;
             }
@@ -1918,6 +2112,9 @@ void WD1793::processWriteByte()
                 _statusRegister &= ~WDS_RECORDTYPE;
             }
             /// endregion </Set WDS_RECORDTYPE bit depending on Data Address Mark>
+
+            // TODO: Recalculate CRC for the written sector data
+            // The disk image should update the CRC in the sector's ID field
 
             // Fetch the next command from fifo (or end if no more commands left)
             transitionFSM(WDSTATE::S_FETCH_FIFO);
@@ -1938,9 +2135,114 @@ void WD1793::processReadTrack()
     transitionFSM(WD1793::S_READ_BYTE);
 }
 
+/// @brief Process Write Track (Format) command - writes raw track data from index to index
+/// Per WD1793 datasheet: Special control bytes are handled:
+/// - F5 (MFM): Write A1 with missing clock, preset CRC
+/// - F6 (MFM): Write C2 with missing clock
+/// - F7: Write 2 CRC bytes (calculated)
+/// - F8-FB: Write Data Address Mark (F8=deleted, FB=normal)
+/// - FC: Write Index Address Mark
+/// - FE: Write ID Address Mark, preset CRC
+/// All other values are written literally
 void WD1793::processWriteTrack()
 {
-    throw std::runtime_error("Not implemented");
+    // Check if DRQ was serviced - if not, it's Lost Data
+    if (_drq_out && !_drq_served)
+    {
+        // Host didn't provide data in time - Lost Data
+        _statusRegister |= WDS_LOSTDATA;
+        MLOGWARNING("Write Track: Lost Data - DRQ not serviced");
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    // Check if we've written all bytes (6250)
+    if (_bytesToWrite <= 0 || _rawDataBufferIndex >= DiskImage::RawTrack::RAW_TRACK_SIZE)
+    {
+        MLOGINFO("Write Track complete: %zu bytes written", _rawDataBufferIndex);
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    // Get the byte from data register
+    uint8_t dataByte = _dataRegister;
+    uint8_t byteToWrite = dataByte;
+
+    // Handle special format control bytes (MFM mode)
+    switch (dataByte)
+    {
+        case 0xF5:
+            // Write A1 with missing clock (sync byte for MFM)
+            // Also presets CRC to initial value
+            byteToWrite = 0xA1;
+            _crcAccumulator = 0xCDB4;  // Preset CRC
+            break;
+
+        case 0xF6:
+            // Write C2 with missing clock
+            byteToWrite = 0xC2;
+            break;
+
+        case 0xF7:
+            // Generate and write 2 CRC bytes
+            // Write CRC high byte, then low byte
+            if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
+            {
+                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(_crcAccumulator >> 8);
+                _bytesToWrite--;
+            }
+            if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
+            {
+                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(_crcAccumulator & 0xFF);
+                _bytesToWrite--;
+            }
+            // CRC bytes written - request next data
+            raiseDrq();
+            return;  // Don't write a third byte
+
+        case 0xF8:
+        case 0xF9:
+        case 0xFA:
+        case 0xFB:
+            // Data Address Mark bytes - written literally
+            // F8 = Deleted Data Mark, FB = Normal Data Mark
+            byteToWrite = dataByte;
+            break;
+
+        case 0xFC:
+            // Index Address Mark
+            byteToWrite = 0xFC;
+            break;
+
+        case 0xFE:
+            // ID Address Mark - preset CRC after writing
+            byteToWrite = 0xFE;
+            _crcAccumulator = 0xCDB4;  // Preset CRC
+            break;
+
+        default:
+            // Normal data byte - written literally
+            byteToWrite = dataByte;
+            break;
+    }
+
+    // Write the byte to the raw track buffer
+    if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
+    {
+        _rawDataBuffer[_rawDataBufferIndex++] = byteToWrite;
+        _bytesToWrite--;
+
+        // Update CRC for non-F7 bytes
+        if (dataByte != 0xF7)
+        {
+            // Simple CRC update (matching WD1793 algorithm)
+            _crcAccumulator = (_crcAccumulator << 8) ^ 
+                (((_crcAccumulator >> 8) ^ byteToWrite) << 8);  // Simplified - accurate CRC is complex
+        }
+    }
+
+    // Request next byte
+    raiseDrq();
 }
 
 void WD1793::processReadCRC()
@@ -1963,6 +2265,38 @@ void WD1793::processWriteCRC()
     // Make delay for 2 bytes transfer and end command execution
     transitionFSMWithDelay(WD1793::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE * _bytesToWrite);
     ;
+}
+
+/// @brief Wait for index pulse (rising edge) before starting track read/write
+/// Per WD1793 datasheet: Read Track and Write Track wait for index pulse before starting
+void WD1793::processWaitIndex()
+{
+    // Use internal counter tracking: _waitIndexPulseCount is set when entering S_WAIT_INDEX
+    // When _indexPulseCounter increments past our stored value, a new index pulse was detected
+    // Note: SIZE_MAX indicates uninitialized state (first call)
+    
+    // If _waitIndexPulseCount hasn't been set (first call), store current counter + 1
+    // We add 1 to wait for the NEXT pulse, not the current one
+    if (_waitIndexPulseCount == SIZE_MAX)
+    {
+        _waitIndexPulseCount = _indexPulseCounter;
+        MLOGDEBUG("S_WAIT_INDEX: Waiting for next index pulse (current count: %zu)", _waitIndexPulseCount);
+        return;
+    }
+    
+    // Check if a new index pulse occurred (counter incremented)
+    if (_indexPulseCounter > _waitIndexPulseCount)
+    {
+        MLOGINFO("Index pulse detected (count: %zu -> %zu) - starting track operation", 
+                 _waitIndexPulseCount, _indexPulseCounter);
+        
+        // Reset wait counter for next use
+        _waitIndexPulseCount = SIZE_MAX;
+        
+        // Fetch from FIFO to set up track buffer and proceed
+        transitionFSM(S_FETCH_FIFO);
+    }
+    // If no new pulse detected, stay in S_WAIT_INDEX state and wait
 }
 
 void WD1793::processEndCommand()

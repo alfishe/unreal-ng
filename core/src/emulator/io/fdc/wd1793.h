@@ -288,6 +288,8 @@ public:
         S_READ_CRC,   // Reads for CRC (2 bytes) at the end of the sector data block
         S_WRITE_CRC,  // Generates and write CRC (2 bytes) at the end of the sector data block
 
+        S_WAIT_INDEX,  // Wait for index pulse (Type III commands)
+
         S_END_COMMAND,  // Command execution ends
 
         WDSTATE_MAX
@@ -309,6 +311,8 @@ public:
             "S_READ_BYTE",   "S_WRITE_BYTE",
 
             "S_READ_CRC",    "S_WRITE_CRC",
+
+            "S_WAIT_INDEX",
 
             "S_END_COMMAND",
         };
@@ -644,13 +648,17 @@ protected:
     uint8_t* _rawDataBuffer = nullptr;  // Pointer to read/write data
     int32_t _bytesToRead = 0;           // How many more bytes to read from the disk
     int32_t _bytesToWrite = 0;          // How many more bytes to write to the disk
+    bool _useDeletedDataMark = false;   // True = write F8 (Deleted Data Mark), False = write FB (Normal Data Mark)
+    size_t _rawDataBufferIndex = 0;      // Current position in raw data buffer for track read/write
+    uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
 
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
     bool _index = false;                    // Current state of index strobe
     bool _prevIndex = false;                // Previous state of index strobe
     uint64_t _lastIndexPulseStartTime = 0;  // T-state when the current index pulse started (0 if no active pulse)
-    size_t _indexPulseCounter = 0;          // Index pulses counter
+    size_t _indexPulseCounter = 0;               // Index pulses counter
+    size_t _waitIndexPulseCount = SIZE_MAX;      // Index pulse counter at start of S_WAIT_INDEX (SIZE_MAX = uninitialized)
     int64_t _motorTimeoutTStates =
         0;  // 0 - motor already stopped. >0 - how many ticks left till auto-stop (timeout is 15 disk revolutions)
 
@@ -671,6 +679,7 @@ protected:
 
     // Force Interrupt command conditions (I0-I3 bits)
     uint8_t _interruptConditions = 0;  // Stores the interrupt condition flags from the Force Interrupt command
+    bool _prevReady = false;           // Previous drive ready state (for I0/I1 transition detection)
 
     // Debug logging state (instance-specific to avoid race conditions)
     uint64_t _lastDebugLogTime = 0;  // Last time debug log was printed (prevents log spam)
@@ -745,6 +754,7 @@ protected:
     void processFDDIndexStrobe();
     void prolongFDDMotorRotation();
     void processCountersAndTimeouts();
+    void processForceInterruptConditions();  // Monitor Force Interrupt I0/I1 conditions
     void startFDDMotor();
     void stopFDDMotor();
     void loadHead();
@@ -814,6 +824,7 @@ protected:
     void processWriteByte();
     void processReadCRC();
     void processWriteCRC();
+    void processWaitIndex();
     void processEndCommand();
 
     /// @brief Check if there are more actions in the FIFO queue
@@ -910,6 +921,7 @@ protected:
         uint8_t result = _dataRegister;
 
         _drq_served = true;
+        clearDrq();
 
         return result;
     }
@@ -921,6 +933,7 @@ protected:
         // If we're on Read or Write operation and data was requested by asserting DRQ - we need to mark that request
         // fulfilled
         _drq_served = true;
+        clearDrq();
     }
 
     /// endregion </State machine handlers>
@@ -1019,6 +1032,8 @@ public:
     using WD1793::_seek_error;
     using WD1793::_write_fault;
     using WD1793::_write_protect;
+    using WD1793::_useDeletedDataMark;
+    using WD1793::_bytesToWrite;
 
     using WD1793::_index;
     using WD1793::_indexPulseCounter;
@@ -1071,6 +1086,11 @@ public:
     using WD1793::enterSleepMode;
     using WD1793::isSleeping;
     using WD1793::wakeUp;
+
+    // Force Interrupt condition fields and methods
+    using WD1793::_prevReady;
+    using WD1793::isReady;
+    using WD1793::processForceInterruptConditions;
 };
 
 #endif  // _CODE_UNDER_TEST
