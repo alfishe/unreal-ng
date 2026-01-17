@@ -501,6 +501,13 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  basic                  - Show BASIC command help" << NEWLINE;
     oss << "  basic extract          - Extract BASIC program from memory" << NEWLINE;
     oss << NEWLINE;
+    oss << "Disk Inspection:" << NEWLINE;
+    oss << "  disk list              - List all disk drives and status" << NEWLINE;
+    oss << "  disk sector <drv> <cyl> <side> <sec> - Read sector data" << NEWLINE;
+    oss << "  disk track <drv> <cyl> <side>        - Read track summary" << NEWLINE;
+    oss << "  disk sysinfo <drv>     - Show TR-DOS system info (sector 9)" << NEWLINE;
+    oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
+    oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
     oss << NEWLINE;
