@@ -190,9 +190,6 @@ public:
             "listFeatures", &FeatureManager::listFeatures
         );
 
-<<<<<<< HEAD
-        // Set the emulator instance in the Lua environment (backward compatibility)
-=======
         // Disk inspection functions (simplified - complex operations via WebAPI)
         // disk_is_inserted(drive) -> bool
         lua.set_function("disk_is_inserted", [this](int drive) -> bool {
@@ -237,8 +234,7 @@ public:
             return true;
         });
 
-        // Set the emulator instance in the Lua environment
->>>>>>> github/master
+        // Set the emulator instance in the Lua environment (backward compatibility)
         lua["emulator"] = _emulator;
     }
 
