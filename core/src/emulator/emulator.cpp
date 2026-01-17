@@ -910,8 +910,13 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
+            
+            // Store file path for API queries
+            _context->coreState.diskFilePaths[0] = resolvedPath;
 
             /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded TRD disk
         }
     }
 
@@ -948,7 +953,13 @@ bool Emulator::LoadDisk(const std::string& path)
             {
                 _context->coreState.diskDrives[0]->insertDisk(diskImage);
             }
+            
+            // Store file path for API queries
+            _context->coreState.diskFilePaths[0] = resolvedPath;
+            
             /// endregion </Load new disk image and mount it>
+            
+            result = true;  // Successfully loaded SCL disk
         }
     }
 
