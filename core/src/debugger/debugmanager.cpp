@@ -2,6 +2,7 @@
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/analyzers/analyzermanager.h"
 
 /// region <Constructors / Destructors>
 
@@ -10,8 +11,14 @@ DebugManager::DebugManager(EmulatorContext* context)
     _context = context;
     _logger = _context->pModuleLogger;
 
-    _breakpoints = new BreakpointManager(context);
-    _labels = new LabelManager(context);
+    // Create all child components first
+    _breakpoints = new BreakpointManager(_context);
+    _labels = new LabelManager(_context);
+    _analyzerManager = std::make_unique<AnalyzerManager>(_context);
+    
+    // Initialize AnalyzerManager after all components are created
+    // Pass 'this' because _context->pDebugManager isn't set yet
+    _analyzerManager->init(this);
 
     _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);
@@ -51,6 +58,11 @@ LabelManager* DebugManager::GetLabelManager()
 std::unique_ptr<Z80Disassembler>& DebugManager::GetDisassembler()
 {
     return _disassembler;
+}
+
+AnalyzerManager* DebugManager::GetAnalyzerManager()
+{
+    return _analyzerManager.get();
 }
 
 /// endregion </Properties>

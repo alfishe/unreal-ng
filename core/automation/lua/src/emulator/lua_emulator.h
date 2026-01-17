@@ -2,6 +2,7 @@
 
 #include <sol/sol.hpp>
 #include <emulator/emulator.h>
+#include <emulator/memory/memory.h>
 
 class LuaEmulator
 {
@@ -28,7 +29,16 @@ public:
           "pause", &Emulator::Pause,
           "resume", &Emulator::Resume,
           "is_running", &Emulator::IsRunning,
-          "is_paused", &Emulator::IsPaused
+          "is_paused", &Emulator::IsPaused,
+          // Memory access
+          "read_memory", [](Emulator& emu, uint16_t addr) -> uint8_t {
+              auto* memory = emu.GetMemory();
+              return memory ? memory->DirectReadFromZ80Memory(addr) : 0;
+          },
+          "write_memory", [](Emulator& emu, uint16_t addr, uint8_t value) {
+              auto* memory = emu.GetMemory();
+              if (memory) memory->DirectWriteToZ80Memory(addr, value);
+          }
         );
 
         // Set the emulator instance in the Lua environment

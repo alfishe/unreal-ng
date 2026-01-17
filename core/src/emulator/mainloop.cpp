@@ -7,6 +7,8 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/modulelogger.h"
 #include "common/timehelper.h"
+#include "debugger/analyzers/analyzermanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "stdafx.h"
@@ -223,6 +225,12 @@ void MainLoop::OnFrameStart()
     _context->pTape->handleFrameStart();
     _soundManager->handleFrameStart();
     _screen->InitFrame();
+    
+    // Dispatch frame start event to AnalyzerManager
+    if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
+    {
+        _context->pDebugManager->GetAnalyzerManager()->dispatchFrameStart();
+    }
 }
 
 void MainLoop::OnCPUStep()
@@ -342,6 +350,12 @@ void MainLoop::OnFrameEnd()
     {
         // Log error but don't crash - message center failure shouldn't stop emulation
         MLOGERROR("MessageCenter post failed: %s", e.what());
+    }
+    
+    // Dispatch frame end event to AnalyzerManager
+    if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
+    {
+        _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
     }
 }
 

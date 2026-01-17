@@ -4,6 +4,7 @@
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/op_noprefix.h"
@@ -166,6 +167,12 @@ void Z80::Z80Step(bool skipBreakpoints)
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+            
+            // Dispatch breakpoint hit event to AnalyzerManager
+            if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
+            {
+                _context->pDebugManager->GetAnalyzerManager()->dispatchBreakpointHit(pc, breakpointID, this);
+            }
 
             // Wait until emulator resumed externally (by debugger or scripting engine)
             WaitUntilResumed();

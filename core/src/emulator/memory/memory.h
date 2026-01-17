@@ -323,5 +323,11 @@ public:
     using Memory::_isPage0ROMDOS;
     using Memory::_isPge0ROMService;
     using Memory::_memoryAccessTracker;
+    
+    // ROM base pointers for testing ROM switching
+    using Memory::base_dos_rom;
+    using Memory::base_sos_rom;
+    using Memory::base_128_rom;
+    using Memory::base_sys_rom;
 };
 #endif  // _CODE_UNDER_TEST

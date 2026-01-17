@@ -1066,42 +1066,70 @@ MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
 
 void Memory::SetROM48k(bool updatePorts)
 {
-    (void)updatePorts;
-
-    // Switch to 48k ROM page
+    // Switch to 48k (SOS) ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_sos_rom));
+    }
 }
 
 void Memory::SetROM128k(bool updatePorts)
 {
-    (void)updatePorts;
-
     // Switch to 128k ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_128_rom));
+    }
 }
 
 void Memory::SetROMDOS(bool updatePorts)
 {
-    (void)updatePorts;
-
     // Switch to DOS ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested (like regular Z80 OUT to port 1FFD)
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_dos_rom));
+    }
 }
 
 void Memory::SetROMSystem(bool updatePorts)
 {
-    (void)updatePorts;
-
-    // Switch to DOS ROM page
+    // Switch to System ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_sys_rom));
+    }
 }
 
 /// endregion </Debug methods>

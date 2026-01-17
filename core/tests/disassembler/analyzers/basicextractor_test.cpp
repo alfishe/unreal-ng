@@ -1,4 +1,4 @@
-#include "debugger/analyzers/basicextractor.h"
+#include "debugger/analyzers/basic-lang/basicextractor.h"
 
 #include <gtest/gtest.h>
 

@@ -23,6 +23,7 @@ protected:
     BreakpointManager* _breakpoints = nullptr;
     LabelManager* _labels = nullptr;
     std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
+    std::unique_ptr<class AnalyzerManager> _analyzerManager = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -38,6 +39,7 @@ public:
     BreakpointManager* GetBreakpointsManager();
     LabelManager* GetLabelManager();
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
+    AnalyzerManager* GetAnalyzerManager();
 
     /// endregion </Properties>
 

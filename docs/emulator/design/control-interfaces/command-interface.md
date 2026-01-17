@@ -2033,13 +2033,45 @@ Intelligent analysis and extraction of various content types from memory or file
 
 Extract and detokenize ZX Spectrum BASIC programs from memory or files.
 
-| Command | Arguments | Description | Status |
-| :--- | :--- | :--- | :--- |
-| `basic extract` | | Extract BASIC program from current memory (using PROG/VARS system variables). Returns detokenized BASIC listing. | ✅ Implemented |
-| `basic extract <addr> <len>` | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
-| `basic extract file <file>` | `<filename>` | Extract BASIC from .tap, .tzx, or raw file. | 🔮 Planned |
-| `basic save <file>` | `<filename>` | Save extracted BASIC to text file. | 🔮 Planned |
-| `basic load <file>` | `<filename>` | Load ASCII BASIC from text file: tokenize into memory and adjust system variables (PROG, VARS, E_LINE). | 🔮 Planned |
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `basic extract` | | | Extract BASIC program from current memory (using PROG/VARS system variables). Returns detokenized BASIC listing. | ✅ Implemented |
+| `basic extract <addr> <len>` | | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
+| `basic extract file <file>` | | `<filename>` | Extract BASIC from .tap, .tzx, or raw file. | 🔮 Planned |
+| `basic save <file>` | | `<filename>` | Save extracted BASIC to text file. | 🔮 Planned |
+| `basic load <file>` | | `<filename>` | Load ASCII BASIC from text file (not implemented). | 🔮 Planned |
+| `basic inject <program>` | | `<basic-code>` | Inject complete BASIC program into memory. Program is a multiline string with `\n` delimiters (e.g., `"10 PRINT \"Hello\"\n20 STOP"`). Tokenizes using BasicEncoder, updates system variables (PROG, VARS, E_LINE). Program is ready but NOT executing. | 🔮 Planned |
+| `basic load <path>` | | `<filename>` | Load BASIC program from `.bas` text file and inject into memory. | 🔮 Planned |
+| `basic appendline <line>` | | `<line-text>` | Append single BASIC line to current program, like typing in ROM BASIC (e.g., `"10 CLS"`). System variables updated after each line. Useful for interactive program building. | 🔮 Planned |
+| `basic run` | | | Execute current BASIC program by simulating RUN command (types R, U, N, ENTER via keyboard). Executes until STOP/END or breakpoint hit. | 🔮 Planned |
+| `basic list` | | | Display currently loaded BASIC program from memory (detokenized). | ✅ Implemented |
+| `basic clear` | | | Clear current BASIC program from memory (NEW command). | 🔮 Planned |
+
+**BASIC Injection Workflow Examples**:
+
+```bash
+# Method 1: Inject complete program all at once
+basic inject "10 PRINT \"Hello, World!\"\n20 STOP"
+basic run
+
+# Method 2: Build program line by line
+basic appendline "10 CLS"
+basic appendline "20 PRINT \"TEST\""
+basic appendline "30 STOP"
+basic run
+
+# Method 3: Load from file
+basic load /tmp/test.bas
+basic run
+
+# Check what's loaded
+basic list
+```
+
+**Implementation Notes**:
+- **`basic inject`**: Uses `BasicEncoder::tokenize()` and `BasicEncoder::loadProgram()` to inject tokenized BASIC into memory and update system variables.
+- **`basic appendline`**: Similar to `basic inject` but appends to existing program rather than replacing it.
+- **`basic run`**: Uses `Keyboard::PressKey()` to simulate typing RUN, then continues execution until program stops or breakpoint hit.
 
 **Features**:
 - Detokenizes all Spectrum 48K/128K BASIC tokens (0xA3-0xFF)

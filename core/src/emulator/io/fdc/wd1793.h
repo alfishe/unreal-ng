@@ -651,6 +651,7 @@ protected:
     bool _useDeletedDataMark = false;   // True = write F8 (Deleted Data Mark), False = write FB (Normal Data Mark)
     size_t _rawDataBufferIndex = 0;      // Current position in raw data buffer for track read/write
     uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
+    DiskImage::Track* _writeTrackTarget = nullptr;  // Track being written by Write Track command (for reindexing)
 
     // FDD state
     // TODO: all timeouts must go to WD93State.counters

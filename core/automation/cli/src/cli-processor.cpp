@@ -2,7 +2,7 @@
 
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
-#include <debugger/analyzers/basicextractor.h>
+#include <debugger/analyzers/basic-lang/basicextractor.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -96,6 +96,16 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // Disk control commands
                         {"disk", &CLIProcessor::HandleDisk},
+
+                        // Memory access commands
+                        {"page", &CLIProcessor::HandlePage},
+                        {"rom", &CLIProcessor::HandleROMProtect},
+
+                        // Memory aliases
+                        {"mem", &CLIProcessor::HandleMemory},
+                        {"m", &CLIProcessor::HandleMemory},
+                        {"regs", &CLIProcessor::HandleRegisters},
+                        {"r", &CLIProcessor::HandleRegisters},
 
                         // Snapshot control commands
                         {"snapshot", &CLIProcessor::HandleSnapshot}};

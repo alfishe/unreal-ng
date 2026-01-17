@@ -1416,6 +1416,7 @@ void WD1793::cmdWriteTrack(uint8_t value)
                             _rawDataBuffer = reinterpret_cast<uint8_t*>(&track->sectors[0]);
                             _rawDataBufferIndex = 0;
                             _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
+                            _writeTrackTarget = track;  // Store track for reindexing on completion
                         });
     _operationFIFO.push(writeTrack);
 
@@ -2160,6 +2161,15 @@ void WD1793::processWriteTrack()
     if (_bytesToWrite <= 0 || _rawDataBufferIndex >= DiskImage::RawTrack::RAW_TRACK_SIZE)
     {
         MLOGINFO("Write Track complete: %zu bytes written", _rawDataBufferIndex);
+        
+        // Reindex sector structure after raw track data has been written
+        // This populates sectorsOrderedRef[] so getSector() works correctly
+        if (_writeTrackTarget)
+        {
+            _writeTrackTarget->reindexSectors();
+            _writeTrackTarget = nullptr;  // Clear after use
+        }
+        
         transitionFSM(S_END_COMMAND);
         return;
     }

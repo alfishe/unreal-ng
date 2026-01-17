@@ -209,3 +209,45 @@ namespace DiskTypes
 } // namespace DiskTypes
 
 } // namespace TRDOS
+
+/// @brief Spectrum 128K Editor System Variables
+/// 
+/// These occupy addresses $EC00-$FFFF in physical RAM bank 7.
+/// Used by the 128K BASIC Editor, Calculator, and Menu system.
+/// 
+/// References:
+/// - ZX Spectrum 128K ROM0 Disassembly
+namespace Editor128K
+{
+// New 128K System Variables in Printer Buffer ($5B00-$5BFF)
+constexpr uint16_t SWAP = 0x5B00;        // 20 bytes: Swap paging subroutine
+constexpr uint16_t YOUNGER = 0x5B14;     // 9 bytes: Return paging subroutine
+constexpr uint16_t ONERR = 0x5B1D;       // 18 bytes: Error handler paging subroutine
+constexpr uint16_t BANK_M = 0x5B5C;      // 1 byte: Copy of last byte output to port $7FFD
+constexpr uint16_t FLAGS3 = 0x5B66;      // 1 byte: Flags - Bit 0: 1=BASIC mode, 0=Menu mode
+
+// Editor Workspace Variables (in RAM bank 7 at $EC00+)
+constexpr uint16_t EDIT_FLAGS = 0xEC00;  // 3 bytes: Flags when inserting line
+constexpr uint16_t EDIT_ERR = 0xEC03;    // 3 bytes: Flags upon error
+constexpr uint16_t EDIT_COUNT = 0xEC06;  // 2 bytes: Count of editable characters
+constexpr uint16_t EDIT_EPPC = 0xEC08;   // 2 bytes: Editor's E_PPC (last line entered)
+constexpr uint16_t MENU_INDEX = 0xEC0C;  // 1 byte: Current menu index (0=Tape, 1=128 BASIC, 2=Calc, 3=48 BASIC, 4=Tester)
+constexpr uint16_t EDITOR_FLAGS = 0xEC0D; // 1 byte: Editor flags - Bit 1=Menu displayed, Bit 4=Return to calc
+constexpr uint16_t EDITOR_MODE = 0xEC0E; // 1 byte: Mode - $00=Edit Menu, $04=Calculator, $FF=Tape Loader
+
+// Screen Line Edit Buffer (SLEB) - 128K full-screen editor buffer at $EC16
+// This is where typed commands are stored in 128K BASIC mode, NOT E_LINE
+constexpr uint16_t SLEB = 0xEC16;         // Screen Line Edit Buffer (up to 32 chars)
+constexpr uint16_t SLEB_LEN = 0xEC36;     // 1 byte: Current length of text in SLEB
+
+// Main Menu Item Indices
+namespace MenuItems
+{
+    constexpr uint8_t TAPE_LOADER = 0;   // Tape Loader
+    constexpr uint8_t BASIC_128K = 1;    // 128 BASIC
+    constexpr uint8_t CALCULATOR = 2;    // Calculator
+    constexpr uint8_t BASIC_48K = 3;     // 48 BASIC
+    constexpr uint8_t TAPE_TESTER = 4;   // Tape Tester
+} // namespace MenuItems
+
+} // namespace Editor128K
