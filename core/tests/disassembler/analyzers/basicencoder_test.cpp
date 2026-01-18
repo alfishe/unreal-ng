@@ -245,9 +245,9 @@ TEST_F(BasicEncoder_Test, InjectIntoMemory_SystemVariables)
     EXPECT_GT(varsAddr, progAddr);
     
     // Program length should match
-    // Program length should match (tokenized size + 2 bytes for program end marker)
+    // Program length should match (tokenized size only)
     auto tokenized = encoder.tokenize(program);
-    EXPECT_EQ(varsAddr - progAddr, tokenized.size() + 2);
+    EXPECT_EQ(varsAddr - progAddr, tokenized.size());
 }
 
 TEST_F(BasicEncoder_Test, InjectIntoMemory_ProgramContent)

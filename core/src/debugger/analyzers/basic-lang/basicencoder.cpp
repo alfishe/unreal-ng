@@ -320,14 +320,13 @@ bool BasicEncoder::injectIntoMemory(Memory* memory,
         memory->DirectWriteToZ80Memory(progStart + i, tokenizedProgram[i]);
     }
     
-    // Write program end marker (0x00 0x00)
-    size_t progSize = tokenizedProgram.size();
-    memory->DirectWriteToZ80Memory(progStart + progSize, 0x00);
-    memory->DirectWriteToZ80Memory(progStart + progSize + 1, 0x00);
     
     // Update system variables
-    // Program end is after the 2-byte terminator
-    uint16_t progEnd = progStart + progSize + 2;
+    // Program end is immediately after the last tokenized byte
+    // Note: ZX Spectrum BASIC does NOT use a 0x00 0x00 terminator.
+    // The end of program is defined strictly by the VARS system variable.
+    size_t progSize = tokenizedProgram.size();
+    uint16_t progEnd = progStart + progSize;
     updateSystemVariables(memory, progStart, progEnd);
     
     return true;
