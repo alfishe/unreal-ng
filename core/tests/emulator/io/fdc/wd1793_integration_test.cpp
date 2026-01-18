@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/test_path_helper.h"
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/trdostesthelper.h"
@@ -34,6 +35,9 @@ protected:
 protected:
     void SetUp() override
     {
+        // Ensure complete isolation - dispose any existing MessageCenter from previous tests
+        MessageCenter::DisposeDefaultMessageCenter();
+        
         _emulator = new Emulator(LoggerLevel::LogError);
         
         if (_emulator && _emulator->Init())
@@ -55,6 +59,9 @@ protected:
             delete _emulator;
             _emulator = nullptr;
         }
+        
+        // Force complete disposal of MessageCenter and all its observers
+        MessageCenter::DisposeDefaultMessageCenter();
     }
 };
 
@@ -213,7 +220,7 @@ TEST_F(WD1793_Integration_Test, TRDOS_BasicCommandExecution)
     TRDOSTestHelper helper(_emulator);
 
     // Execute a simple BASIC command
-    uint64_t cycles = helper.executeBasicCommand("PRINT \"TEST\"");
+    uint64_t cycles = helper.executeTRDOSCommandViaBasic("PRINT \"TEST\"");
     
     // Should execute some cycles
     EXPECT_GT(cycles, 0) << "BASIC command should execute";
@@ -256,65 +263,14 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
     // Step 4: Create TR-DOS test helper
     TRDOSTestHelper helper(_emulator);
 
-    // Step 5: Start FORMAT command via BASIC
-    // Command: RANDOMIZE USR 15616: REM: FORMAT "TEST"
-    std::cout << "[FORMAT_FULL_TEST] Executing TR-DOS FORMAT command...\n";
-    std::cout << "[FORMAT_FULL_TEST] Command: RANDOMIZE USR 15616: REM: FORMAT \"TEST\"\n";
+    // Step 5: Execute FORMAT directly via TR-DOS ROM
+    // This bypasses BASIC interpreter and calls FORMAT routine directly at 0x1EC2
+    std::cout << "[FORMAT_FULL_TEST] Executing TR-DOS FORMAT via direct ROM call...\n";
+    std::cout << "[FORMAT_FULL_TEST] Entry point: 0x1EC2 (TR-DOS v5.04T FORMAT)\n";
     
-    // First run FORMAT for 500ms worth of cycles to let TR-DOS show the prompt
-    // At 3.5MHz, 500ms = 1,750,000 cycles
-    constexpr uint64_t PROMPT_WAIT_CYCLES = 1'750'000;  // ~500ms at 3.5MHz
+    // Call FORMAT directly - 0x16 = 80T DS disk type
+    uint64_t totalCycles = helper.directFormatDisk(0x16);
     
-    uint64_t cyclesPhase1 = helper.executeBasicCommand("FORMAT \"TEST\"", PROMPT_WAIT_CYCLES);
-    std::cout << "[FORMAT_FULL_TEST] Phase 1 (prompt wait): " << cyclesPhase1 << " cycles\n";
-
-    // Step 6: Inject SPACE key to respond to "Press T for TURBO-FORMAT, Other key for FORMAT"
-    std::cout << "[FORMAT_FULL_TEST] Injecting SPACE key for normal FORMAT mode...\n";
-    keyboard->PressKey(ZXKEY_SPACE);
-    
-    // Step 7: Continue executing FORMAT with key held until activity or timeout
-    std::cout << "[FORMAT_FULL_TEST] Continuing FORMAT execution (key held)...\n";
-    
-    constexpr uint64_t FORMAT_MAIN_CYCLES = 500'000'000;  // Max ~140s at 3.5MHz
-    constexpr uint64_t CYCLES_PER_BATCH = 100'000;        // Run 100k cycles per iteration
-    constexpr uint64_t KEY_HOLD_CYCLES = 3'500'000;       // Hold key for ~1 second
-    
-    uint64_t cyclesPhase2 = 0;
-    uint8_t lastTrack = wd1793->getTrackRegister();
-    Z80* z80 = _context->pCore->GetZ80();
-    bool keyReleased = false;
-    
-    while (cyclesPhase2 < FORMAT_MAIN_CYCLES)
-    {
-        // Check if CPU halted
-        if (z80->halted)
-            break;
-        
-        _emulator->RunNCPUCycles(CYCLES_PER_BATCH, true);
-        cyclesPhase2 += CYCLES_PER_BATCH;
-        
-        // Release key after holding for 1 second
-        if (!keyReleased && cyclesPhase2 >= KEY_HOLD_CYCLES)
-        {
-            keyboard->ReleaseKey(ZXKEY_SPACE);
-            keyReleased = true;
-            std::cout << "[FORMAT_FULL_TEST] Key released after " << cyclesPhase2 << " cycles\n";
-        }
-        
-        // Monitor track changes (print only when track changes)
-        uint8_t currentTrack = wd1793->getTrackRegister();
-        if (currentTrack != lastTrack)
-        {
-            std::cout << "[FDC] Track: " << (int)currentTrack << std::endl;
-            lastTrack = currentTrack;
-        }
-    }
-    
-    // Ensure key is released
-    if (!keyReleased)
-        keyboard->ReleaseKey(ZXKEY_SPACE);
-    
-    uint64_t totalCycles = cyclesPhase1 + cyclesPhase2;
     std::cout << "[FORMAT_FULL_TEST] FORMAT completed, total cycles: " << totalCycles << "\n";
 
     // Step 5: Verify disk was actually modified (not empty)
@@ -349,7 +305,24 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
 
     std::cout << "[FORMAT_FULL_TEST] Track 0 has data - FORMAT appears successful\n";
 
-    // Step 6: Validate disk structure externally (C++ validation, not emulator)
+    // Step 6: Run MFM validation on Track 0 to see what was actually written
+    std::cout << "[FORMAT_FULL_TEST] Running MFM validation on Track 0...\n";
+    {
+        const uint8_t* rawData = reinterpret_cast<const uint8_t*>(static_cast<DiskImage::RawTrack*>(track0));
+        auto mfmResult = MFMValidator::validate(rawData, DiskImage::RawTrack::RAW_TRACK_SIZE);
+        std::cout << mfmResult.report();
+        
+        // Dump first 100 bytes of track to see what's there
+        std::cout << "[FORMAT_FULL_TEST] First 100 bytes of Track 0:\n";
+        for (int i = 0; i < 100; i++) {
+            if (i % 16 == 0) std::cout << std::hex << std::setw(4) << std::setfill('0') << i << ": ";
+            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)rawData[i] << " ";
+            if (i % 16 == 15) std::cout << "\n";
+        }
+        std::cout << std::dec << "\n";
+    }
+
+    // Step 7: Validate disk structure externally (C++ validation, not emulator)
     std::cout << "[FORMAT_FULL_TEST] Validating disk structure externally...\n";
 
     // 6a: Verify disk info sector (sector 8)

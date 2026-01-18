@@ -24,8 +24,15 @@ public:
     /// TR-DOS ROM initialization entry point
     static constexpr uint16_t TRDOS_ROM_INIT = 0x0000;
     
+    /// TR-DOS FORMAT routine entry point (v5.04T)
+    /// Direct call to format current disk without needing BASIC interpreter
+    static constexpr uint16_t TRDOS_FORMAT_ENTRY = 0x1EC2;
+    
     /// Maximum cycles to run before timeout (prevents infinite loops)
     static constexpr uint64_t MAX_EXECUTION_CYCLES = 10'000'000;  // ~3 seconds at 3.5MHz
+    
+    /// Maximum cycles for full disk format (~30 seconds)
+    static constexpr uint64_t FORMAT_MAX_CYCLES = 500'000'000;  // ~140s at 3.5MHz
     
     /// Sentinel return address for controlled execution
     static constexpr uint16_t SENTINEL_ADDRESS = 0xFFFE;
@@ -53,10 +60,10 @@ public:
 public:
     /// Execute a BASIC command via RANDOMIZE USR 15616 trap
     /// This simulates typing a command at the BASIC prompt and executing it
-    /// @param basicCommand BASIC command without line number (e.g., "FORMAT \"TEST\"")
+    /// @param trdosCommand BASIC command without line number (e.g., "FORMAT \"TEST\"")
     /// @param maxCycles Maximum cycles to execute (default: MAX_EXECUTION_CYCLES)
     /// @return Number of cycles executed, or 0 on failure
-    uint64_t executeBasicCommand(const std::string& basicCommand, 
+    uint64_t executeTRDOSCommandViaBasic(const std::string& trdosCommand, 
                                   uint64_t maxCycles = MAX_EXECUTION_CYCLES);
 
     /// Execute a full BASIC program (with line numbers)
@@ -79,6 +86,14 @@ public:
     /// Check if TR-DOS ROM is currently active
     /// @return true if TR-DOS ROM is paged in
     bool isTRDOSActive() const;
+    
+    /// Directly call TR-DOS FORMAT routine at 0x1EC2
+    /// Pages in TR-DOS ROM and jumps directly to format routine
+    /// @param diskType Disk type: 0x16=80T DS, 0x17=40T DS (default: 0x16)
+    /// @param maxCycles Maximum cycles to execute (default: FORMAT_MAX_CYCLES)
+    /// @return Number of cycles executed, or 0 on failure
+    uint64_t directFormatDisk(uint8_t diskType = 0x16,
+                               uint64_t maxCycles = FORMAT_MAX_CYCLES);
     /// endregion </TR-DOS Menu Activation>
 
     /// region <State Verification>

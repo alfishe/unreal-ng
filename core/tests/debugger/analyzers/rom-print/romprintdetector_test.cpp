@@ -1,13 +1,16 @@
-#include <gtest/gtest.h>
 #include "debugger/analyzers/rom-print/romprintdetector.h"
+
+#include <gtest/gtest.h>
+
+#include <iostream>
+
+#include "_helpers/emulatortesthelper.h"
+#include "_helpers/spectrumbasictesthelper.h"
+#include "common/image/imagehelper.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/basic-lang/basicencoder.h"
 #include "debugger/debugmanager.h"
 #include "emulator/emulatorcontext.h"
-#include "common/image/imagehelper.h"
-#include "_helpers/emulatortesthelper.h"
-#include "_helpers/basictesthelper.h"
-#include <iostream>
 
 class ROMPrintDetector_test : public ::testing::Test
 {
@@ -24,6 +27,9 @@ protected:
         
         _manager = context->pDebugManager->GetAnalyzerManager();
         ASSERT_NE(_manager, nullptr);
+        
+        // Ensure manager is enabled so it dispatches events
+        _manager->setEnabled(true);
     }
     
     void TearDown() override
@@ -281,7 +287,7 @@ TEST_F(ROMPrintDetector_test, IntegrationTest_RealBASICExecution)
     _manager->activate("rom-print");
     
     // Create BASIC test helper
-    BasicTestHelper basicHelper(_emulator);
+    SpectrumBasicTestHelper basicHelper(_emulator);
     
     // Inject BASIC program that prints test strings
     std::string basicProgram = 
@@ -303,18 +309,22 @@ TEST_F(ROMPrintDetector_test, IntegrationTest_RealBASICExecution)
     
     // DEBUG: Save screen as PNG to see what's actually displayed
     FramebufferDescriptor fb = _emulator->GetFramebuffer();
-    if (fb.memoryBuffer && fb.memoryBufferSize > 0) {
-        std::string screenshotPath = "/tmp/romprintdetector_test.png";
+    if (fb.memoryBuffer && fb.memoryBufferSize > 0)
+    {
+        std::string screenshotPath = "romprintdetector_test.png";
         std::cout << "[TEST] Saving screenshot to " << screenshotPath 
                   << " (" << fb.width << "x" << fb.height << ")" << std::endl;
         ImageHelper::SavePNG(screenshotPath, fb.memoryBuffer, fb.memoryBufferSize, fb.width, fb.height);
-    } else {
+    }
+    else
+        {
         std::cout << "[TEST] ERROR: No framebuffer available for screenshot" << std::endl;
     }
     
     std::cout << "[TEST] Captured text: '" << captured << "'" << std::endl;
     std::cout << "[TEST] Captured lines count: " << lines.size() << std::endl;
-    for (size_t i = 0; i < lines.size(); i++) {
+    for (size_t i = 0; i < lines.size(); i++)
+    {
         std::cout << "[TEST] Line " << i << ": '" << lines[i] << "'" << std::endl;
     }
     

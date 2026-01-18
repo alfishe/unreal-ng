@@ -4,6 +4,7 @@
 
 #include "common/dumphelper.h"
 #include "emulator/io/fdc/fdc.h"
+#include "emulator/io/fdc/mfm_parser.h"
 #include "trdos.h"
 #include <algorithm>
 
@@ -457,6 +458,49 @@ public:
                 sectorsOrderedRef[i] = sectorRef;                       // Store sector reference
                 sectorIDsOrderedRef[i] = &sectorRef->address_record;    // Store ID record reference
             }
+        }
+        
+        /// Reindex sector access by parsing raw MFM data
+        /// Called after Write Track to rebuild sector metadata from MFM stream
+        /// @return Validation result with detailed diagnostics
+        MFMValidator::ValidationResult reindexFromMFM()
+        {
+            // Get raw track data pointer
+            const uint8_t* rawData = reinterpret_cast<const uint8_t*>(static_cast<RawTrack*>(this));
+            
+            // Validate the track using MFM parser
+            auto result = MFMValidator::validate(rawData, RAW_TRACK_SIZE);
+            
+            // Clear existing references
+            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
+            {
+                sectorsOrderedRef[i] = nullptr;
+                sectorIDsOrderedRef[i] = nullptr;
+            }
+            
+            // Rebuild references from parsed sectors
+            for (size_t i = 0; i < 16; i++)
+            {
+                const auto& parsed = result.parseResult.sectors[i];
+                if (parsed.found && parsed.sectorNo >= 1 && parsed.sectorNo <= 16)
+                {
+                    uint8_t idx = parsed.sectorNo - 1;
+                    
+                    // Calculate the raw sector position from IDAM offset
+                    // IDAM is at offset + 3 (after A1 A1 A1), and RawSectorBytes starts 22 bytes before sync
+                    if (parsed.idamOffset >= 25)
+                    {
+                        size_t sectorStart = parsed.idamOffset - 25;  // Back to sector start (gap0 + sync0 + f5_token0)
+                        RawSectorBytes* sectorRef = reinterpret_cast<RawSectorBytes*>(
+                            const_cast<uint8_t*>(rawData + sectorStart));
+                        
+                        sectorsOrderedRef[idx] = sectorRef;
+                        sectorIDsOrderedRef[idx] = &sectorRef->address_record;
+                    }
+                }
+            }
+            
+            return result;
         }
         /// endregion </Methods>
     };

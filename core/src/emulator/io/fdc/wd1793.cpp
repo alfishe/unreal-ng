@@ -2162,11 +2162,25 @@ void WD1793::processWriteTrack()
     {
         MLOGINFO("Write Track complete: %zu bytes written", _rawDataBufferIndex);
         
-        // Reindex sector structure after raw track data has been written
-        // This populates sectorsOrderedRef[] so getSector() works correctly
+        // Reindex sector structure by parsing raw MFM data
+        // This uses MFMParser to find IDAMs and rebuild sectorsOrderedRef[]
         if (_writeTrackTarget)
         {
-            _writeTrackTarget->reindexSectors();
+            auto result = _writeTrackTarget->reindexFromMFM();
+            
+            // Log validation result
+            if (result.passed)
+            {
+                MLOGINFO("Write Track MFM validation: PASSED (%zu/16 sectors)", 
+                         result.parseResult.validSectors);
+            }
+            else
+            {
+                MLOGWARNING("Write Track MFM validation: FAILED (%zu/16 sectors, %zu errors)",
+                            result.parseResult.validSectors, result.issues.size());
+                // Detailed report available via result.report()
+            }
+            
             _writeTrackTarget = nullptr;  // Clear after use
         }
         

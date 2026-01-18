@@ -5,14 +5,14 @@
 #include "debugger/analyzers/basic-lang/basicencoder.h"
 #include <string>
 
-/// BasicTestHelper: Utilities for BASIC program testing
-/// Provides methods to inject and execute BASIC programs in tests
-class BasicTestHelper
+/// BasicTestHelper: Utilities for Spectrum BASIC program testing
+/// Provides methods to inject and execute Spectrum BASIC programs in tests
+class SpectrumBasicTestHelper
 {
 public:
     /// Constructor
     /// @param emulator Initialized emulator instance
-    explicit BasicTestHelper(Emulator* emulator);
+    explicit SpectrumBasicTestHelper(Emulator* emulator);
     
     /// Inject BASIC program into memory and auto-execute it
     /// @param basicProgram BASIC program with line numbers (e.g., "10 PRINT \"HELLO\"\n20 STOP\n")
