@@ -1,0 +1,102 @@
+# Screen Viewer Implementation Log
+
+## Overview
+Implementation log for the `unreal-screen-viewer` application as specified in [tdd.md](./tdd.md).
+
+**Source Location**: `/unreal-screen-viewer/`
+
+---
+
+## 2026-01-17: Project Kickoff
+
+### Session 1: Foundation Setup
+
+#### ✅ Completed
+- [x] TDD created and approved
+- [x] Implementation log created
+- [x] Project directory structure created
+- [x] CMakeLists.txt with Qt6 Widgets/Network
+- [x] main.cpp entry point
+- [x] MainWindow with menu bar, status bar, splitter layout
+- [x] WebAPIClient with HTTP REST calls
+- [x] EmulatorList widget with auto-selection
+- [x] ScreenViewer widget with:
+  - [x] Cross-platform shared memory attachment (POSIX + Windows)
+  - [x] ZX Spectrum screen rendering from raw RAM
+  - [x] Click-to-toggle between Page 5/7
+  - [x] Aspect ratio preservation with scaling
+  - [x] 50Hz refresh timer
+- [x] **BUILD SUCCESSFUL** on macOS
+
+#### 🔧 Technical Notes
+- Used `::close()` instead of `close()` to avoid Qt namespace conflict
+- ZX Spectrum constants verified against `core/src/emulator/platform.h`:
+  - `PAGE_SIZE = 0x4000` (16KB)
+  - `MAX_PAGES = 323` (256 RAM + 2 cache + 1 misc + 64 ROM)
+  - Screen size: 6912 bytes (6144 bitmap + 768 attributes)
+
+#### 📋 Pending
+- [ ] Test with running emulator instance
+- [ ] Settings dialog for endpoint configuration
+- [ ] Connection error handling improvements
+- [ ] Windows build verification
+- [ ] Linux build verification
+
+### Phase 3: Emulator List
+| Task | Status | Notes |
+|:-----|:-------|:------|
+| EmulatorList widget | ⏳ | |
+| Selection handling | ⏳ | |
+| Auto-select single instance | ⏳ | |
+| Periodic refresh | ⏳ | |
+
+### Phase 4: Shared Memory Integration
+| Task | Status | Notes |
+|:-----|:-------|:------|
+| Cross-platform shm helper | ⏳ | POSIX + Windows |
+| Attach/detach lifecycle | ⏳ | |
+| Memory layout handling | ⏳ | |
+
+### Phase 5: Screen Rendering
+| Task | Status | Notes |
+|:-----|:-------|:------|
+| ScreenViewer widget | ⏳ | |
+| Raw RAM rendering | ⏳ | Copy from core/video |
+| Click-to-toggle (Page 5/7) | ⏳ | |
+| Ratio-constrained scaling | ⏳ | |
+
+### Phase 6: Polish
+| Task | Status | Notes |
+|:-----|:-------|:------|
+| Settings dialog | ⏳ | Port configuration |
+| Connection error handling | ⏳ | |
+| Status bar | ⏳ | |
+| Cross-platform testing | ⏳ | macOS, Linux, Windows |
+
+---
+
+## Technical Notes
+
+### Shared Memory Name Format
+- POSIX: `/unreal-ng-{uuid}`
+- Windows: `Local\\unreal-ng-{uuid}`
+
+### Screen Memory Offsets
+- Page 5: `5 * 0x4000 = 0x14000` (main screen)
+- Page 7: `7 * 0x4000 = 0x1C000` (shadow screen)
+- Screen size: 6912 bytes (6144 bitmap + 768 attributes)
+
+### Rendering Reference
+Copy from `core/src/video/` — do NOT link core library.
+
+---
+
+## Build Commands
+
+```bash
+# From unreal-screen-viewer directory
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
+./bin/unreal-screen-viewer
+```

@@ -147,6 +147,12 @@ public:
         return _mappedMemoryFilepath;
     }
 
+    // Check if shared memory is currently enabled and active
+    inline bool IsSharedMemoryEnabled() const
+    {
+        return _feature_sharedmemory_enabled && !_mappedMemoryFilepath.empty();
+    }
+
     // Shortcuts to ROM pages
     uint8_t* base_sos_rom;
     uint8_t* base_dos_rom;
@@ -173,6 +179,30 @@ public:
     /// Unmap the memory from the filesystem
     void UnmapMemory();
     void SyncToDisk();
+
+    /**
+     * @brief Update all cached memory pointers after base memory reallocation.
+     * 
+     * This method MUST be called whenever the underlying memory buffer changes location
+     * (e.g., during heap↔shared memory migration). It updates:
+     *   - Derived base addresses (_ramBase, _cacheBase, _miscBase, _romBase)
+     *   - All four Z80 bank pointers (_bank_read[], _bank_write[])
+     *   - ROM base pointers (base_sos_rom, base_dos_rom, base_128_rom, base_sys_rom)
+     *   - Screen's cached video RAM pointer (via RefreshMemoryPointers)
+     * 
+     * @param oldBase Previous memory base address (before migration)
+     * @param newBase New memory base address (after migration)
+     * 
+     * @warning Failure to call this after memory reallocation causes:
+     *   - Z80 reads/writes accessing freed memory (undefined behavior / crash)
+     *   - Emulator UI showing stale screen content
+     *   - External viewers seeing correct data but emulator frozen
+     *   - Screen updating only after software triggers page switching
+     * 
+     * @note The offset calculation (newBase - oldBase) preserves relative positioning
+     *       of all pointers within the memory region.
+     */
+    void MigratePointersAfterReallocation(uint8_t* oldBase, uint8_t* newBase);
 
     // Update feature cache (call when features change at runtime)
     void UpdateFeatureCache();
