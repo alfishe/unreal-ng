@@ -1,6 +1,9 @@
 #include "memory.h"
 
+#include <atomic>
 #include <cassert>
+#include <mutex>
+#include <thread>
 
 #include "base/featuremanager.h"
 #include "common/bithelper.h"
@@ -13,6 +16,7 @@
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/video/screen.h"
 #include "stdafx.h"
 
 // Platform-specific includes for memory mapping
@@ -32,6 +36,10 @@
 #include <mach/vm_map.h>
 #endif
 #endif
+
+// Global mutex to serialize shared memory migrations across ALL emulator instances
+// This prevents race conditions when multiple emulators toggle shared memory simultaneously
+static std::mutex s_sharedMemoryMigrationMutex;
 
 /// region <Constructors / Destructors>
 
@@ -531,7 +539,9 @@ void Memory::UnmapMemory()
     }
 }
 
-// Add a method to sync the entire buffer if you want to do it in batches
+// Sync shared memory for external viewers
+// For POSIX shm_open based shared memory, we use a memory barrier
+// to ensure writes are visible to other processes (msync is for disk persistence)
 void Memory::SyncToDisk()
 {
     // Only sync if shared memory is in use
@@ -541,24 +551,72 @@ void Memory::SyncToDisk()
     }
 
 #ifndef _WIN32
-    if (msync(_memory, _memorySize, MS_SYNC) == -1)
-    {
-        LOGWARNING("POSIX: msync failed for the entire buffer: " + std::string(strerror(errno)));
-    }
+    // Use a full memory barrier to ensure all writes are visible
+    // This is more appropriate for shm_open-based shared memory than msync
+    __sync_synchronize();
+    
+    // Also use msync with MS_INVALIDATE to force cache coherence
+    msync(_memory, _memorySize, MS_SYNC | MS_INVALIDATE);
 #else
     if (_mappedMemoryHandle != INVALID_HANDLE_VALUE)
     {
-        // On Windows, FlushViewOfFile forces writes to disk for a mapped view
-        // of a file backed by the system paging file.
-        // For page-file backed shared memory, changes are generally immediately visible
-        // to other processes. Explicit flushing is less common for page-file backed memory.
         if (FlushViewOfFile(_memory, _memorySize) == 0)
         {
             LOGWARNING("Windows: FlushViewOfFile failed: " + std::to_string(GetLastError()));
         }
-        MLOGDEBUG("Windows: FlushViewOfFile called.");
     }
 #endif
+}
+
+/// @brief Migrate all cached pointers after memory base address changes.
+/// 
+/// This method is called during heap↔shared memory transitions when the SharedMemory
+/// feature is toggled at runtime. When switching between regular heap allocation and
+/// POSIX/Windows shared memory (for external tools like Screen Viewer), the entire
+/// memory buffer is reallocated at a different address.
+/// 
+/// Calculates the offset between old and new base addresses, then applies
+/// this offset to all cached pointers that reference the memory region.
+/// 
+/// @param oldBase The previous memory base address (heap or shared memory)
+/// @param newBase The new memory base address (shared memory or heap)
+void Memory::MigratePointersAfterReallocation(uint8_t* oldBase, uint8_t* newBase)
+{
+    // Calculate pointer offset: how much each pointer needs to shift
+    // This preserves relative positioning within the memory region
+    ptrdiff_t offset = newBase - oldBase;
+
+    // Step 1: Update derived base addresses
+    // These are the fundamental region pointers that other calculations depend on
+    _ramBase = newBase;                                           // RAM pages start at base
+    _cacheBase = newBase + MAX_RAM_PAGES * PAGE_SIZE;             // Cache follows RAM
+    _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;         // Misc follows cache
+    _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;            // ROM follows misc
+
+    // Step 2: Update Z80 bank pointers
+    // These are the hot-path pointers used by Z80::DirectRead/DirectWrite
+    // Stale pointers here cause reads/writes to freed memory!
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bank_read[i] != nullptr)
+            _bank_read[i] += offset;     // Bank read pointer for Z80 address space window i
+        if (_bank_write[i] != nullptr)
+            _bank_write[i] += offset;    // Bank write pointer for Z80 address space window i
+    }
+
+    // Step 3: Update ROM base pointers
+    // These shortcuts point to specific ROM pages used by SetROMPage()
+    if (base_sos_rom != nullptr) base_sos_rom += offset;   // SOS 48K ROM
+    if (base_dos_rom != nullptr) base_dos_rom += offset;   // TR-DOS ROM
+    if (base_128_rom != nullptr) base_128_rom += offset;   // 128K ROM
+    if (base_sys_rom != nullptr) base_sys_rom += offset;   // System/service ROM
+
+    // Step 4: Notify dependent subsystems to refresh their cached pointers
+    // Screen caches _activeScreenMemoryOffset for rendering performance
+    if (_context->pScreen)
+    {
+        _context->pScreen->RefreshMemoryPointers();
+    }
 }
 
 /// endregion </Initialization>
@@ -1393,6 +1451,39 @@ void Memory::UpdateFeatureCache()
         bool sharedMemoryRequested = fm->isEnabled(Features::kSharedMemory);
         if (sharedMemoryRequested != _feature_sharedmemory_enabled)
         {
+            // GLOBAL LOCK: Serialize all shared memory migrations across ALL emulators
+            // This prevents race conditions when multiple emulators toggle shared memory simultaneously
+            std::lock_guard<std::mutex> lock(s_sharedMemoryMigrationMutex);
+            
+            // Re-check after acquiring lock (another thread might have changed state)
+            sharedMemoryRequested = fm->isEnabled(Features::kSharedMemory);
+            if (sharedMemoryRequested == _feature_sharedmemory_enabled)
+            {
+                // State already changed by another thread while we waited for lock
+                return;
+            }
+            
+            // CRITICAL: Pause emulator before memory migration to prevent race conditions
+            // The Z80 thread would access stale bank pointers during reallocation
+            Emulator* emulator = _context->pEmulator;
+            bool wasRunning = emulator && emulator->IsRunning() && !emulator->IsPaused();
+            
+            LOGDEBUG("Memory::UpdateFeatureCache - SharedMemory toggle: requested=%s, current=%s, emulator=%p, wasRunning=%s",
+                    sharedMemoryRequested ? "ON" : "OFF",
+                    _feature_sharedmemory_enabled ? "ON" : "OFF",
+                    (void*)emulator,
+                    wasRunning ? "YES" : "NO");
+            
+            if (wasRunning)
+            {
+                LOGDEBUG("Memory::UpdateFeatureCache - Pausing emulator before migration (silent)");
+                // Use silent pause (broadcast=false) to avoid triggering UI updates during migration
+                // UI refresh during migration would access memory being reallocated
+                emulator->Pause(false);
+                // MainLoop::Pause() now waits for Z80 thread to confirm it's paused via CV
+                LOGDEBUG("Memory::UpdateFeatureCache - Emulator paused, proceeding with migration");
+            }
+
             if (sharedMemoryRequested && !_feature_sharedmemory_enabled)
             {
                 // Transition: OFF -> ON (enable shared memory)
@@ -1413,17 +1504,18 @@ void Memory::UpdateFeatureCache()
                     {
                         // Copy content from old heap to new shared memory
                         memcpy(_memory, oldMemory, _memorySize);
+                        
+                        // Flush shared memory to ensure external processes see the data immediately
+                        msync(_memory, _memorySize, MS_SYNC | MS_INVALIDATE);
 
-                        // Update derived addresses
-                        _ramBase = _memory;
-                        _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
-                        _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
-                        _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
+                        // Migrate all cached pointers to reference new memory location
+                        // See MigratePointersAfterReallocation() for full documentation
+                        MigratePointersAfterReallocation(oldMemory, _memory);
 
-                        // Free old heap memory
+                        // Free old heap memory (safe now that all pointers updated)
                         delete[] oldMemory;
 
-                        LOGINFO("Shared memory enabled - migrated %zu bytes to shared memory", _memorySize);
+                        LOGDEBUG("Shared memory enabled - migrated %zu bytes to shared memory", _memorySize);
                     }
                     else
                     {
@@ -1444,6 +1536,9 @@ void Memory::UpdateFeatureCache()
                 // Migrate from shared memory to heap memory
                 if (_memory != nullptr && !_mappedMemoryFilepath.empty())
                 {
+                    // Save old shared memory pointer for offset calculation
+                    uint8_t* oldMemory = _memory;
+
                     // Allocate new heap memory
                     uint8_t* newMemory = new uint8_t[_memorySize];
 
@@ -1456,16 +1551,25 @@ void Memory::UpdateFeatureCache()
                     // Set new heap memory
                     _memory = newMemory;
 
-                    // Update derived addresses
-                    _ramBase = _memory;
-                    _cacheBase = _memory + MAX_RAM_PAGES * PAGE_SIZE;
-                    _miscBase = _cacheBase + MAX_CACHE_PAGES * PAGE_SIZE;
-                    _romBase = _miscBase + MAX_MISC_PAGES * PAGE_SIZE;
+                    // Migrate all cached pointers to reference new memory location
+                    // See MigratePointersAfterReallocation() for full documentation
+                    MigratePointersAfterReallocation(oldMemory, _memory);
 
-                    LOGINFO("Shared memory disabled - migrated %zu bytes to heap memory", _memorySize);
+                    LOGDEBUG("Shared memory disabled - migrated %zu bytes to heap memory", _memorySize);
                 }
 
                 _feature_sharedmemory_enabled = false;
+            }
+            
+            // Resume emulator after migration completes
+            if (wasRunning)
+            {
+                // Memory barrier ensures all pointer updates are visible to all CPU cores
+                // before Z80 thread resumes execution (critical for ARM's weak memory model)
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+                
+                // Use silent resume (broadcast=false) to match silent pause
+                emulator->Resume(false);
             }
         }
 

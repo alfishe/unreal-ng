@@ -6,6 +6,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <json/json.h>
+#include <thread>
 
 #include "../emulator_api.h"
 
@@ -212,9 +213,11 @@ void EmulatorAPI::setFeature(const HttpRequestPtr& req, std::function<void(const
         return;
     }
 
+
     bool enabled = (*json)["enabled"].asBool();
 
     // Apply the feature change
+    // Note: For shared memory toggle, Memory::UpdateFeatureCache handles pause/resume internally
     bool success = featureManager->setFeature(name, enabled);
 
     if (!success)
