@@ -95,6 +95,13 @@ void MainLoop::Run(volatile bool& stopRequested)
         {
             MLOGINFO("Pause requested");
 
+            // Signal that we've entered paused state
+            {
+                std::lock_guard<std::mutex> lock(_pauseMutex);
+                _isPausedConfirmed.store(true, std::memory_order_release);
+            }
+            _pauseCV.notify_all();  // Wake up any thread waiting for pause confirmation
+
             while (_pauseRequested)
             {
                 // React on stop request while paused
@@ -104,8 +111,15 @@ void MainLoop::Run(volatile bool& stopRequested)
                     break;  // Exit pause loop
                 }
 
-                sleep_ms(20);
+                // Use condition variable to wait for resume (more responsive than polling)
+                std::unique_lock<std::mutex> lock(_pauseMutex);
+                _pauseCV.wait_for(lock, std::chrono::milliseconds(20), [this]() {
+                    return !_pauseRequested || _stopRequested;
+                });
             }
+
+            // Clear paused confirmation when resuming
+            _isPausedConfirmed.store(false, std::memory_order_release);
 
             continue;  // Either we'll render next frame or exit main loop via stopRequested check
         }
@@ -156,6 +170,17 @@ void MainLoop::Pause()
     _pauseRequested = true;
 
     _cpu->Pause();
+    
+    // Wait for Z80 thread to confirm it's paused (max 100ms timeout)
+    std::unique_lock<std::mutex> lock(_pauseMutex);
+    bool confirmed = _pauseCV.wait_for(lock, std::chrono::milliseconds(100), [this]() {
+        return _isPausedConfirmed.load(std::memory_order_acquire);
+    });
+    
+    if (!confirmed)
+    {
+        MLOGWARNING("Pause confirmation timeout - Z80 thread may still be in mid-frame");
+    }
 }
 
 void MainLoop::Resume()
@@ -163,6 +188,9 @@ void MainLoop::Resume()
     _pauseRequested = false;
 
     _cpu->Resume();
+    
+    // Signal the pause CV to wake up the paused Z80 thread
+    _pauseCV.notify_all();
 }
 
 void MainLoop::RunFrame()
@@ -326,6 +354,21 @@ void MainLoop::OnFrameEnd()
         {
             // Log error but don't crash - recording failure shouldn't stop emulation
             MLOGERROR("RecordingManager::CaptureFrame failed: %s", e.what());
+        }
+    }
+
+    // Sync shared memory if enabled (for external viewers like screen-viewer, debuggers, memory dumpers, etc.)
+    // This ensures the memory-mapped region is visible to other processes
+    // Only sync when shared memory feature is actually enabled to avoid overhead
+    if (_context->pMemory && _context->pMemory->IsSharedMemoryEnabled())
+    {
+        try
+        {
+            _context->pMemory->SyncToDisk();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("Memory::SyncToDisk failed: %s", e.what());
         }
     }
 
