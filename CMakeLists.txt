@@ -131,6 +131,9 @@ if (BUILD_QT_APPS)
     
     message(STATUS ">>> Building unreal-screen-viewer")
     add_subdirectory(unreal-screen-viewer)
+    
+    message(STATUS ">>> Building unreal-videowall")
+    add_subdirectory(unreal-videowall)
 endif ()
 
 # ========================================
