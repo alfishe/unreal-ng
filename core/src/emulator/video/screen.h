@@ -409,6 +409,11 @@ public:
     /// Components cache their feature flags for performance to avoid map lookups in hot paths.
     void UpdateFeatureCache();
 
+    /// @brief Refresh cached memory pointers after memory migration
+    /// Called by Memory when transitioning between heap and shared memory.
+    /// This ensures _activeScreenMemoryOffset points to current memory.
+    void RefreshMemoryPointers();
+
     /// @brief Check if ScreenHQ mode is enabled (per-t-state rendering for demo compatibility)
     /// When false, batch 8-pixel rendering is used for performance
     bool IsScreenHQEnabled() const

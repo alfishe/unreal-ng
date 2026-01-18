@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 #include "cli-processor.h"
 
@@ -323,6 +324,7 @@ void CLIProcessor::HandleFeature(const ClientSession& session, const std::vector
         const std::string& featureName = args[0];
         const std::string& action = args[1];
 
+        // Note: For shared memory toggle, Memory::UpdateFeatureCache handles pause/resume internally
         if (action == Features::kStateOn)
         {
             if (featureManager->setFeature(featureName, true))

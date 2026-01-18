@@ -490,6 +490,18 @@ void Screen::UpdateFeatureCache()
     }
 }
 
+void Screen::RefreshMemoryPointers()
+{
+    // Refresh _activeScreenMemoryOffset after memory migration
+    // This pointer becomes stale when Memory migrates between heap and shared memory
+    if (_memory)
+    {
+        // Re-fetch pointer for currently active screen (Bank 5 or 7)
+        uint8_t ramPage = (_activeScreen == SCREEN_SHADOW) ? 7 : 5;
+        _activeScreenMemoryOffset = _memory->RAMPageAddress(ramPage);
+    }
+}
+
 void Screen::SaveScreen()
 {
     ImageHelper::SaveFrameToPNG_Async(_framebuffer.memoryBuffer, _framebuffer.memoryBufferSize, _framebuffer.width,
