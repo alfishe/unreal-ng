@@ -27,6 +27,9 @@ protected:
     volatile bool _isRunning = false;
     volatile bool _stopRequested = false;
     volatile bool _pauseRequested = false;
+    std::atomic<bool> _isPausedConfirmed{false};  // Set by Z80 thread when actually paused
+    std::condition_variable _pauseCV;              // Signaled when pause is confirmed
+    std::mutex _pauseMutex;                        // Protects pause state
 
     std::atomic<bool> _moreAudioDataRequested;
     std::condition_variable _cv;

@@ -155,8 +155,8 @@ public:
     void Reset();
     void Start();
     void StartAsync();
-    void Pause();
-    void Resume();
+    void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
+    void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
     void Stop();
 
     // File format operations

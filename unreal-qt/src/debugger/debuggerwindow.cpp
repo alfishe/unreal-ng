@@ -287,6 +287,7 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
             updateToolbarActions(true, false, true, true, true, true);
             break;
         case StateRun:
+        case StateResumed:  // StateResumed = running after pause, same as StateRun
             // (Continue: OFF, Pause: ON, Step: OFF, Reset: ON, Breakpoints: ON, Labels: ON)
             updateToolbarActions(false, true, false, true, true, true);
             break;
