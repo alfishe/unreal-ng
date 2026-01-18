@@ -2,15 +2,25 @@ cmake_minimum_required(VERSION 3.16.0)
 
 message(">> unreal-qt CMakeLists.txt")
 
-# Project named 'core' on C++
+# Project named 'unreal-qt' on C++
 project(unreal-qt LANGUAGES CXX)
 
-# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
-set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
-set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
-set(ENABLE_PYTHON_AUTOMATION OFF CACHE BOOL "Enable Python automation" FORCE)
-set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
-set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
+# Define automation options (use defaults if not already set by parent CMakeLists.txt)
+if (NOT DEFINED ENABLE_AUTOMATION)
+    option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
+endif()
+if (NOT DEFINED ENABLE_LUA_AUTOMATION)
+    option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
+endif()
+if (NOT DEFINED ENABLE_PYTHON_AUTOMATION)
+    option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
+endif()
+if (NOT DEFINED ENABLE_WEBAPI_AUTOMATION)
+    option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
+endif()
+if (NOT DEFINED ENABLE_CLI_AUTOMATION)
+    option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
+endif()
 
 # Specify the C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -27,10 +37,11 @@ set (SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Include CMake helper functions file
 include(${ROOT_DIR}/cmake/func.cmake)
 
-# Add automation if enabled
+# Add automation if enabled (skip if target already exists from parent build)
 if (ENABLE_AUTOMATION)
-    add_subdirectory("${ROOT_DIR}/core/automation" automation)
-
+    if (NOT TARGET unrealng::automation)
+        add_subdirectory("${ROOT_DIR}/core/automation" automation)
+    endif()
     set(INCLUDE_AUTOMATION True)
 endif ()
 
@@ -161,8 +172,14 @@ include_directories(
 
 # Build all dependency libraries
 add_subdirectory("3rdparty/QHexView-5.0")
-add_subdirectory("${ROOT_DIR}/core/src" core)
-add_subdirectory("${ROOT_DIR}/core/tests" tests)
+
+# Add core/tests only if not already defined by parent build
+if (NOT TARGET unrealng::core)
+    add_subdirectory("${ROOT_DIR}/core/src" core)
+endif()
+if (NOT TARGET core-tests)
+    add_subdirectory("${ROOT_DIR}/core/tests" tests)
+endif()
 
 # All sources in /src and subfolders will be compiled
 file (GLOB_RECURSE CPP_FILES ${SOURCE_DIR}/*.cpp)
@@ -188,6 +205,7 @@ add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS})
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
+    "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated ui_*.h headers
     "${ROOT_DIR}/core/src"
     "${ROOT_DIR}/core"  # Added parent directory for proper automation includes
     "${ROOT_DIR}/core/automation"  # For automation headers
