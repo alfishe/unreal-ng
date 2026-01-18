@@ -633,9 +633,13 @@ void Emulator::StartAsync()
     _isRunning = true;
     _stopRequested = false;
 
-    // Start new thread with name 'emulator' and execute Start() method from it
-    _asyncThread = new std::thread([this]() {
-        ThreadHelper::setThreadName("emulator");
+    // Start new thread with name 'emulator-xxxxxxxxxxxx' (last 12 chars of UUID) and execute Start() method from it
+    // The short ID matches the shared memory naming convention for consistency
+    std::string shortId = _emulatorId.length() > 12 ? _emulatorId.substr(_emulatorId.length() - 12) : _emulatorId;
+    std::string threadName = "emulator-" + shortId;
+
+    _asyncThread = new std::thread([this, threadName]() {
+        ThreadHelper::setThreadName(threadName.c_str());
 
         this->Start();
     });
