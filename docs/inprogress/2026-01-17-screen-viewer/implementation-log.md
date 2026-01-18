@@ -132,3 +132,26 @@ make -j$(nproc)
 - [ ] Persist mode/layout via QSettings
 - [ ] Test with running emulator
 
+### Session 2: Implementation Complete
+
+#### ✅ Completed
+- [x] Created `ModeToolbar.h/cpp` with toggle buttons ([1] single, [2] dual, ═ horizontal, ║ vertical)
+- [x] Added `ViewMode` and `DualLayout` enums to ScreenViewer
+- [x] Implemented dual rendering in `paintEvent()` with horizontal/vertical layouts
+- [x] Added "Bank 5"/"Bank 7" labels in dual mode
+- [x] Connected ModeToolbar signals to ScreenViewer
+- [x] Added QSettings persistence for mode/layout
+- [x] Updated CMakeLists.txt with new source file
+- [x] **BUILD SUCCESSFUL** on macOS
+
+#### 🔧 Technical Notes
+- Dual horizontal: 8:3 aspect ratio (512×192 effective)
+- Dual vertical: 4:6 aspect ratio (256×384 effective)
+- Click-to-toggle disabled in dual mode (both screens visible)
+- Settings saved to `~/Library/Preferences/com.UnrealNG.ScreenViewer.plist` on macOS
+
+#### 📋 Ready for Testing
+- Manual testing with running emulator required
+- Verify mode switching, layout toggle, and persistence
+
+

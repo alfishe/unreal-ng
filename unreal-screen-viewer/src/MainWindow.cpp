@@ -9,10 +9,13 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QEventLoop>
+#include <QSettings>
+#include <QVBoxLayout>
 
 #include "WebAPIClient.h"
 #include "EmulatorList.h"
 #include "ScreenViewer.h"
+#include "ModeToolbar.h"
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -35,12 +38,18 @@ MainWindow::MainWindow(QWidget* parent)
     connect(_refreshTimer, &QTimer::timeout, this, &MainWindow::onRefreshClicked);
     _refreshTimer->start(2000);
 
+    // Load saved settings
+    loadSettings();
+
     // Initial refresh
     onRefreshClicked();
 }
 
 MainWindow::~MainWindow()
 {
+    // Save settings before exit
+    saveSettings();
+
     // Disable shared memory on selected emulator before exit
     // Wait up to 500ms for the request to complete, then quit anyway
     if (!_selectedEmulatorId.isEmpty() && _webApiClient)
@@ -49,7 +58,6 @@ MainWindow::~MainWindow()
         QTimer timeout;
         timeout.setSingleShot(true);
         
-        // Exit loop when response received or timeout
         connect(_webApiClient.get(), &WebAPIClient::sharedMemoryDisabled, &loop, &QEventLoop::quit);
         connect(_webApiClient.get(), &WebAPIClient::errorOccurred, &loop, &QEventLoop::quit);
         connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
@@ -65,17 +73,28 @@ void MainWindow::setupUI()
     // Create splitter for left/right panels
     _splitter = new QSplitter(Qt::Horizontal, this);
     
-    // Left panel: Emulator list
-    _emulatorList = new EmulatorList(_splitter);
+    // Left panel: Container with emulator list + mode toolbar
+    QWidget* leftPanel = new QWidget(_splitter);
+    QVBoxLayout* leftLayout = new QVBoxLayout(leftPanel);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(0);
+    
+    _emulatorList = new EmulatorList(leftPanel);
     _emulatorList->setMinimumWidth(200);
-    _emulatorList->setMaximumWidth(350);
+    
+    _modeToolbar = new ModeToolbar(leftPanel);
+    
+    leftLayout->addWidget(_emulatorList, 1);  // List stretches
+    leftLayout->addWidget(_modeToolbar, 0);   // Toolbar fixed height
+    leftPanel->setLayout(leftLayout);
+    leftPanel->setMaximumWidth(350);
     
     // Right panel: Screen viewer
     _screenViewer = new ScreenViewer(_splitter);
     
-    _splitter->addWidget(_emulatorList);
+    _splitter->addWidget(leftPanel);
     _splitter->addWidget(_screenViewer);
-    _splitter->setStretchFactor(0, 0);  // List doesn't stretch
+    _splitter->setStretchFactor(0, 0);  // Left panel doesn't stretch
     _splitter->setStretchFactor(1, 1);  // Screen stretches
     
     setCentralWidget(_splitter);
@@ -140,6 +159,18 @@ void MainWindow::connectSignals()
             _emulatorList, &EmulatorList::updateEmulatorList);
     connect(_webApiClient.get(), &WebAPIClient::sharedMemoryEnabled,
             _screenViewer, &ScreenViewer::attachToSharedMemory);
+    
+    // Mode toolbar signals
+    connect(_modeToolbar, &ModeToolbar::viewModeChanged, this, [this](ModeToolbar::ViewMode mode) {
+        _screenViewer->setViewMode(mode == ModeToolbar::ViewMode::Dual 
+                                   ? ScreenViewer::ViewMode::Dual 
+                                   : ScreenViewer::ViewMode::Single);
+    });
+    connect(_modeToolbar, &ModeToolbar::dualLayoutChanged, this, [this](ModeToolbar::DualLayout layout) {
+        _screenViewer->setDualLayout(layout == ModeToolbar::DualLayout::Vertical 
+                                     ? ScreenViewer::DualLayout::Vertical 
+                                     : ScreenViewer::DualLayout::Horizontal);
+    });
 }
 
 void MainWindow::onEmulatorSelected(const QString& emulatorId)
@@ -232,3 +263,31 @@ void MainWindow::updateStatusBar()
         _emulatorLabel->setText("");
     }
 }
+
+void MainWindow::saveSettings()
+{
+    QSettings settings("UnrealNG", "ScreenViewer");
+    
+    settings.setValue("viewMode", static_cast<int>(_modeToolbar->viewMode()));
+    settings.setValue("dualLayout", static_cast<int>(_modeToolbar->dualLayout()));
+    settings.setValue("webApiHost", _webApiHost);
+    settings.setValue("webApiPort", _webApiPort);
+}
+
+void MainWindow::loadSettings()
+{
+    QSettings settings("UnrealNG", "ScreenViewer");
+    
+    // Restore view mode
+    int viewMode = settings.value("viewMode", 0).toInt();
+    _modeToolbar->setViewMode(static_cast<ModeToolbar::ViewMode>(viewMode));
+    
+    // Restore dual layout
+    int dualLayout = settings.value("dualLayout", 0).toInt();
+    _modeToolbar->setDualLayout(static_cast<ModeToolbar::DualLayout>(dualLayout));
+    
+    // Restore WebAPI settings
+    _webApiHost = settings.value("webApiHost", "localhost").toString();
+    _webApiPort = settings.value("webApiPort", 8090).toInt();
+}
+

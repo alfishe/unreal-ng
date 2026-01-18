@@ -110,6 +110,7 @@ set(SOURCES
     src/WebAPIClient.cpp
     src/EmulatorList.cpp
     src/ScreenViewer.cpp
+    src/ModeToolbar.cpp
 )
 
 # Put binary to /bin subfolder
