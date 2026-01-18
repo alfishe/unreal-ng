@@ -19,7 +19,7 @@ protected:
     EmulatorContext* _context;
     ModuleLogger* _logger;
 
-    volatile bool _mute;
+    volatile bool _mute = false;  // MUST initialize - sound unmuted by default
     bool _soundEnabled = true;
 
     AudioFrameDescriptor _beeperAudioDescriptor;                                   // Audio descriptor for the beeper

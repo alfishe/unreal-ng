@@ -308,6 +308,21 @@ bool Emulator::Init()
         // Init default video render
         _context->pScreen->InitFrame();
 
+        // Propagate initial feature values to all subsystems (SoundManager, Memory, etc.)
+        // This ensures cached feature flags match FeatureManager state after initialization
+        // If not done - there will be no sound
+        if (_featureManager)
+        {
+            _featureManager->onFeatureChanged();
+        }
+        
+        // Ensure SoundManager feature cache is definitely synced (belt-and-suspenders)
+        // This guards against race conditions during async start
+        if (_context->pSoundManager)
+        {
+            _context->pSoundManager->UpdateFeatureCache();
+        }
+
         // Ensure all logger messages displayed
         _context->pModuleLogger->Flush();
 
@@ -628,7 +643,31 @@ void Emulator::StartAsync()
     });
 }
 
-void Emulator::Pause()
+/// @brief Pauses emulator execution
+/// 
+/// Pauses the Z80 emulation thread. When paused, the emulator stops executing
+/// instructions but remains in memory and can be resumed.
+///
+/// @param broadcast If true (default), broadcasts StatePaused to UI and listeners.
+///                  If false, performs a "silent" pause without triggering UI updates.
+///
+/// @note Use broadcast=false for internal operations where:
+///       - Memory is being reallocated (shared memory migration)
+///       - State is temporarily inconsistent and UI refresh would crash
+///       - You want an atomic pause/operation/resume without visible state flicker
+///
+/// @warning Silent pause (broadcast=false) should always be paired with silent resume.
+///          The UI will not know the emulator was paused, so don't leave it paused.
+///
+/// @example
+///   // User-initiated pause (shows in debugger):
+///   emulator->Pause();  // or Pause(true)
+///   
+///   // Internal pause for memory migration (invisible to UI):
+///   emulator->Pause(false);
+///   // ... perform migration ...
+///   emulator->Resume(false);
+void Emulator::Pause(bool broadcast)
 {
     if (_isPaused)
         return;
@@ -647,16 +686,38 @@ void Emulator::Pause()
 
     _mainloop->Pause();
 
-    // Update state
-    SetState(StatePaused);
+    // Update state and broadcast only if requested
+    // broadcast=false is used for internal operations like shared memory migration
+    // where we don't want to trigger UI updates during the brief pause
+    if (broadcast)
+    {
+        SetState(StatePaused);
 
-    // Broadcast notification - Emulator execution paused
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
-    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+        // Broadcast notification - Emulator execution paused
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleNumberPayload* payload = new SimpleNumberPayload(StatePaused);
+        messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+    }
 }
 
-void Emulator::Resume()
+/// @brief Resumes emulator execution after pause
+/// 
+/// Resumes the Z80 emulation thread from a paused state. The emulator continues
+/// executing from where it was paused.
+///
+/// @param broadcast If true (default), broadcasts StateResumed to UI and listeners.
+///                  If false, performs a "silent" resume without triggering UI updates.
+///
+/// @note Use broadcast=false for internal operations where:
+///       - Memory was just reallocated and you used silent pause
+///       - You want seamless resume without UI state flicker
+///       - The pause was for an internal atomic operation (not user-initiated)
+///
+/// @warning Must match the pause mode: if Pause(false) was called, use Resume(false).
+///          Mismatched broadcast flags can leave UI in inconsistent state.
+///
+/// @see Emulator::Pause
+void Emulator::Resume(bool broadcast)
 {
     if (!_isPaused)
     {
@@ -676,13 +737,16 @@ void Emulator::Resume()
 
     _isRunning = true;
 
-    // Update state
-    SetState(StateResumed);
+    // Update state and broadcast only if requested
+    if (broadcast)
+    {
+        SetState(StateResumed);
 
-    // Broadcast notification - Emulator execution resumed
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
-    messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+        // Broadcast notification - Emulator execution resumed
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
+        messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+    }
 }
 
 void Emulator::Stop()
