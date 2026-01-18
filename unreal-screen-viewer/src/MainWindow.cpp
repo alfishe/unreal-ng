@@ -8,6 +8,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QEventLoop>
 
 #include "WebAPIClient.h"
 #include "EmulatorList.h"
@@ -41,9 +42,21 @@ MainWindow::MainWindow(QWidget* parent)
 MainWindow::~MainWindow()
 {
     // Disable shared memory on selected emulator before exit
+    // Wait up to 500ms for the request to complete, then quit anyway
     if (!_selectedEmulatorId.isEmpty() && _webApiClient)
     {
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        
+        // Exit loop when response received or timeout
+        connect(_webApiClient.get(), &WebAPIClient::sharedMemoryDisabled, &loop, &QEventLoop::quit);
+        connect(_webApiClient.get(), &WebAPIClient::errorOccurred, &loop, &QEventLoop::quit);
+        connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        
         _webApiClient->disableSharedMemory(_selectedEmulatorId);
+        timeout.start(500);
+        loop.exec();
     }
 }
 
