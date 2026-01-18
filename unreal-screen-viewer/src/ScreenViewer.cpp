@@ -40,9 +40,11 @@ ScreenViewer::ScreenViewer(QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);
     
-    // Initialize with black placeholder
+    // Initialize both images with black placeholder
     _currentImage = QImage(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
     _currentImage.fill(Qt::black);
+    _shadowImage = QImage(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
+    _shadowImage.fill(Qt::black);
     
     _refreshTimer = new QTimer(this);
     connect(_refreshTimer, &QTimer::timeout, this, &ScreenViewer::refreshScreen);
@@ -149,8 +151,9 @@ void ScreenViewer::detachFromSharedMemory()
     _emulatorId.clear();
     _shmName.clear();
     
-    // Reset to black screen
+    // Reset both screens to black
     _currentImage.fill(Qt::black);
+    _shadowImage.fill(Qt::black);
     update();
     
     qDebug() << "ScreenViewer: Detached from shared memory";

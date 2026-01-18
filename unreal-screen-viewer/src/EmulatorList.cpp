@@ -57,6 +57,18 @@ void EmulatorList::updateEmulatorList(const QJsonArray& emulators)
     // Re-enable signals
     blockSignals(false);
     
+    // Handle case when no emulators are available
+    if (count() == 0)
+    {
+        if (!_lastSelectedId.isEmpty())
+        {
+            _lastSelectedId.clear();
+            emit emulatorDeselected();
+            qDebug() << "EmulatorList: No emulators available, deselected";
+        }
+        return;
+    }
+    
     // Auto-select if only one emulator is available AND:
     // - No previous selection existed, OR
     // - Previous selection was not restored (emulator went away)
@@ -64,6 +76,13 @@ void EmulatorList::updateEmulatorList(const QJsonArray& emulators)
     {
         setCurrentRow(0);  // This will trigger onSelectionChanged
         qDebug() << "EmulatorList: Auto-selecting single emulator";
+    }
+    // If selection was not restored and there are multiple emulators, deselect
+    else if (!selectionRestored && !previousSelection.isEmpty())
+    {
+        _lastSelectedId.clear();
+        emit emulatorDeselected();
+        qDebug() << "EmulatorList: Previous emulator gone, deselected";
     }
 }
 

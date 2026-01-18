@@ -154,4 +154,15 @@ make -j$(nproc)
 - Manual testing with running emulator required
 - Verify mode switching, layout toggle, and persistence
 
+### Session 3: Screen Cleanup Fixes
 
+#### ✅ Completed
+- [x] Removed top toolbar with refresh button (useless)
+- [x] Auto-select when only one emulator remains after others leave
+- [x] Removed noisy "Connection error" debug messages
+- [x] 500ms timeout wait for disable SHM request on exit
+- [x] Initialize `_shadowImage` in ScreenViewer constructor
+- [x] Clear both `_currentImage` and `_shadowImage` on detach
+- [x] Emit `emulatorDeselected` when no emulators available
+- [x] Emit `emulatorDeselected` when previously selected emulator goes away
+- [x] **BUILD SUCCESSFUL** on macOS
