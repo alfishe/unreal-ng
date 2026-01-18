@@ -100,3 +100,35 @@ cmake ..
 make -j$(nproc)
 ./bin/unreal-screen-viewer
 ```
+
+---
+
+## 2026-01-18: Dual Screen Mode Feature
+
+### Session 1: Feature Planning
+
+#### ✅ Design Decisions
+- [x] Dual screen mode displays Bank 5 and Bank 7 simultaneously
+- [x] Two layout options: horizontal (side-by-side) and vertical (stacked)
+- [x] Mode toolbar at bottom of emulator list panel
+- [x] Icons: `[1▢]` single, `[▢▢]` dual, `═` horizontal, `║` vertical
+- [x] Layout buttons only visible in dual mode
+- [x] Persist mode/layout via QSettings
+- [x] Click-to-toggle disabled in dual mode
+
+#### 🔧 Implementation Scope
+| Component | Action | Notes |
+|:----------|:-------|:------|
+| `ModeToolbar.h/cpp` | NEW | Toolbar widget with toggle buttons |
+| `ScreenViewer.h/cpp` | MODIFY | Add ViewMode, DualLayout enums; dual rendering |
+| `MainWindow.h/cpp` | MODIFY | Add toolbar, connect signals, QSettings |
+| `CMakeLists.txt` | MODIFY | Add new source files |
+
+#### 📋 Pending
+- [ ] Implement ModeToolbar widget
+- [ ] Add ViewMode/DualLayout enums to ScreenViewer
+- [ ] Implement dual rendering in paintEvent()
+- [ ] Add screen labels for dual mode
+- [ ] Persist mode/layout via QSettings
+- [ ] Test with running emulator
+

@@ -29,7 +29,7 @@ This design ensures that invalid/corrupted snapshots don't affect the current em
 ## SNA Loader Analysis
 
 ### File Structure
-- **Location:** [loader_sna.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/loaders/snapshot/loader_sna.cpp), [loader_sna.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/loaders/snapshot/loader_sna.h)
+- **Location:** [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp), [loader_sna.h](core/src/loaders/snapshot/loader_sna.h)
 - **Lines:** 475 (cpp) + 193 (h) = **668 total**
 
 ### Format Specifications
@@ -139,7 +139,7 @@ for (int pageNum = 0; pageNum < 8; pageNum++) {
 ## Z80 Loader Analysis
 
 ### File Structure
-- **Location:** [loader_z80.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/loaders/snapshot/loader_z80.cpp), [loader_z80.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/loaders/snapshot/loader_z80.h)
+- **Location:** [loader_z80.cpp](core/src/loaders/snapshot/loader_z80.cpp), [loader_z80.h](core/src/loaders/snapshot/loader_z80.h)
 - **Lines:** 702 (cpp) + 254 (h) = **956 total**
 
 ### Format Specifications
@@ -407,7 +407,7 @@ Use NEON/SSE for RLE decompression hot loops.
 4. **Z80-Uncompressed** - Large file, minimal RLE
 
 ### Implementation Plan
-Create `core/benchmarks/loaders/snapshot_benchmark.cpp` following the existing Google Benchmark patterns from [screenzx_benchmark.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/benchmarks/emulator/video/screenzx_benchmark.cpp).
+Create `core/benchmarks/loaders/snapshot_benchmark.cpp` following the existing Google Benchmark patterns from [screenzx_benchmark.cpp](core/benchmarks/emulator/video/screenzx_benchmark.cpp).
 
 ---
 
