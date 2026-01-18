@@ -268,14 +268,29 @@ void SoundManager::UpdateFeatureCache()
 {
     if (_context && _context->pFeatureManager)
     {
-        _feature_sound_enabled = _context->pFeatureManager->isEnabled(Features::kSoundGeneration);
+        bool newSoundEnabled = _context->pFeatureManager->isEnabled(Features::kSoundGeneration);
         _feature_soundhq_enabled = _context->pFeatureManager->isEnabled(Features::kSoundHQ);
+
+        // Debug: ALWAYS log sound feature state
+        LOGINFO("SoundManager::UpdateFeatureCache - sound: %s (was %s), muted: %s",
+                newSoundEnabled ? "ON" : "OFF",
+                _feature_sound_enabled ? "ON" : "OFF",
+                _mute ? "YES" : "NO");
+        
+        _feature_sound_enabled = newSoundEnabled;
 
         // Propagate HQ flag to TurboSound
         if (_turboSound)
         {
             _turboSound->setHQEnabled(_feature_soundhq_enabled);
         }
+    }
+    else
+    {
+        // Fallback: if FeatureManager unavailable, ensure sound is ON by default
+        LOGWARNING("SoundManager::UpdateFeatureCache - FeatureManager unavailable, defaulting sound ON");
+        _feature_sound_enabled = true;
+        _feature_soundhq_enabled = true;
     }
 }
 
