@@ -57,8 +57,10 @@ void EmulatorList::updateEmulatorList(const QJsonArray& emulators)
     // Re-enable signals
     blockSignals(false);
     
-    // Auto-select if only one emulator is available AND no previous selection
-    if (count() == 1 && !selectionRestored && previousSelection.isEmpty())
+    // Auto-select if only one emulator is available AND:
+    // - No previous selection existed, OR
+    // - Previous selection was not restored (emulator went away)
+    if (count() == 1 && !selectionRestored)
     {
         setCurrentRow(0);  // This will trigger onSelectionChanged
         qDebug() << "EmulatorList: Auto-selecting single emulator";

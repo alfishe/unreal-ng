@@ -6,7 +6,6 @@
 #include <QAction>
 #include <QStatusBar>
 #include <QLabel>
-#include <QToolBar>
 #include <QMessageBox>
 #include <QInputDialog>
 
@@ -102,16 +101,6 @@ void MainWindow::setupMenuBar()
                "Part of the Unreal-NG project."));
     });
 
-    // Toolbar with refresh button aligned to right
-    QToolBar* toolbar = addToolBar(tr("Main Toolbar"));
-    toolbar->setMovable(false);
-    
-    // Add spacer to push refresh to the right
-    QWidget* spacer = new QWidget();
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    toolbar->addWidget(spacer);
-    
-    toolbar->addAction(refreshAction);
 }
 
 void MainWindow::setupStatusBar()
