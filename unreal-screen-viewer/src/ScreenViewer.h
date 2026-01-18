@@ -8,8 +8,9 @@
  * @brief Widget for displaying ZX Spectrum screen from shared memory
  * 
  * Renders the emulator screen using raw RAM data from shared memory.
- * Supports switching between main screen (Page 5) and shadow screen (Page 7).
- * Click anywhere on the widget to toggle between screens.
+ * Supports:
+ * - Single mode: switching between Page 5 and Page 7 via click
+ * - Dual mode: displaying both screens with horizontal or vertical layout
  */
 class ScreenViewer : public QWidget
 {
@@ -23,31 +24,60 @@ public:
         Shadow = 7   ///< Shadow screen at RAM page 7 (128K mode)
     };
 
+    /// View mode for screen display
+    enum class ViewMode
+    {
+        Single,      ///< Single screen with click-to-toggle
+        Dual         ///< Both screens displayed simultaneously
+    };
+
+    /// Layout for dual screen mode
+    enum class DualLayout
+    {
+        Horizontal,  ///< Side-by-side (5 | 7)
+        Vertical     ///< Stacked (5 above 7)
+    };
+
     explicit ScreenViewer(QWidget* parent = nullptr);
     ~ScreenViewer() override;
 
-    /// Get the currently displayed screen page
+    /// Get the currently displayed screen page (single mode)
     ScreenPage currentPage() const { return _currentPage; }
+    
+    /// Get current view mode
+    ViewMode viewMode() const { return _viewMode; }
+    
+    /// Get current dual layout
+    DualLayout dualLayout() const { return _dualLayout; }
 
 public slots:
     /// Attach to shared memory region
-    /// @param emulatorId Emulator identifier (for logging)
-    /// @param shmName Shared memory region name
-    /// @param shmSize Size of the shared memory region
     void attachToSharedMemory(const QString& emulatorId, const QString& shmName, qint64 shmSize);
 
     /// Detach from current shared memory
     void detachFromSharedMemory();
 
-    /// Set the screen page to display
+    /// Set the screen page to display (single mode only)
     void setScreenPage(ScreenPage page);
 
-    /// Toggle between main and shadow screen
+    /// Toggle between main and shadow screen (single mode only)
     void toggleScreenPage();
 
+    /// Set the view mode (single or dual)
+    void setViewMode(ViewMode mode);
+
+    /// Set the layout for dual mode
+    void setDualLayout(DualLayout layout);
+
 signals:
-    /// Emitted when screen page changes
+    /// Emitted when screen page changes (single mode)
     void screenPageChanged(ScreenPage page);
+    
+    /// Emitted when view mode changes
+    void viewModeChanged(ViewMode mode);
+    
+    /// Emitted when dual layout changes
+    void dualLayoutChanged(DualLayout layout);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -60,12 +90,17 @@ private:
     void refreshScreen();
     
     /// Render ZX Spectrum screen from raw RAM data
-    /// @param ramData Pointer to 6912 bytes of screen data
-    /// @return Rendered QImage (256x192)
     QImage renderScreen(const uint8_t* ramData);
 
-    /// Get pointer to screen data for current page
-    const uint8_t* getScreenData() const;
+    /// Get pointer to screen data for specified page
+    const uint8_t* getScreenData(ScreenPage page) const;
+    
+    /// Legacy wrapper for current page
+    const uint8_t* getScreenData() const { return getScreenData(_currentPage); }
+    
+    /// Draw a single screen with label
+    void drawScreenWithLabel(QPainter& painter, const QRect& targetRect, 
+                             const QImage& image, const QString& label);
 
     // Shared memory
     void* _shmData = nullptr;
@@ -77,18 +112,22 @@ private:
 
     // Display state
     ScreenPage _currentPage = ScreenPage::Main;
+    ViewMode _viewMode = ViewMode::Single;
+    DualLayout _dualLayout = DualLayout::Horizontal;
     QImage _currentImage;
+    QImage _shadowImage;  // For dual mode
     QTimer* _refreshTimer = nullptr;
 
-    // ZX Spectrum constants (from core/src/emulator/platform.h)
-    static constexpr int PAGE_SIZE = 0x4000;           // 16KB per page
-    static constexpr int SCREEN_BITMAP_SIZE = 6144;    // 256x192 / 8 bits = 6144 bytes
-    static constexpr int SCREEN_ATTR_SIZE = 768;       // 32x24 attributes
-    static constexpr int SCREEN_TOTAL_SIZE = 6912;     // SCREEN_BITMAP_SIZE + SCREEN_ATTR_SIZE
+    // ZX Spectrum constants
+    static constexpr int PAGE_SIZE = 0x4000;
+    static constexpr int SCREEN_BITMAP_SIZE = 6144;
+    static constexpr int SCREEN_ATTR_SIZE = 768;
+    static constexpr int SCREEN_TOTAL_SIZE = 6912;
     static constexpr int SCREEN_WIDTH = 256;
     static constexpr int SCREEN_HEIGHT = 192;
-    static constexpr int REFRESH_RATE_MS = 20;         // 50Hz refresh
+    static constexpr int REFRESH_RATE_MS = 20;
 
-    // ZX Spectrum color palette (standard colors)
+    // ZX Spectrum color palette
     static const uint32_t _zxPalette[16];
 };
+

@@ -26,10 +26,10 @@ provides **massive performance gains** for non-demo usage.
 
 | File | Changes |
 |:---|:---|
-| [`screenzx.h`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/zx/screenzx.h) | Added `DrawBatch8_Scalar`, `DrawBatch8_NEON`, `RenderScreen_Batch8` declarations |
-| [`screenzx.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/zx/screenzx.cpp) | Implemented batch methods with NEON SIMD |
-| [`screenzx_benchmark.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/benchmarks/emulator/video/screenzx_benchmark.cpp) | Added 4 new benchmarks |
-| [`screenzx_test.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/emulator/video/screenzx_test.cpp) | Added 3 new unit tests |
+| [`screenzx.h`](core/src/emulator/video/zx/screenzx.h) | Added `DrawBatch8_Scalar`, `DrawBatch8_NEON`, `RenderScreen_Batch8` declarations |
+| [`screenzx.cpp`](core/src/emulator/video/zx/screenzx.cpp) | Implemented batch methods with NEON SIMD |
+| [`screenzx_benchmark.cpp`](core/benchmarks/emulator/video/screenzx_benchmark.cpp) | Added 4 new benchmarks |
+| [`screenzx_test.cpp`](core/tests/emulator/video/screenzx_test.cpp) | Added 3 new unit tests |
 
 ### Key Methods
 
@@ -103,12 +103,12 @@ The `ScreenHQ` feature is now fully integrated:
 
 | File | Changes |
 |:---|:---|
-| [`featuremanager.h`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.h) | Added `kScreenHQ`, `kScreenHQAlias`, `kScreenHQDesc` constants |
-| [`featuremanager.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.cpp) | Registered feature (ON by default), added Screen::UpdateFeatureCache callback |
-| [`screen.h`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.h) | Added `UpdateFeatureCache()`, `IsScreenHQEnabled()`, `_feature_screenhq_enabled` |
-| [`screen.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.cpp) | Implemented `UpdateFeatureCache()` |
-| [`VideoWallWindow.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp) | Disables ScreenHQ for all videowall instances |
-| [`command-interface.md`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/control-interfaces/command-interface.md) | Documented ScreenHQ feature |
+| [`featuremanager.h`](core/src/base/featuremanager.h) | Added `kScreenHQ`, `kScreenHQAlias`, `kScreenHQDesc` constants |
+| [`featuremanager.cpp`](core/src/base/featuremanager.cpp) | Registered feature (ON by default), added Screen::UpdateFeatureCache callback |
+| [`screen.h`](core/src/emulator/video/screen.h) | Added `UpdateFeatureCache()`, `IsScreenHQEnabled()`, `_feature_screenhq_enabled` |
+| [`screen.cpp`](core/src/emulator/video/screen.cpp) | Implemented `UpdateFeatureCache()` |
+| [`VideoWallWindow.cpp`](unreal-videowall/src/videowall/VideoWallWindow.cpp) | Disables ScreenHQ for all videowall instances |
+| [`command-interface.md`](docs/emulator/design/control-interfaces/command-interface.md) | Documented ScreenHQ feature |
 
 **Feature Details**:
 - **ID**: `screenhq`
@@ -145,7 +145,7 @@ at two key points:
 
 First bypass - skips per-t-state rendering when ScreenHQ=OFF:
 
-| Location | [screen.cpp:705](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.cpp#L705-L730) |
+| Location | [screen.cpp:705](core/src/emulator/video/screen.cpp#L705-L730) |
 |:---|:---|
 | **Bypassed** | `for` loop calling `Draw(tstate)` for ~70,000 t-states per frame |
 | **Condition** | `!_feature_screenhq_enabled` |
@@ -155,7 +155,7 @@ First bypass - skips per-t-state rendering when ScreenHQ=OFF:
 
 Second bypass point - renders batch at frame end:
 
-| Location | [mainloop.cpp:250](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp#L250-L265) |
+| Location | [mainloop.cpp:250](core/src/emulator/mainloop.cpp#L250-L265) |
 |:---|:---|
 | **Condition** | `!_context->pScreen->IsScreenHQEnabled()` |
 | **Action** | Calls `pScreen->RenderFrameBatch()` |
@@ -181,7 +181,7 @@ ScreenHQ=OFF (optimized):
 
 ### Full Documentation
 
-See [Screen Rendering Pipeline](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/video/screen-rendering-pipeline.md)
+See [Screen Rendering Pipeline](docs/emulator/design/video/screen-rendering-pipeline.md)
 for comprehensive architecture, sequence diagrams, and performance analysis.
 
 ## Verification Commands

@@ -32,10 +32,10 @@ Screen (base class)
 
 | Component | File | Responsibility |
 |:---|:---|:---|
-| `Screen` | [screen.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.h) | Base class, feature flag caching, framebuffer management |
-| `ScreenZX` | [screenzx.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/zx/screenzx.h) | ZX-Spectrum ULA emulation, LUT-based rendering |
-| `MainLoop` | [mainloop.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp) | Frame orchestration, calls render at frame end |
-| `FeatureManager` | [featuremanager.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.cpp) | ScreenHQ feature state management |
+| `Screen` | [screen.h](core/src/emulator/video/screen.h) | Base class, feature flag caching, framebuffer management |
+| `ScreenZX` | [screenzx.h](core/src/emulator/video/zx/screenzx.h) | ZX-Spectrum ULA emulation, LUT-based rendering |
+| `MainLoop` | [mainloop.cpp](core/src/emulator/mainloop.cpp) | Frame orchestration, calls render at frame end |
+| `FeatureManager` | [featuremanager.cpp](core/src/base/featuremanager.cpp) | ScreenHQ feature state management |
 
 ---
 
@@ -172,7 +172,7 @@ uint32_t color = (colorInk & mask) | (colorPaper & ~mask);
 
 ### Screen::DrawPeriod() Bypass
 
-Located in [`screen.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.cpp) at the start of `DrawPeriod()`:
+Located in [`screen.cpp`](core/src/emulator/video/screen.cpp) at the start of `DrawPeriod()`:
 
 ```cpp
 // =============================================================================
@@ -198,7 +198,7 @@ if (!_feature_screenhq_enabled)
 
 ### MainLoop::OnFrameEnd() Batch Render
 
-Located in [`mainloop.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp):
+Located in [`mainloop.cpp`](core/src/emulator/mainloop.cpp):
 
 ```cpp
 // =========================================================================
@@ -327,13 +327,13 @@ featureManager->setFeature(Features::kScreenHQ, false);
 
 | File | Description |
 |:---|:---|
-| [screen.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.h) | Base screen class |
-| [screen.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/screen.cpp) | DrawPeriod bypass implementation |
-| [screenzx.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/zx/screenzx.h) | ZX-Spectrum screen class |
-| [screenzx.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/zx/screenzx.cpp) | Batch rendering implementation |
-| [mainloop.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp) | Frame-end batch render call |
-| [featuremanager.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.cpp) | ScreenHQ feature registration |
-| [command-interface.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/control-interfaces/command-interface.md) | Feature documentation |
+| [screen.h](core/src/emulator/video/screen.h) | Base screen class |
+| [screen.cpp](core/src/emulator/video/screen.cpp) | DrawPeriod bypass implementation |
+| [screenzx.h](core/src/emulator/video/zx/screenzx.h) | ZX-Spectrum screen class |
+| [screenzx.cpp](core/src/emulator/video/zx/screenzx.cpp) | Batch rendering implementation |
+| [mainloop.cpp](core/src/emulator/mainloop.cpp) | Frame-end batch render call |
+| [featuremanager.cpp](core/src/base/featuremanager.cpp) | ScreenHQ feature registration |
+| [command-interface.md](docs/emulator/design/control-interfaces/command-interface.md) | Feature documentation |
 
 ---
 
