@@ -8,8 +8,12 @@
 
 void BasicEncoder_Test::SetUp()
 {
+    MessageCenter::DisposeDefaultMessageCenter();
     _context = new EmulatorContext(LoggerLevel::LogError);
     _memory = new Memory(_context);
+    
+    // Initialize memory banks (required for DirectWriteToZ80Memory to work)
+    _memory->DefaultBanksFor48k();
 }
 
 void BasicEncoder_Test::TearDown()
@@ -25,6 +29,8 @@ void BasicEncoder_Test::TearDown()
         delete _context;
         _context = nullptr;
     }
+    
+    MessageCenter::DisposeDefaultMessageCenter();
 }
 
 /// region <Unit Tests - Tokenization>
@@ -58,8 +64,14 @@ TEST_F(BasicEncoder_Test, TokenizeSingleLine_Simple)
     }
     EXPECT_TRUE(foundPrintToken) << "PRINT token (0xF5) not found";
     
-    // Verify line terminator
-    EXPECT_EQ(tokenized.back(), 0x0D);
+    // Verify program terminator (0x00 0x00) is NOT present in tokenized output
+    // It is added by the injector, not the tokenizer
+    ASSERT_GE(tokenized.size(), 4) << "Tokenized program too small";
+    // Last bytes should be line data/terminator, not program terminator
+    
+    // Verify line terminator (0x0D) exists at the end
+    ASSERT_FALSE(tokenized.empty());
+    EXPECT_EQ(tokenized.back(), 0x0D) << "Last byte should be 0x0D (line terminator)";
 }
 
 TEST_F(BasicEncoder_Test, TokenizeMultiLine)
@@ -233,8 +245,9 @@ TEST_F(BasicEncoder_Test, InjectIntoMemory_SystemVariables)
     EXPECT_GT(varsAddr, progAddr);
     
     // Program length should match
+    // Program length should match (tokenized size + 2 bytes for program end marker)
     auto tokenized = encoder.tokenize(program);
-    EXPECT_EQ(varsAddr - progAddr, tokenized.size());
+    EXPECT_EQ(varsAddr - progAddr, tokenized.size() + 2);
 }
 
 TEST_F(BasicEncoder_Test, InjectIntoMemory_ProgramContent)

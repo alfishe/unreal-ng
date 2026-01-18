@@ -144,10 +144,6 @@ std::vector<uint8_t> BasicEncoder::tokenize(const std::string& basicText)
         result.insert(result.end(), tokenizedLine.begin(), tokenizedLine.end());
     }
     
-    // End of program marker: line number 0x00 0x00
-    result.push_back(0x00);
-    result.push_back(0x00);
-    
     return result;
 }
 
@@ -324,8 +320,14 @@ bool BasicEncoder::injectIntoMemory(Memory* memory,
         memory->DirectWriteToZ80Memory(progStart + i, tokenizedProgram[i]);
     }
     
+    // Write program end marker (0x00 0x00)
+    size_t progSize = tokenizedProgram.size();
+    memory->DirectWriteToZ80Memory(progStart + progSize, 0x00);
+    memory->DirectWriteToZ80Memory(progStart + progSize + 1, 0x00);
+    
     // Update system variables
-    uint16_t progEnd = progStart + tokenizedProgram.size();
+    // Program end is after the 2-byte terminator
+    uint16_t progEnd = progStart + progSize + 2;
     updateSystemVariables(memory, progStart, progEnd);
     
     return true;

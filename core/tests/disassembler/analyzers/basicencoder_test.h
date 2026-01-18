@@ -5,6 +5,7 @@
 
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 class BasicEncoder_Test : public ::testing::Test
 {
