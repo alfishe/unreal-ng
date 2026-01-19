@@ -24,6 +24,7 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreen.h"
 
@@ -82,6 +83,7 @@ private slots:
     void handleDebugModeToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
+    void handleIntParametersRequested();
     void updateMenuStates();
 
     // Binding state handler

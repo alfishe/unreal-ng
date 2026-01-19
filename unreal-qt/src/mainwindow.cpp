@@ -131,6 +131,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
+    connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -1587,6 +1588,25 @@ void MainWindow::handleLogWindowToggled(bool visible)
     {
         logWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleIntParametersRequested()
+{
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot open INT Parameters dialog: No active emulator instance";
+        return;
+    }
+
+    // Create new dialog each time (simple one-shot pattern)
+    // Dialog will be auto-deleted when closed
+    IntParametersDialog* dialog = new IntParametersDialog(m_binding, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    
+    // Show the dialog (non-blocking)
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 void MainWindow::updateMenuStates()

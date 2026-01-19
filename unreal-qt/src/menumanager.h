@@ -63,6 +63,9 @@ signals:
     void logWindowToggled(bool visible);
     void fullScreenToggled();
 
+    // Tools signals
+    void intParametersRequested();
+
 private:
     void createFileMenu();
     void createEditMenu();
@@ -138,6 +141,7 @@ private:
 
     // Tools Menu Actions
     QAction* _settingsAction;
+    QAction* _intParametersAction;
     QAction* _screenshotAction;
     QAction* _recordVideoAction;
 

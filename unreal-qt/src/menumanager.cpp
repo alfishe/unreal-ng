@@ -337,6 +337,13 @@ void MenuManager::createToolsMenu()
 
     _toolsMenu->addSeparator();
 
+    // INT Parameters
+    _intParametersAction = _toolsMenu->addAction(tr("&INT Parameters..."));
+    _intParametersAction->setStatusTip(tr("Configure interrupt timing parameters"));
+    connect(_intParametersAction, &QAction::triggered, this, &MenuManager::intParametersRequested);
+
+    _toolsMenu->addSeparator();
+
     // Screenshot
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
     _screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
