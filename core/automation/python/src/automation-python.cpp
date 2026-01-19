@@ -1,8 +1,15 @@
 #include "automation-python.h"
+#include "emulator/python_emulator.h"
 
 #include <chrono>
 #include <thread>
 #include <iostream>
+
+// Define embedded Python module for emulator bindings
+PYBIND11_EMBEDDED_MODULE(unreal_emulator, m) {
+    m.doc() = "Unreal Speccy NG Emulator Python bindings";
+    PythonBindings::registerEmulatorBindings(m);
+}
 
 
 
