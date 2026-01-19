@@ -101,8 +101,8 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
     int32_t hl = cpu->hl;
     int32_t bc = cpu->bc;
 
-    int32_t halfHL = hl;
-    int32_t halfBC = bc;
+    int32_t halfHL = hl & 0x0FFF;  // Lower 12 bits for half-carry
+    int32_t halfBC = bc & 0x0FFF;
 
     uint8_t flags = NF;
     flags |= ((halfHL - halfBC - (cpu->af & CF)) >> 8) & 0x10; // HF
@@ -112,9 +112,8 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
         flags |= CF;
     if (!(result & 0xFFFF))
         flags |= ZF;
-
-    int32_t ri = hl - bc - (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ bc) & 0x8000) && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     cpu->hl = result & 0xFFFF;
@@ -205,9 +204,8 @@ Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl + bc + (int)(cpu->af & CF);
-
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ bc) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     // Store result back to registers
@@ -294,8 +292,8 @@ Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl - de - carryAF;
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ de) & 0x8000) && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     cpu->hl = result & 0xFFFF;
@@ -371,8 +369,8 @@ Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
     if (!(result & 0xFFFF))
        flags |= ZF;
 
-    int ri = (int)(short)cpu->hl + (int)(short)cpu->de + (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ de) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
        flags |= PV;
 
     // Store result back to registers
@@ -496,8 +494,8 @@ Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    if (!(result & 0xFFFF))
        flags |= ZF;
 
-   int ri = hl + hl + (int)(cpu->af & CF);
-   if (ri < -0x8000 || ri >= 0x8000)
+   // P/V = overflow: operands same sign (both hl), result different sign
+   if (((hl ^ hl) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
        flags |= PV;
 
    cpu->hl = result & 0xFFFF;
@@ -559,8 +557,8 @@ Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl - sp - (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ sp) & 0x8000) && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     // Store result back to regusters
@@ -628,8 +626,8 @@ Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
     if (!(uint16_t)result)
        flags |= ZF;
 
-    int ri = (int)(short)cpu->hl + (int)(short)cpu->sp + (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ sp) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
        flags |= PV;
 
     // Store result back to registers
