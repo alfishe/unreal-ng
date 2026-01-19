@@ -58,16 +58,60 @@ bool LoaderZ80::validate()
                 size_t dataSize = _fileSize - sizeof(Z80Header_v1);
                 if (dataSize > 0)
                 {
+                    // 3. Detect snapshot version
                     Z80SnapshotVersion ver = getSnapshotFileVersion();
                     if (ver != Unknown)
                     {
-                        _snapshotVersion = ver;
-                        result = true;
+                        // 4. Validate header sanity for detected version
+                        if (!validateHeaderSanity(ver))
+                        {
+                            MLOGWARNING("Z80 snapshot file '%s' failed header sanity checks", _path.c_str());
+                            return false;
+                        }
+
+                        // 5. Validate minimum file size for detected version
+                        bool sizeValid = true;
+                        switch (ver)
+                        {
+                            case Z80v1:
+                                // v1: 30-byte header + at least some data
+                                if (_fileSize < sizeof(Z80Header_v1) + 1)
+                                {
+                                    MLOGWARNING("Z80 v1 snapshot file '%s' too small (size=%zu)", _path.c_str(), _fileSize);
+                                    sizeValid = false;
+                                }
+                                break;
+                            case Z80v2:
+                                // v2: 30-byte header + 2-byte length + 23-byte extended header = 55 bytes minimum
+                                if (_fileSize < 55)
+                                {
+                                    MLOGWARNING("Z80 v2 snapshot file '%s' too small (size=%zu, need at least 55)", _path.c_str(), _fileSize);
+                                    sizeValid = false;
+                                }
+                                break;
+                            case Z80v3:
+                                // v3: 30-byte header + 2-byte length + 54-byte extended header = 86 bytes minimum
+                                if (_fileSize < 86)
+                                {
+                                    MLOGWARNING("Z80 v3 snapshot file '%s' too small (size=%zu, need at least 86)", _path.c_str(), _fileSize);
+                                    sizeValid = false;
+                                }
+                                break;
+                            default:
+                                sizeValid = false;
+                                break;
+                        }
+
+                        if (sizeValid)
+                        {
+                            _snapshotVersion = ver;
+                            result = true;
+                        }
                     }
                 }
                 else
                 {
-                    MLOGWARNING("Z80 snapshot file '%s' has incorrect size %d", _path.c_str(), _fileSize);
+                    MLOGWARNING("Z80 snapshot file '%s' has incorrect size %zu", _path.c_str(), _fileSize);
                 }
             }
         }
@@ -135,14 +179,46 @@ void LoaderZ80::commitFromStage()
                 ports.PeripheralPortOut(0x7FFD, port7FFD);
                 ports.PeripheralPortOut(0xFFFD, _portFFFD);
 
-                // Set 48k ROM as active
-                memory.SetROMPage(3);
+                memory.SetRAMPageToBank1(5);
+                memory.SetRAMPageToBank2(2);
+                memory.SetRAMPageToBank3(0);
+
+                memory.SetROM48k();
             }
             break;
             case Z80_128K:
+            {
+                // Initialize 128K memory configuration
+                // CRITICAL: Must fully unlock emulator state before applying snapshot
+                
+                // Extract RAM page for bank 3 from port 7FFD (bits 0-2)
+                uint8_t bank3Page = _port7FFD & 0x07;
+                
+                // Step 1: Unlock paging via PortDecoder interface
+                // This allows subsequent port writes to succeed even if previously locked
+                ports.UnlockPaging();
+                
+                // Step 2: Set the actual snapshot port values via port decoder
                 ports.PeripheralPortOut(0x7FFD, _port7FFD);
                 ports.PeripheralPortOut(0xFFFD, _portFFFD);
+                
+                // Step 3: Ensure emulatorState reflects snapshot's port value (including lock bit)
+                // PeripheralPortOut may not update emulatorState directly
+                _context->emulatorState.p7FFD = _port7FFD;
+                
+                // Step 4: Set up standard 128K memory mapping
+                // Bank 0 (0x0000-0x3FFF): ROM (set by UpdateZ80Banks based on port 7FFD bit 4)
+                // Bank 1 (0x4000-0x7FFF): RAM page 5 (fixed)
+                // Bank 2 (0x8000-0xBFFF): RAM page 2 (fixed)  
+                // Bank 3 (0xC000-0xFFFF): RAM page from port 7FFD bits 0-2
+                memory.SetRAMPageToBank1(5);
+                memory.SetRAMPageToBank2(2);
+                memory.SetRAMPageToBank3(bank3Page);
+                
+                // Step 5: Trigger ROM selection based on port 7FFD bit 4
+                memory.UpdateZ80Banks();
                 break;
+            }
             case Z80_256K:
                 break;
             default:
@@ -213,7 +289,7 @@ Z80SnapshotVersion LoaderZ80::getSnapshotFileVersion()
         {
             if (header.reg_PC == 0x0000)
             {
-                // PC register is not zero, it's Z80 v2 or newer format
+                // PC register is zero, indicating Z80 v2 or newer format
                 rewind(_file);
                 Z80Header_v2 headerV2;
                 headerRead = fread(&headerV2, sizeof(headerV2), 1, _file);
@@ -255,7 +331,7 @@ bool LoaderZ80::loadZ80v1()
 
     if (_fileValidated && _snapshotVersion == Z80v1)
     {
-        [[maybe_unused]] Z80MemoryMode memoryMode = Z80_48K;
+        _memoryMode = Z80_48K;
 
         auto buffer = std::unique_ptr<uint8_t[]>(new uint8_t[_fileSize]);
         uint8_t* pBuffer = buffer.get();
@@ -272,13 +348,62 @@ bool LoaderZ80::loadZ80v1()
         // Extract Z80 registers information
         _z80Registers = getZ80Registers(headerV1, headerV1.reg_PC);
 
-        // Remember border color
-        _borderColor = (headerV1.flags & 0b0000'1110) >> 1;
+        // Handle flags byte: if 255, treat as 1 (per specification)
+        uint8_t flags = headerV1.flags;
+        if (flags == 255)
+        {
+            flags = 1;
+        }
 
-        auto unpackedMemory = std::unique_ptr<uint8_t[]>(new uint8_t[3 * PAGE_SIZE]);
-        [[maybe_unused]] size_t dataSize = _fileSize - sizeof(headerV1);
+        // Remember border color (bits 1-3)
+        _borderColor = (flags & 0b0000'1110) >> 1;
 
-        throw std::logic_error("Not supported yet");
+        // Check if data is compressed (bit 5)
+        bool isCompressed = (flags & 0b0010'0000) != 0;
+
+        // Allocate buffer for 48K of memory (3 pages: 0x4000-0xFFFF)
+        constexpr size_t MEMORY_48K_SIZE = 3 * PAGE_SIZE;
+        auto unpackedMemory = std::unique_ptr<uint8_t[]>(new uint8_t[MEMORY_48K_SIZE]);
+        uint8_t* pUnpacked = unpackedMemory.get();
+
+        // Data starts after the 30-byte header
+        uint8_t* dataStart = pBuffer + sizeof(Z80Header_v1);
+        size_t dataSize = _fileSize - sizeof(Z80Header_v1);
+
+        if (isCompressed)
+        {
+            decompressV1Data(dataStart, dataSize, pUnpacked, MEMORY_48K_SIZE);
+        }
+        else
+        {
+            // Uncompressed: copy directly (capped at 48K)
+            size_t copySize = std::min(dataSize, MEMORY_48K_SIZE);
+            memcpy(pUnpacked, dataStart, copySize);
+
+            // Zero remaining if source is smaller (shouldn't happen for valid files)
+            if (copySize < MEMORY_48K_SIZE)
+            {
+                memset(pUnpacked + copySize, 0, MEMORY_48K_SIZE - copySize);
+            }
+        }
+
+        // Map 48K memory to RAM pages:
+        // 0x4000-0x7FFF (offset 0x0000 in unpacked) -> RAM Page 5
+        // 0x8000-0xBFFF (offset 0x4000 in unpacked) -> RAM Page 2
+        // 0xC000-0xFFFF (offset 0x8000 in unpacked) -> RAM Page 0
+        uint8_t* page5 = new uint8_t[PAGE_SIZE];
+        uint8_t* page2 = new uint8_t[PAGE_SIZE];
+        uint8_t* page0 = new uint8_t[PAGE_SIZE];
+
+        memcpy(page5, pUnpacked, PAGE_SIZE);                  // 0x4000-0x7FFF
+        memcpy(page2, pUnpacked + PAGE_SIZE, PAGE_SIZE);      // 0x8000-0xBFFF
+        memcpy(page0, pUnpacked + 2 * PAGE_SIZE, PAGE_SIZE);  // 0xC000-0xFFFF
+
+        _stagingRAMPages[5] = page5;
+        _stagingRAMPages[2] = page2;
+        _stagingRAMPages[0] = page0;
+
+        result = true;
     }
 
     return result;
@@ -307,7 +432,7 @@ bool LoaderZ80::loadZ80v2()
         _z80Registers = getZ80Registers(headerV1, headerV2.newPC);
 
         // Determine snapshot memory model based on model
-        _memoryMode = getMemoryMode(headerV2);
+        _memoryMode = getMemoryModeV2(static_cast<uint8_t>(headerV2.model));
 
         // Retrieve ports configuration
         _port7FFD = headerV2.p7FFD;
@@ -318,10 +443,18 @@ bool LoaderZ80::loadZ80v2()
 
         // Start memory blocks processing after all headers
         uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV2.extendedHeaderLen + 2;
-        size_t processedBytes = memBlock - pBuffer;
+        uint8_t* pBufferEnd = pBuffer + _fileSize;
 
         while (memBlock)
         {
+            // Bounds check: ensure memory block descriptor is within file
+            if (memBlock + sizeof(MemoryBlockDescriptor) > pBufferEnd)
+            {
+                MLOGWARNING("Z80 v2 snapshot truncated: memory block descriptor at offset %zu exceeds file size %zu",
+                            static_cast<size_t>(memBlock - pBuffer), _fileSize);
+                break;
+            }
+
             MemoryBlockDescriptor* memoryBlockDescriptor = (MemoryBlockDescriptor*)memBlock;
             uint8_t* pageBlock = memBlock + sizeof(MemoryBlockDescriptor);
             size_t compressedBlockSize = memoryBlockDescriptor->compressedSize;
@@ -329,6 +462,30 @@ bool LoaderZ80::loadZ80v2()
 
             // Determine emulator target page
             MemoryPageDescriptor targetPageDescriptor = resolveSnapshotPage(targetPage, _memoryMode);
+
+            // Skip invalid/unknown pages (don't allocate or crash)
+            if (targetPageDescriptor.mode == BANK_INVALID)
+            {
+                MLOGWARNING("Z80 v2 snapshot: unknown page %d in %s mode, skipping",
+                            targetPage, (_memoryMode == Z80_48K) ? "48K" : "128K");
+                // Advance to next block
+                size_t skipSize = (compressedBlockSize == 0xFFFF) ? PAGE_SIZE : compressedBlockSize;
+                memBlock += skipSize + sizeof(MemoryBlockDescriptor);
+                if (memBlock >= pBufferEnd)
+                {
+                    memBlock = nullptr;
+                }
+                continue;
+            }
+
+            // Bounds check: ensure compressed data is within file
+            size_t actualBlockSize = (compressedBlockSize == 0xFFFF) ? PAGE_SIZE : compressedBlockSize;
+            if (pageBlock + actualBlockSize > pBufferEnd)
+            {
+                MLOGWARNING("Z80 v2 snapshot truncated: block data at offset %zu (size %zu) exceeds file size %zu",
+                            static_cast<size_t>(pageBlock - pBuffer), actualBlockSize, _fileSize);
+                break;
+            }
 
             // Allocate memory page and register it in one of staging collections (ROM or RAM)
             // De-allocation will be performed after staging changes applied to main emulator memory
@@ -341,6 +498,11 @@ bool LoaderZ80::loadZ80v2()
                     break;
                 case BANK_RAM:
                     _stagingRAMPages[targetPageDescriptor.page] = pageBuffer;
+                    break;
+                default:
+                    // Should not reach here - already handled above
+                    delete[] pageBuffer;
+                    break;
             }
 
             // Unpack memory block to target staging page
@@ -357,8 +519,7 @@ bool LoaderZ80::loadZ80v2()
             }
 
             uint8_t* nextMemBlock = memBlock + compressedBlockSize + sizeof(MemoryBlockDescriptor);
-            processedBytes = nextMemBlock - pBuffer;
-            if (processedBytes >= _fileSize || nextMemBlock == memBlock)
+            if (nextMemBlock >= pBufferEnd || nextMemBlock == memBlock)
             {
                 memBlock = nullptr;
             }
@@ -396,8 +557,8 @@ bool LoaderZ80::loadZ80v3()
         // Extract Z80 registers information
         _z80Registers = getZ80Registers(headerV1, headerV3.newPC);
 
-        // Determine snapshot memory model based on model
-        _memoryMode = getMemoryMode(headerV3);
+        // Determine snapshot memory model based on model (v3 has different model interpretation)
+        _memoryMode = getMemoryModeV3(static_cast<uint8_t>(headerV3.model));
 
         // Retrieve ports configuration
         _port7FFD = headerV3.p7FFD;
@@ -408,10 +569,18 @@ bool LoaderZ80::loadZ80v3()
 
         // Start memory blocks processing after all headers
         uint8_t* memBlock = pBuffer + sizeof(Z80Header_v1) + headerV3.extendedHeaderLen + 2;
-        size_t processedBytes = memBlock - pBuffer;
+        uint8_t* pBufferEnd = pBuffer + _fileSize;
 
         while (memBlock)
         {
+            // Bounds check: ensure memory block descriptor is within file
+            if (memBlock + sizeof(MemoryBlockDescriptor) > pBufferEnd)
+            {
+                MLOGWARNING("Z80 v3 snapshot truncated: memory block descriptor at offset %zu exceeds file size %zu",
+                            static_cast<size_t>(memBlock - pBuffer), _fileSize);
+                break;
+            }
+
             MemoryBlockDescriptor* memoryBlockDescriptor = (MemoryBlockDescriptor*)memBlock;
             uint8_t* pageBlock = memBlock + sizeof(MemoryBlockDescriptor);
             size_t compressedBlockSize = memoryBlockDescriptor->compressedSize;
@@ -419,6 +588,30 @@ bool LoaderZ80::loadZ80v3()
 
             // Determine emulator target page
             MemoryPageDescriptor targetPageDescriptor = resolveSnapshotPage(targetPage, _memoryMode);
+
+            // Skip invalid/unknown pages (don't allocate or crash)
+            if (targetPageDescriptor.mode == BANK_INVALID)
+            {
+                MLOGWARNING("Z80 v3 snapshot: unknown page %d in %s mode, skipping",
+                            targetPage, (_memoryMode == Z80_48K) ? "48K" : "128K");
+                // Advance to next block
+                size_t skipSize = (compressedBlockSize == 0xFFFF) ? PAGE_SIZE : compressedBlockSize;
+                memBlock += skipSize + sizeof(MemoryBlockDescriptor);
+                if (memBlock >= pBufferEnd)
+                {
+                    memBlock = nullptr;
+                }
+                continue;
+            }
+
+            // Bounds check: ensure compressed data is within file
+            size_t actualBlockSize = (compressedBlockSize == 0xFFFF) ? PAGE_SIZE : compressedBlockSize;
+            if (pageBlock + actualBlockSize > pBufferEnd)
+            {
+                MLOGWARNING("Z80 v3 snapshot truncated: block data at offset %zu (size %zu) exceeds file size %zu",
+                            static_cast<size_t>(pageBlock - pBuffer), actualBlockSize, _fileSize);
+                break;
+            }
 
             // Allocate memory page and register it in one of staging collections (ROM or RAM)
             // De-allocation will be performed after staging changes applied to main emulator memory
@@ -431,6 +624,11 @@ bool LoaderZ80::loadZ80v3()
                     break;
                 case BANK_RAM:
                     _stagingRAMPages[targetPageDescriptor.page] = pageBuffer;
+                    break;
+                default:
+                    // Should not reach here - already handled above
+                    delete[] pageBuffer;
+                    break;
             }
 
             // Unpack memory block to target staging page
@@ -447,8 +645,7 @@ bool LoaderZ80::loadZ80v3()
             }
 
             uint8_t* nextMemBlock = memBlock + compressedBlockSize + sizeof(MemoryBlockDescriptor);
-            processedBytes = nextMemBlock - pBuffer;
-            if (processedBytes >= _fileSize || nextMemBlock == memBlock)
+            if (nextMemBlock >= pBufferEnd || nextMemBlock == memBlock)
             {
                 memBlock = nullptr;
             }
@@ -464,29 +661,113 @@ bool LoaderZ80::loadZ80v3()
     return result;
 }
 
-Z80MemoryMode LoaderZ80::getMemoryMode(const Z80Header_v2& header)
+bool LoaderZ80::validateHeaderSanity(Z80SnapshotVersion version)
+{
+    // Validate Z80-specific header constraints based on detected version
+    // NOTE: Generic file type detection (ASCII, etc.) will be handled by a shared component
+    rewind(_file);
+    Z80Header_v1 header;
+    size_t read = fread(&header, sizeof(header), 1, _file);
+    if (read != 1)
+        return false;
+
+    // Note: IFF flags are sanitized during register extraction rather than rejected
+    // This allows loading of files with corrupted IFF values but still valid otherwise
+
+    // For v2/v3, validate extended header constraints
+    if (version == Z80v2 || version == Z80v3)
+    {
+        rewind(_file);
+        Z80Header_v2 headerV2;
+        read = fread(&headerV2, sizeof(headerV2), 1, _file);
+        if (read != 1)
+            return false;
+
+        // Validate extended header length based on expected version
+        uint16_t extLen = headerV2.extendedHeaderLen;
+        if (version == Z80v2 && extLen != 23)
+        {
+            MLOGWARNING("Z80 file '%s' v2 has invalid extended header length %d (expected 23)", 
+                        _path.c_str(), extLen);
+            return false;
+        }
+        if (version == Z80v3 && extLen != 54 && extLen != 55)
+        {
+            MLOGWARNING("Z80 file '%s' v3 has invalid extended header length %d (expected 54 or 55)", 
+                        _path.c_str(), extLen);
+            return false;
+        }
+
+        // Validate model number is in valid range (0-13 per Z80 format spec)
+        if (headerV2.model > 13)
+        {
+            MLOGWARNING("Z80 file '%s' has invalid model number %d (max 13)", 
+                        _path.c_str(), headerV2.model);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+Z80MemoryMode LoaderZ80::getMemoryModeV2(uint8_t model)
 {
     Z80MemoryMode result = Z80_48K;
 
-    switch (header.model)
+    switch (model)
     {
-        case Z80_MODEL2_48K:
-        case Z80_MODEL2_48K_IF1:
+        case 0:  // 48K
+        case 1:  // 48K + IF1
             result = Z80_48K;
             break;
-        case Z80_MODEL2_SAMRAM:
+        case 2:  // SamRam
             result = Z80_SAMCOUPE;
             break;
-        case Z80_MODEL2_128K:
-        case Z80_MODEL2_128K_IF1:
-        case Z80_MODEL2_128K_2:
-        case Z80_MODEL2_128K_2A:
-        case Z80_MODEL2_128K_3:
-        case Z80_MODEL2_128k_3_1:
-        case Z80_MODEL2_P128K:
+        case 3:   // 128K (v2 only)
+        case 4:   // 128K + IF1 (v2 only)
+        case 7:   // +3
+        case 8:   // +3 (alternate)
+        case 9:   // Pentagon 128K
+        case 12:  // +2
+        case 13:  // +2A
             result = Z80_128K;
             break;
-        case Z80_MODEL2_ZS256K:
+        case 10:  // Scorpion 256K
+            result = Z80_256K;
+            break;
+        default:
+            result = Z80_48K;
+            break;
+    }
+
+    return result;
+}
+
+Z80MemoryMode LoaderZ80::getMemoryModeV3(uint8_t model)
+{
+    Z80MemoryMode result = Z80_48K;
+
+    switch (model)
+    {
+        case 0:  // 48K
+        case 1:  // 48K + IF1
+        case 3:  // 48K + MGT (v3: model 3 is 48K, not 128K!)
+            result = Z80_48K;
+            break;
+        case 2:  // SamRam
+            result = Z80_SAMCOUPE;
+            break;
+        case 4:   // 128K (v3: model 4 is 128K base)
+        case 5:   // 128K + IF1
+        case 6:   // 128K + MGT
+        case 7:   // +3
+        case 8:   // +3 (alternate)
+        case 9:   // Pentagon 128K
+        case 12:  // +2
+        case 13:  // +2A
+            result = Z80_128K;
+            break;
+        case 10:  // Scorpion 256K
             result = Z80_256K;
             break;
         default:
@@ -518,13 +799,25 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
     result.iff1 = header.IFF1 ? 1 : 0;
     result.iff2 = header.IFF2 ? 1 : 0;
     result.i = header.reg_I;
-    result.r_low = header.reg_R;
-    result.r_hi = header.reg_R & 0x80;
-    result.im = header.im & 0x03;
+
+    // Per spec: reg_R contains lower 7 bits; flags bit 0 contains bit 7 of R
+    // Handle flags=255 compatibility case
+    uint8_t flags = (header.flags == 255) ? 1 : header.flags;
+    result.r_low = header.reg_R & 0x7F;
+    result.r_hi = (flags & 0x01) << 7;
+
+    // Interrupt mode: Z80 only supports modes 0, 1, 2
+    // Mask to lower 2 bits and validate
+    uint8_t im = header.im & 0x03;
+    if (im > 2)
+    {
+        MLOGWARNING("Invalid interrupt mode %d in Z80 snapshot, using mode 0", header.im);
+        im = 0;
+    }
+    result.im = im;
 
     result.pc = pc;
 
-    // Initialize undocumented registers (not stored in Z80 snapshot format)
     result.memptr = 0;
     result.q = 0;
 
@@ -592,8 +885,17 @@ void LoaderZ80::decompressPage_Optimized(uint8_t* src, size_t srcLen, uint8_t* d
             uint8_t count = src[2];
             uint8_t value = src[3];
 
+            size_t remaining = dstEnd - dst;
+            size_t fillLen = std::min<size_t>(count, remaining);
+            
+            // Warn if compressed data would overflow buffer
+            if (count > remaining)
+            {
+                MLOGWARNING("Z80 decompression overflow: RLE sequence requests %d bytes but only %zu available, truncating",
+                            count, remaining);
+            }
+
             // Use memset for bulk fill (SIMD-accelerated)
-            size_t fillLen = std::min<size_t>(count, dstEnd - dst);
             memset(dst, value, fillLen);
             dst += fillLen;
 
@@ -615,9 +917,67 @@ void LoaderZ80::decompressPage_Optimized(uint8_t* src, size_t srcLen, uint8_t* d
     }
 }
 
+size_t LoaderZ80::decompressV1Data(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen)
+{
+    if (src == nullptr || dst == nullptr || srcLen == 0 || dstLen == 0)
+    {
+        return 0;
+    }
+
+    uint8_t* srcStart = src;
+    uint8_t* dstEnd = dst + dstLen;
+
+    while (srcLen > 0 && dst < dstEnd)
+    {
+        // Check for end marker: 00 ED ED 00
+        if (srcLen >= 4 && src[0] == 0x00 && src[1] == 0xED && src[2] == 0xED && src[3] == 0x00)
+        {
+            break;
+        }
+
+        // Check for RLE sequence: ED ED nn bb
+        if (srcLen >= 4 && src[0] == 0xED && src[1] == 0xED)
+        {
+            uint8_t count = src[2];
+            uint8_t value = src[3];
+
+            size_t remaining = dstEnd - dst;
+            size_t fillLen = std::min<size_t>(count, remaining);
+            
+            // Warn if compressed data would overflow buffer
+            if (count > remaining)
+            {
+                MLOGWARNING("Z80 decompression overflow: RLE sequence requests %d bytes but only %zu available, truncating",
+                            count, remaining);
+            }
+            
+            memset(dst, value, fillLen);
+            dst += fillLen;
+
+            srcLen -= 4;
+            src += 4;
+        }
+        else
+        {
+            *dst++ = *src++;
+            --srcLen;
+        }
+    }
+
+    // Zero-fill remaining destination
+    if (dst < dstEnd)
+    {
+        memset(dst, 0, dstEnd - dst);
+    }
+
+    return static_cast<size_t>(src - srcStart);
+}
+
 MemoryPageDescriptor LoaderZ80::resolveSnapshotPage(uint8_t page, Z80MemoryMode mode)
 {
     MemoryPageDescriptor result;
+    result.mode = MemoryBankModeEnum::BANK_INVALID;  // Default to invalid - must be explicitly set
+    result.page = 0;
     result.addressInPage = 0x0000;
 
     switch (mode)
@@ -648,6 +1008,9 @@ MemoryPageDescriptor LoaderZ80::resolveSnapshotPage(uint8_t page, Z80MemoryMode 
                     result.mode = MemoryBankModeEnum::BANK_RAM;
                     result.page = 5;
                     break;
+                default:
+                    // Unknown page for 48K mode - leave as BANK_INVALID
+                    break;
             }
             break;
         case Z80_128K:
@@ -664,12 +1027,15 @@ MemoryPageDescriptor LoaderZ80::resolveSnapshotPage(uint8_t page, Z80MemoryMode 
                 result.mode = MemoryBankModeEnum::BANK_RAM;
                 result.page = page - 3;
             }
+            // else: page >= 11, leave as BANK_INVALID
             break;
         case Z80_256K:
-            throw std::logic_error("Not implemented yet");
+            // Not implemented - leave as BANK_INVALID
+            MLOGWARNING("Z80 256K mode not implemented, skipping page %d", page);
             break;
         case Z80_SAMCOUPE:
-            throw std::logic_error("Not implemented yet");
+            // Not implemented - leave as BANK_INVALID
+            MLOGWARNING("Z80 SamCoupe mode not implemented, skipping page %d", page);
             break;
         default:
             break;
