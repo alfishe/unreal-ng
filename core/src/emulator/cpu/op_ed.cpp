@@ -819,6 +819,9 @@ Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 		cpu->f |= PV;
 		cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
+		// Interrupted block instruction: YF=PC.13, XF=PC.11
+		cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
 		cputact(7);
 
 		cpu->memptr = cpu->pc + 1;
@@ -852,6 +855,9 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 	  {
 		  cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
+		  // Interrupted block instruction: YF=PC.13, XF=PC.11
+		  cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
 		  cputact(5);
 
 		  cpu->memptr = cpu->pc + 1;
@@ -875,6 +881,9 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
    {
 	   cpu->f |= PV;
 	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(6);
    }
@@ -904,6 +913,9 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
    {
 	   cpu->f |= PV;
 	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(5);
    }
@@ -936,6 +948,9 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
        cpu->f |= PV;
        cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
+       // Interrupted block instruction: YF=PC.13, XF=PC.11
+       cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
        cputact(7);
     }
     else
@@ -967,6 +982,9 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 	  {
 		  cpu->pc = cpu->pc - 2;
 
+		  // Interrupted block instruction: YF=PC.13, XF=PC.11
+		  cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
 		  cputact(5);
 
 		  cpu->memptr = cpu->pc + 1;
@@ -990,6 +1008,9 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
    {
 	   cpu->f |= PV;
 	   cpu->pc = cpu->pc - 2;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(6);
    }
@@ -1019,6 +1040,9 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
    {
 	   cpu->f |= PV;
        cpu->pc = cpu->pc - 2;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(5);
    }

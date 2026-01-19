@@ -651,3 +651,147 @@ TEST_F(Z80_Test, XCF_CCF_Q1_F1_A0)
 }
 
 /// endregion </Z80 XCF Tests>
+
+/// region <Interrupted Block Instruction Tests - YF=PC.13, XF=PC.11>
+///
+/// When block instructions (LDxR, CPxR, INxR, OTxR) repeat, the undocumented 
+/// YF and XF flags are set from PC bits 13 and 11 respectively.
+/// This is visible when an interrupt occurs during block instruction execution.
+
+// Test LDIR sets YF/XF from PC when repeating (PC has both bits set)
+TEST_F(Z80_Test, Block_LDIR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    // Use address 0x2800 where:
+    // PC.13 = (0x2800 >> 13) & 1 = 1
+    // PC.11 = (0x2800 >> 11) & 1 = 1
+    // (0x2800 >> 8) & 0x28 = 0x28 & 0x28 = 0x28
+    z80.pc = 0x2800;
+    memory->base_sos_rom[0x2800] = 0xED;  // ED prefix
+    memory->base_sos_rom[0x2801] = 0xB0;  // LDIR
+    
+    z80.hl = 0x8000;  // Source
+    z80.de = 0x9000;  // Destination
+    z80.bc = 2;       // 2 bytes to copy (will repeat once)
+    
+    // Put source data
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);
+    memory->DirectWriteToZ80Memory(0x8001, 0xBB);
+    
+    z80.Z80Step();  // Execute LDIR
+    
+    // After first iteration, BC=1, instruction repeats
+    // PC should be back to 0x2800 (ED prefix address)
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "YF/XF should be set from PC=0x2800 (bits 13,11 -> bits 5,3)";
+}
+
+// Test LDIR with PC that clears both YF and XF
+TEST_F(Z80_Test, Block_LDIR_Interrupted_Flags_Clear)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    // Use address 0x0000 where:
+    // PC.13 = 0, PC.11 = 0
+    // (0x0000 >> 8) & 0x28 = 0x00
+    z80.pc = 0x0000;
+    memory->base_sos_rom[0x0000] = 0xED;
+    memory->base_sos_rom[0x0001] = 0xB0;
+    
+    z80.hl = 0x8000;
+    z80.de = 0x9000;
+    z80.bc = 2;
+    
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);
+    
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.pc, 0x0000);
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "YF/XF should be 0 from PC=0x0000";
+}
+
+// Test LDDR sets YF/XF from PC when repeating
+TEST_F(Z80_Test, Block_LDDR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    z80.pc = 0x2800;  // PC that sets both YF and XF
+    memory->base_sos_rom[0x2800] = 0xED;
+    memory->base_sos_rom[0x2801] = 0xB8;  // LDDR
+    
+    z80.hl = 0x8001;  // Source (decrementing)
+    z80.de = 0x9001;  // Destination (decrementing)
+    z80.bc = 2;
+    
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);
+    memory->DirectWriteToZ80Memory(0x8001, 0xBB);
+    
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "LDDR YF/XF should be set from PC=0x2800";
+}
+
+// Test CPIR sets YF/XF from PC when repeating (not found scenario)
+TEST_F(Z80_Test, Block_CPIR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    z80.pc = 0x2800;
+    memory->base_sos_rom[0x2800] = 0xED;
+    memory->base_sos_rom[0x2801] = 0xB1;  // CPIR
+    
+    z80.a = 0x55;      // Looking for 0x55
+    z80.hl = 0x8000;
+    z80.bc = 2;
+    
+    // Put different data so comparison fails and instruction repeats
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);  // Not equal to A
+    memory->DirectWriteToZ80Memory(0x8001, 0x55);  // Equal - will stop here
+    
+    z80.Z80Step();
+    
+    // First byte didn't match, BC decremented, instruction repeats
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "CPIR YF/XF should be set from PC=0x2800";
+}
+
+// Test CPDR sets YF/XF from PC when repeating
+TEST_F(Z80_Test, Block_CPDR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    z80.pc = 0x2800;
+    memory->base_sos_rom[0x2800] = 0xED;
+    memory->base_sos_rom[0x2801] = 0xB9;  // CPDR
+    
+    z80.a = 0x55;
+    z80.hl = 0x8001;  // Decrementing
+    z80.bc = 2;
+    
+    memory->DirectWriteToZ80Memory(0x8000, 0x55);  // Match
+    memory->DirectWriteToZ80Memory(0x8001, 0xAA);  // No match - will repeat
+    
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "CPDR YF/XF should be set from PC=0x2800";
+}
+
+/// endregion </Interrupted Block Instruction Tests>
