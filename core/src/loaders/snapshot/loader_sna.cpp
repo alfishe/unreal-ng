@@ -77,11 +77,44 @@ bool LoaderSNA::validate()
             if (is48kSnapshot(_file))
             {
                 _snapshotMode = SNA_48;
+                
+                // 48K SNA must be exactly 49179 bytes (27 header + 49152 RAM)
+                const size_t expected48kSize = _snaHeaderSize + 3 * PAGE_SIZE;
+                if (_fileSize != expected48kSize)
+                {
+                    MLOGWARNING("Invalid 48K SNA file size: %zu (expected %zu)", _fileSize, expected48kSize);
+                    _snapshotMode = SNA_UNKNOWN;
+                }
             }
-
-            if (is128kSnapshot(_file))
+            else if (is128kSnapshot(_file))
             {
                 _snapshotMode = SNA_128;
+                
+                // 128K SNA format is flexible - minimum is 49183 bytes (base structure),
+                // plus 0-8 additional 16KB RAM banks depending on which banks were saved
+                // Common sizes: 131103 bytes (5 banks), 147487 bytes (8 banks)
+                const size_t min128kSize = _snaHeaderSize + 3 * PAGE_SIZE + sizeof(sna128Header);
+                size_t remainingBytes = _fileSize - min128kSize;
+                size_t additionalBanks = remainingBytes / PAGE_SIZE;
+                
+                // Validate that we have whole banks (no partial pages)
+                if (remainingBytes % PAGE_SIZE != 0)
+                {
+                    MLOGWARNING("Invalid 128K SNA file size: %zu (has partial page: %zu bytes)", _fileSize, remainingBytes % PAGE_SIZE);
+                    _snapshotMode = SNA_UNKNOWN;
+                }
+                // Validate we have at least 1 additional bank (128K SNA must have more than just base structure)
+                else if (additionalBanks < 1)
+                {
+                    MLOGWARNING("Invalid 128K SNA: no additional banks (size %zu)", _fileSize);
+                    _snapshotMode = SNA_UNKNOWN;
+                }
+                // Validate we don't have more than 8 additional banks
+                else if (additionalBanks > 8)
+                {
+                    MLOGWARNING("Invalid 128K SNA: too many banks (%zu banks, max 8)", additionalBanks);
+                    _snapshotMode = SNA_UNKNOWN;
+                }
             }
         }
     }
@@ -133,6 +166,13 @@ bool LoaderSNA::is48kSnapshot(FILE* file)
     bool result = false;
 
     size_t fileSize = FileHelper::GetFileSize(file);
+    
+    // Minimum size check: must have at least header (27 bytes)
+    if (fileSize < _snaHeaderSize)
+    {
+        return false;
+    }
+    
     size_t headerSize = fileSize % PAGE_SIZE;
 
     if (headerSize == _snaHeaderSize)
@@ -148,9 +188,21 @@ bool LoaderSNA::is128kSnapshot(FILE* file)
     bool result = false;
 
     size_t fileSize = FileHelper::GetFileSize(file);
-    size_t headerSize = fileSize % PAGE_SIZE;
-
-    if (headerSize == _sna128HeaderSize)
+    
+    // Minimum size for 128K SNA: header (27) + 3 banks (48KB) + extended header (4)
+    const size_t min128kSize = _snaHeaderSize + 3 * PAGE_SIZE + sizeof(sna128Header);
+    
+    if (fileSize < min128kSize)
+    {
+        return false;
+    }
+    
+    // 128K SNA format is flexible - after the base structure (49183 bytes),
+    // it can contain anywhere from 1 to 8 additional 16KB RAM banks
+    // Check if remaining data after base structure is a multiple of PAGE_SIZE and non-zero
+    size_t remainingBytes = fileSize - min128kSize;
+    
+    if (remainingBytes > 0 && remainingBytes % PAGE_SIZE == 0)
     {
         result = true;
     }
@@ -429,16 +481,24 @@ bool LoaderSNA::applySnapshotFromStaging()
             // Memory page mapped to [C000:FFFF]
             uint8_t currentTopPage = _ext128Header.port_7FFD & 0x07u;
 
+            // Step 1: Unlock paging for state-independent loading
+            // Ensures snapshot loads correctly even if port 7FFD was previously locked
+            _context->pPortDecoder->UnlockPaging();
+            
+            // Step 2: Configure 128K memory banks
             memory.SetRAMPageToBank1(5);
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(currentTopPage);
 
             z80.pc = _ext128Header.reg_PC;
 
-            // Switch to proper RAM/ROM pages configuration
+            // Step 3: Set port values via decoder
             _context->pPortDecoder->DecodePortOut(0x7FFD, _ext128Header.port_7FFD, z80.pc);
+            
+            // Step 4: Explicit state assignment (including lock bit if present)
+            _context->emulatorState.p7FFD = _ext128Header.port_7FFD;
 
-            // Activate TR-DOS ROM if needed
+            // Step 5: Activate TR-DOS ROM if needed
             if (_ext128Header.is_TRDOS)
             {
                 _context->pMemory->SetROMDOS();

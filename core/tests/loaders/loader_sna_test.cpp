@@ -203,3 +203,169 @@ TEST_F(LoaderSNA_Test, applySnapshotFromStaging)
         FAIL() << message << std::endl;
     }
 }
+
+/// region <Invalid File Tests>
+
+TEST_F(LoaderSNA_Test, rejectEmptyFile)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/empty.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "Empty file should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectTruncatedHeader)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/truncated_header.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "File with truncated header should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectHeaderOnly)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/header_only.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "File with header but no RAM should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectTruncated48K)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/truncated_48k.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "Truncated 48K snapshot should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectTruncated128K)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/truncated_128k.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "Truncated 128K snapshot should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectWrongFormat_PNG)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/fake_png.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "PNG file should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectWrongFormat_JPEG)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/fake_jpeg.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "JPEG file should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectTextFile)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/text_file.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "Text file should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectAllZeros)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/all_zeros.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "All zeros file should be rejected";
+}
+
+TEST_F(LoaderSNA_Test, rejectAllFF)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/invalid/all_ff.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool result = loader.validate();
+    EXPECT_FALSE(result) << "All 0xFF file should be rejected";
+}
+
+/// endregion </Invalid File Tests>
+
+/// region <Lock/State Verification Tests>
+
+TEST_F(LoaderSNA_Test, load128KWithPreLockedPort)
+{
+    // Lock the paging port to simulate a pre-existing locked state
+    _context->pPortDecoder->LockPaging();
+    ASSERT_TRUE(_context->emulatorState.p7FFD & PORT_7FFD_LOCK) << "Port should be locked for test setup";
+    
+    // Load a 128K snapshot (using first available 128K SNA)
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    LoaderSNACUT loader(_context, testPath);
+    
+    bool loadResult = loader.load();
+    ASSERT_TRUE(loadResult) << "128K SNA should load even with pre-locked port";
+    
+    bool applyResult = loader.applySnapshotFromStaging();
+    ASSERT_TRUE(applyResult) << "128K SNA should apply even with pre-locked port";
+}
+
+TEST_F(LoaderSNA_Test, load48KAfterLocked128K)
+{
+    // First load a 128K snapshot and lock the port
+    static std::string test128Path = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    LoaderSNACUT loader128(_context, test128Path);
+    
+    bool load128 = loader128.load();
+    ASSERT_TRUE(load128) << "128K SNA should load successfully";
+    
+    bool apply128 = loader128.applySnapshotFromStaging();
+    ASSERT_TRUE(apply128) << "128K SNA should apply successfully";
+    
+    // Lock the port explicitly
+    _context->pPortDecoder->LockPaging();
+    ASSERT_TRUE(_context->emulatorState.p7FFD & PORT_7FFD_LOCK) << "Port should be locked after 128K load";
+    
+    // Now load a 48K snapshot - it should still work
+    static std::string test48Path = TestPathHelper::GetTestDataPath("loaders/sna/Timing_Tests-48k_v1.0.sna");
+    LoaderSNACUT loader48(_context, test48Path);
+    
+    bool load48 = loader48.load();
+    ASSERT_TRUE(load48) << "48K SNA should load even after locked 128K state";
+    
+    bool apply48 = loader48.applySnapshotFromStaging();
+    ASSERT_TRUE(apply48) << "48K SNA should apply even after locked 128K state";
+}
+
+TEST_F(LoaderSNA_Test, repeatedLoadIsIdempotent)
+{
+    static std::string testPath = TestPathHelper::GetTestDataPath("loaders/sna/multifix.sna");
+    
+    // Load the same snapshot twice
+    LoaderSNACUT loader1(_context, testPath);
+    bool load1 = loader1.load();
+    ASSERT_TRUE(load1) << "First load should succeed";
+    
+    bool apply1 = loader1.applySnapshotFromStaging();
+    ASSERT_TRUE(apply1) << "First apply should succeed";
+    
+    // Lock the port
+    _context->pPortDecoder->LockPaging();
+    
+    // Load again
+    LoaderSNACUT loader2(_context, testPath);
+    bool load2 = loader2.load();
+    ASSERT_TRUE(load2) << "Second load should succeed";
+    
+    bool apply2 = loader2.applySnapshotFromStaging();
+    ASSERT_TRUE(apply2) << "Second apply should succeed";
+}
+
+/// endregion </Lock/State Verification Tests>

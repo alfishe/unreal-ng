@@ -19,7 +19,7 @@ void UnlockPaging();  // Clear lock bit for snapshot/debug
 void LockPaging();    // Set lock bit for testing/accuracy
 ```
 
-**Implementation** ([portdecoder.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/ports/portdecoder.cpp#L398-L420)):
+**Implementation** ([portdecoder.cpp](core/src/emulator/ports/portdecoder.cpp#L398-L420)):
 - Direct manipulation of `emulatorState.p7FFD` to bypass port device lock checks
 - Used by snapshot loaders and debug sessions to override emulation state
 - Inherited by all port decoder subclasses
@@ -30,7 +30,7 @@ void LockPaging();    // Set lock bit for testing/accuracy
 
 **Root Cause:** Port 7FFD lock bit (bit 5) prevents bank changes. Snapshot's port values include lock=1, so writes were ignored.
 
-**Solution** ([loader_z80.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/loaders/snapshot/loader_z80.cpp#L189-L221)):
+**Solution** ([loader_z80.cpp](core/src/loaders/snapshot/loader_z80.cpp#L189-L221)):
 ```cpp
 case Z80_128K:
 {
