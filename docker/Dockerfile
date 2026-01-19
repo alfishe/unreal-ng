@@ -58,11 +58,12 @@ COPY --from=dep-builder /usr/local/lib/libicu* /usr/local/lib/
 COPY --from=dep-builder /usr/local/include/unicode /usr/local/include/unicode
 COPY --from=dep-builder /opt/qt /opt/qt
 
-# Install CI tools
+# Install CI tools + Python build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     build-essential cmake git ninja-build locales \
-    autoconf automake \
+    autoconf automake libtool pkg-config \
+    libffi-dev libsqlite3-dev libreadline-dev libncursesw5-dev liblzma-dev \
     libgl1-mesa-dev libxkbcommon0 libx11-6 libx11-xcb1 libxcb1 \
     libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
     libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libxcb-cursor0 libglib2.0-0 \
