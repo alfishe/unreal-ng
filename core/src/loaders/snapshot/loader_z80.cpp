@@ -524,6 +524,10 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
 
     result.pc = pc;
 
+    // Initialize undocumented registers (not stored in Z80 snapshot format)
+    result.memptr = 0;
+    result.q = 0;
+
     return result;
 }
 

@@ -457,3 +457,197 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
         EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
     }
 }
+
+/// region <Z80 XCF Tests - Q Register and CCF/SCF Undocumented Flag Behavior>
+///
+/// These tests verify genuine Zilog Z80 behavior for the undocumented YF/XF flags
+/// during CCF and SCF instructions. The Q register mechanism was discovered in 2018-2024
+/// and is tested by the XCF Flavor v1.6 test program.
+///
+/// Formula: undoc_flags = (A | (F & ~Q)) & 0x28
+/// - Flag-modifying instruction: Q = F & 0x28
+/// - Non-flag-modifying instruction: Q = 0
+
+// Test Q register initialization after reset
+TEST_F(Z80_Test, XCF_Q_InitializedOnReset)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    z80.Reset();
+    
+    EXPECT_EQ(z80.q, 0) << "Q register should be 0 after reset";
+}
+
+// Test Q register is updated after flag-modifying instruction (DEC)
+TEST_F(Z80_Test, XCF_Q_UpdatedAfterFlagModifyingInstruction)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;  // DEC A will produce 0xFF with YF/XF set
+    
+    // DEC A (opcode 0x3D) - modifies flags
+    memory[0] = 0x3D;
+    z80.Z80Step();
+    
+    // After DEC A producing 0xFF, both YF (bit 5) and XF (bit 3) should be set
+    EXPECT_EQ(z80.q & 0x28, 0x28) << "Q should capture YF/XF after flag-modifying instruction";
+    EXPECT_EQ(z80.a, 0xFF) << "A should be 0xFF after DEC from 0";
+}
+
+// Test Q register is cleared after non-flag-modifying instruction (LD)
+TEST_F(Z80_Test, XCF_Q_ClearedAfterNonFlagModifyingInstruction)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    
+    // First execute DEC A to set Q = 0x28
+    memory[0] = 0x3D;  // DEC A
+    z80.Z80Step();
+    EXPECT_EQ(z80.q & 0x28, 0x28) << "Q should be set after DEC";
+    
+    // Now reset and execute LD A, n which doesn't modify flags
+    z80.pc = 0;
+    memory[0] = 0x3E;  // LD A, n
+    memory[1] = 0x00;  // immediate value 0
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.q, 0) << "Q should be 0 after non-flag-modifying instruction";
+}
+
+// Test SCF with Q=0, F=0, A=0 -> YX should be 00
+TEST_F(Z80_Test, XCF_SCF_Q0_F0_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x00;
+    z80.q = 0x00;
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "SCF: (Q=0,F=0,A=0) -> YX should be 00";
+    EXPECT_TRUE(z80.f & 0x01) << "SCF should set carry flag";
+}
+
+// Test SCF with Q=0, F has YX=1, A=0 -> YX should be 11 (Zilog behavior)
+TEST_F(Z80_Test, XCF_SCF_Q0_F1_A0_Zilog)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set
+    z80.q = 0x00;  // Q is 0 (previous instruction didn't modify flags)
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0)) & 0x28 = 0x28
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "SCF: (Q=0,F=1,A=0) -> YX should be 11 (Zilog behavior)";
+}
+
+// Test SCF with Q=1, F=1 (same), A=0 -> YX should be 00 
+TEST_F(Z80_Test, XCF_SCF_Q1_F1_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set
+    z80.q = 0x28;  // Q equals F
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0x28)) & 0x28 = 0
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "SCF: (Q=1,F=1,A=0) -> YX should be 00 when Q=F";
+}
+
+// Test SCF with A=0xFF (YX bits set) -> YX should be 11 regardless of Q/F
+TEST_F(Z80_Test, XCF_SCF_A_Contributes)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0xFF;  // All bits set including YF/XF
+    z80.f = 0x00;
+    z80.q = 0x00;
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "SCF: A register should contribute YX flags";
+}
+
+// Test CCF with Q=0, F=0, A=0 -> YX should be 00
+TEST_F(Z80_Test, XCF_CCF_Q0_F0_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x01;  // Carry set (will be complemented)
+    z80.q = 0x00;
+    
+    // CCF (opcode 0x3F)
+    memory[0] = 0x3F;
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "CCF: (Q=0,F=0,A=0) -> YX should be 00";
+    EXPECT_FALSE(z80.f & 0x01) << "CCF should complement carry flag";
+}
+
+// Test CCF with Q=0, F has YX=1, A=0 -> YX should be 11 (Zilog behavior)
+TEST_F(Z80_Test, XCF_CCF_Q0_F1_A0_Zilog)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set, no carry
+    z80.q = 0x00;
+    
+    // CCF (opcode 0x3F)
+    memory[0] = 0x3F;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0)) & 0x28 = 0x28
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "CCF: (Q=0,F=1,A=0) -> YX should be 11 (Zilog behavior)";
+}
+
+// Test CCF with Q=1, F=1 (same), A=0 -> YX should be 00
+TEST_F(Z80_Test, XCF_CCF_Q1_F1_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set
+    z80.q = 0x28;  // Q equals F
+    
+    // CCF (opcode 0x3F)
+    memory[0] = 0x3F;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0x28)) & 0x28 = 0
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "CCF: (Q=1,F=1,A=0) -> YX should be 00 when Q=F";
+}
+
+/// endregion </Z80 XCF Tests>

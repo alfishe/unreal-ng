@@ -422,8 +422,12 @@ Z80OPCODE op_36(Z80 *cpu) { // ld (hl),nn
     cpu->wd(cpu->hl, value);
 }
 
-Z80OPCODE op_37(Z80 *cpu) { // scf
-	cpu->f = (cpu->f & ~(HF|NF)) | (cpu->a & (F3|F5)) | CF;
+Z80OPCODE op_37(Z80 *cpu) { // scf - Zilog Z80 behavior
+    // Undocumented YF/XF flags: (A | (F & ~Q)) & 0x28
+    // When Q=F, only A contributes; when Q≠F, F also contributes
+    // Q captures YF/XF from previous flag-modifying instruction (set in Z80::Z80Step)
+    uint8_t undoc = (cpu->a | (cpu->f & ~cpu->q)) & (F3 | F5);
+    cpu->f = (cpu->f & ~(HF | NF | F3 | F5)) | undoc | CF;
 }
 
 Z80OPCODE op_38(Z80 *cpu) { // jr c,rr
@@ -497,8 +501,12 @@ Z80OPCODE op_3E(Z80 *cpu) { // ld a,nn
     cpu->a = cpu->rd(cpu->pc++, true);
 }
 
-Z80OPCODE op_3F(Z80 *cpu) { // ccf
-   cpu->f = ((cpu->f & ~(NF|HF)) | ((cpu->f << 4) & HF) | (cpu->a & (F3|F5))) ^ CF;
+Z80OPCODE op_3F(Z80 *cpu) { // ccf - Zilog Z80 behavior
+    // Undocumented YF/XF flags: (A | (F & ~Q)) & 0x28
+    // When Q=F, only A contributes; when Q≠F, F also contributes
+    // Q captures YF/XF from previous flag-modifying instruction (set in Z80::OnCPUStep)
+    uint8_t undoc = (cpu->a | (cpu->f & ~cpu->q)) & (F3 | F5);
+    cpu->f = ((cpu->f & ~(NF | HF | F3 | F5)) | ((cpu->f << 4) & HF) | undoc) ^ CF;
 }
 
 Z80OPCODE op_41(Z80 *cpu) { // ld b,c

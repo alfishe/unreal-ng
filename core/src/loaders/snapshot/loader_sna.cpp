@@ -402,6 +402,10 @@ bool LoaderSNA::applySnapshotFromStaging()
         z80.iff1 = (_header.flag19 & 0b00000'0100u) >> 2;
         z80.iff2 = 1;
 
+        // Initialize undocumented registers (not stored in SNA format)
+        z80.memptr = 0;
+        z80.q = 0;
+
         // Set up ports
         if (_snapshotMode == SNA_48)
         {
