@@ -270,11 +270,19 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // 3. Update Q register based on whether flags were modified
         // Q captures YF/XF from flag-modifying instructions only
-        // Non-flag-modifying instructions set Q=0
+        // SCF/CCF update Q internally even if F doesn't numerically change
         if (cpu.f != prev_f)
+        {
             cpu.q = cpu.f & 0x28;  // Flags changed: capture YF/XF
+        }
+        else if (cpu.opcode == 0x37 || cpu.opcode == 0x3F)
+        {
+            // SCF/CCF set Q internally, preserve their value
+        }
         else
-            cpu.q = 0;  // Flags unchanged: Q=0
+        {
+            cpu.q = 0;  // Non-flag-modifying instruction: Q=0
+        }
     }
 
     /// region <Debug trace capture>
