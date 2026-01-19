@@ -410,12 +410,14 @@ bool LoaderSNA::applySnapshotFromStaging()
             memory.SetRAMPageToBank2(2);
             memory.SetRAMPageToBank3(0);
 
-            // 48k SNA files store Z80 PC on stack, so we need to pop it and load to PC
-            uint16_t pc_high = memory.DirectReadFromZ80Memory(z80.sp++);
-            uint8_t pc_low = memory.DirectReadFromZ80Memory(z80.sp++);
-            uint16_t pcAddress = (pc_high << 8) | pc_low;
+            // Set 48k ROM as active (ROM page 3 is the 48k BASIC ROM)
+            memory.SetROMPage(3);
 
-            z80.pc = pcAddress;
+            // 48k SNA files store Z80 PC on stack, so we need to pop it and load to PC
+            // Z80 is little-endian: low byte at SP, high byte at SP+1
+            uint8_t pc_low = memory.DirectReadFromZ80Memory(z80.sp++);
+            uint8_t pc_high = memory.DirectReadFromZ80Memory(z80.sp++);
+            z80.pc = (pc_high << 8) | pc_low;
         }
 
         if (_snapshotMode == SNA_128)
