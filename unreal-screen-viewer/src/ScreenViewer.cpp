@@ -40,9 +40,11 @@ ScreenViewer::ScreenViewer(QWidget* parent)
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);
     
-    // Initialize with black placeholder
+    // Initialize both images with black placeholder
     _currentImage = QImage(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
     _currentImage.fill(Qt::black);
+    _shadowImage = QImage(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
+    _shadowImage.fill(Qt::black);
     
     _refreshTimer = new QTimer(this);
     connect(_refreshTimer, &QTimer::timeout, this, &ScreenViewer::refreshScreen);
@@ -149,8 +151,9 @@ void ScreenViewer::detachFromSharedMemory()
     _emulatorId.clear();
     _shmName.clear();
     
-    // Reset to black screen
+    // Reset both screens to black
     _currentImage.fill(Qt::black);
+    _shadowImage.fill(Qt::black);
     update();
     
     qDebug() << "ScreenViewer: Detached from shared memory";
@@ -168,9 +171,33 @@ void ScreenViewer::setScreenPage(ScreenPage page)
 
 void ScreenViewer::toggleScreenPage()
 {
-    setScreenPage(_currentPage == ScreenPage::Main 
-                  ? ScreenPage::Shadow 
-                  : ScreenPage::Main);
+    // Only toggle in single mode
+    if (_viewMode == ViewMode::Single)
+    {
+        setScreenPage(_currentPage == ScreenPage::Main 
+                      ? ScreenPage::Shadow 
+                      : ScreenPage::Main);
+    }
+}
+
+void ScreenViewer::setViewMode(ViewMode mode)
+{
+    if (_viewMode != mode)
+    {
+        _viewMode = mode;
+        emit viewModeChanged(mode);
+        refreshScreen();
+    }
+}
+
+void ScreenViewer::setDualLayout(DualLayout layout)
+{
+    if (_dualLayout != layout)
+    {
+        _dualLayout = layout;
+        emit dualLayoutChanged(layout);
+        update();
+    }
 }
 
 void ScreenViewer::startRefreshTimer()
@@ -193,31 +220,40 @@ void ScreenViewer::refreshScreen()
     
 #ifndef _WIN32
     // Invalidate our view of shared memory to ensure we see latest writes
-    // This is needed on macOS to get fresh data from another process
     msync(const_cast<void*>(_shmData), _shmSize, MS_INVALIDATE);
 #endif
     
-    const uint8_t* screenData = getScreenData();
-    if (screenData != nullptr)
+    // Always render main screen
+    const uint8_t* mainData = getScreenData(ScreenPage::Main);
+    if (mainData != nullptr)
     {
-        _currentImage = renderScreen(screenData);
-        repaint();
+        _currentImage = renderScreen(mainData);
     }
+    
+    // In dual mode, also render shadow screen
+    if (_viewMode == ViewMode::Dual)
+    {
+        const uint8_t* shadowData = getScreenData(ScreenPage::Shadow);
+        if (shadowData != nullptr)
+        {
+            _shadowImage = renderScreen(shadowData);
+        }
+    }
+    
+    repaint();
 }
 
-const uint8_t* ScreenViewer::getScreenData() const
+const uint8_t* ScreenViewer::getScreenData(ScreenPage page) const
 {
     if (_shmData == nullptr)
         return nullptr;
     
     // Calculate offset to the requested RAM page
-    // Page N is at offset: N * PAGE_SIZE (0x4000 = 16KB)
-    size_t pageOffset = static_cast<size_t>(_currentPage) * PAGE_SIZE;
+    size_t pageOffset = static_cast<size_t>(page) * PAGE_SIZE;
     
     // Bounds check
     if (pageOffset + SCREEN_TOTAL_SIZE > static_cast<size_t>(_shmSize))
     {
-        qDebug() << "ScreenViewer: Page offset out of bounds";
         return nullptr;
     }
     
@@ -292,59 +328,109 @@ void ScreenViewer::paintEvent(QPaintEvent* event)
     
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
-    
-    // Calculate scaled size maintaining aspect ratio (4:3 for 256x192)
-    QSize targetSize = size();
-    float scaleX = static_cast<float>(targetSize.width()) / SCREEN_WIDTH;
-    float scaleY = static_cast<float>(targetSize.height()) / SCREEN_HEIGHT;
-    float scale = qMin(scaleX, scaleY);
-    
-    int scaledWidth = static_cast<int>(SCREEN_WIDTH * scale);
-    int scaledHeight = static_cast<int>(SCREEN_HEIGHT * scale);
-    int offsetX = (targetSize.width() - scaledWidth) / 2;
-    int offsetY = (targetSize.height() - scaledHeight) / 2;
-    
-    // Fill background
     painter.fillRect(rect(), Qt::black);
     
-    // Draw screen image with aspect ratio preservation
-    QRect targetRect(offsetX, offsetY, scaledWidth, scaledHeight);
-    painter.drawImage(targetRect, _currentImage);
+    QSize targetSize = size();
     
-    // Draw page indicator in bottom-right corner
-    QString pageLabel = QString("Page %1").arg(static_cast<int>(_currentPage));
-    QFont indicatorFont("Monospace", 14, QFont::Bold);
+    if (_viewMode == ViewMode::Single)
+    {
+        // Single mode: calculate scaled size maintaining 4:3 aspect ratio
+        float scaleX = static_cast<float>(targetSize.width()) / SCREEN_WIDTH;
+        float scaleY = static_cast<float>(targetSize.height()) / SCREEN_HEIGHT;
+        float scale = qMin(scaleX, scaleY);
+        
+        int scaledWidth = static_cast<int>(SCREEN_WIDTH * scale);
+        int scaledHeight = static_cast<int>(SCREEN_HEIGHT * scale);
+        int offsetX = (targetSize.width() - scaledWidth) / 2;
+        int offsetY = (targetSize.height() - scaledHeight) / 2;
+        
+        QRect targetRect(offsetX, offsetY, scaledWidth, scaledHeight);
+        
+        // In single mode, show current page (main or shadow based on toggle)
+        const QImage& displayImage = (_currentPage == ScreenPage::Main) ? _currentImage : _shadowImage;
+        QString label = QString("Page %1").arg(static_cast<int>(_currentPage));
+        drawScreenWithLabel(painter, targetRect, displayImage.isNull() ? _currentImage : displayImage, label);
+    }
+    else
+    {
+        // Dual mode: display both screens
+        int screenW, screenH;
+        QRect rect1, rect2;
+        
+        if (_dualLayout == DualLayout::Horizontal)
+        {
+            // Side-by-side: 8:3 aspect ratio (512x192)
+            float scaleX = static_cast<float>(targetSize.width()) / (SCREEN_WIDTH * 2);
+            float scaleY = static_cast<float>(targetSize.height()) / SCREEN_HEIGHT;
+            float scale = qMin(scaleX, scaleY);
+            
+            screenW = static_cast<int>(SCREEN_WIDTH * scale);
+            screenH = static_cast<int>(SCREEN_HEIGHT * scale);
+            
+            int totalW = screenW * 2;
+            int offsetX = (targetSize.width() - totalW) / 2;
+            int offsetY = (targetSize.height() - screenH) / 2;
+            
+            rect1 = QRect(offsetX, offsetY, screenW, screenH);
+            rect2 = QRect(offsetX + screenW, offsetY, screenW, screenH);
+        }
+        else  // Vertical
+        {
+            // Stacked: 4:6 aspect ratio (256x384)
+            float scaleX = static_cast<float>(targetSize.width()) / SCREEN_WIDTH;
+            float scaleY = static_cast<float>(targetSize.height()) / (SCREEN_HEIGHT * 2);
+            float scale = qMin(scaleX, scaleY);
+            
+            screenW = static_cast<int>(SCREEN_WIDTH * scale);
+            screenH = static_cast<int>(SCREEN_HEIGHT * scale);
+            
+            int totalH = screenH * 2;
+            int offsetX = (targetSize.width() - screenW) / 2;
+            int offsetY = (targetSize.height() - totalH) / 2;
+            
+            rect1 = QRect(offsetX, offsetY, screenW, screenH);
+            rect2 = QRect(offsetX, offsetY + screenH, screenW, screenH);
+        }
+        
+        drawScreenWithLabel(painter, rect1, _currentImage, "Bank 5");
+        drawScreenWithLabel(painter, rect2, _shadowImage, "Bank 7");
+    }
+}
+
+void ScreenViewer::drawScreenWithLabel(QPainter& painter, const QRect& targetRect,
+                                        const QImage& image, const QString& label)
+{
+    painter.drawImage(targetRect, image);
+    
+    QFont indicatorFont("Monospace", 12, QFont::Bold);
     painter.setFont(indicatorFont);
     
-    // Calculate label size based on actual font metrics
     QFontMetrics fm(indicatorFont);
-    int textWidth = fm.horizontalAdvance(pageLabel) + 16;
-    int textHeight = fm.height() + 8;
+    int textWidth = fm.horizontalAdvance(label) + 12;
+    int textHeight = fm.height() + 6;
     
-    // Position: 8px padding from bottom-right corner of the screen area
-    QRect labelRect(targetRect.right() - textWidth - 8, 
-                    targetRect.bottom() - textHeight - 8, 
+    QRect labelRect(targetRect.right() - textWidth - 6, 
+                    targetRect.bottom() - textHeight - 6, 
                     textWidth, textHeight);
     
-    // Draw semi-transparent background with rounded corners for better readability
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setBrush(QColor(0, 0, 0, 200));
     painter.setPen(Qt::NoPen);
     painter.drawRoundedRect(labelRect, 4, 4);
     
-    // Draw text
     painter.setPen(Qt::white);
-    painter.drawText(labelRect, Qt::AlignCenter, pageLabel);
+    painter.drawText(labelRect, Qt::AlignCenter, label);
 }
 
 void ScreenViewer::mousePressEvent(QMouseEvent* event)
 {
     Q_UNUSED(event);
     
-    // Toggle screen page on click
-    toggleScreenPage();
-    
-    qDebug() << "ScreenViewer: Toggled to page" << static_cast<int>(_currentPage);
+    // Toggle screen page on click (single mode only)
+    if (_viewMode == ViewMode::Single)
+    {
+        toggleScreenPage();
+    }
 }
 
 void ScreenViewer::resizeEvent(QResizeEvent* event)

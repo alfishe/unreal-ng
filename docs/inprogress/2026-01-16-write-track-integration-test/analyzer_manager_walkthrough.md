@@ -8,13 +8,13 @@ Successfully implemented the core AnalyzerManager infrastructure according to th
 
 ### Core Interfaces
 
-#### [`ianalyzer.h`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/ianalyzer.h)
+#### [`ianalyzer.h`](core/src/debugger/analyzers/ianalyzer.h)
 - Base interface for all analyzers
 - Virtual methods for lifecycle (`onActivate`, `onDeactivate`) and cold-path events (`onFrameStart`, `onFrameEnd`, `onBreakpointHit`)
 - Public `_manager` pointer for analyzer access to subscription APIs
 - Uses /// autodoc-style comments
 
-#### [`analyzermanager.h`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/analyzermanager.h)
+#### [`analyzermanager.h`](core/src/debugger/analyzers/analyzermanager.h)
 - Complete API with analyzer lifecycle management
 - Hybrid dispatch system:
   - **Hot paths** (~3.5M/sec): Raw function pointers (`subscribeCPUStep`, `subscribeMemoryRead/Write`)
@@ -23,7 +23,7 @@ Successfully implemented the core AnalyzerManager infrastructure according to th
 - Breakpoint ownership tracking with automatic cleanup
 - Comprehensive /// autodoc documentation for all public methods
 
-#### [`analyzermanager.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/analyzermanager.cpp)
+#### [`analyzermanager.cpp`](core/src/debugger/analyzers/analyzermanager.cpp)
 - Full implementation of all manager functionality
 - Automatic resource cleanup on deactivation
 - C++17 compatible (uses `.count()` instead of `.contains()`)
@@ -33,7 +33,7 @@ Successfully implemented the core AnalyzerManager infrastructure according to th
 
 ### DebugManager Integration
 
-Updated [`debugmanager.h`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/debugmanager.h#L26) and [`debugmanager.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/debugmanager.cpp#L19):
+Updated [`debugmanager.h`](core/src/debugger/debugmanager.h#L26) and [`debugmanager.cpp`](core/src/debugger/debugmanager.cpp#L19):
 - Added `_analyzerManager` field
 - Added `GetAnalyzerManager()` accessor
 - Instantiated in constructor
@@ -179,7 +179,7 @@ According to the implementation plan:
 
 ## References
 
-- TDD: [`analyzer_manager_design.md`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-01-16-write-track-integration-test/analyzer_manager_design.md)
+- TDD: [`analyzer_manager_design.md`](docs/inprogress/2026-01-16-write-track-integration-test/analyzer_manager_design.md)
 - Use Cases: See Appendix A in TDD for 4 detailed analyzer examples
 
 ## Critical Fix: Two-Phase Initialization
@@ -269,5 +269,5 @@ EmulatorTestHelper::CleanupEmulator(emu);
 
 ## References
 
-- TDD: [`analyzer_manager_design.md`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-01-16-write-track-integration-test/analyzer_manager_design.md)
+- TDD: [`analyzer_manager_design.md`](docs/inprogress/2026-01-16-write-track-integration-test/analyzer_manager_design.md)
 - Use Cases: See Appendix A in TDD for 4 detailed analyzer examples
