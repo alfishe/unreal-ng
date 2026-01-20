@@ -129,6 +129,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"start", &CLIProcessor::HandleStart},
                         {"create", &CLIProcessor::HandleCreate},
                         {"stop", &CLIProcessor::HandleStop},
+                        {"remove", &CLIProcessor::HandleStop},  // Alias for stop (stop also removes the instance)
+                        {"models", &CLIProcessor::HandleModels},
 
                         // Tape control commands
                         {"tape", &CLIProcessor::HandleTape},
@@ -480,6 +482,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  select <id>   - Select an emulator" << NEWLINE;
     oss << "  start [model] - Start new emulator instance (default 48K or specified model)" << NEWLINE;
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
+    oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
+    oss << "  models        - List available ZX Spectrum models" << NEWLINE;
     oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  resume [id|index]   - Resume emulation (auto-select if only one, or by ID/index)" << NEWLINE;
@@ -541,6 +545,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk track <drv> <cyl> <side>        - Read track summary" << NEWLINE;
     oss << "  disk sysinfo <drv>     - Show TR-DOS system info (sector 9)" << NEWLINE;
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Snapshot Commands:" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80)" << NEWLINE;
+    oss << "  snapshot save <file> [--force] - Save snapshot (.sna)" << NEWLINE;
+    oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;

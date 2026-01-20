@@ -12,7 +12,7 @@ Add comprehensive memory access commands to the ECI, supporting:
 ## Proposed Changes
 
 ### 1. Documentation Changes
-**File**: [command-interface.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/control-interfaces/command-interface.md)
+**File**: [command-interface.md](docs/emulator/design/control-interfaces/command-interface.md)
 
 Add to Section "3. State Inspection" (around line 412):
 
@@ -27,9 +27,9 @@ Add to Section "3. State Inspection" (around line 412):
 #### Explicit Page Addressing Commands
 | Command | Aliases | Arguments | Description |
 |:---|:---|:---|:---|
-| `page read <type> <page> <offset> [len]` | [pr](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/basic-lang/basicencoder.cpp#331-345) | `<ram\|rom> <page#> <offset> [length]` | Read from specific RAM/ROM page, bypassing current mapping. |
+| `page read <type> <page> <offset> [len]` | [pr](core/src/debugger/analyzers/basic-lang/basicencoder.cpp#331-345) | `<ram\|rom> <page#> <offset> [length]` | Read from specific RAM/ROM page, bypassing current mapping. |
 | `page write <type> <page> <offset> <bytes>` | `pw` | `<ram\|rom> <page#> <offset> <hex-bytes>` | Write to specific page. ROM writes require protection removal. |
-| `rom protect <on\|off>` | | [on](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/platform.h#926-932) or `off` | Enable/disable ROM write protection for all ROM pages. Default: ON (protected). |
+| `rom protect <on\|off>` | | [on](core/src/emulator/platform.h#926-932) or `off` | Enable/disable ROM write protection for all ROM pages. Default: ON (protected). |
 
 ---
 
@@ -37,13 +37,13 @@ Add to Section "3. State Inspection" (around line 412):
 
 #### [NEW] `cli-processor-memory.cpp`
 New command handler file for memory commands:
-- [HandleMemory()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/breakpoints/breakpointmanager.cpp#987-1010) - existing, needs write subcommand
-- [HandleMemoryWrite()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/breakpoints/breakpointmanager.cpp#1011-1034) - write to Z80 address space  
+- [HandleMemory()](core/src/debugger/breakpoints/breakpointmanager.cpp#987-1010) - existing, needs write subcommand
+- [HandleMemoryWrite()](core/src/debugger/breakpoints/breakpointmanager.cpp#1011-1034) - write to Z80 address space  
 - `HandlePageRead()` - read from explicit page
 - `HandlePageWrite()` - write to explicit page
 - `HandlePageProtect()` - toggle ROM protection
 
-#### [MODIFY] [Memory](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.h#81-85) class methods used
+#### [MODIFY] [Memory](core/src/emulator/cpu/core.h#81-85) class methods used
 - `DirectReadFromZ80Memory(uint16_t addr)` - existing
 - `DirectWriteToZ80Memory(uint16_t addr, uint8_t val)` - existing
 - `ReadRAMPage(uint8_t page, uint16_t offset)` - may need to add

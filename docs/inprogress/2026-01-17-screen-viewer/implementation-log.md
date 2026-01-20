@@ -100,3 +100,69 @@ cmake ..
 make -j$(nproc)
 ./bin/unreal-screen-viewer
 ```
+
+---
+
+## 2026-01-18: Dual Screen Mode Feature
+
+### Session 1: Feature Planning
+
+#### ✅ Design Decisions
+- [x] Dual screen mode displays Bank 5 and Bank 7 simultaneously
+- [x] Two layout options: horizontal (side-by-side) and vertical (stacked)
+- [x] Mode toolbar at bottom of emulator list panel
+- [x] Icons: `[1▢]` single, `[▢▢]` dual, `═` horizontal, `║` vertical
+- [x] Layout buttons only visible in dual mode
+- [x] Persist mode/layout via QSettings
+- [x] Click-to-toggle disabled in dual mode
+
+#### 🔧 Implementation Scope
+| Component | Action | Notes |
+|:----------|:-------|:------|
+| `ModeToolbar.h/cpp` | NEW | Toolbar widget with toggle buttons |
+| `ScreenViewer.h/cpp` | MODIFY | Add ViewMode, DualLayout enums; dual rendering |
+| `MainWindow.h/cpp` | MODIFY | Add toolbar, connect signals, QSettings |
+| `CMakeLists.txt` | MODIFY | Add new source files |
+
+#### 📋 Pending
+- [ ] Implement ModeToolbar widget
+- [ ] Add ViewMode/DualLayout enums to ScreenViewer
+- [ ] Implement dual rendering in paintEvent()
+- [ ] Add screen labels for dual mode
+- [ ] Persist mode/layout via QSettings
+- [ ] Test with running emulator
+
+### Session 2: Implementation Complete
+
+#### ✅ Completed
+- [x] Created `ModeToolbar.h/cpp` with toggle buttons ([1] single, [2] dual, ═ horizontal, ║ vertical)
+- [x] Added `ViewMode` and `DualLayout` enums to ScreenViewer
+- [x] Implemented dual rendering in `paintEvent()` with horizontal/vertical layouts
+- [x] Added "Bank 5"/"Bank 7" labels in dual mode
+- [x] Connected ModeToolbar signals to ScreenViewer
+- [x] Added QSettings persistence for mode/layout
+- [x] Updated CMakeLists.txt with new source file
+- [x] **BUILD SUCCESSFUL** on macOS
+
+#### 🔧 Technical Notes
+- Dual horizontal: 8:3 aspect ratio (512×192 effective)
+- Dual vertical: 4:6 aspect ratio (256×384 effective)
+- Click-to-toggle disabled in dual mode (both screens visible)
+- Settings saved to `~/Library/Preferences/com.UnrealNG.ScreenViewer.plist` on macOS
+
+#### 📋 Ready for Testing
+- Manual testing with running emulator required
+- Verify mode switching, layout toggle, and persistence
+
+### Session 3: Screen Cleanup Fixes
+
+#### ✅ Completed
+- [x] Removed top toolbar with refresh button (useless)
+- [x] Auto-select when only one emulator remains after others leave
+- [x] Removed noisy "Connection error" debug messages
+- [x] 500ms timeout wait for disable SHM request on exit
+- [x] Initialize `_shadowImage` in ScreenViewer constructor
+- [x] Clear both `_currentImage` and `_shadowImage` on detach
+- [x] Emit `emulatorDeselected` when no emulators available
+- [x] Emit `emulatorDeselected` when previously selected emulator goes away
+- [x] **BUILD SUCCESSFUL** on macOS

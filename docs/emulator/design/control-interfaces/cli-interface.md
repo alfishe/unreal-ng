@@ -118,6 +118,19 @@ Unknown command: invalid_command
 Type 'help' for available commands.
 ```
 
+### Interface Parity
+
+The CLI implements the same command semantics as other interfaces (WebAPI, Python, Lua). However, some capabilities are **intentionally WebAPI-only** as they are designed for programmatic/remote access patterns rather than interactive CLI use:
+
+| WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
+| :--- | :--- | :--- |
+| `GET /emulator/models` | — | Model discovery is typically done once at startup via config; CLI users select model when creating emulator |
+| `DELETE /emulator/{id}` | `stop` | CLI uses `stop` which both stops and removes; separate remove is for advanced orchestration |
+| `POST /emulator/{id}/start` | `resume` | Starting an existing (initialized but not running) emulator uses `resume` in CLI |
+
+> [!NOTE]
+> The `create` command in CLI creates an emulator in initialized state. Use `resume` to start it. WebAPI provides separate `create` and `start` endpoints for finer-grained control in orchestration scenarios.
+
 ## Connection Examples
 
 ### Using Telnet

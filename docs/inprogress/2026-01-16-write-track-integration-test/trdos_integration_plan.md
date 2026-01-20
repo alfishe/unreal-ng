@@ -55,7 +55,7 @@ Create `BasicEncoder` class to:
 #### Implementation
 - **Files**: `basicencoder.h`, `basicencoder.cpp`, `basicencoder_test.cpp`
 - **Dependencies**: Complements existing `BasicExtractor` class
-- **Details**: See [basicencoder_plan.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-01-16-write-track-integration-test/basicencoder_plan.md)
+- **Details**: See [basicencoder_plan.md](docs/inprogress/2026-01-16-write-track-integration-test/basicencoder_plan.md)
 
 #### Status
 - [x] Implementation plan created
@@ -110,7 +110,7 @@ TEST_F(Memory_Test, SetROMSystem_UpdatesAllState)
 This allows tests to work without full emulator context while runtime maintains proper state sync.
 
 ### Phase 1: Add TR-DOS Constants
-Update [spectrumconstants.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/spectrumconstants.h) with:
+Update [spectrumconstants.h](core/src/emulator/spectrumconstants.h) with:
 - TR-DOS format entry points for common versions
 - Sector interleave pattern constants
 - Track 0 sector layout (catalog sectors 0-8, disk info sector 9)

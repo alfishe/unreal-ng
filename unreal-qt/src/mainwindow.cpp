@@ -9,6 +9,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QScopedValueRollback>
 #include <QShortcut>
 #include <QThread>
@@ -31,9 +32,10 @@
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
-    // Load the last used directory from settings
+    // Load the last used directories from settings
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     _lastDirectory = settings.value("LastFileDirectory", QCoreApplication::applicationDirPath()).toString();
+    _lastSaveDirectory = settings.value("LastSaveDirectory", QCoreApplication::applicationDirPath()).toString();
     qDebug() << "Loading last directory from settings:" << _lastDirectory;
 
 #ifdef ENABLE_AUTOMATION
@@ -118,6 +120,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -131,6 +134,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::fullScreenToggled, this, &MainWindow::handleFullScreenShortcut);
+    connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
 
     // Bring application windows to foreground
     debuggerWindow->raise();
@@ -1429,6 +1433,51 @@ void MainWindow::openFileDialog()
     }
 }
 
+void MainWindow::saveFileDialog()
+{
+    // Check if emulator is running
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save snapshot";
+        return;
+    }
+
+    // Show a file save dialog using the last save directory
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.sna",
+        tr("SNA Snapshots (*.sna);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        // Ensure .sna extension
+        if (!filePath.toLower().endsWith(".sna"))
+        {
+            filePath += ".sna";
+        }
+
+        // Save directory to settings (separate from open directory)
+        QFileInfo fileInfo(filePath);
+        _lastSaveDirectory = fileInfo.absolutePath();
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+        // Save the snapshot
+        std::string file = filePath.toStdString();
+        bool result = _emulator->SaveSnapshot(file);
+
+        if (result)
+        {
+            qDebug() << "Snapshot saved successfully:" << filePath;
+        }
+        else
+        {
+            qDebug() << "Failed to save snapshot:" << filePath;
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Failed to save snapshot to:\n%1").arg(filePath));
+        }
+    }
+}
+
 void MainWindow::resetEmulator()
 {
     if (_emulator)
@@ -1587,6 +1636,25 @@ void MainWindow::handleLogWindowToggled(bool visible)
     {
         logWindow->setVisible(visible);
     }
+}
+
+void MainWindow::handleIntParametersRequested()
+{
+    if (!m_binding || !m_binding->emulator())
+    {
+        qDebug() << "Cannot open INT Parameters dialog: No active emulator instance";
+        return;
+    }
+
+    // Create new dialog each time (simple one-shot pattern)
+    // Dialog will be auto-deleted when closed
+    IntParametersDialog* dialog = new IntParametersDialog(m_binding, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    
+    // Show the dialog (non-blocking)
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 void MainWindow::updateMenuStates()
