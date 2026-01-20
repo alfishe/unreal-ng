@@ -84,6 +84,13 @@ else()
     add_library(${PROJECT_NAME} STATIC ${SOURCES})
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
+    # Add include directories for emulator headers
+    target_include_directories(${PROJECT_NAME}
+        PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/${SOURCE_DIR}
+        ${ROOT_DIR}/core/src
+    )
+
     # Link python as static library
     target_link_libraries(${PROJECT_NAME}
         pybind11::embed

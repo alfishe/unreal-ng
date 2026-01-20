@@ -892,6 +892,80 @@ bool Emulator::LoadSnapshot(const std::string& path)
     return result;
 }
 
+bool Emulator::SaveSnapshot(const std::string& path)
+{
+    // Guard against operations during destruction (thread safety)
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("SaveSnapshot rejected - emulator is being destroyed");
+        return false;
+    }
+
+    bool result = false;
+
+    /// region <Info logging>
+
+    MLOGEMPTY();
+    MLOGINFO("Saving snapshot to file: '%s'", path.c_str());
+
+    /// endregion </Info logging>
+
+    // Resolve to absolute path
+    std::string absolutePath = FileHelper::AbsolutePath(path);
+
+    // Validate file extension
+    std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
+    if (ext != "sna")
+    {
+        MLOGERROR("Invalid snapshot format for save: {}. Currently only .sna is supported", ext.c_str());
+        return false;
+    }
+
+    // Pause execution
+    bool wasRunning = false;
+    if (!IsPaused())
+    {
+        Pause();
+        wasRunning = true;
+    }
+
+    if (ext == "sna")
+    {
+        /// region <Save SNA snapshot>
+        LoaderSNA loaderSna(_context, absolutePath);
+        result = loaderSna.save();
+
+        /// region <Info logging>
+        if (result)
+        {
+            MLOGINFO("SNA file saved successfully: '%s'", absolutePath.c_str());
+        }
+        else
+        {
+            MLOGERROR("Failed to save SNA file: '%s'", absolutePath.c_str());
+        }
+
+        MLOGEMPTY();
+        /// endregion </Info logging>
+
+        /// endregion </Save SNA snapshot>
+    }
+
+    // Store snapshot path on success
+    if (result)
+    {
+        _context->coreState.snapshotFilePath = absolutePath;
+    }
+
+    // Resume execution
+    if (wasRunning)
+    {
+        Resume();
+    }
+
+    return result;
+}
+
 bool Emulator::LoadTape(const std::string& path)
 {
     bool result = false;

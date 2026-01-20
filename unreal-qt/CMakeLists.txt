@@ -58,38 +58,56 @@ if (NOT DEFINED QT_INSTALL_PATH)
 endif()
 
 if (QT_INSTALL_PATH STREQUAL "")
-    if (APPLE)  # macOS
-        # Check common Qt6 versions in ~/Qt (most recent first)
-        set(QT_POSSIBLE_PATHS
-            "$ENV{HOME}/Qt/6.9.3/macos"
-            "$ENV{HOME}/Qt/6.5.3/macos"
-            "$ENV{HOME}/Qt/6.5.0/macos"
-            "$ENV{QTDIR}"
-        )
-    elseif (UNIX AND NOT APPLE)  # Linux
-        set(QT_POSSIBLE_PATHS
-            "$ENV{HOME}/Qt/6.9.3/gcc_64"
-            "$ENV{HOME}/Qt/6.5.3/gcc_64"
-            "$ENV{HOME}/Qt/6.5.0/gcc_64"
-            "$ENV{QTDIR}"
-        )
-    elseif (WIN32)  # Windows
-        set(QT_POSSIBLE_PATHS
-            "C:/Qt/6.9.3/msvc2019_64"
-            "C:/Qt/6.5.3/msvc2019_64"
-            "C:/Qt/6.5.0/msvc2019_64"
-            "$ENV{QTDIR}"
-        )
-    endif ()
+    # First, check if CMAKE_PREFIX_PATH environment variable points to Qt
+    # This is commonly set in Docker containers and CI environments
+    if (DEFINED ENV{CMAKE_PREFIX_PATH} AND NOT "$ENV{CMAKE_PREFIX_PATH}" STREQUAL "")
+        string(REPLACE ":" ";" PREFIX_PATHS "$ENV{CMAKE_PREFIX_PATH}")
+        foreach(PREFIX_PATH ${PREFIX_PATHS})
+            if(EXISTS "${PREFIX_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+                set(QT_FOUND_PATH "${PREFIX_PATH}")
+                message(STATUS "Found Qt6 via CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
+                break()
+            endif()
+        endforeach()
+    endif()
     
-    # Try to find Qt6Config.cmake in possible paths
-    foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
-        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
-            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-            message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
-            break()
-        endif()
-    endforeach()
+    # If not found via CMAKE_PREFIX_PATH, check standard platform paths
+    if(NOT QT_FOUND_PATH)
+        if (APPLE)  # macOS
+            # Check common Qt6 versions in ~/Qt (most recent first)
+            set(QT_POSSIBLE_PATHS
+                "$ENV{HOME}/Qt/6.9.3/macos"
+                "$ENV{HOME}/Qt/6.5.3/macos"
+                "$ENV{HOME}/Qt/6.5.0/macos"
+                "$ENV{QTDIR}"
+            )
+        elseif (UNIX AND NOT APPLE)  # Linux
+            set(QT_POSSIBLE_PATHS
+                "$ENV{HOME}/Qt/6.9.3/gcc_64"
+                "$ENV{HOME}/Qt/6.5.3/gcc_64"
+                "$ENV{HOME}/Qt/6.5.0/gcc_64"
+                "$ENV{QTDIR}"
+            )
+        elseif (WIN32)  # Windows
+            set(QT_POSSIBLE_PATHS
+                "C:/Qt/6.9.3/msvc2019_64"
+                "C:/Qt/6.5.3/msvc2019_64"
+                "C:/Qt/6.5.0/msvc2019_64"
+                "$ENV{QTDIR}"
+            )
+        endif ()
+    endif()
+    
+    # Try to find Qt6Config.cmake in possible paths (only if not already found via CMAKE_PREFIX_PATH)
+    if (NOT QT_FOUND_PATH AND DEFINED QT_POSSIBLE_PATHS)
+        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+            if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+                set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+                message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
+                break()
+            endif()
+        endforeach()
+    endif()
 else ()
     # User specified a path (could be a list or single path)
     # In CMake, lists are semicolon-separated, so we can iterate directly

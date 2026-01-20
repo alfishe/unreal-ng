@@ -54,6 +54,19 @@ Unlike CLI (stateful sessions), WebAPI is stateless:
 - Future versions: `/api/v2/...` without breaking existing clients
 - Version negotiation via `Accept` header (future)
 
+## Interface Parity
+
+The WebAPI implements the same command semantics as other interfaces (CLI, Python, Lua). However, some endpoints are **WebAPI-specific** due to the stateless REST design:
+
+| WebAPI Endpoint | CLI Equivalent | Notes |
+| :--- | :--- | :--- |
+| `GET /emulator/models` | — | Returns available Spectrum models for programmatic discovery; CLI users specify model in `create` command |
+| `DELETE /emulator/{id}` | `stop` | Explicit remove endpoint; CLI's `stop` command stops and removes instance |
+| `POST /emulator/{id}/start` | `resume` | Start an existing initialized emulator; CLI uses `resume` after `create` |
+
+> [!NOTE]
+> These WebAPI-specific endpoints support orchestration patterns (scripts, CI/CD, web dashboards) where fine-grained lifecycle control is needed. CLI provides equivalent functionality through its command set.
+
 ## Implemented Endpoints
 
 ### 1. List Emulators
