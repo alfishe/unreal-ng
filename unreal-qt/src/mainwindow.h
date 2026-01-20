@@ -24,6 +24,7 @@
 #include "emulator/soundmanager.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
+#include "ui/intparametersdialog.h"
 #include "ui_mainwindow.h"
 #include "widgets/devicescreen.h"
 
@@ -67,6 +68,7 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
     void openSpecificFile(const QString& filepath);
+    void saveFileDialog();
     void resetEmulator();
     void handleFullScreenShortcut();
 
@@ -82,6 +84,7 @@ private slots:
     void handleDebugModeToggled(bool enabled);
     void handleDebuggerToggled(bool visible);
     void handleLogWindowToggled(bool visible);
+    void handleIntParametersRequested();
     void updateMenuStates();
 
     // Binding state handler
@@ -201,6 +204,7 @@ private:
 
     // Last directory used for file operations
     QString _lastDirectory;
+    QString _lastSaveDirectory;
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;

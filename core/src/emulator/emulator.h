@@ -161,6 +161,7 @@ public:
 
     // File format operations
     bool LoadSnapshot(const std::string& path);
+    bool SaveSnapshot(const std::string& path);
     bool LoadTape(const std::string& path);
     bool LoadDisk(const std::string& path);
 

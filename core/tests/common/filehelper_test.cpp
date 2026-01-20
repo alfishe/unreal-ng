@@ -399,3 +399,54 @@ TEST_F(FileHelper_Test, AbsolutePath_PathNormalization)
     ASSERT_EQ(ret, 0);
 #endif
 }
+
+/// @brief Test tilde expansion in AbsolutePath
+/// Verifies that ~ is properly expanded to home directory on all platforms
+TEST_F(FileHelper_Test, AbsolutePath_TildeExpansion)
+{
+    // Get expected home directory
+#ifdef _WIN32
+    const char* home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOMEPATH");
+#else
+    const char* home = getenv("HOME");
+#endif
+    
+    // Skip test if HOME is not set
+    if (!home || strlen(home) == 0)
+    {
+        GTEST_SKIP() << "HOME environment variable not set";
+        return;
+    }
+    
+    std::string homeDir = home;
+    
+    // Test 1: Simple tilde expansion
+    std::string result = FileHelper::AbsolutePath("~/test.sna", false);
+    EXPECT_FALSE(result.empty()) << "AbsolutePath should not return empty for ~/test.sna";
+    EXPECT_EQ(result.find("~"), std::string::npos) << "Tilde should be expanded: " << result;
+    EXPECT_NE(result.find(homeDir), std::string::npos) << "Result should contain home dir. Got: " << result;
+    
+    // Test 2: Tilde with subdirectory
+    result = FileHelper::AbsolutePath("~/Downloads/snapshot.sna", false);
+    EXPECT_FALSE(result.empty());
+    EXPECT_EQ(result.find("~"), std::string::npos) << "Tilde should be expanded: " << result;
+    EXPECT_NE(result.find(homeDir), std::string::npos) << "Result should contain home dir. Got: " << result;
+    EXPECT_NE(result.find("Downloads"), std::string::npos) << "Path should contain Downloads. Got: " << result;
+    
+    // Test 3: Non-tilde path should remain unchanged (relative structure)
+    result = FileHelper::AbsolutePath("/absolute/path/file.sna", false);
+    EXPECT_EQ(result.find("~"), std::string::npos);
+    EXPECT_NE(result.find("/absolute/path"), std::string::npos) << "Absolute path should be preserved. Got: " << result;
+    
+    // Test 4: Empty path handling
+    result = FileHelper::AbsolutePath("", false);
+    // Empty path behavior is implementation-defined, just ensure no crash
+    
+    // Test 5: Just tilde
+    result = FileHelper::AbsolutePath("~", false);
+    EXPECT_FALSE(result.empty());
+    EXPECT_EQ(result.find("~"), std::string::npos) << "Tilde should be expanded: " << result;
+    
+    std::cout << "AbsolutePath_TildeExpansion: Home directory is " << homeDir << std::endl;
+}

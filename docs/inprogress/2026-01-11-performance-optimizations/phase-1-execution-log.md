@@ -10,7 +10,7 @@ Implemented sleep mode for the WD1793 floppy disk controller to eliminate ~8% CP
 
 ## Changes Made
 
-### File: [wd1793.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.h)
+### File: [wd1793.h](core/src/emulator/io/fdc/wd1793.h)
 
 #### 1. Added Sleep Mode Constant
 ```diff
@@ -35,7 +35,7 @@ Implemented sleep mode for the WD1793 floppy disk controller to eliminate ~8% CP
 
 ---
 
-### File: [wd1793.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp)
+### File: [wd1793.cpp](core/src/emulator/io/fdc/wd1793.cpp)
 
 #### 1. Initialize Sleep State in `internalReset()`
 ```diff

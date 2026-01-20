@@ -885,3 +885,40 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
 }
+
+// HandleModels - List available ZX Spectrum models
+void CLIProcessor::HandleModels(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto* emulatorManager = EmulatorManager::GetInstance();
+    if (!emulatorManager)
+    {
+        session.SendResponse("Error: EmulatorManager not available." + std::string(NEWLINE));
+        return;
+    }
+
+    auto models = emulatorManager->GetAvailableModels();
+    
+    if (models.empty())
+    {
+        session.SendResponse("No models available." + std::string(NEWLINE));
+        return;
+    }
+
+    std::stringstream ss;
+    ss << "Available ZX Spectrum models:" << NEWLINE;
+    ss << "=============================" << NEWLINE;
+    
+    for (size_t i = 0; i < models.size(); ++i)
+    {
+        const auto& model = models[i];
+        ss << "  " << (model.ShortName ? model.ShortName : "<unknown>");
+        if (model.FullName && model.FullName[0] != '\0')
+        {
+            ss << " - " << model.FullName;
+        }
+        ss << NEWLINE;
+    }
+    
+    ss << NEWLINE << "Use 'start <model>' to create emulator with specific model.";
+    session.SendResponse(ss.str());
+}
