@@ -274,3 +274,87 @@ message(STATUS "Post-build: Will copy resources from ${DATA_PATH} to ${CMAKE_RUN
 message(STATUS "  - Fonts: ${DATA_PATH}/fonts")
 message(STATUS "  - Config: ${CONFIG_FILE}")
 message(STATUS "  - ROM: ${DATA_PATH}/rom and ${DATA_PATH}/testrom")
+
+# ======================================================
+# Installer Configuration
+# ======================================================
+
+# Include CPack for packaging
+include(InstallRequiredSystemLibraries)
+
+# Set package output directory
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+
+# Package version information
+set(PACKAGE_VERSION "1.0.0")
+set(PACKAGE_VERSION_MAJOR "1")
+set(PACKAGE_VERSION_MINOR "0")
+set(PACKAGE_VERSION_PATCH "0")
+
+# ======================================================
+# Platform-specific installer configurations
+# ======================================================
+
+# macOS specific packaging
+if(APPLE)
+    # Create a custom target for macOS packaging
+    add_custom_target(package_videowall_macos
+        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package for Video Wall..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND hdiutil create -volname "UnrealNG-VideoWall" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall.dmg"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating macOS DMG package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
+    )
+    
+    # Create a macOS application bundle
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Video Wall"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.videowall"
+        MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+    )
+    
+    # Copy resources to bundle
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon512k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
+        COMMENT "Copying resources to Video Wall app bundle"
+    )
+endif()
+
+# Windows specific packaging
+if(WIN32)
+    # Create a custom target for Windows packaging
+    add_custom_target(package_videowall_windows
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package for Video Wall..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}.exe" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating Windows package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
+    )
+endif()
+
+# Linux specific packaging
+if(UNIX AND NOT APPLE)
+    # Create a custom target for Linux packaging
+    add_custom_target(package_videowall_linux
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Linux package for Video Wall..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages/unreal-videowall"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-videowall" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/unreal-videowall/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-videowall"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating Linux package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
+    )
+endif()
