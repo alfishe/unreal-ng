@@ -1641,6 +1641,24 @@ CSimpleIniTempl<SI_CHAR,SI_STRLESS,SI_CONVERTER>::FindEntry(
             ++a_pData;
         }
 
+        // strip inline comments (';', '#', or '//') from the value
+        // search backwards from end of line to find comment start
+        pTrail = a_pData - 1;
+        while (pTrail >= a_pVal) {
+            if (*pTrail == ';' || *pTrail == '#') {
+                // found a single-char comment marker
+                a_pData = pTrail;
+                break;
+            }
+            // check for '//' comment (need two consecutive slashes)
+            if (*pTrail == '/' && pTrail > a_pVal && *(pTrail - 1) == '/') {
+                // found a '//' comment marker
+                a_pData = pTrail - 1;  // point to first '/'
+                break;
+            }
+            --pTrail;
+        }
+
         // remove trailing spaces from the value
         pTrail = a_pData - 1;
         if (*a_pData) { // prepare for the next round

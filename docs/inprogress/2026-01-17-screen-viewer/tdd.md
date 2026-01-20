@@ -304,6 +304,72 @@ Each screen buffer is 6912 bytes:
 > [!NOTE]
 > The screen-viewer renders directly from RAM pages using copied rendering code from `core/video`. No timing synchronization with the emulator is required—this is an arbitrary point-in-time snapshot.
 
+### 4.4 Dual Screen Mode
+
+The viewer supports a **dual screen mode** that displays both Bank 5 and Bank 7 screens simultaneously.
+
+#### View Modes
+
+| Mode | Description | Aspect Ratio |
+|:-----|:------------|:-------------|
+| **Single** | One screen, click to toggle | 4:3 (256×192) |
+| **Dual Horizontal** | Side-by-side (5 \| 7) | 8:3 (512×192) |
+| **Dual Vertical** | Stacked (5 above 7) | 4:6 (256×384) |
+
+#### Mode Toolbar UI
+
+A compact toolbar at the bottom of the emulator list provides mode selection:
+
+```
+┌──────────────────────────┐
+│ ○ abc123..               │
+│   ZX 128K                │
+│                          │
+│ ● def456..               │
+│   Pentagon               │
+├──────────────────────────┤
+│ [1▢] [▢▢]  ═ ║           │  ← Mode toolbar
+├──────────────────────────┴────────────────────────────────┐
+│ 🟢 Connected to localhost:8090         Selected: def456  │
+└───────────────────────────────────────────────────────────┘
+```
+
+| Icon | Meaning | Behavior |
+|:-----|:--------|:---------|
+| `[1▢]` | Single screen | Radio toggle with `[▢▢]` |
+| `[▢▢]` | Dual screen | Radio toggle with `[1▢]` |
+| `═` | Horizontal layout | Only visible in dual mode |
+| `║` | Vertical layout | Only visible in dual mode |
+
+#### Dual Mode Mockup
+
+```
+Horizontal Layout (side-by-side):
+┌────────────────┬────────────────┐
+│    Bank 5      │    Bank 7      │
+│                │                │
+│    (Main)      │   (Shadow)     │
+└────────────────┴────────────────┘
+
+Vertical Layout (stacked):
+┌────────────────┐
+│    Bank 5      │
+│    (Main)      │
+├────────────────┤
+│    Bank 7      │
+│   (Shadow)     │
+└────────────────┘
+```
+
+#### Behavior
+
+| Aspect | Single Mode | Dual Mode |
+|:-------|:------------|:----------|
+| **Click on screen** | Toggles Bank 5 ↔ Bank 7 | No action |
+| **Screen labels** | "Page 5" or "Page 7" | "Bank 5" and "Bank 7" |
+| **Fetch strategy** | Only visible page | Both pages |
+| **Persistence** | Remember last used mode via QSettings |
+
 ---
 
 ## 5. Implementation Plan
@@ -342,6 +408,15 @@ Each screen buffer is 6912 bytes:
 - [ ] Status bar with connection info
 - [ ] Manual testing with running emulator
 - [ ] Edge case: emulator exit during viewing
+
+### Phase 7: Dual Screen Mode (Day 5)
+- [ ] Add `ViewMode` and `DualLayout` enums to ScreenViewer
+- [ ] Implement `ModeToolbar` widget with toggle buttons
+- [ ] Modify `ScreenViewer::paintEvent()` for dual rendering
+- [ ] Add screen labels ("Bank 5", "Bank 7") in dual mode
+- [ ] Connect mode toolbar signals to ScreenViewer
+- [ ] Persist mode/layout via QSettings
+- [ ] Update CMakeLists.txt with new source files
 
 ---
 

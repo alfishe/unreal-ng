@@ -1,8 +1,15 @@
 #include "automation-python.h"
+#include "emulator/python_emulator.h"
 
 #include <chrono>
 #include <thread>
 #include <iostream>
+
+// Define embedded Python module for emulator bindings
+PYBIND11_EMBEDDED_MODULE(unreal_emulator, m) {
+    m.doc() = "Unreal Speccy NG Emulator Python bindings";
+    PythonBindings::registerEmulatorBindings(m);
+}
 
 
 
@@ -67,20 +74,19 @@ void AutomationPython::processPython()
     try
     {
         std::string simplePythonCode = "print('Python tread running')";
-        std::string longRunningPythonCode = "import time\n"
-                                            "import threading\n"
-                                            "import sys"
-                                            "\n"
-                                            "print(f\"Python version: \")\n"
-                                            "print(sys.version)\n"
-                                            "current_thread = threading.current_thread()\n"
-                                            "print(f\"Current thread: {current_thread.name}, Thread ID: {current_thread.ident}\")\n"
-                                            "try:\n"
-                                            "    while True:\n"
-                                            "        print(\"Python is looping...\")\n"
-                                            "        time.sleep(1)  # Pause for 1 second to avoid excessive CPU usage\n"
-                                            "except KeyboardInterrupt:\n"
-                                            "    print(\"\\nLoop interrupted by user.\")";
+        std::string longRunningPythonCode = 
+            "import time\n"
+            "import threading\n"
+            "import sys\n"
+            "\n"
+            "print(f'Python version: {sys.version}')\n"
+            "current_thread = threading.current_thread()\n"
+            "print(f'Python automation started (Thread: {current_thread.name}, ID: {current_thread.ident})')\n"
+            "try:\n"
+            "    while True:\n"
+            "        time.sleep(1)  # Silent loop - no log spam\n"
+            "except KeyboardInterrupt:\n"
+            "    print('Python automation interrupted.')\n";
         // Execute Python code
         this->executePython(longRunningPythonCode);
 

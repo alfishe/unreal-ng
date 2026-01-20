@@ -18,71 +18,72 @@ set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # ========================================
 # Platform-specific Qt path detection
+# (Skip if included from parent - Qt already configured there)
 # ========================================
-
-# Default Qt paths (can be overridden via command line)
-set(QT_FOUND_PATH "")
-
-# Check if QT_INSTALL_PATH is defined and not empty
-if (NOT DEFINED QT_INSTALL_PATH)
-    set(QT_INSTALL_PATH "")
-endif()
-
-if (QT_INSTALL_PATH STREQUAL "")
-    if (APPLE)  # macOS
-        set(QT_POSSIBLE_PATHS
-            "$ENV{HOME}/Qt/6.9.3/macos"
-            "$ENV{HOME}/Qt/6.5.3/macos"
-            "$ENV{HOME}/Qt/6.5.0/macos"
-            "$ENV{QTDIR}"
-        )
-    elseif (UNIX AND NOT APPLE)  # Linux
-        set(QT_POSSIBLE_PATHS
-            "$ENV{HOME}/Qt/6.9.3/gcc_64"
-            "$ENV{HOME}/Qt/6.5.3/gcc_64"
-            "$ENV{HOME}/Qt/6.5.0/gcc_64"
-            "$ENV{QTDIR}"
-        )
-    elseif (WIN32)  # Windows
-        set(QT_POSSIBLE_PATHS
-            "C:/Qt/6.9.3/msvc2019_64"
-            "C:/Qt/6.5.3/msvc2019_64"
-            "C:/Qt/6.5.0/msvc2019_64"
-            "$ENV{QTDIR}"
-        )
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # Default Qt paths (can be overridden via command line)
+    set(QT_FOUND_PATH "")
+    
+    # Check if QT_INSTALL_PATH is defined and not empty
+    if (NOT DEFINED QT_INSTALL_PATH)
+        set(QT_INSTALL_PATH "")
+    endif()
+    
+    if (QT_INSTALL_PATH STREQUAL "")
+        if (APPLE)
+            set(QT_POSSIBLE_PATHS
+                "$ENV{HOME}/Qt/6.9.3/macos"
+                "$ENV{HOME}/Qt/6.5.3/macos"
+                "$ENV{HOME}/Qt/6.5.0/macos"
+                "$ENV{QTDIR}"
+            )
+        elseif (UNIX AND NOT APPLE)
+            set(QT_POSSIBLE_PATHS
+                "$ENV{HOME}/Qt/6.9.3/gcc_64"
+                "$ENV{HOME}/Qt/6.5.3/gcc_64"
+                "$ENV{HOME}/Qt/6.5.0/gcc_64"
+                "$ENV{QTDIR}"
+            )
+        elseif (WIN32)
+            set(QT_POSSIBLE_PATHS
+                "C:/Qt/6.9.3/msvc2019_64"
+                "C:/Qt/6.5.3/msvc2019_64"
+                "C:/Qt/6.5.0/msvc2019_64"
+                "$ENV{QTDIR}"
+            )
+        endif ()
+        
+        foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
+            if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+                set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+                message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
+                break()
+            endif()
+        endforeach()
+    else ()
+        foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
+            string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
+            if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
+                set(QT_FOUND_PATH "${POSSIBLE_PATH}")
+                message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
+                break()
+            endif()
+        endforeach()
     endif ()
     
-    # Try to find Qt6Config.cmake in possible paths
-    foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
-        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
-            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-            message(STATUS "Found Qt6 at: ${QT_FOUND_PATH}")
-            break()
-        endif()
-    endforeach()
-else ()
-    foreach(POSSIBLE_PATH ${QT_INSTALL_PATH})
-        string(STRIP "${POSSIBLE_PATH}" POSSIBLE_PATH)
-        if(EXISTS "${POSSIBLE_PATH}/lib/cmake/Qt6/Qt6Config.cmake")
-            set(QT_FOUND_PATH "${POSSIBLE_PATH}")
-            message(STATUS "Found Qt6 at user-specified path: ${QT_FOUND_PATH}")
-            break()
-        endif()
-    endforeach()
-endif ()
-
-# If still not found, provide helpful error message
-if(NOT QT_FOUND_PATH)
-    message(FATAL_ERROR "Qt6 not found. Please install Qt6 or set QT_INSTALL_PATH manually.")
-endif()
-
-# Allow overriding via -DQT_INSTALL_PATH=...
-set(QT_INSTALL_PATH "${QT_FOUND_PATH}" CACHE PATH "Path to Qt installation")
-
-# Append Qt path to CMAKE_PREFIX_PATH
-if(QT_FOUND_PATH)
-    list(APPEND CMAKE_PREFIX_PATH "${QT_FOUND_PATH}")
-    message(STATUS "Added Qt path to CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
+    # If still not found, provide helpful error message
+    if(NOT QT_FOUND_PATH)
+        message(FATAL_ERROR "Qt6 not found. Please install Qt6 or set QT_INSTALL_PATH manually.")
+    endif()
+    
+    # Allow overriding via -DQT_INSTALL_PATH=...
+    set(QT_INSTALL_PATH "${QT_FOUND_PATH}" CACHE PATH "Path to Qt installation")
+    
+    # Append Qt path to CMAKE_PREFIX_PATH
+    if(QT_FOUND_PATH)
+        list(APPEND CMAKE_PREFIX_PATH "${QT_FOUND_PATH}")
+        message(STATUS "Added Qt path to CMAKE_PREFIX_PATH: ${QT_FOUND_PATH}")
+    endif()
 endif()
 
 # Qt specific settings
@@ -110,6 +111,7 @@ set(SOURCES
     src/WebAPIClient.cpp
     src/EmulatorList.cpp
     src/ScreenViewer.cpp
+    src/ModeToolbar.cpp
 )
 
 # Put binary to /bin subfolder
@@ -121,6 +123,7 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # Set common target properties
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated headers when built from root
 )
 
 # Debug configuration

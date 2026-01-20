@@ -78,8 +78,8 @@ is within noise margin.
 
 | File | Change |
 |:---|:---|
-| [`screenzx.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/video/zx/screenzx.cpp) | Branch-free color selection in `Draw()` |
-| [`02-optimization-roadmap.md`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/inprogress/2026-01-11-performance-optimizations/02-optimization-roadmap.md) | Updated phases 3-4 to reflect demo constraint |
+| [`screenzx.cpp`](core/src/emulator/video/zx/screenzx.cpp) | Branch-free color selection in `Draw()` |
+| [`02-optimization-roadmap.md`](docs/inprogress/2026-01-11-performance-optimizations/02-optimization-roadmap.md) | Updated phases 3-4 to reflect demo constraint |
 
 ---
 
