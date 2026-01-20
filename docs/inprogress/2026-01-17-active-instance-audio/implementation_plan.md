@@ -6,21 +6,21 @@ When an emulator tile receives focus, audio should be bound to that instance (wi
 
 ### VideoWallWindow
 
-#### [MODIFY] [VideoWallWindow.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.h)
+#### [MODIFY] [VideoWallWindow.h](unreal-videowall/src/videowall/VideoWallWindow.h)
 
 Add sound manager and audio binding machinery:
 
-- Add `#include` for [AppSoundManager](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/emulator/soundmanager.h#13-49) (copy from [unreal-qt/src/emulator/soundmanager.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/emulator/soundmanager.h))
+- Add `#include` for [AppSoundManager](unreal-qt/src/emulator/soundmanager.h#13-49) (copy from [unreal-qt/src/emulator/soundmanager.h](unreal-qt/src/emulator/soundmanager.h))
 - Add private member `AppSoundManager* _soundManager = nullptr;`
 - Add private member `EmulatorTile* _audioBoundTile = nullptr;` to track currently bound tile
 - Add private slot `void onTileFocused(EmulatorTile* tile);`
 - Add private method `void bindAudioToTile(EmulatorTile* tile);`
 
-#### [MODIFY] [VideoWallWindow.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp)
+#### [MODIFY] [VideoWallWindow.cpp](unreal-videowall/src/videowall/VideoWallWindow.cpp)
 
 Implement audio binding:
 
-1. **Constructor**: Initialize sound manager (similar to [MainWindow](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.cpp#32-212)):
+1. **Constructor**: Initialize sound manager (similar to [MainWindow](unreal-qt/src/mainwindow.cpp#32-212)):
    ```cpp
    _soundManager = new AppSoundManager();
    if (_soundManager->init())
@@ -87,7 +87,7 @@ Implement audio binding:
    }
    ```
 
-5. **[addEmulatorTile()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp#117-143)**: Connect new tile's focus signal:
+5. **[addEmulatorTile()](unreal-videowall/src/videowall/VideoWallWindow.cpp#117-143)**: Connect new tile's focus signal:
    ```cpp
    connect(tile, &EmulatorTile::tileFocused, this, &VideoWallWindow::onTileFocused);
    ```
@@ -96,7 +96,7 @@ Implement audio binding:
 
 ### EmulatorTile
 
-#### [MODIFY] [EmulatorTile.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/EmulatorTile.h)
+#### [MODIFY] [EmulatorTile.h](unreal-videowall/src/videowall/EmulatorTile.h)
 
 Add focus signal:
 
@@ -105,7 +105,7 @@ signals:
     void tileFocused(EmulatorTile* tile);
 ```
 
-#### [MODIFY] [EmulatorTile.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/EmulatorTile.cpp)
+#### [MODIFY] [EmulatorTile.cpp](unreal-videowall/src/videowall/EmulatorTile.cpp)
 
 Emit signal on focus:
 
@@ -123,7 +123,7 @@ void EmulatorTile::focusInEvent(QFocusEvent* event)
 
 ### CMake Integration
 
-#### [MODIFY] [CMakeLists.txt](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/CMakeLists.txt)
+#### [MODIFY] [CMakeLists.txt](unreal-videowall/CMakeLists.txt)
 
 Add soundmanager source file (copied from unreal-qt or linked):
 

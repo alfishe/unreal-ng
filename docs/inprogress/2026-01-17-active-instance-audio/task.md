@@ -15,7 +15,7 @@
   - [ ] Add signals for tile focus change to notify VideoWallWindow
   - [ ] Implement `bindAudioToTile()` method
   - [ ] Update `EmulatorTile::focusInEvent()` to emit focus signal
-  - [ ] Handle audio unbinding on [focusOutEvent()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/EmulatorTile.cpp#104-110)
+  - [ ] Handle audio unbinding on [focusOutEvent()](unreal-videowall/src/videowall/EmulatorTile.cpp#104-110)
   - [ ] Enable sound feature temporarily for focused tile
 - [ ] Verify implementation
   - [ ] Manual testing of tile focus audio switching

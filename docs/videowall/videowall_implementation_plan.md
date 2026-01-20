@@ -7,7 +7,7 @@ A new Qt application that displays multiple ZX Spectrum emulator instances in a 
 ## Requirements
 
 ### Core Functionality
-- Link to `core` and [automation](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation) libraries (similar to `unreal-qt`)
+- Link to `core` and [automation](core/automation) libraries (similar to `unreal-qt`)
 - Display multiple emulator instances as tiles in a grid
 - Each tile shows ZX Spectrum screen (256x192 pixels, no border)
 - 1:1 pixel mapping (no scaling initially)
@@ -78,7 +78,7 @@ Widget representing a single emulator instance.
 **Qt Features:**
 - `QWidget` subclass
 - Accept drops via `setAcceptDrops(true)`
-- Override [dragEnterEvent](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.cpp#712-720), [dropEvent](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.h#97-98)
+- Override [dragEnterEvent](unreal-qt/src/mainwindow.cpp#712-720), [dropEvent](unreal-qt/src/mainwindow.h#97-98)
 - Override `paintEvent` for rendering
 - Override `focusInEvent`, `focusOutEvent`
 
@@ -175,18 +175,18 @@ emulator->DisableAllModularLogging();
 The following components should be **reused or adapted** from `unreal-qt`:
 
 ### Build System (CMakeLists.txt)
-- Copy CMake structure from [unreal-qt/CMakeLists.txt](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/CMakeLists.txt)
+- Copy CMake structure from [unreal-qt/CMakeLists.txt](unreal-qt/CMakeLists.txt)
 - Link same libraries (core, automation)
 - Use same Qt configuration
 
 ### Keyboard Handling
-Reference: `unreal-qt/src/keyboard/` (if exists) or [MainWindow](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.cpp#32-207) keyboard event handling
+Reference: `unreal-qt/src/keyboard/` (if exists) or [MainWindow](unreal-qt/src/mainwindow.cpp#32-207) keyboard event handling
 - **Reuse**: Keyboard mapping logic
 - **Reuse**: Key event translation to ZX Spectrum matrix
 - **Adapt**: Route events only to focused tile
 
 ### Emulator Instance Binding
-Reference: [unreal-qt/src/mainwindow.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/mainwindow.cpp)
+Reference: [unreal-qt/src/mainwindow.cpp](unreal-qt/src/mainwindow.cpp)
 - **Reuse**: `EmulatorManager` integration pattern
 - **Reuse**: Notification subscription pattern (`NC_VIDEO_FRAME_REFRESH`, etc.)
 - **Reuse**: Framebuffer access and conversion
@@ -272,7 +272,7 @@ void EmulatorTile::handleVideoFrameRefresh(int id, Message* message)
 ### Required Libraries
 - Qt 6 (Widgets module)
 - `core` library (emulator, notifications)
-- [automation](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation) library (CLI, WebAPI - optional)
+- [automation](core/automation) library (CLI, WebAPI - optional)
 
 ### CMake Integration
 ```cmake

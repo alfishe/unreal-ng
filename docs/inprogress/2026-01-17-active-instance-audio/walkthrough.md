@@ -10,8 +10,8 @@ Implemented audio binding that follows tile focus in the videowall. When a tile 
 
 | File | Change |
 |------|--------|
-| [EmulatorTile.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/EmulatorTile.h) | Added `tileFocused(EmulatorTile*)` signal |
-| [EmulatorTile.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/EmulatorTile.cpp) | Emit signal in [focusInEvent()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/EmulatorTile.cpp#97-104) |
+| [EmulatorTile.h](unreal-videowall/src/videowall/EmulatorTile.h) | Added `tileFocused(EmulatorTile*)` signal |
+| [EmulatorTile.cpp](unreal-videowall/src/videowall/EmulatorTile.cpp) | Emit signal in [focusInEvent()](unreal-videowall/src/videowall/EmulatorTile.cpp#97-104) |
 
 ```diff:EmulatorTile.h
 #pragma once
@@ -157,8 +157,8 @@ private:
 
 | File | Change |
 |------|--------|
-| [VideoWallWindow.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.h) | Added `AppSoundManager*`, `_audioBoundTile`, [bindAudioToTile()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp#731-770), [onTileFocused()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp#771-775) |
-| [VideoWallWindow.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp) | Init/deinit sound manager, connect signals, implement binding logic |
+| [VideoWallWindow.h](unreal-videowall/src/videowall/VideoWallWindow.h) | Added `AppSoundManager*`, `_audioBoundTile`, [bindAudioToTile()](unreal-videowall/src/videowall/VideoWallWindow.cpp#731-770), [onTileFocused()](unreal-videowall/src/videowall/VideoWallWindow.cpp#771-775) |
+| [VideoWallWindow.cpp](unreal-videowall/src/videowall/VideoWallWindow.cpp) | Init/deinit sound manager, connect signals, implement binding logic |
 
 ```diff:VideoWallWindow.cpp
 #include "videowall/VideoWallWindow.h"
@@ -1644,8 +1644,8 @@ void VideoWallWindow::onTileFocused(EmulatorTile* tile)
 
 ### New Files
 
-- [soundmanager.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/emulator/soundmanager.h) - Copied from `unreal-qt`
-- [soundmanager.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/emulator/soundmanager.cpp) - Copied from `unreal-qt`
+- [soundmanager.h](unreal-videowall/src/emulator/soundmanager.h) - Copied from `unreal-qt`
+- [soundmanager.cpp](unreal-videowall/src/emulator/soundmanager.cpp) - Copied from `unreal-qt`
 
 ## Verification
 
