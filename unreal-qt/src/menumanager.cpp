@@ -82,11 +82,19 @@ void MenuManager::createFileMenu()
 
     _fileMenu->addSeparator();
 
-    // Save Snapshot
-    _saveSnapshotAction = _fileMenu->addAction(tr("&Save Snapshot..."));
-    _saveSnapshotAction->setShortcut(QKeySequence::Save);
-    _saveSnapshotAction->setStatusTip(tr("Save current emulator state to snapshot"));
-    _saveSnapshotAction->setEnabled(false);  // TODO: Implement save functionality
+    // Save Snapshot submenu
+    _saveSnapshotMenu = _fileMenu->addMenu(tr("&Save Snapshot"));
+    
+    // Save as SNA
+    _saveSnapshotSNAAction = _saveSnapshotMenu->addAction(tr("Save as .sna..."));
+    _saveSnapshotSNAAction->setShortcut(QKeySequence::Save);
+    _saveSnapshotSNAAction->setStatusTip(tr("Save current emulator state to SNA snapshot format"));
+    connect(_saveSnapshotSNAAction, &QAction::triggered, this, &MenuManager::saveSnapshotRequested);
+    
+    // Save as Z80 (disabled - not yet implemented)
+    _saveSnapshotZ80Action = _saveSnapshotMenu->addAction(tr("Save as .z80..."));
+    _saveSnapshotZ80Action->setStatusTip(tr("Save current emulator state to Z80 snapshot format (not implemented)"));
+    _saveSnapshotZ80Action->setEnabled(false);  // TODO: Implement Z80 save
 
     _fileMenu->addSeparator();
 
@@ -337,6 +345,13 @@ void MenuManager::createToolsMenu()
 
     _toolsMenu->addSeparator();
 
+    // INT Parameters
+    _intParametersAction = _toolsMenu->addAction(tr("&INT Parameters..."));
+    _intParametersAction->setStatusTip(tr("Configure interrupt timing parameters"));
+    connect(_intParametersAction, &QAction::triggered, this, &MenuManager::intParametersRequested);
+
+    _toolsMenu->addSeparator();
+
     // Screenshot
     _screenshotAction = _toolsMenu->addAction(tr("Take &Screenshot"));
     _screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
@@ -431,7 +446,8 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     bool isRunning = emulatorExists && activeEmulator->IsRunning();
     bool isPaused = emulatorExists && activeEmulator->IsPaused();
 
-    // File menu - always enabled
+    // File menu - Save Snapshot requires active emulator
+    _saveSnapshotMenu->setEnabled(emulatorExists);
 
     // Run menu states
     _startAction->setEnabled(!emulatorExists);         // Start only when no emulator

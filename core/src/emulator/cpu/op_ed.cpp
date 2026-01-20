@@ -101,8 +101,8 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
     int32_t hl = cpu->hl;
     int32_t bc = cpu->bc;
 
-    int32_t halfHL = hl;
-    int32_t halfBC = bc;
+    int32_t halfHL = hl & 0x0FFF;  // Lower 12 bits for half-carry
+    int32_t halfBC = bc & 0x0FFF;
 
     uint8_t flags = NF;
     flags |= ((halfHL - halfBC - (cpu->af & CF)) >> 8) & 0x10; // HF
@@ -112,9 +112,8 @@ Z80OPCODE ope_42(Z80 *cpu) { // sbc hl,bc
         flags |= CF;
     if (!(result & 0xFFFF))
         flags |= ZF;
-
-    int32_t ri = hl - bc - (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ bc) & 0x8000) && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     cpu->hl = result & 0xFFFF;
@@ -205,9 +204,8 @@ Z80OPCODE ope_4A(Z80 *cpu) { // adc hl,bc
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl + bc + (int)(cpu->af & CF);
-
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ bc) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     // Store result back to registers
@@ -294,8 +292,8 @@ Z80OPCODE ope_52(Z80 *cpu) { // sbc hl,de
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl - de - carryAF;
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ de) & 0x8000) && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     cpu->hl = result & 0xFFFF;
@@ -329,11 +327,7 @@ Z80OPCODE ope_56(Z80 *cpu) { // im 1
 
 Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
    cpu->a = cpu->i;
-   cpu->f = (log_f[cpu->r_low & 0x7F] | (cpu->f & CF)) & ~PV;	// TODO: dirty fix with unknown reason and test sequence
-
-   if (cpu->iff2 && (((uint32_t)(cpu->t + 10) < cpu->tpi) || cpu->eipos + 8 == cpu->t))
-      cpu->f |= PV;
-
+   cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
    cputact(1);
 }
 
@@ -371,8 +365,8 @@ Z80OPCODE ope_5A(Z80 *cpu) { // adc hl,de
     if (!(result & 0xFFFF))
        flags |= ZF;
 
-    int ri = (int)(short)cpu->hl + (int)(short)cpu->de + (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ de) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
        flags |= PV;
 
     // Store result back to registers
@@ -405,11 +399,7 @@ Z80OPCODE ope_5E(Z80 *cpu) { // im 2
 
 Z80OPCODE ope_5F(Z80 *cpu) { // ld a,r
    cpu->a = (cpu->r_low & 0x7F) | cpu->r_hi;
-   cpu->f = (log_f[cpu->a] | (cpu->f & CF)) & ~PV;
-
-   if (cpu->iff2 && (((uint32_t)(cpu->t + 10) < cpu->tpi) || cpu->eipos + 8==cpu->t))
-      cpu->f |= PV;
-
+   cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
    cputact(1);
 }
 
@@ -496,8 +486,8 @@ Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    if (!(result & 0xFFFF))
        flags |= ZF;
 
-   int ri = hl + hl + (int)(cpu->af & CF);
-   if (ri < -0x8000 || ri >= 0x8000)
+   // P/V = overflow: operands same sign (both hl), result different sign
+   if (((hl ^ hl) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
        flags |= PV;
 
    cpu->hl = result & 0xFFFF;
@@ -559,8 +549,8 @@ Z80OPCODE ope_72(Z80 *cpu) { // sbc hl,sp
     if (!(result & 0xFFFF))
         flags |= ZF;
 
-    int ri = hl - sp - (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands different sign, result sign differs from minuend
+    if (((hl ^ sp) & 0x8000) && ((hl ^ result) & 0x8000))
         flags |= PV;
 
     // Store result back to regusters
@@ -628,8 +618,8 @@ Z80OPCODE ope_7A(Z80 *cpu) { // adc hl,sp
     if (!(uint16_t)result)
        flags |= ZF;
 
-    int ri = (int)(short)cpu->hl + (int)(short)cpu->sp + (int)(cpu->af & CF);
-    if (ri < -0x8000 || ri >= 0x8000)
+    // P/V = overflow: operands same sign, result different sign
+    if (((hl ^ sp) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
        flags |= PV;
 
     // Store result back to registers
@@ -819,6 +809,9 @@ Z80OPCODE ope_B0(Z80 *cpu) { // ldir
 		cpu->f |= PV;
 		cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
+		// Interrupted block instruction: YF=PC.13, XF=PC.11
+		cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
 		cputact(7);
 
 		cpu->memptr = cpu->pc + 1;
@@ -852,6 +845,9 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 	  {
 		  cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
+		  // Interrupted block instruction: YF=PC.13, XF=PC.11
+		  cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
 		  cputact(5);
 
 		  cpu->memptr = cpu->pc + 1;
@@ -875,6 +871,9 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
    {
 	   cpu->f |= PV;
 	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(6);
    }
@@ -904,6 +903,9 @@ Z80OPCODE ope_B3(Z80 *cpu) { // otir
    {
 	   cpu->f |= PV;
 	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(5);
    }
@@ -936,6 +938,9 @@ Z80OPCODE ope_B8(Z80 *cpu) { // lddr
        cpu->f |= PV;
        cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
+       // Interrupted block instruction: YF=PC.13, XF=PC.11
+       cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
        cputact(7);
     }
     else
@@ -967,6 +972,9 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 	  {
 		  cpu->pc = cpu->pc - 2;
 
+		  // Interrupted block instruction: YF=PC.13, XF=PC.11
+		  cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
 		  cputact(5);
 
 		  cpu->memptr = cpu->pc + 1;
@@ -990,6 +998,9 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
    {
 	   cpu->f |= PV;
 	   cpu->pc = cpu->pc - 2;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(6);
    }
@@ -1019,6 +1030,9 @@ Z80OPCODE ope_BB(Z80 *cpu) { // otdr
    {
 	   cpu->f |= PV;
        cpu->pc = cpu->pc - 2;
+
+	   // Interrupted block instruction: YF=PC.13, XF=PC.11
+	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
 	   cputact(5);
    }

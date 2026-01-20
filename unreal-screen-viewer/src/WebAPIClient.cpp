@@ -71,7 +71,6 @@ void WebAPIClient::onEmulatorListReply()
 
     if (reply->error() != QNetworkReply::NoError)
     {
-        qDebug() << "WebAPIClient: Connection error:" << reply->errorString();
         emit connectionStatusChanged(false);
         emit errorOccurred(reply->errorString());
         return;

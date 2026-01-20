@@ -18,7 +18,7 @@ Improve unreal-videowall performance from 20-30 FPS to stable 50 FPS with 48 emu
 ## Phase 1: Bug Fixes (COMPLETED)
 
 ### Gap 4: Feature Flag Edge Case
-**File:** [featuremanager.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.cpp)
+**File:** [featuremanager.cpp](core/src/base/featuremanager.cpp)
 
 **Problem:** `onFeatureChanged()` was only called when feature value actually changed, not when `setFeature()` was called with the same value. This caused `UpdateFeatureCache()` to not be invoked, leaving cached flags potentially out of sync.
 
@@ -29,7 +29,7 @@ Improve unreal-videowall performance from 20-30 FPS to stable 50 FPS with 48 emu
 ---
 
 ### Gap 2: No Sound Disable on Fullscreen
-**File:** [VideoWallWindow.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp)
+**File:** [VideoWallWindow.cpp](unreal-videowall/src/videowall/VideoWallWindow.cpp)
 
 **Problem:** Sound was only disabled via WebAPI calls from test scripts. Entering fullscreen mode did not automatically disable sound for existing tiles.
 
@@ -67,7 +67,7 @@ Improve unreal-videowall performance from 20-30 FPS to stable 50 FPS with 48 emu
 ## Phase 3: Future Design Work
 
 ### Gap 5: Simplified Video Rendering
-**Design needed:** Separate planning cycle per [feature-management.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/core/feature-management.md)
+**Design needed:** Separate planning cycle per [feature-management.md](docs/emulator/design/core/feature-management.md)
 
 **Summary:**
 - Add `video_mode` feature with `accurate` / `fast` / `off` modes

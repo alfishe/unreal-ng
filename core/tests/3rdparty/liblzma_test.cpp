@@ -14,6 +14,9 @@
 #include "3rdparty/liblzma/include/LzmaLib.h"
 #include "3rdparty/liblzma/include/7zTypes.h"
 
+// Test path helper for finding project root
+#include "_helpers/test_path_helper.h"
+
 namespace fs = std::filesystem;
 
 class LzmaTest : public ::testing::Test
@@ -28,43 +31,6 @@ protected:
     void TearDown() override
     {
         // Cleanup if needed
-    }
-
-    // Helper function to find project root by looking for characteristic folders
-    fs::path findProjectRoot(const fs::path& startPath = fs::current_path())
-    {
-        fs::path current = startPath;
-        int depth = 0;
-        const int maxDepth = 20; // Support deep build hierarchies (e.g., core/tests/cmake-build-release/bin/)
-        
-        // Look up the directory tree until we find the project root
-        while (current.has_parent_path() && depth < maxDepth)
-        {
-            // Check if this directory contains the characteristic project folders
-            bool hasSrc = fs::exists(current / "src");
-            bool hasData = fs::exists(current / "data");
-            bool hasTestData = fs::exists(current / "testdata");
-            bool hasUnrealQt = fs::exists(current / "unreal-qt");
-            bool hasCore = fs::exists(current / "core");
-            bool hasGit = fs::exists(current / ".git");
-            bool hasCMake = fs::exists(current / "CMakeLists.txt");
-            
-            // If we find all or most of the characteristic folders, this is likely the project root
-            // Added .git check as a strong indicator of project root
-            if ((hasSrc && hasData && hasTestData) || 
-                (hasSrc && hasUnrealQt) || 
-                (hasCore && hasUnrealQt) ||
-                (hasGit && (hasCore || hasUnrealQt)))
-            {
-                return current;
-            }
-            
-            current = current.parent_path();
-            depth++;
-        }
-        
-        // If we reach here, we couldn't find the project root
-        throw std::runtime_error("Could not find project root directory. Started at: " + startPath.string());
     }
 
     // Helper function to generate random data
@@ -459,8 +425,8 @@ TEST_F(LzmaTest, CompressionRatioAnalysis)
 
 TEST_F(LzmaTest, PackUnrealQtSrcFolder)
 {
-    // Dynamically find the project root and then locate the unreal-qt/src directory
-    fs::path projectRoot = findProjectRoot();
+    // Use the shared TestPathHelper to find the project root
+    fs::path projectRoot = TestPathHelper::findProjectRoot();
     fs::path srcPath = projectRoot / "unreal-qt" / "src";
     
     // Ensure the source directory exists
@@ -595,8 +561,8 @@ TEST_F(LzmaTest, PackUnrealQtSrcFolder)
 
 TEST_F(LzmaTest, PackCoreSrcFolder)
 {
-    // Dynamically find the project root and then locate the core/src directory
-    fs::path projectRoot = findProjectRoot();
+    // Use the shared TestPathHelper to find the project root
+    fs::path projectRoot = TestPathHelper::findProjectRoot();
     fs::path srcPath = projectRoot / "core" / "src";
     
     // Ensure the source directory exists

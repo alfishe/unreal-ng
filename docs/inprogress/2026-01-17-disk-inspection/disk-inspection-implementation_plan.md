@@ -111,16 +111,16 @@ All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
 ## Files to Modify
 
 ### 1. Command Interface Doc
-- [command-interface.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/control-interfaces/command-interface.md) - Add Section 6.5 disk commands
+- [command-interface.md](docs/emulator/design/control-interfaces/command-interface.md) - Add Section 6.5 disk commands
 
 ---
 
 ### 2. WebAPI Module
 | File | Changes |
 | :--- | :--- |
-| [emulator_api.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/emulator_api.h) | Method declarations + ADD_METHOD_TO routes |
-| [tape_disk_api.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/api/tape_disk_api.cpp) | Endpoint implementations |
-| [openapi_spec.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/openapi_spec.cpp) | OpenAPI schema + response models |
+| [emulator_api.h](core/automation/webapi/src/emulator_api.h) | Method declarations + ADD_METHOD_TO routes |
+| [tape_disk_api.cpp](core/automation/webapi/src/api/tape_disk_api.cpp) | Endpoint implementations |
+| [openapi_spec.cpp](core/automation/webapi/src/openapi_spec.cpp) | OpenAPI schema + response models |
 
 ---
 
@@ -128,7 +128,7 @@ All endpoints scoped to emulator instance: `/api/v1/emulator/{id}/disk/...`
 
 | File | Changes |
 | :--- | :--- |
-| [cli-processor-analyzer.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/cli/src/commands/cli-processor-analyzer.cpp) | Command handlers for `disk` command tree |
+| [cli-processor-analyzer.cpp](core/automation/cli/src/commands/cli-processor-analyzer.cpp) | Command handlers for `disk` command tree |
 
 **CLI Commands:**
 ```

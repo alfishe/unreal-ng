@@ -41,6 +41,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void saveSnapshotRequested();
 
     // Emulator control signals
     void startRequested();
@@ -62,6 +63,9 @@ signals:
     void debuggerToggled(bool visible);
     void logWindowToggled(bool visible);
     void fullScreenToggled();
+
+    // Tools signals
+    void intParametersRequested();
 
 private:
     void createFileMenu();
@@ -94,7 +98,9 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
-    QAction* _saveSnapshotAction;
+    QMenu* _saveSnapshotMenu;
+    QAction* _saveSnapshotSNAAction;
+    QAction* _saveSnapshotZ80Action;
     QAction* _recentFilesAction;
     QAction* _exitAction;
 
@@ -138,6 +144,7 @@ private:
 
     // Tools Menu Actions
     QAction* _settingsAction;
+    QAction* _intParametersAction;
     QAction* _screenshotAction;
     QAction* _recordVideoAction;
 

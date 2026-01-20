@@ -50,8 +50,10 @@ if (WIN32 AND NOT MSVC)
         ${GOOGLETEST_DIR}/googletest/src/gtest-internal-inl.h
     )
 else (WIN32 AND NOT MSVC)
-    # Compile GoogleTest to <binary>/googletest subfolder
-    add_subdirectory(${GOOGLETEST_DIR} ${CMAKE_CURRENT_BINARY_DIR}/googletest)
+    # Compile GoogleTest to <binary>/googletest subfolder (skip if already defined)
+    if (NOT TARGET gtest)
+        add_subdirectory(${GOOGLETEST_DIR} ${CMAKE_CURRENT_BINARY_DIR}/googletest)
+    endif()
 endif (WIN32 AND NOT MSVC)
 
 # Check if we're being included from the top CMakeLists.txt
@@ -72,72 +74,75 @@ set (SOURCES "${CORE_CPP_FILES};${TEST_CPP_FILES};${GOOGLETEST_FILES}")
 message("TESTS:${TEST_CPP_FILES}")
 message("SOURCES:${SOURCES}")
 
-# Compile tests into executable
-add_executable(${PROJECT_NAME} ${SOURCES})
+# Create test executable only if not already defined (prevents duplicates in unified builds)
+if (NOT TARGET ${PROJECT_NAME})
+    # Compile tests into executable
+    add_executable(${PROJECT_NAME} ${SOURCES})
 
-# Declare _ALWAYS_USE_LOGGING for compiler
-target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
+    # Declare _ALWAYS_USE_LOGGING for compiler
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _ALWAYS_USE_LOGGING)
 
-# Declare _DEBUG symbol for compiler
-if (CMAKE_BUILD_TYPE MATCHES Debug)
-    message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
-endif (CMAKE_BUILD_TYPE MATCHES Debug)
+    # Declare _DEBUG symbol for compiler
+    if (CMAKE_BUILD_TYPE MATCHES Debug)
+        message(STATUS "CMAKE_BUILD_TYPE:${CMAKE_BUILD_TYPE} - defining '_DEBUG'")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE _DEBUG)
+    endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
-# Enable test wrappers in code
-target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
+    # Enable test wrappers in code
+    target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_TEST)
 
-# 'pch.h' is our precompiled header
-#target_precompile_headers(${PROJECT_NAME} PRIVATE ${TESTS_DIR}/pch.h)
+    # 'pch.h' is our precompiled header
+    #target_precompile_headers(${PROJECT_NAME} PRIVATE ${TESTS_DIR}/pch.h)
 
-target_link_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/googletest)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/googletest)
 
-# All standard libraries required
-if (WIN32 AND MSVC)
-    set(common_libraries stdc++ iconv gtest)
-endif (WIN32 AND MSVC)
+    # All standard libraries required
+    if (WIN32 AND MSVC)
+        set(common_libraries stdc++ iconv gtest)
+    endif (WIN32 AND MSVC)
 
-if (WIN32 AND MINGW)
-    # Link all as static
-    set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
+    if (WIN32 AND MINGW)
+        # Link all as static
+        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -liconv -Wl,--no-whole-archive")
 
-    set(common_libraries shlwapi ws2_32)
-endif (WIN32 AND MINGW)
+        set(common_libraries shlwapi ws2_32)
+    endif (WIN32 AND MINGW)
 
-if (UNIX AND NOT APPLE)
-    set(CMAKE_CXX_FLAGS " -static-libstdc++")
-    set(common_libraries -static-libstdc++ pthread gtest)
-endif (UNIX AND NOT APPLE)
+    if (UNIX AND NOT APPLE)
+        set(CMAKE_CXX_FLAGS " -static-libstdc++")
+        set(common_libraries -static-libstdc++ pthread gtest)
+    endif (UNIX AND NOT APPLE)
 
-if (APPLE)
-    target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
-    set(common_libraries pthread iconv gtest)
-endif (APPLE)
+    if (APPLE)
+        target_link_directories(${PROJECT_NAME} PRIVATE /usr/lib)
+        set(common_libraries pthread iconv gtest)
+    endif (APPLE)
 
-target_link_libraries(${PROJECT_NAME}
-    ${common_libraries}
-    core
-)
+    target_link_libraries(${PROJECT_NAME}
+        ${common_libraries}
+        core
+    )
 
-# Enable CTest for Google Test discovery
-enable_testing()
-include(GoogleTest)
-gtest_discover_tests(${PROJECT_NAME})
+    # Enable CTest for Google Test discovery
+    enable_testing()
+    include(GoogleTest)
+    gtest_discover_tests(${PROJECT_NAME})
 
-# Define data paths
-set(DATA_PATH "${ROOT_DIR}/data")
-set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+    # Define data paths
+    set(DATA_PATH "${ROOT_DIR}/data")
+    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
 
-# Copy resources using modern CMake syntax
-add_custom_command(
-    TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
-        "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${ROOT_DIR}/testdata" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/testdata"
-    COMMENT "Copying runtime resource files to output directory"
-)
+    # Copy resources using modern CMake syntax
+    add_custom_command(
+        TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${CONFIG_FILE}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/rom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${DATA_PATH}/testrom" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${ROOT_DIR}/testdata" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/testdata"
+        COMMENT "Copying runtime resource files to output directory"
+    )
+endif()
