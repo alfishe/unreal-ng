@@ -68,6 +68,7 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
     void openSpecificFile(const QString& filepath);
+    void saveFileDialog();
     void resetEmulator();
     void handleFullScreenShortcut();
 
@@ -203,6 +204,7 @@ private:
 
     // Last directory used for file operations
     QString _lastDirectory;
+    QString _lastSaveDirectory;
 
     DockingManager* _dockingManager = nullptr;
     MenuManager* _menuManager = nullptr;

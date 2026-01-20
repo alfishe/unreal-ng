@@ -9,6 +9,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMimeData>
+#include <QMessageBox>
 #include <QScopedValueRollback>
 #include <QShortcut>
 #include <QThread>
@@ -31,9 +32,10 @@
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
-    // Load the last used directory from settings
+    // Load the last used directories from settings
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     _lastDirectory = settings.value("LastFileDirectory", QCoreApplication::applicationDirPath()).toString();
+    _lastSaveDirectory = settings.value("LastSaveDirectory", QCoreApplication::applicationDirPath()).toString();
     qDebug() << "Loading last directory from settings:" << _lastDirectory;
 
 #ifdef ENABLE_AUTOMATION
@@ -118,6 +120,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openSnapshotRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
+    connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -1427,6 +1430,51 @@ void MainWindow::openFileDialog()
                 qDebug() << "Unsupported file type:" << filePath;
                 break;
         };
+    }
+}
+
+void MainWindow::saveFileDialog()
+{
+    // Check if emulator is running
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save snapshot";
+        return;
+    }
+
+    // Show a file save dialog using the last save directory
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.sna",
+        tr("SNA Snapshots (*.sna);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        // Ensure .sna extension
+        if (!filePath.toLower().endsWith(".sna"))
+        {
+            filePath += ".sna";
+        }
+
+        // Save directory to settings (separate from open directory)
+        QFileInfo fileInfo(filePath);
+        _lastSaveDirectory = fileInfo.absolutePath();
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+        // Save the snapshot
+        std::string file = filePath.toStdString();
+        bool result = _emulator->SaveSnapshot(file);
+
+        if (result)
+        {
+            qDebug() << "Snapshot saved successfully:" << filePath;
+        }
+        else
+        {
+            qDebug() << "Failed to save snapshot:" << filePath;
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Failed to save snapshot to:\n%1").arg(filePath));
+        }
     }
 }
 

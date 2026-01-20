@@ -41,6 +41,7 @@ signals:
     void openSnapshotRequested();
     void openTapeRequested();
     void openDiskRequested();
+    void saveSnapshotRequested();
 
     // Emulator control signals
     void startRequested();
@@ -97,7 +98,9 @@ private:
     QAction* _openSnapshotAction;
     QAction* _openTapeAction;
     QAction* _openDiskAction;
-    QAction* _saveSnapshotAction;
+    QMenu* _saveSnapshotMenu;
+    QAction* _saveSnapshotSNAAction;
+    QAction* _saveSnapshotZ80Action;
     QAction* _recentFilesAction;
     QAction* _exitAction;
 
