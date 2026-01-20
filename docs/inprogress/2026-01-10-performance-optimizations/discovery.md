@@ -14,7 +14,7 @@ The profiler shows significant CPU usage by GIF-related functions:
 - **Total: ~10% CPU**
 
 ### Root Cause
-Debug code was left in [`mainloop.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp):
+Debug code was left in [`mainloop.cpp`](core/src/emulator/mainloop.cpp):
 
 **Lines 79-84 (Run method - Start recording for EVERY instance):**
 ```cpp
@@ -70,7 +70,7 @@ if (_context && _context->pScreen)
 ### Discovery
 User stated: "Sound disabled when we go to fullscreen state + from WebAPI when we're loading snapshots."
 
-However, searching [`VideoWallWindow.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-videowall/src/videowall/VideoWallWindow.cpp) for:
+However, searching [`VideoWallWindow.cpp`](unreal-videowall/src/videowall/VideoWallWindow.cpp) for:
 - `setFeature.*sound` — **No results**
 - `disableSound` — **No results**
 - `sound.*fullscreen` — **No results**
@@ -108,7 +108,7 @@ toggleFullscreenMode() → [NOTHING happens to sound features]
 ## Gap 3: No FeatureManager Integration for Recording
 
 ### Discovery
-A proper `RecordingManager` exists ([see docs](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/recording/recording-system.md)) with:
+A proper `RecordingManager` exists ([see docs](docs/emulator/design/recording/recording-system.md)) with:
 - `StartRecording()` / `StopRecording()` lifecycle
 - `IsRecording()` state check  
 - Full codec/bitrate configuration API
@@ -168,7 +168,7 @@ The debug `GIFAnimationHelper` is:
 ## Gap 4: Feature Flag Edge Case in FeatureManager
 
 ### Discovery
-In [`featuremanager.cpp`](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.cpp) lines 53-72:
+In [`featuremanager.cpp`](core/src/base/featuremanager.cpp) lines 53-72:
 
 ```cpp
 bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
@@ -238,7 +238,7 @@ For high-density scenarios (48 instances on 4K), simplified rendering could be a
 
 ### Required Action
 > [!NOTE]
-> This optimization requires a **new feature flag** and a full design/planning cycle per [feature-management.md](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/core/feature-management.md).
+> This optimization requires a **new feature flag** and a full design/planning cycle per [feature-management.md](docs/emulator/design/core/feature-management.md).
 
 **Proposed feature:**
 - Name: `video_accurate` or `video_mode`
@@ -324,10 +324,10 @@ Before implementing fixes, the following requirements should be clarified:
 
 ## References
 
-- [RecordingManager implementation](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/recording/recordingmanager.cpp)
-- [Recording System Architecture](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/recording/recording-system.md)
-- [Feature Management System](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/docs/emulator/design/core/feature-management.md)
-- [FeatureManager implementation](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/base/featuremanager.cpp)
-- [MainLoop (GIF debug code)](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp)
+- [RecordingManager implementation](core/src/emulator/recording/recordingmanager.cpp)
+- [Recording System Architecture](docs/emulator/design/recording/recording-system.md)
+- [Feature Management System](docs/emulator/design/core/feature-management.md)
+- [FeatureManager implementation](core/src/base/featuremanager.cpp)
+- [MainLoop (GIF debug code)](core/src/emulator/mainloop.cpp)
 - [Videowall profiler analysis KI](file:///Users/dev/.gemini/antigravity/knowledge/unreal_ng_system_architecture/artifacts/verification/videowall_profiler_analysis_2026_01.md)
 

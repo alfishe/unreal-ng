@@ -18,6 +18,7 @@ void AutomationLua::start()
     _lua = new sol::state();
 
     _luaEmulator = new LuaEmulator();
+    _luaEmulator->setLuaState(_lua);
     _luaEmulator->registerType(*_lua);
 }
 

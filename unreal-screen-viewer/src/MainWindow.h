@@ -7,6 +7,7 @@
 class WebAPIClient;
 class EmulatorList;
 class ScreenViewer;
+class ModeToolbar;
 class QLabel;
 class QSplitter;
 
@@ -14,7 +15,7 @@ class QSplitter;
  * @brief Main application window for the Screen Viewer
  * 
  * Provides a split-view interface with:
- * - Left panel: List of discovered emulator instances
+ * - Left panel: List of discovered emulator instances + mode toolbar
  * - Right panel: Screen display for selected emulator
  * - Status bar: Connection status and selected emulator info
  */
@@ -39,11 +40,14 @@ private:
     void setupStatusBar();
     void connectSignals();
     void updateStatusBar();
+    void saveSettings();
+    void loadSettings();
 
     // UI Components
     QSplitter* _splitter = nullptr;
     EmulatorList* _emulatorList = nullptr;
     ScreenViewer* _screenViewer = nullptr;
+    ModeToolbar* _modeToolbar = nullptr;
     QLabel* _statusLabel = nullptr;
     QLabel* _emulatorLabel = nullptr;
 
@@ -57,3 +61,4 @@ private:
     QString _webApiHost = "localhost";
     int _webApiPort = 8090;
 };
+

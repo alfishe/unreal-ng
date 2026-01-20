@@ -147,6 +147,13 @@ protected:
     bool load48kToStaging();
     bool load128kToStaging();
     bool applySnapshotFromStaging();
+    
+    // Save helpers
+    SNA_MODE determineOutputFormat();
+    bool captureStateToStaging();
+    bool save48kFromStaging();
+    bool save128kFromStaging();
+    bool isPageEmpty(int pageNum);
     /// endregion </Helper methods>
 
     /// region <Debug methods>
@@ -189,5 +196,12 @@ public:
     using LoaderSNA::load48kToStaging;
     using LoaderSNA::load128kToStaging;
     using LoaderSNA::applySnapshotFromStaging;
+    
+    // Save helpers
+    using LoaderSNA::determineOutputFormat;
+    using LoaderSNA::captureStateToStaging;
+    using LoaderSNA::save48kFromStaging;
+    using LoaderSNA::save128kFromStaging;
+    using LoaderSNA::isPageEmpty;
 };
 #endif // _CODE_UNDER_TEST

@@ -129,6 +129,13 @@ public:
 
     uint8_t PeripheralPortIn(uint16_t port);
     void PeripheralPortOut(uint16_t port, uint8_t value);
+    
+    /// Unlock port 7FFD paging for snapshot loading or debug sessions
+    /// This bypasses the lock bit check, allowing subsequent port writes to succeed
+    void UnlockPaging();
+    
+    /// Lock port 7FFD paging (for debug sessions only, not used in normal operation)
+    void LockPaging();
 
     /// endregion </Interaction with peripherals>
 

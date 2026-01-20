@@ -394,6 +394,32 @@ void PortDecoder::PeripheralPortOut(uint16_t port, uint8_t value)
 
 /// endregion </Interaction with peripherals>
 
+/// region <Privileged operations for snapshot loading / debug>
+
+/// Unlock port 7FFD paging for snapshot loading or debug sessions
+/// Clears the lock bit (bit 5) in emulatorState.p7FFD, allowing subsequent port writes
+void PortDecoder::UnlockPaging()
+{
+    if (_state)
+    {
+        _state->p7FFD &= ~PORT_7FFD_LOCK;
+        MLOGINFO("Port 7FFD paging unlocked for snapshot/debug");
+    }
+}
+
+/// Lock port 7FFD paging (for emulation accuracy or testing)
+/// Sets the lock bit (bit 5) in emulatorState.p7FFD
+void PortDecoder::LockPaging()
+{
+    if (_state)
+    {
+        _state->p7FFD |= PORT_7FFD_LOCK;
+        MLOGINFO("Port 7FFD paging locked");
+    }
+}
+
+/// endregion </Privileged operations for snapshot loading / debug>
+
 /// region <Debug information>
 
 void PortDecoder::MuteLoggingForPort(uint16_t port)
