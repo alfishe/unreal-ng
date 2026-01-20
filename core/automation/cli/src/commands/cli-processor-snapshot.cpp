@@ -6,6 +6,7 @@
 
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <common/filehelper.h>
 
 #include <sstream>
 
@@ -37,6 +38,10 @@ void CLIProcessor::HandleSnapshot(const ClientSession& session, const std::vecto
     if (subcommand == "load")
     {
         HandleSnapshotLoad(session, emulator, context, args);
+    }
+    else if (subcommand == "save")
+    {
+        HandleSnapshotSave(session, emulator, args);
     }
     else if (subcommand == "info")
     {
@@ -101,11 +106,56 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "Snapshot Commands" << NEWLINE;
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
-    ss << "  snapshot load <file>     Load snapshot from file (.z80, .sna)" << NEWLINE;
-    ss << "  snapshot info            Get current snapshot status" << NEWLINE;
+    ss << "  snapshot load <file>           Load snapshot from file (.z80, .sna)" << NEWLINE;
+    ss << "  snapshot save <file> [--force] Save snapshot to file (.sna)" << NEWLINE;
+    ss << "  snapshot info                  Get current snapshot status" << NEWLINE;
     ss << NEWLINE;
 
     session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleSnapshotSave(const ClientSession& session,
+                                      std::shared_ptr<Emulator> emulator,
+                                      const std::vector<std::string>& args)
+{
+    if (args.size() < 2)
+    {
+        session.SendResponse(std::string("Error: Missing file path") + NEWLINE +
+                            "Usage: snapshot save <file> [--force]" + NEWLINE);
+        return;
+    }
+
+    std::string filepath = args[1];
+    
+    // Check for --force flag
+    bool force = false;
+    for (size_t i = 2; i < args.size(); i++)
+    {
+        if (args[i] == "--force" || args[i] == "-f")
+        {
+            force = true;
+        }
+    }
+    
+    // Check if file exists and force wasn't specified
+    if (!force && FileHelper::FileExists(filepath))
+    {
+        session.SendResponse(std::string("Error: File already exists: ") + filepath + NEWLINE +
+                            "Use --force to overwrite." + NEWLINE);
+        return;
+    }
+
+    // Use SaveSnapshot method
+    bool success = emulator->SaveSnapshot(filepath);
+
+    if (success)
+    {
+        session.SendResponse(std::string("Snapshot saved: ") + filepath + NEWLINE);
+    }
+    else
+    {
+        session.SendResponse(std::string("Error: Failed to save snapshot: ") + filepath + NEWLINE);
+    }
 }
 
 /// endregion </Snapshot Control Commands>

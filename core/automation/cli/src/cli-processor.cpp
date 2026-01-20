@@ -502,6 +502,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  disk sysinfo <drv>     - Show TR-DOS system info (sector 9)" << NEWLINE;
     oss << "  disk catalog <drv>     - Show TR-DOS file catalog" << NEWLINE;
     oss << NEWLINE;
+    oss << "Snapshot Commands:" << NEWLINE;
+    oss << "  snapshot load <file>           - Load snapshot (.sna, .z80)" << NEWLINE;
+    oss << "  snapshot save <file> [--force] - Save snapshot (.sna)" << NEWLINE;
+    oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
+    oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;
     oss << NEWLINE;

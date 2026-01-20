@@ -294,6 +294,7 @@ namespace PythonBindings
             
             // Snapshot operations
             .def("snapshot_load", &Emulator::LoadSnapshot, "Load snapshot file", py::arg("path"))
+            .def("snapshot_save", &Emulator::SaveSnapshot, "Save snapshot file", py::arg("path"))
             
             // Breakpoint management
             .def("bp", [](Emulator& self, uint16_t addr) -> int {

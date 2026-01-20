@@ -193,6 +193,8 @@ private:
     void ShowSnapshotHelp(const ClientSession& session);
     void HandleSnapshotLoad(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
                             const std::vector<std::string>& args);
+    void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
+                            const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
 
     // Command map

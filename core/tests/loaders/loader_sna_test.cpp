@@ -369,3 +369,211 @@ TEST_F(LoaderSNA_Test, repeatedLoadIsIdempotent)
 }
 
 /// endregion </Lock/State Verification Tests>
+
+/// region <Save Tests>
+
+TEST_F(LoaderSNA_Test, determineOutputFormat_48kMode)
+{
+    // Set up 48K mode by locking paging (bit 5 of port 7FFD)
+    _context->emulatorState.p7FFD = 0x20;  // Lock bit set
+    _context->pPortDecoder->LockPaging();
+    
+    std::string tempPath = "/tmp/test_determine_48k.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    SNA_MODE mode = loader.determineOutputFormat();
+    EXPECT_EQ(mode, SNA_48) << "Locked paging should result in 48K format";
+}
+
+TEST_F(LoaderSNA_Test, determineOutputFormat_128kMode)
+{
+    // Set up 128K mode (unlocked paging)
+    _context->emulatorState.p7FFD = 0x00;  // No lock bit
+    _context->pPortDecoder->UnlockPaging();
+    
+    std::string tempPath = "/tmp/test_determine_128k.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    SNA_MODE mode = loader.determineOutputFormat();
+    EXPECT_EQ(mode, SNA_128) << "Unlocked paging should result in 128K format";
+}
+
+TEST_F(LoaderSNA_Test, isPageEmpty_AllZeros)
+{
+    // Explicitly zero out page 0 for this test
+    Memory& memory = *_context->pMemory;
+    memset(memory.RAMPageAddress(0), 0, PAGE_SIZE);
+    
+    std::string tempPath = "/tmp/test_empty_page.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    // Page 0 should now be empty after explicit zeroing
+    bool isEmpty = loader.isPageEmpty(0);
+    EXPECT_TRUE(isEmpty) << "Page 0 should be empty after zeroing";
+}
+
+TEST_F(LoaderSNA_Test, isPageEmpty_Randomized)
+{
+    std::string tempPath = "/tmp/test_randomized_page.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    // Page 5 should NOT be empty (randomized during init)
+    bool isEmpty = loader.isPageEmpty(5);
+    EXPECT_FALSE(isEmpty) << "Page 5 should not be empty (randomized)";
+}
+
+// NOTE: Save tests require full EmulatorContext initialization (pCore, pMemory).
+// The test fixture initializes Core but not Screen - save handles Screen being null.
+
+TEST_F(LoaderSNA_Test, save48kBasic)
+{
+    // Set up 48K locked mode
+    _context->emulatorState.p7FFD = 0x20;
+    _context->pPortDecoder->LockPaging();
+    
+    std::string tempPath = "/tmp/test_save_48k.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    bool result = loader.save();
+    ASSERT_TRUE(result) << "save() should succeed for 48K snapshot";
+    
+    // Verify file exists and has correct size
+    FILE* file = fopen(tempPath.c_str(), "rb");
+    ASSERT_NE(file, nullptr) << "Saved file should exist";
+    
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fclose(file);
+    
+    EXPECT_EQ(fileSize, 49179) << "48K SNA should be exactly 49179 bytes";
+    
+    // Clean up
+    remove(tempPath.c_str());
+}
+
+TEST_F(LoaderSNA_Test, save128kBasic)
+{
+    // Set up 128K unlocked mode
+    _context->emulatorState.p7FFD = 0x00;
+    _context->pPortDecoder->UnlockPaging();
+    
+    std::string tempPath = "/tmp/test_save_128k.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    bool result = loader.save();
+    ASSERT_TRUE(result) << "save() should succeed for 128K snapshot";
+    
+    // Verify file exists and has correct minimum size
+    FILE* file = fopen(tempPath.c_str(), "rb");
+    ASSERT_NE(file, nullptr) << "Saved file should exist";
+    
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fclose(file);
+    
+    // 128K SNA: header(27) + 3 pages(49152) + ext header(4) + 5 remaining pages(81920) = 131103
+    EXPECT_EQ(fileSize, 131103) << "128K SNA should be exactly 131103 bytes";
+    
+    // Clean up
+    remove(tempPath.c_str());
+}
+
+TEST_F(LoaderSNA_Test, saveAndLoadRoundtrip48k)
+{
+    // Set up 48K mode with specific register values
+    _context->emulatorState.p7FFD = 0x20;
+    _context->pPortDecoder->LockPaging();
+    
+    Z80& z80 = *_context->pCore->GetZ80();
+    z80.a = 0xAB;
+    z80.bc = 0x1234;
+    z80.de = 0x5678;
+    z80.hl = 0x9ABC;
+    z80.pc = 0x8000;
+    z80.sp = 0xFF00;
+    z80.im = 1;
+    
+    std::string tempPath = "/tmp/test_roundtrip_48k.sna";
+    
+    // Save
+    {
+        LoaderSNACUT saver(_context, tempPath);
+        bool saveResult = saver.save();
+        ASSERT_TRUE(saveResult) << "Save should succeed";
+    }
+    
+    // Reset registers to different values
+    z80.a = 0x00;
+    z80.bc = 0x0000;
+    z80.de = 0x0000;
+    z80.hl = 0x0000;
+    
+    // Load back
+    {
+        LoaderSNACUT loader(_context, tempPath);
+        bool loadResult = loader.load();
+        ASSERT_TRUE(loadResult) << "Load should succeed";
+    }
+    
+    // Verify registers restored (note: 48K PC comes from stack)
+    EXPECT_EQ(z80.a, 0xAB) << "Register A should be restored";
+    EXPECT_EQ(z80.bc, 0x1234) << "Register BC should be restored";
+    EXPECT_EQ(z80.de, 0x5678) << "Register DE should be restored";
+    EXPECT_EQ(z80.hl, 0x9ABC) << "Register HL should be restored";
+    
+    // Clean up
+    remove(tempPath.c_str());
+}
+
+// File size sanity tests - prevent oversized snapshots (e.g. 4MB extended memory)
+TEST_F(LoaderSNA_Test, save48kFileSizeExact)
+{
+    // Set up 48K locked mode
+    _context->emulatorState.p7FFD = 0x20;
+    _context->pPortDecoder->LockPaging();
+    
+    std::string tempPath = "/tmp/test_size_48k.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    bool result = loader.save();
+    ASSERT_TRUE(result);
+    
+    FILE* file = fopen(tempPath.c_str(), "rb");
+    ASSERT_NE(file, nullptr);
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fclose(file);
+    
+    // 48K SNA: 27 (header) + 49152 (3 pages) = 49179 bytes exactly
+    EXPECT_EQ(fileSize, 49179) << "48K SNA must be exactly 49179 bytes";
+    EXPECT_LT(fileSize, 100000) << "48K SNA should never exceed 100KB (sanity check)";
+    
+    remove(tempPath.c_str());
+}
+
+TEST_F(LoaderSNA_Test, save128kFileSizeExact)
+{
+    // Set up 128K unlocked mode
+    _context->emulatorState.p7FFD = 0x00;
+    _context->pPortDecoder->UnlockPaging();
+    
+    std::string tempPath = "/tmp/test_size_128k.sna";
+    LoaderSNACUT loader(_context, tempPath);
+    
+    bool result = loader.save();
+    ASSERT_TRUE(result);
+    
+    FILE* file = fopen(tempPath.c_str(), "rb");
+    ASSERT_NE(file, nullptr);
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fclose(file);
+    
+    // 128K SNA: 27 (header) + 49152 (3 pages) + 4 (ext header) + 81920 (5 pages) = 131103 bytes exactly
+    EXPECT_EQ(fileSize, 131103) << "128K SNA must be exactly 131103 bytes";
+    EXPECT_LT(fileSize, 200000) << "128K SNA should never exceed 200KB (sanity check)";
+    
+    remove(tempPath.c_str());
+}
+
+/// endregion </Save Tests>

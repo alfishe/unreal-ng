@@ -98,9 +98,55 @@ Implemented "Permissive Validation" with exact constraints:
 - Flexible on content (allows 1-8 additional banks)
 - Clear error messages for diagnostics
 
+## Save Implementation (Completed)
+
+See [save-implementation-plan.md](save-implementation-plan.md) for original plan.
+
+### Implementation Highlights
+
+**Direct Save (No Staging)**: Unlike load which uses staging for validation before applying, save writes directly from emulator state to file:
+1. Build 27-byte header from Z80 registers
+2. Write RAM pages directly via `Memory::RAMPageAddress()`
+3. For 48K: push PC to stack before saving
+4. For 128K: include extended 4-byte header with PC
+
+**File Size Validation**: Unit tests enforce exact sizes to prevent extended memory (4MB) from leaking:
+- 48K SNA: exactly 49,179 bytes
+- 128K SNA: exactly 131,103 bytes
+
+### Command Interface
+```bash
+# CLI
+snapshot save <file> [--force]    # Format from extension (.sna)
+                                  # --force: Overwrite if exists
+```
+
+### Automation Integration
+| Interface | Method | Force Parameter |
+|-----------|--------|-----------------|
+| CLI | `snapshot save <path> [--force]` | `--force` or `-f` flag |
+| WebAPI | `POST .../snapshot/save` | `{"path": "...", "force": true}` |
+| Python | `emulator.snapshot_save(path)` | N/A (direct method) |
+| Lua | `snapshot_save(path)` | N/A (direct function) |
+
+### Qt UI Integration
+- **Submenu**: File → Save Snapshot → "Save as .sna..." (enabled) / "Save as .z80..." (disabled)
+- **Shortcut**: Ctrl+S for .sna save
+- **State Management**: Menu disabled when no emulator running
+- **Directory Persistence**: Separate `LastSaveDirectory` QSettings key
+
 ## Files Modified
-- [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp) - Added defensive programming and validation
-- [loader_sna_test.cpp](core/tests/loaders/loader_sna_test.cpp) - Added 13 new tests
+- [loader_sna.cpp](core/src/loaders/snapshot/loader_sna.cpp) - Added defensive programming, validation, and save()
+- [loader_sna_test.cpp](core/tests/loaders/loader_sna_test.cpp) - 29 tests including 5 save tests
+- [emulator.cpp](core/src/emulator/emulator.cpp) - Added SaveSnapshot()
+- [menumanager.cpp](unreal-qt/src/menumanager.cpp) - Save submenu and state management
+- [mainwindow.cpp](unreal-qt/src/mainwindow.cpp) - Save file dialog with persistence
+- [cli-processor-snapshot.cpp](core/automation/cli/src/commands/cli-processor-snapshot.cpp) - CLI save command
+- [snapshot_api.cpp](core/automation/webapi/src/api/snapshot_api.cpp) - WebAPI endpoint
+- [python_emulator.h](core/automation/python/src/emulator/python_emulator.h) - Python binding
+- [lua_emulator.h](core/automation/lua/src/emulator/lua_emulator.h) - Lua binding
 
 ## Documentation Updated
 - Created [docs/inprogress/2026-01-19-sna-loader/SCOPE.md](docs/inprogress/2026-01-19-sna-loader/SCOPE.md) - Scope of work document
+- Created [save-implementation-plan.md](save-implementation-plan.md) - Save feature implementation plan
+

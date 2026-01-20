@@ -358,6 +358,11 @@ public:
             return _emulator->LoadSnapshot(path);
         });
 
+        lua.set_function("snapshot_save", [this](const std::string& path) -> bool {
+            if (!_emulator) return false;
+            return _emulator->SaveSnapshot(path);
+        });
+
         // Breakpoint management
         lua.set_function("bp", [this](uint16_t addr) -> int {
             if (!_emulator) return -1;
