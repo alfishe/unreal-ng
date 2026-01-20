@@ -6,9 +6,9 @@ Integrate AnalyzerManager dispatch hooks into the emulator's main loop to enable
 ## Integration Points
 
 ### 1. Frame Events (Cold Path - Virtual Dispatch)
-**Location**: [mainloop.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp)
-- [OnFrameStart()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp#217-227) - Called at the beginning of each frame
-- [OnFrameEnd()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp#240-347) - Called at the end of each frame
+**Location**: [mainloop.cpp](core/src/emulator/mainloop.cpp)
+- [OnFrameStart()](core/src/emulator/mainloop.cpp#217-227) - Called at the beginning of each frame
+- [OnFrameEnd()](core/src/emulator/mainloop.cpp#240-347) - Called at the end of each frame
 
 **Changes**:
 ```cpp
@@ -97,7 +97,7 @@ void AnalyzerManager::init(DebugManager* debugManager) {
 
 ### Automated Tests
 1. **Existing Unit Tests** ✅
-   - Already passing: 14/14 tests in [AnalyzerManager_test](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/debugger/analyzermanager/analyzermanager_test.h#11-21)
+   - Already passing: 14/14 tests in [AnalyzerManager_test](core/tests/debugger/analyzermanager/analyzermanager_test.h#11-21)
    - Command: `./bin/core-tests --gtest_filter="AnalyzerManager*"`
    - These verify the dispatch methods work correctly
 

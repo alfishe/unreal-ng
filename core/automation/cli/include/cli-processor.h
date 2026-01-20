@@ -139,6 +139,7 @@ private:
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleModels(const ClientSession& session, const std::vector<std::string>& args);
 
     // Helper method to get the currently selected emulator
     std::shared_ptr<Emulator> GetSelectedEmulator(const ClientSession& session);
@@ -196,6 +197,8 @@ private:
     void HandleSnapshot(const ClientSession& session, const std::vector<std::string>& args);
     void ShowSnapshotHelp(const ClientSession& session);
     void HandleSnapshotLoad(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context,
+                            const std::vector<std::string>& args);
+    void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
                             const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
 

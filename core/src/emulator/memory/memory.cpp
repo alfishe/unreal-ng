@@ -315,10 +315,21 @@ void Memory::Reset()
     }
 }
 
-/// Fill whole physical RAM with random values
+/// Fill RAM pages visible in 48K mode with random values
+/// Only pages 5 (0x4000-0x7FFF) and 7 (0xC000-0xFFFF in 48K) are randomized.
+/// Other pages (0,1,2,3,4,6) remain zeroed to allow empty page detection for snapshot saving.
 void Memory::RandomizeMemoryContent()
 {
-    RandomizeMemoryBlock(RAMPageAddress(0), MAX_RAM_SIZE);
+    // Note: full memory randomization was used previously but since not visible
+    // to the user, it was replaced with randomization of visible RAM pages only (screen 5 and shadow screen 7)
+    // RandomizeMemoryBlock(RAMPageAddress(0), MAX_RAM_SIZE);
+
+    // Page 5: Screen memory and lower RAM (0x4000-0x7FFF in Z80 space)
+    RandomizeMemoryBlock(RAMPageAddress(5), PAGE_SIZE);
+    
+    // Page 7: Not typically visible in 48K but used for shadow screen in 128K
+    // Randomize for consistency with visible memory behavior
+    RandomizeMemoryBlock(RAMPageAddress(7), PAGE_SIZE);
 }
 
 /// Fill block of memory with specified size with random values

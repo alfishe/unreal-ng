@@ -457,3 +457,341 @@ TEST_F(Z80_Test, Z80OpcodeTimings_FDCB)
         EXPECT_EQ(delta_cycles, descriptor.cycles) << message << std::endl;
     }
 }
+
+/// region <Z80 XCF Tests - Q Register and CCF/SCF Undocumented Flag Behavior>
+///
+/// These tests verify genuine Zilog Z80 behavior for the undocumented YF/XF flags
+/// during CCF and SCF instructions. The Q register mechanism was discovered in 2018-2024
+/// and is tested by the XCF Flavor v1.6 test program.
+///
+/// Formula: undoc_flags = (A | (F & ~Q)) & 0x28
+/// - Flag-modifying instruction: Q = F & 0x28
+/// - Non-flag-modifying instruction: Q = 0
+
+// Test Q register initialization after reset
+TEST_F(Z80_Test, XCF_Q_InitializedOnReset)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    z80.Reset();
+    
+    EXPECT_EQ(z80.q, 0) << "Q register should be 0 after reset";
+}
+
+// Test Q register is updated after flag-modifying instruction (DEC)
+TEST_F(Z80_Test, XCF_Q_UpdatedAfterFlagModifyingInstruction)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;  // DEC A will produce 0xFF with YF/XF set
+    
+    // DEC A (opcode 0x3D) - modifies flags
+    memory[0] = 0x3D;
+    z80.Z80Step();
+    
+    // After DEC A producing 0xFF, both YF (bit 5) and XF (bit 3) should be set
+    EXPECT_EQ(z80.q & 0x28, 0x28) << "Q should capture YF/XF after flag-modifying instruction";
+    EXPECT_EQ(z80.a, 0xFF) << "A should be 0xFF after DEC from 0";
+}
+
+// Test Q register is cleared after non-flag-modifying instruction (LD)
+TEST_F(Z80_Test, XCF_Q_ClearedAfterNonFlagModifyingInstruction)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    
+    // First execute DEC A to set Q = 0x28
+    memory[0] = 0x3D;  // DEC A
+    z80.Z80Step();
+    EXPECT_EQ(z80.q & 0x28, 0x28) << "Q should be set after DEC";
+    
+    // Now reset and execute LD A, n which doesn't modify flags
+    z80.pc = 0;
+    memory[0] = 0x3E;  // LD A, n
+    memory[1] = 0x00;  // immediate value 0
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.q, 0) << "Q should be 0 after non-flag-modifying instruction";
+}
+
+// Test SCF with Q=0, F=0, A=0 -> YX should be 00
+TEST_F(Z80_Test, XCF_SCF_Q0_F0_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x00;
+    z80.q = 0x00;
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "SCF: (Q=0,F=0,A=0) -> YX should be 00";
+    EXPECT_TRUE(z80.f & 0x01) << "SCF should set carry flag";
+}
+
+// Test SCF with Q=0, F has YX=1, A=0 -> YX should be 11 (Zilog behavior)
+TEST_F(Z80_Test, XCF_SCF_Q0_F1_A0_Zilog)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set
+    z80.q = 0x00;  // Q is 0 (previous instruction didn't modify flags)
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0)) & 0x28 = 0x28
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "SCF: (Q=0,F=1,A=0) -> YX should be 11 (Zilog behavior)";
+}
+
+// Test SCF with Q=1, F=1 (same), A=0 -> YX should be 00 
+TEST_F(Z80_Test, XCF_SCF_Q1_F1_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set
+    z80.q = 0x28;  // Q equals F
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0x28)) & 0x28 = 0
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "SCF: (Q=1,F=1,A=0) -> YX should be 00 when Q=F";
+}
+
+// Test SCF with A=0xFF (YX bits set) -> YX should be 11 regardless of Q/F
+TEST_F(Z80_Test, XCF_SCF_A_Contributes)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0xFF;  // All bits set including YF/XF
+    z80.f = 0x00;
+    z80.q = 0x00;
+    
+    // SCF (opcode 0x37)
+    memory[0] = 0x37;
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "SCF: A register should contribute YX flags";
+}
+
+// Test CCF with Q=0, F=0, A=0 -> YX should be 00
+TEST_F(Z80_Test, XCF_CCF_Q0_F0_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x01;  // Carry set (will be complemented)
+    z80.q = 0x00;
+    
+    // CCF (opcode 0x3F)
+    memory[0] = 0x3F;
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "CCF: (Q=0,F=0,A=0) -> YX should be 00";
+    EXPECT_FALSE(z80.f & 0x01) << "CCF should complement carry flag";
+}
+
+// Test CCF with Q=0, F has YX=1, A=0 -> YX should be 11 (Zilog behavior)
+TEST_F(Z80_Test, XCF_CCF_Q0_F1_A0_Zilog)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set, no carry
+    z80.q = 0x00;
+    
+    // CCF (opcode 0x3F)
+    memory[0] = 0x3F;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0)) & 0x28 = 0x28
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "CCF: (Q=0,F=1,A=0) -> YX should be 11 (Zilog behavior)";
+}
+
+// Test CCF with Q=1, F=1 (same), A=0 -> YX should be 00
+TEST_F(Z80_Test, XCF_CCF_Q1_F1_A0)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    uint8_t* memory = _cpu->GetMemory()->base_sos_rom;
+    
+    ResetCPUAndMemory();
+    z80.a = 0x00;
+    z80.f = 0x28;  // YF and XF set
+    z80.q = 0x28;  // Q equals F
+    
+    // CCF (opcode 0x3F)
+    memory[0] = 0x3F;
+    z80.Z80Step();
+    
+    // Zilog formula: (A | (F & ~Q)) & 0x28 = (0 | (0x28 & ~0x28)) & 0x28 = 0
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "CCF: (Q=1,F=1,A=0) -> YX should be 00 when Q=F";
+}
+
+/// endregion </Z80 XCF Tests>
+
+/// region <Interrupted Block Instruction Tests - YF=PC.13, XF=PC.11>
+///
+/// When block instructions (LDxR, CPxR, INxR, OTxR) repeat, the undocumented 
+/// YF and XF flags are set from PC bits 13 and 11 respectively.
+/// This is visible when an interrupt occurs during block instruction execution.
+
+// Test LDIR sets YF/XF from PC when repeating (PC has both bits set)
+TEST_F(Z80_Test, Block_LDIR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    // Use address 0x2800 where:
+    // PC.13 = (0x2800 >> 13) & 1 = 1
+    // PC.11 = (0x2800 >> 11) & 1 = 1
+    // (0x2800 >> 8) & 0x28 = 0x28 & 0x28 = 0x28
+    z80.pc = 0x2800;
+    memory->base_sos_rom[0x2800] = 0xED;  // ED prefix
+    memory->base_sos_rom[0x2801] = 0xB0;  // LDIR
+    
+    z80.hl = 0x8000;  // Source
+    z80.de = 0x9000;  // Destination
+    z80.bc = 2;       // 2 bytes to copy (will repeat once)
+    
+    // Put source data
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);
+    memory->DirectWriteToZ80Memory(0x8001, 0xBB);
+    
+    z80.Z80Step();  // Execute LDIR
+    
+    // After first iteration, BC=1, instruction repeats
+    // PC should be back to 0x2800 (ED prefix address)
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "YF/XF should be set from PC=0x2800 (bits 13,11 -> bits 5,3)";
+}
+
+// Test LDIR with PC that clears both YF and XF
+TEST_F(Z80_Test, Block_LDIR_Interrupted_Flags_Clear)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    // Use address 0x0000 where:
+    // PC.13 = 0, PC.11 = 0
+    // (0x0000 >> 8) & 0x28 = 0x00
+    z80.pc = 0x0000;
+    memory->base_sos_rom[0x0000] = 0xED;
+    memory->base_sos_rom[0x0001] = 0xB0;
+    
+    z80.hl = 0x8000;
+    z80.de = 0x9000;
+    z80.bc = 2;
+    
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);
+    
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.pc, 0x0000);
+    EXPECT_EQ(z80.f & 0x28, 0x00) << "YF/XF should be 0 from PC=0x0000";
+}
+
+// Test LDDR sets YF/XF from PC when repeating
+TEST_F(Z80_Test, Block_LDDR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    z80.pc = 0x2800;  // PC that sets both YF and XF
+    memory->base_sos_rom[0x2800] = 0xED;
+    memory->base_sos_rom[0x2801] = 0xB8;  // LDDR
+    
+    z80.hl = 0x8001;  // Source (decrementing)
+    z80.de = 0x9001;  // Destination (decrementing)
+    z80.bc = 2;
+    
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);
+    memory->DirectWriteToZ80Memory(0x8001, 0xBB);
+    
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "LDDR YF/XF should be set from PC=0x2800";
+}
+
+// Test CPIR sets YF/XF from PC when repeating (not found scenario)
+TEST_F(Z80_Test, Block_CPIR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    z80.pc = 0x2800;
+    memory->base_sos_rom[0x2800] = 0xED;
+    memory->base_sos_rom[0x2801] = 0xB1;  // CPIR
+    
+    z80.a = 0x55;      // Looking for 0x55
+    z80.hl = 0x8000;
+    z80.bc = 2;
+    
+    // Put different data so comparison fails and instruction repeats
+    memory->DirectWriteToZ80Memory(0x8000, 0xAA);  // Not equal to A
+    memory->DirectWriteToZ80Memory(0x8001, 0x55);  // Equal - will stop here
+    
+    z80.Z80Step();
+    
+    // First byte didn't match, BC decremented, instruction repeats
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "CPIR YF/XF should be set from PC=0x2800";
+}
+
+// Test CPDR sets YF/XF from PC when repeating
+TEST_F(Z80_Test, Block_CPDR_Interrupted_Flags_Set)
+{
+    Z80& z80 = *_cpu->GetZ80();
+    Memory* memory = _cpu->GetMemory();
+    
+    ResetCPUAndMemory();
+    
+    z80.pc = 0x2800;
+    memory->base_sos_rom[0x2800] = 0xED;
+    memory->base_sos_rom[0x2801] = 0xB9;  // CPDR
+    
+    z80.a = 0x55;
+    z80.hl = 0x8001;  // Decrementing
+    z80.bc = 2;
+    
+    memory->DirectWriteToZ80Memory(0x8000, 0x55);  // Match
+    memory->DirectWriteToZ80Memory(0x8001, 0xAA);  // No match - will repeat
+    
+    z80.Z80Step();
+    
+    EXPECT_EQ(z80.pc, 0x2800);
+    EXPECT_EQ(z80.f & 0x28, 0x28) << "CPDR YF/XF should be set from PC=0x2800";
+}
+
+/// endregion </Interrupted Block Instruction Tests>

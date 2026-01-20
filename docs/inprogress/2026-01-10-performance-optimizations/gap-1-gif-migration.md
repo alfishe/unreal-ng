@@ -13,7 +13,7 @@ Migrate the working `GIFAnimationHelper` code from debug code in `mainloop.cpp` 
 ## Current State
 
 ### Debug Code Location
-**File:** [mainloop.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/mainloop.cpp)
+**File:** [mainloop.cpp](core/src/emulator/mainloop.cpp)
 
 **Start recording (line 83):**
 ```cpp
@@ -26,7 +26,7 @@ gifAnimationHelper.WriteFrame(buffer, size);
 ```
 
 ### GIFAnimationHelper Implementation
-**File:** [gifanimationhelper.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/common/image/gifanimationhelper.cpp)
+**File:** [gifanimationhelper.cpp](core/src/common/image/gifanimationhelper.cpp)
 
 Uses 3rd party `gif.h` library for LZW encoding.
 

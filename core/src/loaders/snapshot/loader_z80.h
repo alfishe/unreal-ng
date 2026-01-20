@@ -197,8 +197,10 @@ protected:
     bool loadZ80v3();
 
     Z80Registers getZ80Registers(const Z80Header_v1& header, uint16_t pc);
-    Z80MemoryMode getMemoryMode(const Z80Header_v2& header);
+    Z80MemoryMode getMemoryModeV2(uint8_t model);
+    Z80MemoryMode getMemoryModeV3(uint8_t model);
     void applyPeripheralState(const Z80Header_v2& header);
+    bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set
     // The compression method is very simple:
@@ -224,6 +226,14 @@ public:
 
     /// @brief Original decompression (for benchmarking comparison)
     void decompressPage_Original(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+
+    /// @brief Decompress Z80 v1 format data which uses end marker (00 ED ED 00)
+    /// @param src Source compressed data
+    /// @param srcLen Maximum source length (file size minus header)
+    /// @param dst Destination buffer for decompressed data
+    /// @param dstLen Expected decompressed length (48K = 3 * PAGE_SIZE)
+    /// @return Number of source bytes consumed (useful for validation)
+    size_t decompressV1Data(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
 
 protected:
     MemoryPageDescriptor resolveSnapshotPage(uint8_t page, Z80MemoryMode mode);

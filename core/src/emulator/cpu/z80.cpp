@@ -45,6 +45,7 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     alt.de = 0;
     alt.hl = 0;
     memptr = 0;
+    q = 0;  // Initialize undocumented Q register
 
     tpi = 0;
     rate = (1 << 8);
@@ -127,6 +128,7 @@ void Z80::Reset()
     im = 0;         // IM0 mode is set by default
     sp = 0xFFFF;    // Stack pointer set to the end of memory address space
     af = 0xFFFF;    // Real chip behavior
+    q = 0;          // Q register (undocumented) reset
 
     // All that takes 3 clock cycles
     IncrementCPUCyclesCounter(3);
@@ -262,6 +264,9 @@ void Z80::Z80Step(bool skipBreakpoints)
         // Preserve previous PC register state
         cpu.prev_pc = m1_pc;
 
+        // Save F register before opcode execution (for Q register update)
+        uint8_t prev_f = cpu.f;
+
         // Regular Z80 bus cycle
         // 1. Fetch opcode (Z80 M1 bus cycle)
         cpu.prefix = 0x0000;
@@ -269,6 +274,22 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // 2. Emulate fetched Z80 opcode
         (normal_opcode[opcode])(&cpu);
+
+        // 3. Update Q register based on whether flags were modified
+        // Q captures YF/XF from flag-modifying instructions only
+        // SCF/CCF update Q internally even if F doesn't numerically change
+        if (cpu.f != prev_f)
+        {
+            cpu.q = cpu.f & 0x28;  // Flags changed: capture YF/XF
+        }
+        else if (cpu.opcode == 0x37 || cpu.opcode == 0x3F)
+        {
+            // SCF/CCF set Q internally, preserve their value
+        }
+        else
+        {
+            cpu.q = 0;  // Non-flag-modifying instruction: Q=0
+        }
     }
 
     /// region <Debug trace capture>
@@ -610,6 +631,8 @@ void Z80::HandleINT(uint8_t vector)
 
 void Z80::OnCPUStep()
 {
+    // Q register update is now handled in Z80Step() based on flag changes
+
     // MainLoop will dispatch the call to all peripherals
     _context->pMainLoop->OnCPUStep();
 }
