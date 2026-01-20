@@ -127,6 +127,21 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
 #ifndef _WIN32
         std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
 #endif
+        
+        // Expand tilde to home directory (cross-platform)
+        if (!normalizedPath.empty() && normalizedPath[0] == '~')
+        {
+#ifdef _WIN32
+            const char* home = getenv("USERPROFILE");
+            if (!home) home = getenv("HOMEPATH");
+#else
+            const char* home = getenv("HOME");
+#endif
+            if (home)
+            {
+                normalizedPath = std::string(home) + normalizedPath.substr(1);
+            }
+        }
 
         fs::path absolutePath = fs::path(normalizedPath);
 

@@ -185,15 +185,62 @@ struct Z80Registers
         };
     } alt;
 
+    /// region <Undocumented Internal Registers>
+    ///
+    /// The Z80 contains internal registers not exposed in official documentation but discovered
+    /// through reverse engineering and behavioral analysis. These registers affect observable
+    /// behavior of certain instructions, particularly undocumented flag bits 3 (XF) and 5 (YF).
+    ///
+    /// Reference: "The Undocumented Z80 Documented" by Sean Young
+    ///            "MEMPTR" research by Boo-boo, Vladimir Kladov (zx.pk.ru, 2006)
+    ///            "Z80 XCF Flavor" by Manuel Sainz de Baranda y Goñi (zxe.io, 2022-2024)
+
+    /// MEMPTR (also known as WZ) - 16-bit internal address buffer register
+    ///
+    /// Used by the Z80 for 16-bit address calculations and temporary storage during
+    /// multi-byte memory operations. Its value affects the undocumented YF/XF flags
+    /// in the BIT n,(HL) instruction, where bits 11 and 13 of MEMPTR are copied to
+    /// flags bits 3 and 5 respectively.
+    ///
+    /// Various instructions set MEMPTR:
+    /// - LD A,(addr) / LD (addr),A: MEMPTR = addr + 1 (low byte), high byte varies
+    /// - LD A,(rp) / LD (rp),A: MEMPTR = rp + 1
+    /// - ADD/ADC/SBC rp1,rp2: MEMPTR = rp1_before + 1
+    /// - JP/CALL/JR/RET/RST: MEMPTR = target address
+    /// - IN/OUT instructions: MEMPTR derived from port address
+    /// - Block instructions (LDIR, CPIR, etc.): Various behaviors
+    /// - Any instruction with (IX+d)/(IY+d): MEMPTR = INDEX + d
     union
     {
-        uint16_t memptr;  // undocumented register
+        uint16_t memptr;
         struct
         {
             uint8_t meml;
             uint8_t memh;
         };
     };
+
+    /// Q Register - 8-bit internal flag capture register (only bits 3 and 5 are significant)
+    ///
+    /// Discovered in 2018-2024, Q captures the YF/XF bits (bits 5/3) from the Flags register
+    /// after each instruction that modifies flags. It affects the undocumented behavior of
+    /// CCF and SCF instructions.
+    ///
+    /// On genuine Zilog Z80, CCF and SCF compute undocumented flags as:
+    ///     YF = A.5 | (F.5 & Q.5)
+    ///     XF = A.3 | (F.3 & Q.3)
+    /// Or simplified: undoc_flags = (A | (F & Q)) & 0x28
+    ///
+    /// Different Z80 clones exhibit different behavior:
+    /// - Zilog (original): Uses Q register as described above
+    /// - NEC NMOS clones: Ignore Q, use only A register: undoc_flags = A & 0x28
+    /// - ST CMOS clones: Asymmetric YF/XF behavior (different formulas for each bit)
+    ///
+    /// The XCF Flavor test (https://zxe.io) can distinguish these variants.
+    /// This emulator implements genuine Zilog Z80 behavior.
+    uint8_t q;
+
+    /// endregion </Undocumented Internal Registers>
 
     uint16_t eipos;
     uint16_t haltpos;

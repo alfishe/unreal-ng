@@ -1,4 +1,5 @@
 #include "automation-python.h"
+#include "emulator/python_emulator.h"
 
 #include <base/featuremanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
@@ -12,6 +13,12 @@
 #include <iostream>
 #include <sstream>
 #include <thread>
+
+// Define embedded Python module for emulator bindings
+PYBIND11_EMBEDDED_MODULE(unreal_emulator, m) {
+    m.doc() = "Unreal Speccy NG Emulator Python bindings";
+    PythonBindings::registerEmulatorBindings(m);
+}
 
 /// region <Methods>
 void AutomationPython::start()
