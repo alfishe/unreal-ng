@@ -327,11 +327,7 @@ Z80OPCODE ope_56(Z80 *cpu) { // im 1
 
 Z80OPCODE ope_57(Z80 *cpu) { // ld a,i
    cpu->a = cpu->i;
-   cpu->f = (log_f[cpu->r_low & 0x7F] | (cpu->f & CF)) & ~PV;	// TODO: dirty fix with unknown reason and test sequence
-
-   if (cpu->iff2 && (((uint32_t)(cpu->t + 10) < cpu->tpi) || cpu->eipos + 8 == cpu->t))
-      cpu->f |= PV;
-
+   cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
    cputact(1);
 }
 
@@ -403,11 +399,7 @@ Z80OPCODE ope_5E(Z80 *cpu) { // im 2
 
 Z80OPCODE ope_5F(Z80 *cpu) { // ld a,r
    cpu->a = (cpu->r_low & 0x7F) | cpu->r_hi;
-   cpu->f = (log_f[cpu->a] | (cpu->f & CF)) & ~PV;
-
-   if (cpu->iff2 && (((uint32_t)(cpu->t + 10) < cpu->tpi) || cpu->eipos + 8==cpu->t))
-      cpu->f |= PV;
-
+   cpu->f = (log_f[cpu->a] & ~(PV | HF | NF)) | (cpu->iff2 ? PV : 0) | (cpu->f & CF);
    cputact(1);
 }
 
