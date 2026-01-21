@@ -5,6 +5,7 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
+#include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/diskimage.h>
@@ -363,6 +364,38 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->GetBreakpointListAsString() : "";
             }, "Get formatted breakpoint list")
+            .def("bp_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) {
+                    result["valid"] = false;
+                    return result;
+                }
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                if (!bpm) {
+                    result["valid"] = false;
+                    return result;
+                }
+                auto info = bpm->GetLastTriggeredBreakpointInfo();
+                result["valid"] = info.valid;
+                if (info.valid) {
+                    result["id"] = info.id;
+                    result["type"] = info.type;
+                    result["address"] = info.address;
+                    result["access"] = info.access;
+                    result["active"] = info.active;
+                    result["note"] = info.note;
+                    result["group"] = info.group;
+                }
+                return result;
+            }, "Get last triggered breakpoint info (id, type, address, access)")
+            .def("bp_clear_last", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pDebugManager) {
+                    BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                    if (bpm) bpm->ClearLastTriggeredBreakpoint();
+                }
+            }, "Clear last triggered breakpoint tracking")
             
             // Screen state
             .def("screen_get_mode", [](Emulator& self) -> std::string {
@@ -454,6 +487,78 @@ namespace PythonBindings
                 DiskImage* disk = fdd->getDiskImage();
                 if (!disk) return "";
                 return disk->DumpSectorHex(track, sector);
-            }, "Read sector as hex dump", py::arg("drive"), py::arg("track"), py::arg("sector"));
+            }, "Read sector as hex dump", py::arg("drive"), py::arg("track"), py::arg("sector"))
+            
+            // Debug mode control
+            .def("debugmode", [](Emulator& self, bool enable) -> bool {
+                FeatureManager* fm = self.GetFeatureManager();
+                return fm ? fm->setFeature("debugmode", enable) : false;
+            }, "Enable/disable debug mode", py::arg("enable"))
+            .def("is_debugmode", [](Emulator& self) -> bool {
+                FeatureManager* fm = self.GetFeatureManager();
+                return fm ? fm->isEnabled("debugmode") : false;
+            }, "Check if debug mode is enabled")
+            
+            // Memory access counters - uses memory->GetAccessTracker() API
+            .def("memcounters", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) {
+                    result["error"] = "Memory not available";
+                    return result;
+                }
+                Memory* memory = ctx->pMemory;
+                MemoryAccessTracker& tracker = memory->GetAccessTracker();
+                
+                // Sum Z80 banks
+                uint64_t totalReads = 0;
+                uint64_t totalWrites = 0;
+                uint64_t totalExecutes = 0;
+                
+                py::list banks;
+                for (int bank = 0; bank < 4; bank++) {
+                    uint64_t reads = tracker.GetZ80BankReadAccessCount(bank);
+                    uint64_t writes = tracker.GetZ80BankWriteAccessCount(bank);
+                    uint64_t executes = tracker.GetZ80BankExecuteAccessCount(bank);
+                    
+                    totalReads += reads;
+                    totalWrites += writes;
+                    totalExecutes += executes;
+                    
+                    py::dict bankInfo;
+                    bankInfo["bank"] = bank;
+                    bankInfo["reads"] = reads;
+                    bankInfo["writes"] = writes;
+                    bankInfo["executes"] = executes;
+                    bankInfo["total"] = reads + writes + executes;
+                    banks.append(bankInfo);
+                }
+                
+                result["total_reads"] = totalReads;
+                result["total_writes"] = totalWrites;
+                result["total_executes"] = totalExecutes;
+                result["total_accesses"] = totalReads + totalWrites + totalExecutes;
+                result["banks"] = banks;
+                return result;
+            }, "Get memory access counters")
+            .def("memcounters_reset", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pMemory) {
+                    ctx->pMemory->GetAccessTracker().ResetCounters();
+                }
+            }, "Reset memory access counters")
+            
+            // Call trace
+            .def("calltrace", [](Emulator& self, int limit) -> py::list {
+                py::list result;
+                FeatureManager* fm = self.GetFeatureManager();
+                bool enabled = fm ? fm->isEnabled("calltrace") : false;
+                // TODO: Add actual call trace entries when CallTraceManager exposes API
+                return result;
+            }, "Get call trace entries (requires calltrace feature)", py::arg("limit") = 50)
+            .def("is_calltrace", [](Emulator& self) -> bool {
+                FeatureManager* fm = self.GetFeatureManager();
+                return fm ? fm->isEnabled("calltrace") : false;
+            }, "Check if call trace is enabled");
     }
 }

@@ -244,6 +244,39 @@ class DebugManager:
         """Get disassembler"""
 ```
 
+### Debug Commands (Direct Methods)
+
+> **Status**: ✅ Implemented (2026-01)
+
+The `Emulator` class exposes these debug methods directly:
+
+```python
+# Debug Mode Control
+emu.debugmode_on()         # Enable debug mode
+emu.debugmode_off()        # Disable debug mode
+emu.debugmode()            # Returns True if debug mode enabled
+
+# Memory Access Counters
+emu.memcounters()          # Returns dict with:
+# {
+#     'total_reads': int, 'total_writes': int, 'total_executes': int,
+#     'total_accesses': int,
+#     'banks': [{'bank': 0, 'reads': int, 'writes': int, 'executes': int}, ...]
+# }
+emu.memcounters_reset()    # Reset all counters
+
+# Call Trace
+emu.calltrace(limit=50)    # Returns list of recent control flow events
+
+# Breakpoint Status (Last Triggered)
+emu.bp_status()            # Returns dict with type-specific fields:
+# Memory: {'valid': bool, 'id': int, 'type': 'memory', 'address': int,
+#          'execute': bool, 'read': bool, 'write': bool, 'active': bool, 'note': str, 'group': str}
+# Port:   {'valid': bool, 'id': int, 'type': 'port', 'address': int,
+#          'in': bool, 'out': bool, 'active': bool, 'note': str, 'group': str}
+emu.bp_clear_last()        # Clear last triggered breakpoint ID
+```
+
 ### Enumerations
 
 ```python

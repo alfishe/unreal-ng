@@ -452,6 +452,46 @@ public:
             return bpm ? bpm->GetBreakpointListAsString() : "";
         });
 
+        lua.set_function("bp_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) {
+                result["valid"] = false;
+                return result;
+            }
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) {
+                result["valid"] = false;
+                return result;
+            }
+            BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+            if (!bpm) {
+                result["valid"] = false;
+                return result;
+            }
+            auto info = bpm->GetLastTriggeredBreakpointInfo();
+            result["valid"] = info.valid;
+            if (info.valid) {
+                result["id"] = info.id;
+                result["type"] = info.type;
+                result["address"] = info.address;
+                result["access"] = info.access;
+                result["active"] = info.active;
+                result["note"] = info.note;
+                result["group"] = info.group;
+            }
+            return result;
+        });
+
+        lua.set_function("bp_clear_last", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pDebugManager) {
+                BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
+                if (bpm) bpm->ClearLastTriggeredBreakpoint();
+            }
+        });
+
         // Screen state
         lua.set_function("screen_get_mode", [this]() -> std::string {
             if (!_emulator) return "";

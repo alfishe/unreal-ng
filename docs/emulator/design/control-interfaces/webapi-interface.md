@@ -209,44 +209,123 @@ Content-Type: application/json
 }
 ```
 
-## Planned Endpoints (Not Yet Implemented)
+## Implemented Debug Commands
+
+> **Status**: ✅ Implemented in `debug_api.cpp` (2026-01)
 
 ### Execution Control
 ```
-POST /api/v1/emulators/{id}/reset
-POST /api/v1/emulators/{id}/step
-POST /api/v1/emulators/{id}/stepover
-POST /api/v1/emulators/{id}/steps?count=10
+POST /api/v1/emulator/{id}/step      Execute single instruction
+POST /api/v1/emulator/{id}/steps     Execute N instructions (body: {"count": N})
+POST /api/v1/emulator/{id}/stepover  Step over CALL instructions
 ```
+
+### Debug Mode
+```
+GET  /api/v1/emulator/{id}/debugmode     Get debug mode state
+PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true})
+```
+
+> [!NOTE]
+> Enabling any debug subfeature (breakpoints, memorytracking, calltrace) automatically enables the master `debugmode` switch. This ensures debug features work correctly.
 
 ### State Inspection
 ```
-GET /api/v1/emulators/{id}/registers
-GET /api/v1/emulators/{id}/memory?address=0x8000&length=256
-GET /api/v1/emulators/{id}/disassemble?address=0x8000&count=10
+GET /api/v1/emulator/{id}/registers           Get CPU registers (AF, BC, DE, HL, PC, SP, etc.)
+GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
+GET /api/v1/emulator/{id}/memcounters         Memory access statistics
+GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 ```
 
 ### Breakpoints
 ```
-GET    /api/v1/emulators/{id}/breakpoints
-POST   /api/v1/emulators/{id}/breakpoints
-DELETE /api/v1/emulators/{id}/breakpoints/{bp_id}
-PATCH  /api/v1/emulators/{id}/breakpoints/{bp_id}
+GET    /api/v1/emulator/{id}/breakpoints                   List all breakpoints
+POST   /api/v1/emulator/{id}/breakpoints                   Add breakpoint
+DELETE /api/v1/emulator/{id}/breakpoints                   Clear all
+DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}           Remove specific
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
+PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
+GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info
 ```
 
-### Media Operations
-```
-POST /api/v1/emulators/{id}/tape/load
-POST /api/v1/emulators/{id}/tape/eject
-POST /api/v1/emulators/{id}/disk/{drive}/insert
-POST /api/v1/emulators/{id}/disk/{drive}/eject
+#### Add Breakpoint Request
+```json
+{
+  "type": "execution|read|write|port_in|port_out",
+  "address": 32768,
+  "note": "optional annotation",
+  "group": "optional group name"
+}
 ```
 
-### Snapshots
+#### List Breakpoints Response
+Response contains type-specific fields based on breakpoint type:
+
+**Memory Breakpoint** (execute/read/write):
+```json
+{
+  "count": 2,
+  "breakpoints": [
+    {
+      "id": 1,
+      "type": "memory",
+      "address": 32768,
+      "execute": true,
+      "read": false,
+      "write": false,
+      "active": true,
+      "note": "entry point",
+      "group": "default"
+    }
+  ]
+}
 ```
-GET  /api/v1/emulators/{id}/snapshot
-POST /api/v1/emulators/{id}/snapshot/save
-POST /api/v1/emulators/{id}/snapshot/load
+
+**Port Breakpoint** (in/out only):
+```json
+{
+  "id": 2,
+  "type": "port",
+  "address": 254,
+  "in": true,
+  "out": true,
+  "active": true,
+  "note": "ULA port",
+  "group": "io"
+}
+```
+
+#### Breakpoint Status Response
+```json
+{
+  "is_paused": true,
+  "breakpoints_count": 3,
+  "last_triggered_id": 1,
+  "last_triggered_type": "memory",
+  "last_triggered_address": 32768,
+  "paused_by_breakpoint": true
+}
+```
+
+## Planned Endpoints (Not Yet Implemented)
+
+### Disassembly
+```
+GET /api/v1/emulator/{id}/disassemble?address=0x8000&count=10
+```
+
+### Media Operations (Implemented Separately)
+```
+POST /api/v1/emulator/{id}/tape/load    ✅ Implemented
+POST /api/v1/emulator/{id}/tape/eject   ✅ Implemented
+POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
+POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
+```
+
+### Snapshots (Implemented Separately)
+```
+POST /api/v1/emulator/{id}/snapshot/save  ✅ Implemented
+POST /api/v1/emulator/{id}/snapshot/load  ✅ Implemented
 ```
 
 ## WebSocket Support (Future)

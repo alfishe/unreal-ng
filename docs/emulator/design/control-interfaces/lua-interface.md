@@ -214,6 +214,30 @@ count = bp_mgr:get_bp_count()
 bp_list = bp_mgr:get_all_bps()  -- Returns table of breakpoints
 ```
 
+### Debug Commands (Direct Methods)
+
+> **Status**: ✅ Implemented (2026-01)
+
+The `Emulator` object exposes these debug methods directly:
+
+```lua
+-- Breakpoint Status (Last Triggered)
+local status = emu:bp_status()  -- Returns table with type-specific fields:
+-- Memory: {valid=bool, id=int, type='memory', address=int,
+--          execute=bool, read=bool, write=bool, active=bool, note=str, group=str}
+-- Port:   {valid=bool, id=int, type='port', address=int,
+--          in_=bool, out=bool, active=bool, note=str, group=str}
+emu:bp_clear_last()  -- Clear last triggered breakpoint ID
+
+-- Debug Mode (via feature manager)
+emu:feature_set("debugmode", true)   -- Enable debug mode
+emu:feature_set("debugmode", false)  -- Disable debug mode
+local enabled = emu:feature_get("debugmode")
+```
+
+> [!NOTE]
+> Memory counters (`memcounters`) and call trace (`calltrace`) are available via CLI and WebAPI. Full Lua bindings for these analysis features are planned.
+
 ## Usage Examples
 
 ### Register Dump Macro
