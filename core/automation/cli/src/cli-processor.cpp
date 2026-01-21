@@ -74,6 +74,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"memstats", &CLIProcessor::HandleMemCounters},
                         {"calltrace", &CLIProcessor::HandleCallTrace},
                         {"feature", &CLIProcessor::HandleFeature},
+                        {"disasm", &CLIProcessor::HandleDisasm},
+                        {"disasm_page", &CLIProcessor::HandleDisasmPage},
+                        {"u", &CLIProcessor::HandleDisasm},  // Shortcut like debug monitors
 
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
@@ -485,6 +488,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "Memory Access Tracking:" << NEWLINE;
     oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;
     oss << "  memcounters save [opts] - Save memory access data to file" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Disassembly:" << NEWLINE;
+    oss << "  disasm [addr] [count]   - Disassemble at address (or, u for short)" << NEWLINE;
+    oss << "  disasm_page <ram|rom> <page> [offset] [count] - Disassemble from physical page" << NEWLINE;
     oss << NEWLINE;
     oss << "Call Trace:" << NEWLINE;
     oss << "  calltrace [latest [N]] - Show latest N call trace events" << NEWLINE;

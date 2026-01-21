@@ -917,6 +917,54 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
 
+    // Disassembly endpoint
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["summary"] = "Disassemble Z80 code";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["name"] = "address";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal, default: PC)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["name"] = "count";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] = "Disassembled instructions";
+
+    // Physical page disassembly endpoint
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["summary"] = "Disassemble from physical RAM/ROM page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["name"] = "type";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["description"] = "Memory type: 'ram' or 'rom'";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["name"] = "page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["description"] = "Physical page number (0-255)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["name"] = "offset";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["description"] = "Offset within page (default: 0)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["name"] = "count";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] = "Disassembled instructions from physical page";
+
     spec["paths"] = paths;
 
     // Components/Schemas

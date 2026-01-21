@@ -13,6 +13,7 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/disassembler/z80disasm.h>
 
 class LuaEmulator
 {
@@ -490,6 +491,109 @@ public:
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 if (bpm) bpm->ClearLastTriggeredBreakpoint();
             }
+        });
+
+        // Disassembly
+        lua.set_function("disasm", [this](sol::optional<int> address, sol::optional<int> count) -> sol::table {
+            sol::table result = _lua->create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
+            
+            Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
+            Memory* memory = ctx->pMemory;
+            
+            uint16_t addr = address.value_or(-1) < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address.value_or(0));
+            int cnt = count.value_or(10);
+            if (cnt < 1) cnt = 10;
+            if (cnt > 100) cnt = 100;
+            
+            int idx = 1;
+            for (int i = 0; i < cnt; ++i) {
+                std::vector<uint8_t> buffer;
+                for (int j = 0; j < 4; ++j) {
+                    buffer.push_back(memory->MemoryReadFast(static_cast<uint16_t>(addr + j), false));
+                }
+                
+                uint8_t cmdLen = 0;
+                DecodedInstruction decoded;
+                std::string mnemonic = disasm->disassembleSingleCommand(buffer, addr, &cmdLen, &decoded);
+                if (cmdLen == 0) cmdLen = 1;
+                
+                sol::table instr = _lua->create_table();
+                instr["address"] = addr;
+                std::string hexBytes;
+                for (uint8_t j = 0; j < cmdLen; ++j) {
+                    char buf[4];
+                    snprintf(buf, sizeof(buf), "%02X", buffer[j]);
+                    hexBytes += buf;
+                }
+                instr["bytes"] = hexBytes;
+                instr["mnemonic"] = mnemonic;
+                instr["size"] = cmdLen;
+                if (decoded.hasJump || decoded.hasRelativeJump) {
+                    instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                }
+                result[idx++] = instr;
+                addr += cmdLen;
+            }
+            return result;
+        });
+
+        // Physical page disassembly
+        lua.set_function("disasm_page", [this](const std::string& type, int page, sol::optional<int> offset, sol::optional<int> count) -> sol::table {
+            sol::table result = _lua->create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
+            
+            Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
+            Memory* memory = ctx->pMemory;
+            
+            bool isROM = (type == "rom");
+            uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page)) 
+                                      : memory->RAMPageAddress(static_cast<uint16_t>(page));
+            if (!pageBase) return result;
+            
+            int off = offset.value_or(0);
+            int cnt = count.value_or(10);
+            if (off < 0) off = 0;
+            if (off >= PAGE_SIZE) off = PAGE_SIZE - 1;
+            if (cnt < 1) cnt = 10;
+            if (cnt > 100) cnt = 100;
+            
+            uint16_t currentOffset = static_cast<uint16_t>(off);
+            int idx = 1;
+            for (int i = 0; i < cnt && currentOffset < PAGE_SIZE; ++i) {
+                std::vector<uint8_t> buffer;
+                for (int j = 0; j < 4 && (currentOffset + j) < PAGE_SIZE; ++j) {
+                    buffer.push_back(pageBase[currentOffset + j]);
+                }
+                if (buffer.size() < 4) buffer.resize(4, 0);
+                
+                uint8_t cmdLen = 0;
+                DecodedInstruction decoded;
+                std::string mnemonic = disasm->disassembleSingleCommand(buffer, currentOffset, &cmdLen, &decoded);
+                if (cmdLen == 0) cmdLen = 1;
+                
+                sol::table instr = _lua->create_table();
+                instr["offset"] = currentOffset;
+                std::string hexBytes;
+                for (uint8_t j = 0; j < cmdLen; ++j) {
+                    char buf[4];
+                    snprintf(buf, sizeof(buf), "%02X", buffer[j]);
+                    hexBytes += buf;
+                }
+                instr["bytes"] = hexBytes;
+                instr["mnemonic"] = mnemonic;
+                instr["size"] = cmdLen;
+                if (decoded.hasJump || decoded.hasRelativeJump) {
+                    instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                }
+                result[idx++] = instr;
+                currentOffset += cmdLen;
+            }
+            return result;
         });
 
         // Screen state

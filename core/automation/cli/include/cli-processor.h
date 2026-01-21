@@ -103,6 +103,8 @@ private:
     void HandleMemCounters(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCallTrace(const ClientSession& session, const std::vector<std::string>& args);
     void HandleFeature(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDisasm(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleDisasmPage(const ClientSession& session, const std::vector<std::string>& args);
 
     // BASIC command handlers
     void HandleBasic(const ClientSession& session, const std::vector<std::string>& args);

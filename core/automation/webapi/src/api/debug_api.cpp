@@ -951,5 +951,256 @@ void EmulatorAPI::getCallTrace(const HttpRequestPtr& req, std::function<void(con
 
 // endregion Analysis
 
+// region Disassembly
+
+/// @brief GET /api/v1/emulator/{id}/disasm
+/// @brief Disassemble Z80 code
+/// @brief Query params: address (default: PC), count (default: 10, max: 100)
+void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    EmulatorContext* ctx = emulator->GetContext();
+    Memory* memory = ctx->pMemory;
+    Z80* z80 = ctx->pCore->GetZ80();
+    DebugManager* dbg = ctx->pDebugManager;
+    
+    if (!dbg || !dbg->GetDisassembler())
+    {
+        Json::Value error;
+        error["error"] = "Disassembler not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    Z80Disassembler* disasm = dbg->GetDisassembler().get();
+    
+    // Parse query parameters
+    std::string addrParam = req->getParameter("address");
+    std::string countParam = req->getParameter("count");
+    
+    uint16_t address = z80->pc;  // Default to PC
+    size_t count = 10;           // Default count
+    
+    if (!addrParam.empty())
+    {
+        try
+        {
+            if (addrParam.find("0x") == 0 || addrParam.find("0X") == 0)
+                address = static_cast<uint16_t>(std::stoul(addrParam, nullptr, 16));
+            else
+                address = static_cast<uint16_t>(std::stoul(addrParam));
+        }
+        catch (...) {}
+    }
+    
+    if (!countParam.empty())
+    {
+        count = std::stoul(countParam);
+        if (count > 100) count = 100;
+        if (count < 1) count = 1;
+    }
+    
+    Json::Value ret;
+    ret["address"] = address;
+    ret["count"] = static_cast<unsigned int>(count);
+    ret["instructions"] = Json::arrayValue;
+    
+    uint16_t currentAddr = address;
+    for (size_t i = 0; i < count && currentAddr >= address; ++i)
+    {
+        // Read up to 4 bytes for instruction
+        std::vector<uint8_t> buffer;
+        for (int j = 0; j < 4; ++j)
+        {
+            buffer.push_back(memory->MemoryReadFast(static_cast<uint16_t>(currentAddr + j), false));
+        }
+        
+        uint8_t cmdLen = 0;
+        DecodedInstruction decoded;
+        std::string mnemonic = disasm->disassembleSingleCommand(buffer, currentAddr, &cmdLen, &decoded);
+        
+        if (cmdLen == 0) cmdLen = 1;  // Safety: at least advance by 1
+        
+        Json::Value instr;
+        instr["address"] = currentAddr;
+        
+        // Build hex bytes string
+        std::string hexBytes;
+        for (uint8_t j = 0; j < cmdLen; ++j)
+        {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%02X", buffer[j]);
+            hexBytes += buf;
+        }
+        instr["bytes"] = hexBytes;
+        instr["mnemonic"] = mnemonic;
+        instr["size"] = cmdLen;
+        
+        // Add target address for jumps/calls
+        if (decoded.hasJump || decoded.hasRelativeJump)
+        {
+            if (decoded.hasRelativeJump)
+                instr["target"] = decoded.relJumpAddr;
+            else
+                instr["target"] = decoded.jumpAddr;
+        }
+        
+        ret["instructions"].append(instr);
+        
+        currentAddr += cmdLen;
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+// endregion Disassembly
+
+/// @brief GET /api/v1/emulator/{id}/disasm/page
+/// @brief Disassemble from physical RAM/ROM page (bypasses Z80 paging)
+/// @brief Query params: type (ram|rom), page (0-255), offset (0-16383), count (default: 10, max: 100)
+void EmulatorAPI::getDisasmPage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    EmulatorContext* ctx = emulator->GetContext();
+    Memory* memory = ctx->pMemory;
+    DebugManager* dbg = ctx->pDebugManager;
+    
+    if (!dbg || !dbg->GetDisassembler())
+    {
+        Json::Value error;
+        error["error"] = "Disassembler not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    Z80Disassembler* disasm = dbg->GetDisassembler().get();
+    
+    // Parse query parameters
+    std::string typeParam = req->getParameter("type");
+    std::string pageParam = req->getParameter("page");
+    std::string offsetParam = req->getParameter("offset");
+    std::string countParam = req->getParameter("count");
+    
+    bool isROM = (typeParam == "rom");
+    if (typeParam != "rom" && typeParam != "ram")
+    {
+        Json::Value error;
+        error["error"] = "Invalid type parameter. Use 'ram' or 'rom'";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    uint8_t page = 0;
+    uint16_t offset = 0;
+    size_t count = 10;
+    
+    try {
+        page = static_cast<uint8_t>(std::stoul(pageParam));
+        if (!offsetParam.empty()) {
+            if (offsetParam.find("0x") == 0 || offsetParam.find("0X") == 0)
+                offset = static_cast<uint16_t>(std::stoul(offsetParam, nullptr, 16));
+            else
+                offset = static_cast<uint16_t>(std::stoul(offsetParam));
+        }
+    } catch (...) {
+        Json::Value error;
+        error["error"] = "Invalid page or offset parameter";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    if (offset >= PAGE_SIZE) offset = PAGE_SIZE - 1;
+    
+    if (!countParam.empty()) {
+        count = std::stoul(countParam);
+        if (count > 100) count = 100;
+        if (count < 1) count = 1;
+    }
+    
+    // Get physical memory base for the page
+    uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(page) : memory->RAMPageAddress(page);
+    if (!pageBase)
+    {
+        Json::Value error;
+        error["error"] = "Invalid page number";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    Json::Value ret;
+    ret["type"] = typeParam;
+    ret["page"] = page;
+    ret["offset"] = offset;
+    ret["count"] = static_cast<unsigned int>(count);
+    ret["instructions"] = Json::arrayValue;
+    
+    uint16_t currentOffset = offset;
+    for (size_t i = 0; i < count && currentOffset < PAGE_SIZE; ++i)
+    {
+        // Read up to 4 bytes from physical page
+        std::vector<uint8_t> buffer;
+        for (int j = 0; j < 4 && (currentOffset + j) < PAGE_SIZE; ++j)
+        {
+            buffer.push_back(pageBase[currentOffset + j]);
+        }
+        if (buffer.size() < 4) buffer.resize(4, 0);  // Pad if near end
+        
+        uint8_t cmdLen = 0;
+        DecodedInstruction decoded;
+        std::string mnemonic = disasm->disassembleSingleCommand(buffer, currentOffset, &cmdLen, &decoded);
+        if (cmdLen == 0) cmdLen = 1;
+        
+        Json::Value instr;
+        instr["offset"] = currentOffset;
+        
+        std::string hexBytes;
+        for (uint8_t j = 0; j < cmdLen; ++j) {
+            char buf[4];
+            snprintf(buf, sizeof(buf), "%02X", buffer[j]);
+            hexBytes += buf;
+        }
+        instr["bytes"] = hexBytes;
+        instr["mnemonic"] = mnemonic;
+        instr["size"] = cmdLen;
+        
+        if (decoded.hasJump || decoded.hasRelativeJump) {
+            if (decoded.hasRelativeJump)
+                instr["target"] = decoded.relJumpAddr;
+            else
+                instr["target"] = decoded.jumpAddr;
+        }
+        
+        ret["instructions"].append(instr);
+        currentOffset += cmdLen;
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 } // namespace v1
 } // namespace api

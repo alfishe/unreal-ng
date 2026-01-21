@@ -275,6 +275,13 @@ emu.bp_status()            # Returns dict with type-specific fields:
 # Port:   {'valid': bool, 'id': int, 'type': 'port', 'address': int,
 #          'in': bool, 'out': bool, 'active': bool, 'note': str, 'group': str}
 emu.bp_clear_last()        # Clear last triggered breakpoint ID
+
+# Disassembly
+emu.disasm()                                    # Disassemble from PC (default 10 lines)
+emu.disasm(address=0x8000, count=20)           # Disassemble from address
+emu.disasm_page("rom", 2, offset=0, count=20)  # Disassemble physical ROM page (e.g., TR-DOS)
+emu.disasm_page("ram", 5, offset=0x100, count=10)  # Disassemble physical RAM page
+# Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, target (if jump)
 ```
 
 ### Enumerations

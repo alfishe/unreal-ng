@@ -229,6 +229,13 @@ local status = emu:bp_status()  -- Returns table with type-specific fields:
 --          in_=bool, out=bool, active=bool, note=str, group=str}
 emu:bp_clear_last()  -- Clear last triggered breakpoint ID
 
+-- Disassembly
+local lines = disasm()                   -- Disassemble from PC (default 10 lines)
+local lines = disasm(0x8000, 20)         -- Disassemble from address, count
+local lines = disasm_page("rom", 2, 0, 20)   -- Disassemble physical ROM page (e.g., TR-DOS)
+local lines = disasm_page("ram", 5, 0x100, 10)  -- Disassemble physical RAM page
+-- Returns: table with entries: {offset, bytes, mnemonic, size, target (if jump)}
+
 -- Debug Mode (via feature manager)
 emu:feature_set("debugmode", true)   -- Enable debug mode
 emu:feature_set("debugmode", false)  -- Disable debug mode

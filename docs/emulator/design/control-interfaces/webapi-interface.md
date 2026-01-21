@@ -235,6 +235,8 @@ GET /api/v1/emulator/{id}/registers           Get CPU registers (AF, BC, DE, HL,
 GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
 GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
+GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
+GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 ```
 
 ### Breakpoints

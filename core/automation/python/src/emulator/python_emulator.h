@@ -13,6 +13,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <base/featuremanager.h>
+#include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 
@@ -396,6 +397,105 @@ namespace PythonBindings
                     if (bpm) bpm->ClearLastTriggeredBreakpoint();
                 }
             }, "Clear last triggered breakpoint tracking")
+            
+            // Disassembly
+            .def("disasm", [](Emulator& self, int address, int count) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
+                    return result;
+                }
+                Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
+                Memory* memory = ctx->pMemory;
+                
+                uint16_t addr = address < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address);
+                if (count < 1) count = 10;
+                if (count > 100) count = 100;
+                
+                for (int i = 0; i < count; ++i) {
+                    std::vector<uint8_t> buffer;
+                    for (int j = 0; j < 4; ++j) {
+                        buffer.push_back(memory->MemoryReadFast(static_cast<uint16_t>(addr + j), false));
+                    }
+                    
+                    uint8_t cmdLen = 0;
+                    DecodedInstruction decoded;
+                    std::string mnemonic = disasm->disassembleSingleCommand(buffer, addr, &cmdLen, &decoded);
+                    if (cmdLen == 0) cmdLen = 1;
+                    
+                    py::dict instr;
+                    instr["address"] = addr;
+                    std::string hexBytes;
+                    for (uint8_t j = 0; j < cmdLen; ++j) {
+                        char buf[4];
+                        snprintf(buf, sizeof(buf), "%02X", buffer[j]);
+                        hexBytes += buf;
+                    }
+                    instr["bytes"] = hexBytes;
+                    instr["mnemonic"] = mnemonic;
+                    instr["size"] = cmdLen;
+                    if (decoded.hasJump || decoded.hasRelativeJump) {
+                        instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                    }
+                    result.append(instr);
+                    addr += cmdLen;
+                }
+                return result;
+            }, py::arg("address") = -1, py::arg("count") = 10, "Disassemble code at address (default: PC)")
+            
+            // Physical page disassembly
+            .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
+                    return result;
+                }
+                Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
+                Memory* memory = ctx->pMemory;
+                
+                bool isROM = (type == "rom");
+                uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(static_cast<uint8_t>(page)) 
+                                          : memory->RAMPageAddress(static_cast<uint16_t>(page));
+                if (!pageBase) return result;
+                
+                if (offset < 0) offset = 0;
+                if (offset >= PAGE_SIZE) offset = PAGE_SIZE - 1;
+                if (count < 1) count = 10;
+                if (count > 100) count = 100;
+                
+                uint16_t currentOffset = static_cast<uint16_t>(offset);
+                for (int i = 0; i < count && currentOffset < PAGE_SIZE; ++i) {
+                    std::vector<uint8_t> buffer;
+                    for (int j = 0; j < 4 && (currentOffset + j) < PAGE_SIZE; ++j) {
+                        buffer.push_back(pageBase[currentOffset + j]);
+                    }
+                    if (buffer.size() < 4) buffer.resize(4, 0);
+                    
+                    uint8_t cmdLen = 0;
+                    DecodedInstruction decoded;
+                    std::string mnemonic = disasm->disassembleSingleCommand(buffer, currentOffset, &cmdLen, &decoded);
+                    if (cmdLen == 0) cmdLen = 1;
+                    
+                    py::dict instr;
+                    instr["offset"] = currentOffset;
+                    std::string hexBytes;
+                    for (uint8_t j = 0; j < cmdLen; ++j) {
+                        char buf[4];
+                        snprintf(buf, sizeof(buf), "%02X", buffer[j]);
+                        hexBytes += buf;
+                    }
+                    instr["bytes"] = hexBytes;
+                    instr["mnemonic"] = mnemonic;
+                    instr["size"] = cmdLen;
+                    if (decoded.hasJump || decoded.hasRelativeJump) {
+                        instr["target"] = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
+                    }
+                    result.append(instr);
+                    currentOffset += cmdLen;
+                }
+                return result;
+            }, py::arg("type"), py::arg("page"), py::arg("offset") = 0, py::arg("count") = 10, 
+               "Disassemble from physical RAM/ROM page (bypasses Z80 paging). type='ram'|'rom'")
             
             // Screen state
             .def("screen_get_mode", [](Emulator& self) -> std::string {
