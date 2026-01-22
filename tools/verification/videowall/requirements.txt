@@ -1,0 +1,2 @@
+# Requirements for videowall WebAPI testing
+requests>=2.28.0

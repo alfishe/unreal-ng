@@ -915,9 +915,9 @@ bool Emulator::SaveSnapshot(const std::string& path)
 
     // Validate file extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(absolutePath));
-    if (ext != "sna")
+    if (ext != "sna" && ext != "z80")
     {
-        MLOGERROR("Invalid snapshot format for save: {}. Currently only .sna is supported", ext.c_str());
+        MLOGERROR("Invalid snapshot format for save: {}. Supported: .sna, .z80", ext.c_str());
         return false;
     }
 
@@ -949,6 +949,27 @@ bool Emulator::SaveSnapshot(const std::string& path)
         /// endregion </Info logging>
 
         /// endregion </Save SNA snapshot>
+    }
+    else if (ext == "z80")
+    {
+        /// region <Save Z80 snapshot>
+        LoaderZ80 loaderZ80(_context, absolutePath);
+        result = loaderZ80.save();
+
+        /// region <Info logging>
+        if (result)
+        {
+            MLOGINFO("Z80 file saved successfully: '%s'", absolutePath.c_str());
+        }
+        else
+        {
+            MLOGERROR("Failed to save Z80 file: '%s'", absolutePath.c_str());
+        }
+
+        MLOGEMPTY();
+        /// endregion </Info logging>
+
+        /// endregion </Save Z80 snapshot>
     }
 
     // Store snapshot path on success

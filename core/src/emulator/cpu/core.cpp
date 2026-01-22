@@ -5,7 +5,6 @@
 #include <cassert>
 
 #include "common/modulelogger.h"
-#include "emulator/io/fdc/vg93.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/videocontroller.h"
