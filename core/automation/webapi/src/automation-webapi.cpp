@@ -188,7 +188,31 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 
     app.setCustom404Page(notFoundResp);
 
-    app.setLogPath("./")
+    // Create a writable log directory in the user's home folder
+    std::string logPath;
+#ifdef __APPLE__
+    // On macOS, use ~/Library/Logs/UnrealNG/
+    const char* homeDir = getenv("HOME");
+    if (homeDir)
+    {
+        logPath = std::string(homeDir) + "/Library/Logs/UnrealNG";
+        // Create the directory if it doesn't exist
+        std::filesystem::create_directories(logPath);
+    }
+    else
+    {
+        // Fallback to temporary directory if HOME is not available
+        logPath = "/tmp/UnrealNG";
+        std::filesystem::create_directories(logPath);
+    }
+#else
+    // On other platforms, use the current directory
+    logPath = "./";
+#endif
+
+    LOG_INFO << "Using log path: " << logPath;
+
+    app.setLogPath(logPath)
         .setLogLevel(trantor::Logger::kNumberOfLogLevels)
         .disableSigtermHandling()  // SIGTERM is handled by the main application (unreal-qt or testclient)
         .addListener("0.0.0.0", 8090)

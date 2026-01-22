@@ -152,6 +152,68 @@ size_t BreakpointManager::GetBreakpointsCount()
     return _breakpointMapByID.size();
 }
 
+BreakpointManager::BreakpointStatusInfo BreakpointManager::GetLastTriggeredBreakpointInfo() const
+{
+    BreakpointStatusInfo info;
+    
+    if (_lastTriggeredBreakpointID == BRK_INVALID)
+    {
+        return info;  // Returns default with valid=false
+    }
+    
+    auto it = _breakpointMapByID.find(_lastTriggeredBreakpointID);
+    if (it == _breakpointMapByID.end())
+    {
+        return info;  // Breakpoint was removed after triggering
+    }
+    
+    BreakpointDescriptor* bp = it->second;
+    
+    info.valid = true;
+    info.id = _lastTriggeredBreakpointID;
+    info.address = bp->z80address;
+    info.active = bp->active;
+    info.note = bp->note;
+    info.group = bp->group;
+    
+    // Breakpoint type
+    switch (bp->type)
+    {
+        case BRK_MEMORY:
+            info.type = "memory";
+            break;
+        case BRK_IO:
+            info.type = "port";
+            break;
+        case BRK_KEYBOARD:
+            info.type = "keyboard";
+            break;
+        default:
+            info.type = "unknown";
+            break;
+    }
+    
+    // Access type (for memory: execution/read/write, for port: in/out)
+    std::string accessStr;
+    if (bp->type == BRK_MEMORY)
+    {
+        if (bp->memoryType & BRK_MEM_EXECUTE) accessStr += "execute,";
+        if (bp->memoryType & BRK_MEM_READ) accessStr += "read,";
+        if (bp->memoryType & BRK_MEM_WRITE) accessStr += "write,";
+    }
+    else if (bp->type == BRK_IO)
+    {
+        if (bp->ioType & BRK_IO_IN) accessStr += "in,";
+        if (bp->ioType & BRK_IO_OUT) accessStr += "out,";
+    }
+    // Trim trailing comma
+    if (!accessStr.empty() && accessStr.back() == ',')
+        accessStr.pop_back();
+    info.access = accessStr;
+    
+    return info;
+}
+
 /// endregion </Management methods>
 
 /// region <Management assistance methods>
@@ -951,6 +1013,7 @@ uint16_t BreakpointManager::HandlePCChange(uint16_t pc)
         if (breakpoint->memoryType & BRK_MEM_EXECUTE)
         {
             result = breakpoint->breakpointID;
+            _lastTriggeredBreakpointID = result;  // Track for automation API queries
 
             /// region <Debug info>
 #ifdef _DEBUG
@@ -1002,6 +1065,7 @@ uint16_t BreakpointManager::HandleMemoryRead(uint16_t readAddress)
         if (breakpoint->memoryType & BRK_MEM_READ)
         {
             result = breakpoint->breakpointID;
+            _lastTriggeredBreakpointID = result;  // Track for automation API queries
         }
     }
 
@@ -1026,6 +1090,7 @@ uint16_t BreakpointManager::HandleMemoryWrite(uint16_t writeAddress)
         if (breakpoint->memoryType & BRK_MEM_WRITE)
         {
             result = breakpoint->breakpointID;
+            _lastTriggeredBreakpointID = result;  // Track for automation API queries
         }
     }
 
@@ -1050,6 +1115,7 @@ uint16_t BreakpointManager::HandlePortIn(uint16_t portAddress)
         if (breakpoint->ioType & BRK_IO_IN)
         {
             result = breakpoint->breakpointID;
+            _lastTriggeredBreakpointID = result;  // Track for automation API queries
         }
     }
 
@@ -1074,6 +1140,7 @@ uint16_t BreakpointManager::HandlePortOut(uint16_t portAddress)
         if (breakpoint->ioType & BRK_IO_OUT)
         {
             result = breakpoint->breakpointID;
+            _lastTriggeredBreakpointID = result;  // Track for automation API queries
         }
     }
 
