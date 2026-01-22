@@ -35,12 +35,12 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
         std::stringstream ss;
         ss << "BASIC commands:" << NEWLINE;
         ss << "  basic extract             - Extract BASIC program from memory" << NEWLINE;
-        ss << "  basic inject <program>    - Inject BASIC program (multiline with \\n)" << NEWLINE;
-        ss << "  basic load <path>         - Load BASIC from file" << NEWLINE;
-        ss << "  basic appendline <line>   - Append single line to program" << NEWLINE;
-        ss << "  basic run [<command>]     - Execute RUN or inject command to E_LINE" << NEWLINE;
+        ss << "  basic inject <command>    - Inject command into edit buffer (no execute)" << NEWLINE;
+        ss << "  basic run [<command>]     - Inject + execute command (default: RUN)" << NEWLINE;
+        ss << "  basic program <code>      - Load multi-line BASIC program (with \\n)" << NEWLINE;
         ss << "  basic list                - Show current program" << NEWLINE;
         ss << "  basic clear               - Clear program (NEW)" << NEWLINE;
+        ss << "  basic state               - Show BASIC/TR-DOS state" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -84,10 +84,66 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
     }
     else if (subcommand == "inject")
     {
-        // basic inject <program> OR basic inject --file <path>
+        // basic inject <command> - Inject command into edit buffer (NO execution)
         if (args.size() < 2)
         {
-            session.SendResponse(std::string("Error: basic inject requires a program or --file argument.") + NEWLINE);
+            session.SendResponse(std::string("Error: basic inject requires a command argument.") + NEWLINE);
+            return;
+        }
+
+        Memory* memory = emulator->GetMemory();
+        if (!memory)
+        {
+            session.SendResponse(std::string("Error: Unable to access emulator memory.") + NEWLINE);
+            return;
+        }
+
+        // Build command string from args
+        std::string command;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            if (i > 1) command += " ";
+            command += args[i];
+        }
+
+        // Use injectCommand (writes to edit buffer, no execution)
+        auto result = BasicEncoder::injectCommand(memory, command);
+        
+        std::stringstream ss;
+        ss << result.message << NEWLINE;
+        if (result.success)
+        {
+            ss << "Press ENTER to execute." << NEWLINE;
+        }
+        session.SendResponse(ss.str());
+    }
+    else if (subcommand == "program")
+    {
+        // basic program <code> - Load multi-line BASIC program into PROG area
+        if (args.size() < 2)
+        {
+            session.SendResponse(std::string("Error: basic program requires BASIC code with line numbers.") + NEWLINE);
+            return;
+        }
+
+        Memory* memory = emulator->GetMemory();
+        if (!memory)
+        {
+            session.SendResponse(std::string("Error: Unable to access emulator memory.") + NEWLINE);
+            return;
+        }
+
+        // Check state before injection
+        auto state = BasicEncoder::detectState(memory);
+        if (state == BasicEncoder::BasicState::TRDOS_Active || 
+            state == BasicEncoder::BasicState::TRDOS_SOS_Call)
+        {
+            session.SendResponse(std::string("Error: TR-DOS is active. Please exit to BASIC first.") + NEWLINE);
+            return;
+        }
+        if (state == BasicEncoder::BasicState::Menu128K)
+        {
+            session.SendResponse(std::string("Error: On 128K menu. Please enter BASIC first.") + NEWLINE);
             return;
         }
 
@@ -99,37 +155,23 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             program += args[i];
         }
 
-        // Debug: show what we received
-        std::cout << "[DEBUG] Program before: [" << program << "]" << std::endl;
-        
-        // Replace \n with actual newlines
+        // Replace \\n with actual newlines
         size_t pos = 0;
         while ((pos = program.find("\\n", pos)) != std::string::npos)
         {
-            std::cout << "[DEBUG] Found backslash-n at pos " << pos << std::endl;
             program.replace(pos, 2, "\n");
             pos++;
         }
-        
-        std::cout << "[DEBUG] Program after: [" << program << "]" << std::endl;
 
         BasicEncoder encoder;
-        Memory* memory = emulator->GetMemory();
-
-        if (!memory)
-        {
-            session.SendResponse(std::string("Error: Unable to access emulator memory.") + NEWLINE);
-            return;
-        }
-
         bool success = encoder.loadProgram(memory, program);
         if (success)
         {
-            session.SendResponse(std::string("BASIC program injected successfully.") + NEWLINE);
+            session.SendResponse(std::string("BASIC program loaded successfully.") + NEWLINE);
         }
         else
         {
-            session.SendResponse(std::string("Error: Failed to inject BASIC program.") + NEWLINE);
+            session.SendResponse(std::string("Error: Failed to load BASIC program.") + NEWLINE);
         }
     }
     else if (subcommand == "appendline")
@@ -190,14 +232,10 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             }
         }
 
-        // Inject using BasicEncoder (handles 128K SLEB vs 48K E_LINE internally)
-        std::string result = BasicEncoder::injectCommand(memory, command);
-        ss << result << NEWLINE;
+        // Use new runCommand API (injects + executes via ENTER)
+        auto result = BasicEncoder::runCommand(memory, command);
+        ss << result.message << NEWLINE;
 
-        // Trigger execution by simulating ENTER key
-        BasicEncoder::injectEnter(memory);
-
-        ss << "Executed." << NEWLINE;
         session.SendResponse(ss.str());
     }
     else if (subcommand == "list")

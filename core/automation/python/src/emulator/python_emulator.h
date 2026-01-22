@@ -18,6 +18,8 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
+#include <debugger/analyzers/rom-print/screenocr.h>
+#include <emulator/video/screencapture.h>
 
 namespace py = pybind11;
 
@@ -602,6 +604,26 @@ namespace PythonBindings
                 if (!ctx || !ctx->pScreen) return 0;
                 return ctx->pScreen->GetActiveScreen();
             }, "Get active screen (0=normal, 1=shadow)")
+            
+            // Capture operations
+            .def("capture_ocr", [](Emulator& self) -> std::string {
+                return ScreenOCR::ocrScreen(self.GetId());
+            }, "OCR text from screen (32x24 chars)")
+            .def("capture_screen", [](Emulator& self, const std::string& format, bool fullFramebuffer) -> py::dict {
+                py::dict result;
+                CaptureMode mode = fullFramebuffer ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
+                auto capture = ScreenCapture::captureScreen(self.GetId(), format, mode);
+                result["success"] = capture.success;
+                result["format"] = capture.format;
+                result["width"] = capture.width;
+                result["height"] = capture.height;
+                result["size"] = capture.originalSize;
+                result["data"] = capture.base64Data;
+                if (!capture.success) {
+                    result["error"] = capture.errorMessage;
+                }
+                return result;
+            }, "Capture screen as image", py::arg("format") = "gif", py::arg("full") = false)
             
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {

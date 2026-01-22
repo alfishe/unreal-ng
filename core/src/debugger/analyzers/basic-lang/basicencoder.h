@@ -43,10 +43,12 @@ public:
     /// Current BASIC environment state
     enum class BasicState
     {
-        Menu128K,     ///< On 128K main menu (needs navigation to BASIC)
-        Basic128K,    ///< In 128K BASIC editor (ready for commands)
-        Basic48K,     ///< In 48K BASIC mode (ready for commands)
-        Unknown       ///< Unable to determine state
+        Menu128K,       ///< On 128K main menu (needs navigation to BASIC)
+        Basic128K,      ///< In 128K BASIC editor (ready for commands)
+        Basic48K,       ///< In 48K BASIC mode (ready for commands)
+        TRDOS_Active,   ///< TR-DOS is actively executing (DOS ROM paged)
+        TRDOS_SOS_Call, ///< TR-DOS temporarily using SOS ROM (e.g., for printing)
+        Unknown         ///< Unable to determine state
     };
     /// endregion </Types>
 
@@ -97,10 +99,44 @@ public:
     static void injectText(Memory* memory, const std::string& text);
     
     /// Detect current BASIC environment state
-    /// Checks FLAGS3, EC0D, EC0E to determine if on 128K menu or in BASIC editor
+    /// Uses three-tier detection: hardware ROM state, stack context, system variables
+    /// Properly detects TR-DOS activity even during temporary SOS ROM calls
     /// @param memory Pointer to emulator memory instance
+    /// @param z80SP Current Z80 stack pointer (for stack scanning)
     /// @return Current BasicState
-    static BasicState detectState(Memory* memory);
+    static BasicState detectState(Memory* memory, uint16_t z80SP = 0);
+    
+    /// Check if TR-DOS is logically active (even during temporary SOS calls)
+    /// Uses three-tier detection algorithm:
+    /// - Tier 1: DOS ROM hardware paging state
+    /// - Tier 2: Stack context (scan for $3D2F return addresses)
+    /// - Tier 3: System variable initialization ($5CC2 == $C9)
+    /// @param memory Pointer to emulator memory instance
+    /// @param z80SP Current Z80 stack pointer
+    /// @return true if TR-DOS is in control (actively or via SOS call)
+    static bool isTRDOSLogicallyActive(Memory* memory, uint16_t z80SP);
+    
+    /// Check if TR-DOS system variables have been initialized
+    /// @param memory Pointer to emulator memory instance
+    /// @return true if TR-DOS has been entered at least once this session
+    static bool isTRDOSInitialized(Memory* memory);
+    
+    /// Scan stack for TR-DOS trap return addresses ($3D00-$3DFF)
+    /// Indicates DOS is temporarily borrowing SOS ROM for I/O
+    /// @param memory Pointer to emulator memory instance
+    /// @param z80SP Current Z80 stack pointer
+    /// @param maxDepth Maximum stack entries to scan (default 16)
+    /// @return true if stack contains DOS return address
+    static bool stackContainsDOSReturnAddress(Memory* memory, uint16_t z80SP, int maxDepth = 16);
+    
+    /// Verify stack contains plausible return addresses (sanity check)
+    /// Checks that first few stack entries look like valid ROM/RAM addresses
+    /// rather than garbage data. Uses known ROM vectors and RAM trampolines.
+    /// @param memory Pointer to emulator memory instance
+    /// @param z80SP Current Z80 stack pointer
+    /// @param checkDepth Number of entries to check (default 4)
+    /// @return true if stack appears valid, false if garbage detected
+    static bool isStackSane(Memory* memory, uint16_t z80SP, int checkDepth = 4);
     
     /// Check if in ready-for-BASIC state (either 128K or 48K editor)
     /// @param memory Pointer to emulator memory instance
@@ -112,13 +148,45 @@ public:
     /// @param memory Pointer to emulator memory instance
     static void navigateToBasic128K(Memory* memory);
     
-    /// Inject a command into the BASIC edit buffer (mode-aware)
-    /// For 128K BASIC: Writes to SLEB buffer at $EC16
-    /// For 48K BASIC: Writes to E_LINE buffer
+    /// Result struct for injection operations
+    struct InjectionResult {
+        bool success;           ///< true if injection succeeded
+        BasicState state;       ///< Detected BASIC state at time of injection
+        std::string message;    ///< Human-readable result or error message
+    };
+    
+    /// Inject a command into the BASIC edit buffer (mode-aware dispatcher)
+    /// Does NOT execute the command - just places it in the editor
+    /// Dispatches to injectTo48K or injectTo128K based on detected state
     /// @param memory Pointer to emulator memory instance  
     /// @param command Command string to inject
-    /// @return Description of what was done (for CLI output)
-    static std::string injectCommand(Memory* memory, const std::string& command);
+    /// @param z80SP Optional Z80 stack pointer for accurate state detection
+    /// @return InjectionResult with success flag, detected state, and message
+    static InjectionResult injectCommand(Memory* memory, const std::string& command, uint16_t z80SP = 0);
+    
+    /// Inject a command into BASIC edit buffer AND execute it
+    /// Combines injectCommand + injectEnter for convenience
+    /// Use this when you want immediate execution (like typing RUN + ENTER)
+    /// @param memory Pointer to emulator memory instance  
+    /// @param command Command string to inject and execute
+    /// @param z80SP Optional Z80 stack pointer for accurate state detection
+    /// @return InjectionResult with success flag, detected state, and message
+    static InjectionResult runCommand(Memory* memory, const std::string& command, uint16_t z80SP = 0);
+    
+    /// ROM-specific: Inject command into 48K BASIC E_LINE buffer
+    /// Writes tokenized command to E_LINE, updates K_CUR, WORKSP, CH_ADD
+    /// @param memory Pointer to emulator memory instance
+    /// @param command Command string to inject
+    /// @return InjectionResult (state will be Basic48K on success)
+    static InjectionResult injectTo48K(Memory* memory, const std::string& command);
+    
+    /// ROM-specific: Inject command into 128K BASIC SLEB buffer
+    /// Writes command to Screen Line Edit Buffer at $EC16 in RAM bank 7
+    /// Sets cursor position and "line altered" flag for ENTER handler
+    /// @param memory Pointer to emulator memory instance
+    /// @param command Command string to inject
+    /// @return InjectionResult (state will be Basic128K on success)
+    static InjectionResult injectTo128K(Memory* memory, const std::string& command);
     
     /// Replace BASIC keywords with their token equivalents
     /// Handles multi-word keywords and preserves string literals

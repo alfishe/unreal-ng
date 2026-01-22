@@ -4,7 +4,7 @@
 Create comprehensive test validating WD1793 Write Track command via TR-DOS FORMAT.
 
 ## Approach
-Use [TRDOSTestHelper](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/_helpers/trdostesthelper.h#17-116) to execute `FORMAT "a"` BASIC command and verify disk structure.
+Use [TRDOSTestHelper](core/tests/_helpers/trdostesthelper.h#17-116) to execute `FORMAT "a"` BASIC command and verify disk structure.
 
 ---
 
@@ -72,7 +72,7 @@ TEST_F(WD1793_Integration_Test, Integration_TRDOS_Format_ViaBasicCommand)
 | Action | File |
 |--------|------|
 | NEW | `core/tests/wd1793_integration_test.cpp` |
-| MODIFY | [core/tests/CMakeLists.txt](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/CMakeLists.txt) (add test file) |
+| MODIFY | [core/tests/CMakeLists.txt](core/tests/CMakeLists.txt) (add test file) |
 
 ---
 

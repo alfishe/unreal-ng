@@ -436,61 +436,314 @@ void BasicEncoder::injectText(Memory* memory, const std::string& text)
         injectKeypress(memory, static_cast<uint8_t>(c));
     }
 }
-/// @brief Detect current BASIC state based on ROM page and editor flags
+
+/// @brief Check if TR-DOS system variables have been initialized
 /// 
-/// Detection Logic:
+/// TR-DOS initialization is detected by:
+/// - RAM stub at $5CC2 contains RET opcode ($C9)
+/// - CHANS system variable equals $5D25 (TR-DOS extends channel area)
+///
+/// @param memory Pointer to emulator memory instance
+/// @return true if TR-DOS has been entered at least once this session
+bool BasicEncoder::isTRDOSInitialized(Memory* memory)
+{
+    if (!memory)
+        return false;
+    
+    using namespace TRDOS::ROMSwitch;
+    using namespace SystemVariables48k;
+    
+    // Check for RAM stub containing RET instruction
+    uint8_t stubValue = memory->DirectReadFromZ80Memory(RAM_STUB);
+    if (stubValue != RAM_STUB_OPCODE)
+        return false;
+    
+    // Check CHANS value - TR-DOS extends system variables to $5D25
+    uint16_t chansValue = memory->DirectReadFromZ80Memory(CHANS) |
+                          (memory->DirectReadFromZ80Memory(CHANS + 1) << 8);
+    
+    return (chansValue == CHANS_TRDOS_VALUE);
+}
+
+/// @brief Scan stack for TR-DOS trap return addresses ($3D00-$3DFF)
+/// 
+/// When TR-DOS temporarily calls SOS ROM (for printing, keyboard, etc.),
+/// the stack contains return addresses in the trap range. Finding such
+/// addresses indicates DOS is "logically active" even though SOS ROM is paged.
+///
+/// @param memory Pointer to emulator memory instance
+/// @param z80SP Current Z80 stack pointer
+/// @param maxDepth Maximum stack entries to scan (default 16)
+/// @return true if stack contains DOS return address, false to fallback to HW detection
+bool BasicEncoder::stackContainsDOSReturnAddress(Memory* memory, uint16_t z80SP, int maxDepth)
+{
+    if (!memory)
+        return false;
+    
+    // Stack validation: SP must be in valid RAM range
+    // Stack typically lives in upper RAM ($C000-$FFFF or $8000-$BFFF)
+    // SP < $4000 means stack in ROM area - invalid/garbage
+    if (z80SP < 0x4000)
+        return false;
+    
+    // SP near top of memory with no room for even one entry - invalid
+    if (z80SP >= 0xFFFE)
+        return false;
+    
+    using namespace TRDOS::ROMSwitch;
+    
+    // Garbage detection counters
+    int zeroCount = 0;       // Consecutive $0000 entries
+    int suspiciousCount = 0; // Entries that look like garbage (e.g., $FFFF, repeated patterns)
+    
+    // Scan stack for trap range return addresses
+    for (int i = 0; i < maxDepth; i++)
+    {
+        uint16_t stackAddr = z80SP + (i * 2);
+        
+        // Don't read beyond valid RAM
+        if (stackAddr >= 0xFFFE)
+            break;
+        
+        // Read 16-bit return address from stack (little-endian)
+        uint16_t retAddr = memory->DirectReadFromZ80Memory(stackAddr) |
+                           (memory->DirectReadFromZ80Memory(stackAddr + 1) << 8);
+        
+        // Garbage detection: too many zeros indicates uninitialized memory
+        if (retAddr == 0x0000)
+        {
+            zeroCount++;
+            if (zeroCount >= 4)
+            {
+                // Stack looks uninitialized - don't trust it
+                return false;
+            }
+            continue;
+        }
+        else
+        {
+            zeroCount = 0;  // Reset counter on non-zero value
+        }
+        
+        // Garbage detection: $FFFF is suspicious (uninitialized RAM)
+        if (retAddr == 0xFFFF)
+        {
+            suspiciousCount++;
+            if (suspiciousCount >= 3)
+            {
+                // Too much garbage - don't trust stack
+                return false;
+            }
+            continue;
+        }
+        
+        // Check if return address is in TR-DOS trap range
+        if (retAddr >= TRAP_START && retAddr <= TRAP_END)
+        {
+            return true;  // Found DOS return address on stack
+        }
+        
+        // Continue scanning - DOS return address may be deeper in stack
+        // (e.g., when SOS is calling its own subroutines)
+    }
+    
+    return false;
+}
+
+/// @brief Helper: Check if address looks like a plausible return address
+/// @param addr 16-bit address to check
+/// @return true if address could reasonably be on a stack
+static bool isPlausibleReturnAddress(uint16_t addr)
+{
+    // ROM area (valid code region, excluding high ROM data areas)
+    if (addr < 0x3E00)
+        return true;
+    
+    // TR-DOS trap range
+    if (addr >= 0x3D00 && addr <= 0x3DFF)
+        return true;
+    
+    // RAM trampolines in system variable area ($5C00-$5E00)
+    if (addr >= 0x5C00 && addr < 0x5E00)
+        return true;
+    
+    // RAM program/code area (typical BASIC/code locations)
+    if (addr >= 0x5E00 && addr < 0xFF00)
+        return true;
+    
+    return false;
+}
+
+/// @brief Verify stack contains plausible return addresses (sanity check)
+/// 
+/// Checks that first few stack entries look like valid ROM/RAM addresses
+/// rather than garbage data. Helps avoid false positives when stack is
+/// corrupted or uninitialized.
+///
+/// @param memory Pointer to emulator memory instance
+/// @param z80SP Current Z80 stack pointer
+/// @param checkDepth Number of entries to check (default 4)
+/// @return true if stack appears valid, false if garbage detected
+bool BasicEncoder::isStackSane(Memory* memory, uint16_t z80SP, int checkDepth)
+{
+    if (!memory)
+        return false;
+    
+    // Stack validation: SP must be in valid RAM range
+    if (z80SP < 0x4000 || z80SP >= 0xFFFE)
+        return false;
+    
+    int plausibleCount = 0;
+    int garbageCount = 0;
+    
+    for (int i = 0; i < checkDepth; i++)
+    {
+        uint16_t stackAddr = z80SP + (i * 2);
+        if (stackAddr >= 0xFFFE)
+            break;
+        
+        uint16_t retAddr = memory->DirectReadFromZ80Memory(stackAddr) |
+                           (memory->DirectReadFromZ80Memory(stackAddr + 1) << 8);
+        
+        // Check for obvious garbage patterns
+        if (retAddr == 0x0000 || retAddr == 0xFFFF)
+        {
+            garbageCount++;
+            continue;
+        }
+        
+        // Check if this looks like a reasonable return address
+        if (isPlausibleReturnAddress(retAddr))
+        {
+            plausibleCount++;
+        }
+        else
+        {
+            garbageCount++;
+        }
+    }
+    
+    // Stack is sane if we found at least one plausible address
+    // and garbage doesn't dominate
+    return (plausibleCount > 0) && (plausibleCount >= garbageCount);
+}
+
+/// @brief Check if TR-DOS is logically active (even during temporary SOS calls)
+/// 
+/// Uses three-tier detection algorithm:
+/// - Tier 1: DOS ROM hardware paging state (instant, definitive)
+/// - Tier 2: Stack context analysis (detects SOS calls from DOS)  
+/// - Tier 3: System variable initialization check (prerequisite)
+///
+/// @param memory Pointer to emulator memory instance
+/// @param z80SP Current Z80 stack pointer
+/// @return true if TR-DOS is in control (actively or via SOS call)
+bool BasicEncoder::isTRDOSLogicallyActive(Memory* memory, uint16_t z80SP)
+{
+    if (!memory)
+        return false;
+    
+    // TIER 1: Check hardware ROM paging state
+    // If DOS ROM is paged, TR-DOS is definitely active
+    uint16_t romPage = memory->GetROMPage();
+    
+    // ROM page 2 = TR-DOS ROM (on Pentagon/Scorpion with Beta 128)
+    // Note: This depends on machine configuration
+    // TODO: Add proper Beta 128 paging state detection via port $FF mirror
+    if (romPage == 2)
+    {
+        return true;  // DOS ROM is physically paged in
+    }
+    
+    // TIER 3 (checked before Tier 2): Verify TR-DOS was ever initialized
+    if (!isTRDOSInitialized(memory))
+    {
+        return false;  // TR-DOS was never entered this session
+    }
+    
+    // TIER 2: Stack context analysis
+    // TR-DOS may be temporarily using SOS ROM for I/O (printing, keyboard, etc.)
+    // The stack will contain return addresses in the trap range ($3D00-$3DFF)
+    return stackContainsDOSReturnAddress(memory, z80SP);
+}
+
+/// @brief Detect current BASIC/DOS state based on ROM page, stack, and system variables
+/// 
+/// Detection Logic (Three-Tier):
+/// =============================
+/// 
+/// TIER 1: TR-DOS HARDWARE CHECK
+///   - If DOS ROM paged → TRDOS_Active
+///   - If SOS ROM paged but stack contains $3D00-$3DFF → TRDOS_SOS_Call
+/// 
+/// TIER 2: BASIC ROM PAGE CHECK
+///   - Pages 1, 3 = 48K BASIC ROM → Basic48K
+///   - Pages 0, 2 = 128K Editor/Menu ROM → continue to step 3
+///
+/// TIER 3: 128K EDITOR STATE CHECK ($EC0D in RAM bank 7)
+///   - Bit 1 SET = Menu displayed → Menu128K
+///   - Bit 1 CLEAR = In BASIC editor → Basic128K
+///
+/// Key Discoveries:
 /// ================
-/// 1. ROM PAGE CHECK (from Memory::GetROMPage())
-///    - Pages 1, 3 = 48K BASIC ROM  →  Basic48K state
-///    - Pages 0, 2 = 128K Editor/Menu ROM  →  continue to step 2
+/// - TR-DOS frequently calls SOS ROM for I/O (printing, keyboard)
+/// - During these calls, SOS ROM is paged but DOS is still "in control"
+/// - Stack analysis reveals DOS activity: look for $3D2F return addresses
+/// - RAM stub at $5CC2 contains $C9 (RET) when TR-DOS initialized
 ///
-/// 2. EDITOR_FLAGS CHECK ($EC0D in RAM bank 7)
-///    - Bit 1 SET (value & 0x02) = Menu is currently displayed  →  Menu128K
-///    - Bit 1 CLEAR = In 128K BASIC editor, not menu  →  Basic128K
-///
-/// Key Discovery (2026-01-17):
-/// ===========================
-/// - FLAGS3 ($5B66) bit 0 is NOT reliable for detecting BASIC vs Menu mode
-/// - EDITOR_FLAGS ($EC0D) bit 1 directly indicates if menu is shown
-/// - When in 128K BASIC, FLAGS3 can still be 0x00
-/// - The SLEB buffer at $EC16 is used by 128K BASIC, E_LINE by 48K
-///
-BasicEncoder::BasicState BasicEncoder::detectState(Memory* memory)
+BasicEncoder::BasicState BasicEncoder::detectState(Memory* memory, uint16_t z80SP)
 {
     if (!memory)
         return BasicState::Unknown;
     
-    // PRIMARY CHECK: ROM page
-    // ROM pages 1 and 3 = 48K BASIC ROM
-    // ROM pages 0 and 2 = 128K Editor/Menu ROM
-    // This is THE most reliable indicator across all Spectrum models
+    // =========================================================================
+    // TIER 1: TR-DOS Detection (highest priority)
+    // =========================================================================
+    
     uint16_t romPage = memory->GetROMPage();
     
-    // DEBUG: Log ROM page
-    std::cout << "[DEBUG] detectState: romPage=" << romPage << std::endl;
+    // Check if DOS ROM is physically paged (page 2 on Pentagon/Scorpion)
+    // TODO: Properly detect Beta 128 state via port $FF hardware latch
+    if (romPage == 2)
+    {
+        // DOS ROM is active - TR-DOS is definitely running
+        return BasicState::TRDOS_Active;
+    }
+    
+    // Check if TR-DOS is calling SOS ROM temporarily
+    // This happens during printing, keyboard scanning, etc.
+    // Only trust stack analysis if the stack looks valid
+    if (z80SP != 0 && isTRDOSInitialized(memory) && isStackSane(memory, z80SP))
+    {
+        if (stackContainsDOSReturnAddress(memory, z80SP))
+        {
+            // SOS ROM is paged but DOS is waiting on stack
+            return BasicState::TRDOS_SOS_Call;
+        }
+    }
+    
+    // =========================================================================
+    // TIER 2: BASIC ROM Detection
+    // =========================================================================
     
     if (romPage == 1 || romPage == 3)
     {
-        // 48K BASIC ROM is active
-        std::cout << "[DEBUG] detectState: returning Basic48K (ROM pages 1 or 3)" << std::endl;
+        // 48K BASIC ROM is active (and not TR-DOS calling it)
         return BasicState::Basic48K;
     }
     
-    // ROM 0 or 2 → 128K Editor/Menu ROM active
-    // Now check RAM bank 7 to distinguish menu vs BASIC editor
-    // CRITICAL: Must verify bank 7 is actually paged at $C000 before reading EC0D
+    // =========================================================================
+    // TIER 3: 128K Editor/Menu Detection (ROM pages 0, 2)
+    // =========================================================================
     
     // Check which RAM bank is paged at $C000-$FFFF (BANK_M bits 0-2)
     uint8_t bankM = memory->DirectReadFromZ80Memory(0x5B5C);
     uint8_t upperBank = bankM & 0x07;  // Bits 0-2 = RAM bank at $C000
     
-    std::cout << "[DEBUG] detectState: bankM=" << (int)bankM << " upperBank=" << (int)upperBank << std::endl;
-    
     if (upperBank != 7)
     {
         // Bank 7 not paged, can't read editor variables
         // Must be in menu or early boot - assume menu
-        std::cout << "[DEBUG] detectState: returning Menu128K (bank7 not paged)" << std::endl;
         return BasicState::Menu128K;
     }
     
@@ -498,7 +751,6 @@ BasicEncoder::BasicState BasicEncoder::detectState(Memory* memory)
     uint8_t* ramBank7 = memory->RAMPageAddress(7);
     if (!ramBank7)
     {
-        std::cout << "[DEBUG] detectState: returning Unknown (ramBank7 null)" << std::endl;
         return BasicState::Unknown;
     }
     
@@ -506,16 +758,12 @@ BasicEncoder::BasicState BasicEncoder::detectState(Memory* memory)
     constexpr uint16_t EDITOR_FLAGS_OFFSET = Editor128K::EDITOR_FLAGS - 0xC000;  // $2C0D
     uint8_t editorFlags = ramBank7[EDITOR_FLAGS_OFFSET];
     
-    std::cout << "[DEBUG] detectState: editorFlags=" << (int)editorFlags << " bit1=" << ((editorFlags & 0x02) ? 1 : 0) << std::endl;
-    
     // Bit 1: 1 = Menu displayed, 0 = In BASIC editor
     if (editorFlags & 0x02)
     {
-        std::cout << "[DEBUG] detectState: returning Menu128K (bit1 set)" << std::endl;
         return BasicState::Menu128K;
     }
     
-    std::cout << "[DEBUG] detectState: returning Basic128K" << std::endl;
     return BasicState::Basic128K;
 }
 
@@ -540,114 +788,188 @@ void BasicEncoder::navigateToBasic128K(Memory* memory)
     memory->DirectWriteToZ80Memory(FLAGS3, flags3 | 0x01);
 }
 
-std::string BasicEncoder::injectCommand(Memory* memory, const std::string& command)
+// ============================================================================
+// ROM-Specific Injection Functions
+// ============================================================================
+
+BasicEncoder::InjectionResult BasicEncoder::injectTo48K(Memory* memory, const std::string& command)
 {
+    InjectionResult result;
+    result.success = false;
+    result.state = BasicState::Basic48K;
+    
     if (!memory)
-        return "Error: Memory not available";
-    
-    BasicState state = detectState(memory);
-    std::ostringstream ss;
-    
-    if (state == BasicState::Basic128K)
     {
-        // 128K BASIC: Write to Screen Line Edit Buffer (SLEB) in RAM bank 7
-        // CRITICAL: $EC00-$FFFF is in RAM bank 7, NOT accessible via Z80 address space
-        // unless bank 7 is paged at $C000-$FFFF. We must write directly to RAM page.
-        using namespace Editor128K;
-        
-        // Get direct pointer to RAM bank 7
-        uint8_t* ramBank7 = memory->RAMPageAddress(7);
-        if (!ramBank7)
-        {
-            ss << "Error: Cannot access RAM bank 7";
-            return ss.str();
-        }
-        
-        // SLEB at $EC16 = offset $2C16 in RAM bank 7 (since bank 7 maps to $C000-$FFFF)
-        // Offset = $EC16 - $C000 = $2C16
-        constexpr uint16_t SLEB_OFFSET = SLEB - 0xC000;  // $EC16 - $C000 = $2C16
-        
-        // Write command text (max 32 chars per row)
-        size_t len = std::min(command.size(), static_cast<size_t>(32));
-        for (size_t i = 0; i < len; i++)
-        {
-            ramBank7[SLEB_OFFSET + i] = static_cast<uint8_t>(command[i]);
-        }
-        // Pad remaining chars with nulls
-        for (size_t i = len; i < 32; i++)
-        {
-            ramBank7[SLEB_OFFSET + i] = 0x00;
-        }
-        
-        // Set row flags (3 bytes after the 32 characters)
-        // Bit 0=first row, Bit 3=last row of logical line
-        ramBank7[SLEB_OFFSET + 32] = 0x09;
-        ramBank7[SLEB_OFFSET + 33] = 0x00;  // Line number low
-        ramBank7[SLEB_OFFSET + 34] = 0x00;  // Line number high
-        
-        // Set cursor position at $F6EE-$F6EF (required for ENTER handler)
-        constexpr uint16_t CURSOR_ROW_OFFSET = 0xF6EE - 0xC000;    // $36EE
-        constexpr uint16_t CURSOR_COL_OFFSET = 0xF6EF - 0xC000;    // $36EF
-        ramBank7[CURSOR_ROW_OFFSET] = 0x00;                         // Row 0
-        ramBank7[CURSOR_COL_OFFSET] = static_cast<uint8_t>(len);   // Column = after text
-        
-        // CRITICAL: Set "line altered" flag (bit 3 of EDITOR_FLAGS at $EC0D)
-        // This tells ROM to tokenize and process the line when ENTER is pressed
-        // Use OR to preserve other flags, only set bit 3
-        constexpr uint16_t EDITOR_FLAGS_OFFSET = EDITOR_FLAGS - 0xC000;  // $2C0D
-        ramBank7[EDITOR_FLAGS_OFFSET] |= 0x08;  // Set bit 3 = line altered
-        
-        // NOTE: Do NOT set cursor position, edit count, or other variables
-        // The ROM maintains these itself. Setting them causes conflicts and reboots.
-        
-        ss << "[128K BASIC] Injected: " << command;
-        ss << "\nPress ENTER to execute.";
-    }
-    else if (state == BasicState::Basic48K)
-    {
-        // 48K BASIC: All-at-once buffer injection
-        // Based on ROM analysis: populate E-LINE, set WORKSP, CH_ADD, K_CUR
-        using namespace SystemVariables48k;
-        
-        // Tokenize the command (keywords → single byte tokens)
-        auto tokenized = BasicEncoder::tokenizeImmediate(command);
-        
-        uint16_t eLineAddr = memory->DirectReadFromZ80Memory(E_LINE) |
-                             (memory->DirectReadFromZ80Memory(E_LINE + 1) << 8);
-        
-        // Write tokenized command to E_LINE buffer
-        for (size_t i = 0; i < tokenized.size(); i++)
-        {
-            memory->DirectWriteToZ80Memory(eLineAddr + i, tokenized[i]);
-        }
-        
-        // Terminate with ENTER (0x0D)
-        memory->DirectWriteToZ80Memory(eLineAddr + tokenized.size(), 0x0D);
-        // End marker (0x80 tells ROM this is end of edit area)
-        memory->DirectWriteToZ80Memory(eLineAddr + tokenized.size() + 1, 0x80);
-        
-        // CRITICAL: Set WORKSP to point after the E-LINE buffer content
-        // WORKSP (23649) = E_LINE + content_length + 2 (after 0x0D and 0x80)
-        // The ROM uses this to know where the workspace begins
-        uint16_t workspVal = eLineAddr + tokenized.size() + 2;
-        memory->DirectWriteToZ80Memory(WORKSP, workspVal & 0xFF);
-        memory->DirectWriteToZ80Memory(WORKSP + 1, (workspVal >> 8) & 0xFF);
-        
-        // Set K_CUR to cursor position (after command, before 0x0D)
-        uint16_t kCurVal = eLineAddr + tokenized.size();
-        memory->DirectWriteToZ80Memory(K_CUR, kCurVal & 0xFF);
-        memory->DirectWriteToZ80Memory(K_CUR + 1, (kCurVal >> 8) & 0xFF);
-        
-        // Set CH_ADD to E_LINE for LINE-SCAN to parse from start 
-        memory->DirectWriteToZ80Memory(CH_ADD, eLineAddr & 0xFF);
-        memory->DirectWriteToZ80Memory(CH_ADD + 1, (eLineAddr >> 8) & 0xFF);
-        
-        ss << "[48K BASIC] Injected: " << command;
-    }
-    else
-    {
-        ss << "Error: Not in BASIC editor. Please enter 48K or 128K BASIC first.";
+        result.message = "Error: Memory not available";
+        return result;
     }
     
-    return ss.str();
+    using namespace SystemVariables48k;
+    
+    // Tokenize the command (keywords -> single byte tokens)
+    auto tokenized = BasicEncoder::tokenizeImmediate(command);
+    
+    // Read E_LINE address from system variables
+    uint16_t eLineAddr = memory->DirectReadFromZ80Memory(E_LINE) |
+                         (memory->DirectReadFromZ80Memory(E_LINE + 1) << 8);
+    
+    if (eLineAddr < 0x5B00 || eLineAddr > 0xFF00)
+    {
+        result.message = "Error: Invalid E_LINE address";
+        return result;
+    }
+    
+    // Write tokenized command to E_LINE buffer
+    for (size_t i = 0; i < tokenized.size(); i++)
+    {
+        memory->DirectWriteToZ80Memory(eLineAddr + i, tokenized[i]);
+    }
+    
+    // Terminate with ENTER (0x0D)
+    memory->DirectWriteToZ80Memory(eLineAddr + tokenized.size(), 0x0D);
+    // End marker (0x80 tells ROM this is end of edit area)
+    memory->DirectWriteToZ80Memory(eLineAddr + tokenized.size() + 1, 0x80);
+    
+    // Set WORKSP to point after the E-LINE buffer content
+    uint16_t workspVal = eLineAddr + tokenized.size() + 2;
+    memory->DirectWriteToZ80Memory(WORKSP, workspVal & 0xFF);
+    memory->DirectWriteToZ80Memory(WORKSP + 1, (workspVal >> 8) & 0xFF);
+    
+    // Set K_CUR to cursor position (after command, before 0x0D)
+    uint16_t kCurVal = eLineAddr + tokenized.size();
+    memory->DirectWriteToZ80Memory(K_CUR, kCurVal & 0xFF);
+    memory->DirectWriteToZ80Memory(K_CUR + 1, (kCurVal >> 8) & 0xFF);
+    
+    // Set CH_ADD to E_LINE for LINE-SCAN to parse from start
+    memory->DirectWriteToZ80Memory(CH_ADD, eLineAddr & 0xFF);
+    memory->DirectWriteToZ80Memory(CH_ADD + 1, (eLineAddr >> 8) & 0xFF);
+    
+    result.success = true;
+    result.message = "[48K BASIC] Injected: " + command;
+    
+    return result;
+}
+
+BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Memory* memory, const std::string& command)
+{
+    InjectionResult result;
+    result.success = false;
+    result.state = BasicState::Basic128K;
+    
+    if (!memory)
+    {
+        result.message = "Error: Memory not available";
+        return result;
+    }
+    
+    using namespace Editor128K;
+    
+    // Get direct pointer to RAM bank 7 (contains editor variables)
+    uint8_t* ramBank7 = memory->RAMPageAddress(7);
+    if (!ramBank7)
+    {
+        result.message = "Error: Cannot access RAM bank 7";
+        return result;
+    }
+    
+    // SLEB at $EC16 = offset $2C16 in RAM bank 7 (since bank 7 maps to $C000-$FFFF)
+    constexpr uint16_t SLEB_OFFSET = SLEB - 0xC000;
+    
+    // Write command text (max 32 chars per row)
+    size_t len = std::min(command.size(), static_cast<size_t>(32));
+    for (size_t i = 0; i < len; i++)
+    {
+        ramBank7[SLEB_OFFSET + i] = static_cast<uint8_t>(command[i]);
+    }
+    // Pad remaining chars with nulls
+    for (size_t i = len; i < 32; i++)
+    {
+        ramBank7[SLEB_OFFSET + i] = 0x00;
+    }
+    
+    // Set row flags (3 bytes after the 32 characters)
+    // Bit 0=first row, Bit 3=last row of logical line
+    ramBank7[SLEB_OFFSET + 32] = 0x09;  // First + Last row
+    ramBank7[SLEB_OFFSET + 33] = 0x00;  // Line number low
+    ramBank7[SLEB_OFFSET + 34] = 0x00;  // Line number high
+    
+    // Set cursor position at $F6EE-$F6EF (required for ENTER handler)
+    constexpr uint16_t CURSOR_ROW_OFFSET = 0xF6EE - 0xC000;
+    constexpr uint16_t CURSOR_COL_OFFSET = 0xF6EF - 0xC000;
+    ramBank7[CURSOR_ROW_OFFSET] = 0x00;                        // Row 0
+    ramBank7[CURSOR_COL_OFFSET] = static_cast<uint8_t>(len);   // Column = after text
+    
+    // Set "line altered" flag (bit 3 of EDITOR_FLAGS at $EC0D)
+    // This tells ROM to tokenize and process the line when ENTER is pressed
+    constexpr uint16_t EDITOR_FLAGS_OFFSET = EDITOR_FLAGS - 0xC000;
+    ramBank7[EDITOR_FLAGS_OFFSET] |= 0x08;  // Set bit 3 = line altered
+    
+    result.success = true;
+    result.message = "[128K BASIC] Injected: " + command;
+    
+    return result;
+}
+
+// ============================================================================
+// Dispatcher Functions
+// ============================================================================
+
+BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const std::string& command, uint16_t z80SP)
+{
+    InjectionResult result;
+    result.success = false;
+    result.state = BasicState::Unknown;
+    
+    if (!memory)
+    {
+        result.message = "Error: Memory not available";
+        return result;
+    }
+    
+    // Detect current BASIC state
+    result.state = detectState(memory, z80SP);
+    
+    // Dispatch to ROM-specific injection function
+    switch (result.state)
+    {
+        case BasicState::Basic48K:
+            return injectTo48K(memory, command);
+            
+        case BasicState::Basic128K:
+            return injectTo128K(memory, command);
+            
+        case BasicState::TRDOS_Active:
+        case BasicState::TRDOS_SOS_Call:
+            result.message = "Error: TR-DOS is active. Please exit to BASIC first.";
+            break;
+            
+        case BasicState::Menu128K:
+            result.message = "Error: On 128K menu. Please enter BASIC first.";
+            break;
+            
+        default:
+            result.message = "Error: Not in BASIC editor. State: " + std::to_string(static_cast<int>(result.state));
+            break;
+    }
+    
+    return result;
+}
+
+BasicEncoder::InjectionResult BasicEncoder::runCommand(Memory* memory, const std::string& command, uint16_t z80SP)
+{
+    // First inject the command
+    InjectionResult result = injectCommand(memory, command, z80SP);
+    
+    if (!result.success)
+    {
+        return result;  // Return error from injection
+    }
+    
+    // Trigger execution via ENTER keypress
+    injectEnter(memory);
+    
+    // Update message to indicate execution was triggered
+    result.message += "\nExecuting...";
+    
+    return result;
 }

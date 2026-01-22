@@ -19,6 +19,7 @@ set(SOURCES
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
+    src/commands/cli-processor-capture.cpp
 )
 
 # Create the library

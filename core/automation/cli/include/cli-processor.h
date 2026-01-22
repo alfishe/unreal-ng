@@ -207,6 +207,13 @@ private:
                             const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
 
+    // Capture command handlers (OCR, screen capture, ROM text)
+    void HandleCapture(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowCaptureHelp(const ClientSession& session);
+    void HandleCaptureOCR(const ClientSession& session, std::shared_ptr<Emulator> emulator);
+    void HandleCaptureScreen(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                              const std::vector<std::string>& args);
+
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;
 

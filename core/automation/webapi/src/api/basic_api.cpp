@@ -83,24 +83,24 @@ void EmulatorAPI::basicRun(const HttpRequestPtr& req,
         return;
     }
     
-    // Inject command using BasicEncoder (handles 128K SLEB vs 48K E_LINE internally)
-    std::string result = BasicEncoder::injectCommand(memory, command);
+    // Use new runCommand API (injects + executes via ENTER)
+    auto result = BasicEncoder::runCommand(memory, command);
     
-    // Trigger execution by simulating ENTER key
-    BasicEncoder::injectEnter(memory);
-    
-    ret["success"] = true;
+    ret["success"] = result.success;
     ret["command"] = command;
-    ret["injection_result"] = result;
-    ret["message"] = "Command injected and executed";
+    ret["message"] = result.message;
     
     // Include state info
-    switch (state) {
+    switch (result.state) {
         case BasicEncoder::BasicState::Basic48K:
             ret["basic_mode"] = "48K";
             break;
         case BasicEncoder::BasicState::Basic128K:
             ret["basic_mode"] = "128K";
+            break;
+        case BasicEncoder::BasicState::TRDOS_Active:
+        case BasicEncoder::BasicState::TRDOS_SOS_Call:
+            ret["basic_mode"] = "trdos";
             break;
         default:
             ret["basic_mode"] = "unknown";
@@ -108,6 +108,7 @@ void EmulatorAPI::basicRun(const HttpRequestPtr& req,
     }
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
+    resp->setStatusCode(result.success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
 }
@@ -138,6 +139,36 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
         Json::Value error;
         error["error"] = "Not Available";
         error["message"] = "Memory subsystem not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Check state before injection
+    auto state = BasicEncoder::detectState(memory);
+    if (state == BasicEncoder::BasicState::TRDOS_Active || 
+        state == BasicEncoder::BasicState::TRDOS_SOS_Call) {
+        Json::Value error;
+        error["success"] = false;
+        error["error"] = "TR-DOS Active";
+        error["message"] = "TR-DOS is active. Please exit to BASIC first.";
+        error["state"] = (state == BasicEncoder::BasicState::TRDOS_Active) ? "trdos_active" : "trdos_sos_call";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    if (state == BasicEncoder::BasicState::Menu128K) {
+        Json::Value error;
+        error["success"] = false;
+        error["error"] = "Menu Active";
+        error["message"] = "On 128K menu. Please enter BASIC first.";
+        error["state"] = "menu128k";
         
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);

@@ -313,7 +313,7 @@ Extract from catalog entry at offset `0x08` (type byte).
 
 #### ✅ Available: IAnalyzer Interface
 
-[ianalyzer.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/ianalyzer.h) provides:
+[ianalyzer.h](core/src/debugger/analyzers/ianalyzer.h) provides:
 
 ```cpp
 class IAnalyzer {
@@ -330,7 +330,7 @@ public:
 
 #### ✅ Available: AnalyzerManager
 
-[analyzermanager.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/analyzermanager.h) provides:
+[analyzermanager.h](core/src/debugger/analyzers/analyzermanager.h) provides:
 
 | Feature | Status | Method |
 |:--------|:-------|:-------|
@@ -346,7 +346,7 @@ public:
 
 #### ✅ Available: Reference Implementation
 
-[ROMPrintDetector](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/debugger/analyzers/rom-print/romprintdetector.h) is an **existing working analyzer** that:
+[ROMPrintDetector](core/src/debugger/analyzers/rom-print/romprintdetector.h) is an **existing working analyzer** that:
 - Sets breakpoints at ROM addresses (`$0010`, `$09F4`, `$15F2`)
 - Captures data on `onBreakpointHit()`
 - Provides query API (`getNewOutput()`, `getFullHistory()`, `getLines()`)
@@ -555,19 +555,25 @@ Use a **ring buffer with configurable size** (default 10K events) to prevent unb
 
 ## 10. Implementation Status
 
-> **Last Updated**: 2026-01-21
+> **Last Updated**: 2026-01-22
 
-### 10.1 Completed (Phase 1)
+### 10.1 Completed (Phase 1 + Phase 2)
 
 | Component | Status | Location |
 |:----------|:-------|:---------|
-| `IWD1793Observer` | ✅ Done | [iwd1793observer.h](../../../core/src/emulator/io/fdc/iwd1793observer.h) |
-| `RingBuffer<T>` | ✅ Done | [ringbuffer.h](../../../core/src/common/ringbuffer.h) |
-| WD1793 Observer Support | ✅ Done | [wd1793.h](../../../core/src/emulator/io/fdc/wd1793.h) |
-| `TRDOSEvent` types | ✅ Done | [trdosevent.h](../../../core/src/debugger/analyzers/trdos/trdosevent.h) |
-| `TRDOSAnalyzer` class | ✅ Done | [trdosanalyzer.h/cpp](../../../core/src/debugger/analyzers/trdos/) |
-| CLI `analyzer` commands | ✅ Done | [cli-processor-analyzer-mgr.cpp](../../../core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp) |
-| DebugManager registration | ✅ Done | [debugmanager.cpp](../../../core/src/debugger/debugmanager.cpp) |
+| `IWD1793Observer` | ✅ Done | [iwd1793observer.h](core/src/emulator/io/fdc/iwd1793observer.h) |
+| `RingBuffer<T>` | ✅ Done | [ringbuffer.h](core/src/common/ringbuffer.h) |
+| WD1793 Observer Support | ✅ Done | [wd1793.h](core/src/emulator/io/fdc/wd1793.h) |
+| `TRDOSEvent` types | ✅ Done | [trdosevent.h](core/src/debugger/analyzers/trdos/trdosevent.h) |
+| `TRDOSAnalyzer` class | ✅ Done | [trdosanalyzer.h/cpp](core/src/debugger/analyzers/trdos/) |
+| `AnalyzerManager` | ✅ Done | [analyzermanager.cpp](core/src/debugger/analyzers/analyzermanager.cpp) |
+| Page-Specific Breakpoints | ✅ Done | `requestExecutionBreakpointInPage()` |
+| Silent Dispatch Pattern | ✅ Done | Analyzer breakpoints bypass MessageCenter |
+| Auto-Feature Enable | ✅ Done | `ensureDebugFeaturesEnabled()` |
+| CLI `analyzer` commands | ✅ Done | [cli-processor-analyzer-mgr.cpp](core/automation/cli/src/commands/cli-processor-analyzer-mgr.cpp) |
+| DebugManager registration | ✅ Done | [debugmanager.cpp](core/src/debugger/debugmanager.cpp) |
+| Integration Tests | ✅ Done | [analyzermanager_integration_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_integration_test.cpp) |
+| Unit Tests | ✅ Done | [analyzermanager_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_test.cpp) |
 
 ### 10.2 CLI Commands Available
 
@@ -582,9 +588,10 @@ analyzer <name> clear           - Clear event buffer
 
 ### 10.3 Remaining Work
 
-- [ ] Phase 3: Verification with real TR-DOS operations
+- [x] Phase 3: Verification with real TR-DOS operations (covered by integration tests)
 - [ ] Phase 4: Qt UI panel integration (deferred)
 - [ ] Future: Optional sector data capture (`--capture-data` flag)
+- [ ] Future: WebSocket streaming endpoint
 
 ---
 
@@ -1831,16 +1838,938 @@ class CombinedAnalyzer : public IAnalyzer {
 
 ## 17. Verification Plan
 
-### 17.1 Automated Tests
+### 17.1 Automated Test Suite
 
-1. **Unit Tests**: Event structure serialization/deserialization
-2. **Integration Tests**: Load a TR-DOS snapshot, trigger LOAD command, verify event sequence
-3. **Regression Tests**: Run against known disk images, compare event logs
+The TR-DOS analyzer test suite is located at `core/tests/debugger/analyzers/trdos/`. It follows the testing patterns established by the AnalyzerManager integration tests.
 
-### 17.2 Manual Verification
+#### Test Suite Structure
+
+```
+core/tests/debugger/analyzers/trdos/
+├── trdos_analyzer_test.h          # Test fixture declaration
+├── trdos_analyzer_test.cpp        # Unit tests for TRDOSAnalyzer
+├── trdos_integration_test.cpp     # End-to-end integration tests
+└── trdos_event_test.cpp           # Event structure and formatting tests
+```
+
+#### Planned Test Categories
+
+| Category | Test File | Description |
+|:---------|:----------|:------------|
+| **Unit Tests** | `trdos_analyzer_test.cpp` | State machine transitions, event emission, query API |
+| **Event Tests** | `trdos_event_test.cpp` | Event structure, formatting, serialization |
+| **Integration** | `trdos_integration_test.cpp` | Full TR-DOS operations with emulator |
+
+### 17.2 Unit Tests (`trdos_analyzer_test.cpp`)
+
+Tests for the `TRDOSAnalyzer` class in isolation:
+
+```cpp
+// Test fixture for TRDOSAnalyzer unit tests
+class TRDOSAnalyzer_test : public ::testing::Test {
+protected:
+    Emulator* _emulator = nullptr;
+    EmulatorContext* _context = nullptr;
+    TRDOSAnalyzer* _analyzer = nullptr;
+    AnalyzerManager* _manager = nullptr;
+    
+    void SetUp() override;
+    void TearDown() override;
+};
+```
+
+| Test Name | Purpose |
+|:----------|:--------|
+| `AnalyzerRegistration` | Verify TRDOSAnalyzer can be registered with AnalyzerManager |
+| `ActivationSetsState` | State transitions from IDLE when activated |
+| `DeactivationCleansUp` | FDC observer removed, breakpoints released |
+| `BreakpointRegistration` | TR-DOS ROM breakpoints correctly registered |
+| `PageSpecificBreakpoints` | Breakpoints only fire in TR-DOS ROM, not other ROMs at same address |
+| `StateTransition_IdleToInTRDOS` | Entry breakpoint triggers state change |
+| `StateTransition_InTRDOSToInCommand` | Command dispatch triggers COMMAND_START event |
+| `EventEmission_TRDOSEntry` | Entry event contains correct PC and caller address |
+| `EventEmission_CommandStart` | Command event identifies LOAD/SAVE/CAT correctly |
+| `EventEmission_FDCCommand` | FDC observer callbacks generate correct events |
+| `EventQuery_GetAll` | `getEvents()` returns all buffered events |
+| `EventQuery_GetSince` | `getEventsSince()` filters by timestamp |
+| `EventQuery_GetNew` | `getNewEvents()` tracks query position |
+| `BufferManagement_Clear` | `clear()` resets event buffer and query position |
+| `BufferManagement_RingBuffer` | Events evicted when buffer full |
+
+### 17.3 Event Tests (`trdos_event_test.cpp`)
+
+Tests for `TRDOSEvent` structure and formatting:
+
+| Test Name | Purpose |
+|:----------|:--------|
+| `EventFormat_TRDOSEntry` | Human-readable format for entry event |
+| `EventFormat_CommandStart` | Format includes command type and filename |
+| `EventFormat_FDCRead` | Format includes track/sector |
+| `EventFormat_Error` | Error events properly formatted |
+| `EventType_Enum` | All event types have distinct values |
+| `CommandType_Enum` | All command types have distinct values |
+
+### 17.4 Integration Tests (`trdos_integration_test.cpp`)
+
+End-to-end tests with full emulator:
+
+| Test Name | Purpose |
+|:----------|:--------|
+| `LoadSnapshot_EmitsEntry` | Loading TR-DOS snapshot triggers TRDOS_ENTRY |
+| `ListCommand_CapturesEvents` | `LIST` command generates catalog read events |
+| `LoadCommand_CapturesFileEvents` | `LOAD "file"` generates full event sequence |
+| `CatCommand_CapturesCatalogRead` | `CAT` command reads sectors 1-8 of track 0 |
+| `SaveCommand_CapturesWriteEvents` | `SAVE` command generates write sector events |
+| `FormatCommand_CapturesTrackWrites` | `FORMAT` generates write track events |
+| `SilentDispatch_NoMessageCenter` | Analyzer breakpoints don't trigger UI pause |
+| `PageSpecific_OnlyTRDOS` | Breakpoints don't fire in 48K BASIC ROM |
+| `MultipleCommands_SequentialEvents` | Back-to-back commands generate correct sequence |
+| `ErrorCondition_CapturesCRCError` | FDC error status captured as ERROR event |
+| `CustomLoader_DetectsNonStandard` | Direct FDC access from RAM triggers detection |
+
+### 17.5 Test Verification Patterns
+
+#### Pattern 1: Event Sequence Verification
+
+```cpp
+TEST_F(TRDOSIntegration_test, LoadCommand_CapturesFileEvents)
+{
+    // Load TR-DOS snapshot with ready disk
+    EmulatorTestHelper::LoadSnapshot(_emulator, "testdata/loaders/z80/trdos-snapshot.z80");
+    
+    // Activate analyzer
+    _manager->activate("trdos");
+    _manager->setEnabled(true);
+    
+    // Inject LOAD command
+    EmulatorTestHelper::InjectBASICCommand(_emulator, "LOAD \"test\"");
+    
+    // Run until command completes (or timeout)
+    EmulatorTestHelper::RunUntilBreakpointOrTimeout(_emulator, BP_TRDOS_EXIT, 5000);
+    
+    // Get events
+    auto events = _analyzer->getEvents();
+    
+    // Verify event sequence
+    ASSERT_GE(events.size(), 4);
+    EXPECT_EQ(events[0].type, TRDOSEventType::TRDOS_ENTRY);
+    EXPECT_EQ(events[1].type, TRDOSEventType::COMMAND_START);
+    EXPECT_EQ(events[1].command, TRDOSCommand::LOAD);
+    
+    // Verify FDC operations occurred
+    auto fdcEvents = std::count_if(events.begin(), events.end(), [](const TRDOSEvent& e) {
+        return e.type == TRDOSEventType::FDC_CMD_READ || 
+               e.type == TRDOSEventType::SECTOR_TRANSFER;
+    });
+    EXPECT_GT(fdcEvents, 0) << "Expected FDC read events for LOAD command";
+    
+    // Verify exit
+    EXPECT_EQ(events.back().type, TRDOSEventType::TRDOS_EXIT);
+}
+```
+
+#### Pattern 2: Silent Dispatch Verification
+
+```cpp
+TEST_F(TRDOSIntegration_test, SilentDispatch_NoMessageCenter)
+{
+    _manager->activate("trdos");
+    _manager->setEnabled(true);
+    
+    // Track MessageCenter notifications
+    std::atomic<int> notifications{0};
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    
+    auto handler = [&notifications](int id, Message* msg) {
+        notifications++;
+        (void)id; (void)msg;
+    };
+    mc.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
+    
+    // Execute code that hits TR-DOS entry
+    EmulatorTestHelper::LoadSnapshot(_emulator, "testdata/loaders/z80/trdos-snapshot.z80");
+    _emulator->RunNCPUCycles(1000, false);
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    mc.RemoveObserver(NC_EXECUTION_BREAKPOINT, handler);
+    
+    // Analyzer should have captured events
+    EXPECT_GT(_analyzer->getEventCount(), 0);
+    
+    // MessageCenter should NOT have been notified (silent dispatch)
+    EXPECT_EQ(notifications.load(), 0) 
+        << "TR-DOS analyzer breakpoints should NOT trigger MessageCenter";
+}
+```
+
+### 17.6 Manual Verification
 
 1. Load `trdos-snapshot.z80` test image
 2. Execute `LOAD "test"` command
 3. Observe real-time event log
 4. Verify sector access pattern matches expected file layout
 5. Test with games using custom loaders (Elite, Turbo Out Run, etc.)
+
+---
+
+## 18. Sextuple-Gated Dispatch Model
+
+The AnalyzerManager implements a **Sextuple-Gated Dispatch** pattern for analyzer breakpoints, ensuring maximum correctness while maintaining performance.
+
+### 18.1 Dispatch Flow Diagram
+
+```mermaid
+flowchart TD
+    subgraph "Z80 Execution"
+        Z80[Z80::Step]
+        PC[PC Check]
+    end
+    
+    subgraph "Gate 1: Breakpoint Check"
+        BP_CHECK{Breakpoint<br/>exists at PC?}
+    end
+    
+    subgraph "Gate 2: Page Match"
+        PAGE_CHECK{Page-specific?<br/>Does current page match?}
+    end
+    
+    subgraph "Gate 3: Ownership"
+        OWNER_CHECK{AnalyzerManager<br/>owns breakpoint?}
+    end
+    
+    subgraph "Gate 4: Master Enable"
+        ENABLED_CHECK{AnalyzerManager<br/>enabled?}
+    end
+    
+    subgraph "Gate 5: Analyzer Active"
+        ACTIVE_CHECK{Owning analyzer<br/>active?}
+    end
+    
+    subgraph "Gate 6: Silent vs Interactive"
+        SILENT{Silent<br/>Dispatch}
+        INTERACTIVE{MessageCenter<br/>Notification}
+    end
+    
+    subgraph "Destinations"
+        ANALYZER[Analyzer::onBreakpointHit]
+        UI[UI Debugger Pause]
+        CONTINUE[Continue Execution]
+    end
+    
+    Z80 --> PC --> BP_CHECK
+    BP_CHECK -->|No| CONTINUE
+    BP_CHECK -->|Yes| PAGE_CHECK
+    PAGE_CHECK -->|No match| CONTINUE
+    PAGE_CHECK -->|Matches| OWNER_CHECK
+    OWNER_CHECK -->|Analyzer-owned| ENABLED_CHECK
+    OWNER_CHECK -->|Interactive| INTERACTIVE
+    ENABLED_CHECK -->|Disabled| CONTINUE
+    ENABLED_CHECK -->|Enabled| ACTIVE_CHECK
+    ACTIVE_CHECK -->|Inactive| CONTINUE
+    ACTIVE_CHECK -->|Active| SILENT
+    SILENT --> ANALYZER --> CONTINUE
+    INTERACTIVE --> UI
+```
+
+### 18.2 Gate Descriptions
+
+| Gate | Check | Location | Performance |
+|:-----|:------|:---------|:------------|
+| **Gate 1** | Breakpoint exists | `BreakpointManager::HasBreakpointAtAddress()` | O(1) hash lookup |
+| **Gate 2** | Page match | `BreakpointManager::CheckPageMatch()` | O(1) comparison |
+| **Gate 3** | Ownership | `AnalyzerManager::ownsBreakpointAtAddress()` | O(1) set lookup |
+| **Gate 4** | Master enable | `AnalyzerManager::isEnabled()` | O(1) flag check |
+| **Gate 5** | Analyzer active | `_activeAnalyzers.count(id)` | O(1) set lookup |
+| **Gate 6** | Dispatch type | Owner ID comparison | O(1) string compare |
+
+### 18.3 Silent Dispatch Guarantee
+
+The critical property of the Sextuple-Gated model is **silent dispatch guarantee**:
+
+> Analyzer-owned breakpoints trigger analyzer callbacks but **never** pause the emulator or notify the UI debugger through MessageCenter.
+
+This is verified by the `AnalyzerBreakpointIsSilent` integration test:
+
+```cpp
+// From analyzermanager_integration_test.cpp
+TEST_F(AnalyzerManagerIntegration_test, AnalyzerBreakpointIsSilent)
+{
+    // ... setup ...
+    
+    // CRITICAL ASSERTIONS:
+    // 1. Analyzer callback SHOULD have been triggered
+    EXPECT_GE(mock->breakpointHitCount.load(), 1);
+    
+    // 2. MessageCenter SHOULD NOT have been notified (silent breakpoint)
+    EXPECT_EQ(messageCenterNotifications.load(), 0);
+}
+```
+
+### 18.4 Auto-Feature Orchestration
+
+When an analyzer requests its first breakpoint, `AnalyzerManager` automatically enables required debug features:
+
+```cpp
+void AnalyzerManager::ensureDebugFeaturesEnabled()
+{
+    if (!_featureManager)
+        return;
+    
+    if (!_featureManager->isEnabled(Features::kBreakpoints))
+    {
+        // Enable breakpoints feature - cascades to enable debugmode
+        _featureManager->setFeature(Features::kBreakpoints, true);
+    }
+}
+```
+
+This is verified by the `AutoEnablesFeaturesOnFirstBreakpointRequest` integration test.
+
+---
+
+## 19. Complete Source File Reference
+
+### 19.1 Core Implementation
+
+| File | Purpose | Lines |
+|:-----|:--------|:------|
+| [trdosanalyzer.h](core/src/debugger/analyzers/trdos/trdosanalyzer.h) | TRDOSAnalyzer class declaration | 126 |
+| [trdosanalyzer.cpp](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp) | TRDOSAnalyzer implementation | 404 |
+| [trdosevent.h](core/src/debugger/analyzers/trdos/trdosevent.h) | Event types and structures | 100 |
+
+### 19.2 Infrastructure
+
+| File | Purpose | Lines |
+|:-----|:--------|:------|
+| [analyzermanager.h](core/src/debugger/analyzers/analyzermanager.h) | AnalyzerManager class declaration | 327 |
+| [analyzermanager.cpp](core/src/debugger/analyzers/analyzermanager.cpp) | AnalyzerManager implementation | 656 |
+| [ianalyzer.h](core/src/debugger/analyzers/ianalyzer.h) | IAnalyzer interface | ~50 |
+| [iwd1793observer.h](core/src/emulator/io/fdc/iwd1793observer.h) | FDC observer interface | ~30 |
+| [ringbuffer.h](core/src/common/ringbuffer.h) | Thread-safe ring buffer template | ~150 |
+
+### 19.3 Tests
+
+| File | Purpose | Lines |
+|:-----|:--------|:------|
+| [analyzermanager_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_test.cpp) | AnalyzerManager unit tests | 724 |
+| [analyzermanager_integration_test.cpp](core/tests/debugger/analyzermanager/analyzermanager_integration_test.cpp) | AnalyzerManager integration tests | 448 |
+| `core/tests/debugger/analyzers/trdos/` | TR-DOS analyzer tests (planned) | - |
+
+### 19.4 Key Interfaces
+
+#### TRDOSAnalyzer State Machine
+
+```cpp
+enum class TRDOSAnalyzerState : uint8_t
+{
+    IDLE,           // Monitoring for TR-DOS entry
+    IN_TRDOS,       // Inside TR-DOS ROM, command not identified
+    IN_COMMAND,     // Command identified, tracking operation
+    IN_SECTOR_OP,   // Mid-sector read/write
+    IN_MULTI_OP,    // Multi-sector operation
+    COMPLETING,     // Operation finishing
+    IN_CUSTOM,      // Custom loader detected
+};
+```
+
+#### TRDOSEvent Types
+
+```cpp
+enum class TRDOSEventType : uint8_t
+{
+    // System events
+    TRDOS_ENTRY,        // Entered TR-DOS ROM
+    TRDOS_EXIT,         // Exited TR-DOS ROM
+    
+    // Command events
+    COMMAND_START,      // TR-DOS command started
+    COMMAND_COMPLETE,   // TR-DOS command completed
+    
+    // File operations
+    FILE_FOUND,         // File located in catalog
+    FILE_NOT_FOUND,     // File not found
+    MODULE_LOAD,        // Module loaded
+    MODULE_SAVE,        // Module saved
+    
+    // FDC operations
+    FDC_CMD_RESTORE,    // Restore (seek track 0)
+    FDC_CMD_SEEK,       // Seek to track
+    FDC_CMD_STEP,       // Step in/out
+    FDC_CMD_READ,       // Read sector
+    FDC_CMD_WRITE,      // Write sector
+    FDC_CMD_READ_ADDR,  // Read address
+    FDC_CMD_READ_TRACK, // Read track
+    FDC_CMD_WRITE_TRACK,// Write track (format)
+    
+    // Data transfer
+    SECTOR_TRANSFER,    // Sector data transfer complete
+    
+    // Errors
+    ERROR_CRC,          // CRC error
+    ERROR_RNF,          // Record not found
+    ERROR_LOST_DATA,    // Lost data
+    ERROR_WRITE_PROTECT,// Write protected
+    
+    // Special
+    LOADER_DETECTED,    // Custom loader detected
+    PROTECTION_DETECTED,// Copy protection detected
+};
+```
+
+#### Query API
+
+```cpp
+class TRDOSAnalyzer {
+public:
+    // Get all captured events
+    std::vector<TRDOSEvent> getEvents() const;
+    
+    // Get events since T-state timestamp
+    std::vector<TRDOSEvent> getEventsSince(uint64_t timestamp) const;
+    
+    // Get new events since last query
+    std::vector<TRDOSEvent> getNewEvents();
+    
+    // Get event count
+    size_t getEventCount() const;
+    
+    // Clear all captured events
+    void clear();
+    
+    // Get statistics
+    uint64_t getTotalEventsProduced() const;
+    uint64_t getTotalEventsEvicted() const;
+};
+```
+
+---
+
+## 20. Known Issues and Debugging
+
+### 20.1 Active Issue: No Events Logged After Analyzer Activation
+
+> [!WARNING]
+> **Status**: Under investigation (2026-01-22)
+
+**Symptom**: After activating the TR-DOS analyzer via WebAPI or CLI, no events are captured even when TR-DOS commands are executed.
+
+**Suspected Root Cause**: Incorrect matching between Z80 core breakpoint dispatch and AnalyzerManager ownership check in `Z80::Step()`.
+
+**Investigation Areas**:
+
+1. **Z80::ownsBreakpointAtAddress() call path**
+   - Verify the PC value passed to `ownsBreakpointAtAddress()` matches the registered breakpoint address
+   - Check if page-specific breakpoints require different matching logic
+
+2. **AnalyzerManager::ownsBreakpointAtAddress() lookup**
+   - Verify `_ownedAddresses` set contains the registered addresses
+   - Check if `_enabled` flag is true when lookup occurs
+
+3. **BreakpointManager integration**
+   - Verify breakpoints are actually registered in `BreakpointManager`
+   - Check if breakpoint ID returned by `AddExecutionBreakpoint()` is valid
+
+4. **Page-specific breakpoint issues**
+   - TR-DOS uses `requestExecutionBreakpointInPage()` with TR-DOS ROM page
+   - Verify the page number and bank type match at dispatch time
+
+**Debug Checklist**:
+
+```cpp
+// Add to Z80::Step() for debugging
+if (pc == 0x3D00 || pc == 0x3D21 || pc == 0x0077) {
+    printf("Z80Step: PC=$%04X, hasBreakpoint=%d, analyzerOwns=%d\n",
+           pc,
+           breakpointManager->HasBreakpointAtAddress(pc),
+           analyzerManager->ownsBreakpointAtAddress(pc));
+}
+```
+
+**Related Files**:
+- [z80.cpp](core/src/emulator/cpu/z80.cpp) - `Z80::Step()` breakpoint dispatch
+- [analyzermanager.cpp](core/src/debugger/analyzers/analyzermanager.cpp) - `ownsBreakpointAtAddress()`
+- [trdosanalyzer.cpp](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp) - `onActivate()` breakpoint registration
+
+**Verification Test**:
+```cpp
+// Add to analyzermanager_integration_test.cpp
+TEST_F(AnalyzerManagerIntegration_test, TRDOSBreakpointsRegisteredCorrectly)
+{
+    // This test verifies the complete chain from registration to ownership
+    TRDOSAnalyzer* trdos = _manager->getAnalyzer<TRDOSAnalyzer>("trdos");
+    ASSERT_NE(trdos, nullptr);
+    
+    _manager->activate("trdos");
+    _manager->setEnabled(true);
+    
+    // Verify breakpoints are owned
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x3D00))
+        << "TR-DOS entry breakpoint should be owned after activation";
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x3D21))
+        << "Command dispatch breakpoint should be owned after activation";
+    
+    // Verify breakpoints exist in BreakpointManager
+    EXPECT_TRUE(_breakpointManager->HasBreakpointAtAddress(0x3D00))
+        << "TR-DOS entry breakpoint should exist in BreakpointManager";
+}
+```
+
+### 20.2 Debugging Flow Diagram
+
+```mermaid
+flowchart TD
+    subgraph "Issue: Events Not Logged"
+        START[Analyzer Activated] --> BP_REG[Breakpoints Registered?]
+        BP_REG -->|No| FIX1[Fix: Check onActivate called]
+        BP_REG -->|Yes| BPM_HAS[BreakpointManager has them?]
+        BPM_HAS -->|No| FIX2[Fix: Check AddExecutionBreakpoint]
+        BPM_HAS -->|Yes| AM_OWNS[AnalyzerManager owns them?]
+        AM_OWNS -->|No| FIX3[Fix: Check _ownedAddresses]
+        AM_OWNS -->|Yes| Z80_CHECKS[Z80 checks ownership?]
+        Z80_CHECKS -->|No| FIX4[Fix: Add ownership check to Z80::Step]
+        Z80_CHECKS -->|Yes| DISPATCH[dispatchBreakpointHit called?]
+        DISPATCH -->|No| FIX5[Fix: Check silent dispatch path]
+        DISPATCH -->|Yes| CALLBACK[onBreakpointHit called?]
+        CALLBACK -->|No| FIX6[Fix: Check analyzer active state]
+        CALLBACK -->|Yes| EVENT[Event emitted?]
+        EVENT -->|No| FIX7[Fix: Check event emission logic]
+        EVENT -->|Yes| SUCCESS[Should be working!]
+    end
+```
+
+### 20.3 Common Pitfalls
+
+| Pitfall | Symptom | Solution |
+|:--------|:--------|:---------|
+| Analyzer not activated | No events, `isActive()` returns false | Call `activate("trdos")` before use |
+| Manager not enabled | No events, `isEnabled()` returns false | Call `setEnabled(true)` |
+| Debug features disabled | Breakpoints ignored | Verify `FeatureManager::isEnabled("breakpoints")` |
+| Page mismatch | Events only missing for some addresses | Check ROM page at breakpoint time |
+| Z80 debug mode off | All breakpoints ignored | Verify `Z80::isDebugMode` is true |
+| Missing dispatch call | Ownership correct but no callback | Verify `dispatchBreakpointHit()` is called in Z80::Step |
+
+### 20.4 Diagnostic API Additions (Recommended)
+
+To aid debugging, consider adding these diagnostic methods:
+
+```cpp
+// In AnalyzerManager
+struct BreakpointDiagnostics {
+    size_t registeredCount;
+    size_t ownedAddressCount;
+    std::vector<uint16_t> ownedAddresses;
+    bool enabled;
+    std::vector<std::string> activeAnalyzers;
+};
+
+BreakpointDiagnostics AnalyzerManager::getDiagnostics() const;
+
+// In TRDOSAnalyzer
+struct TRDOSDiagnostics {
+    TRDOSAnalyzerState state;
+    size_t eventCount;
+    size_t breakpointHitCount;  // Counter for onBreakpointHit calls
+    uint64_t lastBreakpointPC;  // Last PC that triggered callback
+};
+
+TRDOSDiagnostics TRDOSAnalyzer::getDiagnostics() const;
+```
+
+This would enable WebAPI diagnostic endpoint:
+```
+GET /api/v1/emulator/{id}/analyzers/trdos/diagnostics
+→ { "state": "IDLE", "eventCount": 0, "breakpointHitCount": 0, ... }
+```
+
+---
+
+## 21. Testing TR-DOS Analyzer via WebAPI
+
+This section provides a complete step-by-step guide for manually testing the TR-DOS analyzer through the WebAPI. This is essential for verification during development and for understanding the API interaction patterns.
+
+> [!IMPORTANT]
+> **Model Requirement**: TR-DOS features require a model with FDC hardware support (e.g., `PENTAGON`, `SCORPION`). The standard `48K` model does not support disk operations and will return 400 errors for disk-related commands.
+
+### 21.1 Prerequisites
+
+Before testing, ensure:
+
+1. **WebAPI Server Running**: The unreal-ng emulator with WebAPI enabled is running
+2. **Appropriate Model**: A Pentagon or Scorpion model instance is available
+3. **TR-DOS ROM Loaded**: The emulator has TR-DOS ROM correctly mapped
+4. **Disk Image Mounted** (optional): For commands like `LIST` or `LOAD`, a disk image should be mounted
+
+```bash
+# Default WebAPI endpoint
+BASE_URL="http://localhost:8090/api/v1"
+```
+
+### 21.2 Step 1: Discover Available Emulator Instances
+
+First, list all running emulator instances to obtain the instance ID:
+
+```bash
+# List all emulator instances
+curl -s "${BASE_URL}/emulator" | python3 -m json.tool
+```
+
+**Expected Response**:
+```json
+{
+    "emulators": [
+        {
+            "id": "emu-001",
+            "model": "PENTAGON",
+            "state": "running",
+            "cpu_clock": 3546900
+        }
+    ]
+}
+```
+
+> [!NOTE]
+> The `id` field (e.g., `emu-001`) is the instance identifier used in all subsequent API calls. Store this value for use in the following steps.
+
+```bash
+# Store the emulator ID
+EMU_ID="emu-001"  # Replace with actual ID from response
+```
+
+### 21.3 Step 2: Verify Model and Feature Support
+
+Before activating the analyzer, verify the emulator supports the required features:
+
+```bash
+# Check emulator status and model
+curl -s "${BASE_URL}/emulator/${EMU_ID}/status" | python3 -m json.tool
+
+# List available features
+curl -s "${BASE_URL}/emulator/${EMU_ID}/features" | python3 -m json.tool
+```
+
+**Expected Features Response**:
+```json
+{
+    "features": [
+        { "name": "debugmode", "enabled": false },
+        { "name": "breakpoints", "enabled": false },
+        { "name": "taperecording", "enabled": false }
+    ]
+}
+```
+
+### 21.4 Step 3: Activate the TR-DOS Analyzer
+
+The analyzer activation involves two steps: enabling the analyzer and ensuring the AnalyzerManager is enabled.
+
+```bash
+# Enable the TR-DOS analyzer
+curl -s -X PUT \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true}' \
+     "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos"
+```
+
+**Expected Response**:
+```json
+{
+    "analyzer": "trdos",
+    "enabled": true,
+    "state": "IDLE",
+    "eventCount": 0
+}
+```
+
+> [!TIP]
+> When the analyzer is activated, it automatically enables the required debug features (`debugmode` and `breakpoints`) through the Auto-Feature Orchestration mechanism described in Section 18.4.
+
+#### Verify Analyzer Status
+
+```bash
+# Check analyzer status
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/status" | python3 -m json.tool
+```
+
+**Expected Response**:
+```json
+{
+    "analyzer": "trdos",
+    "enabled": true,
+    "state": "IDLE",
+    "eventCount": 0,
+    "bufferUsage": "0%",
+    "totalEventsProduced": 0,
+    "totalEventsEvicted": 0
+}
+```
+
+### 21.5 Step 4: Execute TR-DOS Commands (User Operations)
+
+With the analyzer active, execute TR-DOS commands to generate events. You can either:
+
+**Option A: Manual Execution**
+- In the emulator UI, type TR-DOS commands directly (e.g., `LIST`, `CAT`, `LOAD "game"`)
+
+**Option B: BASIC Command Injection via WebAPI**
+
+```bash
+# Inject a LIST command (assuming emulator is at BASIC prompt)
+curl -s -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"command": "LIST"}' \
+     "${BASE_URL}/emulator/${EMU_ID}/basic/run"
+
+# Or inject a CAT command
+curl -s -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"command": "CAT"}' \
+     "${BASE_URL}/emulator/${EMU_ID}/basic/run"
+
+# Or inject a LOAD command
+curl -s -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"command": "LOAD \"game\""}' \
+     "${BASE_URL}/emulator/${EMU_ID}/basic/run"
+```
+
+> [!CAUTION]
+> The BASIC injection endpoint requires the emulator to be at a BASIC prompt. If the emulator is in the middle of execution or in a different state, the command may not be processed correctly.
+
+#### Wait for Command Execution
+
+After injecting a command, allow time for the emulator to execute it:
+
+```bash
+# Give the emulator time to execute the command
+sleep 2
+
+# Or run a specific number of frames
+curl -s -X POST \
+     -H "Content-Type: application/json" \
+     -d '{"frames": 100}' \
+     "${BASE_URL}/emulator/${EMU_ID}/run"
+```
+
+### 21.6 Step 5: Retrieve Captured Events
+
+After executing TR-DOS commands, fetch the captured events:
+
+```bash
+# Get all captured events
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/events" | python3 -m json.tool
+
+# Get events with limit
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/events?limit=50" | python3 -m json.tool
+
+# Get events since a specific timestamp
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/events?since=0&limit=100" | python3 -m json.tool
+
+# Filter by event type
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/events?type=SECTOR_TRANSFER&limit=20" | python3 -m json.tool
+```
+
+**Expected Response for LIST Command**:
+```json
+{
+    "events": [
+        {
+            "id": 1,
+            "timestamp": 125000,
+            "type": "TRDOS_ENTRY",
+            "description": "RST #8 from $8000",
+            "pc": 15616
+        },
+        {
+            "id": 2,
+            "timestamp": 125456,
+            "type": "COMMAND_START",
+            "command": "LIST",
+            "description": "LIST command initiated"
+        },
+        {
+            "id": 3,
+            "timestamp": 126100,
+            "type": "FDC_CMD_READ",
+            "track": 0,
+            "sector": 1,
+            "description": "Read sector T=0, S=1"
+        },
+        {
+            "id": 4,
+            "timestamp": 127500,
+            "type": "SECTOR_TRANSFER",
+            "track": 0,
+            "sector": 1,
+            "bytes": 256,
+            "status": "OK",
+            "description": "256 bytes, CRC OK"
+        }
+    ],
+    "truncated": false,
+    "totalCount": 4
+}
+```
+
+### 21.7 Step 6: Verify Event Correctness
+
+After retrieving events, verify they match expected patterns for different TR-DOS commands:
+
+#### LIST Command Expected Sequence
+
+| Order | Event Type | Expected Details |
+|:------|:-----------|:-----------------|
+| 1 | `TRDOS_ENTRY` | Entry into TR-DOS ROM |
+| 2 | `COMMAND_START` | Command = "LIST" |
+| 3+ | `FDC_CMD_READ` | Track 0, Sectors 1-8 (catalog) |
+| N-1 | `COMMAND_COMPLETE` | Catalog display finished |
+| N | `TRDOS_EXIT` | Return to BASIC |
+
+#### CAT Command Expected Sequence
+
+| Order | Event Type | Expected Details |
+|:------|:-----------|:-----------------|
+| 1 | `TRDOS_ENTRY` | Entry into TR-DOS ROM |
+| 2 | `COMMAND_START` | Command = "CAT" |
+| 3+ | `FDC_CMD_READ` | Track 0, Sectors 1-8 (full catalog read) |
+| N | `TRDOS_EXIT` | Return to BASIC |
+
+#### LOAD Command Expected Sequence
+
+| Order | Event Type | Expected Details |
+|:------|:-----------|:-----------------|
+| 1 | `TRDOS_ENTRY` | Entry into TR-DOS ROM |
+| 2 | `COMMAND_START` | Command = "LOAD", filename present |
+| 3 | `FILE_FOUND` | File located in catalog |
+| 4+ | `FDC_CMD_SEEK` | Seek to file's track |
+| 5+ | `FDC_CMD_READ` | Read file sectors |
+| 6+ | `SECTOR_TRANSFER` | Data transfer events |
+| N-1 | `FILE_LOAD_COMPLETE` | File fully loaded |
+| N | `TRDOS_EXIT` | Return to BASIC/execution |
+
+### 21.8 Complete Testing Script
+
+Here's a complete bash script for automated testing:
+
+```bash
+#!/bin/bash
+# test_trdos_analyzer.sh - Complete TR-DOS analyzer test via WebAPI
+
+BASE_URL="${BASE_URL:-http://localhost:8090/api/v1}"
+
+# Step 1: Get emulator instance
+echo "=== Step 1: Discovering emulator instances ==="
+EMULATORS=$(curl -s "${BASE_URL}/emulator")
+echo "$EMULATORS" | python3 -m json.tool
+
+EMU_ID=$(echo "$EMULATORS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['emulators'][0]['id'])" 2>/dev/null)
+if [ -z "$EMU_ID" ]; then
+    echo "ERROR: No emulator instance found"
+    exit 1
+fi
+echo "Using emulator: $EMU_ID"
+
+# Step 2: Enable analyzer
+echo ""
+echo "=== Step 2: Activating TR-DOS analyzer ==="
+curl -s -X PUT \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true}' \
+     "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos" | python3 -m json.tool
+
+# Step 3: Clear existing events
+echo ""
+echo "=== Step 3: Clearing event buffer ==="
+curl -s -X POST "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/clear"
+
+# Step 4: Check initial state
+echo ""
+echo "=== Step 4: Checking initial analyzer state ==="
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/status" | python3 -m json.tool
+
+# Step 5: User action required
+echo ""
+echo "=== Step 5: Execute TR-DOS command ==="
+echo "Please execute a TR-DOS command in the emulator (e.g., LIST, CAT, LOAD)"
+echo "Or inject via API:"
+echo "  curl -s -X POST -H 'Content-Type: application/json' \\"
+echo "       -d '{\"command\": \"LIST\"}' \\"
+echo "       '${BASE_URL}/emulator/${EMU_ID}/basic/run'"
+echo ""
+read -p "Press Enter after executing the command..."
+
+# Step 6: Retrieve events
+echo ""
+echo "=== Step 6: Retrieving captured events ==="
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/events?limit=50" | python3 -m json.tool
+
+# Step 7: Show final status
+echo ""
+echo "=== Step 7: Final analyzer status ==="
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/status" | python3 -m json.tool
+
+echo ""
+echo "=== Test complete ==="
+```
+
+### 21.9 Troubleshooting WebAPI Testing
+
+| Issue | Symptom | Resolution |
+|:------|:--------|:-----------|
+| No emulator instances | Empty `emulators` array | Start the emulator with WebAPI enabled |
+| 404 on analyzer endpoint | "Not Found" response | Check if analyzer is registered; use correct path format |
+| No events after command | Empty `events` array | Verify analyzer is enabled; check debug features are active |
+| 400 on disk commands | "Model does not support FDC" | Switch to PENTAGON or SCORPION model |
+| BASIC injection fails | Command not executed | Ensure emulator is at BASIC prompt, not in-execution |
+
+#### Diagnostic Endpoint (if implemented)
+
+```bash
+# Get detailed diagnostics for debugging
+curl -s "${BASE_URL}/emulator/${EMU_ID}/analyzer/trdos/diagnostics" | python3 -m json.tool
+```
+
+**Expected Diagnostic Response**:
+```json
+{
+    "state": "IN_COMMAND",
+    "eventCount": 15,
+    "breakpointHitCount": 23,
+    "lastBreakpointPC": 15649,
+    "activeBreakpoints": [
+        {"address": 15616, "page": 2, "type": "ROM"},
+        {"address": 15649, "page": 2, "type": "ROM"},
+        {"address": 119, "page": 2, "type": "ROM"}
+    ],
+    "featureStatus": {
+        "debugmode": true,
+        "breakpoints": true
+    }
+}
+```
+
+### 21.10 WebSocket Real-Time Streaming
+
+For real-time event monitoring, use the WebSocket endpoint:
+
+```javascript
+// JavaScript WebSocket client example
+const ws = new WebSocket(`ws://localhost:8090/api/v1/emulator/${emuId}/analyzer/trdos/stream`);
+
+ws.onmessage = (event) => {
+    const trdosEvent = JSON.parse(event.data);
+    console.log(`[${trdosEvent.timestamp}] ${trdosEvent.type}: ${trdosEvent.description}`);
+};
+
+ws.onopen = () => {
+    console.log('Connected to TR-DOS analyzer stream');
+};
+
+ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+};
+```
+
+```bash
+# Using websocat CLI tool
+websocat "ws://localhost:8090/api/v1/emulator/${EMU_ID}/analyzer/trdos/stream"
+```

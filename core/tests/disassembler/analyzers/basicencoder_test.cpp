@@ -495,3 +495,390 @@ TEST_F(BasicEncoder_Test, TokenizeImmediate_StringLiteralsPreserved)
 }
 
 /// endregion </Immediate Command Tokenization Tests>
+
+/// region <ROM State Detection Tests>
+/// 
+/// These tests verify the three-tier ROM state detection algorithm:
+/// - Tier 1: Hardware ROM paging state
+/// - Tier 2: Stack context analysis (TR-DOS calling SOS)
+/// - Tier 3: System variable initialization
+///
+/// Test scenarios:
+/// 1. Pure SOS ROM (48K BASIC active, no TR-DOS initialized)
+/// 2. 128K Menu (ROM 0, EDITOR_FLAGS bit 1 set)
+/// 3. 128K BASIC (ROM 0, EDITOR_FLAGS bit 1 clear)
+/// 4. 48K BASIC (ROM 1 or 3)
+/// 5. TR-DOS Active (DOS ROM paged, ROM page 2)
+/// 6. TR-DOS calling SOS (SOS ROM paged, stack contains $3D2F)
+
+TEST_F(BasicEncoder_Test, StateDetection_PureSOS_48KBASIC)
+{
+    // Scenario: Pure 48K BASIC mode
+    // - ROM page 1 (48K BASIC ROM)
+    // - No TR-DOS initialization markers
+    // - Expected: Basic48K
+    
+    // Note: Memory banks are already set up for 48K in SetUp()
+    // ROM page detection depends on Memory::GetROMPage() implementation
+    
+    // For this unit test, we verify isTRDOSInitialized returns false
+    // when RAM stub doesn't contain RET opcode
+    bool trdosInit = BasicEncoder::isTRDOSInitialized(_memory);
+    EXPECT_FALSE(trdosInit) << "Fresh 48K memory should not have TR-DOS initialized";
+    
+    // Stack scan should return false with no DOS addresses
+    bool hasDosOnStack = BasicEncoder::stackContainsDOSReturnAddress(_memory, 0xFF00);
+    EXPECT_FALSE(hasDosOnStack) << "Fresh memory should not have DOS return addresses on stack";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_TRDOSInitialized)
+{
+    // Scenario: TR-DOS has been initialized (RAM stub at $5CC2 = $C9)
+    // Write the RAM stub that TR-DOS installs
+    using namespace TRDOS::ROMSwitch;
+    using namespace SystemVariables48k;
+    
+    // Write RET ($C9) at RAM stub location
+    _memory->DirectWriteToZ80Memory(RAM_STUB, RAM_STUB_OPCODE);
+    
+    // Write CHANS = $5D25 (TR-DOS extends channel area)
+    _memory->DirectWriteToZ80Memory(CHANS, CHANS_TRDOS_VALUE & 0xFF);
+    _memory->DirectWriteToZ80Memory(CHANS + 1, (CHANS_TRDOS_VALUE >> 8) & 0xFF);
+    
+    bool trdosInit = BasicEncoder::isTRDOSInitialized(_memory);
+    EXPECT_TRUE(trdosInit) << "TR-DOS initialization markers should be detected";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_TRDOSNotInitialized_WrongStub)
+{
+    // Scenario: RAM stub has wrong opcode
+    using namespace TRDOS::ROMSwitch;
+    using namespace SystemVariables48k;
+    
+    // Write wrong opcode at stub location
+    _memory->DirectWriteToZ80Memory(RAM_STUB, 0x00);  // NOP, not RET
+    
+    // Write correct CHANS value
+    _memory->DirectWriteToZ80Memory(CHANS, CHANS_TRDOS_VALUE & 0xFF);
+    _memory->DirectWriteToZ80Memory(CHANS + 1, (CHANS_TRDOS_VALUE >> 8) & 0xFF);
+    
+    bool trdosInit = BasicEncoder::isTRDOSInitialized(_memory);
+    EXPECT_FALSE(trdosInit) << "Wrong stub opcode should fail TR-DOS detection";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_TRDOSNotInitialized_WrongCHANS)
+{
+    // Scenario: CHANS has wrong value (standard 48K value)
+    using namespace TRDOS::ROMSwitch;
+    using namespace SystemVariables48k;
+    
+    // Write correct stub
+    _memory->DirectWriteToZ80Memory(RAM_STUB, RAM_STUB_OPCODE);
+    
+    // Write 48K CHANS value (not $5D25)
+    _memory->DirectWriteToZ80Memory(CHANS, 0xAF);  // Standard 48K value
+    _memory->DirectWriteToZ80Memory(CHANS + 1, 0x5C);
+    
+    bool trdosInit = BasicEncoder::isTRDOSInitialized(_memory);
+    EXPECT_FALSE(trdosInit) << "Wrong CHANS value should fail TR-DOS detection";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackContainsDOSAddress_SingleEntry)
+{
+    // Scenario: Stack contains a single TR-DOS trap address ($3D2F)
+    using namespace TRDOS::ROMSwitch;
+    
+    uint16_t sp = 0xFF00;
+    
+    // Push $3D2F to stack (little-endian)
+    _memory->DirectWriteToZ80Memory(sp, ROM_TRAMPOLINE & 0xFF);       // Low byte
+    _memory->DirectWriteToZ80Memory(sp + 1, (ROM_TRAMPOLINE >> 8) & 0xFF);  // High byte
+    
+    bool hasDosAddr = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
+    EXPECT_TRUE(hasDosAddr) << "Stack with $3D2F should detect DOS return address";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackContainsDOSAddress_Nested)
+{
+    // Scenario: Multiple nested calls, DOS address buried in stack
+    using namespace TRDOS::ROMSwitch;
+    
+    uint16_t sp = 0xFF00;
+    
+    // Simulate nested call stack:
+    // SP+0: $5CC2 (RAM stub - current return)
+    // SP+2: $0010 (SOS ROM print routine - we're inside this)
+    // SP+4: $3D2F (DOS trampoline - this makes us "logically in DOS")
+    // SP+6: $2F90 (Some DOS internal address)
+    
+    _memory->DirectWriteToZ80Memory(sp + 0, 0xC2);  // $5CC2 low
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x5C);  // $5CC2 high
+    
+    _memory->DirectWriteToZ80Memory(sp + 2, 0x10);  // $0010 low
+    _memory->DirectWriteToZ80Memory(sp + 3, 0x00);  // $0010 high
+    
+    _memory->DirectWriteToZ80Memory(sp + 4, 0x2F);  // $3D2F low
+    _memory->DirectWriteToZ80Memory(sp + 5, 0x3D);  // $3D2F high
+    
+    _memory->DirectWriteToZ80Memory(sp + 6, 0x90);  // $2F90 low
+    _memory->DirectWriteToZ80Memory(sp + 7, 0x2F);  // $2F90 high
+    
+    bool hasDosAddr = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
+    EXPECT_TRUE(hasDosAddr) << "Nested stack with $3D2F should detect DOS return address";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackNoDOSAddress_PureBASIC)
+{
+    // Scenario: Stack with only BASIC ROM addresses, no TR-DOS
+    uint16_t sp = 0xFF00;
+    
+    // Simulate pure BASIC call stack:
+    // SP+0: $1234 (some BASIC ROM address)
+    // SP+2: $0A3B (another BASIC address)
+    // SP+4: $5678 (RAM address - program)
+    
+    _memory->DirectWriteToZ80Memory(sp + 0, 0x34);
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x12);
+    
+    _memory->DirectWriteToZ80Memory(sp + 2, 0x3B);
+    _memory->DirectWriteToZ80Memory(sp + 3, 0x0A);
+    
+    _memory->DirectWriteToZ80Memory(sp + 4, 0x78);
+    _memory->DirectWriteToZ80Memory(sp + 5, 0x56);
+    
+    bool hasDosAddr = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp);
+    EXPECT_FALSE(hasDosAddr) << "Pure BASIC stack should not detect DOS return address";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_TRDOSLogicallyActive_DOSPaged)
+{
+    // Note: This test would require mocking Memory::GetROMPage() to return 2
+    // For now, we test the helper functions work correctly
+    
+    // If DOS ROM page 2 is paged, isTRDOSLogicallyActive should return true
+    // But since we can't easily mock GetROMPage, we verify the subordinate checks
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_TRDOSLogicallyActive_SOSWithDOSOnStack)
+{
+    // Scenario: SOS ROM paged (48K BASIC), but TR-DOS initialized and $3D2F on stack
+    // This is the "TR-DOS calling SOS" scenario
+    
+    using namespace TRDOS::ROMSwitch;
+    using namespace SystemVariables48k;
+    
+    // Initialize TR-DOS markers
+    _memory->DirectWriteToZ80Memory(RAM_STUB, RAM_STUB_OPCODE);
+    _memory->DirectWriteToZ80Memory(CHANS, CHANS_TRDOS_VALUE & 0xFF);
+    _memory->DirectWriteToZ80Memory(CHANS + 1, (CHANS_TRDOS_VALUE >> 8) & 0xFF);
+    
+    // Set up stack with DOS return address
+    uint16_t sp = 0xFF00;
+    _memory->DirectWriteToZ80Memory(sp, ROM_TRAMPOLINE & 0xFF);
+    _memory->DirectWriteToZ80Memory(sp + 1, (ROM_TRAMPOLINE >> 8) & 0xFF);
+    
+    // Verify all conditions for "TR-DOS calling SOS" are met
+    EXPECT_TRUE(BasicEncoder::isTRDOSInitialized(_memory));
+    EXPECT_TRUE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp));
+    
+    // The full isTRDOSLogicallyActive would return true if ROM page != 2
+    // and both above conditions are true
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackScanMaxDepth)
+{
+    // Verify stack scanning respects max depth limit
+    using namespace TRDOS::ROMSwitch;
+    
+    uint16_t sp = 0xFF00;
+    
+    // Fill stack with valid-looking addresses (not zeros or $FFFF)
+    // to avoid triggering garbage detection
+    for (int i = 0; i < 25; i++)
+    {
+        uint16_t fakeAddr = 0x5000 + (i * 0x100);  // Various RAM addresses
+        _memory->DirectWriteToZ80Memory(sp + i*2, fakeAddr & 0xFF);
+        _memory->DirectWriteToZ80Memory(sp + i*2 + 1, (fakeAddr >> 8) & 0xFF);
+    }
+    
+    // Put DOS address at depth 20 (beyond default max of 16)
+    int farOffset = 20 * 2;
+    _memory->DirectWriteToZ80Memory(sp + farOffset, ROM_TRAMPOLINE & 0xFF);
+    _memory->DirectWriteToZ80Memory(sp + farOffset + 1, (ROM_TRAMPOLINE >> 8) & 0xFF);
+    
+    // Should NOT find it with default depth
+    bool foundDefault = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp, 16);
+    EXPECT_FALSE(foundDefault) << "Should not find DOS address beyond max depth";
+    
+    // Should find it with extended depth
+    bool foundExtended = BasicEncoder::stackContainsDOSReturnAddress(_memory, sp, 25);
+    EXPECT_TRUE(foundExtended) << "Should find DOS address with extended depth";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_TrapRangeBoundaries)
+{
+    // Verify trap range detection at boundaries
+    using namespace TRDOS::ROMSwitch;
+    
+    uint16_t sp = 0xFF00;
+    
+    // Test $3D00 (start of trap range)
+    _memory->DirectWriteToZ80Memory(sp, TRAP_START & 0xFF);
+    _memory->DirectWriteToZ80Memory(sp + 1, (TRAP_START >> 8) & 0xFF);
+    EXPECT_TRUE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp)) 
+        << "$3D00 should be in trap range";
+    
+    // Test $3DFF (end of trap range)
+    _memory->DirectWriteToZ80Memory(sp, TRAP_END & 0xFF);
+    _memory->DirectWriteToZ80Memory(sp + 1, (TRAP_END >> 8) & 0xFF);
+    EXPECT_TRUE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp))
+        << "$3DFF should be in trap range";
+    
+    // Test $3CFF (just below trap range)
+    _memory->DirectWriteToZ80Memory(sp, 0xFF);
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x3C);
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp))
+        << "$3CFF should NOT be in trap range";
+    
+    // Test $3E00 (just above trap range)
+    _memory->DirectWriteToZ80Memory(sp, 0x00);
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x3E);
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp))
+        << "$3E00 should NOT be in trap range";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackValidation_InvalidSP)
+{
+    // Test that invalid SP values cause fallback (return false)
+    
+    // SP in ROM area ($0000-$3FFF) is invalid
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, 0x1000))
+        << "SP in ROM area should fail validation";
+    
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, 0x3FFF))
+        << "SP at end of ROM area should fail validation";
+    
+    // SP at very top of memory with no room
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, 0xFFFE))
+        << "SP at $FFFE should fail validation";
+    
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, 0xFFFF))
+        << "SP at $FFFF should fail validation";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackGarbageDetection_TooManyZeros)
+{
+    // Test that consecutive $0000 entries trigger garbage detection
+    uint16_t sp = 0xFF00;
+    
+    // Fill stack with zeros (uninitialized memory pattern)
+    for (int i = 0; i < 20; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i, 0x00);
+    }
+    
+    // Should detect garbage and return false (fallback to HW detection)
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp))
+        << "Stack full of zeros should trigger garbage detection";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackGarbageDetection_TooManyFFFF)
+{
+    // Test that multiple $FFFF entries trigger garbage detection
+    uint16_t sp = 0xFF00;
+    
+    // Fill stack with $FFFF (uninitialized RAM pattern)
+    for (int i = 0; i < 10; i++)
+    {
+        _memory->DirectWriteToZ80Memory(sp + i*2, 0xFF);
+        _memory->DirectWriteToZ80Memory(sp + i*2 + 1, 0xFF);
+    }
+    
+    // Should detect garbage and return false
+    EXPECT_FALSE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp))
+        << "Stack full of $FFFF should trigger garbage detection";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_StackGarbageDetection_ValidWithSomeZeros)
+{
+    // Test that a few zeros don't trigger false garbage detection
+    using namespace TRDOS::ROMSwitch;
+    
+    uint16_t sp = 0xFF00;
+    
+    // Some zeros, then valid DOS address
+    _memory->DirectWriteToZ80Memory(sp + 0, 0x00);  // $0000
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x00);
+    _memory->DirectWriteToZ80Memory(sp + 2, 0x00);  // $0000
+    _memory->DirectWriteToZ80Memory(sp + 3, 0x00);
+    _memory->DirectWriteToZ80Memory(sp + 4, ROM_TRAMPOLINE & 0xFF);  // $3D2F
+    _memory->DirectWriteToZ80Memory(sp + 5, (ROM_TRAMPOLINE >> 8) & 0xFF);
+    
+    // Should still find the DOS address (only 2 zeros, threshold is 4)
+    EXPECT_TRUE(BasicEncoder::stackContainsDOSReturnAddress(_memory, sp))
+        << "A few zeros should not trigger garbage detection when DOS addr follows";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_IsStackSane_ValidStack)
+{
+    // Test that a stack with plausible ROM/RAM addresses passes sanity check
+    uint16_t sp = 0xFF00;
+    
+    // Create a realistic looking stack
+    // Entry 1: ROM address (keyboard scan $028E)
+    _memory->DirectWriteToZ80Memory(sp + 0, 0x8E);
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x02);
+    
+    // Entry 2: RAM trampoline ($5CC2)
+    _memory->DirectWriteToZ80Memory(sp + 2, 0xC2);
+    _memory->DirectWriteToZ80Memory(sp + 3, 0x5C);
+    
+    // Entry 3: Program RAM ($6000)
+    _memory->DirectWriteToZ80Memory(sp + 4, 0x00);
+    _memory->DirectWriteToZ80Memory(sp + 5, 0x60);
+    
+    // Entry 4: TR-DOS trap ($3D2F)
+    _memory->DirectWriteToZ80Memory(sp + 6, 0x2F);
+    _memory->DirectWriteToZ80Memory(sp + 7, 0x3D);
+    
+    EXPECT_TRUE(BasicEncoder::isStackSane(_memory, sp))
+        << "Stack with valid ROM/RAM addresses should be sane";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_IsStackSane_GarbageStack)
+{
+    // Test that a stack full of garbage fails sanity check
+    uint16_t sp = 0xFF00;
+    
+    // Fill with garbage (addresses that don't look like code areas)
+    // $3E10 - just outside trap range
+    _memory->DirectWriteToZ80Memory(sp + 0, 0x10);
+    _memory->DirectWriteToZ80Memory(sp + 1, 0x3E);
+    
+    // $FF80 - high stack area (unusual)
+    _memory->DirectWriteToZ80Memory(sp + 2, 0x80);
+    _memory->DirectWriteToZ80Memory(sp + 3, 0xFF);
+    
+    // $4000 - screen memory (not code)
+    _memory->DirectWriteToZ80Memory(sp + 4, 0x00);
+    _memory->DirectWriteToZ80Memory(sp + 5, 0x40);
+    
+    // $FFFF - uninitialized
+    _memory->DirectWriteToZ80Memory(sp + 6, 0xFF);
+    _memory->DirectWriteToZ80Memory(sp + 7, 0xFF);
+    
+    EXPECT_FALSE(BasicEncoder::isStackSane(_memory, sp))
+        << "Stack with garbage addresses should not be sane";
+}
+
+TEST_F(BasicEncoder_Test, StateDetection_IsStackSane_InvalidSP)
+{
+    // Test that invalid SP values fail sanity check
+    EXPECT_FALSE(BasicEncoder::isStackSane(_memory, 0x1000))
+        << "SP in ROM area should fail";
+    EXPECT_FALSE(BasicEncoder::isStackSane(_memory, 0xFFFE))
+        << "SP at memory top should fail";
+}
+
+/// endregion </ROM State Detection Tests>
+

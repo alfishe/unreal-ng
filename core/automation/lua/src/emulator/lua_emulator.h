@@ -18,6 +18,8 @@
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <debugger/analyzers/rom-print/screenocr.h>
+#include <emulator/video/screencapture.h>
 
 class LuaEmulator
 {
@@ -304,27 +306,74 @@ public:
                 return result;
             }
             
-            // Inject and execute command
-            std::string injResult = BasicEncoder::injectCommand(memory, command);
-            BasicEncoder::injectEnter(memory);
+            // Use new runCommand API (injects + executes)
+            auto injResult = BasicEncoder::runCommand(memory, command);
             
-            result["success"] = true;
+            result["success"] = injResult.success;
             result["command"] = command;
-            result["message"] = "Command injected and executed";
-            result["basic_mode"] = (state == BasicEncoder::BasicState::Basic48K) ? "48K" : "128K";
+            result["message"] = injResult.message;
+            
+            switch (injResult.state) {
+                case BasicEncoder::BasicState::Basic48K:
+                    result["basic_mode"] = "48K";
+                    break;
+                case BasicEncoder::BasicState::Basic128K:
+                    result["basic_mode"] = "128K";
+                    break;
+                case BasicEncoder::BasicState::TRDOS_Active:
+                case BasicEncoder::BasicState::TRDOS_SOS_Call:
+                    result["basic_mode"] = "trdos";
+                    break;
+                default:
+                    result["basic_mode"] = "unknown";
+                    break;
+            }
             
             return result;
         });
 
-        // basic_inject(program) -> bool
+        // basic_inject(program) -> table {success, message, state}
         // Inject a BASIC program into memory without executing
-        lua.set_function("basic_inject", [this](const std::string& program) -> bool {
-            if (!_emulator) return false;
+        lua.set_function("basic_inject", [this](sol::this_state L, const std::string& program) -> sol::table {
+            sol::state_view lua(L);
+            sol::table result = lua.create_table();
+            
+            if (!_emulator) {
+                result["success"] = false;
+                result["message"] = "No emulator available";
+                return result;
+            }
             Memory* memory = _emulator->GetMemory();
-            if (!memory) return false;
+            if (!memory) {
+                result["success"] = false;
+                result["message"] = "Memory subsystem not available";
+                return result;
+            }
+            
+            // Check state before injection
+            auto state = BasicEncoder::detectState(memory);
+            if (state == BasicEncoder::BasicState::TRDOS_Active || 
+                state == BasicEncoder::BasicState::TRDOS_SOS_Call) {
+                result["success"] = false;
+                result["message"] = "TR-DOS is active. Please exit to BASIC first.";
+                result["state"] = "trdos";
+                return result;
+            }
+            if (state == BasicEncoder::BasicState::Menu128K) {
+                result["success"] = false;
+                result["message"] = "On 128K menu. Please enter BASIC first.";
+                result["state"] = "menu128k";
+                return result;
+            }
             
             BasicEncoder encoder;
-            return encoder.loadProgram(memory, program);
+            bool success = encoder.loadProgram(memory, program);
+            
+            result["success"] = success;
+            result["message"] = success ? "BASIC program injected successfully" : "Failed to inject BASIC program";
+            result["state"] = (state == BasicEncoder::BasicState::Basic48K) ? "basic48k" : "basic128k";
+            
+            return result;
         });
 
         // basic_extract() -> string
@@ -861,6 +910,33 @@ public:
             auto* ctx = _emulator->GetContext();
             if (!ctx || !ctx->pScreen) return 0;
             return ctx->pScreen->GetActiveScreen();
+        });
+
+        // Capture operations
+        lua.set_function("capture_ocr", [this]() -> std::string {
+            if (!_emulator) return "";
+            return ScreenOCR::ocrScreen(_emulator->GetId());
+        });
+
+        lua.set_function("capture_screen", [this](const std::string& format, bool fullFramebuffer) -> sol::table {
+            sol::table result = (*_lua).create_table();
+            if (!_emulator) {
+                result["success"] = false;
+                result["error"] = "No emulator";
+                return result;
+            }
+            CaptureMode mode = fullFramebuffer ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
+            auto capture = ScreenCapture::captureScreen(_emulator->GetId(), format, mode);
+            result["success"] = capture.success;
+            result["format"] = capture.format;
+            result["width"] = capture.width;
+            result["height"] = capture.height;
+            result["size"] = static_cast<int>(capture.originalSize);
+            result["data"] = capture.base64Data;
+            if (!capture.success) {
+                result["error"] = capture.errorMessage;
+            }
+            return result;
         });
 
         // Audio state

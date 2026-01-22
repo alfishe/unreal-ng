@@ -650,7 +650,6 @@ TEST_F(BreakpointManager_test, portBreakpointsWithOwner)
     EXPECT_EQ(foundOut->owner, "port_analyzer");
 }
 
-// Negative test: invalid parameters
 TEST_F(BreakpointManager_test, negativeInvalidPageType)
 {
     // BANK_INVALID should still work (marks as non-page-specific)
@@ -658,4 +657,391 @@ TEST_F(BreakpointManager_test, negativeInvalidPageType)
     
     // This is allowed - BANK_INVALID indicates non-page-specific
     EXPECT_NE(brkID, BRK_INVALID);
+}
+
+// ============================================================================
+// Page-Specific Breakpoint Matching Tests (HandlePCChange / FindAddressBreakpoint)
+// ============================================================================
+
+/// @brief Test that page-specific breakpoint is found when correct page is active
+TEST_F(BreakpointManager_test, FindAddressBreakpoint_MatchesCorrectPage)
+{
+    // Add page-specific breakpoint at address 0x0100 in ROM page 2
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "test_analyzer");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Create page descriptor matching the breakpoint
+    MemoryPageDescriptor matchingPage;
+    matchingPage.mode = BANK_ROM;
+    matchingPage.page = 2;
+    matchingPage.addressInPage = 0x0100;
+    
+    // Should find the breakpoint
+    BreakpointDescriptor* found = _brkManager->FindAddressBreakpoint(0x0100, matchingPage);
+    ASSERT_NE(found, nullptr) << "Should find page-specific breakpoint when page matches";
+    EXPECT_EQ(found->breakpointID, brkID);
+}
+
+/// @brief Test that page-specific breakpoint is NOT found when different page is active
+TEST_F(BreakpointManager_test, FindAddressBreakpoint_DoesNotMatchDifferentPage)
+{
+    // Add page-specific breakpoint at address 0x0100 in ROM page 2
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "test_analyzer");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Create page descriptor with DIFFERENT page
+    MemoryPageDescriptor differentPage;
+    differentPage.mode = BANK_ROM;
+    differentPage.page = 0;  // Different page!
+    differentPage.addressInPage = 0x0100;
+    
+    // Should NOT find the breakpoint (page mismatch)
+    BreakpointDescriptor* found = _brkManager->FindAddressBreakpoint(0x0100, differentPage);
+    EXPECT_EQ(found, nullptr) << "Should NOT find page-specific breakpoint when page differs";
+}
+
+/// @brief Test that address-only (wildcard) breakpoint is found in any page
+TEST_F(BreakpointManager_test, FindAddressBreakpoint_WildcardMatchesAnyPage)
+{
+    // Add address-only (wildcard) breakpoint at 0x0100
+    uint16_t brkID = _brkManager->AddExecutionBreakpoint(0x0100, "test_analyzer");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Test matching in ROM page 0
+    MemoryPageDescriptor romPage0;
+    romPage0.mode = BANK_ROM;
+    romPage0.page = 0;
+    romPage0.addressInPage = 0x0100;
+    
+    BreakpointDescriptor* found1 = _brkManager->FindAddressBreakpoint(0x0100, romPage0);
+    ASSERT_NE(found1, nullptr) << "Wildcard breakpoint should match in ROM page 0";
+    EXPECT_EQ(found1->breakpointID, brkID);
+    
+    // Test matching in ROM page 2
+    MemoryPageDescriptor romPage2;
+    romPage2.mode = BANK_ROM;
+    romPage2.page = 2;
+    romPage2.addressInPage = 0x0100;
+    
+    BreakpointDescriptor* found2 = _brkManager->FindAddressBreakpoint(0x0100, romPage2);
+    ASSERT_NE(found2, nullptr) << "Wildcard breakpoint should match in ROM page 2";
+    EXPECT_EQ(found2->breakpointID, brkID);
+    
+    // Test matching in RAM page
+    MemoryPageDescriptor ramPage;
+    ramPage.mode = BANK_RAM;
+    ramPage.page = 5;
+    ramPage.addressInPage = 0x0100;
+    
+    BreakpointDescriptor* found3 = _brkManager->FindAddressBreakpoint(0x0100, ramPage);
+    ASSERT_NE(found3, nullptr) << "Wildcard breakpoint should match in RAM page";
+    EXPECT_EQ(found3->breakpointID, brkID);
+}
+
+/// @brief Test that page-specific breakpoint takes precedence over wildcard
+TEST_F(BreakpointManager_test, FindAddressBreakpoint_PageSpecificTakesPrecedence)
+{
+    // First add wildcard breakpoint
+    uint16_t wildcardID = _brkManager->AddExecutionBreakpoint(0x0100, "wildcard_owner");
+    ASSERT_NE(wildcardID, BRK_INVALID);
+    
+    // Then add page-specific breakpoint at same address
+    uint16_t pageSpecificID = _brkManager->AddExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "page_specific_owner");
+    ASSERT_NE(pageSpecificID, BRK_INVALID);
+    
+    // When querying with matching page, should return page-specific (higher precedence)
+    MemoryPageDescriptor matchingPage;
+    matchingPage.mode = BANK_ROM;
+    matchingPage.page = 2;
+    matchingPage.addressInPage = 0x0100;
+    
+    BreakpointDescriptor* found = _brkManager->FindAddressBreakpoint(0x0100, matchingPage);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->breakpointID, pageSpecificID) << "Page-specific should take precedence over wildcard";
+    EXPECT_EQ(found->owner, "page_specific_owner");
+    
+    // When querying with different page, should fall back to wildcard
+    MemoryPageDescriptor differentPage;
+    differentPage.mode = BANK_ROM;
+    differentPage.page = 0;  // Different page
+    differentPage.addressInPage = 0x0100;
+    
+    BreakpointDescriptor* fallback = _brkManager->FindAddressBreakpoint(0x0100, differentPage);
+    ASSERT_NE(fallback, nullptr);
+    EXPECT_EQ(fallback->breakpointID, wildcardID) << "Should fall back to wildcard when page doesn't match";
+    EXPECT_EQ(fallback->owner, "wildcard_owner");
+}
+
+/// @brief Test ROM vs RAM page type distinction
+TEST_F(BreakpointManager_test, FindAddressBreakpoint_DistinguishesROMvsRAM)
+{
+    // Add breakpoint in ROM page 0
+    uint16_t romBp = _brkManager->AddExecutionBreakpointInPage(0x0000, 0, BANK_ROM, "rom_owner");
+    ASSERT_NE(romBp, BRK_INVALID);
+    
+    // Add breakpoint at same address but in RAM page 0
+    uint16_t ramBp = _brkManager->AddExecutionBreakpointInPage(0x0000, 0, BANK_RAM, "ram_owner");
+    ASSERT_NE(ramBp, BRK_INVALID);
+    
+    // Query with ROM context
+    MemoryPageDescriptor romContext;
+    romContext.mode = BANK_ROM;
+    romContext.page = 0;
+    romContext.addressInPage = 0x0000;
+    
+    BreakpointDescriptor* foundRom = _brkManager->FindAddressBreakpoint(0x0000, romContext);
+    ASSERT_NE(foundRom, nullptr);
+    EXPECT_EQ(foundRom->breakpointID, romBp);
+    EXPECT_EQ(foundRom->owner, "rom_owner");
+    
+    // Query with RAM context
+    MemoryPageDescriptor ramContext;
+    ramContext.mode = BANK_RAM;
+    ramContext.page = 0;
+    ramContext.addressInPage = 0x0000;
+    
+    BreakpointDescriptor* foundRam = _brkManager->FindAddressBreakpoint(0x0000, ramContext);
+    ASSERT_NE(foundRam, nullptr);
+    EXPECT_EQ(foundRam->breakpointID, ramBp);
+    EXPECT_EQ(foundRam->owner, "ram_owner");
+}
+
+// ============================================================================
+// Page-Specific Breakpoint Lifecycle Tests (Register, Find, Remove)
+// ============================================================================
+
+/// @brief Test registering execution breakpoint in specific ROM page
+TEST_F(BreakpointManager_test, PageSpecific_RegisterExecuteInROM_Positive)
+{
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x3D00, 3, BANK_ROM, "trdos_analyzer");
+    
+    ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register execution breakpoint in ROM page";
+    EXPECT_GE(_brkManager->GetBreakpointsCount(), 1);
+    
+    // Verify descriptor fields
+    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(bp, nullptr);
+    EXPECT_EQ(bp->z80address, 0x3D00);
+    EXPECT_EQ(bp->page, 3);
+    EXPECT_EQ(bp->pageType, BANK_ROM);
+    EXPECT_EQ(bp->matchType, BRK_MATCH_BANK_ADDR);
+    EXPECT_TRUE(bp->memoryType & BRK_MEM_EXECUTE);
+}
+
+/// @brief Test registering read breakpoint in specific RAM page
+TEST_F(BreakpointManager_test, PageSpecific_RegisterReadInRAM_Positive)
+{
+    uint16_t brkID = _brkManager->AddMemReadBreakpointInPage(0xC000, 5, BANK_RAM, "memory_analyzer");
+    
+    ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register read breakpoint in RAM page";
+    
+    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(bp, nullptr);
+    EXPECT_EQ(bp->z80address, 0xC000);
+    EXPECT_EQ(bp->page, 5);
+    EXPECT_EQ(bp->pageType, BANK_RAM);
+    EXPECT_TRUE(bp->memoryType & BRK_MEM_READ);
+}
+
+/// @brief Test registering write breakpoint in specific RAM page
+TEST_F(BreakpointManager_test, PageSpecific_RegisterWriteInRAM_Positive)
+{
+    uint16_t brkID = _brkManager->AddMemWriteBreakpointInPage(0xD000, 7, BANK_RAM, "write_monitor");
+    
+    ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register write breakpoint in RAM page";
+    
+    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(bp, nullptr);
+    EXPECT_EQ(bp->z80address, 0xD000);
+    EXPECT_EQ(bp->page, 7);
+    EXPECT_EQ(bp->pageType, BANK_RAM);
+    EXPECT_TRUE(bp->memoryType & BRK_MEM_WRITE);
+}
+
+/// @brief Test registering combined (read+write+execute) breakpoint in specific page
+TEST_F(BreakpointManager_test, PageSpecific_RegisterCombinedInPage_Positive)
+{
+    uint16_t brkID = _brkManager->AddCombinedMemoryBreakpointInPage(
+        0x4000, 
+        BRK_MEM_READ | BRK_MEM_WRITE | BRK_MEM_EXECUTE,
+        2,
+        BANK_RAM,
+        "combined_analyzer");
+    
+    ASSERT_NE(brkID, BRK_INVALID) << "Should successfully register combined breakpoint in page";
+    
+    BreakpointDescriptor* bp = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(bp, nullptr);
+    EXPECT_TRUE(bp->memoryType & BRK_MEM_READ);
+    EXPECT_TRUE(bp->memoryType & BRK_MEM_WRITE);
+    EXPECT_TRUE(bp->memoryType & BRK_MEM_EXECUTE);
+    EXPECT_EQ(bp->page, 2);
+    EXPECT_EQ(bp->pageType, BANK_RAM);
+}
+
+/// @brief Test finding page-specific breakpoint with matching page context (positive)
+TEST_F(BreakpointManager_test, PageSpecific_FindWithMatchingPage_Positive)
+{
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0200, 1, BANK_ROM, "test");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Create matching page context
+    MemoryPageDescriptor matchingPage;
+    matchingPage.mode = BANK_ROM;
+    matchingPage.page = 1;
+    matchingPage.addressInPage = 0x0200;
+    
+    BreakpointDescriptor* found = _brkManager->FindAddressBreakpoint(0x0200, matchingPage);
+    ASSERT_NE(found, nullptr) << "Should find breakpoint with matching page";
+    EXPECT_EQ(found->breakpointID, brkID);
+}
+
+/// @brief Test NOT finding page-specific breakpoint with wrong page (negative)
+TEST_F(BreakpointManager_test, PageSpecific_FindWithWrongPage_Negative)
+{
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0200, 1, BANK_ROM, "test");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Create NON-matching page context (different page number)
+    MemoryPageDescriptor wrongPage;
+    wrongPage.mode = BANK_ROM;
+    wrongPage.page = 2;  // Wrong page!
+    wrongPage.addressInPage = 0x0200;
+    
+    BreakpointDescriptor* found = _brkManager->FindAddressBreakpoint(0x0200, wrongPage);
+    EXPECT_EQ(found, nullptr) << "Should NOT find breakpoint with wrong page number";
+}
+
+/// @brief Test NOT finding page-specific breakpoint with wrong page type (negative)
+TEST_F(BreakpointManager_test, PageSpecific_FindWithWrongPageType_Negative)
+{
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0200, 1, BANK_ROM, "test");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Create NON-matching page context (different page type)
+    MemoryPageDescriptor wrongType;
+    wrongType.mode = BANK_RAM;  // Wrong type! (ROM vs RAM)
+    wrongType.page = 1;
+    wrongType.addressInPage = 0x0200;
+    
+    BreakpointDescriptor* found = _brkManager->FindAddressBreakpoint(0x0200, wrongType);
+    EXPECT_EQ(found, nullptr) << "Should NOT find ROM breakpoint when querying RAM context";
+}
+
+/// @brief Test removing page-specific breakpoint by ID (positive)
+TEST_F(BreakpointManager_test, PageSpecific_RemoveByID_Positive)
+{
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x1000, 2, BANK_ROM, "to_remove");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    size_t countBefore = _brkManager->GetBreakpointsCount();
+    
+    bool removed = _brkManager->RemoveBreakpointByID(brkID);
+    EXPECT_TRUE(removed) << "Should successfully remove page-specific breakpoint by ID";
+    
+    size_t countAfter = _brkManager->GetBreakpointsCount();
+    EXPECT_EQ(countAfter, countBefore - 1);
+    
+    // Verify it's really gone
+    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    EXPECT_EQ(found, nullptr) << "Removed breakpoint should not be findable";
+}
+
+/// @brief Test removing non-existent breakpoint (negative)
+TEST_F(BreakpointManager_test, PageSpecific_RemoveNonExistent_Negative)
+{
+    uint16_t fakeID = 9999;
+    
+    bool removed = _brkManager->RemoveBreakpointByID(fakeID);
+    EXPECT_FALSE(removed) << "Should fail to remove non-existent breakpoint";
+}
+
+/// @brief Test multiple page-specific breakpoints at same address in different pages
+TEST_F(BreakpointManager_test, PageSpecific_MultipleAtSameAddress_Positive)
+{
+    // Register breakpoint at 0x0000 in ROM page 0
+    uint16_t bp1 = _brkManager->AddExecutionBreakpointInPage(0x0000, 0, BANK_ROM, "rom0_owner");
+    ASSERT_NE(bp1, BRK_INVALID);
+    
+    // Register breakpoint at 0x0000 in ROM page 1
+    uint16_t bp2 = _brkManager->AddExecutionBreakpointInPage(0x0000, 1, BANK_ROM, "rom1_owner");
+    ASSERT_NE(bp2, BRK_INVALID);
+    
+    // Register breakpoint at 0x0000 in RAM page 0
+    uint16_t bp3 = _brkManager->AddExecutionBreakpointInPage(0x0000, 0, BANK_RAM, "ram0_owner");
+    ASSERT_NE(bp3, BRK_INVALID);
+    
+    // All should be different breakpoints
+    EXPECT_NE(bp1, bp2);
+    EXPECT_NE(bp1, bp3);
+    EXPECT_NE(bp2, bp3);
+    
+    // Each should be findable in its own context
+    MemoryPageDescriptor rom0; rom0.mode = BANK_ROM; rom0.page = 0; rom0.addressInPage = 0x0000;
+    MemoryPageDescriptor rom1; rom1.mode = BANK_ROM; rom1.page = 1; rom1.addressInPage = 0x0000;
+    MemoryPageDescriptor ram0; ram0.mode = BANK_RAM; ram0.page = 0; ram0.addressInPage = 0x0000;
+    
+    BreakpointDescriptor* found1 = _brkManager->FindAddressBreakpoint(0x0000, rom0);
+    BreakpointDescriptor* found2 = _brkManager->FindAddressBreakpoint(0x0000, rom1);
+    BreakpointDescriptor* found3 = _brkManager->FindAddressBreakpoint(0x0000, ram0);
+    
+    ASSERT_NE(found1, nullptr);
+    ASSERT_NE(found2, nullptr);
+    ASSERT_NE(found3, nullptr);
+    
+    EXPECT_EQ(found1->owner, "rom0_owner");
+    EXPECT_EQ(found2->owner, "rom1_owner");
+    EXPECT_EQ(found3->owner, "ram0_owner");
+}
+
+/// @brief Test that duplicate page-specific breakpoint returns same ID (idempotent)
+TEST_F(BreakpointManager_test, PageSpecific_DuplicateRegistration_ReturnsExisting)
+{
+    // Register first time
+    uint16_t bp1 = _brkManager->AddExecutionBreakpointInPage(0x3D00, 3, BANK_ROM, "owner1");
+    ASSERT_NE(bp1, BRK_INVALID);
+    
+    size_t countAfterFirst = _brkManager->GetBreakpointsCount();
+    
+    // Register again with same address, page, and type
+    uint16_t bp2 = _brkManager->AddExecutionBreakpointInPage(0x3D00, 3, BANK_ROM, "owner2");
+    ASSERT_NE(bp2, BRK_INVALID);
+    
+    // Should return same ID (idempotent)
+    EXPECT_EQ(bp1, bp2) << "Duplicate registration should return existing breakpoint ID";
+    
+    // Count should not increase
+    size_t countAfterSecond = _brkManager->GetBreakpointsCount();
+    EXPECT_EQ(countAfterSecond, countAfterFirst) << "Duplicate should not create new breakpoint";
+}
+
+/// @brief Test removing one page-specific breakpoint doesn't affect others at same address
+TEST_F(BreakpointManager_test, PageSpecific_RemoveOne_OthersUnaffected)
+{
+    // Register breakpoints at same address in different pages
+    uint16_t bp1 = _brkManager->AddExecutionBreakpointInPage(0x0100, 0, BANK_ROM, "keep1");
+    uint16_t bp2 = _brkManager->AddExecutionBreakpointInPage(0x0100, 1, BANK_ROM, "remove");
+    uint16_t bp3 = _brkManager->AddExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "keep2");
+    
+    ASSERT_NE(bp1, BRK_INVALID);
+    ASSERT_NE(bp2, BRK_INVALID);
+    ASSERT_NE(bp3, BRK_INVALID);
+    
+    // Remove middle one
+    bool removed = _brkManager->RemoveBreakpointByID(bp2);
+    EXPECT_TRUE(removed);
+    
+    // Verify bp2 is gone
+    EXPECT_EQ(_brkManager->GetBreakpointById(bp2), nullptr);
+    
+    // Verify bp1 and bp3 still exist
+    EXPECT_NE(_brkManager->GetBreakpointById(bp1), nullptr);
+    EXPECT_NE(_brkManager->GetBreakpointById(bp3), nullptr);
+    
+    // Verify they're still findable in their contexts
+    MemoryPageDescriptor page0; page0.mode = BANK_ROM; page0.page = 0; page0.addressInPage = 0x0100;
+    MemoryPageDescriptor page2; page2.mode = BANK_ROM; page2.page = 2; page2.addressInPage = 0x0100;
+    
+    EXPECT_NE(_brkManager->FindAddressBreakpoint(0x0100, page0), nullptr);
+    EXPECT_NE(_brkManager->FindAddressBreakpoint(0x0100, page2), nullptr);
 }

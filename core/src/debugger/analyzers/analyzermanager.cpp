@@ -566,22 +566,23 @@ void AnalyzerManager::dispatchBreakpointHit(uint16_t addr, BreakpointId bpId, Z8
 {
     if (!_enabled)
         return;
-    (void)bpId;  // May be used in future for more precise lookup
 
-    // Find all analyzers that own breakpoints at this address
-    for (const auto& [id, analyzerId] : _breakpointOwners)
+    // Use the provided breakpoint ID for precise lookup
+    // This correctly handles page-specific breakpoints where the same address
+    // can have different breakpoints in different memory pages
+    auto ownerIt = _breakpointOwners.find(bpId);
+    if (ownerIt == _breakpointOwners.end())
     {
-        // Retrieve the composite key for this breakpoint ID
-        auto keyIt = _breakpointKeys.find(id);
-        if (keyIt == _breakpointKeys.end())
-            continue;
-        
-        // Extract address from composite key (lower 16 bits)
-        uint16_t bpAddr = static_cast<uint16_t>(keyIt->second & 0xFFFF);
-        if (bpAddr == addr && _activeAnalyzers.count(analyzerId) > 0)
-        {
-            _analyzers.at(analyzerId)->onBreakpointHit(addr, cpu);
-        }
+        // Not an analyzer-owned breakpoint
+        return;
+    }
+    
+    const std::string& analyzerId = ownerIt->second;
+    
+    // Only dispatch if the analyzer is active
+    if (_activeAnalyzers.count(analyzerId) > 0)
+    {
+        _analyzers.at(analyzerId)->onBreakpointHit(addr, cpu);
     }
 }
 

@@ -163,8 +163,24 @@ void Z80::Z80Step(bool skipBreakpoints)
         {
             AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
             
+            // Get current memory page information for page-specific breakpoint matching
+            Memory& mem = *_context->pMemory;
+            MemoryPageDescriptor pageInfo = mem.MapZ80AddressToPhysicalPage(pc);
+            
             // Check if this is an analyzer-owned breakpoint (should not pause)
-            bool isAnalyzerBreakpoint = analyzerMgr && analyzerMgr->ownsBreakpointAtAddress(pc);
+            // Must check both address-only AND page-specific ownership
+            bool isAnalyzerBreakpoint = false;
+            if (analyzerMgr)
+            {
+                // First check page-specific match (for breakpoints like TR-DOS ROM)
+                isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc, pageInfo.page, pageInfo.mode);
+                
+                // Fall back to address-only match (for non-page-specific breakpoints)
+                if (!isAnalyzerBreakpoint)
+                {
+                    isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc);
+                }
+            }
             
             // Always dispatch breakpoint hit to analyzer manager for notification
             // Note: No MessageCenter notification is sent for analyzer breakpoints

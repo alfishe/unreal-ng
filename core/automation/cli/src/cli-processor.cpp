@@ -116,7 +116,10 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"r", &CLIProcessor::HandleRegisters},
 
                         // Snapshot control commands
-                        {"snapshot", &CLIProcessor::HandleSnapshot}};
+                        {"snapshot", &CLIProcessor::HandleSnapshot},
+
+                        // Capture commands (OCR, screen, ROM text)
+                        {"capture", &CLIProcessor::HandleCapture}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -533,6 +536,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  snapshot load <file>           - Load snapshot (.sna, .z80)" << NEWLINE;
     oss << "  snapshot save <file> [--force] - Save snapshot (.sna)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Capture Commands:" << NEWLINE;
+    oss << "  capture ocr                    - OCR text from screen (ROM font)" << NEWLINE;
+    oss << "  capture romtext                - Capture ROM print output (TODO)" << NEWLINE;
+    oss << "  capture screen [5|7|shadow]    - Capture screen bitmap (TODO)" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;

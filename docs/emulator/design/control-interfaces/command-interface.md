@@ -2165,49 +2165,59 @@ Intelligent analysis and extraction of various content types from memory or file
 #### 8.1 BASIC Program Extractor
 
 **Status**: ✅ Implemented  
-**Implementation**: `core/src/debugger/analyzers/basicextractor.h/cpp`
+**Implementation**: `core/src/debugger/analyzers/basic-lang/basicextractor.h/cpp`, `core/src/debugger/analyzers/basic-lang/basicencoder.h/cpp`
 
-Extract and detokenize ZX Spectrum BASIC programs from memory or files.
+Extract and detokenize ZX Spectrum BASIC programs from memory or files. Inject commands and programs into BASIC editor.
 
 | Command | Aliases | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- | :--- |
 | `basic extract` | | | Extract BASIC program from current memory (using PROG/VARS system variables). Returns detokenized BASIC listing. | ✅ Implemented |
 | `basic extract <addr> <len>` | | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
-| `basic extract file <file>` | | `<filename>` | Extract BASIC from .tap, .tzx, or raw file. | 🔮 Planned |
-| `basic save <file>` | | `<filename>` | Save extracted BASIC to text file. | 🔮 Planned |
-| `basic load <file>` | | `<filename>` | Load ASCII BASIC from text file (not implemented). | 🔮 Planned |
-| `basic inject <program>` | | `<basic-code>` | Inject complete BASIC program into memory. Program is a multiline string with `\n` delimiters (e.g., `"10 PRINT \"Hello\"\n20 STOP"`). Tokenizes using BasicEncoder, updates system variables (PROG, VARS, E_LINE). Program is ready but NOT executing. | 🔮 Planned |
-| `basic load <path>` | | `<filename>` | Load BASIC program from `.bas` text file and inject into memory. | 🔮 Planned |
-| `basic appendline <line>` | | `<line-text>` | Append single BASIC line to current program, like typing in ROM BASIC (e.g., `"10 CLS"`). System variables updated after each line. Useful for interactive program building. | 🔮 Planned |
-| `basic run` | | | Execute current BASIC program by simulating RUN command (types R, U, N, ENTER via keyboard). Executes until STOP/END or breakpoint hit. | 🔮 Planned |
+| `basic inject <command>` | | `<basic-cmd>` | Inject command into BASIC edit buffer WITHOUT executing. Uses `BasicEncoder::injectCommand()`. Works for 48K (E_LINE) and 128K (SLEB) BASIC modes. Returns error if TR-DOS active or not in editor. | ✅ Implemented |
+| `basic run [<command>]` | | `[<basic-cmd>]` | Inject command into edit buffer AND execute via ENTER. Uses `BasicEncoder::runCommand()`. Default command is "RUN" if not specified. Handles 128K menu navigation. | ✅ Implemented |
+| `basic program <code>` | | `<basic-code>` | Load multi-line BASIC program into PROG area. Uses `BasicEncoder::loadProgram()`. Program must have line numbers (e.g., `"10 PRINT 1\n20 GOTO 10"`). | ✅ Implemented |
 | `basic list` | | | Display currently loaded BASIC program from memory (detokenized). | ✅ Implemented |
-| `basic clear` | | | Clear current BASIC program from memory (NEW command). | 🔮 Planned |
+| `basic clear` | | | Clear current BASIC program from memory (NEW command). | ✅ Implemented |
+| `basic state` | | | Get current BASIC environment state (48K/128K mode, TR-DOS active, menu vs editor). | ✅ Implemented |
 
 **BASIC Injection Workflow Examples**:
 
 ```bash
-# Method 1: Inject complete program all at once
+# Method 1: Inject command and execute immediately
+basic run PRINT 1+1
+basic run LIST
+
+# Method 2: Inject without executing (appears in editor)
+basic inject PRINT "Hello"
+# (command appears in edit buffer, press ENTER manually to execute)
+
+# Method 3: Inject complete program
 basic inject "10 PRINT \"Hello, World!\"\n20 STOP"
 basic run
 
-# Method 2: Build program line by line
-basic appendline "10 CLS"
-basic appendline "20 PRINT \"TEST\""
-basic appendline "30 STOP"
-basic run
-
-# Method 3: Load from file
+# Method 4: Load from file
 basic load /tmp/test.bas
 basic run
+
+# Check current state
+basic state
+# => state: basic48k, in_editor: true, ready_for_commands: true
 
 # Check what's loaded
 basic list
 ```
 
 **Implementation Notes**:
-- **`basic inject`**: Uses `BasicEncoder::tokenize()` and `BasicEncoder::loadProgram()` to inject tokenized BASIC into memory and update system variables.
-- **`basic appendline`**: Similar to `basic inject` but appends to existing program rather than replacing it.
-- **`basic run`**: Uses `Keyboard::PressKey()` to simulate typing RUN, then continues execution until program stops or breakpoint hit.
+- **`basic inject`**: Uses `BasicEncoder::injectCommand()` to tokenize and write to edit buffer. Does NOT execute.
+  - 48K BASIC: Writes to E_LINE buffer at `$5C59` system variable
+  - 128K BASIC: Writes to SLEB buffer at `$EC16` in RAM bank 7
+  - Returns structured `InjectionResult` with success flag, detected state, and message
+- **`basic run`**: Uses `BasicEncoder::runCommand()` which combines `injectCommand()` + `injectEnter()`. Executes immediately.
+- **State Detection**: Uses `BasicEncoder::detectState()` with three-tier detection:
+  - Tier 1: TR-DOS ROM hardware page check
+  - Tier 2: Stack context analysis (detects SOS calls from DOS)
+  - Tier 3: System variable initialization check
+
 
 **Features**:
 - Detokenizes all Spectrum 48K/128K BASIC tokens (0xA3-0xFF)
@@ -2222,7 +2232,38 @@ basic list
 - Convert tokenized BASIC to editable text
 - Study programming techniques in commercial software
 
-#### 8.2 Music Detector & Ripper
+#### 8.2 Capture Commands (OCR, Screen, ROM Text)
+
+**Status**: 🚧 In Progress  
+**Implementation**: `core/src/debugger/analyzers/rom-print/screenocr.h/cpp`, `core/automation/cli/src/commands/cli-processor-capture.cpp`
+
+Capture and extract various output data from the emulator: screen text via OCR, screen bitmaps, ROM print output.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `capture ocr` | | OCR text from screen using ROM font bitmap matching. Returns 24 lines × 32 characters. | ✅ Implemented |
+| `capture romtext` | | Start/show captured ROM print output (uses ROMPrintDetector). | 🔮 Planned |
+| `capture screen` | `[5\|7\|shadow]` | Capture screen bitmap. Default: screen 5. Output: base64-encoded GIF with format/size metadata. | 🔮 Planned |
+| `capture screen 5` | | Capture main screen (page 5). | 🔮 Planned |
+| `capture screen 7` | | Capture shadow screen (page 7). | 🔮 Planned |
+| `capture screen shadow` | | Alias for `capture screen 7`. | 🔮 Planned |
+
+**OCR Implementation Details**:
+- Uses `ZXSpectrum::FONT_BITMAP[96][8]` from ROM for character matching
+- Handles ZX Spectrum interleaved screen layout (3 "thirds")
+- Returns '?' for unrecognized patterns, ' ' for empty cells
+- Tested at all 768 screen positions (32×24) and all 96 font characters
+
+**WebAPI Response Format** (for `capture screen`):
+```json
+{
+  "format": "gif",
+  "size": 12345,
+  "data": "base64encodeddata..."
+}
+```
+
+#### 8.3 Music Detector & Ripper
 
 **Status**: 🔮 Planned (Q2-Q3 2026)
 

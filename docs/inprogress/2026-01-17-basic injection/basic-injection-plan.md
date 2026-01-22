@@ -16,9 +16,9 @@ Propagate BASIC commands from CLI to all automation modules, then proceed with W
 
 ## Phase 1: WebAPI BASIC Endpoints
 
-### [NEW] [basic_api.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/api/basic_api.cpp)
+### [NEW] [basic_api.cpp](core/automation/webapi/src/api/basic_api.cpp)
 
-Following the [tape_disk_api.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/api/tape_disk_api.cpp) pattern:
+Following the [tape_disk_api.cpp](core/automation/webapi/src/api/tape_disk_api.cpp) pattern:
 
 ```cpp
 // POST /api/v1/emulator/:id/basic/run
@@ -39,7 +39,7 @@ void EmulatorAPI::basicExtract(const HttpRequestPtr& req, ...);
 void EmulatorAPI::basicClear(const HttpRequestPtr& req, ...);
 ```
 
-### [MODIFY] [emulator_api.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/emulator_api.h)
+### [MODIFY] [emulator_api.h](core/automation/webapi/src/emulator_api.h)
 
 Add method declarations and PATH/METHOD macros.
 
@@ -47,7 +47,7 @@ Add method declarations and PATH/METHOD macros.
 
 ## Phase 2: Update OpenAPI Spec
 
-### [MODIFY] [openapi_spec.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/openapi_spec.cpp)
+### [MODIFY] [openapi_spec.cpp](core/automation/webapi/src/openapi_spec.cpp)
 
 Add BASIC endpoint definitions following existing patterns.
 
@@ -55,7 +55,7 @@ Add BASIC endpoint definitions following existing patterns.
 
 ## Phase 3: Lua Bindings
 
-### [MODIFY] [lua_emulator.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/lua/src/emulator/lua_emulator.h)
+### [MODIFY] [lua_emulator.h](core/automation/lua/src/emulator/lua_emulator.h)
 
 ```lua
 -- Global functions:
@@ -70,7 +70,7 @@ basic_state()             -- Returns "48k", "128k", or "menu128k"
 
 ## Phase 4: Python API Client
 
-### [MODIFY] [api_client.py](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/tools/verification/webapi/src/api_client.py)
+### [MODIFY] [api_client.py](tools/verification/webapi/src/api_client.py)
 
 ```python
 def basic_run(self, emulator_id, command=None):
@@ -83,7 +83,7 @@ def basic_clear(self, emulator_id):
 
 ## Phase 5: Integration Test (FORMAT)
 
-### [NEW] [test_api_format.py](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/tools/verification/webapi/src/test_api_format.py)
+### [NEW] [test_api_format.py](tools/verification/webapi/src/test_api_format.py)
 
 ```python
 def test_trdos_format(self, api_client, pentagon_emulator):
@@ -108,10 +108,10 @@ def test_trdos_format(self, api_client, pentagon_emulator):
 | Action | File | Purpose |
 |--------|------|---------|
 | NEW | `webapi/src/api/basic_api.cpp` | WebAPI BASIC endpoints |
-| MODIFY | [webapi/src/emulator_api.h](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/emulator_api.h) | Add declarations |
-| MODIFY | [webapi/src/openapi_spec.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/automation/webapi/src/openapi_spec.cpp) | OpenAPI definitions |
+| MODIFY | [webapi/src/emulator_api.h](core/automation/webapi/src/emulator_api.h) | Add declarations |
+| MODIFY | [webapi/src/openapi_spec.cpp](core/automation/webapi/src/openapi_spec.cpp) | OpenAPI definitions |
 | MODIFY | `lua/src/emulator/lua_emulator.h` | Lua bindings |
-| MODIFY | [tools/verification/webapi/src/api_client.py](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/tools/verification/webapi/src/api_client.py) | Python client |
+| MODIFY | [tools/verification/webapi/src/api_client.py](tools/verification/webapi/src/api_client.py) | Python client |
 | NEW | `tools/verification/webapi/src/test_api_format.py` | Integration test |
 
 ---

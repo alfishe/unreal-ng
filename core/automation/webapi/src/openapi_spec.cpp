@@ -477,12 +477,69 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["responses"]["200"]["description"] =
         "Snapshot status information";
 
+    // Capture Commands endpoints
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["summary"] = "OCR text from screen";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["tags"].append("Capture");
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["description"] = 
+        "Extract text from screen using ROM font bitmap matching (OCR). "
+        "Returns 24 lines x 32 characters. Uses ZX Spectrum ROM font patterns.";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["description"] =
+        "Screen OCR result";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["rows"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["cols"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["lines"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["text"]["type"] = "string";
+
+    // Capture screen endpoint
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["summary"] = "Capture screen as image";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["tags"].append("Capture");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["description"] = 
+        "Capture screen as GIF or PNG image. Returns base64-encoded data.";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["name"] = "format";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["enum"].append("gif");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["enum"].append("png");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["name"] = "mode";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["enum"].append("screen");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["enum"].append("full");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["description"] =
+        "Screen captured successfully";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["width"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["height"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["size"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["data"]["type"] = "string";
+
     // BASIC Control endpoints
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["summary"] = "Execute BASIC command";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["tags"].append("BASIC Control");
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["description"] = 
-        "Inject and execute a BASIC command. If no command specified, executes RUN. "
-        "Automatically handles 128K menu navigation if needed.";
+        "Inject a command into BASIC edit buffer AND execute it via simulated ENTER key. "
+        "If no command specified, executes RUN. "
+        "Automatically handles 128K menu navigation if needed. "
+        "Returns error if TR-DOS is active or not in BASIC editor.";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["required"] = true;
@@ -490,15 +547,32 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["command"]["type"] = "string";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["command"]["description"] = "BASIC command to execute (e.g., 'FORMAT \"a\"', 'RUN', 'LIST')";
+         ["properties"]["command"]["description"] = "BASIC command to execute (e.g., 'RUN', 'LIST', 'PRINT 1+1')";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["description"] = 
         "Command injected and executed";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["success"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["success"]["description"] = "True if command was injected and executed";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["message"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["message"]["description"] = "Human-readable result or error message";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["command"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["basic_mode"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["basic_mode"]["description"] = "Detected BASIC mode: '48K', '128K', 'trdos', or 'unknown'";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["400"]["description"] = 
+        "Not in BASIC editor, TR-DOS active, or other injection error";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
-    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["summary"] = "Inject BASIC program";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["summary"] = "Inject BASIC program into memory";
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["tags"].append("BASIC Control");
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["description"] = 
         "Inject a multi-line BASIC program into memory without executing. "
+        "Uses loadProgram() to tokenize and write to program area. "
         "Lines should be separated by newlines and include line numbers.";
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["in"] = "path";
@@ -512,7 +586,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["200"]["description"] = 
         "Program injected successfully";
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["400"]["description"] = 
-        "Missing program parameter";
+        "Missing program parameter or injection failed";
 
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["summary"] = "Extract BASIC program";
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["tags"].append("BASIC Control");
@@ -539,13 +613,23 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["summary"] = "Get BASIC environment state";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["tags"].append("BASIC Control");
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["description"] = 
-        "Get the current BASIC environment state (48K/128K mode, menu vs editor, ready for commands).";
+        "Get the current BASIC environment state including mode (48K/128K), menu vs editor, "
+        "TR-DOS state, and readiness for commands.";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["description"] = 
         "BASIC state information";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["state"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["state"]["description"] = "State: 'basic48k', 'basic128k', 'menu128k', 'trdos_active', 'trdos_sos_call', 'unknown'";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["in_editor"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["ready_for_commands"]["type"] = "boolean";
+
 
     // Settings Management endpoints
     paths["/api/v1/emulator/{id}/settings"]["get"]["summary"] = "Get all emulator settings";

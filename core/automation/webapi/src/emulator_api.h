@@ -93,6 +93,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
     // endregion Tape/Disk/Snapshot Control
 
+    // region Capture Commands (implementation: api/capture_api.cpp)
+    // Screen OCR
+    ADD_METHOD_TO(EmulatorAPI::captureOcr, "/api/v1/emulator/{id}/capture/ocr", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::captureScreen, "/api/v1/emulator/{id}/capture/screen", drogon::Get);
+    // endregion Capture Commands
+
     // region BASIC Control (implementation: api/basic_api.cpp)
     // BASIC command execution and program management
     ADD_METHOD_TO(EmulatorAPI::basicRun, "/api/v1/emulator/{id}/basic/run", drogon::Post);
@@ -323,6 +329,13 @@ public:
     void getSnapshotInfo(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
+
+    // region Capture Commands Methods (implementation: api/capture_api.cpp)
+    void captureOcr(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void captureScreen(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    // endregion Capture Commands Methods
 
     // region BASIC Control Methods (implementation: api/basic_api.cpp)
     void basicRun(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
