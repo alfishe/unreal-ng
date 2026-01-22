@@ -131,6 +131,9 @@ if (BUILD_QT_APPS)
     
     message(STATUS ">>> Building unreal-screen-viewer")
     add_subdirectory(unreal-screen-viewer)
+    
+    message(STATUS ">>> Building unreal-videowall")
+    add_subdirectory(unreal-videowall)
 endif ()
 
 # ========================================
@@ -167,3 +170,122 @@ if (ENABLE_AUTOMATION)
     message(STATUS "    ENABLE_CLI_AUTOMATION:    ${ENABLE_CLI_AUTOMATION}")
 endif ()
 message(STATUS "====================================================")
+
+# ========================================
+# Combined Packaging (All Qt Apps)
+# ========================================
+if (BUILD_QT_APPS)
+    # Shared resource paths
+    set(DATA_PATH "${CMAKE_CURRENT_SOURCE_DIR}/data")
+    set(CONFIG_FILE "${DATA_PATH}/configs/pentagon512k/unreal.ini")
+    set(SUITE_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite")
+    
+    # macOS: Combined DMG with all apps
+    if(APPLE)
+        add_custom_target(package_suite_macos
+            # Create staging directory
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SUITE_STAGING_DIR}"
+            
+            # Copy all three app bundles
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.app"
+                "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app"
+                "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app"
+                "${SUITE_STAGING_DIR}/Video Wall.app"
+            
+            # Create combined DMG
+            COMMAND hdiutil create
+                -volname "UnrealNG Suite"
+                -srcfolder "${SUITE_STAGING_DIR}"
+                -ov -format UDZO
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
+            
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Creating combined macOS DMG with all applications"
+        )
+    endif()
+    
+    # Windows: Combined ZIP with all apps and shared resources
+    if(WIN32)
+        add_custom_target(package_suite_windows
+            # Create staging directory
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SUITE_STAGING_DIR}"
+            
+            # Copy all executables
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt.exe"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+                "${SUITE_STAGING_DIR}/"
+            
+            # Copy shared resources (only once)
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
+            
+            # Create ZIP archive
+            COMMAND ${CMAKE_COMMAND} -E tar "cf"
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
+                "--format=zip" "--" "${SUITE_STAGING_DIR}"
+            
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Creating combined Windows ZIP with all applications"
+        )
+    endif()
+    
+    # Linux: Combined tarball with all apps and shared resources
+    if(UNIX AND NOT APPLE)
+        add_custom_target(package_suite_linux
+            # Create staging directory
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+            COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SUITE_STAGING_DIR}"
+            
+            # Copy all executables
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-qt"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
+                "${SUITE_STAGING_DIR}/"
+            
+            # Copy shared resources (only once)
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
+            
+            # Create tarball
+            COMMAND ${CMAKE_COMMAND} -E tar "cfz"
+                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Linux.tar.gz"
+                "--" "${SUITE_STAGING_DIR}"
+            
+            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            COMMENT "Creating combined Linux tarball with all applications"
+        )
+    endif()
+endif()

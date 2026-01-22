@@ -326,22 +326,118 @@ add_custom_command(
     COMMENT "Copying runtime resource files to output directory"
 )
 
-# Install rules for packaging
-install(DIRECTORY ${DATA_PATH}/fonts
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/fonts
-)
-
-install(FILES ${CONFIG_FILE}
-    DESTINATION ${CMAKE_INSTALL_PREFIX}
-)
-
-install(DIRECTORY ${DATA_PATH}/rom
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/rom
-)
+# These install rules are already covered by the common install rules above
 
 # Debug output
 message(STATUS "CONFIG_FILE: ${CONFIG_FILE}")
 message(STATUS "Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
+
+# ======================================================
+# Installer Configuration
+# ======================================================
+
+# Include CPack for packaging
+# No CPack needed for direct packaging
+include(InstallRequiredSystemLibraries)
+
+# Set package output directory
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+
+# Package version information
+set(PACKAGE_VERSION "1.0.0")
+set(PACKAGE_VERSION_MAJOR "1")
+set(PACKAGE_VERSION_MINOR "0")
+set(PACKAGE_VERSION_PATCH "0")
+
+# ======================================================
+# Platform-specific installer configurations
+# ======================================================
+
+# macOS specific packaging
+if(APPLE)
+    # Create a custom target for macOS packaging
+    add_custom_target(package_macos
+        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating macOS DMG package in ${CMAKE_BINARY_DIR}/packages"
+    )
+    
+    # Create a macOS application bundle
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
+        MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "unreal.icns"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.emulator"
+        MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+    )
+    
+    # Copy the icon file and required resources to the bundle
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/unreal.icns" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/fonts" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/rom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${ROOT_DIR}/data/testrom" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/data/configs/pentagon512k/unreal.ini" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/unreal.ini"
+    )
+endif()
+
+# Windows specific packaging
+if(WIN32)
+    # Create a custom target for Windows packaging that builds without tests
+    add_custom_target(package_windows
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package..."
+        # First configure and build without tests
+        COMMAND ${CMAKE_COMMAND} -DBUILD_TESTS=OFF ${CMAKE_SOURCE_DIR}
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${PROJECT_NAME}
+        # Create package directory
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages/UnrealNG"
+        # Only copy the main executable
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}.exe" "${CMAKE_BINARY_DIR}/packages/UnrealNG/"
+        # Copy only necessary resources
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/UnrealNG/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/UnrealNG/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/UnrealNG/unreal.ini"
+        # Create the final zip package
+        COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG"
+        COMMENT "Creating Windows package in ${CMAKE_BINARY_DIR}/packages"
+    )
+    
+    # Add Windows RC file for icon and version information
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/install/windows/app.rc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/app.rc" @ONLY)
+    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/app.rc")
+endif()
+
+# Linux specific packaging
+if(UNIX AND NOT APPLE)
+    # Create a custom target for Linux packaging
+    add_custom_target(package_linux
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Linux package..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-qt" "${CMAKE_BINARY_DIR}/packages/unreal-qt"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/fonts" "${CMAKE_BINARY_DIR}/packages/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_BINARY_DIR}/bin/rom" "${CMAKE_BINARY_DIR}/packages/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal.ini" "${CMAKE_BINARY_DIR}/packages/unreal.ini"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-qt" "${CMAKE_BINARY_DIR}/packages/fonts" "${CMAKE_BINARY_DIR}/packages/rom" "${CMAKE_BINARY_DIR}/packages/unreal.ini"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating Linux package in ${CMAKE_BINARY_DIR}/packages"
+    )
+    # No desktop integration for simple packaging
+endif()
+
+# Add a general packaging target that builds the appropriate package for the current platform
+add_custom_target(package_all
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+    COMMAND ${CMAKE_CPACK_COMMAND} -C $<CONFIG> --config "${CMAKE_BINARY_DIR}/CPackConfig.cmake" -B "${CMAKE_BINARY_DIR}/packages"
+    DEPENDS ${PROJECT_NAME}
+    COMMENT "Creating package for current platform in ${CMAKE_BINARY_DIR}/packages"
+)
 
 # <Diagnostics>
 message(STATUS "<unreal-qt diagnostics>")

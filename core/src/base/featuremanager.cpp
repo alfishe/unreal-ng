@@ -60,6 +60,22 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
         bool valueChanged = (feature->enabled != enabled);
         feature->enabled = enabled;
 
+        // Auto-enable master debugmode when enabling any debug subfeature
+        // This ensures breakpoints/calltrace/memorytracking work as expected
+        if (enabled)
+        {
+            const std::string& id = feature->id;
+            if (id == Features::kBreakpoints || id == Features::kCallTrace || id == Features::kMemoryTracking)
+            {
+                auto* master = findFeature(Features::kDebugMode);
+                if (master && !master->enabled)
+                {
+                    master->enabled = true;
+                    valueChanged = true;
+                }
+            }
+        }
+
         // Always call onFeatureChanged() to ensure caches are synchronized,
         // even if the value didn't change. This handles the edge case where
         // UpdateFeatureCache() was never called during initialization.

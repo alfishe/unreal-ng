@@ -134,7 +134,10 @@ protected:
     // Incremental counter to generate new breakpoint IDs
     // Note: no breakpoint IDs reuse allowed
     uint16_t _breakpointIDSeq = 0;
-    // endregion </Fields>
+    
+    // Last triggered breakpoint ID (for automation API queries)
+    uint16_t _lastTriggeredBreakpointID = BRK_INVALID;
+    /// endregion </Fields>
 
     // region <Constructors / destructors>
 public:
@@ -153,6 +156,26 @@ public:
     bool RemoveBreakpointByID(uint16_t breakpointID);
 
     size_t GetBreakpointsCount();
+    
+    // Get/clear last triggered breakpoint (for automation APIs)
+    uint16_t GetLastTriggeredBreakpointID() const { return _lastTriggeredBreakpointID; }
+    void ClearLastTriggeredBreakpoint() { _lastTriggeredBreakpointID = BRK_INVALID; }
+    
+    /// Structured status info for automation APIs
+    struct BreakpointStatusInfo
+    {
+        bool valid = false;                  // True if a breakpoint was found
+        uint16_t id = BRK_INVALID;           // Breakpoint ID
+        std::string type;                    // "memory", "port", "keyboard"
+        uint16_t address = 0;                // Z80 address or port number
+        std::string access;                  // "execute", "read", "write", "in", "out" (comma-separated)
+        bool active = false;                 // Current enable state
+        std::string note;                    // User annotation
+        std::string group;                   // Group name
+    };
+    
+    /// Get structured info about the last triggered breakpoint
+    BreakpointStatusInfo GetLastTriggeredBreakpointInfo() const;
     /// endregion </Management methods>
 
     /// region <Management assistance methods>

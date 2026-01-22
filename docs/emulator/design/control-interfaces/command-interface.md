@@ -2055,13 +2055,103 @@ for addr in range(0x0000, 0x4000):
 
 ### 7. Disassembly & Reverse Engineering
 
-Enhanced code analysis and disassembly features.
+Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and needs to be exposed via automation interfaces.
+
+**Implementation**: `core/src/debugger/disassembler/z80disasm.h/cpp`
+
+#### 7.1 Disassembly Commands
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `disasm <addr> [count]` | `<address> [lines]` | Disassemble Z80 code starting at address. Default: 10 lines. Shows address, hex bytes, mnemonics, and operands. | 🔮 Planned |
-| `disasm range <from> <to>` | `<start> <end>` | Disassemble address range. | 🔮 Planned |
-| `disasm function <addr>` | `<address>` | Disassemble entire function (until RET found). | 🔮 Planned |
+| `disasm [addr] [count]` | `[address] [lines]` | Disassemble Z80 code starting at address (default: PC). Default count: 10 lines. Shows address, hex bytes, mnemonics, and operands. | ✅ Implemented |
+| `disasm range <from> <to>` | `<start> <end>` | Disassemble address range. | 🔧 Ready to implement |
+| `disasm function <addr>` | `[address]` | Disassemble entire function (until RET found). Default: function containing PC. | 🔮 Planned |
+| `disasm page <type> <page> <offset> [count]` | `<ram\|rom> <page> <offset> [lines]` | Disassemble from physical memory page (bypasses paging). Useful for ROM banks not currently paged in. Example: `disasm page rom 2 0x0000 20` for TR-DOS ROM. | ✅ Implemented |
+
+**Example Output**:
+```
+0x3683: CB 7F       BIT 7,A
+0x3685: 28 03       JR Z,0x368A
+0x3687: CD 00 10    CALL 0x1000
+0x368A: C9          RET
+```
+
+**WebAPI Endpoints**:
+```
+GET /api/v1/emulator/{id}/disasm?address=0x3683&count=10
+GET /api/v1/emulator/{id}/disasm?from=0x3683&to=0x3700
+GET /api/v1/emulator/{id}/disasm/page?type=rom&page=2&offset=0&count=20
+```
+
+**WebAPI Response**:
+```json
+{
+  "address": 13955,
+  "count": 4,
+  "instructions": [
+    {
+      "address": 13955,
+      "bytes": "CB7F",
+      "mnemonic": "BIT 7,A",
+      "size": 2
+    },
+    {
+      "address": 13957,
+      "bytes": "2803",
+      "mnemonic": "JR Z,0x368A",
+      "size": 2,
+      "target": 13962
+    }
+  ]
+}
+```
+
+**Python Binding**:
+```python
+# Disassemble 10 instructions from PC
+lines = emu.disasm()
+
+# Disassemble from specific address
+lines = emu.disasm(address=0x3683, count=20)
+
+# Disassemble from physical ROM page (e.g., TR-DOS ROM at page 2)
+lines = emu.disasm_page(type="rom", page=2, offset=0, count=20)
+
+# Disassemble from physical RAM page
+lines = emu.disasm_page(type="ram", page=5, offset=0x100, count=10)
+
+# Returns list of dicts with: address/offset, bytes, mnemonic, size, target (if branch)
+```
+
+**Lua Binding**:
+```lua
+-- Disassemble from PC
+local lines = emu:disasm()
+local lines = emu:disasm(0x3683, 10)  -- address, count
+
+-- Disassemble from physical page (bypasses Z80 paging)
+local lines = disasm_page("rom", 2, 0, 20)  -- type, page, offset, count
+local lines = disasm_page("ram", 5, 0x100, 10)
+
+-- Each entry: {address/offset, bytes, mnemonic, size, target}
+```
+
+**CLI Commands**:
+```
+disasm [address] [count]       - Disassemble from address (default: PC)
+disasm_page <ram|rom> <page> [offset] [count] - Disassemble from physical page
+u [address] [count]            - Alias for disasm
+
+# Examples:
+disasm 0x3683 20
+disasm_page rom 2 0 20         # TR-DOS ROM
+disasm_page ram 5 0x100 10     # RAM page 5
+```
+
+#### 7.2 Symbol Management
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
 | `symbol load <file>` | `<filename>` | Load symbol file (.map, .sym, .labels). Enables symbolic names in disassembly and breakpoints. | 🔮 Planned |
 | `symbol list [filter]` | `[pattern]` | List loaded symbols, optionally filtered by pattern. | 🔮 Planned |
 | `symbol find <name>` | `<symbol-name>` | Find address of symbol by name. | 🔮 Planned |

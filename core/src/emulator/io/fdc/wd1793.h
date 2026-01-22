@@ -654,6 +654,7 @@ protected:
     size_t _rawDataBufferIndex = 0;      // Current position in raw data buffer for track read/write
     uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
     DiskImage::Track* _writeTrackTarget = nullptr;  // Track being written by Write Track command (for reindexing)
+    size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
 
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
@@ -1098,6 +1099,16 @@ public:
     using WD1793::_prevReady;
     using WD1793::isReady;
     using WD1793::processForceInterruptConditions;
+
+    // Write Track CRC regression test fields and methods
+    using WD1793::_rawDataBuffer;
+    using WD1793::_rawDataBufferIndex;
+    using WD1793::_crcStartPosition;
+    using WD1793::processWriteTrack;
+    
+    // Read Track / Wait Index regression test fields and methods
+    using WD1793::_waitIndexPulseCount;
+    using WD1793::processWaitIndex;
 };
 
 #endif  // _CODE_UNDER_TEST
