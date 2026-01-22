@@ -146,6 +146,38 @@ public:
     ADD_METHOD_TO(EmulatorAPI::executeBatch, "/api/v1/batch/execute", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getBatchableCommands, "/api/v1/batch/commands", drogon::Get);
     // endregion Batch Command Execution
+
+    // region Debug Commands (implementation: api/debug_api.cpp)
+    // Stepping
+    ADD_METHOD_TO(EmulatorAPI::step, "/api/v1/emulator/{id}/step", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::steps, "/api/v1/emulator/{id}/steps", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::stepOver, "/api/v1/emulator/{id}/stepover", drogon::Post);
+    
+    // Debug mode
+    ADD_METHOD_TO(EmulatorAPI::getDebugMode, "/api/v1/emulator/{id}/debugmode", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setDebugMode, "/api/v1/emulator/{id}/debugmode", drogon::Put);
+    
+    // Breakpoints
+    ADD_METHOD_TO(EmulatorAPI::getBreakpoints, "/api/v1/emulator/{id}/breakpoints", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::addBreakpoint, "/api/v1/emulator/{id}/breakpoints", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::clearBreakpoints, "/api/v1/emulator/{id}/breakpoints", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::removeBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::enableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/enable", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
+    ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
+    
+    // Memory inspection
+    ADD_METHOD_TO(EmulatorAPI::getRegisters, "/api/v1/emulator/{id}/registers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getMemory, "/api/v1/emulator/{id}/memory/{addr}", drogon::Get);
+    
+    // Analysis
+    ADD_METHOD_TO(EmulatorAPI::getMemCounters, "/api/v1/emulator/{id}/memcounters", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getCallTrace, "/api/v1/emulator/{id}/calltrace", drogon::Get);
+    
+    // Disassembly
+    ADD_METHOD_TO(EmulatorAPI::getDisasm, "/api/v1/emulator/{id}/disasm", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
+    // endregion Debug Commands
     METHOD_LIST_END
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
@@ -380,6 +412,56 @@ public:
     void getBatchableCommands(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     // endregion Batch Command Execution Methods
+
+    // region Debug Commands Methods (implementation: api/debug_api.cpp)
+    // Stepping
+    void step(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+              const std::string& id) const;
+    void steps(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+               const std::string& id) const;
+    void stepOver(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    
+    // Debug mode
+    void getDebugMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void setDebugMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    
+    // Breakpoints
+    void getBreakpoints(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void addBreakpoint(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void clearBreakpoints(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    void removeBreakpoint(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id, const std::string& bpIdStr) const;
+    void enableBreakpoint(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id, const std::string& bpIdStr) const;
+    void disableBreakpoint(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& bpIdStr) const;
+    void getBreakpointStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    
+    // Memory inspection
+    void getRegisters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void getMemory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id, const std::string& addrStr) const;
+    
+    // Analysis
+    void getMemCounters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void getCallTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    
+    // Disassembly
+    void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void getDisasmPage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    // endregion Debug Commands Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:

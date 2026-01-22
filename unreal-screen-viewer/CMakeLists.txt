@@ -164,3 +164,71 @@ message(STATUS "<unreal-screen-viewer diagnostics>")
 message(STATUS "  PROJECT_NAME: ${PROJECT_NAME}")
 message(STATUS "  CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 message(STATUS "</unreal-screen-viewer diagnostics>")
+
+# ======================================================
+# Installer Configuration
+# ======================================================
+
+# Include CPack for packaging
+include(InstallRequiredSystemLibraries)
+
+# Set package output directory
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+
+# Package version information
+set(PACKAGE_VERSION "1.0.0")
+set(PACKAGE_VERSION_MAJOR "1")
+set(PACKAGE_VERSION_MINOR "0")
+set(PACKAGE_VERSION_PATCH "0")
+
+# ======================================================
+# Platform-specific installer configurations
+# ======================================================
+
+# macOS specific packaging
+if(APPLE)
+    # Create a custom target for macOS packaging
+    add_custom_target(package_screen_viewer_macos
+        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package for Screen Viewer..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND hdiutil create -volname "UnrealNG-ScreenViewer" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer.dmg"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating macOS DMG package for Screen Viewer in ${CMAKE_BINARY_DIR}/packages"
+    )
+    
+    # Create a macOS application bundle
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Screen Viewer"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.screen-viewer"
+        MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+    )
+endif()
+
+# Windows specific packaging
+if(WIN32)
+    # Create a custom target for Windows packaging
+    add_custom_target(package_screen_viewer_windows
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package for Screen Viewer..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/${PROJECT_NAME}.exe" "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer/"
+        COMMAND ${CMAKE_COMMAND} -E tar "cf" "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer-Windows.zip" "--format=zip" "--" "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating Windows package for Screen Viewer in ${CMAKE_BINARY_DIR}/packages"
+    )
+endif()
+
+# Linux specific packaging
+if(UNIX AND NOT APPLE)
+    # Create a custom target for Linux packaging
+    add_custom_target(package_screen_viewer_linux
+        COMMAND ${CMAKE_COMMAND} -E echo "Building Linux package for Screen Viewer..."
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer" "${CMAKE_BINARY_DIR}/packages/unreal-screen-viewer"
+        COMMAND ${CMAKE_COMMAND} -E tar "cfz" "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer-Linux.tar.gz" "--" "${CMAKE_BINARY_DIR}/packages/unreal-screen-viewer"
+        DEPENDS ${PROJECT_NAME}
+        COMMENT "Creating Linux package for Screen Viewer in ${CMAKE_BINARY_DIR}/packages"
+    )
+endif()

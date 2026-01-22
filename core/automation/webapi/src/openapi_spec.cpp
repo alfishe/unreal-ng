@@ -768,6 +768,229 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/BatchableCommandsResponse";
 
+    // Debug Commands endpoints
+    // Stepping
+    paths["/api/v1/emulator/{id}/step"]["post"]["summary"] = "Execute single instruction";
+    paths["/api/v1/emulator/{id}/step"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/step"]["post"]["responses"]["200"]["description"] = "Instruction executed, returns new PC";
+
+    paths["/api/v1/emulator/{id}/steps"]["post"]["summary"] = "Execute N instructions";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["description"] = "Number of instructions to execute";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["responses"]["200"]["description"] = "Instructions executed";
+
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["summary"] = "Step over call instruction";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["responses"]["200"]["description"] = "Stepped over call";
+
+    // Debug mode
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["summary"] = "Get debug mode state";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["responses"]["200"]["description"] = "Debug mode enabled state";
+
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["summary"] = "Enable/disable debug mode";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["responses"]["200"]["description"] = "Debug mode updated";
+
+    // Breakpoints
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["summary"] = "List all breakpoints";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["responses"]["200"]["description"] = "List of breakpoints";
+
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["summary"] = "Add breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/AddBreakpointRequest";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/AddBreakpointResponse";
+
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["summary"] = "Clear all breakpoints";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["responses"]["200"]["description"] = "All breakpoints cleared";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["summary"] = "Remove specific breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["responses"]["200"]["description"] = "Breakpoint removed";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["summary"] = "Enable breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["responses"]["200"]["description"] = "Breakpoint enabled";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["summary"] = "Disable breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["responses"]["200"]["description"] = "Breakpoint disabled";
+
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["summary"] = "Get breakpoint status";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["description"] = 
+        "Returns information about the last triggered breakpoint, including type (memory/port), address, and access mode";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["description"] = "Breakpoint status";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BreakpointStatusResponse";
+
+    // Memory inspection
+    paths["/api/v1/emulator/{id}/registers"]["get"]["summary"] = "Get CPU registers";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["responses"]["200"]["description"] = "CPU register values";
+
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["summary"] = "Read memory";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["name"] = "addr";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["name"] = "len";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] = "Number of bytes to read (default: 16, max: 256)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["description"] = "Memory content";
+
+    // Analysis
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["summary"] = "Get memory access counters";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["responses"]["200"]["description"] = "Memory access statistics";
+
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["summary"] = "Get call trace";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["description"] = "Max entries to return (default: 50)";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
+
+    // Disassembly endpoint
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["summary"] = "Disassemble Z80 code";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["name"] = "address";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal, default: PC)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["name"] = "count";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] = "Disassembled instructions";
+
+    // Physical page disassembly endpoint
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["summary"] = "Disassemble from physical RAM/ROM page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["name"] = "type";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["description"] = "Memory type: 'ram' or 'rom'";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["name"] = "page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["description"] = "Physical page number (0-255)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["name"] = "offset";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["description"] = "Offset within page (default: 0)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["name"] = "count";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] = "Disassembled instructions from physical page";
+
     spec["paths"] = paths;
 
     // Components/Schemas
@@ -813,6 +1036,108 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["FeatureInfo"]["properties"]["enabled"]["type"] = "boolean";
     schemas["FeatureInfo"]["properties"]["description"]["type"] = "string";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
+
+    // Debug Commands schemas
+    
+    // Breakpoints List Response
+    schemas["BreakpointsListResponse"]["type"] = "object";
+    schemas["BreakpointsListResponse"]["description"] = "List of breakpoints";
+    schemas["BreakpointsListResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["type"] = "array";
+    schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] = "#/components/schemas/BreakpointInfo";
+    
+    // Memory Breakpoint Info
+    schemas["MemoryBreakpointInfo"]["type"] = "object";
+    schemas["MemoryBreakpointInfo"]["description"] = "Memory breakpoint (execute/read/write)";
+    schemas["MemoryBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["type"]["enum"].append("memory");
+    schemas["MemoryBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["execute"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["read"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["write"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    
+    // Port Breakpoint Info
+    schemas["PortBreakpointInfo"]["type"] = "object";
+    schemas["PortBreakpointInfo"]["description"] = "Port breakpoint (in/out)";
+    schemas["PortBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["type"]["enum"].append("port");
+    schemas["PortBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["address"]["description"] = "Port number";
+    schemas["PortBreakpointInfo"]["properties"]["in"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["out"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    
+    // Keyboard Breakpoint Info
+    schemas["KeyboardBreakpointInfo"]["type"] = "object";
+    schemas["KeyboardBreakpointInfo"]["description"] = "Keyboard breakpoint (press/release)";
+    schemas["KeyboardBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["KeyboardBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["KeyboardBreakpointInfo"]["properties"]["type"]["enum"].append("keyboard");
+    schemas["KeyboardBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["KeyboardBreakpointInfo"]["properties"]["press"]["type"] = "boolean";
+    schemas["KeyboardBreakpointInfo"]["properties"]["release"]["type"] = "boolean";
+    schemas["KeyboardBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["KeyboardBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["KeyboardBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    
+    // Generic BreakpointInfo (oneOf the above)
+    schemas["BreakpointInfo"]["oneOf"][0]["$ref"] = "#/components/schemas/MemoryBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][1]["$ref"] = "#/components/schemas/PortBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][2]["$ref"] = "#/components/schemas/KeyboardBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["propertyName"] = "type";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["memory"] = "#/components/schemas/MemoryBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["port"] = "#/components/schemas/PortBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["keyboard"] = "#/components/schemas/KeyboardBreakpointInfo";
+    
+    // Breakpoint Status Response (last triggered)
+    schemas["BreakpointStatusResponse"]["type"] = "object";
+    schemas["BreakpointStatusResponse"]["description"] = "Last triggered breakpoint information";
+    schemas["BreakpointStatusResponse"]["properties"]["is_paused"]["type"] = "boolean";
+    schemas["BreakpointStatusResponse"]["properties"]["breakpoints_count"]["type"] = "integer";
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_id"]["type"] = "integer";
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_id"]["nullable"] = true;
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["type"] = "string";
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("memory");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("port");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("keyboard");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_address"]["type"] = "integer";
+    schemas["BreakpointStatusResponse"]["properties"]["paused_by_breakpoint"]["type"] = "boolean";
+    
+    // Add Breakpoint Request
+    schemas["AddBreakpointRequest"]["type"] = "object";
+    schemas["AddBreakpointRequest"]["description"] = "Request to add a breakpoint";
+    schemas["AddBreakpointRequest"]["required"].append("type");
+    schemas["AddBreakpointRequest"]["required"].append("address");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["type"]["description"] = "Breakpoint type";
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("execution");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("read");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("write");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_in");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
+    schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["address"]["description"] = "Z80 address (0-65535) or port number (0-255)";
+    schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] = "Optional group name";
+    
+    // Add Breakpoint Response
+    schemas["AddBreakpointResponse"]["type"] = "object";
+    schemas["AddBreakpointResponse"]["description"] = "Response after adding a breakpoint";
+    schemas["AddBreakpointResponse"]["properties"]["status"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["id"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["id"]["description"] = "Assigned breakpoint ID";
+    schemas["AddBreakpointResponse"]["properties"]["type"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
 
     // Memory State schemas
     schemas["MemoryStateResponse"]["type"] = "object";
