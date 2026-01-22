@@ -1,7 +1,9 @@
 #include "analyzermanager.h"
 
+#include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/platform.h"
 
@@ -28,7 +30,29 @@ void AnalyzerManager::init(DebugManager* debugManager)
     {
         _breakpointManager = debugManager->GetBreakpointsManager();
     }
-    // FeatureManager integration will be added later when needed
+    // Initialize FeatureManager reference for auto-enabling debug features
+    if (_context && _context->pEmulator)
+    {
+        _featureManager = _context->pEmulator->GetFeatureManager();
+    }
+}
+
+/// @brief Ensure debug features are enabled when first breakpoint is registered
+/// Auto-enables 'debugmode' and 'breakpoints' features to ensure analyzer breakpoints work.
+/// This is called automatically when an analyzer requests its first breakpoint.
+void AnalyzerManager::ensureDebugFeaturesEnabled()
+{
+    if (!_featureManager)
+        return;
+    
+    // Only auto-enable if this is the first analyzer breakpoint being registered
+    // (optimization: skip if features are already enabled)
+    if (!_featureManager->isEnabled(Features::kBreakpoints))
+    {
+        // Enable breakpoints feature - this will also auto-enable debugmode
+        // due to the cascade logic in FeatureManager::setFeature()
+        _featureManager->setFeature(Features::kBreakpoints, true);
+    }
 }
 
 // Analyzer lifecycle
@@ -300,6 +324,9 @@ BreakpointId AnalyzerManager::requestExecutionBreakpoint(uint16_t address, const
 {
     if (!_breakpointManager)
         return BRK_INVALID;
+    
+    // Auto-enable debug features on first breakpoint registration
+    ensureDebugFeaturesEnabled();
 
     // Add breakpoint using BreakpointManager with AnalyzerManager's OWNER_ID
     // AnalyzerManager owns all analyzer breakpoints - dispatches internally to requesting analyzer
@@ -323,6 +350,9 @@ BreakpointId AnalyzerManager::requestExecutionBreakpointInPage(uint16_t address,
 {
     if (!_breakpointManager)
         return BRK_INVALID;
+    
+    // Auto-enable debug features on first breakpoint registration
+    ensureDebugFeaturesEnabled();
 
     // Add page-specific breakpoint using BreakpointManager with AnalyzerManager's OWNER_ID
     // AnalyzerManager owns all analyzer breakpoints - dispatches internally to requesting analyzer

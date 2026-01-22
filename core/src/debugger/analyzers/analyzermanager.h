@@ -319,4 +319,8 @@ private:
     /// Remove all subscriptions for an analyzer
     /// @param analyzerId Analyzer identifier
     void removeAllSubscriptionsForAnalyzer(const std::string& analyzerId);
+    
+    /// Auto-enable debug features (debugmode + breakpoints) on first breakpoint registration
+    /// Called automatically when an analyzer requests a breakpoint
+    void ensureDebugFeaturesEnabled();
 };

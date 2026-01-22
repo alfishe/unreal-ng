@@ -23,6 +23,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "base/featuremanager.h"
 
 // Mock Analyzer that tracks breakpoint hits
 class TrackingAnalyzer : public IAnalyzer {
@@ -304,6 +305,96 @@ TEST_F(AnalyzerManagerIntegration_test, OwnershipCheckDistinguishesBreakpoints)
     
     EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x3000))
         << "AnalyzerManager should NOT own non-existent address";
+}
+
+/// @brief Verify AnalyzerManager auto-enables required features on first breakpoint request
+/// This test captures the requirement that analyzers shouldn't need manual feature setup.
+/// When AnalyzerManager registers its first breakpoint, it should automatically enable:
+/// 1. 'debugmode' feature (master debug switch)
+/// 2. 'breakpoints' feature (breakpoint processing)
+/// 3. Set Z80::isDebugMode = true (CPU-level debug flag)
+TEST_F(AnalyzerManagerIntegration_test, AutoEnablesFeaturesOnFirstBreakpointRequest)
+{
+    // Create a fresh emulator WITHOUT debug features pre-enabled
+    EmulatorTestHelper::CleanupEmulator(_emulator);
+    _emulator = EmulatorTestHelper::CreateDebugEmulator({});  // No features enabled
+    ASSERT_NE(_emulator, nullptr);
+    
+    _context = _emulator->GetContext();
+    ASSERT_NE(_context, nullptr);
+    
+    _manager = _context->pDebugManager->GetAnalyzerManager();
+    ASSERT_NE(_manager, nullptr);
+    
+    _z80 = _context->pCore->GetZ80();
+    ASSERT_NE(_z80, nullptr);
+    
+    FeatureManager* fm = _emulator->GetFeatureManager();
+    ASSERT_NE(fm, nullptr);
+    
+    // Explicitly disable debug features to ensure clean initial state
+    // (EmulatorTestHelper may enable them during creation)
+    fm->setFeature("debugmode", false);
+    fm->setFeature("breakpoints", false);
+    _manager->setEnabled(false);  // Disable AnalyzerManager master toggle
+    
+    // PRECONDITION: Verify ALL debug mechanisms are now disabled
+    EXPECT_FALSE(fm->isEnabled("debugmode")) 
+        << "debugmode should be disabled after explicit disable";
+    EXPECT_FALSE(fm->isEnabled("breakpoints")) 
+        << "breakpoints should be disabled after explicit disable";
+    EXPECT_FALSE(_z80->isDebugMode) 
+        << "Z80::isDebugMode should be false when debugmode is disabled";
+    EXPECT_FALSE(_manager->isEnabled())
+        << "AnalyzerManager master toggle should be disabled";
+    
+    // Register and activate an analyzer - this enables AnalyzerManager master toggle
+    auto analyzer = std::make_unique<TrackingAnalyzer>("auto-features-test", "auto-uuid");
+    _manager->registerAnalyzer("auto-features-test", std::move(analyzer));
+    _manager->activate("auto-features-test");
+    
+    // Register first breakpoint - this should trigger auto-enable of features
+    BreakpointId bp = _manager->requestExecutionBreakpoint(0x1000, "auto-features-test");
+    ASSERT_NE(bp, BRK_INVALID) << "Failed to register breakpoint";
+    
+    // POSTCONDITION: ALL required debug mechanisms should now be enabled
+    EXPECT_TRUE(fm->isEnabled("debugmode")) 
+        << "debugmode should be auto-enabled when AnalyzerManager registers first breakpoint";
+    EXPECT_TRUE(fm->isEnabled("breakpoints")) 
+        << "breakpoints should be auto-enabled when AnalyzerManager registers first breakpoint";
+    EXPECT_TRUE(_z80->isDebugMode) 
+        << "Z80::isDebugMode should be set to true when debugmode feature is enabled";
+    EXPECT_TRUE(_manager->isEnabled())
+        << "AnalyzerManager master toggle should be enabled after activation";
+}
+
+/// @brief Verify features remain enabled when last analyzer breakpoint is released
+TEST_F(AnalyzerManagerIntegration_test, FeaturesRemainEnabledAfterBreakpointRelease)
+{
+    // Start with features enabled
+    FeatureManager* fm = _emulator->GetFeatureManager();
+    ASSERT_NE(fm, nullptr);
+    
+    EXPECT_TRUE(fm->isEnabled("debugmode"));
+    EXPECT_TRUE(fm->isEnabled("breakpoints"));
+    
+    // Register analyzer and breakpoint
+    auto analyzer = std::make_unique<TrackingAnalyzer>("release-test", "release-uuid");
+    _manager->registerAnalyzer("release-test", std::move(analyzer));
+    _manager->activate("release-test");
+    
+    BreakpointId bp = _manager->requestExecutionBreakpoint(0x2000, "release-test");
+    ASSERT_NE(bp, BRK_INVALID);
+    
+    // Release the breakpoint
+    _manager->releaseBreakpoint(bp);
+    
+    // Features should remain enabled (user may have other breakpoints or expect debug mode)
+    // Automatic disable would be unexpected behavior
+    EXPECT_TRUE(fm->isEnabled("debugmode")) 
+        << "debugmode should remain enabled after breakpoint release";
+    EXPECT_TRUE(fm->isEnabled("breakpoints")) 
+        << "breakpoints should remain enabled after breakpoint release";
 }
 
 /// @brief Verify page-specific analyzer breakpoint is also silent
