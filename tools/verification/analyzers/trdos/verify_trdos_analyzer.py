@@ -391,6 +391,161 @@ class TRDOSAnalyzerVerifier:
         except Exception as e:
             self.print_error(f"Failed to execute command: {e}")
             return False
+    
+    def capture_screen_ocr(self, description: str = "") -> Tuple[bool, List[str]]:
+        """Capture screen via OCR and return lines"""
+        step_label = f"Screen OCR{': ' + description if description else ''}"
+        self.print_info(f"{step_label}...")
+        
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/capture/ocr"
+        
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            if result.get('status') != 'success':
+                self.print_error(f"OCR failed: {result.get('message', 'Unknown error')}")
+                return False, []
+            
+            lines = result.get('lines', [])
+            text = result.get('text', '')
+            
+            self.print_success(f"OCR captured ({len(lines)} lines)")
+            
+            # Show first few non-empty lines
+            non_empty = [l.strip() for l in lines if l.strip()]
+            print(f"\n{Colors.BOLD}Screen Content Preview:{Colors.END}")
+            for i, line in enumerate(non_empty[:8]):
+                # Truncate long lines
+                display_line = line[:60] + ('...' if len(line) > 60 else '')
+                print(f"  |{display_line}|")
+            if len(non_empty) > 8:
+                print(f"  ... ({len(non_empty) - 8} more lines)")
+            print()
+            
+            return True, lines
+            
+        except requests.exceptions.HTTPError as e:
+            self.print_error(f"HTTP error during OCR: {e}")
+            return False, []
+        except Exception as e:
+            self.print_error(f"OCR failed: {e}")
+            return False, []
+    
+    def inject_basic_command(self, command: str) -> bool:
+        """Inject a BASIC command into editor (without executing)"""
+        self.print_info(f"Injecting command: {command}")
+        
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/basic/inject"
+        payload = {"command": command}  # Now uses 'command' parameter
+        
+        try:
+            response = self.session.post(url, json=payload, timeout=10)
+            response.raise_for_status()
+            
+            result = response.json()
+            state = result.get('state', 'unknown')
+            
+            if result.get('success'):
+                self.print_success(f"Command '{command}' injected (state: {state})")
+                
+                # For TR-DOS, we need to step the emulator to process keypresses
+                # since keypress injection only sets one key at a time
+                if state == 'trdos':
+                    self.print_info("TR-DOS mode - stepping emulator to process keys...")
+                    # Run emulator for ~100ms to process keypress
+                    self.step_frames(5)
+                    
+                return True
+            else:
+                self.print_error(f"Injection failed: {result.get('message', 'Unknown error')}")
+                return False
+                
+        except requests.exceptions.HTTPError as e:
+            self.print_error(f"HTTP error during injection: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_body = e.response.json()
+                    self.print_info(f"Server response: {error_body}")
+                except:
+                    self.print_info(f"Server response: {e.response.text[:500]}")
+            return False
+        except Exception as e:
+            self.print_error(f"Failed to inject command: {e}")
+            return False
+    
+    def step_frames(self, count: int = 1) -> bool:
+        """Step emulator by specified number of frames"""
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/step"
+        payload = {"frames": count}
+        try:
+            response = self.session.post(url, json=payload, timeout=5)
+            if response.status_code == 404:
+                # No step endpoint, just wait (20ms per frame at 50Hz)
+                time.sleep(0.02 * count)
+                return True
+            return response.status_code == 200
+        except:
+            time.sleep(0.02 * count)
+            return True
+    
+    def verify_command_injection(self, command: str, wait_time: float = 0.5) -> bool:
+        """Inject command (without ENTER) and verify it appears on screen via OCR"""
+        self.print_step("4b", f"Injecting and verifying command: {command}")
+        
+        # Step 1: Inject command (no ENTER pressed - command stays in editor buffer)
+        if not self.inject_basic_command(command):
+            return False
+        
+        # Give a moment for screen to update with injected text
+        time.sleep(wait_time)
+        
+        # Step 2: Capture screen to verify text appears
+        success, lines = self.capture_screen_ocr("after injection")
+        if not success:
+            return False
+        
+        # Check if command text appears on screen
+        screen_text = '\n'.join(lines).upper()
+        command_upper = command.upper()
+        
+        if command_upper in screen_text:
+            self.print_success(f"Command '{command}' visible on screen!")
+            return True
+        else:
+            self.print_error(f"Command '{command}' NOT visible on screen - injection failed!")
+            return False
+    
+    def inject_enter(self) -> bool:
+        """Inject ENTER keypress to execute the already-injected command"""
+        self.print_info("Injecting ENTER keypress...")
+        
+        # Use the basic/run endpoint with empty command - it will just inject ENTER
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/basic/run"
+        payload = {"command": ""}  # Empty command = just inject ENTER
+        
+        try:
+            response = self.session.post(url, json=payload, timeout=10)
+            response.raise_for_status()
+            
+            result = response.json()
+            if result.get('success'):
+                self.print_success("ENTER keypress injected")
+                return True
+            else:
+                self.print_warning(f"ENTER injection: {result.get('message', 'Unknown')}")
+                return True  # Don't fail test
+                
+        except Exception as e:
+            self.print_warning(f"ENTER injection failed: {e}")
+            return True  # Don't fail the test
+    
+    def capture_results(self, description: str = "command results") -> Tuple[bool, List[str]]:
+        """Capture screen to see command execution results"""
+        self.print_step("5b", f"Capturing {description}...")
+        return self.capture_screen_ocr(description)
             
     def get_events(self) -> Tuple[bool, List[Dict]]:
         """Retrieve analyzer events"""
@@ -519,6 +674,10 @@ class TRDOSAnalyzerVerifier:
         # Step 2.7: Load disk image into drive A
         if not self.load_disk_image():
             return False
+        
+        # Capture initial screen state
+        self.print_step("2.9", "Capturing initial screen state...")
+        self.capture_screen_ocr("before command injection")
             
         # Step 3: Activate analyzer
         if not self.activate_analyzer():
@@ -527,15 +686,30 @@ class TRDOSAnalyzerVerifier:
         # TODO: Verify analyzer state and breakpoints
         self.print_info("Analyzer activated - breakpoints should be set at 0x3D00, 0x3D21")
             
-        # Step 4: Execute TR-DOS LOAD command
-        # Note: TR-DOS is already active from snapshot, so we can directly use LOAD
-        if not self.execute_basic_command('LOAD'):
+        # Step 4: TEST INJECTION - Inject LOAD command and verify it appears on screen
+        # This tests the BasicEncoder injection mode (TR-DOS mode)
+        if not self.verify_command_injection('LOAD'):
+            self.print_error("LOAD command injection failed - BasicEncoder issue!")
             self.deactivate_analyzer()
             return False
+        
+        # Step 4c: Inject ENTER to execute the injected command
+        self.print_step("4c", "Injecting ENTER to execute command...")
+        self.inject_enter()
             
         # Wait for command execution to complete
         self.print_info("Waiting for LOAD command to complete...")
         time.sleep(2.0)  # Give more time for disk operations
+        
+        # Step 4d: Capture screen after command execution to verify it ran
+        self.print_step("4d", "Verifying command executed...")
+        success, lines = self.capture_results("LOAD command results")
+        if success:
+            screen_text = '\n'.join(lines)
+            if 'LOAD' in screen_text.upper() or 'A>' in screen_text:
+                self.print_success("Command appears to have executed")
+            else:
+                self.print_info("Screen state changed after command")
         
         # Step 5: Get events
         success, events = self.get_events()

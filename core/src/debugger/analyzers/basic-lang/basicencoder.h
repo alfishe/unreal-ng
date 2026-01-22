@@ -188,6 +188,14 @@ public:
     /// @return InjectionResult (state will be Basic128K on success)
     static InjectionResult injectTo128K(Memory* memory, const std::string& command);
     
+    /// ROM-specific: Inject command into TR-DOS E_LINE buffer
+    /// TR-DOS uses SOS ROM for keyboard input, so E_LINE buffer works
+    /// Commands are raw ASCII (no BASIC tokenization)
+    /// @param memory Pointer to emulator memory instance
+    /// @param command Command string to inject
+    /// @return InjectionResult (state will be TRDOS_Active on success)
+    static InjectionResult injectToTRDOS(Memory* memory, const std::string& command);
+    
     /// Replace BASIC keywords with their token equivalents
     /// Handles multi-word keywords and preserves string literals
     /// @param text Line text to process

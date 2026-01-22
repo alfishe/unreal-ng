@@ -910,6 +910,75 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Memory* memory, const s
     return result;
 }
 
+BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const std::string& command)
+{
+    InjectionResult result;
+    result.success = false;
+    result.state = BasicState::TRDOS_Active;
+    
+    if (!memory)
+    {
+        result.message = "Error: Memory not available";
+        return result;
+    }
+    
+    // TR-DOS uses the EXACT same E_LINE buffer mechanism as 48K BASIC!
+    // From TR-DOS ROM at $027B (RUN "boot" command injection):
+    //   LD HL,($5C59)   ; E_LINE - get command buffer address
+    //   LD (HL),...     ; write command bytes
+    //   LD ($5C5B),HL   ; K_CUR - set cursor position  
+    //   LD (HL),$0D     ; ENTER terminator
+    //   LD ($5C61),HL   ; WORKSP - set workspace
+    //
+    // We replicate this exact behavior.
+    
+    using namespace SystemVariables48k;
+    
+    // Read E_LINE address from system variables
+    uint16_t eLineAddr = memory->DirectReadFromZ80Memory(E_LINE) |
+                         (memory->DirectReadFromZ80Memory(E_LINE + 1) << 8);
+    
+    // Debug: validate E_LINE points to reasonable RAM area
+    // After TR-DOS initialization, E_LINE should point past TR-DOS sys vars
+    if (eLineAddr < 0x5B00 || eLineAddr > 0xFFFF)
+    {
+        result.message = "Error: Invalid E_LINE address: " + std::to_string(eLineAddr);
+        return result;
+    }
+    
+    // Write command characters (raw ASCII - TR-DOS doesn't tokenize)
+    uint16_t currentAddr = eLineAddr;
+    for (size_t i = 0; i < command.size(); i++)
+    {
+        memory->DirectWriteToZ80Memory(currentAddr++, static_cast<uint8_t>(command[i]));
+    }
+    
+    // Set K_CUR to cursor position (after command text)
+    memory->DirectWriteToZ80Memory(K_CUR, currentAddr & 0xFF);
+    memory->DirectWriteToZ80Memory(K_CUR + 1, (currentAddr >> 8) & 0xFF);
+    
+    // Write ENTER terminator
+    memory->DirectWriteToZ80Memory(currentAddr++, 0x0D);
+    
+    // Write end-of-area marker
+    memory->DirectWriteToZ80Memory(currentAddr++, 0x80);
+    
+    // Set WORKSP to point after the buffer content
+    memory->DirectWriteToZ80Memory(WORKSP, currentAddr & 0xFF);
+    memory->DirectWriteToZ80Memory(WORKSP + 1, (currentAddr >> 8) & 0xFF);
+    
+    // Also update STKBOT and STKEND for calculator stack
+    memory->DirectWriteToZ80Memory(STKBOT, currentAddr & 0xFF);
+    memory->DirectWriteToZ80Memory(STKBOT + 1, (currentAddr >> 8) & 0xFF);
+    memory->DirectWriteToZ80Memory(STKEND, currentAddr & 0xFF);
+    memory->DirectWriteToZ80Memory(STKEND + 1, (currentAddr >> 8) & 0xFF);
+    
+    result.success = true;
+    result.message = "[TR-DOS] Injected to E_LINE at " + std::to_string(eLineAddr) + ": " + command;
+    
+    return result;
+}
+
 // ============================================================================
 // Dispatcher Functions
 // ============================================================================
@@ -940,8 +1009,9 @@ BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const 
             
         case BasicState::TRDOS_Active:
         case BasicState::TRDOS_SOS_Call:
-            result.message = "Error: TR-DOS is active. Please exit to BASIC first.";
-            break;
+            // TR-DOS uses SOS ROM for keyboard input, so E_LINE buffer still works!
+            // Commands are entered at the A> prompt using standard 48K input mechanism
+            return injectToTRDOS(memory, command);
             
         case BasicState::Menu128K:
             result.message = "Error: On 128K menu. Please enter BASIC first.";

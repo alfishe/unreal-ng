@@ -147,22 +147,10 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
         return;
     }
     
-    // Check state before injection
+    
+    // Check state before injection - only reject Menu128K (no input buffer available)
+    // Note: TR-DOS is now supported via BasicEncoder::injectToTRDOS
     auto state = BasicEncoder::detectState(memory);
-    if (state == BasicEncoder::BasicState::TRDOS_Active || 
-        state == BasicEncoder::BasicState::TRDOS_SOS_Call) {
-        Json::Value error;
-        error["success"] = false;
-        error["error"] = "TR-DOS Active";
-        error["message"] = "TR-DOS is active. Please exit to BASIC first.";
-        error["state"] = (state == BasicEncoder::BasicState::TRDOS_Active) ? "trdos_active" : "trdos_sos_call";
-        
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
     if (state == BasicEncoder::BasicState::Menu128K) {
         Json::Value error;
         error["success"] = false;
@@ -178,10 +166,17 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
     }
     
     auto json = req->getJsonObject();
-    if (!json || !json->isMember("program")) {
+    
+    // Accept both 'program' (legacy) and 'command' (new) parameters
+    std::string command;
+    if (json && json->isMember("command")) {
+        command = (*json)["command"].asString();
+    } else if (json && json->isMember("program")) {
+        command = (*json)["program"].asString();
+    } else {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = "Missing 'program' parameter in request body";
+        error["message"] = "Missing 'command' or 'program' parameter in request body";
         
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
@@ -190,21 +185,32 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
         return;
     }
     
-    std::string program = (*json)["program"].asString();
-    
-    BasicEncoder encoder;
-    bool success = encoder.loadProgram(memory, program);
+    // Use injectCommand for single command injection (into edit buffer)
+    auto result = BasicEncoder::injectCommand(memory, command);
     
     Json::Value ret;
-    ret["success"] = success;
-    if (success) {
-        ret["message"] = "BASIC program injected successfully";
-    } else {
-        ret["message"] = "Failed to inject BASIC program";
+    ret["success"] = result.success;
+    ret["message"] = result.message;
+    
+    // Include detected state
+    switch (result.state) {
+        case BasicEncoder::BasicState::Basic48K:
+            ret["state"] = "basic48k";
+            break;
+        case BasicEncoder::BasicState::Basic128K:
+            ret["state"] = "basic128k";
+            break;
+        case BasicEncoder::BasicState::TRDOS_Active:
+        case BasicEncoder::BasicState::TRDOS_SOS_Call:
+            ret["state"] = "trdos";
+            break;
+        default:
+            ret["state"] = "unknown";
+            break;
     }
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
-    resp->setStatusCode(success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
+    resp->setStatusCode(result.success ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
     addCorsHeaders(resp);
     callback(resp);
 }
