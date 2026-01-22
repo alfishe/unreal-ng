@@ -244,6 +244,35 @@ class DebugManager:
         """Get disassembler"""
 ```
 
+### Analyzer Management
+
+```python
+# List registered analyzers
+names = emu.analyzer_list()  # → ["trdos"]
+
+# Enable/disable analyzer
+emu.analyzer_enable("trdos")  # → True
+emu.analyzer_disable("trdos")  # → True
+
+# Get analyzer status
+status = emu.analyzer_status("trdos")
+# → {"enabled": True, "state": "IN_TRDOS", "event_count": 42}
+
+# Get captured events (optional limit parameter)
+events = emu.analyzer_events("trdos", limit=50)
+# → ["[0001234] TR-DOS Entry (PC=$3D00)", ...]
+
+# Clear analyzer events
+emu.analyzer_clear("trdos")
+```
+
+**TRDOSAnalyzer States:**
+- `IDLE` - Not in TR-DOS ROM
+- `IN_TRDOS` - In TR-DOS ROM but not executing command
+- `IN_COMMAND` - Executing TR-DOS command
+- `IN_SECTOR_OP` - Sector read/write in progress
+- `IN_CUSTOM` - Custom sector operation
+
 ### Enumerations
 
 ```python

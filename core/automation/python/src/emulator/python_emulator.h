@@ -14,6 +14,8 @@
 #include <base/featuremanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/trdos/trdosanalyzer.h>
 
 namespace py = pybind11;
 
@@ -363,6 +365,88 @@ namespace PythonBindings
                 BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
                 return bpm ? bpm->GetBreakpointListAsString() : "";
             }, "Get formatted breakpoint list")
+            
+            // Analyzer management
+            .def("analyzer_list", [](Emulator& self) -> py::list {
+                py::list analyzers;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return analyzers;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return analyzers;
+                for (const auto& name : am->getRegisteredAnalyzers()) {
+                    analyzers.append(name);
+                }
+                return analyzers;
+            }, "List registered analyzers")
+            .def("analyzer_enable", [](Emulator& self, const std::string& name) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                return am ? am->activate(name) : false;
+            }, "Enable analyzer", py::arg("name"))
+            .def("analyzer_disable", [](Emulator& self, const std::string& name) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                return am ? am->deactivate(name) : false;
+            }, "Disable analyzer", py::arg("name"))
+            .def("analyzer_status", [](Emulator& self, const std::string& name) -> py::dict {
+                py::dict status;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return status;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am || !am->hasAnalyzer(name)) return status;
+                
+                status["enabled"] = am->isActive(name);
+                
+                if (name == "trdos") {
+                    TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                    if (trdos) {
+                        std::string stateStr;
+                        switch (trdos->getState()) {
+                            case TRDOSAnalyzerState::IDLE: stateStr = "IDLE"; break;
+                            case TRDOSAnalyzerState::IN_TRDOS: stateStr = "IN_TRDOS"; break;
+                            case TRDOSAnalyzerState::IN_COMMAND: stateStr = "IN_COMMAND"; break;
+                            case TRDOSAnalyzerState::IN_SECTOR_OP: stateStr = "IN_SECTOR_OP"; break;
+                            case TRDOSAnalyzerState::IN_CUSTOM: stateStr = "IN_CUSTOM"; break;
+                            default: stateStr = "UNKNOWN"; break;
+                        }
+                        status["state"] = stateStr;
+                        status["event_count"] = trdos->getEventCount();
+                    }
+                }
+                return status;
+            }, "Get analyzer status", py::arg("name"))
+            .def("analyzer_events", [](Emulator& self, const std::string& name, size_t limit) -> py::list {
+                py::list events;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return events;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return events;
+                
+                if (name == "trdos") {
+                    TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                    if (trdos) {
+                        auto evts = trdos->getEvents();
+                        size_t start = (evts.size() > limit) ? evts.size() - limit : 0;
+                        for (size_t i = start; i < evts.size(); i++) {
+                            events.append(evts[i].format());
+                        }
+                    }
+                }
+                return events;
+            }, "Get analyzer events", py::arg("name"), py::arg("limit") = 50)
+            .def("analyzer_clear", [](Emulator& self, const std::string& name) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return;
+                
+                if (name == "trdos") {
+                    TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                    if (trdos) trdos->clear();
+                }
+            }, "Clear analyzer events", py::arg("name"))
             
             // Screen state
             .def("screen_get_mode", [](Emulator& self) -> std::string {

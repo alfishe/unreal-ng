@@ -214,6 +214,37 @@ count = bp_mgr:get_bp_count()
 bp_list = bp_mgr:get_all_bps()  -- Returns table of breakpoints
 ```
 
+### Analyzer Management
+
+```lua
+-- List registered analyzers
+local names = analyzer_list()  -- → {"trdos"}
+
+-- Enable/disable analyzer
+analyzer_enable("trdos")   -- → true
+analyzer_disable("trdos")  -- → true
+
+-- Get analyzer status
+local status = analyzer_status("trdos")
+-- status.enabled = true
+-- status.state = "IN_TRDOS"
+-- status.event_count = 42
+
+-- Get captured events (optional limit parameter)
+local events = analyzer_events("trdos", 50)
+-- → {"[0001234] TR-DOS Entry (PC=$3D00)", ...}
+
+-- Clear analyzer events
+analyzer_clear("trdos")
+```
+
+**TRDOSAnalyzer States:**
+- `IDLE` - Not in TR-DOS ROM
+- `IN_TRDOS` - In TR-DOS ROM but not executing command
+- `IN_COMMAND` - Executing TR-DOS command
+- `IN_SECTOR_OP` - Sector read/write in progress
+- `IN_CUSTOM` - Custom sector operation
+
 ## Usage Examples
 
 ### Register Dump Macro

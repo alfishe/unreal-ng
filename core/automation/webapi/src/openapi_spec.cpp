@@ -812,6 +812,80 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
         "Audio channels information";
 
+    // Analyzer Management endpoints
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["summary"] = "List all analyzers";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["responses"]["200"]["description"] =
+        "List of registered analyzers with status";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["summary"] = "Get analyzer status";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["description"] =
+        "Analyzer name (e.g., trdos)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["responses"]["200"]["description"] = "Analyzer status";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["summary"] = "Enable or disable analyzer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["description"] = "True to enable, false to disable";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["responses"]["200"]["description"] = "Analyzer state updated";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["summary"] = "Get analyzer events";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["description"] =
+        "Retrieve captured events from an analyzer. Use limit query param to control count.";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["description"] =
+        "Maximum number of events to return (default: 100)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["responses"]["200"]["description"] =
+        "List of analyzer events";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["summary"] = "Clear analyzer events";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["responses"]["200"]["description"] =
+        "Events cleared";
+
     spec["paths"] = paths;
 
     // Components/Schemas
@@ -1005,6 +1079,11 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tag10AudioActive["name"] = "Audio State (Active)";
     tag10AudioActive["description"] = "Inspect audio hardware state (active/most recent emulator)";
     tags.append(tag10AudioActive);
+
+    Json::Value tagAnalyzer;
+    tagAnalyzer["name"] = "Analyzer Management";
+    tagAnalyzer["description"] = "Control and query analyzer modules (TRDOSAnalyzer, etc.)";
+    tags.append(tagAnalyzer);
 
     spec["tags"] = tags;
 

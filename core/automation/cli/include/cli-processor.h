@@ -107,6 +107,9 @@ private:
     // BASIC command handlers
     void HandleBasic(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Analyzer command handlers
+    void HandleAnalyzer(const ClientSession& session, const std::vector<std::string>& args);
+
     // Memory access command handlers
     void HandlePage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleROMProtect(const ClientSession& session, const std::vector<std::string>& args);

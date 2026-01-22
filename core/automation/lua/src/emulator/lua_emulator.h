@@ -15,6 +15,8 @@
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/trdos/trdosanalyzer.h>
 
 class LuaEmulator
 {
@@ -586,6 +588,106 @@ public:
             if (!ctx || !ctx->pDebugManager) return "";
             BreakpointManager* bpm = ctx->pDebugManager->GetBreakpointsManager();
             return bpm ? bpm->GetBreakpointListAsString() : "";
+        });
+
+        // Analyzer management
+        lua.set_function("analyzer_list", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table analyzers = lua_view.create_table();
+            if (!_emulator) return analyzers;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return analyzers;
+            AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+            if (!am) return analyzers;
+            int i = 1;
+            for (const auto& name : am->getRegisteredAnalyzers()) {
+                analyzers[i++] = name;
+            }
+            return analyzers;
+        });
+
+        lua.set_function("analyzer_enable", [this](const std::string& name) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+            return am ? am->activate(name) : false;
+        });
+
+        lua.set_function("analyzer_disable", [this](const std::string& name) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return false;
+            AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+            return am ? am->deactivate(name) : false;
+        });
+
+        lua.set_function("analyzer_status", [this](sol::this_state L, const std::string& name) -> sol::table {
+            sol::state_view lua(L);
+            sol::table status = lua.create_table();
+            if (!_emulator) return status;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return status;
+            AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+            if (!am || !am->hasAnalyzer(name)) return status;
+            
+            status["enabled"] = am->isActive(name);
+            
+            if (name == "trdos") {
+                TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                if (trdos) {
+                    std::string stateStr;
+                    switch (trdos->getState()) {
+                        case TRDOSAnalyzerState::IDLE: stateStr = "IDLE"; break;
+                        case TRDOSAnalyzerState::IN_TRDOS: stateStr = "IN_TRDOS"; break;
+                        case TRDOSAnalyzerState::IN_COMMAND: stateStr = "IN_COMMAND"; break;
+                        case TRDOSAnalyzerState::IN_SECTOR_OP: stateStr = "IN_SECTOR_OP"; break;
+                        case TRDOSAnalyzerState::IN_CUSTOM: stateStr = "IN_CUSTOM"; break;
+                        default: stateStr = "UNKNOWN"; break;
+                    }
+                    status["state"] = stateStr;
+                    status["event_count"] = static_cast<int>(trdos->getEventCount());
+                }
+            }
+            return status;
+        });
+
+        lua.set_function("analyzer_events", [this](const std::string& name, sol::optional<int> limit) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table events = lua_view.create_table();
+            if (!_emulator) return events;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return events;
+            AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+            if (!am) return events;
+            
+            size_t maxEvents = limit.value_or(50);
+            
+            if (name == "trdos") {
+                TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                if (trdos) {
+                    auto evts = trdos->getEvents();
+                    size_t start = (evts.size() > maxEvents) ? evts.size() - maxEvents : 0;
+                    int i = 1;
+                    for (size_t j = start; j < evts.size(); j++) {
+                        events[i++] = evts[j].format();
+                    }
+                }
+            }
+            return events;
+        });
+
+        lua.set_function("analyzer_clear", [this](const std::string& name) {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager) return;
+            AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+            if (!am) return;
+            
+            if (name == "trdos") {
+                TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                if (trdos) trdos->clear();
+            }
         });
 
         // Screen state

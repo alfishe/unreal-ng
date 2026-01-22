@@ -3,6 +3,7 @@
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/trdos/trdosanalyzer.h"
 
 /// region <Constructors / Destructors>
 
@@ -19,6 +20,9 @@ DebugManager::DebugManager(EmulatorContext* context)
     // Initialize AnalyzerManager after all components are created
     // Pass 'this' because _context->pDebugManager isn't set yet
     _analyzerManager->init(this);
+    
+    // Register built-in analyzers
+    _analyzerManager->registerAnalyzer("trdos", std::make_unique<TRDOSAnalyzer>(_context));
 
     _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);

@@ -20,6 +20,7 @@ enum MemoryBankModeEnum : uint8_t
 {
     BANK_ROM = 0,
     BANK_RAM = 1,
+    BANK_CACHE = 2,
     BANK_INVALID = 0xFF  // Sentinel for invalid/unknown page in snapshot loaders
 };
 

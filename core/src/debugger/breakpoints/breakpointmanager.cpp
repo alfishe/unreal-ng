@@ -152,6 +152,14 @@ size_t BreakpointManager::GetBreakpointsCount()
     return _breakpointMapByID.size();
 }
 
+BreakpointDescriptor* BreakpointManager::GetBreakpointById(uint16_t breakpointID)
+{
+    auto it = _breakpointMapByID.find(breakpointID);
+    if (it == _breakpointMapByID.end())
+        return nullptr;
+    return it->second;
+}
+
 /// endregion </Management methods>
 
 /// region <Management assistance methods>
@@ -163,7 +171,7 @@ size_t BreakpointManager::GetBreakpointsCount()
 /// 
 /// Creates a breakpoint that triggers when the Z80 executes the instruction
 /// at the specified memory address.
-uint16_t BreakpointManager::AddExecutionBreakpoint(uint16_t z80address)
+uint16_t BreakpointManager::AddExecutionBreakpoint(uint16_t z80address, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -171,6 +179,7 @@ uint16_t BreakpointManager::AddExecutionBreakpoint(uint16_t z80address)
     breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
     breakpoint->memoryType = BRK_MEM_EXECUTE;
     breakpoint->z80address = z80address;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -184,7 +193,7 @@ uint16_t BreakpointManager::AddExecutionBreakpoint(uint16_t z80address)
 /// 
 /// Creates a breakpoint that triggers when the Z80 reads from the specified
 /// memory address.
-uint16_t BreakpointManager::AddMemReadBreakpoint(uint16_t z80address)
+uint16_t BreakpointManager::AddMemReadBreakpoint(uint16_t z80address, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -192,6 +201,7 @@ uint16_t BreakpointManager::AddMemReadBreakpoint(uint16_t z80address)
     breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
     breakpoint->memoryType = BRK_MEM_READ;
     breakpoint->z80address = z80address;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -205,7 +215,7 @@ uint16_t BreakpointManager::AddMemReadBreakpoint(uint16_t z80address)
 /// 
 /// Creates a breakpoint that triggers when the Z80 writes to the specified
 /// memory address.
-uint16_t BreakpointManager::AddMemWriteBreakpoint(uint16_t z80address)
+uint16_t BreakpointManager::AddMemWriteBreakpoint(uint16_t z80address, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -213,6 +223,7 @@ uint16_t BreakpointManager::AddMemWriteBreakpoint(uint16_t z80address)
     breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
     breakpoint->memoryType = BRK_MEM_WRITE;
     breakpoint->z80address = z80address;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -226,7 +237,7 @@ uint16_t BreakpointManager::AddMemWriteBreakpoint(uint16_t z80address)
 /// 
 /// Creates a breakpoint that triggers when the Z80 performs an IN instruction
 /// on the specified I/O port.
-uint16_t BreakpointManager::AddPortInBreakpoint(uint16_t port)
+uint16_t BreakpointManager::AddPortInBreakpoint(uint16_t port, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -234,6 +245,7 @@ uint16_t BreakpointManager::AddPortInBreakpoint(uint16_t port)
     breakpoint->type = BreakpointTypeEnum::BRK_IO;
     breakpoint->ioType = BRK_IO_IN;
     breakpoint->z80address = port;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -247,7 +259,7 @@ uint16_t BreakpointManager::AddPortInBreakpoint(uint16_t port)
 /// 
 /// Creates a breakpoint that triggers when the Z80 performs an OUT instruction
 /// on the specified I/O port.
-uint16_t BreakpointManager::AddPortOutBreakpoint(uint16_t port)
+uint16_t BreakpointManager::AddPortOutBreakpoint(uint16_t port, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -255,6 +267,7 @@ uint16_t BreakpointManager::AddPortOutBreakpoint(uint16_t port)
     breakpoint->type = BreakpointTypeEnum::BRK_IO;
     breakpoint->ioType = BRK_IO_OUT;
     breakpoint->z80address = port;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -271,7 +284,7 @@ uint16_t BreakpointManager::AddPortOutBreakpoint(uint16_t port)
 /// 
 /// Creates a memory breakpoint that can trigger on multiple access types (read/write/execute).
 /// The memoryType parameter should be a bitwise OR of the desired BRK_MEM_* flags.
-uint16_t BreakpointManager::AddCombinedMemoryBreakpoint(uint16_t z80address, uint8_t memoryType)
+uint16_t BreakpointManager::AddCombinedMemoryBreakpoint(uint16_t z80address, uint8_t memoryType, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -279,6 +292,7 @@ uint16_t BreakpointManager::AddCombinedMemoryBreakpoint(uint16_t z80address, uin
     breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
     breakpoint->memoryType = memoryType;
     breakpoint->z80address = z80address;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -293,7 +307,7 @@ uint16_t BreakpointManager::AddCombinedMemoryBreakpoint(uint16_t z80address, uin
 /// 
 /// Creates an I/O port breakpoint that can trigger on input, output, or both operations.
 /// The ioType parameter should be a bitwise OR of the desired BRK_IO_* flags.
-uint16_t BreakpointManager::AddCombinedPortBreakpoint(uint16_t port, uint8_t ioType)
+uint16_t BreakpointManager::AddCombinedPortBreakpoint(uint16_t port, uint8_t ioType, const std::string& owner)
 {
     uint16_t result = BRK_INVALID;
 
@@ -301,6 +315,110 @@ uint16_t BreakpointManager::AddCombinedPortBreakpoint(uint16_t port, uint8_t ioT
     breakpoint->type = BreakpointTypeEnum::BRK_IO;
     breakpoint->ioType = ioType;
     breakpoint->z80address = port;
+    breakpoint->owner = owner;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+// Page-specific breakpoints (for ROM/RAM/Cache page matching)
+
+/// @brief Adds an execution breakpoint at the specified address in a specific memory page
+/// 
+/// @param z80address The 16-bit Z80 memory address where the breakpoint should be set
+/// @param page The memory page number (ROM 0-63, RAM 0-255, Cache 0-1)
+/// @param pageType The memory type (BANK_ROM, BANK_RAM, or BANK_CACHE)
+/// @return uint16_t The ID of the newly created breakpoint, or BRK_INVALID on failure
+/// 
+/// Creates a breakpoint that only triggers when the Z80 executes the instruction
+/// at the specified memory address AND the specified page of the specified type is currently mapped.
+uint16_t BreakpointManager::AddExecutionBreakpointInPage(uint16_t z80address, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->matchType = BreakpointAddressMatchEnum::BRK_MATCH_BANK_ADDR;
+    breakpoint->memoryType = BRK_MEM_EXECUTE;
+    breakpoint->z80address = z80address;
+    breakpoint->page = page;
+    breakpoint->pageType = pageType;
+    breakpoint->owner = owner;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+/// @brief Adds a memory read breakpoint at the specified address in a specific memory page
+/// 
+/// @param z80address The 16-bit Z80 memory address to monitor for read operations
+/// @param page The memory page number (ROM 0-63, RAM 0-255, Cache 0-1)
+/// @param pageType The memory type (BANK_ROM, BANK_RAM, or BANK_CACHE)
+/// @return uint16_t The ID of the newly created breakpoint, or BRK_INVALID on failure
+uint16_t BreakpointManager::AddMemReadBreakpointInPage(uint16_t z80address, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->matchType = BreakpointAddressMatchEnum::BRK_MATCH_BANK_ADDR;
+    breakpoint->memoryType = BRK_MEM_READ;
+    breakpoint->z80address = z80address;
+    breakpoint->page = page;
+    breakpoint->pageType = pageType;
+    breakpoint->owner = owner;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+/// @brief Adds a memory write breakpoint at the specified address in a specific memory page
+/// 
+/// @param z80address The 16-bit Z80 memory address to monitor for write operations
+/// @param page The memory page number (ROM 0-63, RAM 0-255, Cache 0-1)
+/// @param pageType The memory type (BANK_ROM, BANK_RAM, or BANK_CACHE)
+/// @return uint16_t The ID of the newly created breakpoint, or BRK_INVALID on failure
+uint16_t BreakpointManager::AddMemWriteBreakpointInPage(uint16_t z80address, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->matchType = BreakpointAddressMatchEnum::BRK_MATCH_BANK_ADDR;
+    breakpoint->memoryType = BRK_MEM_WRITE;
+    breakpoint->z80address = z80address;
+    breakpoint->page = page;
+    breakpoint->pageType = pageType;
+    breakpoint->owner = owner;
+
+    result = AddBreakpoint(breakpoint);
+
+    return result;
+}
+
+/// @brief Adds a combined memory breakpoint at the specified address in a specific memory page
+/// 
+/// @param z80address The 16-bit Z80 memory address for the breakpoint
+/// @param memoryType Bitmask of BRK_MEM_* flags specifying the access types to break on
+/// @param page The memory page number (ROM 0-63, RAM 0-255, Cache 0-1)
+/// @param pageType The memory type (BANK_ROM, BANK_RAM, or BANK_CACHE)
+/// @return uint16_t The ID of the newly created breakpoint, or BRK_INVALID on failure
+uint16_t BreakpointManager::AddCombinedMemoryBreakpointInPage(uint16_t z80address, uint8_t memoryType, 
+                                                              uint8_t page, MemoryBankModeEnum pageType, const std::string& owner)
+{
+    uint16_t result = BRK_INVALID;
+
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->matchType = BreakpointAddressMatchEnum::BRK_MATCH_BANK_ADDR;
+    breakpoint->memoryType = memoryType;
+    breakpoint->z80address = z80address;
+    breakpoint->page = page;
+    breakpoint->pageType = pageType;
+    breakpoint->owner = owner;
 
     result = AddBreakpoint(breakpoint);
 
@@ -1131,8 +1249,10 @@ uint16_t BreakpointManager::AddMemoryBreakpoint(BreakpointDescriptor* descriptor
             key = 0xFFFF'0000 | descriptor->z80address;
             break;
         case BRK_MATCH_BANK_ADDR:
-            key = descriptor->bank << 16;
-            key |= descriptor->bankAddress;
+            // Key format: [pageType:8][page:8][z80address:16]
+            key = (static_cast<uint32_t>(descriptor->pageType) << 24) | 
+                  (static_cast<uint32_t>(descriptor->page) << 16) | 
+                  descriptor->z80address;
             break;
         default:
             break;
@@ -1197,22 +1317,36 @@ uint16_t BreakpointManager::AddPortBreakpoint(BreakpointDescriptor* descriptor)
 /// It checks both the address-based map and the wildcard breakpoints.
 BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address)
 {
-    BreakpointDescriptor* result = nullptr;
-
     Memory& memory = *_context->pMemory;
 
-    // Determine memory page for address
-    MemoryPageDescriptor page = memory.MapZ80AddressToPhysicalPage(address);
-    uint32_t fullKey = (page.page << 16) | page.addressInPage;
+    // Get current memory page for address
+    MemoryPageDescriptor pageInfo = memory.MapZ80AddressToPhysicalPage(address);
+    
+    return FindAddressBreakpoint(address, pageInfo);
+}
+
+/// @brief Finds a memory breakpoint by address with explicit page information
+/// 
+/// @param address The memory address to search for
+/// @param pageInfo The memory page descriptor containing mode, page, and offset
+/// @return BreakpointDescriptor* Pointer to the found breakpoint, or nullptr if not found
+BreakpointDescriptor* BreakpointManager::FindAddressBreakpoint(uint16_t address, const MemoryPageDescriptor& pageInfo)
+{
+    BreakpointDescriptor* result = nullptr;
+
+    // Key format: [pageType:8][page:8][z80address:16]
+    uint32_t fullKey = (static_cast<uint32_t>(pageInfo.mode) << 24) |
+                       (static_cast<uint32_t>(pageInfo.page) << 16) |
+                       address;
     uint32_t wildcardKey = 0xFFFF'0000 | address;
 
-    // Try to match address in specified memory page first
+    // Try to match page-specific breakpoint first
     auto it = _breakpointMapByAddress.find(fullKey);
     if (it != _breakpointMapByAddress.end())
     {
         result = it->second;
     }
-    // Address in any bank matching
+    // Fall back to address-only (wildcard) matching
     else
     {
         it = _breakpointMapByAddress.find(wildcardKey);

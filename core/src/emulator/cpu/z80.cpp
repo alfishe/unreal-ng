@@ -161,23 +161,33 @@ void Z80::Z80Step(bool skipBreakpoints)
         uint16_t breakpointID = brk.HandlePCChange(pc);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not Core.Pause() or Z80.Pause() for successful resume later
-            emulator.Pause();
-
-            // Broadcast notification - breakpoint triggered
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+            AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
             
-            // Dispatch breakpoint hit event to AnalyzerManager
-            if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
+            // Check if this is an analyzer-owned breakpoint (should not pause)
+            bool isAnalyzerBreakpoint = analyzerMgr && analyzerMgr->ownsBreakpointAtAddress(pc);
+            
+            // Always dispatch breakpoint hit to analyzer manager for notification
+            // Note: No MessageCenter notification is sent for analyzer breakpoints
+            if (analyzerMgr)
             {
-                _context->pDebugManager->GetAnalyzerManager()->dispatchBreakpointHit(pc, breakpointID, this);
+                analyzerMgr->dispatchBreakpointHit(pc, breakpointID, this);
             }
+            
+            // Only pause for debugger breakpoints (not analyzer-owned)
+            if (!isAnalyzerBreakpoint)
+            {
+                // Request to pause emulator
+                // Important note: Emulator.Pause() is needed, not Core.Pause() or Z80.Pause() for successful resume later
+                emulator.Pause();
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            WaitUntilResumed();
+                // Broadcast notification - breakpoint triggered
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+                messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+
+                // Wait until emulator resumed externally (by debugger or scripting engine)
+                WaitUntilResumed();
+            }
         }
     }
 

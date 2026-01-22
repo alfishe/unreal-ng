@@ -116,6 +116,15 @@ public:
     ADD_METHOD_TO(EmulatorAPI::setFeature, "/api/v1/emulator/{id}/feature/{name}", drogon::Put, drogon::Post);
     // endregion Feature Management
 
+    // region Analyzer Management (implementation: api/analyzers_api.cpp)
+    // Analyzer control
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzers, "/api/v1/emulator/{id}/analyzers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzer, "/api/v1/emulator/{id}/analyzer/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setAnalyzer, "/api/v1/emulator/{id}/analyzer/{name}", drogon::Put, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzerEvents, "/api/v1/emulator/{id}/analyzer/{name}/events", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::clearAnalyzerEvents, "/api/v1/emulator/{id}/analyzer/{name}/events", drogon::Delete);
+    // endregion Analyzer Management
+
     // region Memory State (implementation: api/state_memory_api.cpp)
     // State inspection
     ADD_METHOD_TO(EmulatorAPI::getStateMemory, "/api/v1/emulator/{id}/state/memory", drogon::Get);
@@ -319,6 +328,24 @@ public:
     void setFeature(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id, const std::string& name) const;
     // endregion Feature Management Methods
+
+    // region Analyzer Management Methods (implementation: api/analyzers_api.cpp)
+    // Analyzer control
+    void getAnalyzers(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+
+    void getAnalyzer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+
+    void setAnalyzer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+
+    void getAnalyzerEvents(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& name) const;
+
+    void clearAnalyzerEvents(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id, const std::string& name) const;
+    // endregion Analyzer Management Methods
 
     // region Memory State Methods (implementation: api/state_memory_api.cpp)
     // State inspection

@@ -242,6 +242,52 @@ POST /api/v1/emulators/{id}/disk/{drive}/insert
 POST /api/v1/emulators/{id}/disk/{drive}/eject
 ```
 
+### Analyzers
+```
+GET    /api/v1/emulator/{id}/analyzers              # List all analyzers
+GET    /api/v1/emulator/{id}/analyzer/{name}        # Get analyzer status
+PUT    /api/v1/emulator/{id}/analyzer/{name}        # Enable/disable analyzer
+GET    /api/v1/emulator/{id}/analyzer/{name}/events # Get captured events
+DELETE /api/v1/emulator/{id}/analyzer/{name}/events # Clear events
+```
+
+**Example - List Analyzers**:
+```bash
+curl http://localhost:8090/api/v1/emulator/{id}/analyzers
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "analyzers": [
+    {"id": "trdos", "enabled": false}
+  ]
+}
+```
+
+**Example - Enable TRDOSAnalyzer**:
+```bash
+curl -X PUT http://localhost:8090/api/v1/emulator/{id}/analyzer/trdos \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true}'
+```
+
+**Example - Get Events**:
+```bash
+curl http://localhost:8090/api/v1/emulator/{id}/analyzer/trdos/events?limit=50
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "analyzer_id": "trdos",
+  "events": [
+    {"timestamp": 1234567, "type": 1, "formatted": "[0001234] TR-DOS Entry (PC=$3D00)"}
+  ],
+  "total_events": 47
+}
+```
+
 ### Snapshots
 ```
 GET  /api/v1/emulators/{id}/snapshot

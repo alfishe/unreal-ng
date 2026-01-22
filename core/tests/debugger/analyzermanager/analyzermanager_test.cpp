@@ -140,18 +140,22 @@ TEST_F(AnalyzerManager_test, DeactivateAnalyzer)
 // Test multiple analyzer registration
 TEST_F(AnalyzerManager_test, MultipleAnalyzers)
 {
+    // Capture baseline - system may have auto-registered analyzers
+    size_t baselineRegistered = _manager->getRegisteredAnalyzers().size();
+    size_t baselineActive = _manager->getActiveAnalyzers().size();
+    
     _manager->registerAnalyzer("analyzer1", std::make_unique<MockAnalyzer>("a1", "uuid1"));
     _manager->registerAnalyzer("analyzer2", std::make_unique<MockAnalyzer>("a2", "uuid2"));
     _manager->registerAnalyzer("analyzer3", std::make_unique<MockAnalyzer>("a3", "uuid3"));
     
     auto registered = _manager->getRegisteredAnalyzers();
-    EXPECT_EQ(registered.size(), 3);
+    EXPECT_EQ(registered.size(), baselineRegistered + 3);
     
     _manager->activate("analyzer1");
     _manager->activate("analyzer3");
     
     auto active = _manager->getActiveAnalyzers();
-    EXPECT_EQ(active.size(), 2);
+    EXPECT_EQ(active.size(), baselineActive + 2);
     
     EXPECT_TRUE(_manager->isActive("analyzer1"));
     EXPECT_FALSE(_manager->isActive("analyzer2"));
@@ -208,7 +212,9 @@ TEST_F(AnalyzerManager_test, MasterEnableDisable)
     _manager->registerAnalyzer("test-id", std::move(analyzer));
     _manager->activate("test-id");
     
-    // Disabled by default
+    // Force disable to test enable/disable behavior
+    // (system may start enabled with auto-registered analyzers)
+    _manager->setEnabled(false);
     EXPECT_FALSE(_manager->isEnabled());
     
     _manager->dispatchFrameStart();
@@ -356,6 +362,9 @@ TEST_F(AnalyzerManager_test, UnregisterDeactivates)
 // Test activate/deactivate all
 TEST_F(AnalyzerManager_test, ActivateDeactivateAll)
 {
+    // Deactivate any auto-activated analyzers first for clean baseline
+    _manager->deactivateAll();
+    
     auto a1 = std::make_unique<MockAnalyzer>("a1", "uuid1");
     auto a2 = std::make_unique<MockAnalyzer>("a2", "uuid2");
     auto a3 = std::make_unique<MockAnalyzer>("a3", "uuid3");
@@ -368,12 +377,15 @@ TEST_F(AnalyzerManager_test, ActivateDeactivateAll)
     _manager->registerAnalyzer("a2", std::move(a2));
     _manager->registerAnalyzer("a3", std::move(a3));
     
+    // Track baseline registered count (includes auto-registered like trdos)
+    size_t totalRegistered = _manager->getRegisteredAnalyzers().size();
+    
     _manager->activateAll();
     
     EXPECT_TRUE(m1->activateCalled);
     EXPECT_TRUE(m2->activateCalled);
     EXPECT_TRUE(m3->activateCalled);
-    EXPECT_EQ(_manager->getActiveAnalyzers().size(), 3);
+    EXPECT_EQ(_manager->getActiveAnalyzers().size(), totalRegistered);  // All registered analyzers active
     
     _manager->deactivateAll();
     
@@ -408,4 +420,304 @@ TEST_F(AnalyzerManager_test, VideoLineCallback)
     
     EXPECT_EQ(callCount, 3);
     EXPECT_EQ(lastLine, 192);
+}
+
+// ============================================================================
+// Ownership and O(1) Lookup Tests
+// ============================================================================
+
+// Test ownsBreakpointAtAddress returns true for owned addresses
+TEST_F(AnalyzerManager_test, OwnsBreakpointAtAddressPositive)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Request breakpoint
+    BreakpointId bpId = _manager->requestExecutionBreakpoint(0x1234, "test-id");
+    ASSERT_NE(bpId, BRK_INVALID);
+    
+    // Should own this address
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1234));
+}
+
+// Test ownsBreakpointAtAddress returns false for non-owned addresses
+TEST_F(AnalyzerManager_test, OwnsBreakpointAtAddressNegative)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Request breakpoint at one address
+    _manager->requestExecutionBreakpoint(0x1234, "test-id");
+    
+    // Should NOT own different address
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x5678));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0000));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0xFFFF));
+}
+
+// Test page-specific breakpoint ownership (positive)
+TEST_F(AnalyzerManager_test, OwnsPageSpecificBreakpointPositive)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Request page-specific breakpoint in ROM page 2
+    BreakpointId bpId = _manager->requestExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "test-id");
+    ASSERT_NE(bpId, BRK_INVALID);
+    
+    // Should own this address (address-only lookup)
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0100));
+    
+    // Should own with exact page match
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0100, 2, BANK_ROM));
+}
+
+// Test page-specific breakpoint ownership (negative - different page)
+TEST_F(AnalyzerManager_test, OwnsPageSpecificBreakpointNegativeDifferentPage)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Request page-specific breakpoint in ROM page 2
+    _manager->requestExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "test-id");
+    
+    // Should NOT own different page at same address
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0100, 3, BANK_ROM));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0100, 2, BANK_RAM));
+}
+
+// Test multiple analyzers can have breakpoints at different addresses
+TEST_F(AnalyzerManager_test, MultipleAnalyzersDifferentAddresses)
+{
+    auto analyzer1 = std::make_unique<MockAnalyzer>("a1", "uuid1");
+    auto analyzer2 = std::make_unique<MockAnalyzer>("a2", "uuid2");
+    
+    _manager->registerAnalyzer("analyzer1", std::move(analyzer1));
+    _manager->registerAnalyzer("analyzer2", std::move(analyzer2));
+    _manager->activate("analyzer1");
+    _manager->activate("analyzer2");
+    _manager->setEnabled(true);
+    
+    // Each analyzer requests different address
+    _manager->requestExecutionBreakpoint(0x1000, "analyzer1");
+    _manager->requestExecutionBreakpoint(0x2000, "analyzer2");
+    
+    // Both addresses should be owned
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1000));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x2000));
+    
+    // Different address should not be owned
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x3000));
+}
+
+// Test same address can have breakpoints in different pages
+TEST_F(AnalyzerManager_test, SameAddressDifferentPages)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Same address, different ROM pages
+    BreakpointId bp1 = _manager->requestExecutionBreakpointInPage(0x0000, 0, BANK_ROM, "test-id");
+    BreakpointId bp2 = _manager->requestExecutionBreakpointInPage(0x0000, 2, BANK_ROM, "test-id");
+    
+    ASSERT_NE(bp1, BRK_INVALID);
+    ASSERT_NE(bp2, BRK_INVALID);
+    
+    // Address-only lookup should find
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0000));
+    
+    // Page-specific lookups should work
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0000, 0, BANK_ROM));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0000, 2, BANK_ROM));
+    
+    // Different page should not be owned
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0000, 1, BANK_ROM));
+}
+
+// Test cleanup removes address from ownership tracking
+TEST_F(AnalyzerManager_test, ReleaseBreakpointRemovesOwnership)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    BreakpointId bpId = _manager->requestExecutionBreakpoint(0x1234, "test-id");
+    ASSERT_NE(bpId, BRK_INVALID);
+    
+    // Should own before release
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1234));
+    
+    // Release the breakpoint
+    _manager->releaseBreakpoint(bpId);
+    
+    // Should NOT own after release
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x1234));
+}
+
+// Test deactivation cleans up all breakpoints
+TEST_F(AnalyzerManager_test, DeactivateRemovesAllOwnership)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Request multiple breakpoints
+    _manager->requestExecutionBreakpoint(0x1000, "test-id");
+    _manager->requestExecutionBreakpoint(0x2000, "test-id");
+    _manager->requestExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "test-id");
+    
+    // All should be owned
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1000));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x2000));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0100));
+    
+    // Deactivate
+    _manager->deactivate("test-id");
+    
+    // None should be owned after deactivation
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x1000));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x2000));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0100));
+}
+
+// Test ownership check returns false when disabled
+TEST_F(AnalyzerManager_test, OwnershipCheckWhenDisabled)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    _manager->requestExecutionBreakpoint(0x1234, "test-id");
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1234));
+    
+    // Disable manager
+    _manager->setEnabled(false);
+    
+    // Should return false when disabled (even though breakpoint exists)
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x1234));
+}
+
+// Test duplicate breakpoint at same address from same analyzer
+TEST_F(AnalyzerManager_test, DuplicateBreakpointSameAddress)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Request same address twice
+    BreakpointId bp1 = _manager->requestExecutionBreakpoint(0x1234, "test-id");
+    BreakpointId bp2 = _manager->requestExecutionBreakpoint(0x1234, "test-id");
+    
+    // Both should get valid IDs (BreakpointManager may return same or different)
+    ASSERT_NE(bp1, BRK_INVALID);
+    ASSERT_NE(bp2, BRK_INVALID);
+    
+    // Address should be owned
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1234));
+    
+    // Release one - address should still be owned (other breakpoint exists)
+    _manager->releaseBreakpoint(bp1);
+    
+    if (bp1 != bp2)
+    {
+        // If two different breakpoints were created, address should still be owned
+        EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x1234));
+        
+        // Release the second one
+        _manager->releaseBreakpoint(bp2);
+    }
+    
+    // Now address should not be owned
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x1234));
+}
+
+// Test page-specific cleanup when one of multiple breakpoints is removed
+TEST_F(AnalyzerManager_test, PartialCleanupPageSpecific)
+{
+    auto analyzer = std::make_unique<MockAnalyzer>("test", "test-uuid");
+    _manager->registerAnalyzer("test-id", std::move(analyzer));
+    _manager->activate("test-id");
+    _manager->setEnabled(true);
+    
+    // Two breakpoints at same address but different pages
+    BreakpointId bp1 = _manager->requestExecutionBreakpointInPage(0x0100, 0, BANK_ROM, "test-id");
+    BreakpointId bp2 = _manager->requestExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "test-id");
+    
+    ASSERT_NE(bp1, BRK_INVALID);
+    ASSERT_NE(bp2, BRK_INVALID);
+    
+    // Release first one
+    _manager->releaseBreakpoint(bp1);
+    
+    // Address should still be owned (bp2 exists)
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0100));
+    
+    // Page 0 should no longer be owned, but page 2 should
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0100, 0, BANK_ROM));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0100, 2, BANK_ROM));
+    
+    // Release second one
+    _manager->releaseBreakpoint(bp2);
+    
+    // Nothing should be owned now
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0100));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0100, 2, BANK_ROM));
+}
+
+// Integration test with full emulator
+TEST_F(AnalyzerManager_test, IntegrationWithEmulator)
+{
+    // The fixture already creates an emulator with debug mode
+    ASSERT_NE(_emulator, nullptr);
+    ASSERT_NE(_context, nullptr);
+    ASSERT_NE(_manager, nullptr);
+    
+    // Register and activate analyzer
+    auto analyzer = std::make_unique<MockAnalyzer>("integration-test", "int-uuid");
+    MockAnalyzer* mock = analyzer.get();
+    
+    _manager->registerAnalyzer("int-test", std::move(analyzer));
+    _manager->activate("int-test");
+    _manager->setEnabled(true);
+    
+    // Verify activation
+    EXPECT_TRUE(mock->activateCalled);
+    EXPECT_TRUE(_manager->isActive("int-test"));
+    
+    // Request breakpoints
+    BreakpointId bp1 = _manager->requestExecutionBreakpoint(0x0000, "int-test");
+    BreakpointId bp2 = _manager->requestExecutionBreakpointInPage(0x3D00, 2, BANK_ROM, "int-test");
+    
+    EXPECT_NE(bp1, BRK_INVALID);
+    EXPECT_NE(bp2, BRK_INVALID);
+    
+    // Verify ownership
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x0000));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x3D00));
+    EXPECT_TRUE(_manager->ownsBreakpointAtAddress(0x3D00, 2, BANK_ROM));
+    
+    // Verify breakpoints exist in BreakpointManager
+    BreakpointManager* brkMgr = _emulator->GetBreakpointManager();
+    ASSERT_NE(brkMgr, nullptr);
+    EXPECT_GE(brkMgr->GetBreakpointsCount(), 2);
+    
+    // Deactivate and verify cleanup
+    _manager->deactivate("int-test");
+    
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x0000));
+    EXPECT_FALSE(_manager->ownsBreakpointAtAddress(0x3D00));
 }

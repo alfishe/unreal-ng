@@ -3,6 +3,7 @@
 
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/memory/memory.h"
 #include "emulator/platform.h"
 #include <map>
 #include <unordered_map>
@@ -60,12 +61,17 @@ struct BreakpointDescriptor
     uint8_t ioType = BRK_IO_IN | BRK_IO_OUT;
     uint8_t keyType = BRK_KEY_PRESS | BRK_KEY_RELEASE;
 
+    // Used if breakpoint is set to any matching address in Z80 address space (independently of the bank mapping)
     uint16_t z80address = 0xFFFF;
-    uint8_t bank = 0xFF;
-    uint16_t bankAddress = 0xFFFF;
+
+    // Used if breakpoint is set to any matching address in specific memory page (independently of Z80 address)
+    uint8_t page = 0xFF;                        // Page number (ROM 0-63 or RAM 0-255)
+    MemoryBankModeEnum pageType = BANK_RAM;     // Memory type: BANK_ROM, BANK_RAM, or BANK_CACHE
+    uint16_t bankOffset = 0xFFFF;               // Offset within the page (0-0x3FFF)
 
     bool active = true;
 
+    std::string owner = "interactive";          // Owner: "interactive" for user/CLI, or "analyzer_manager" if set by analyzer manager
     std::string note;                           // Annotation for the breakpoint
     std::string group = "default";              // Group name for organizing breakpoints
 };
@@ -104,15 +110,21 @@ typedef std::map<uint8_t, BreakpointMapByAddress> BreakpointMapByBank;
 /// endregion </Types>
 
 class BreakpointManager
-{
-    /// region <ModuleLogger definitions for Module/Submodule>
+{   
+    // region <ModuleLogger definitions for Module/Submodule>
 protected:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
     const uint16_t _SUBMODULE = PlatformDebuggerSubmodulesEnum::SUBMODULE_DEBUG_BREAKPOINTS;
     ModuleLogger* _logger = nullptr;
-    /// endregion </ModuleLogger definitions for Module/Submodule>
+    // endregion </ModuleLogger definitions for Module/Submodule>
 
-    /// region <Fields>
+    // region <Constants>
+public:
+    /// Owner ID for interactive (user/CLI) breakpoints
+    static constexpr const char* OWNER_INTERACTIVE = "interactive";
+    // endregion </Constants>
+
+    // region <Fields>
 protected:
     EmulatorContext* _context;
     BreakpointMapByAddress _breakpointMapByAddress;
@@ -122,9 +134,9 @@ protected:
     // Incremental counter to generate new breakpoint IDs
     // Note: no breakpoint IDs reuse allowed
     uint16_t _breakpointIDSeq = 0;
-    /// endregion </Fields>
+    // endregion </Fields>
 
-    /// region <Constructors / destructors>
+    // region <Constructors / destructors>
 public:
     BreakpointManager() = delete;       // Disable default constructors. C++ 11 feature
     BreakpointManager(EmulatorContext* context);
@@ -136,6 +148,7 @@ public:
     void ClearBreakpoints();
 
     uint16_t AddBreakpoint(BreakpointDescriptor* descriptor);
+    BreakpointDescriptor* GetBreakpointById(uint16_t breakpointID);
     bool RemoveBreakpoint(BreakpointDescriptor* descriptor);
     bool RemoveBreakpointByID(uint16_t breakpointID);
 
@@ -144,16 +157,25 @@ public:
 
     /// region <Management assistance methods>
 
-    // Shortcuts for breakpoint creation
-    uint16_t AddExecutionBreakpoint(uint16_t z80address);
-    uint16_t AddMemReadBreakpoint(uint16_t z80address);
-    uint16_t AddMemWriteBreakpoint(uint16_t z80address);
-    uint16_t AddPortInBreakpoint(uint16_t port);
-    uint16_t AddPortOutBreakpoint(uint16_t port);
+    // Shortcuts for breakpoint creation in Z80 address space
+    // owner: OWNER_INTERACTIVE for user/CLI breakpoints, or custom ID for analyzer-owned breakpoints
+    uint16_t AddExecutionBreakpoint(uint16_t z80address, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddMemReadBreakpoint(uint16_t z80address, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddMemWriteBreakpoint(uint16_t z80address, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddPortInBreakpoint(uint16_t port, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddPortOutBreakpoint(uint16_t port, const std::string& owner = OWNER_INTERACTIVE);
     
+    // Page-specific breakpoints (for ROM/RAM/Cache page matching, independently of Z80 address)
+    // page: ROM 0-63, RAM 0-255, Cache 0-1
+    // pageType: BANK_ROM, BANK_RAM, or BANK_CACHE
+    uint16_t AddExecutionBreakpointInPage(uint16_t z80address, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddMemReadBreakpointInPage(uint16_t z80address, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddMemWriteBreakpointInPage(uint16_t z80address, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner = OWNER_INTERACTIVE);
+
     // Combined breakpoint types
-    uint16_t AddCombinedMemoryBreakpoint(uint16_t z80address, uint8_t memoryType);
-    uint16_t AddCombinedPortBreakpoint(uint16_t port, uint8_t ioType);
+    uint16_t AddCombinedMemoryBreakpoint(uint16_t z80address, uint8_t memoryType, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddCombinedPortBreakpoint(uint16_t port, uint8_t ioType, const std::string& owner = OWNER_INTERACTIVE);
+    uint16_t AddCombinedMemoryBreakpointInPage(uint16_t z80address, uint8_t memoryType, uint8_t page, MemoryBankModeEnum pageType, const std::string& owner = OWNER_INTERACTIVE);
     
     // Breakpoint listing
     const BreakpointMapByID& GetAllBreakpoints() const;
@@ -191,18 +213,18 @@ public:
     bool RemoveBreakpointFromGroup(uint16_t breakpointID);
     void RemoveBreakpointGroup(const std::string& groupName);
 
-    /// endregion </Management assistance methods>
+    // endregion </Management assistance methods>
 
-    /// region <Runtime methods>
+    // region <Runtime methods>
 public:
     uint16_t HandlePCChange(uint16_t pc);
     uint16_t HandleMemoryRead(uint16_t readAddress);
     uint16_t HandleMemoryWrite(uint16_t writeAddress);
     uint16_t HandlePortIn(uint16_t portAddress);
     uint16_t HandlePortOut(uint16_t portAddress);
-    /// endregion </Runtime methods>
+    // endregion </Runtime methods>
 
-    /// region <Helper methods>
+    // region <Helper methods>
 protected:
     uint16_t GenerateNewBreakpointID();
 
@@ -210,9 +232,10 @@ protected:
     uint16_t AddPortBreakpoint(BreakpointDescriptor* descriptor);
 
     BreakpointDescriptor* FindAddressBreakpoint(uint16_t address);
+    BreakpointDescriptor* FindAddressBreakpoint(uint16_t address, const MemoryPageDescriptor& pageInfo);
     BreakpointDescriptor* FindPortBreakpoint(uint16_t port);
 
-    /// endregion </Helper methods>
+    // endregion </Helper methods>
 };
 
 

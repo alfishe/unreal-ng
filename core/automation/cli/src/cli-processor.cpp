@@ -78,6 +78,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
 
+                        // Analyzer commands
+                        {"analyzer", &CLIProcessor::HandleAnalyzer},
+
                         // Settings commands
                         {"setting", &CLIProcessor::HandleSetting},
                         {"settings", &CLIProcessor::HandleSetting},
@@ -504,6 +507,13 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "BASIC Program Tools:" << NEWLINE;
     oss << "  basic                  - Show BASIC command help" << NEWLINE;
     oss << "  basic extract          - Extract BASIC program from memory" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Analyzer Commands:" << NEWLINE;
+    oss << "  analyzer list          - List all registered analyzers" << NEWLINE;
+    oss << "  analyzer enable <name> - Activate an analyzer" << NEWLINE;
+    oss << "  analyzer disable <name>- Deactivate an analyzer" << NEWLINE;
+    oss << "  analyzer status [name] - Show analyzer status" << NEWLINE;
+    oss << "  analyzer <name> events - Get captured events" << NEWLINE;
     oss << NEWLINE;
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;

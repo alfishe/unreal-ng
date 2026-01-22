@@ -493,3 +493,169 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
     delete emulator;
     /// endregion </Release>
 }
+
+// ============================================================================
+// Ownership Tests
+// ============================================================================
+
+TEST_F(BreakpointManager_test, ownerDefaultsToInteractive)
+{
+    // Add a breakpoint without specifying owner
+    BreakpointDescriptor* breakpoint = new BreakpointDescriptor();
+    breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
+    breakpoint->memoryType = BRK_MEM_EXECUTE;
+    breakpoint->z80address = 0x1000;
+    uint16_t brkID = _brkManager->AddBreakpoint(breakpoint);
+    
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Retrieve by ID and check owner
+    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->owner, BreakpointManager::OWNER_INTERACTIVE);
+}
+
+TEST_F(BreakpointManager_test, ownerSetExplicitly)
+{
+    // Add breakpoint with explicit owner via convenience method
+    uint16_t brkID = _brkManager->AddExecutionBreakpoint(0x2000, "test_analyzer");
+    
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Retrieve by ID and check owner
+    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->owner, "test_analyzer");
+}
+
+TEST_F(BreakpointManager_test, pageSpecificBreakpointROM)
+{
+    // Add page-specific breakpoint in ROM page 2
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0100, 2, BANK_ROM, "trdos_analyzer");
+    
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Count should increase
+    EXPECT_GE(_brkManager->GetBreakpointsCount(), 1);
+}
+
+TEST_F(BreakpointManager_test, pageSpecificBreakpointRAM)
+{
+    // Add page-specific breakpoint in RAM page 5
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0xC000, 5, BANK_RAM, "memory_analyzer");
+    
+    ASSERT_NE(brkID, BRK_INVALID);
+    EXPECT_GE(_brkManager->GetBreakpointsCount(), 1);
+}
+
+TEST_F(BreakpointManager_test, multipleOwnersAtDifferentAddresses)
+{
+    // Two different owners at different addresses
+    uint16_t bp1 = _brkManager->AddExecutionBreakpoint(0x1000, "analyzer_a");
+    uint16_t bp2 = _brkManager->AddExecutionBreakpoint(0x2000, "analyzer_b");
+    uint16_t bp3 = _brkManager->AddExecutionBreakpoint(0x3000, BreakpointManager::OWNER_INTERACTIVE);
+    
+    ASSERT_NE(bp1, BRK_INVALID);
+    ASSERT_NE(bp2, BRK_INVALID);
+    ASSERT_NE(bp3, BRK_INVALID);
+    
+    // Check each breakpoint has correct owner using GetBreakpointById
+    BreakpointDescriptor* found1 = _brkManager->GetBreakpointById(bp1);
+    BreakpointDescriptor* found2 = _brkManager->GetBreakpointById(bp2);
+    BreakpointDescriptor* found3 = _brkManager->GetBreakpointById(bp3);
+    
+    ASSERT_NE(found1, nullptr);
+    ASSERT_NE(found2, nullptr);
+    ASSERT_NE(found3, nullptr);
+    
+    EXPECT_EQ(found1->owner, "analyzer_a");
+    EXPECT_EQ(found2->owner, "analyzer_b");
+    EXPECT_EQ(found3->owner, BreakpointManager::OWNER_INTERACTIVE);
+}
+
+TEST_F(BreakpointManager_test, pageSpecificBreakpointDescriptorFields)
+{
+    // Add page-specific breakpoint and verify all descriptor fields
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x0800, 3, BANK_ROM, "custom_owner");
+    
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    // Find the breakpoint by ID
+    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    
+    ASSERT_NE(found, nullptr) << "Could not find page-specific breakpoint by ID";
+    
+    // Verify all fields
+    EXPECT_EQ(found->z80address, 0x0800);
+    EXPECT_EQ(found->page, 3);
+    EXPECT_EQ(found->pageType, BANK_ROM);
+    EXPECT_EQ(found->owner, "custom_owner");
+    EXPECT_EQ(found->type, BreakpointTypeEnum::BRK_MEMORY);
+    EXPECT_TRUE(found->memoryType & BRK_MEM_EXECUTE);
+}
+
+TEST_F(BreakpointManager_test, removeBreakpointByID)
+{
+    uint16_t brkID = _brkManager->AddExecutionBreakpoint(0x5000, "to_be_removed");
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    size_t countBefore = _brkManager->GetBreakpointsCount();
+    
+    _brkManager->RemoveBreakpointByID(brkID);
+    
+    size_t countAfter = _brkManager->GetBreakpointsCount();
+    EXPECT_EQ(countAfter, countBefore - 1);
+    
+    // Should not be found anymore
+    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    EXPECT_EQ(found, nullptr);
+}
+
+TEST_F(BreakpointManager_test, combinedMemoryBreakpointWithOwner)
+{
+    // Test combined memory breakpoint (read + write + execute)
+    uint16_t brkID = _brkManager->AddCombinedMemoryBreakpoint(
+        0x6000, 
+        BRK_MEM_READ | BRK_MEM_WRITE | BRK_MEM_EXECUTE,
+        "combined_owner");
+    
+    ASSERT_NE(brkID, BRK_INVALID);
+    
+    BreakpointDescriptor* found = _brkManager->GetBreakpointById(brkID);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->owner, "combined_owner");
+    EXPECT_TRUE(found->memoryType & BRK_MEM_READ);
+    EXPECT_TRUE(found->memoryType & BRK_MEM_WRITE);
+    EXPECT_TRUE(found->memoryType & BRK_MEM_EXECUTE);
+}
+
+TEST_F(BreakpointManager_test, portBreakpointsWithOwner)
+{
+    // Port IN breakpoint with owner
+    uint16_t bpIn = _brkManager->AddPortInBreakpoint(0xFE, "port_analyzer");
+    ASSERT_NE(bpIn, BRK_INVALID);
+    
+    // Port OUT breakpoint with owner
+    uint16_t bpOut = _brkManager->AddPortOutBreakpoint(0x7FFD, "port_analyzer");
+    ASSERT_NE(bpOut, BRK_INVALID);
+    
+    // Both should be findable by ID
+    BreakpointDescriptor* foundIn = _brkManager->GetBreakpointById(bpIn);
+    BreakpointDescriptor* foundOut = _brkManager->GetBreakpointById(bpOut);
+    
+    ASSERT_NE(foundIn, nullptr);
+    ASSERT_NE(foundOut, nullptr);
+    
+    EXPECT_EQ(foundIn->owner, "port_analyzer");
+    EXPECT_EQ(foundOut->owner, "port_analyzer");
+}
+
+// Negative test: invalid parameters
+TEST_F(BreakpointManager_test, negativeInvalidPageType)
+{
+    // BANK_INVALID should still work (marks as non-page-specific)
+    uint16_t brkID = _brkManager->AddExecutionBreakpointInPage(0x1000, 0, BANK_INVALID, "test");
+    
+    // This is allowed - BANK_INVALID indicates non-page-specific
+    EXPECT_NE(brkID, BRK_INVALID);
+}

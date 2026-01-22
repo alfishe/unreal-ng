@@ -15,6 +15,7 @@
 #include "stdafx.h"
 
 class WD1793Collector;
+class IWD1793Observer;
 
 class WD1793 : public PortDecoder, public PortDevice
 {
@@ -584,6 +585,7 @@ public:
     /// region <Fields>
 protected:
     WD1793Collector* _collector = nullptr;
+    std::vector<IWD1793Observer*> _observers;
 
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
@@ -746,6 +748,10 @@ public:
 
     void process();
     void ejectDisk();
+    
+    // Observer support for analyzers
+    void addObserver(IWD1793Observer* observer);
+    void removeObserver(IWD1793Observer* observer);
     /// endregion </Methods>
 
     /// region <Helper methods>

@@ -8,6 +8,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "wd1793_collector.h"
+#include "iwd1793observer.h"
 
 /// region <Constructors / destructors>
 
@@ -746,6 +747,20 @@ bool WD1793::isReady()
 
     return result;
 }
+
+void WD1793::addObserver(IWD1793Observer* observer)
+{
+    if (observer && std::find(_observers.begin(), _observers.end(), observer) == _observers.end())
+    {
+        _observers.push_back(observer);
+    }
+}
+
+void WD1793::removeObserver(IWD1793Observer* observer)
+{
+    _observers.erase(std::remove(_observers.begin(), _observers.end(), observer), _observers.end());
+}
+
 /// endregion </Helper methods>
 
 /// region <Command handling>
@@ -950,6 +965,12 @@ void WD1793::processWD93Command(uint8_t value)
     {
         // Register call in a collection
         _collector->recordCommandStart(*this, value);
+        
+        // Notify observers
+        for (auto* obs : _observers)
+        {
+            obs->onFDCCommand(value, *this);
+        }
 
         const CommandHandler& handler = commandTable[command];
         bool isBusy = _statusRegister & WDS_BUSY;
@@ -2326,6 +2347,12 @@ void WD1793::processWaitIndex()
 void WD1793::processEndCommand()
 {
     endCommand();
+
+    // Notify observers of command completion
+    for (auto* obs : _observers)
+    {
+        obs->onFDCCommandComplete(_statusRegister, *this);
+    }
 
     // Transition to IDLE state
     transitionFSM(S_IDLE);
