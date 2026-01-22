@@ -297,8 +297,9 @@ void WD1793::processForceInterruptConditions()
         {
             MLOGINFO("Force Interrupt I0: INTRQ raised on Not-Ready->Ready transition");
             raiseIntrq();
-            // Clear the I0 condition after triggering
-            _interruptConditions &= ~WD_FORCE_INTERRUPT_NOT_READY;
+
+            // NOTE: Do NOT clear the condition - it persists until a new command is issued
+            // This allows software to detect multiple disk insertions without re-issuing $D1
         }
     }
 
@@ -309,8 +310,9 @@ void WD1793::processForceInterruptConditions()
         {
             MLOGINFO("Force Interrupt I1: INTRQ raised on Ready->Not-Ready transition");
             raiseIntrq();
-            // Clear the I1 condition after triggering
-            _interruptConditions &= ~WD_FORCE_INTERRUPT_READY;
+            
+            // NOTE: Do NOT clear the condition - it persists until a new command is issued
+            // This allows software to detect multiple disk ejections without re-issuing $D2
         }
     }
 
@@ -348,13 +350,14 @@ void WD1793::processFDDIndexStrobe()
             MLOGDEBUG("Index pulse #%u detected at T-state: %llu. Motor timeout remaining: %d T-states (%.2f ms)",
                       _indexPulseCounter, _time, _motorTimeoutTStates, _motorTimeoutTStates * 1000.0 / Z80_FREQUENCY);
 
-            // Force Interrupt I2 condition: generate interrupt on each index pulse
+            // Force Interrupt I2 condition: generate interrupt on EACH index pulse
+            // Per WD1793 datasheet: "The interrupt is generated on every index pulse"
             if (_interruptConditions & WD_FORCE_INTERRUPT_INDEX_PULSE)
             {
                 MLOGINFO("Force Interrupt I2: INTRQ raised on index pulse #%u", _indexPulseCounter);
                 raiseIntrq();
-                // Clear the I2 condition after triggering (per datasheet behavior)
-                _interruptConditions &= ~WD_FORCE_INTERRUPT_INDEX_PULSE;
+                // NOTE: Do NOT clear the condition - I2 triggers on EVERY index pulse
+                // until a new command is issued that clears _interruptConditions
             }
         }
 
@@ -1563,6 +1566,9 @@ void WD1793::startType1Command()
     clearIntrq();
     clearAllErrors();
 
+    // Clear any Force Interrupt conditions - they are canceled by new commands
+    _interruptConditions = 0;
+
     // Ensure the motor is spinning
     prolongFDDMotorRotation();
 
@@ -1607,6 +1613,9 @@ void WD1793::startType2Command()
     clearIntrq();
     clearAllErrors();
 
+    // Clear any Force Interrupt conditions - they are canceled by new commands
+    _interruptConditions = 0;
+
     if (!isReady())
     {
         // If the drive is not ready - end immediately
@@ -1650,6 +1659,9 @@ void WD1793::startType3Command()
     clearDrq();
     clearIntrq();
     clearAllErrors();
+
+    // Clear any Force Interrupt conditions - they are canceled by new commands
+    _interruptConditions = 0;
 
     if (!isReady())
     {
@@ -2173,9 +2185,10 @@ void WD1793::processWriteTrack()
     {
         case 0xF5:
             // Write A1 with missing clock (sync byte for MFM)
-            // Also presets CRC to initial value
+            // Also presets CRC and records start position for F7 calculation
             byteToWrite = 0xA1;
-            _crcAccumulator = 0xCDB4;  // Preset CRC
+            _crcAccumulator = 0xCDB4;  // Preset CRC after 3x A1 sync bytes
+            _crcStartPosition = _rawDataBufferIndex + 1;  // CRC calculation starts AFTER this byte
             break;
 
         case 0xF6:
@@ -2184,21 +2197,34 @@ void WD1793::processWriteTrack()
             break;
 
         case 0xF7:
-            // Generate and write 2 CRC bytes
-            // Write CRC high byte, then low byte
+        {
+            // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
+            // Use CRC-CCITT (same as unrealspeccy wd93_crc function)
+            uint16_t crc = 0xCDB4;
+            for (size_t i = _crcStartPosition; i < _rawDataBufferIndex; i++)
+            {
+                crc ^= static_cast<uint16_t>(_rawDataBuffer[i]) << 8;
+                for (int j = 0; j < 8; j++)
+                {
+                    crc = (crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0);
+                }
+            }
+            
+            // Write CRC LOW byte first, then HIGH byte (matching unrealspeccy)
             if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
             {
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(_crcAccumulator >> 8);
+                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF);  // Low byte first
                 _bytesToWrite--;
             }
             if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
             {
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(_crcAccumulator & 0xFF);
+                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);   // High byte second
                 _bytesToWrite--;
             }
             // CRC bytes written - request next data
             raiseDrq();
             return;  // Don't write a third byte
+        }
 
         case 0xF8:
         case 0xF9:
@@ -2231,14 +2257,7 @@ void WD1793::processWriteTrack()
     {
         _rawDataBuffer[_rawDataBufferIndex++] = byteToWrite;
         _bytesToWrite--;
-
-        // Update CRC for non-F7 bytes
-        if (dataByte != 0xF7)
-        {
-            // Simple CRC update (matching WD1793 algorithm)
-            _crcAccumulator = (_crcAccumulator << 8) ^ 
-                (((_crcAccumulator >> 8) ^ byteToWrite) << 8);  // Simplified - accurate CRC is complex
-        }
+        // Note: CRC is calculated on-demand from _crcStartPosition when F7 is written
     }
 
     // Request next byte
@@ -2269,22 +2288,36 @@ void WD1793::processWriteCRC()
 
 /// @brief Wait for index pulse (rising edge) before starting track read/write
 /// Per WD1793 datasheet: Read Track and Write Track wait for index pulse before starting
+/// Fixed: Uses T-state based calculation (like unrealspeccy's getindex()) to avoid race conditions
 void WD1793::processWaitIndex()
 {
-    // Use internal counter tracking: _waitIndexPulseCount is set when entering S_WAIT_INDEX
-    // When _indexPulseCounter increments past our stored value, a new index pulse was detected
-    // Note: SIZE_MAX indicates uninitialized state (first call)
+    // Calculate how many T-states until the next index pulse using disk rotation timing
+    // This approach avoids race conditions between index pulse detection and process() calls
     
-    // If _waitIndexPulseCount hasn't been set (first call), store current counter + 1
-    // We add 1 to wait for the NEXT pulse, not the current one
+    // If _waitIndexPulseCount hasn't been set (first call), calculate wait time
     if (_waitIndexPulseCount == SIZE_MAX)
     {
+        // Calculate current position within disk rotation (0 to DISK_ROTATION_PERIOD_TSTATES)
+        size_t currentPositionInRotation = _time % DISK_ROTATION_PERIOD_TSTATES;
+        
+        // Calculate T-states until next index pulse (start of next rotation)
+        size_t tstatesUntilNextIndex = DISK_ROTATION_PERIOD_TSTATES - currentPositionInRotation;
+        
+        // Use delay-based wait for index pulse - transitions to S_FETCH_FIFO after delay
+        MLOGDEBUG("S_WAIT_INDEX: Waiting %zu T-states (%.2f ms) for next index pulse", 
+                  tstatesUntilNextIndex, tstatesUntilNextIndex * 1000.0 / Z80_FREQUENCY);
+        
+        // Mark that we've started waiting
         _waitIndexPulseCount = _indexPulseCounter;
-        MLOGDEBUG("S_WAIT_INDEX: Waiting for next index pulse (current count: %zu)", _waitIndexPulseCount);
+        
+        // Set delay to wait for index pulse, then transition to fetch FIFO
+        _delayTStates = tstatesUntilNextIndex;
+        _state2 = S_FETCH_FIFO;
+        _state = S_WAIT;
         return;
     }
     
-    // Check if a new index pulse occurred (counter incremented)
+    // Fallback: if already initialized but still in S_WAIT_INDEX, check counter
     if (_indexPulseCounter > _waitIndexPulseCount)
     {
         MLOGINFO("Index pulse detected (count: %zu -> %zu) - starting track operation", 

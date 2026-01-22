@@ -109,6 +109,7 @@ The CLI supports command aliases for convenience:
 - `r` → `registers`
 - `m` → `memory`
 - `bp` → `breakpoint`
+- `u` → `disasm` (disassemble)
 - `quit` → `exit`
 
 **Error Messages**:

@@ -183,11 +183,18 @@ public:
 
 public:
     bool load();
+    bool save();
 
 protected:
     bool validate();
     bool stageLoad();
     void commitFromStage();
+
+    // Save helpers
+    Z80MemoryMode determineOutputFormat();
+    bool captureStateToStaging();
+    bool saveV3FromStaging();
+    uint8_t getModelCodeV3();
 
     /// region <Helper methods>
 protected:
@@ -215,7 +222,7 @@ protected:
     // The block is terminated by an end marker, 00 ED ED 00.
     // @see https://sinclair.wiki.zxnet.co.uk/wiki/Z80_format
     // @see https://worldofspectrum.org/faq/reference/z80format.htm
-    void compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
+    size_t compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen);
 
 public:
     // Exposed for benchmarking comparison
@@ -269,8 +276,23 @@ public:
     using LoaderZ80::_path;
     using LoaderZ80::_stagingLoaded;
 
+    // Staging fields
+    using LoaderZ80::_stagingRAMPages;
+    using LoaderZ80::_stagingROMPages;
+    using LoaderZ80::_z80Registers;
+    using LoaderZ80::_port7FFD;
+    using LoaderZ80::_portFFFD;
+    using LoaderZ80::_borderColor;
+    using LoaderZ80::_memoryMode;
+
+    // Load methods
     using LoaderZ80::commitFromStage;
     using LoaderZ80::stageLoad;
     using LoaderZ80::validate;
+
+    // Compression methods
+    using LoaderZ80::compressPage;
+    using LoaderZ80::decompressPage;
+    using LoaderZ80::decompressPage_Optimized;
 };
 #endif  // _CODE_UNDER_TEST

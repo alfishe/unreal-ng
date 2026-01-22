@@ -680,7 +680,9 @@ bool LoaderSNA::captureStateToStaging()
     }
     
     // Capture memory pages
-    for (int pageNum = 0; pageNum < MAX_RAM_PAGES; pageNum++)
+    // SNA format only supports 8 RAM pages (128K Spectrum), not MAX_RAM_PAGES (256)
+    constexpr int SNA_RAM_PAGES = 8;
+    for (int pageNum = 0; pageNum < SNA_RAM_PAGES; pageNum++)
     {
         memcpy(_memoryPages[pageNum], memory.RAMPageAddress(pageNum), PAGE_SIZE);
         _memoryPagesUsed[pageNum] = true;
@@ -811,7 +813,9 @@ bool LoaderSNA::save128kFromStaging()
     }
     
     // Write remaining pages in ascending order (skip 5, 2, and currentPage)
-    for (int pageNum = 0; pageNum < MAX_RAM_PAGES; pageNum++)
+    // SNA format only supports 8 RAM pages (128K Spectrum)
+    constexpr int SNA_RAM_PAGES = 8;
+    for (int pageNum = 0; pageNum < SNA_RAM_PAGES; pageNum++)
     {
         if (pageNum == 5 || pageNum == 2 || pageNum == currentPage)
         {

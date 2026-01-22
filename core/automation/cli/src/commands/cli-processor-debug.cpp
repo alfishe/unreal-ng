@@ -569,3 +569,173 @@ void CLIProcessor::HandleSteps(const ClientSession& session, const std::vector<s
     session.SendResponse(ss.str());
 }
 
+// HandleDisasm - disassemble Z80 code at address or PC
+void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
+
+    if (!memory || !disassembler)
+    {
+        session.SendResponse("Error: Unable to access memory or disassembler.");
+        return;
+    }
+
+    // Parse arguments: disasm [address] [count]
+    uint16_t address = emulator->GetZ80State()->pc;  // Default: PC
+    int count = 10;  // Default count
+
+    try {
+        if (args.size() >= 1)
+        {
+            const std::string& addrStr = args[0];
+            if (addrStr.find("0x") == 0 || addrStr.find("0X") == 0 || addrStr.find("$") == 0)
+                address = static_cast<uint16_t>(std::stoul(addrStr.substr(addrStr[0] == '$' ? 1 : 2), nullptr, 16));
+            else
+                address = static_cast<uint16_t>(std::stoul(addrStr));
+        }
+        if (args.size() >= 2)
+        {
+            count = std::stoi(args[1]);
+            if (count < 1) count = 1;
+            if (count > 100) count = 100;
+        }
+    } catch (...) {
+        session.SendResponse("Error: Invalid address or count. Usage: disasm [address] [count]");
+        return;
+    }
+
+    std::stringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0');
+
+    uint16_t currentAddr = address;
+    for (int i = 0; i < count; ++i)
+    {
+        std::vector<uint8_t> buffer(4);
+        for (int j = 0; j < 4; ++j)
+            buffer[j] = memory->DirectReadFromZ80Memory(currentAddr + j);
+
+        uint8_t cmdLen = 0;
+        DecodedInstruction decoded;
+        std::string mnemonic = disassembler->disassembleSingleCommand(buffer, currentAddr, &cmdLen, &decoded);
+        if (cmdLen == 0) cmdLen = 1;
+
+        // Format: $XXXX: XX XX XX XX  mnemonic
+        ss << "$" << std::setw(4) << currentAddr << ": ";
+        for (uint8_t j = 0; j < cmdLen; ++j)
+            ss << std::setw(2) << static_cast<int>(buffer[j]) << " ";
+        for (int j = cmdLen; j < 4; ++j)
+            ss << "   ";
+        ss << " " << mnemonic << NEWLINE;
+
+        currentAddr += cmdLen;
+    }
+
+    session.SendResponse(ss.str());
+}
+
+// HandleDisasmPage - disassemble from physical RAM/ROM page
+void CLIProcessor::HandleDisasmPage(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    std::unique_ptr<Z80Disassembler>& disassembler = emulator->GetDebugManager()->GetDisassembler();
+
+    if (!memory || !disassembler)
+    {
+        session.SendResponse("Error: Unable to access memory or disassembler.");
+        return;
+    }
+
+    // Parse arguments: disasm_page <ram|rom> <page> [offset] [count]
+    if (args.size() < 2)
+    {
+        session.SendResponse("Usage: disasm_page <ram|rom> <page> [offset] [count]\n"
+                             "Example: disasm_page rom 2 0 20  (TR-DOS ROM start)");
+        return;
+    }
+
+    std::string type = args[0];
+    bool isROM = (type == "rom");
+    if (type != "rom" && type != "ram")
+    {
+        session.SendResponse("Error: First argument must be 'ram' or 'rom'");
+        return;
+    }
+
+    uint8_t page = 0;
+    uint16_t offset = 0;
+    int count = 10;
+
+    try {
+        page = static_cast<uint8_t>(std::stoul(args[1]));
+        if (args.size() >= 3)
+        {
+            const std::string& offStr = args[2];
+            if (offStr.find("0x") == 0 || offStr.find("0X") == 0 || offStr.find("$") == 0)
+                offset = static_cast<uint16_t>(std::stoul(offStr.substr(offStr[0] == '$' ? 1 : 2), nullptr, 16));
+            else
+                offset = static_cast<uint16_t>(std::stoul(offStr));
+        }
+        if (args.size() >= 4)
+        {
+            count = std::stoi(args[3]);
+            if (count < 1) count = 1;
+            if (count > 100) count = 100;
+        }
+    } catch (...) {
+        session.SendResponse("Error: Invalid parameters. Usage: disasm_page <ram|rom> <page> [offset] [count]");
+        return;
+    }
+
+    if (offset >= PAGE_SIZE) offset = PAGE_SIZE - 1;
+
+    uint8_t* pageBase = isROM ? memory->ROMPageHostAddress(page) : memory->RAMPageAddress(page);
+    if (!pageBase)
+    {
+        session.SendResponse("Error: Invalid page number");
+        return;
+    }
+
+    std::stringstream ss;
+    ss << type << " page " << static_cast<int>(page) << " @ offset $" << std::hex << std::uppercase << offset << ":" << NEWLINE;
+    ss << std::hex << std::uppercase << std::setfill('0');
+
+    uint16_t currentOffset = offset;
+    for (int i = 0; i < count && currentOffset < PAGE_SIZE; ++i)
+    {
+        std::vector<uint8_t> buffer(4);
+        for (int j = 0; j < 4 && (currentOffset + j) < PAGE_SIZE; ++j)
+            buffer[j] = pageBase[currentOffset + j];
+
+        uint8_t cmdLen = 0;
+        DecodedInstruction decoded;
+        std::string mnemonic = disassembler->disassembleSingleCommand(buffer, currentOffset, &cmdLen, &decoded);
+        if (cmdLen == 0) cmdLen = 1;
+
+        // Format: $XXXX: XX XX XX XX  mnemonic
+        ss << "$" << std::setw(4) << currentOffset << ": ";
+        for (uint8_t j = 0; j < cmdLen; ++j)
+            ss << std::setw(2) << static_cast<int>(buffer[j]) << " ";
+        for (int j = cmdLen; j < 4; ++j)
+            ss << "   ";
+        ss << " " << mnemonic << NEWLINE;
+
+        currentOffset += cmdLen;
+    }
+
+    session.SendResponse(ss.str());
+}

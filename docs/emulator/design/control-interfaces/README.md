@@ -113,7 +113,7 @@ All interfaces (where applicable) support these command categories:
    - `pause`, `resume`, `reset`, `step`, `stepin`, `steps`, `stepover`
 
 3. **State Inspection** - View internal state
-   - `registers`, `memory`, `debugmode`, `memcounters`, `calltrace`
+   - `registers`, `memory`, `debugmode`, `memcounters`, `calltrace`, `disasm`, `disasm_page`
 
 4. **Breakpoints & Watchpoints** - Advanced debugging
    - `bp`, `wp`, `bport`, `bplist`, `bpclear`, `bpgroup`, `bpon`, `bpoff`
@@ -141,7 +141,7 @@ All interfaces (where applicable) support these command categories:
 10. **Media Operations** - Tape/disk control
 11. **Audio/Video Capture** - Recording and export
 12. **Scripting Integration** - Script execution
-13. **Disassembly** - Code analysis
+13. **Disassembly** - Code analysis ✅
 14. **Performance Profiling** - CPU hotspots
 15. **Network & Multi-Emulator** - Multi-instance coordination
 
@@ -168,7 +168,7 @@ See [command-interface.md](./command-interface.md) for complete details.
 **Planned - Phase 1 (Q1-Q2 2026)**:
 - 🔮 Snapshot save/load commands
 - 🔮 Input injection (keyboard, joystick)
-- 🔮 Disassembly commands
+- ✅ Disassembly commands (both Z80 address space and physical page)
 - 🔮 Symbol file loading
 
 **Planned - Phase 2 (Q2-Q3 2026)**:

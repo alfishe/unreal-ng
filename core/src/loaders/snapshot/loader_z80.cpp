@@ -5,7 +5,10 @@
 #include "common/stringhelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "emulator/cpu/core.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/sound/chips/soundchip_ay8910.h"
+#include "emulator/sound/soundmanager.h"
 #include "stdafx.h"
 
 LoaderZ80::LoaderZ80(EmulatorContext* context, const std::string& path)
@@ -39,6 +42,244 @@ bool LoaderZ80::load()
     }
 
     return result;
+}
+
+bool LoaderZ80::save()
+{
+    bool result = false;
+
+    // Capture current emulator state to staging buffers
+    if (!captureStateToStaging())
+    {
+        MLOGERROR("Failed to capture emulator state for Z80 save");
+        return false;
+    }
+
+    // Determine output format based on current emulator mode
+    _memoryMode = determineOutputFormat();
+
+    // Write V3 format file
+    result = saveV3FromStaging();
+
+    // Clean up staging memory
+    freeStagingMemory();
+
+    return result;
+}
+
+Z80MemoryMode LoaderZ80::determineOutputFormat()
+{
+    // Check if emulator is in 128K mode by examining port 7FFD lock bit
+    // If locked and in 48K mode, use 48K format; otherwise use 128K
+    uint8_t port7FFD = _context->emulatorState.p7FFD;
+    bool isLocked = (port7FFD & 0x20) != 0;  // Bit 5 = lock
+
+    // Check current model - some models are always 48K
+    // For simplicity: if lock bit is set AND we're running as 48K, save as 48K
+    // Otherwise save as 128K to preserve all banks
+    if (isLocked)
+    {
+        // Check if only using 48K-visible pages
+        return Z80_48K;
+    }
+
+    return Z80_128K;
+}
+
+bool LoaderZ80::captureStateToStaging()
+{
+    if (_context == nullptr || _context->pCore == nullptr || _context->pMemory == nullptr)
+    {
+        return false;
+    }
+
+    // Get current Z80 state from CPU - Z80 inherits from Z80Registers
+    Z80* z80 = _context->pCore->GetZ80();
+    if (z80 == nullptr)
+    {
+        return false;
+    }
+    
+    // Copy register values directly from Z80 (which inherits Z80Registers)
+    _z80Registers.pc = z80->pc;
+    _z80Registers.sp = z80->sp;
+    _z80Registers.af = z80->af;
+    _z80Registers.bc = z80->bc;
+    _z80Registers.de = z80->de;
+    _z80Registers.hl = z80->hl;
+    _z80Registers.ix = z80->ix;
+    _z80Registers.iy = z80->iy;
+    _z80Registers.i = z80->i;
+    _z80Registers.r_low = z80->r_low;
+    _z80Registers.r_hi = z80->r_hi;
+    _z80Registers.iff1 = z80->iff1;
+    _z80Registers.iff2 = z80->iff2;
+    _z80Registers.im = z80->im;
+    _z80Registers.alt.af = z80->alt.af;
+    _z80Registers.alt.bc = z80->alt.bc;
+    _z80Registers.alt.de = z80->alt.de;
+    _z80Registers.alt.hl = z80->alt.hl;
+
+    // Capture port state
+    _port7FFD = _context->emulatorState.p7FFD;
+    _portFFFD = _context->emulatorState.pFFFD;
+
+    // Capture border color
+    _borderColor = _context->pScreen->GetBorderColor() & 0x07;
+
+    // Capture all RAM pages
+    Memory* memory = _context->pMemory;
+    for (int page = 0; page < MAX_RAM_PAGES; page++)
+    {
+        uint8_t* srcPage = memory->RAMPageAddress(page);
+        if (srcPage != nullptr)
+        {
+            _stagingRAMPages[page] = new uint8_t[PAGE_SIZE];
+            memcpy(_stagingRAMPages[page], srcPage, PAGE_SIZE);
+        }
+    }
+
+    _stagingLoaded = true;
+    return true;
+}
+
+bool LoaderZ80::saveV3FromStaging()
+{
+    // Open file for writing
+    FILE* outFile = fopen(_path.c_str(), "wb");
+    if (outFile == nullptr)
+    {
+        MLOGERROR("Failed to open '%s' for writing", _path.c_str());
+        return false;
+    }
+
+    // Build V3 header
+    Z80Header_v3 header = {};
+
+    // V1 fields - CPU registers
+    header.reg_A = _z80Registers.a;
+    header.reg_F = _z80Registers.f;
+    header.reg_BC = _z80Registers.bc;
+    header.reg_DE = _z80Registers.de;
+    header.reg_HL = _z80Registers.hl;
+    header.reg_SP = _z80Registers.sp;
+    header.reg_I = _z80Registers.i;
+    header.reg_R = _z80Registers.r_low | (_z80Registers.r_hi & 0x80);
+
+    // Flags byte: bit 0 = R bit 7, bits 1-3 = border, bit 5 = compression
+    header.flags = (_z80Registers.r_hi >> 7) | ((_borderColor & 0x07) << 1) | 0x20;  // 0x20 = compressed
+
+    header.reg_DE1 = _z80Registers.alt.de;
+    header.reg_BC1 = _z80Registers.alt.bc;
+    header.reg_HL1 = _z80Registers.alt.hl;
+    header.reg_A1 = _z80Registers.alt.a;
+    header.reg_F1 = _z80Registers.alt.f;
+    header.reg_IY = _z80Registers.iy;
+    header.reg_IX = _z80Registers.ix;
+    header.IFF1 = _z80Registers.iff1 ? 1 : 0;
+    header.IFF2 = _z80Registers.iff2 ? 1 : 0;
+    header.im = _z80Registers.im & 0x03;
+
+    // V1: PC = 0 indicates v2/v3 format
+    header.reg_PC = 0;
+
+    // V2 fields
+    header.extendedHeaderLen = 54;  // V3 standard
+    header.newPC = _z80Registers.pc;
+    header.model = static_cast<Z80_Models_v2>(getModelCodeV3());
+    header.p7FFD = _port7FFD;
+    header.pFFFD = _portFFFD;
+
+    // AY registers - get from sound manager
+    if (_context->pSoundManager != nullptr)
+    {
+        SoundChip_AY8910* psg = _context->pSoundManager->getAYChip(0);
+        if (psg != nullptr)
+        {
+            for (int i = 0; i < 16; i++)
+            {
+                header.ay[i] = psg->readRegister(static_cast<uint8_t>(i));
+            }
+        }
+    }
+
+    // V3 fields - T-state counter (optional, set to 0)
+    header.lowTCounter = 0;
+    header.highTCounter = 0;
+
+    // Write header (first 30 bytes of V1)
+    fwrite(&header, sizeof(Z80Header_v1), 1, outFile);
+
+    // Write extended header length (2 bytes) then remaining V2/V3 header
+    uint16_t extLen = header.extendedHeaderLen;
+    fwrite(&extLen, sizeof(extLen), 1, outFile);
+    fwrite(&header.newPC, extLen, 1, outFile);
+
+    // Write memory pages
+    uint8_t compressBuffer[PAGE_SIZE + 1024];  // Extra space for worst case
+
+    if (_memoryMode == Z80_48K)
+    {
+        // 48K: write pages 5, 2, 0 (mapped to Z80 pages 8, 4, 5)
+        int pageMap48K[] = {8, 4, 5};    // Z80 page numbers
+        int ramMap48K[] = {5, 2, 0};     // Our RAM page numbers
+
+        for (int i = 0; i < 3; i++)
+        {
+            if (_stagingRAMPages[ramMap48K[i]] != nullptr)
+            {
+                size_t compressedSize = compressPage(_stagingRAMPages[ramMap48K[i]], PAGE_SIZE,
+                                                     compressBuffer, sizeof(compressBuffer));
+
+                MemoryBlockDescriptor desc;
+                desc.compressedSize = static_cast<uint16_t>(compressedSize);
+                desc.memoryPage = pageMap48K[i];
+
+                fwrite(&desc, sizeof(desc), 1, outFile);
+                fwrite(compressBuffer, compressedSize, 1, outFile);
+            }
+        }
+    }
+    else
+    {
+        // 128K: write all 8 RAM pages (Z80 pages 3-10)
+        for (int page = 0; page < 8; page++)
+        {
+            if (_stagingRAMPages[page] != nullptr)
+            {
+                size_t compressedSize = compressPage(_stagingRAMPages[page], PAGE_SIZE,
+                                                     compressBuffer, sizeof(compressBuffer));
+
+                MemoryBlockDescriptor desc;
+                desc.compressedSize = static_cast<uint16_t>(compressedSize);
+                desc.memoryPage = page + 3;  // Z80 pages: 3=RAM0, 4=RAM1, ..., 10=RAM7
+
+                fwrite(&desc, sizeof(desc), 1, outFile);
+                fwrite(compressBuffer, compressedSize, 1, outFile);
+            }
+        }
+    }
+
+    fclose(outFile);
+
+    MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)",
+             _path.c_str(), (_memoryMode == Z80_48K) ? "48K" : "128K");
+
+    return true;
+}
+
+uint8_t LoaderZ80::getModelCodeV3()
+{
+    // Map current emulator model to Z80 v3 model code
+    // For now, default to standard models based on memory mode
+    if (_memoryMode == Z80_48K)
+    {
+        return Z80_MODEL3_48K;  // 0
+    }
+    else
+    {
+        return Z80_MODEL3_128K;  // 4
+    }
 }
 
 bool LoaderZ80::validate()
@@ -827,6 +1068,82 @@ Z80Registers LoaderZ80::getZ80Registers(const Z80Header_v1& header, uint16_t pc)
 void LoaderZ80::applyPeripheralState(const Z80Header_v2& header)
 {
     (void)header;
+}
+
+/// @brief Compress memory page using Z80 RLE compression
+/// @details RLE format: ED ED nn bb = repeat byte 'bb' nn times
+///          - Only sequences of ≥5 identical bytes are compressed
+///          - ED bytes are special: even 2 consecutive EDs → ED ED 02 ED
+///          - Single ED followed by non-ED is written as-is (ED xx)
+/// @param src Source uncompressed data
+/// @param srcLen Source data length
+/// @param dst Destination buffer for compressed data
+/// @param dstLen Destination buffer size
+/// @return Number of bytes written to dst
+size_t LoaderZ80::compressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen)
+{
+    if (src == nullptr || dst == nullptr || srcLen == 0 || dstLen == 0)
+    {
+        return 0;
+    }
+
+    size_t srcPos = 0;
+    size_t dstPos = 0;
+
+    while (srcPos < srcLen && dstPos < dstLen)
+    {
+        uint8_t byte = src[srcPos];
+
+        // Count consecutive identical bytes
+        size_t runLen = 1;
+        while (srcPos + runLen < srcLen && src[srcPos + runLen] == byte && runLen < 255)
+        {
+            runLen++;
+        }
+
+        // Special case: ED bytes must always be encoded if there are 2+ of them
+        if (byte == 0xED)
+        {
+            if (runLen >= 2)
+            {
+                // Encode ED sequence: ED ED count ED
+                if (dstPos + 4 > dstLen) break;
+                dst[dstPos++] = 0xED;
+                dst[dstPos++] = 0xED;
+                dst[dstPos++] = static_cast<uint8_t>(runLen);
+                dst[dstPos++] = 0xED;
+                srcPos += runLen;
+            }
+            else
+            {
+                // Single ED: write as-is
+                if (dstPos + 1 > dstLen) break;
+                dst[dstPos++] = byte;
+                srcPos++;
+            }
+        }
+        else if (runLen >= 5)
+        {
+            // Encode RLE sequence: ED ED count value
+            if (dstPos + 4 > dstLen) break;
+            dst[dstPos++] = 0xED;
+            dst[dstPos++] = 0xED;
+            dst[dstPos++] = static_cast<uint8_t>(runLen);
+            dst[dstPos++] = byte;
+            srcPos += runLen;
+        }
+        else
+        {
+            // Write literal bytes (run too short for compression)
+            for (size_t i = 0; i < runLen && dstPos < dstLen; i++)
+            {
+                dst[dstPos++] = byte;
+            }
+            srcPos += runLen;
+        }
+    }
+
+    return dstPos;
 }
 
 void LoaderZ80::decompressPage(uint8_t* src, size_t srcLen, uint8_t* dst, size_t dstLen)
