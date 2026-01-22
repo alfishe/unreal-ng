@@ -121,6 +121,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openTapeRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
+    connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -1474,6 +1475,51 @@ void MainWindow::saveFileDialog()
             qDebug() << "Failed to save snapshot:" << filePath;
             QMessageBox::warning(this, tr("Save Failed"),
                                  tr("Failed to save snapshot to:\n%1").arg(filePath));
+        }
+    }
+}
+
+void MainWindow::saveFileDialogZ80()
+{
+    // Check if emulator is running
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save snapshot";
+        return;
+    }
+
+    // Show a file save dialog using the last save directory
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Save Z80 Snapshot"), _lastSaveDirectory + "/snapshot.z80",
+        tr("Z80 Snapshots (*.z80);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        // Ensure .z80 extension
+        if (!filePath.toLower().endsWith(".z80"))
+        {
+            filePath += ".z80";
+        }
+
+        // Save directory to settings (separate from open directory)
+        QFileInfo fileInfo(filePath);
+        _lastSaveDirectory = fileInfo.absolutePath();
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+        // Save the snapshot - Emulator::SaveSnapshot() handles .z80 extension
+        std::string file = filePath.toStdString();
+        bool result = _emulator->SaveSnapshot(file);
+
+        if (result)
+        {
+            qDebug() << "Z80 Snapshot saved successfully:" << filePath;
+        }
+        else
+        {
+            qDebug() << "Failed to save Z80 snapshot:" << filePath;
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Failed to save Z80 snapshot to:\n%1").arg(filePath));
         }
     }
 }

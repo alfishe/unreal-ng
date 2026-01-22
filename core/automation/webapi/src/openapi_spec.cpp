@@ -737,94 +737,259 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/covox"]["get"]["tags"].append("Audio State (Active)");
     paths["/api/v1/emulator/state/audio/covox"]["get"]["responses"]["200"]["description"] = "Covox state";
 
-    paths["/api/v1/emulator/state/audio/channels"][" get"]["summary"] = "Get audio channels (active emulator)";
+    paths["/api/v1/emulator/state/audio/channels"]["get"]["summary"] = "Get audio channels (active emulator)";
     paths["/api/v1/emulator/state/audio/channels"]["get"]["tags"].append("Audio State (Active)");
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
         "Audio channels information";
 
-    // Python Interpreter Control endpoints
-    paths["/api/v1/python/exec"]["post"]["summary"] = "Execute Python code";
-    paths["/api/v1/python/exec"]["post"]["tags"].append("Python Interpreter");
-    paths["/api/v1/python/exec"]["post"]["description"] = "Execute Python code synchronously. Requires Python automation enabled at compile-time.";
-    paths["/api/v1/python/exec"]["post"]["requestBody"]["required"] = true;
-    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
-    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("code");
-    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["type"] = "string";
-    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["description"] = "Python code to execute";
-    paths["/api/v1/python/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["example"] = "print('Hello from Python')";
-    paths["/api/v1/python/exec"]["post"]["responses"]["200"]["description"] = "Code executed successfully";
-    paths["/api/v1/python/exec"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterExecResponse";
-    paths["/api/v1/python/exec"]["post"]["responses"]["400"]["description"] = "Bad request - missing code parameter";
-    paths["/api/v1/python/exec"]["post"]["responses"]["500"]["description"] = "Execution error";
-    paths["/api/v1/python/exec"]["post"]["responses"]["503"]["description"] = "Python automation not available";
+    // Batch Execution endpoints
+    paths["/api/v1/batch/execute"]["post"]["summary"] = "Execute batch commands in parallel";
+    paths["/api/v1/batch/execute"]["post"]["description"] =
+        "Execute multiple commands across emulator instances using a 4-thread pool. ~2-3ms for 48 instances.";
+    paths["/api/v1/batch/execute"]["post"]["tags"].append("Batch Execution");
+    paths["/api/v1/batch/execute"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/batch/execute"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchExecuteRequest";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["200"]["description"] = "All commands succeeded";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchResult";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["207"]["description"] =
+        "Partial success (some commands failed)";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["207"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchResult";
+    paths["/api/v1/batch/execute"]["post"]["responses"]["400"]["description"] =
+        "Invalid request (missing emulator/command, command not batchable)";
 
-    paths["/api/v1/python/file"]["post"]["summary"] = "Execute Python file";
-    paths["/api/v1/python/file"]["post"]["tags"].append("Python Interpreter");
-    paths["/api/v1/python/file"]["post"]["description"] = "Load and execute Python file from absolute path";
-    paths["/api/v1/python/file"]["post"]["requestBody"]["required"] = true;
-    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
-    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
-    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
-    paths["/api/v1/python/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Absolute path to Python file (.py)";
-    paths["/api/v1/python/file"]["post"]["responses"]["200"]["description"] = "File executed successfully";
-    paths["/api/v1/python/file"]["post"]["responses"]["400"]["description"] = "Invalid file path";
-    paths["/api/v1/python/file"]["post"]["responses"]["404"]["description"] = "File not found";
-    paths["/api/v1/python/file"]["post"]["responses"]["500"]["description"] = "Execution error";
-    paths["/api/v1/python/file"]["post"]["responses"]["503"]["description"] = "Python automation not available";
+    paths["/api/v1/batch/commands"]["get"]["summary"] = "List batchable commands";
+    paths["/api/v1/batch/commands"]["get"]["description"] =
+        "Returns list of command names that can be used in batch execution";
+    paths["/api/v1/batch/commands"]["get"]["tags"].append("Batch Execution");
+    paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["description"] = "List of batchable commands";
+    paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BatchableCommandsResponse";
 
-    paths["/api/v1/python/status"]["get"]["summary"] = "Get Python interpreter status";
-    paths["/api/v1/python/status"]["get"]["tags"].append("Python Interpreter");
-    paths["/api/v1/python/status"]["get"]["description"] = "Get current status and availability of Python interpreter";
-    paths["/api/v1/python/status"]["get"]["responses"]["200"]["description"] = "Status information";
-    paths["/api/v1/python/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterStatusResponse";
+    // Debug Commands endpoints
+    // Stepping
+    paths["/api/v1/emulator/{id}/step"]["post"]["summary"] = "Execute single instruction";
+    paths["/api/v1/emulator/{id}/step"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/step"]["post"]["responses"]["200"]["description"] = "Instruction executed, returns new PC";
 
-    paths["/api/v1/python/stop"]["post"]["summary"] = "Stop Python execution";
-    paths["/api/v1/python/stop"]["post"]["tags"].append("Python Interpreter");
-    paths["/api/v1/python/stop"]["post"]["description"] = "Send interrupt signal to stop running Python code";
-    paths["/api/v1/python/stop"]["post"]["responses"]["200"]["description"] = "Interrupt signal sent";
-    paths["/api/v1/python/stop"]["post"]["responses"]["503"]["description"] = "Python automation not available";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["summary"] = "Execute N instructions";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["description"] = "Number of instructions to execute";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["responses"]["200"]["description"] = "Instructions executed";
 
-    // Lua Interpreter Control endpoints
-    paths["/api/v1/lua/exec"]["post"]["summary"] = "Execute Lua code";
-    paths["/api/v1/lua/exec"]["post"]["tags"].append("Lua Interpreter");
-    paths["/api/v1/lua/exec"]["post"]["description"] = "Execute Lua code synchronously. Requires Lua automation enabled at compile-time.";
-    paths["/api/v1/lua/exec"]["post"]["requestBody"]["required"] = true;
-    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
-    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("code");
-    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["type"] = "string";
-    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["description"] = "Lua code to execute";
-    paths["/api/v1/lua/exec"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["code"]["example"] = "print('Hello from Lua')";
-    paths["/api/v1/lua/exec"]["post"]["responses"]["200"]["description"] = "Code executed successfully";
-    paths["/api/v1/lua/exec"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterExecResponse";
-    paths["/api/v1/lua/exec"]["post"]["responses"]["400"]["description"] = "Bad request - missing code parameter";
-    paths["/api/v1/lua/exec"]["post"]["responses"]["500"]["description"] = "Execution error";
-    paths["/api/v1/lua/exec"]["post"]["responses"]["503"]["description"] = "Lua automation not available";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["summary"] = "Step over call instruction";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/stepover"]["post"]["responses"]["200"]["description"] = "Stepped over call";
 
-    paths["/api/v1/lua/file"]["post"]["summary"] = "Execute Lua file";
-    paths["/api/v1/lua/file"]["post"]["tags"].append("Lua Interpreter");
-    paths["/api/v1/lua/file"]["post"]["description"] = "Load and execute Lua file from absolute path";
-    paths["/api/v1/lua/file"]["post"]["requestBody"]["required"] = true;
-    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
-    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("path");
-    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["type"] = "string";
-    paths["/api/v1/lua/file"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["path"]["description"] = "Absolute path to Lua file (.lua)";
-    paths["/api/v1/lua/file"]["post"]["responses"]["200"]["description"] = "File executed successfully";
-    paths["/api/v1/lua/file"]["post"]["responses"]["400"]["description"] = "Invalid file path";
-    paths["/api/v1/lua/file"]["post"]["responses"]["404"]["description"] = "File not found";
-    paths["/api/v1/lua/file"]["post"]["responses"]["500"]["description"] = "Execution error";
-    paths["/api/v1/lua/file"]["post"]["responses"]["503"]["description"] = "Lua automation not available";
+    // Debug mode
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["summary"] = "Get debug mode state";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/debugmode"]["get"]["responses"]["200"]["description"] = "Debug mode enabled state";
 
-    paths["/api/v1/lua/status"]["get"]["summary"] = "Get Lua interpreter status";
-    paths["/api/v1/lua/status"]["get"]["tags"].append("Lua Interpreter");
-    paths["/api/v1/lua/status"]["get"]["description"] = "Get current status and availability of Lua interpreter";
-    paths["/api/v1/lua/status"]["get"]["responses"]["200"]["description"] = "Status information";
-    paths["/api/v1/lua/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] = "#/components/schemas/InterpreterStatusResponse";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["summary"] = "Enable/disable debug mode";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/debugmode"]["put"]["responses"]["200"]["description"] = "Debug mode updated";
 
-    paths["/api/v1/lua/stop"]["post"]["summary"] = "Request Lua execution stop";
-    paths["/api/v1/lua/stop"]["post"]["tags"].append("Lua Interpreter");
-  paths["/api/v1/lua/stop"]["post"]["description"] = "Request Lua execution stop (requires cooperative script checking)";
-    paths["/api/v1/lua/stop"]["post"]["responses"]["200"]["description"] = "Stop request noted";
-    paths["/api/v1/lua/stop"]["post"]["responses"]["503"]["description"] = "Lua automation not available";
+    // Breakpoints
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["summary"] = "List all breakpoints";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["get"]["responses"]["200"]["description"] = "List of breakpoints";
+
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["summary"] = "Add breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/AddBreakpointRequest";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/AddBreakpointResponse";
+
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["summary"] = "Clear all breakpoints";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints"]["delete"]["responses"]["200"]["description"] = "All breakpoints cleared";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["summary"] = "Remove specific breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["responses"]["200"]["description"] = "Breakpoint removed";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["summary"] = "Enable breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["responses"]["200"]["description"] = "Breakpoint enabled";
+
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["summary"] = "Disable breakpoint";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["name"] = "bp_id";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["responses"]["200"]["description"] = "Breakpoint disabled";
+
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["summary"] = "Get breakpoint status";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["description"] = 
+        "Returns information about the last triggered breakpoint, including type (memory/port), address, and access mode";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["description"] = "Breakpoint status";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/BreakpointStatusResponse";
+
+    // Memory inspection
+    paths["/api/v1/emulator/{id}/registers"]["get"]["summary"] = "Get CPU registers";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/registers"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/registers"]["get"]["responses"]["200"]["description"] = "CPU register values";
+
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["summary"] = "Read memory";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["name"] = "addr";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["name"] = "len";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] = "Number of bytes to read (default: 16, max: 256)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["description"] = "Memory content";
+
+    // Analysis
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["summary"] = "Get memory access counters";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memcounters"]["get"]["responses"]["200"]["description"] = "Memory access statistics";
+
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["summary"] = "Get call trace";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["description"] = "Max entries to return (default: 50)";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
+
+    // Disassembly endpoint
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["summary"] = "Disassemble Z80 code";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["name"] = "address";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal, default: PC)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["name"] = "count";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] = "Disassembled instructions";
+
+    // Physical page disassembly endpoint
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["summary"] = "Disassemble from physical RAM/ROM page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["tags"].append("Debug Commands");
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["name"] = "type";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["description"] = "Memory type: 'ram' or 'rom'";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["name"] = "page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["required"] = true;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["description"] = "Physical page number (0-255)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["name"] = "offset";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["description"] = "Offset within page (default: 0)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["name"] = "count";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] = "Disassembled instructions from physical page";
 
     spec["paths"] = paths;
 
@@ -871,6 +1036,108 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["FeatureInfo"]["properties"]["enabled"]["type"] = "boolean";
     schemas["FeatureInfo"]["properties"]["description"]["type"] = "string";
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
+
+    // Debug Commands schemas
+    
+    // Breakpoints List Response
+    schemas["BreakpointsListResponse"]["type"] = "object";
+    schemas["BreakpointsListResponse"]["description"] = "List of breakpoints";
+    schemas["BreakpointsListResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["type"] = "array";
+    schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] = "#/components/schemas/BreakpointInfo";
+    
+    // Memory Breakpoint Info
+    schemas["MemoryBreakpointInfo"]["type"] = "object";
+    schemas["MemoryBreakpointInfo"]["description"] = "Memory breakpoint (execute/read/write)";
+    schemas["MemoryBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["type"]["enum"].append("memory");
+    schemas["MemoryBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["execute"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["read"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["write"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    
+    // Port Breakpoint Info
+    schemas["PortBreakpointInfo"]["type"] = "object";
+    schemas["PortBreakpointInfo"]["description"] = "Port breakpoint (in/out)";
+    schemas["PortBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["type"]["enum"].append("port");
+    schemas["PortBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["address"]["description"] = "Port number";
+    schemas["PortBreakpointInfo"]["properties"]["in"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["out"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    
+    // Keyboard Breakpoint Info
+    schemas["KeyboardBreakpointInfo"]["type"] = "object";
+    schemas["KeyboardBreakpointInfo"]["description"] = "Keyboard breakpoint (press/release)";
+    schemas["KeyboardBreakpointInfo"]["properties"]["id"]["type"] = "integer";
+    schemas["KeyboardBreakpointInfo"]["properties"]["type"]["type"] = "string";
+    schemas["KeyboardBreakpointInfo"]["properties"]["type"]["enum"].append("keyboard");
+    schemas["KeyboardBreakpointInfo"]["properties"]["address"]["type"] = "integer";
+    schemas["KeyboardBreakpointInfo"]["properties"]["press"]["type"] = "boolean";
+    schemas["KeyboardBreakpointInfo"]["properties"]["release"]["type"] = "boolean";
+    schemas["KeyboardBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["KeyboardBreakpointInfo"]["properties"]["note"]["type"] = "string";
+    schemas["KeyboardBreakpointInfo"]["properties"]["group"]["type"] = "string";
+    
+    // Generic BreakpointInfo (oneOf the above)
+    schemas["BreakpointInfo"]["oneOf"][0]["$ref"] = "#/components/schemas/MemoryBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][1]["$ref"] = "#/components/schemas/PortBreakpointInfo";
+    schemas["BreakpointInfo"]["oneOf"][2]["$ref"] = "#/components/schemas/KeyboardBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["propertyName"] = "type";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["memory"] = "#/components/schemas/MemoryBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["port"] = "#/components/schemas/PortBreakpointInfo";
+    schemas["BreakpointInfo"]["discriminator"]["mapping"]["keyboard"] = "#/components/schemas/KeyboardBreakpointInfo";
+    
+    // Breakpoint Status Response (last triggered)
+    schemas["BreakpointStatusResponse"]["type"] = "object";
+    schemas["BreakpointStatusResponse"]["description"] = "Last triggered breakpoint information";
+    schemas["BreakpointStatusResponse"]["properties"]["is_paused"]["type"] = "boolean";
+    schemas["BreakpointStatusResponse"]["properties"]["breakpoints_count"]["type"] = "integer";
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_id"]["type"] = "integer";
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_id"]["nullable"] = true;
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["type"] = "string";
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("memory");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("port");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("keyboard");
+    schemas["BreakpointStatusResponse"]["properties"]["last_triggered_address"]["type"] = "integer";
+    schemas["BreakpointStatusResponse"]["properties"]["paused_by_breakpoint"]["type"] = "boolean";
+    
+    // Add Breakpoint Request
+    schemas["AddBreakpointRequest"]["type"] = "object";
+    schemas["AddBreakpointRequest"]["description"] = "Request to add a breakpoint";
+    schemas["AddBreakpointRequest"]["required"].append("type");
+    schemas["AddBreakpointRequest"]["required"].append("address");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["type"]["description"] = "Breakpoint type";
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("execution");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("read");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("write");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_in");
+    schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
+    schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
+    schemas["AddBreakpointRequest"]["properties"]["address"]["description"] = "Z80 address (0-65535) or port number (0-255)";
+    schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["group"]["description"] = "Optional group name";
+    
+    // Add Breakpoint Response
+    schemas["AddBreakpointResponse"]["type"] = "object";
+    schemas["AddBreakpointResponse"]["description"] = "Response after adding a breakpoint";
+    schemas["AddBreakpointResponse"]["properties"]["status"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["id"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["id"]["description"] = "Assigned breakpoint ID";
+    schemas["AddBreakpointResponse"]["properties"]["type"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["address"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
 
     // Memory State schemas
     schemas["MemoryStateResponse"]["type"] = "object";
@@ -956,24 +1223,40 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SnapshotInfoResponse"]["properties"]["loaded"]["type"] = "boolean";
     schemas["SnapshotInfoResponse"]["properties"]["filename"]["type"] = "string";
 
-    // Interpreter Control schemas
-    schemas["InterpreterExecResponse"]["type"] = "object";
-    schemas["InterpreterExecResponse"]["description"] = "Interpreter code execution response";
-    schemas["InterpreterExecResponse"]["properties"]["success"]["type"] = "boolean";
-    schemas["InterpreterExecResponse"]["properties"]["message"]["type"] = "string";
-    schemas["InterpreterExecResponse"]["properties"]["error"]["type"] = "string";
-    schemas["InterpreterExecResponse"]["properties"]["output"]["type"] = "string";
-    schemas["InterpreterExecResponse"]["properties"]["output"]["description"] = "Captured stdout output from script execution";
-    schemas["InterpreterExecResponse"]["properties"]["path"]["type"] = "string";
-    schemas["InterpreterExecResponse"]["properties"]["path"]["description"] = "File path (for file execution)";
+    // Batch command schemas
+    schemas["BatchCommand"]["type"] = "object";
+    schemas["BatchCommand"]["description"] = "A single command in a batch";
+    schemas["BatchCommand"]["required"].append("emulator");
+    schemas["BatchCommand"]["required"].append("command");
+    schemas["BatchCommand"]["properties"]["emulator"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["emulator"]["description"] = "Emulator ID, UUID, or index";
+    schemas["BatchCommand"]["properties"]["command"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["command"]["description"] =
+        "Command name: load-snapshot, reset, pause, resume, feature";
+    schemas["BatchCommand"]["properties"]["arg1"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["arg1"]["description"] = "First argument (e.g., file path, feature name)";
+    schemas["BatchCommand"]["properties"]["arg2"]["type"] = "string";
+    schemas["BatchCommand"]["properties"]["arg2"]["description"] = "Second argument (e.g., on/off for feature)";
 
-    schemas["InterpreterStatusResponse"]["type"] = "object";
-    schemas["InterpreterStatusResponse"]["description"] = "Interpreter status information";
-    schemas["InterpreterStatusResponse"]["properties"]["available"]["type"] = "boolean";
-    schemas["InterpreterStatusResponse"]["properties"]["initialized"]["type"] = "boolean";
-    schemas["InterpreterStatusResponse"]["properties"]["status"]["type"] = "string";
-    schemas["InterpreterStatusResponse"]["properties"]["message"]["type"] = "string";
-    schemas["InterpreterStatusResponse"]["properties"]["error"]["type"] = "string";
+    schemas["BatchExecuteRequest"]["type"] = "object";
+    schemas["BatchExecuteRequest"]["description"] = "Batch execution request";
+    schemas["BatchExecuteRequest"]["required"].append("commands");
+    schemas["BatchExecuteRequest"]["properties"]["commands"]["type"] = "array";
+    schemas["BatchExecuteRequest"]["properties"]["commands"]["items"]["$ref"] = "#/components/schemas/BatchCommand";
+
+    schemas["BatchResult"]["type"] = "object";
+    schemas["BatchResult"]["description"] = "Batch execution result";
+    schemas["BatchResult"]["properties"]["success"]["type"] = "boolean";
+    schemas["BatchResult"]["properties"]["total"]["type"] = "integer";
+    schemas["BatchResult"]["properties"]["succeeded"]["type"] = "integer";
+    schemas["BatchResult"]["properties"]["failed"]["type"] = "integer";
+    schemas["BatchResult"]["properties"]["duration_ms"]["type"] = "number";
+    schemas["BatchResult"]["properties"]["results"]["type"] = "array";
+
+    schemas["BatchableCommandsResponse"]["type"] = "object";
+    schemas["BatchableCommandsResponse"]["description"] = "List of batchable commands";
+    schemas["BatchableCommandsResponse"]["properties"]["commands"]["type"] = "array";
+    schemas["BatchableCommandsResponse"]["properties"]["count"]["type"] = "integer";
 
     spec["components"]["schemas"] = schemas;
 
@@ -1039,15 +1322,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tag10AudioActive["description"] = "Inspect audio hardware state (active/most recent emulator)";
     tags.append(tag10AudioActive);
 
-    Json::Value tagPythonInterpreter;
-    tagPythonInterpreter["name"] = "Python Interpreter";
-    tagPythonInterpreter["description"] = "Remote Python interpreter control";
-    tags.append(tagPythonInterpreter);
-
-    Json::Value tagLuaInterpreter;
-    tagLuaInterpreter["name"] = "Lua Interpreter";
-    tagLuaInterpreter["description"] = "Remote Lua interpreter control";
-    tags.append(tagLuaInterpreter);
+    Json::Value tag11Batch;
+    tag11Batch["name"] = "Batch Execution";
+    tag11Batch["description"] = "Execute multiple commands in parallel across emulator instances";
+    tags.append(tag11Batch);
 
     spec["tags"] = tags;
 

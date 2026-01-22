@@ -69,6 +69,7 @@ private slots:
     void openFileDialog();
     void openSpecificFile(const QString& filepath);
     void saveFileDialog();
+    void saveFileDialogZ80();
     void resetEmulator();
     void handleFullScreenShortcut();
 

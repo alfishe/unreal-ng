@@ -91,10 +91,10 @@ void MenuManager::createFileMenu()
     _saveSnapshotSNAAction->setStatusTip(tr("Save current emulator state to SNA snapshot format"));
     connect(_saveSnapshotSNAAction, &QAction::triggered, this, &MenuManager::saveSnapshotRequested);
     
-    // Save as Z80 (disabled - not yet implemented)
+    // Save as Z80
     _saveSnapshotZ80Action = _saveSnapshotMenu->addAction(tr("Save as .z80..."));
-    _saveSnapshotZ80Action->setStatusTip(tr("Save current emulator state to Z80 snapshot format (not implemented)"));
-    _saveSnapshotZ80Action->setEnabled(false);  // TODO: Implement Z80 save
+    _saveSnapshotZ80Action->setStatusTip(tr("Save current emulator state to Z80 v3 snapshot format"));
+    connect(_saveSnapshotZ80Action, &QAction::triggered, this, &MenuManager::saveSnapshotZ80Requested);
 
     _fileMenu->addSeparator();
 

@@ -2730,9 +2730,9 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
     bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after Not-Ready->Ready transition";
     
-    // Verify I0 condition was cleared after triggering
-    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 0) 
-        << "I0 condition should be cleared after triggering";
+    // Verify I0 condition is still set (conditions persist until new command)
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 0) 
+        << "I0 condition should persist after triggering (for subsequent transitions)";
 
     // Cleanup
     fdc._selectedDrive->ejectDisk();
@@ -2800,9 +2800,9 @@ TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
     bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after Ready->Not-Ready transition";
     
-    // Verify I1 condition was cleared after triggering
-    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 0) 
-        << "I1 condition should be cleared after triggering";
+    // Verify I1 condition is still set (conditions persist until new command)
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 0) 
+        << "I1 condition should persist after triggering (for subsequent transitions)";
 }
 
 /// Test Force Interrupt I2: Index pulse interrupt
@@ -2885,9 +2885,9 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
     bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after index pulse";
     
-    // Verify I2 condition was cleared after triggering
-    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0) 
-        << "I2 condition should be cleared after triggering";
+    // Verify I2 condition is still set (triggers on EVERY index pulse)
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0) 
+        << "I2 condition should persist (triggers on every index pulse)";
 
     // Cleanup
     fdc._selectedDrive->ejectDisk();
@@ -3153,5 +3153,310 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
 }
 
 /// endregion </FORCE_INTERRUPT>
+
+/// region <FORCE_INTERRUPT Persistence Tests>
+
+/// Test Force Interrupt I2: Verify interrupt triggers on MULTIPLE index pulses
+/// Per WD1793 datasheet: "The interrupt is generated on every index pulse"
+TEST_F(WD1793_Test, ForceInterrupt_I2_MultipleIndexPulses)
+{
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+    static constexpr size_t const ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / 5; // 200ms per rotation
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk and start motor
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._drive = 0;
+
+    DiskImage* diskImage = new DiskImage(80, 2);
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+    fdc.prolongFDDMotorRotation();
+
+    // Send Force Interrupt command with I2=1
+    const uint8_t forceInterruptCommand = 0b1101'0100;  // I2=1: Index pulse interrupt
+    WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
+    uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
+    fdc._commandRegister = forceInterruptCommand;
+    fdc._lastDecodedCmd = decodedCommand;
+    fdc.cmdForceInterrupt(commandValue);
+
+    // Verify I2 condition is set
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0);
+
+    // Clear initial INTRQ
+    fdc.clearIntrq();
+    size_t initialPulseCount = fdc._indexPulseCounter;
+    
+    // Run for 3 full disk rotations (~600ms) and count how many times INTRQ is raised
+    size_t intrqRaisedCount = 0;
+    size_t lastTime = 0;
+    bool lastIntrqState = false;
+    
+    for (size_t clk = 0; clk < 3 * ROTATION_PERIOD_TSTATES + 10000; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc._lastTime = lastTime;
+        lastTime = clk;
+        fdc.process();
+
+        // Detect rising edge of INTRQ
+        bool currentIntrqState = (fdc._beta128status & WD1793::INTRQ) != 0;
+        if (currentIntrqState && !lastIntrqState)
+        {
+            intrqRaisedCount++;
+            // Clear INTRQ to detect the next one
+            fdc.clearIntrq();
+        }
+        lastIntrqState = (fdc._beta128status & WD1793::INTRQ) != 0;
+    }
+
+    size_t totalPulses = fdc._indexPulseCounter - initialPulseCount;
+    
+    // Should have at least 2-3 index pulses over 3 rotations
+    EXPECT_GE(totalPulses, 2) << "Should have at least 2 index pulses in 3 rotations";
+    
+    // INTRQ should have been raised for each pulse (key test for the fix!)
+    EXPECT_EQ(intrqRaisedCount, totalPulses) 
+        << "INTRQ should be raised on EVERY index pulse, not just the first";
+
+    // I2 condition should still be set (persists)
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0)
+        << "I2 condition should persist after multiple triggers";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that Force Interrupt conditions are cleared when a new command is issued
+TEST_F(WD1793_Test, ForceInterrupt_ConditionsClearedByNewCommand)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Set I2 condition
+    const uint8_t forceInterruptI2 = 0b1101'0100;  // I2=1
+    fdc._commandRegister = forceInterruptI2;
+    fdc._lastDecodedCmd = WD1793::WD_CMD_FORCE_INTERRUPT;
+    fdc.cmdForceInterrupt(0b0100);  // I2 bit
+
+    // Verify I2 is set
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0);
+
+    // Issue a new RESTORE command
+    fdc._commandRegister = 0x00;  // RESTORE
+    fdc._lastDecodedCmd = WD1793::WD_CMD_RESTORE;
+    fdc.cmdRestore(0);
+
+    // Verify I2 condition is now cleared by new command start
+    EXPECT_EQ(fdc._interruptConditions, 0) 
+        << "Interrupt conditions should be cleared when a new command is issued";
+}
+
+/// Test $D0 (Force Interrupt with no conditions) - negative test
+/// Verify NO interrupt is raised, not even after disk transitions
+TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterruptEvenAfterTransitions)
+{
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
+    fdc._drive = 0;
+
+    // Send $D0 - Terminate with NO interrupt
+    const uint8_t forceInterruptD0 = 0b1101'0000;
+    fdc._commandRegister = forceInterruptD0;
+    fdc._lastDecodedCmd = WD1793::WD_CMD_FORCE_INTERRUPT;
+    fdc.cmdForceInterrupt(0);  // No condition bits
+
+    // Verify no interrupt conditions are monitored
+    EXPECT_EQ(fdc._interruptConditions, 0);
+    
+    // Clear any INTRQ
+    fdc.clearIntrq();
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ);
+
+    // Insert a disk (simulates Not-Ready -> Ready transition)
+    DiskImage* diskImage = new DiskImage(80, 2);
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._prevReady = false;
+    fdc.prolongFDDMotorRotation();
+    
+    // Process to let transition detection run
+    fdc._time = TEST_INCREMENT_TSTATES;
+    fdc.process();
+
+    // Verify NO interrupt was raised (since we specified $D0)
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) 
+        << "$D0 should NOT generate interrupts even after state transitions";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// endregion </FORCE_INTERRUPT Persistence Tests>
+
+/// region <Write Track CRC Regression Tests>
+
+/// Test that Write Track F5 byte correctly sets _crcStartPosition
+/// Regression test for Bug #5: Missing start_crc position tracking
+TEST_F(WD1793_Test, WriteTrack_F5_Sets_CrcStartPosition)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup for Write Track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    
+    // Allocate raw track buffer
+    fdc._rawDataBuffer = new uint8_t[DiskImage::RawTrack::RAW_TRACK_SIZE];
+    fdc._rawDataBufferIndex = 100;  // Simulate we're at byte 100
+    fdc._bytesToWrite = 6250;
+    
+    // Write F5 (sync byte)
+    fdc._dataRegister = 0xF5;
+    fdc.processWriteTrack();
+    
+    // Verify _crcStartPosition was set to AFTER the A1 byte (index + 1)
+    EXPECT_EQ(fdc._crcStartPosition, 100 + 1) 
+        << "F5 should set _crcStartPosition to the byte AFTER the A1 sync byte";
+    
+    // Verify A1 was written (F5 -> A1)
+    EXPECT_EQ(fdc._rawDataBuffer[100], 0xA1) << "F5 should write A1 byte";
+    
+    // Cleanup
+    delete[] fdc._rawDataBuffer;
+    fdc._rawDataBuffer = nullptr;
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that Write Track F7 writes CRC in correct byte order (low byte first, then high byte)
+/// Regression test for Bug #4: CRC byte order was reversed
+TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_LowFirst)
+{
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup for Write Track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
+    
+    // Allocate raw track buffer
+    fdc._rawDataBuffer = new uint8_t[DiskImage::RawTrack::RAW_TRACK_SIZE];
+    memset(fdc._rawDataBuffer, 0, DiskImage::RawTrack::RAW_TRACK_SIZE);
+    
+    // Write known data pattern for CRC calculation
+    // After F5: write A1 and set _crcStartPosition
+    fdc._rawDataBufferIndex = 0;
+    fdc._bytesToWrite = 6250;
+    fdc._drq_served = true;  // Mark DRQ as served to prevent Lost Data error
+    fdc._dataRegister = 0xF5;  // Sync byte
+    fdc.processWriteTrack();
+    
+    size_t crcStart = fdc._crcStartPosition;  // Should be 1
+    
+    // Write a known data byte (e.g., FE for ID Address Mark)
+    fdc._drq_served = true;  // Mark DRQ as served
+    fdc._dataRegister = 0xFE;
+    fdc.processWriteTrack();
+    
+    // Record current index before writing CRC
+    size_t indexBeforeCrc = fdc._rawDataBufferIndex;
+    
+    // Write F7 (generates 2 CRC bytes)
+    fdc._drq_served = true;  // Mark DRQ as served
+    fdc._dataRegister = 0xF7;
+    fdc.processWriteTrack();
+    
+    // CRC should be 2 bytes after previous position
+    EXPECT_EQ(fdc._rawDataBufferIndex, indexBeforeCrc + 2) << "F7 should write 2 CRC bytes";
+    
+    // Manually calculate expected CRC for verification
+    // CRC-CCITT starting with 0xCDB4 over the data from crcStart
+    uint16_t expectedCrc = 0xCDB4;
+    for (size_t i = crcStart; i < indexBeforeCrc; i++)
+    {
+        expectedCrc ^= static_cast<uint16_t>(fdc._rawDataBuffer[i]) << 8;
+        for (int j = 0; j < 8; j++)
+        {
+            expectedCrc = (expectedCrc << 1) ^ ((expectedCrc & 0x8000) ? 0x1021 : 0);
+        }
+    }
+    
+    // Key regression test: verify byte order is LOW BYTE FIRST, then HIGH BYTE
+    uint8_t lowByte = fdc._rawDataBuffer[indexBeforeCrc];
+    uint8_t highByte = fdc._rawDataBuffer[indexBeforeCrc + 1];
+    
+    EXPECT_EQ(lowByte, expectedCrc & 0xFF) << "First CRC byte should be LOW byte";
+    EXPECT_EQ(highByte, (expectedCrc >> 8) & 0xFF) << "Second CRC byte should be HIGH byte";
+    
+    // Cleanup
+    delete[] fdc._rawDataBuffer;
+    fdc._rawDataBuffer = nullptr;
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that processWaitIndex uses T-state based delay calculation
+/// Regression test for Bug #8: Index pulse race condition
+TEST_F(WD1793_Test, WaitIndex_Uses_TState_Delay)
+{
+    static constexpr size_t const ROTATION_PERIOD = Z80_FREQUENCY / 5;  // 200ms = 700,000 T-states
+    
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup
+    DiskImage* diskImage = new DiskImage(80, 2);
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc.prolongFDDMotorRotation();
+    fdc.wakeUp();
+    
+    // Set initial time to middle of disk rotation
+    fdc._time = ROTATION_PERIOD / 2;  // 350,000 T-states into rotation
+    
+    // Set state to wait for index
+    fdc._state = WD1793::S_WAIT_INDEX;
+    fdc._waitIndexPulseCount = SIZE_MAX;  // Reset wait state
+    
+    // Call processWaitIndex - should calculate delay and set S_WAIT
+    fdc.processWaitIndex();
+    
+    // Verify it switched to S_WAIT (using delay-based approach, not counter polling)
+    EXPECT_EQ(fdc._state, WD1793::S_WAIT) << "processWaitIndex should use delay-based wait";
+    EXPECT_EQ(fdc._state2, WD1793::S_FETCH_FIFO) << "After delay, should transition to S_FETCH_FIFO";
+    
+    // Verify delay was calculated to next index pulse
+    // At time = ROTATION_PERIOD/2, delay should be approximately ROTATION_PERIOD/2 to reach next index
+    size_t expectedDelay = ROTATION_PERIOD - (fdc._time % ROTATION_PERIOD);
+    EXPECT_IN_RANGE(fdc._delayTStates, expectedDelay - 100, expectedDelay + 100)
+        << "Delay should be calculated to next index pulse";
+    
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// endregion </Write Track CRC Regression Tests>
 
 /// endregion </Commands>

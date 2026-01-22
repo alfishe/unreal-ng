@@ -42,6 +42,7 @@ signals:
     void openTapeRequested();
     void openDiskRequested();
     void saveSnapshotRequested();
+    void saveSnapshotZ80Requested();
 
     // Emulator control signals
     void startRequested();
