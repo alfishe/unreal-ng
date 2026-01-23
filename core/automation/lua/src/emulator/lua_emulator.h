@@ -186,6 +186,141 @@ public:
             mem->MemoryWriteFast(addr + 1, (value >> 8) & 0xFF);
         });
 
+        lua.set_function("mem_read_block", [this](uint16_t addr, uint16_t len) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table data = lua_view.create_table();
+            if (!_emulator) return data;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return data;
+            for (uint16_t i = 0; i < len; i++) {
+                data[i + 1] = mem->MemoryReadFast(addr + i, false);
+            }
+            return data;
+        });
+
+        lua.set_function("mem_write_block", [this](uint16_t addr, sol::table data) {
+            if (!_emulator) return;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return;
+            for (auto& pair : data) {
+                int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
+                uint8_t val = pair.second.as<uint8_t>();
+                mem->MemoryWriteFast((addr + idx) & 0xFFFF, val);
+            }
+        });
+
+        // Physical page access (ram/rom/cache/misc)
+        lua.set_function("page_read", [this](const std::string& type, int page, int offset) -> int {
+            if (!_emulator) return 0;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return 0;
+            uint8_t* pagePtr = nullptr;
+            if (type == "ram" && page < MAX_RAM_PAGES)
+                pagePtr = mem->RAMPageAddress(page);
+            else if (type == "rom" && page < MAX_ROM_PAGES)
+                pagePtr = mem->ROMPageHostAddress(page);
+            else if (type == "cache" && page < MAX_CACHE_PAGES)
+                pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+            else if (type == "misc" && page < MAX_MISC_PAGES)
+                pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+            if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return 0;
+            return pagePtr[offset];
+        });
+
+        lua.set_function("page_write", [this](const std::string& type, int page, int offset, uint8_t value) {
+            if (!_emulator) return;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return;
+            uint8_t* pagePtr = nullptr;
+            if (type == "ram" && page < MAX_RAM_PAGES)
+                pagePtr = mem->RAMPageAddress(page);
+            else if (type == "rom" && page < MAX_ROM_PAGES)
+                pagePtr = mem->ROMPageHostAddress(page);
+            else if (type == "cache" && page < MAX_CACHE_PAGES)
+                pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+            else if (type == "misc" && page < MAX_MISC_PAGES)
+                pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+            if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
+                pagePtr[offset] = value;
+            }
+        });
+
+        lua.set_function("page_read_block", [this](const std::string& type, int page, int offset, int len) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table data = lua_view.create_table();
+            if (!_emulator) return data;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return data;
+            uint8_t* pagePtr = nullptr;
+            if (type == "ram" && page < MAX_RAM_PAGES)
+                pagePtr = mem->RAMPageAddress(page);
+            else if (type == "rom" && page < MAX_ROM_PAGES)
+                pagePtr = mem->ROMPageHostAddress(page);
+            else if (type == "cache" && page < MAX_CACHE_PAGES)
+                pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+            else if (type == "misc" && page < MAX_MISC_PAGES)
+                pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+            if (!pagePtr) return data;
+            if (offset < 0) offset = 0;
+            if (offset >= PAGE_SIZE) return data;
+            if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
+            for (int i = 0; i < len; i++) {
+                data[i + 1] = pagePtr[offset + i];
+            }
+            return data;
+        });
+
+        lua.set_function("page_write_block", [this](const std::string& type, int page, int offset, sol::table data) {
+            if (!_emulator) return;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return;
+            uint8_t* pagePtr = nullptr;
+            if (type == "ram" && page < MAX_RAM_PAGES)
+                pagePtr = mem->RAMPageAddress(page);
+            else if (type == "rom" && page < MAX_ROM_PAGES)
+                pagePtr = mem->ROMPageHostAddress(page);
+            else if (type == "cache" && page < MAX_CACHE_PAGES)
+                pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+            else if (type == "misc" && page < MAX_MISC_PAGES)
+                pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+            if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return;
+            int maxLen = PAGE_SIZE - offset;
+            int idx = 0;
+            for (auto& pair : data) {
+                if (idx >= maxLen) break;
+                uint8_t val = pair.second.as<uint8_t>();
+                pagePtr[offset + idx] = val;
+                idx++;
+            }
+        });
+
+        lua.set_function("memory_info", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table info = lua_view.create_table();
+            if (!_emulator) return info;
+            Memory* mem = _emulator->GetMemory();
+            if (!mem) return info;
+            
+            sol::table pages = lua_view.create_table();
+            pages["ram_count"] = MAX_RAM_PAGES;
+            pages["rom_count"] = MAX_ROM_PAGES;
+            pages["cache_count"] = MAX_CACHE_PAGES;
+            pages["misc_count"] = MAX_MISC_PAGES;
+            info["pages"] = pages;
+            
+            sol::table banks = lua_view.create_table();
+            for (int bank = 0; bank < 4; bank++) {
+                sol::table bankInfo = lua_view.create_table();
+                bankInfo["bank"] = bank;
+                bankInfo["start"] = bank * 0x4000;
+                bankInfo["end"] = (bank + 1) * 0x4000 - 1;
+                bankInfo["mapping"] = mem->GetCurrentBankName(bank);
+                banks[bank + 1] = bankInfo;
+            }
+            info["z80_banks"] = banks;
+            return info;
+        });
+
         // Feature management (using correct FeatureManager API)
         lua.set_function("feature_list", [this]() -> sol::table {
             sol::state_view lua_view(*_lua);

@@ -233,11 +233,37 @@ PUT  /api/v1/emulator/{id}/debugmode     Enable/disable (body: {"enabled": true}
 ```
 GET /api/v1/emulator/{id}/registers           Get CPU registers (AF, BC, DE, HL, PC, SP, etc.)
 GET /api/v1/emulator/{id}/memory/{addr}       Read memory (?len=N, default 16, max 256)
+PUT /api/v1/emulator/{id}/memory/{addr}       Write memory (body: {"data":[...]} or {"hex":"..."})
+GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Read from physical page (?len=N)
+PUT /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Write to physical page (body: {"data":[...],"force":true})
+GET /api/v1/emulator/{id}/memory/info         Get memory configuration (page counts, bank mappings)
 GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
 GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 ```
+
+#### Physical Page Types
+- `ram` - RAM pages (0-255)
+- `rom` - ROM pages (0-63)
+- `cache` - Cache/SIMM pages (0-3)
+- `misc` - Miscellaneous pages (0-3)
+
+#### Memory Write Request
+```json
+{
+  "data": [0x00, 0x01, 0x02],
+  "force": true
+}
+```
+Or use hex string format:
+```json
+{
+  "hex": "00 01 02 03",
+  "force": true
+}
+```
+> **Note**: `force` is required for ROM writes.
 
 ### Breakpoints
 ```
