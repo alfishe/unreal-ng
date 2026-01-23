@@ -1,5 +1,6 @@
 #include "basicencoder.h"
 #include "emulator/memory/memory.h"
+#include "emulator/emulator.h"
 #include "emulator/spectrumconstants.h"
 
 #include <sstream>
@@ -702,11 +703,16 @@ BasicEncoder::BasicState BasicEncoder::detectState(Memory* memory, uint16_t z80S
     
     uint16_t romPage = memory->GetROMPage();
     
-    // Check if DOS ROM is physically paged (page 2 on Pentagon/Scorpion)
-    // TODO: Properly detect Beta 128 state via port $FF hardware latch
-    if (romPage == 2)
+    // Pentagon ROM layout:
+    //   Page 0: Service ROM
+    //   Page 1: TR-DOS ROM  <-- TR-DOS is here
+    //   Page 2: 128K Editor/Menu ROM
+    //   Page 3: 48K BASIC ROM (SOS)
+    //
+    // Check if TR-DOS ROM is physically paged (page 1 on Pentagon/Scorpion)
+    if (romPage == 1)
     {
-        // DOS ROM is active - TR-DOS is definitely running
+        // TR-DOS ROM is active
         return BasicState::TRDOS_Active;
     }
     
@@ -723,12 +729,21 @@ BasicEncoder::BasicState BasicEncoder::detectState(Memory* memory, uint16_t z80S
     }
     
     // =========================================================================
-    // TIER 2: BASIC ROM Detection
+    // TIER 2: 48K BASIC ROM Detection (page 3 = SOS ROM on Pentagon)
     // =========================================================================
     
-    if (romPage == 1 || romPage == 3)
+    if (romPage == 3)
     {
-        // 48K BASIC ROM is active (and not TR-DOS calling it)
+        // SOS ROM (48K BASIC) is active
+        // BUT: TR-DOS frequently pages in SOS ROM for I/O (keyboard, printing)
+        // If TR-DOS has been initialized (CHANS=$5D25, stub at $5CC2), 
+        // assume we're in TR-DOS mode calling SOS
+        if (isTRDOSInitialized(memory))
+        {
+            return BasicState::TRDOS_Active;  // TR-DOS calling SOS ROM
+        }
+        
+        // True 48K BASIC mode
         return BasicState::Basic48K;
     }
     
@@ -773,8 +788,12 @@ bool BasicEncoder::isInBasicEditor(Memory* memory)
     return (state == BasicState::Basic128K || state == BasicState::Basic48K);
 }
 
-void BasicEncoder::navigateToBasic128K(Memory* memory)
+void BasicEncoder::navigateToBasic128K(Emulator* emulator)
 {
+    if (!emulator)
+        return;
+    
+    Memory* memory = emulator->GetMemory();
     if (!memory)
         return;
     
@@ -783,9 +802,63 @@ void BasicEncoder::navigateToBasic128K(Memory* memory)
     // Menu items: 0=Tape Loader, 1=128 BASIC, 2=Calculator, 3=48 BASIC, 4=Tape Tester
     memory->DirectWriteToZ80Memory(EC0D_FLAGS - 1, 0x01);  // EC0C = menu index = 1
     
-    // Set FLAGS3 bit 0 to indicate BASIC mode
-    uint8_t flags3 = memory->DirectReadFromZ80Memory(FLAGS3);
-    memory->DirectWriteToZ80Memory(FLAGS3, flags3 | 0x01);
+    // Inject ENTER keypress to trigger menu selection
+    // The emulator will process this on the next frame naturally
+    injectKeypress(memory, 0x0D);  // 0x0D = ENTER
+    
+    // Note: Menu transition is asynchronous - caller should poll for state change
+    // or wait a few frames before injecting commands
+}
+
+void BasicEncoder::navigateToBasic48K(Emulator* emulator)
+{
+    if (!emulator)
+        return;
+    
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+        return;
+    
+    // When 128K menu is displayed, RAM bank 7 is paged at $C000-$FFFF
+    // Set menu index $EC0C to 3 (48 BASIC)
+    // Menu items: 0=Tape Loader, 1=128 BASIC, 2=Calculator, 3=48 BASIC, 4=Tape Tester
+    memory->DirectWriteToZ80Memory(EC0D_FLAGS - 1, 0x03);  // EC0C = menu index = 3
+    
+    // Inject ENTER keypress to trigger menu selection
+    // The emulator will process this on the next frame naturally
+    injectKeypress(memory, 0x0D);  // 0x0D = ENTER
+    
+    // Note: Menu transition is asynchronous - caller should poll for state change
+}
+
+void BasicEncoder::navigateToTapeLoader(Memory* memory)
+{
+    if (!memory)
+        return;
+    
+    // Menu item 0: Tape Loader
+    memory->DirectWriteToZ80Memory(EC0D_FLAGS - 1, 0x00);  // EC0C = menu index = 0
+    injectKeypress(memory, 0x0D);  // 0x0D = ENTER
+}
+
+void BasicEncoder::navigateToCalculator(Memory* memory)
+{
+    if (!memory)
+        return;
+    
+    // Menu item 2: Calculator
+    memory->DirectWriteToZ80Memory(EC0D_FLAGS - 1, 0x02);  // EC0C = menu index = 2
+    injectKeypress(memory, 0x0D);  // 0x0D = ENTER
+}
+
+void BasicEncoder::navigateToTRDOS(Memory* memory)
+{
+    if (!memory)
+        return;
+    
+    // Menu item 4: Tape Tester (TR-DOS on Pentagon)
+    memory->DirectWriteToZ80Memory(EC0D_FLAGS - 1, 0x04);  // EC0C = menu index = 4
+    injectKeypress(memory, 0x0D);  // 0x0D = ENTER
 }
 
 // ============================================================================
@@ -844,65 +917,77 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo48K(Memory* memory, const st
     memory->DirectWriteToZ80Memory(CH_ADD, eLineAddr & 0xFF);
     memory->DirectWriteToZ80Memory(CH_ADD + 1, (eLineAddr >> 8) & 0xFF);
     
+    // Trigger screen refresh by injecting a keypress
+    // Cursor right (0x09) doesn't modify buffer content but triggers editor redraw
+    injectKeypress(memory, 0x09);
+    
     result.success = true;
     result.message = "[48K BASIC] Injected: " + command;
     
     return result;
 }
 
-BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Memory* memory, const std::string& command)
+BasicEncoder::InjectionResult BasicEncoder::injectTo128K(Emulator* emulator, const std::string& command)
 {
     InjectionResult result;
     result.success = false;
     result.state = BasicState::Basic128K;
     
+    if (!emulator)
+    {
+        result.message = "Error: Emulator not available";
+        return result;
+    }
+    
+    Memory* memory = emulator->GetMemory();
     if (!memory)
     {
         result.message = "Error: Memory not available";
         return result;
     }
     
-    using namespace Editor128K;
+    // Method 1 from docs: Keystroke simulation with frame stepping
+    // For 128K, we inject each ASCII character as a keypress.
+    // The 128K editor's character handler (L28F1) will:
+    // 1. Insert the character into SLEB
+    // 2. Update the screen display
+    // This way both buffer AND screen are properly updated.
+    //
+    // Unlike 48K where we inject pre-tokenized bytes,
+    // 128K editor expects plain ASCII (tokenization happens on ENTER).
+    //
+    // We run 2 frames per character to allow ROM to process the keypress.
+    // Pause once for entire injection, then resume. Avoids repeated pause/resume overhead.
     
-    // Get direct pointer to RAM bank 7 (contains editor variables)
-    uint8_t* ramBank7 = memory->RAMPageAddress(7);
-    if (!ramBank7)
+    bool wasRunning = emulator->IsRunning() && !emulator->IsPaused();
+    if (wasRunning)
     {
-        result.message = "Error: Cannot access RAM bank 7";
-        return result;
+        emulator->Pause(false);  // Pause without broadcasting
     }
     
-    // SLEB at $EC16 = offset $2C16 in RAM bank 7 (since bank 7 maps to $C000-$FFFF)
-    constexpr uint16_t SLEB_OFFSET = SLEB - 0xC000;
-    
-    // Write command text (max 32 chars per row)
-    size_t len = std::min(command.size(), static_cast<size_t>(32));
-    for (size_t i = 0; i < len; i++)
+    for (char c : command)
     {
-        ramBank7[SLEB_OFFSET + i] = static_cast<uint8_t>(command[i]);
+        injectKeypress(memory, static_cast<uint8_t>(c));
+        
+        // Run 2 frames inline without pause/resume (we're already paused)
+        // This is more efficient than calling RunNFrames which has its own pause/resume logic
+        for (int frame = 0; frame < 2; frame++)
+        {
+            emulator->RunSingleCPUCycle(true);
+            // Run until frame boundary
+            EmulatorContext* ctx = emulator->GetContext();
+            uint64_t frameStart = ctx->emulatorState.frame_counter;
+            while (ctx->emulatorState.frame_counter == frameStart)
+            {
+                emulator->RunSingleCPUCycle(true);
+            }
+        }
     }
-    // Pad remaining chars with nulls
-    for (size_t i = len; i < 32; i++)
+    
+    if (wasRunning)
     {
-        ramBank7[SLEB_OFFSET + i] = 0x00;
+        emulator->Resume(false);  // Resume without broadcasting
     }
-    
-    // Set row flags (3 bytes after the 32 characters)
-    // Bit 0=first row, Bit 3=last row of logical line
-    ramBank7[SLEB_OFFSET + 32] = 0x09;  // First + Last row
-    ramBank7[SLEB_OFFSET + 33] = 0x00;  // Line number low
-    ramBank7[SLEB_OFFSET + 34] = 0x00;  // Line number high
-    
-    // Set cursor position at $F6EE-$F6EF (required for ENTER handler)
-    constexpr uint16_t CURSOR_ROW_OFFSET = 0xF6EE - 0xC000;
-    constexpr uint16_t CURSOR_COL_OFFSET = 0xF6EF - 0xC000;
-    ramBank7[CURSOR_ROW_OFFSET] = 0x00;                        // Row 0
-    ramBank7[CURSOR_COL_OFFSET] = static_cast<uint8_t>(len);   // Column = after text
-    
-    // Set "line altered" flag (bit 3 of EDITOR_FLAGS at $EC0D)
-    // This tells ROM to tokenize and process the line when ENTER is pressed
-    constexpr uint16_t EDITOR_FLAGS_OFFSET = EDITOR_FLAGS - 0xC000;
-    ramBank7[EDITOR_FLAGS_OFFSET] |= 0x08;  // Set bit 3 = line altered
     
     result.success = true;
     result.message = "[128K BASIC] Injected: " + command;
@@ -923,14 +1008,18 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     }
     
     // TR-DOS uses the EXACT same E_LINE buffer mechanism as 48K BASIC!
+    // IMPORTANT DISCOVERY: TR-DOS commands ARE tokenized!
+    //   - LIST appears as 0xF0 (not ASCII "LIST")
+    //   - LOAD appears as 0xEF (not ASCII "LOAD")
+    // We must tokenize the command before injecting.
+    //
     // From TR-DOS ROM at $027B (RUN "boot" command injection):
     //   LD HL,($5C59)   ; E_LINE - get command buffer address
-    //   LD (HL),...     ; write command bytes
+    //   LD (HL),0xF7    ; RUN token
+    //   ...
     //   LD ($5C5B),HL   ; K_CUR - set cursor position  
     //   LD (HL),$0D     ; ENTER terminator
     //   LD ($5C61),HL   ; WORKSP - set workspace
-    //
-    // We replicate this exact behavior.
     
     using namespace SystemVariables48k;
     
@@ -938,19 +1027,23 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     uint16_t eLineAddr = memory->DirectReadFromZ80Memory(E_LINE) |
                          (memory->DirectReadFromZ80Memory(E_LINE + 1) << 8);
     
-    // Debug: validate E_LINE points to reasonable RAM area
-    // After TR-DOS initialization, E_LINE should point past TR-DOS sys vars
+    // Validate E_LINE points to reasonable RAM area
+    // After TR-DOS initialization, E_LINE should point past TR-DOS sys vars (~$5D3C)
     if (eLineAddr < 0x5B00 || eLineAddr > 0xFFFF)
     {
         result.message = "Error: Invalid E_LINE address: " + std::to_string(eLineAddr);
         return result;
     }
     
-    // Write command characters (raw ASCII - TR-DOS doesn't tokenize)
+    // TOKENIZE the command (same as 48K BASIC)
+    // This converts "LOAD" → 0xEF, "LIST" → 0xF0, etc.
+    auto tokenized = tokenizeImmediate(command);
+    
+    // Write tokenized command to E_LINE buffer
     uint16_t currentAddr = eLineAddr;
-    for (size_t i = 0; i < command.size(); i++)
+    for (size_t i = 0; i < tokenized.size(); i++)
     {
-        memory->DirectWriteToZ80Memory(currentAddr++, static_cast<uint8_t>(command[i]));
+        memory->DirectWriteToZ80Memory(currentAddr++, tokenized[i]);
     }
     
     // Set K_CUR to cursor position (after command text)
@@ -973,8 +1066,14 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     memory->DirectWriteToZ80Memory(STKEND, currentAddr & 0xFF);
     memory->DirectWriteToZ80Memory(STKEND + 1, (currentAddr >> 8) & 0xFF);
     
+    // Trigger screen refresh by injecting a keypress
+    // This makes the injected text visible on screen by triggering the ROM's
+    // editor redraw routine. Cursor right (0x09) doesn't modify buffer content.
+    // The ROM will process this on the next frame and redraw the line.
+    injectKeypress(memory, 0x09);  // Cursor right - triggers redraw without changing buffer
+    
     result.success = true;
-    result.message = "[TR-DOS] Injected to E_LINE at " + std::to_string(eLineAddr) + ": " + command;
+    result.message = "[TR-DOS] Injected tokenized command to E_LINE at " + std::to_string(eLineAddr) + ": " + command;
     
     return result;
 }
@@ -983,12 +1082,19 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
 // Dispatcher Functions
 // ============================================================================
 
-BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const std::string& command, uint16_t z80SP)
+BasicEncoder::InjectionResult BasicEncoder::injectCommand(Emulator* emulator, const std::string& command)
 {
     InjectionResult result;
     result.success = false;
     result.state = BasicState::Unknown;
     
+    if (!emulator)
+    {
+        result.message = "Error: Emulator not available";
+        return result;
+    }
+    
+    Memory* memory = emulator->GetMemory();
     if (!memory)
     {
         result.message = "Error: Memory not available";
@@ -996,7 +1102,7 @@ BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const 
     }
     
     // Detect current BASIC state
-    result.state = detectState(memory, z80SP);
+    result.state = detectState(memory);
     
     // Dispatch to ROM-specific injection function
     switch (result.state)
@@ -1005,7 +1111,7 @@ BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const 
             return injectTo48K(memory, command);
             
         case BasicState::Basic128K:
-            return injectTo128K(memory, command);
+            return injectTo128K(emulator, command);
             
         case BasicState::TRDOS_Active:
         case BasicState::TRDOS_SOS_Call:
@@ -1014,7 +1120,7 @@ BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const 
             return injectToTRDOS(memory, command);
             
         case BasicState::Menu128K:
-            result.message = "Error: On 128K menu. Please enter BASIC first.";
+            result.message = "Error: On 128K menu. Use autoNavigateAndInject() or enter BASIC first.";
             break;
             
         default:
@@ -1025,10 +1131,53 @@ BasicEncoder::InjectionResult BasicEncoder::injectCommand(Memory* memory, const 
     return result;
 }
 
-BasicEncoder::InjectionResult BasicEncoder::runCommand(Memory* memory, const std::string& command, uint16_t z80SP)
+BasicEncoder::InjectionResult BasicEncoder::autoNavigateAndInject(Emulator* emulator, const std::string& command)
 {
-    // First inject the command
-    InjectionResult result = injectCommand(memory, command, z80SP);
+    InjectionResult result;
+    result.success = false;
+    result.state = BasicState::Unknown;
+    
+    if (!emulator)
+    {
+        result.message = "Error: Emulator not available";
+        return result;
+    }
+    
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        result.message = "Error: Memory not available";
+        return result;
+    }
+    
+    // Detect current BASIC state
+    result.state = detectState(memory);
+    
+    // If on 128K menu, navigate to 128K BASIC first
+    if (result.state == BasicState::Menu128K)
+    {
+        navigateToBasic128K(emulator);
+        
+        // Re-detect state after navigation
+        result.state = detectState(memory);
+        
+        // Verify we're now in BASIC
+        if (result.state != BasicState::Basic128K && result.state != BasicState::Basic48K)
+        {
+            result.message = "Error: Failed to navigate from menu to BASIC. Current state: " + 
+                             std::to_string(static_cast<int>(result.state));
+            return result;
+        }
+    }
+    
+    // Now delegate to the regular injectCommand
+    return injectCommand(emulator, command);
+}
+
+BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const std::string& command)
+{
+    // First auto-navigate and inject the command
+    InjectionResult result = autoNavigateAndInject(emulator, command);
     
     if (!result.success)
     {
@@ -1036,7 +1185,11 @@ BasicEncoder::InjectionResult BasicEncoder::runCommand(Memory* memory, const std
     }
     
     // Trigger execution via ENTER keypress
-    injectEnter(memory);
+    Memory* memory = emulator->GetMemory();
+    if (memory)
+    {
+        injectEnter(memory);
+    }
     
     // Update message to indicate execution was triggered
     result.message += "\nExecuting...";

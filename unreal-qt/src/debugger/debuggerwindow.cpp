@@ -64,7 +64,11 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(stepOutAction, &QAction::triggered, this, &DebuggerWindow::stepOut);
     toolBar->addAction(stepOutAction);
 
-    frameStepAction = toolBar->addAction("Frame step");
+    frameStepAction = new QAction("Frame step", this);
+    frameStepAction->setShortcut(QKeySequence(Qt::Key_F9));
+    connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
+    toolBar->addAction(frameStepAction);
+    
     waitInterruptAction = toolBar->addAction("Wait INT");
     resetAction = toolBar->addAction("Reset");
     toolBar->addWidget(spacer);
@@ -891,7 +895,14 @@ void DebuggerWindow::frameStep()
 
     _breakpointTriggered = false;
 
-    updateState();
+    if (_emulator)
+    {
+        // Execute one complete video frame
+        bool skipBreakpoints = true;
+        _emulator->RunFrame(skipBreakpoints);
+
+        updateState();
+    }
 }
 
 void DebuggerWindow::waitInterrupt()

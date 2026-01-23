@@ -107,7 +107,7 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
         }
 
         // Use injectCommand (writes to edit buffer, no execution)
-        auto result = BasicEncoder::injectCommand(memory, command);
+        auto result = BasicEncoder::injectCommand(emulator.get(), command);
         
         std::stringstream ss;
         ss << result.message << NEWLINE;
@@ -206,7 +206,7 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
         if (state == BasicEncoder::BasicState::Menu128K)
         {
             ss << "Detected 128K menu, navigating to BASIC..." << NEWLINE;
-            BasicEncoder::navigateToBasic128K(memory);
+            BasicEncoder::navigateToBasic128K(emulator.get());
             BasicEncoder::injectEnter(memory);
             ss << "Please wait for menu transition, then retry command." << NEWLINE;
             session.SendResponse(ss.str());
@@ -232,8 +232,8 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
             }
         }
 
-        // Use new runCommand API (injects + executes via ENTER)
-        auto result = BasicEncoder::runCommand(memory, command);
+        // Use new runCommand API (auto-navigates from menu, injects + executes via ENTER)
+        auto result = BasicEncoder::runCommand(emulator.get(), command);
         ss << result.message << NEWLINE;
 
         session.SendResponse(ss.str());
@@ -303,6 +303,45 @@ void CLIProcessor::HandleBasic(const ClientSession& session, const std::vector<s
     else if (subcommand == "load")
     {
         session.SendResponse(std::string("Error: 'basic load' is not yet implemented.") + NEWLINE);
+    }
+    else if (subcommand == "state")
+    {
+        // basic state - Show BASIC/TR-DOS state
+        Memory* memory = emulator->GetMemory();
+        if (!memory)
+        {
+            session.SendResponse(std::string("Error: Unable to access emulator memory.") + NEWLINE);
+            return;
+        }
+        
+        auto state = BasicEncoder::detectState(memory);
+        std::stringstream ss;
+        
+        ss << "Current state: ";
+        switch (state)
+        {
+            case BasicEncoder::BasicState::Unknown:
+                ss << "Unknown" << NEWLINE;
+                break;
+            case BasicEncoder::BasicState::Menu128K:
+                ss << "128K Menu (no BASIC active)" << NEWLINE;
+                ss << "Hint: Use 'basic run' to auto-navigate to BASIC." << NEWLINE;
+                break;
+            case BasicEncoder::BasicState::Basic48K:
+                ss << "48K BASIC" << NEWLINE;
+                break;
+            case BasicEncoder::BasicState::Basic128K:
+                ss << "128K BASIC" << NEWLINE;
+                break;
+            case BasicEncoder::BasicState::TRDOS_Active:
+                ss << "TR-DOS (A> prompt)" << NEWLINE;
+                break;
+            case BasicEncoder::BasicState::TRDOS_SOS_Call:
+                ss << "TR-DOS (in SOS ROM call)" << NEWLINE;
+                break;
+        }
+        
+        session.SendResponse(ss.str());
     }
     else
     {

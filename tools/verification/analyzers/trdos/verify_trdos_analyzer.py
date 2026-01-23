@@ -491,31 +491,79 @@ class TRDOSAnalyzerVerifier:
             time.sleep(0.02 * count)
             return True
     
-    def verify_command_injection(self, command: str, wait_time: float = 0.5) -> bool:
-        """Inject command (without ENTER) and verify it appears on screen via OCR"""
+    def verify_command_injection(self, command: str, wait_time: float = 1.0) -> bool:
+        """Inject command and verify it appears on screen via OCR"""
         self.print_step("4b", f"Injecting and verifying command: {command}")
         
         # Step 1: Inject command (no ENTER pressed - command stays in editor buffer)
         if not self.inject_basic_command(command):
             return False
         
-        # Give a moment for screen to update with injected text
+        # Give emulator time to process keypress and refresh screen
         time.sleep(wait_time)
         
-        # Step 2: Capture screen to verify text appears
+        # Step 2: OCR verification - command MUST appear on screen
         success, lines = self.capture_screen_ocr("after injection")
         if not success:
+            self.print_error("Failed to capture screen for verification")
             return False
-        
-        # Check if command text appears on screen
+            
         screen_text = '\n'.join(lines).upper()
         command_upper = command.upper()
         
         if command_upper in screen_text:
             self.print_success(f"Command '{command}' visible on screen!")
             return True
-        else:
-            self.print_error(f"Command '{command}' NOT visible on screen - injection failed!")
+        
+        # Also check memory as informational (not for pass/fail)
+        if self.verify_injection_via_memory(command):
+            self.print_info(f"Command found in memory buffer but NOT on screen - screen refresh issue!")
+        
+        self.print_error(f"Command '{command}' NOT visible on screen - injection failed!")
+        return False
+    
+    def verify_injection_via_memory(self, command: str) -> bool:
+        """Verify command was injected by reading E_LINE buffer via memory API"""
+        try:
+            # Read E_LINE pointer from system variable $5C59
+            url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/memory/read/0x5C59?length=2"
+            response = self.session.get(url, timeout=5)
+            if response.status_code != 200:
+                return False
+            
+            data = response.json().get('data', [])
+            if len(data) < 2:
+                return False
+            
+            e_line_addr = data[0] | (data[1] << 8)
+            self.print_info(f"E_LINE buffer at address: 0x{e_line_addr:04X}")
+            
+            # Read buffer contents
+            url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/memory/read/0x{e_line_addr:04X}?length=32"
+            response = self.session.get(url, timeout=5)
+            if response.status_code != 200:
+                return False
+            
+            buffer_data = response.json().get('data', [])
+            
+            # Convert command to expected token (for LOAD = 0xEF)
+            # Check if LOAD token (0xEF) is at start of buffer
+            token_map = {'LOAD': 0xEF, 'LIST': 0xF0, 'CAT': 0xCF, 'RUN': 0xF7, 'SAVE': 0xF8}
+            expected_token = token_map.get(command.upper())
+            
+            if expected_token and buffer_data and buffer_data[0] == expected_token:
+                self.print_info(f"Found {command} token (0x{expected_token:02X}) in E_LINE buffer")
+                return True
+            
+            # Also check for raw ASCII
+            cmd_bytes = [ord(c) for c in command.upper()]
+            if buffer_data[:len(cmd_bytes)] == cmd_bytes:
+                self.print_info(f"Found '{command}' as ASCII in E_LINE buffer")
+                return True
+                
+            return False
+        except Exception as e:
+            self.print_info(f"Memory verification failed: {e}")
             return False
     
     def inject_enter(self) -> bool:

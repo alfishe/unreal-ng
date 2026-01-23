@@ -168,6 +168,8 @@ public:
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
+    void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
+    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
     void RunUntilInterrupt();
     void RunUntilCondition(/* some condition descriptor */);  // TODO: revise design
     void StepOver();                                          // Execute instruction, skip calls and subroutines

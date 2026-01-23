@@ -409,7 +409,6 @@ public:
         });
 
 
-        // BASIC control functions
         // basic_run([command]) -> table {success, message, basic_mode}
         // Execute a BASIC command (defaults to "RUN" if no command specified)
         lua.set_function("basic_run", [this](sol::this_state L, sol::optional<std::string> cmd) -> sol::table {
@@ -421,28 +420,10 @@ public:
                 return result;
             }
             
-            Memory* memory = _emulator->GetMemory();
-            if (!memory) {
-                result["success"] = false;
-                result["message"] = "Memory subsystem not available";
-                return result;
-            }
-            
             std::string command = cmd.value_or("RUN");
             
-            // Check if we're on 128K menu
-            auto state = BasicEncoder::detectState(memory);
-            if (state == BasicEncoder::BasicState::Menu128K) {
-                BasicEncoder::navigateToBasic128K(memory);
-                BasicEncoder::injectEnter(memory);
-                result["success"] = true;
-                result["message"] = "Detected 128K menu, navigating to BASIC. Retry command after transition.";
-                result["state"] = "menu_transition";
-                return result;
-            }
-            
-            // Use new runCommand API (injects + executes)
-            auto injResult = BasicEncoder::runCommand(memory, command);
+            // Use new runCommand API - handles menu navigation automatically
+            auto injResult = BasicEncoder::runCommand(_emulator, command);
             
             result["success"] = injResult.success;
             result["command"] = command;

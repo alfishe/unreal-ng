@@ -106,6 +106,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::basicExtract, "/api/v1/emulator/{id}/basic/extract", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::basicClear, "/api/v1/emulator/{id}/basic/clear", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::basicState, "/api/v1/emulator/{id}/basic/state", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::basicMode, "/api/v1/emulator/{id}/basic/mode", drogon::Post);
     // endregion BASIC Control
 
     // region Settings Management (implementation: api/settings_api.cpp)
@@ -353,6 +354,8 @@ public:
                     const std::string& id) const;
     void basicState(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& id) const;
+    void basicMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
     // endregion BASIC Control Methods
 
     // region Settings Management Methods (implementation: api/settings_api.cpp)

@@ -6,6 +6,7 @@
 #include <map>
 
 class Memory;
+class Emulator;
 
 /// BasicEncoder: Converts plain text ZX Spectrum BASIC programs to tokenized format
 /// and injects them into emulator memory with proper system variable setup.
@@ -145,8 +146,30 @@ public:
     
     /// Navigate from 128K menu directly to 128K BASIC editor
     /// Sets the menu selection to 128 BASIC and triggers the handler
+    /// Pauses emulator, runs frames to allow menu transition, then resumes
+    /// @param emulator Pointer to emulator instance
+    static void navigateToBasic128K(Emulator* emulator);
+    
+    /// Navigate from 128K menu directly to 48K BASIC mode (SOS ROM)
+    /// Sets the menu selection to 48 BASIC and triggers the handler
+    /// Pauses emulator, runs frames to allow menu transition, then resumes
+    /// @param emulator Pointer to emulator instance
+    static void navigateToBasic48K(Emulator* emulator);
+    
+    /// Navigate from 128K menu to Tape Loader
+    /// Menu item 0: Tape Loader
     /// @param memory Pointer to emulator memory instance
-    static void navigateToBasic128K(Memory* memory);
+    static void navigateToTapeLoader(Memory* memory);
+    
+    /// Navigate from 128K menu to Calculator
+    /// Menu item 2: Calculator
+    /// @param memory Pointer to emulator memory instance
+    static void navigateToCalculator(Memory* memory);
+    
+    /// Navigate from 128K menu to Tape Tester (TR-DOS on Pentagon)
+    /// Menu item 4: Tape Tester / TR-DOS
+    /// @param memory Pointer to emulator memory instance
+    static void navigateToTRDOS(Memory* memory);
     
     /// Result struct for injection operations
     struct InjectionResult {
@@ -155,23 +178,31 @@ public:
         std::string message;    ///< Human-readable result or error message
     };
     
-    /// Inject a command into the BASIC edit buffer (mode-aware dispatcher)
+    /// Inject a command into the current BASIC edit buffer (48K or 128K)
     /// Does NOT execute the command - just places it in the editor
     /// Dispatches to injectTo48K or injectTo128K based on detected state
-    /// @param memory Pointer to emulator memory instance  
+    /// Fails if on 128K menu - use autoNavigateAndInject for automatic navigation
+    /// @param emulator Pointer to emulator instance
     /// @param command Command string to inject
-    /// @param z80SP Optional Z80 stack pointer for accurate state detection
     /// @return InjectionResult with success flag, detected state, and message
-    static InjectionResult injectCommand(Memory* memory, const std::string& command, uint16_t z80SP = 0);
+    static InjectionResult injectCommand(Emulator* emulator, const std::string& command);
+    
+    /// Automatically navigate to BASIC (if needed) and inject command
+    /// Handles 128K menu navigation automatically before injection
+    /// This is the recommended high-level API for external callers
+    /// @param emulator Pointer to emulator instance
+    /// @param command Command string to inject
+    /// @return InjectionResult with success flag, detected state, and message
+    static InjectionResult autoNavigateAndInject(Emulator* emulator, const std::string& command);
     
     /// Inject a command into BASIC edit buffer AND execute it
-    /// Combines injectCommand + injectEnter for convenience
+    /// Combines autoNavigateAndInject + injectEnter for convenience
     /// Use this when you want immediate execution (like typing RUN + ENTER)
-    /// @param memory Pointer to emulator memory instance  
+    /// Handles 128K menu navigation automatically
+    /// @param emulator Pointer to emulator instance
     /// @param command Command string to inject and execute
-    /// @param z80SP Optional Z80 stack pointer for accurate state detection
     /// @return InjectionResult with success flag, detected state, and message
-    static InjectionResult runCommand(Memory* memory, const std::string& command, uint16_t z80SP = 0);
+    static InjectionResult runCommand(Emulator* emulator, const std::string& command);
     
     /// ROM-specific: Inject command into 48K BASIC E_LINE buffer
     /// Writes tokenized command to E_LINE, updates K_CUR, WORKSP, CH_ADD
@@ -183,10 +214,10 @@ public:
     /// ROM-specific: Inject command into 128K BASIC SLEB buffer
     /// Writes command to Screen Line Edit Buffer at $EC16 in RAM bank 7
     /// Sets cursor position and "line altered" flag for ENTER handler
-    /// @param memory Pointer to emulator memory instance
+    /// @param emulator Pointer to emulator instance (provides memory and frame stepping)
     /// @param command Command string to inject
     /// @return InjectionResult (state will be Basic128K on success)
-    static InjectionResult injectTo128K(Memory* memory, const std::string& command);
+    static InjectionResult injectTo128K(Emulator* emulator, const std::string& command);
     
     /// ROM-specific: Inject command into TR-DOS E_LINE buffer
     /// TR-DOS uses SOS ROM for keyboard input, so E_LINE buffer works

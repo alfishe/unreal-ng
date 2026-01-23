@@ -1166,6 +1166,83 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
     }
 }
 
+void Emulator::RunFrame(bool skipBreakpoints)
+{
+    // If emulator is running, we need to pause it first to avoid race condition
+    bool wasRunning = IsRunning() && !IsPaused();
+    if (wasRunning)
+    {
+        Pause(false);  // Pause without broadcasting (internal operation)
+    }
+    
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+    
+    // Run CPU cycles until we reach the frame boundary
+    uint64_t frameStart = _context->emulatorState.frame_counter;
+    
+    while (_context->emulatorState.frame_counter == frameStart && !_stopRequested)
+    {
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+        
+        // Check for frame boundary
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+        }
+    }
+    
+    // Notify the debugger that a frame step has been performed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    
+    // Resume if we were running before
+    if (wasRunning)
+    {
+        Resume(false);  // Resume without broadcasting (internal operation)
+    }
+}
+
+void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
+{
+    // Pause once for all frames to avoid repeated pause/resume overhead
+    bool wasRunning = IsRunning() && !IsPaused();
+    if (wasRunning)
+    {
+        Pause(false);
+    }
+    
+    for (unsigned i = 0; i < frames && !_stopRequested; i++)
+    {
+        // Call internal frame step without pause/resume handling
+        const CONFIG& config = _context->config;
+        Z80& z80 = *_core->GetZ80();
+        
+        uint64_t frameStart = _context->emulatorState.frame_counter;
+        
+        while (_context->emulatorState.frame_counter == frameStart && !_stopRequested)
+        {
+            z80.Z80Step(skipBreakpoints);
+            z80.OnCPUStep();
+            
+            if (z80.t >= config.frame)
+            {
+                _core->AdjustFrameCounters();
+            }
+        }
+    }
+    
+    // Notify once after all frames
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    
+    if (wasRunning)
+    {
+        Resume(false);
+    }
+}
+
 void Emulator::RunUntilInterrupt()
 {
     throw std::logic_error("Not implemented");

@@ -67,24 +67,8 @@ void EmulatorAPI::basicRun(const HttpRequestPtr& req,
     
     Json::Value ret;
     
-    // Check if we're on 128K menu - if so, navigate to BASIC first
-    auto state = BasicEncoder::detectState(memory);
-    if (state == BasicEncoder::BasicState::Menu128K) {
-        BasicEncoder::navigateToBasic128K(memory);
-        BasicEncoder::injectEnter(memory);
-        
-        ret["success"] = true;
-        ret["state"] = "menu_transition";
-        ret["message"] = "Detected 128K menu, navigating to BASIC. Retry command after transition.";
-        
-        auto resp = HttpResponse::newHttpJsonResponse(ret);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    
-    // Use new runCommand API (injects + executes via ENTER)
-    auto result = BasicEncoder::runCommand(memory, command);
+    // Use new runCommand API - handles menu navigation automatically
+    auto result = BasicEncoder::runCommand(emulator.get(), command);
     
     ret["success"] = result.success;
     ret["command"] = command;
@@ -134,37 +118,6 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
         return;
     }
     
-    Memory* memory = emulator->GetMemory();
-    if (!memory) {
-        Json::Value error;
-        error["error"] = "Not Available";
-        error["message"] = "Memory subsystem not available";
-        
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    
-    
-    // Check state before injection - only reject Menu128K (no input buffer available)
-    // Note: TR-DOS is now supported via BasicEncoder::injectToTRDOS
-    auto state = BasicEncoder::detectState(memory);
-    if (state == BasicEncoder::BasicState::Menu128K) {
-        Json::Value error;
-        error["success"] = false;
-        error["error"] = "Menu Active";
-        error["message"] = "On 128K menu. Please enter BASIC first.";
-        error["state"] = "menu128k";
-        
-        auto resp = HttpResponse::newHttpJsonResponse(error);
-        resp->setStatusCode(HttpStatusCode::k400BadRequest);
-        addCorsHeaders(resp);
-        callback(resp);
-        return;
-    }
-    
     auto json = req->getJsonObject();
     
     // Accept both 'program' (legacy) and 'command' (new) parameters
@@ -185,8 +138,8 @@ void EmulatorAPI::basicInject(const HttpRequestPtr& req,
         return;
     }
     
-    // Use injectCommand for single command injection (into edit buffer)
-    auto result = BasicEncoder::injectCommand(memory, command);
+    // Use autoNavigateAndInject - handles menu navigation automatically
+    auto result = BasicEncoder::autoNavigateAndInject(emulator.get(), command);
     
     Json::Value ret;
     ret["success"] = result.success;
@@ -381,6 +334,126 @@ void EmulatorAPI::basicState(const HttpRequestPtr& req,
             ret["description"] = "Unable to determine state";
             ret["ready_for_commands"] = false;
             break;
+    }
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/:id/basic/mode
+/// @brief Switch BASIC mode (from 128K menu to 48K or 128K BASIC)
+void EmulatorAPI::basicMode(const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+    
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        Json::Value error;
+        error["error"] = "Memory Error";
+        error["message"] = "Memory not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Parse request body for mode
+    auto json = req->getJsonObject();
+    std::string mode = json ? (*json)["mode"].asString() : "";
+    
+    if (mode.empty())
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Mode is required. Use '48k' or '128k'.";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Check current state
+    auto currentState = BasicEncoder::detectState(memory);
+    
+    Json::Value ret;
+    
+    if (mode == "48k" || mode == "48K")
+    {
+        if (currentState == BasicEncoder::BasicState::Menu128K)
+        {
+            BasicEncoder::navigateToBasic48K(emulator.get());
+            ret["success"] = true;
+            ret["message"] = "Switched to 48K BASIC mode from menu";
+            ret["mode"] = "48k";
+        }
+        else if (currentState == BasicEncoder::BasicState::Basic48K)
+        {
+            ret["success"] = true;
+            ret["message"] = "Already in 48K BASIC mode";
+            ret["mode"] = "48k";
+        }
+        else
+        {
+            ret["success"] = false;
+            ret["message"] = "Cannot switch to 48K mode from current state";
+            ret["current_state"] = static_cast<int>(currentState);
+        }
+    }
+    else if (mode == "128k" || mode == "128K")
+    {
+        if (currentState == BasicEncoder::BasicState::Menu128K)
+        {
+            BasicEncoder::navigateToBasic128K(emulator.get());
+            ret["success"] = true;
+            ret["message"] = "Switched to 128K BASIC mode from menu";
+            ret["mode"] = "128k";
+        }
+        else if (currentState == BasicEncoder::BasicState::Basic128K)
+        {
+            ret["success"] = true;
+            ret["message"] = "Already in 128K BASIC mode";
+            ret["mode"] = "128k";
+        }
+        else
+        {
+            ret["success"] = false;
+            ret["message"] = "Cannot switch to 128K mode from current state";
+            ret["current_state"] = static_cast<int>(currentState);
+        }
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid mode. Use '48k' or '128k'.";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
     }
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
