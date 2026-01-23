@@ -204,6 +204,10 @@ public:
     /// @return InjectionResult with success flag, detected state, and message
     static InjectionResult runCommand(Emulator* emulator, const std::string& command);
     
+    /// @brief Press and release physical ENTER key via MessageCenter
+    /// @param emulator Pointer to emulator instance
+    static void injectEnterPhysical(Emulator* emulator);
+    
     /// ROM-specific: Inject command into 48K BASIC E_LINE buffer
     /// Writes tokenized command to E_LINE, updates K_CUR, WORKSP, CH_ADD
     /// @param memory Pointer to emulator memory instance

@@ -2,6 +2,8 @@
 #include "emulator/memory/memory.h"
 #include "emulator/emulator.h"
 #include "emulator/spectrumconstants.h"
+#include "emulator/io/keyboard/keyboard.h"
+#include "3rdparty/message-center/messagecenter.h"
 
 #include <sstream>
 #include <cctype>
@@ -1046,7 +1048,8 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
         memory->DirectWriteToZ80Memory(currentAddr++, tokenized[i]);
     }
     
-    // Set K_CUR to cursor position (after command text)
+    // Set K_CUR to cursor position (after command text, BEFORE 0x0D)
+    // This must be set BEFORE writing the terminator
     memory->DirectWriteToZ80Memory(K_CUR, currentAddr & 0xFF);
     memory->DirectWriteToZ80Memory(K_CUR + 1, (currentAddr >> 8) & 0xFF);
     
@@ -1067,6 +1070,11 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     // Unlike 48K BASIC which uses these for calculator stack management,
     // TR-DOS relies on the Z80 SP register and ROM stack handling.
     
+    // Set CH_ADD to E_LINE for LINE-SCAN to parse from start
+    // This is CRITICAL - without it, ENTER doesn't know where to find the command!
+    memory->DirectWriteToZ80Memory(CH_ADD, eLineAddr & 0xFF);
+    memory->DirectWriteToZ80Memory(CH_ADD + 1, (eLineAddr >> 8) & 0xFF);
+    
     // Trigger screen refresh by injecting a keypress
     // This makes the injected text visible on screen by triggering the ROM's
     // editor redraw routine. Cursor right (0x09) doesn't modify buffer content.
@@ -1075,6 +1083,7 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     
     result.success = true;
     result.message = "[TR-DOS] Injected tokenized command to E_LINE at " + std::to_string(eLineAddr) + ": " + command;
+    result.state = BasicState::TRDOS_Active;
     
     return result;
 }
@@ -1177,23 +1186,59 @@ BasicEncoder::InjectionResult BasicEncoder::autoNavigateAndInject(Emulator* emul
 
 BasicEncoder::InjectionResult BasicEncoder::runCommand(Emulator* emulator, const std::string& command)
 {
-    // First auto-navigate and inject the command
-    InjectionResult result = autoNavigateAndInject(emulator, command);
+    InjectionResult result;
+    result.success = true;
     
-    if (!result.success)
+    if (!command.empty())
     {
-        return result;  // Return error from injection
+        // Auto-navigate and inject the command
+        result = autoNavigateAndInject(emulator, command);
+        if (!result.success)
+        {
+            return result;
+        }
+    }
+    else
+    {
+        // Just detect current state for proper ENTER injection logic below
+        result.state = detectState(emulator->GetMemory());
     }
     
-    // Trigger execution via ENTER keypress
     Memory* memory = emulator->GetMemory();
     if (memory)
     {
-        injectEnter(memory);
+        if (result.state == BasicState::TRDOS_Active)
+        {
+            // Trigger screen refresh once more before ENTER, ensures buffer is definitely synchronized
+            // and visible to the ROM's keyboard loop.
+            injectKeypress(memory, 0x09);  // Cursor right
+            emulator->RunNFrames(2);       // Wait for refresh to process
+
+            // For TR-DOS, we prefer physical events to ensure the ROM's keyboard loop
+            // correctly picks up the command.
+            injectEnterPhysical(emulator);
+        }
+        else
+        {
+            // Standard 48K/128K BASIC handles LAST_K injection fine
+            injectEnter(memory);
+        }
     }
-    
     // Update message to indicate execution was triggered
     result.message += "\nExecuting...";
     
     return result;
+}
+
+void BasicEncoder::injectEnterPhysical(Emulator* emulator)
+{
+    if (!emulator) return;
+
+    // Post physical key events with a delay in between
+    // This ensures the ROM's keyboard scanner (running on INT) sees the key pressed
+    MessageCenter& mc = MessageCenter::DefaultMessageCenter();
+    mc.Post(MC_KEY_PRESSED, new KeyboardEvent(ZXKEY_ENTER, KEY_PRESSED, emulator->GetUUID()));
+    emulator->RunNFrames(4); // Hold for 4 frames (80ms) - be slightly more generous
+    mc.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_ENTER, KEY_RELEASED, emulator->GetUUID()));
+    emulator->RunNFrames(2); // Wait for release to be processed
 }

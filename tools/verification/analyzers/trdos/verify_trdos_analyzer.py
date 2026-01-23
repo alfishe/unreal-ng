@@ -850,12 +850,15 @@ class TRDOSAnalyzerVerifier:
         # This must happen before any commands to avoid false positives from breakpoint removal
         self.verify_breakpoints()
         
-        # Step 4: TEST INJECTION - Inject LOAD command and verify it appears on screen
+        # Step 4: TEST INJECTION - Inject LIST command and verify it appears on screen
         # This tests the BasicEncoder injection mode (TR-DOS mode)
-        if not self.verify_command_injection('LOAD'):
-            self.print_error("LOAD command injection failed - BasicEncoder issue!")
+        if not self.verify_command_injection('LIST'):
+            self.print_error("LIST command injection failed - BasicEncoder issue!")
             self.deactivate_analyzer()
             return False
+            
+        # Wait a bit after injection to let the ROM "see" the cursor-right redraw
+        time.sleep(0.5)
         
         # Step 4c: Inject ENTER to execute the injected command
         self.print_step("4c", "Injecting ENTER to execute command...")
