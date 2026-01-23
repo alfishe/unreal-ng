@@ -762,7 +762,8 @@ class TRDOSAnalyzerVerifier:
             13: 'FDC_CMD_READ_ADDR',
             14: 'FDC_CMD_READ_TRACK',
             15: 'FDC_CMD_WRITE_TRACK',
-            16: 'SECTOR_TRANSFER'
+            16: 'SECTOR_TRANSFER',
+            21: 'LOADER_DETECTED'
         }
         
         event_types = {}
@@ -779,7 +780,7 @@ class TRDOSAnalyzerVerifier:
             print(f"  {event_type}: {count}")
             
         # Verify expected events
-        expected_events = ['TRDOS_ENTRY', 'COMMAND_START']
+        expected_events = ['COMMAND_START', 'FDC_CMD_READ']
         found_events = set(event_types.keys())
         
         all_found = True
@@ -789,6 +790,11 @@ class TRDOSAnalyzerVerifier:
             else:
                 self.print_warning(f"Missing expected event: {expected}")
                 all_found = False
+        
+        # We generally expect NO LOADER_DETECTED for standard LIST command
+        if 'LOADER_DETECTED' in found_events:
+            self.print_warning("Unexpected LOADER_DETECTED event in standard LIST command")
+            # We don't fail here yet, but it's worth noting.
                 
         # Print detailed events
         if events:
@@ -859,10 +865,7 @@ class TRDOSAnalyzerVerifier:
                     desc = "Entered TR-DOS ROM"
                     
                 elif type_name == 'COMMAND_START':
-                    cmd = event.get('command')
-                    desc = f"Command Recognized"
-                    if cmd:
-                        desc += f": {cmd}"
+                    desc = event.get('formatted', 'Command Recognized')
 
                 # Time formatting
                 # Use Frame Number for stable wall-clock time (50Hz = 20ms/frame)

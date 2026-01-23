@@ -68,6 +68,8 @@ struct EventContext
     uint16_t pc;                         // Current Program Counter
     uint16_t callerAddress;              // Immediate return address from stack
     uint16_t originalRAMCaller;          // First non-ROM address in stack
+    uint8_t iff1;                        // Interrupt Enable Flag (1=EI, 0=DI)
+    uint8_t im;                          // Interrupt Mode (0, 1, 2)
 };
 
 /// Semantic event captured by the analyzer

@@ -46,7 +46,9 @@ public:
 
     // TR-DOS ROM breakpoint addresses
     static constexpr uint16_t BP_TRDOS_ENTRY = 0x3D00;  // TR-DOS entry point
+    static constexpr uint16_t BP_SERVICE_ENTRY = 0x3D13;// Service entry (RST 8 / Standard)
     static constexpr uint16_t BP_COMMAND_DISPATCH = 0x3D21; // Command dispatch
+    static constexpr uint16_t BP_DOS_ENTRY = 0x3D2F;    // DOS entry (via RET/JP)
     static constexpr uint16_t BP_EXIT = 0x0077;         // TR-DOS exit (RET to BASIC)
 
     /// Constructor

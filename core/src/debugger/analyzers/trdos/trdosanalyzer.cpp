@@ -21,6 +21,8 @@ std::string TRDOSEvent::format() const
     {
         case TRDOSEventType::TRDOS_ENTRY:
             ss << "TR-DOS Entry (PC=$" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << context.pc << ")";
+            // Add Interrupt State info
+            ss << " [" << (context.iff1 ? "EI" : "DI") << " IM" << (int)context.im << "]";
 
             break;
         case TRDOSEventType::TRDOS_EXIT:
@@ -57,11 +59,48 @@ std::string TRDOSEvent::format() const
         case TRDOSEventType::SECTOR_TRANSFER:
             ss << "Sector Transfer: " << bytesTransferred << " bytes, T" << (int)track << "/S" << (int)sector;
             break;
-        case TRDOSEventType::ERROR_CRC:
-            ss << "*** ERROR: CRC Error ***";
+        case TRDOSEventType::FDC_CMD_READ_ADDR:
+            ss << "FDC Read Address";
             break;
+        case TRDOSEventType::FDC_CMD_READ_TRACK:
+            ss << "FDC Read Track (T" << (int)track << ")";
+            break;
+        case TRDOSEventType::FDC_CMD_WRITE_TRACK:
+            ss << "FDC Write Track (Format T" << (int)track << ")";
+            break;
+        case TRDOSEventType::FDC_CMD_STEP:
+            ss << "FDC Step";
+            break;
+        case TRDOSEventType::FILE_FOUND:
+            ss << "File Found: " << filename;
+            break;
+        case TRDOSEventType::FILE_NOT_FOUND:
+            ss << "File Not Found: " << filename;
+            break;
+        case TRDOSEventType::MODULE_LOAD:
+            ss << "Module Loaded: " << filename;
+            break;
+        case TRDOSEventType::MODULE_SAVE:
+            ss << "Module Saved: " << filename;
+            break;
+        case TRDOSEventType::ERROR_CRC:
+            ss << "*** CRC ERROR ***";
+            break;
+        case TRDOSEventType::ERROR_LOST_DATA:
+            ss << "*** DATA LOST ERROR ***";
+            break;
+        case TRDOSEventType::ERROR_WRITE_PROTECT:
+            ss << "*** WRITE PROTECT ERROR ***";
+            break;
+
         case TRDOSEventType::ERROR_RNF:
             ss << "*** ERROR: Record Not Found ***";
+            break;
+        case TRDOSEventType::LOADER_DETECTED:
+            ss << "Custom Loader Activity Detected";
+            break;
+        case TRDOSEventType::PROTECTION_DETECTED:
+            ss << "Protection Check Detected";
             break;
         default:
             ss << "Event type " << static_cast<int>(type);
@@ -122,13 +161,16 @@ void TRDOSAnalyzer::onActivate(AnalyzerManager* manager)
         // Fallback to global for debugging:
         manager->requestExecutionBreakpoint(BP_TRDOS_ENTRY, _registrationId);
         manager->requestExecutionBreakpoint(BP_COMMAND_DISPATCH, _registrationId);
+        manager->requestExecutionBreakpoint(BP_SERVICE_ENTRY, _registrationId);
         manager->requestExecutionBreakpoint(BP_EXIT, _registrationId);
     }
     else
     {
         // Fallback: use regular breakpoints (will trigger in any ROM - less accurate)
         manager->requestExecutionBreakpoint(BP_TRDOS_ENTRY, _registrationId);
+        manager->requestExecutionBreakpoint(BP_SERVICE_ENTRY, _registrationId);
         manager->requestExecutionBreakpoint(BP_COMMAND_DISPATCH, _registrationId);
+        manager->requestExecutionBreakpoint(BP_DOS_ENTRY, _registrationId);
         manager->requestExecutionBreakpoint(BP_EXIT, _registrationId);
     }
     
@@ -140,16 +182,21 @@ void TRDOSAnalyzer::onActivate(AnalyzerManager* manager)
     // But FDC commands can happen via quick traps.
     // So we will default to IN_TRDOS (Active Monitoring) processing breakpoints and FDC events.
     
-    bool isAlreadyActive = true; 
+    // We default to IDLE to allow proper state transitions (including Custom Loaders).
+    // If we are actually in TR-DOS, the next instruction/hook will transition us.
+    // However, if we want to catch "already inside" case, we could check PC/ROM.
+    // But for "Custom Loader" detection (which enters from RAM), we MUST start IDLE
+    // if we are in RAM.
     
-    // Optional: Log if we are "physically" in TR-DOS for debug
-    /*
-    if (_context && _context->pMemory)
+    bool isAlreadyActive = false; 
+    
+    // Check if we are physically in TR-DOS ROM (paged in + PC in range)
+    if (_context && _context->pMemory && _context->pCore && _context->pCore->GetZ80())
     {
-        uint8_t romStub = _context->pMemory->DirectReadFromZ80Memory(0x5CC2);
-        // ...
+       // Implementation specific check: check if TR-DOS ROM is active
+       // Simplified: just trust breakpoints for transition, or use heuristic
+       // For now, start IDLE. The first breakpoint hit or FDC command will wake us up.
     }
-    */
     
     // Reset state
     if (isAlreadyActive)
@@ -164,6 +211,8 @@ void TRDOSAnalyzer::onActivate(AnalyzerManager* manager)
         {
             entryEvent.timestamp = _context->pCore->GetZ80()->tt;
             entryEvent.context.pc = _context->pCore->GetZ80()->pc;
+            entryEvent.context.iff1 = _context->pCore->GetZ80()->iff1;
+            entryEvent.context.im = _context->pCore->GetZ80()->im;
         }
         else
         {
@@ -208,7 +257,42 @@ void TRDOSAnalyzer::onBreakpointHit(uint16_t address, Z80* cpu)
             handleTRDOSEntry(cpu);
             break;
         case BP_COMMAND_DISPATCH:
+        case BP_SERVICE_ENTRY:
+             // 3D13 is standard Service Entry, often acts as dispatch with C register
             handleCommandDispatch(cpu);
+            break;
+        case BP_DOS_ENTRY:
+            // Custom loader detected entering via non-standard point
+            if (_state != TRDOSAnalyzerState::IN_TRDOS && _state != TRDOSAnalyzerState::IN_COMMAND)
+            {
+                 // Transition to Custom State
+                 _state = TRDOSAnalyzerState::IN_CUSTOM;
+                 
+                 TRDOSEvent entryEvent{};
+                 entryEvent.timestamp = cpu ? cpu->tt : 0;
+                 entryEvent.type = TRDOSEventType::TRDOS_ENTRY;
+                 entryEvent.context.pc = cpu ? cpu->pc : 0;
+                 
+                 // Capture Interrupt State
+                 if (cpu)
+                 {
+                     entryEvent.context.iff1 = cpu->iff1;
+                     entryEvent.context.im = cpu->im;
+                 }
+                 
+                 // Get caller
+                 entryEvent.context.callerAddress = 0;
+                 if (cpu && _context && _context->pMemory)
+                 {
+                     uint16_t sp = cpu->sp;
+                     uint8_t low = _context->pMemory->DirectReadFromZ80Memory(sp);
+                     uint8_t high = _context->pMemory->DirectReadFromZ80Memory(sp + 1);
+                     entryEvent.context.callerAddress = (high << 8) | low;
+                 }
+                 
+                 entryEvent.flags = 0x02; // Custom entry flag
+                 emitEvent(std::move(entryEvent));
+            }
             break;
         // BP_EXIT is not used - exit detected in onFrameEnd
     }
@@ -226,7 +310,44 @@ void TRDOSAnalyzer::onFDCCommand(uint8_t command, const WD1793& fdc)
 {
     if (_state == TRDOSAnalyzerState::IDLE)
     {
-        return; // Only capture when in TR-DOS
+        // Relax restriction: Monitor FDC even in IDLE to catch custom loaders.
+        // But check PC to distinguish "Implicit Standard" from "Custom".
+        
+        uint16_t pc = 0;
+        if (_context && _context->pCore && _context->pCore->GetZ80())
+        {
+            pc = _context->pCore->GetZ80()->pc;
+        }
+
+        bool inStandardRom = (pc >= 0x3D00 && pc <= 0x3FFF);
+
+        if (inStandardRom)
+        {
+            // We missed the entry point (e.g. quick FDC poll loop inside ROM),
+            // but we are definitely running standard TR-DOS code.
+            _state = TRDOSAnalyzerState::IN_TRDOS;
+            
+            // Optional: Emit implicit entry? No, let's keep it clean.
+        }
+        else
+        {
+            // We are executing FDC commands from RAM (or non-TR-DOS ROM).
+            // This is a custom loader.
+            _state = TRDOSAnalyzerState::IN_CUSTOM;
+            
+            TRDOSEvent entryEvent{};
+            entryEvent.timestamp = _context && _context->pCore && _context->pCore->GetZ80() ? _context->pCore->GetZ80()->tt : 0;
+            entryEvent.type = TRDOSEventType::LOADER_DETECTED;
+            entryEvent.context.pc = pc;
+            
+            if (_context && _context->pCore && _context->pCore->GetZ80())
+            {
+                entryEvent.context.iff1 = _context->pCore->GetZ80()->iff1;
+                entryEvent.context.im = _context->pCore->GetZ80()->im;
+            }
+            
+            emitEvent(std::move(entryEvent));
+        }
     }
     
     uint64_t now = 0;
@@ -277,6 +398,8 @@ void TRDOSAnalyzer::onFDCCommand(uint8_t command, const WD1793& fdc)
     if (_context && _context->pCore && _context->pCore->GetZ80())
     {
         event.context.pc = _context->pCore->GetZ80()->pc;
+        event.context.iff1 = _context->pCore->GetZ80()->iff1;
+        event.context.im = _context->pCore->GetZ80()->im;
     }
     event.track = fdc.getTrackRegister();
     event.sector = fdc.getSectorRegister();
@@ -441,7 +564,13 @@ void TRDOSAnalyzer::handleTRDOSEntry(Z80* cpu)
     event.timestamp = now;
     event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
     event.type = TRDOSEventType::TRDOS_ENTRY;
+    event.type = TRDOSEventType::TRDOS_ENTRY;
     event.context.pc = cpu ? cpu->pc : 0;
+    if (cpu)
+    {
+        event.context.iff1 = cpu->iff1;
+        event.context.im = cpu->im;
+    }
     
     // Get caller address from stack
     event.context.callerAddress = 0;

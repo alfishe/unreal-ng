@@ -365,6 +365,8 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                 if (events[i].context.originalRAMCaller != 0) {
                     ctx["original_caller"] = static_cast<int>(events[i].context.originalRAMCaller);
                 }
+                ctx["iff1"] = static_cast<int>(events[i].context.iff1);
+                ctx["im"] = static_cast<int>(events[i].context.im);
                 ev["context"] = ctx;
 
                 // Legacy/Direct fields
