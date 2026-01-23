@@ -387,6 +387,13 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                     ev["filename"] = events[i].filename;
                 }
                 
+                // Command type for COMMAND_START events
+                if (events[i].type == TRDOSEventType::COMMAND_START ||
+                    events[i].type == TRDOSEventType::COMMAND_COMPLETE)
+                {
+                    ev["command"] = static_cast<int>(events[i].command);
+                }
+                
                 // Add FDC state info
                 ev["fdc_status"] = static_cast<int>(events[i].fdcStatus);
                 ev["fdc_cmd_reg"] = static_cast<int>(events[i].fdcCommand);

@@ -94,8 +94,10 @@ std::vector<T> RingBuffer<T>::getSince(uint64_t timestamp) const {
 ```cpp
 class TRDOSAnalyzer : public IAnalyzer {
 private:
-    RingBuffer<RawEvent> _rawEvents{512};        // 8 KB
-    RingBuffer<TRDOSEvent> _semanticEvents{10000}; // 480 KB
+    RingBuffer<RawFDCEvent> _rawFdcEvents{4096};        // ~196 KB (48 bytes × 4096)
+    RingBuffer<RawBreakpointEvent> _rawBreakpoints{4096}; // ~260 KB (64 bytes × 4096)
+    RingBuffer<TRDOSEvent> _semanticEvents{2048};       // ~100 KB (48 bytes × 2048)
+    // Total: ~556 KB per analyzer instance
 };
 ```
 

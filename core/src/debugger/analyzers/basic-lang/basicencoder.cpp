@@ -919,6 +919,10 @@ BasicEncoder::InjectionResult BasicEncoder::injectTo48K(Memory* memory, const st
     memory->DirectWriteToZ80Memory(CH_ADD, eLineAddr & 0xFF);
     memory->DirectWriteToZ80Memory(CH_ADD + 1, (eLineAddr >> 8) & 0xFF);
     
+    // Set L mode flag (FLAGS bit 3) for extended character entry mode
+    uint8_t flags = memory->DirectReadFromZ80Memory(FLAGS);
+    memory->DirectWriteToZ80Memory(FLAGS, flags | 0x08);  // Set bit 3
+    
     // Trigger screen refresh by injecting a keypress
     // Cursor right (0x09) doesn't modify buffer content but triggers editor redraw
     injectKeypress(memory, 0x09);
@@ -1074,6 +1078,11 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     // This is CRITICAL - without it, ENTER doesn't know where to find the command!
     memory->DirectWriteToZ80Memory(CH_ADD, eLineAddr & 0xFF);
     memory->DirectWriteToZ80Memory(CH_ADD + 1, (eLineAddr >> 8) & 0xFF);
+    
+    // Set L mode flag (FLAGS bit 3) - matches ROM pattern SET 3,(IY+1) at $027B
+    // This ensures extended character entry mode is active after injection
+    uint8_t flags = memory->DirectReadFromZ80Memory(FLAGS);
+    memory->DirectWriteToZ80Memory(FLAGS, flags | 0x08);  // Set bit 3
     
     // Trigger screen refresh by injecting a keypress
     // This makes the injected text visible on screen by triggering the ROM's

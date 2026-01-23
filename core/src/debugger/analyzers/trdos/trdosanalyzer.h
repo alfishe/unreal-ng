@@ -40,9 +40,9 @@ enum class TRDOSAnalyzerState : uint8_t
 class TRDOSAnalyzer : public IAnalyzer, public IWD1793Observer
 {
 public:
-    // Buffer sizes
-    static constexpr size_t RAW_BUFFER_SIZE = 512;      // Raw FDC events
-    static constexpr size_t SEMANTIC_BUFFER_SIZE = 10000; // Semantic events
+    // Buffer sizes (raw > semantic since semantic are aggregated)
+    static constexpr size_t RAW_BUFFER_SIZE = 4096;       // Raw FDC/breakpoint events
+    static constexpr size_t SEMANTIC_BUFFER_SIZE = 2048;  // Aggregated semantic events
 
     // TR-DOS ROM breakpoint addresses
     static constexpr uint16_t BP_TRDOS_ENTRY = 0x3D00;  // TR-DOS entry point
@@ -141,7 +141,7 @@ private:
     void captureRawFDCEvent(const WD1793& fdc, Z80* cpu);
     void captureRawBreakpointEvent(uint16_t address, Z80* cpu);
     void handleTRDOSEntry(Z80* cpu);
-    void handleCommandDispatch(Z80* cpu);
+    void handleCommandDispatch(uint16_t address, Z80* cpu);
     void handleTRDOSExit(Z80* cpu);
     TRDOSCommand identifyCommand(uint16_t address, Z80* cpu);
     std::string readFilenameFromMemory(uint16_t address);

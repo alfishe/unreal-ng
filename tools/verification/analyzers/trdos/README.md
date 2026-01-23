@@ -1,6 +1,14 @@
-# TR-DOS Analyzer Verification Tool
+# TR-DOS Analyzer Verification Tools
 
-Python script for verifying TR-DOS analyzer functionality via WebAPI.
+Python scripts for verifying and capturing TR-DOS analyzer data via WebAPI.
+
+## Scripts
+
+### 1. `verify_trdos_analyzer.py` - Automated Verification
+Automated test script that runs a complete verification workflow with predefined TR-DOS commands.
+
+### 2. `capture_trdos_session.py` - Manual Capture Harness
+Interactive tool for manually capturing TR-DOS analyzer session data. Waits for user input before capturing.
 
 ## Requirements
 
@@ -30,7 +38,108 @@ python verify_trdos_analyzer.py --uuid 12345678-1234-1234-1234-123456789abc
 python verify_trdos_analyzer.py --host localhost --port 8090 --uuid <UUID>
 ```
 
-## Use Case & Architecture
+## Manual Session Capture (`capture_trdos_session.py`)
+
+### Basic Usage
+```bash
+# Auto-discover emulator, auto-find snapshot and disk
+python capture_trdos_session.py
+```
+
+### With Custom Paths
+```bash
+# Specify snapshot and disk
+python capture_trdos_session.py --snapshot /path/to/trdos.z80 --disk /path/to/game.trd
+
+# Specify emulator UUID
+python capture_trdos_session.py --uuid 12345678-1234-1234-1234-123456789abc
+
+# All options
+python capture_trdos_session.py --host localhost --port 8090 --snapshot /path/to/trdos.z80 --disk /path/to/game.trd
+```
+
+### Workflow
+1. Script activates TR-DOS analyzer
+2. Script waits for you to press ENTER
+3. **You manually operate the emulator** (load games, run commands, etc.)
+4. Press ENTER when done
+5. Script captures and saves all session data to JSON files
+
+### Output Files
+The script creates the following files in the current directory:
+
+- **`session_metadata.json`** - Session information
+  - Start/end timestamps
+  - Snapshot filename and full path
+  - Disk image filename and full path
+  - Analyzer name
+  
+- **`semantic_events.json`** - High-level TR-DOS events
+  - Command starts/completions
+  - FDC operations (READ, WRITE, SEEK, etc.)
+  - Sector transfers
+  
+- **`raw_fdc_events.json`** - Raw FDC port I/O events
+  - All values as JSON numbers
+  - Z80 main registers (AF, BC, DE, HL)
+  - FDC register snapshot
+  - 16-byte stack snapshot
+  - Timing (tstate, frame_number)
+  
+- **`raw_breakpoint_events.json`** - Raw breakpoint events
+  - Complete Z80 state
+  - Main + alternate registers
+  - Index registers (IX, IY)
+  - Special registers (I, R)
+  - 16-byte stack snapshot
+
+### Example Session
+```bash
+$ python capture_trdos_session.py
+
+============================================================
+TR-DOS Analyzer Session Capture
+============================================================
+
+Checking WebAPI connection...
+✓ WebAPI accessible at http://localhost:8090
+
+Selecting emulator...
+✓ Auto-selected emulator: d2ccbea5...
+
+Loading snapshot: trdos-snapshot.z80
+✓ Loaded: trdos-snapshot.z80
+
+Loading disk: game.trd
+✓ Loaded: game.trd
+
+Activating TR-DOS analyzer...
+✓ TR-DOS analyzer activated (session started)
+
+============================================================
+Analyzer is now active!
+Perform your TR-DOS operations in the emulator.
+Press ENTER when done to capture and save session data...
+============================================================
+
+[User manually loads games, runs commands, etc.]
+[User presses ENTER]
+
+Deactivating analyzer...
+✓ TR-DOS analyzer deactivated
+
+Dumping session data to files...
+✓ Saved: session_metadata.json
+✓ Saved: semantic_events.json (47 events)
+✓ Saved: raw_fdc_events.json (96 events)
+✓ Saved: raw_breakpoint_events.json (12 events)
+
+============================================================
+✓ Session data captured successfully!
+============================================================
+```
+
+## Automated Verification (`verify_trdos_analyzer.py`)
 
 ### Purpose
 
