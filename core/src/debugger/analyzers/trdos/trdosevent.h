@@ -62,6 +62,15 @@ enum class TRDOSCommand : uint8_t
 };
 
 /// Semantic event captured by the analyzer
+// Event context capturing state at time of event
+struct EventContext
+{
+    uint16_t pc;                         // Current Program Counter
+    uint16_t callerAddress;              // Immediate return address from stack
+    uint16_t originalRAMCaller;          // First non-ROM address in stack
+};
+
+/// Semantic event captured by the analyzer
 struct TRDOSEvent
 {
     // Timing
@@ -72,8 +81,7 @@ struct TRDOSEvent
     TRDOSEventType type;
     
     // Context
-    uint16_t pc;                // Program counter at event
-    uint16_t callerAddress;     // Return address from stack
+    EventContext context;
     
     // FDC state (if applicable)
     uint8_t track;
@@ -89,7 +97,7 @@ struct TRDOSEvent
     uint16_t bytesTransferred;
     
     // Flags
-    uint8_t flags;
+    uint16_t flags;
     
     // For file operations
     std::string filename;       // 8 chars max for TR-DOS

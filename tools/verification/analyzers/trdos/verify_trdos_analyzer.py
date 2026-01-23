@@ -793,25 +793,144 @@ class TRDOSAnalyzerVerifier:
         # Print detailed events
         if events:
             print(f"\n{Colors.BOLD}Detailed Events:{Colors.END}")
-            for i, event in enumerate(events[:10], 1):  # Show first 10
+            
+            # State tracking for narrative
+            last_track = 0  # Assume start at T0 (restored)
+            
+            # Time tracking for resets (monotonicity)
+            last_frame = 0
+            frame_offset = 0
+            
+            for i, event in enumerate(events, 1):
                 timestamp = event.get('timestamp', 0)
-                event_type = event.get('type', 'UNKNOWN')
-                command = event.get('command', '')
-                track = event.get('track', '')
-                sector = event.get('sector', '')
+                frame = event.get('frame_number', 0)
+                raw_type = event.get('type', 0)
                 
-                details = f"[{timestamp:8d}] {event_type}"
-                if command:
-                    details += f" (Command: {command})"
-                if track or sector:
-                    details += f" (Track: {track}, Sector: {sector})"
+                # Detect emulator reset (frame counter rewind)
+                if frame < last_frame:
+                    frame_offset += last_frame + 1 # Add 1 to ensure strict increase
                     
-                print(f"  {i}. {details}")
+                last_frame = frame
+                adjusted_frame = frame + frame_offset
                 
-            if len(events) > 10:
-                print(f"  ... and {len(events) - 10} more events")
+                # Context formatting
+                ctx = event.get('context', {})
+                pc_str = ""
+                if ctx and ctx.get('pc') is not None:
+                    pc_str = f" PC=${ctx.get('pc', 0):04X}"
+
+                # FDC Details
+                track = event.get('track')
+                sector = event.get('sector')
                 
-        return all_found
+                # Default description
+                type_name = str(raw_type)
+                if isinstance(raw_type, int):
+                    type_name = EVENT_TYPE_MAP.get(raw_type, f"UNKNOWN({raw_type})")
+
+                # Semantic descriptions
+                desc = type_name
+                
+                if type_name == 'FDC_CMD_RESTORE':
+                    desc = "Recalibrate (Seek T0)"
+                    last_track = 0
+                
+                elif type_name == 'FDC_CMD_SEEK':
+                    if track is not None:
+                        desc = f"Seek T{last_track} -> T{track}"
+                        last_track = track
+                    else:
+                        desc = "Seek (Unknown Target)"
+                        
+                elif type_name == 'FDC_CMD_READ_ADDR':
+                    # READ_ADDR reads IDAM to verify head position
+                    desc = f"Verify Sector ID (at T{track})"
+                    if sector:
+                        desc += f" [Expect S{sector}]"
+                        
+                elif type_name == 'FDC_CMD_READ':
+                    desc = f"Read Sector T{track}/S{sector}"
+                    
+                elif type_name == 'SECTOR_TRANSFER':
+                    length = event.get('bytes_transferred', 0)
+                    desc = f"Data Transfer ({length} bytes)"
+                    
+                elif type_name == 'TRDOS_ENTRY':
+                    desc = "Entered TR-DOS ROM"
+                    
+                elif type_name == 'COMMAND_START':
+                    cmd = event.get('command')
+                    desc = f"Command Recognized"
+                    if cmd:
+                        desc += f": {cmd}"
+
+                # Time formatting
+                # Use Frame Number for stable wall-clock time (50Hz = 20ms/frame)
+                # T-states can be erratic across snapshot loads/resets
+                total_seconds = adjusted_frame * 0.02
+                minutes = int(total_seconds // 60)
+                seconds = int(total_seconds % 60)
+                millis = int((total_seconds * 1000) % 1000)
+                
+                if minutes > 0:
+                    time_fmt = f"{minutes:02d}m:{seconds:02d}.{millis:03d}s"
+                else:
+                    time_fmt = f"{seconds:02d}.{millis:03d}s"
+                
+                # Format: [01m:12.345s] F:0056
+                # Pad to ensure alignment
+                time_str = f"[{time_fmt:>11}] F:{frame:04d}"
+                
+                print(f"  {i:>2}. {time_str} {desc:<40} {pc_str}")
+                
+                command = event.get('command')
+                if command:
+                    print(f"      Command: {command}")
+                
+        # Validate event fidelity (new check)
+        fidelity_passed = True
+        self.print_info(f"\nVerifying Event Fidelity:")
+        
+        for i, event in enumerate(events[:5], 1): # Check first 5 events for fidelity
+            # Check Frame Number
+            frame = event.get('frame_number')
+            if frame is None:
+                self.print_warning(f"  Event {i}: Missing 'frame_number'")
+                fidelity_passed = False
+            else:
+                self.print_info(f"  Event {i}: Frame {frame}")
+
+            # Check Context
+            ctx = event.get('context')
+            if not ctx:
+                 self.print_warning(f"  Event {i}: Missing 'context' object")
+                 fidelity_passed = False
+            else:
+                pc = ctx.get('pc')
+                if pc is None:
+                    self.print_warning(f"  Event {i}: Missing 'context.pc'")
+                    fidelity_passed = False
+                else:
+                    self.print_info(f"  Event {i}: PC=${pc:04X}")
+
+            # Check Timestamps
+            ts = event.get('timestamp')
+            if ts is None or (ts == 0 and event.get('type') != 0): # Entry might be 0 if very early
+                 self.print_warning(f"  Event {i}: Invalid Timestamp {ts}")
+                 # fidelity_passed = False # Warning only for now as startup might be 0
+
+        if fidelity_passed:
+            self.print_success("Event Fidelity Check Passed")
+        else:
+            self.print_warning("Event Fidelity Check Failed (Missing fields)")
+            
+        # Dump events to file for analysis
+        with open('trdos_events.json', 'w') as f:
+            import json
+            json.dump(events, f, indent=2)
+        self.print_info(f"Dumped {len(events)} events to trdos_events.json")
+
+        return all_found and fidelity_passed
         
     def deactivate_analyzer(self) -> bool:
         """Deactivate TR-DOS analyzer"""

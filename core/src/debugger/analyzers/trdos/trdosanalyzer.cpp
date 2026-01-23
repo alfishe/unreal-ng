@@ -20,7 +20,8 @@ std::string TRDOSEvent::format() const
     switch (type)
     {
         case TRDOSEventType::TRDOS_ENTRY:
-            ss << "TR-DOS Entry (PC=$" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << pc << ")";
+            ss << "TR-DOS Entry (PC=$" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << context.pc << ")";
+
             break;
         case TRDOSEventType::TRDOS_EXIT:
             ss << "TR-DOS Exit";
@@ -157,7 +158,19 @@ void TRDOSAnalyzer::onActivate(AnalyzerManager* manager)
         
         // Emit implicit entry event since we are already active and might miss the breakpoint
         TRDOSEvent entryEvent{};
-        entryEvent.timestamp = 0; // Unknown timestamp
+        
+        // Capture context if available
+        if (_context && _context->pCore && _context->pCore->GetZ80())
+        {
+            entryEvent.timestamp = _context->pCore->GetZ80()->tt;
+            entryEvent.context.pc = _context->pCore->GetZ80()->pc;
+        }
+        else
+        {
+            entryEvent.timestamp = 0;
+        }
+        
+        entryEvent.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
         entryEvent.type = TRDOSEventType::TRDOS_ENTRY;
         entryEvent.flags = 0x01; // Implied
         emitEvent(std::move(entryEvent));
@@ -231,7 +244,13 @@ void TRDOSAnalyzer::onFDCCommand(uint8_t command, const WD1793& fdc)
         
         TRDOSEvent cmdEvent{};
         cmdEvent.timestamp = now;
-        cmdEvent.frameNumber = 0;
+        cmdEvent.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+        
+        if (_context && _context->pCore && _context->pCore->GetZ80())
+        {
+            cmdEvent.context.pc = _context->pCore->GetZ80()->pc;
+        }
+        
         cmdEvent.type = TRDOSEventType::COMMAND_START;
         cmdEvent.command = TRDOSCommand::UNKNOWN; // Let verification script handle unknown
         
@@ -252,7 +271,13 @@ void TRDOSAnalyzer::onFDCCommand(uint8_t command, const WD1793& fdc)
 
     TRDOSEvent event{};
     event.timestamp = now;
-    event.frameNumber = 0; // Frame counter not readily available
+    event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    
+    // Capture CPU context
+    if (_context && _context->pCore && _context->pCore->GetZ80())
+    {
+        event.context.pc = _context->pCore->GetZ80()->pc;
+    }
     event.track = fdc.getTrackRegister();
     event.sector = fdc.getSectorRegister();
     event.fdcCommand = command;
@@ -342,6 +367,12 @@ void TRDOSAnalyzer::onFDCCommandComplete(uint8_t status, const WD1793& fdc)
     {
         TRDOSEvent event{};
         event.timestamp = now;
+        event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+        
+        if (_context && _context->pCore && _context->pCore->GetZ80())
+        {
+            event.context.pc = _context->pCore->GetZ80()->pc;
+        }
         event.type = TRDOSEventType::SECTOR_TRANSFER;
         event.track = fdc.getTrackRegister();
         event.sector = fdc.getSectorRegister();
@@ -408,19 +439,27 @@ void TRDOSAnalyzer::handleTRDOSEntry(Z80* cpu)
     
     TRDOSEvent event{};
     event.timestamp = now;
-    event.frameNumber = 0;
+    event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
     event.type = TRDOSEventType::TRDOS_ENTRY;
-    event.pc = cpu ? cpu->pc : 0;
+    event.context.pc = cpu ? cpu->pc : 0;
     
     // Get caller address from stack
-    if (cpu)
+    event.context.callerAddress = 0;
+    if (cpu && _context && _context->pMemory)
     {
         uint16_t sp = cpu->sp;
-        (void)sp; // TODO: Read return address from stack
+        uint8_t low = _context->pMemory->DirectReadFromZ80Memory(sp);
+        uint8_t high = _context->pMemory->DirectReadFromZ80Memory(sp + 1);
+        event.context.callerAddress = (high << 8) | low;
     }
     
     _commandStartTime = now;
     emitEvent(std::move(event));
+    
+    /* 
+       Also implied entry if we just started monitoring? 
+       Actually handleTRDOSEntry is called on breakpoint, so it's explicit.
+    */
 }
 
 void TRDOSAnalyzer::handleCommandDispatch(Z80* cpu)
@@ -433,8 +472,9 @@ void TRDOSAnalyzer::handleCommandDispatch(Z80* cpu)
         // Emit an implied entry event so usage is consistent
         TRDOSEvent entryEvent{};
         entryEvent.timestamp = cpu ? cpu->tt : 0;
+        entryEvent.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
         entryEvent.type = TRDOSEventType::TRDOS_ENTRY;
-        entryEvent.pc = cpu ? cpu->pc : 0;
+        entryEvent.context.pc = cpu ? cpu->pc : 0;
         entryEvent.flags = 0x01; // Flag as "implied" entry
         emitEvent(std::move(entryEvent));
     }
@@ -451,7 +491,7 @@ void TRDOSAnalyzer::handleCommandDispatch(Z80* cpu)
     
     TRDOSEvent event{};
     event.timestamp = now;
-    event.frameNumber = 0;
+    event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
     event.type = TRDOSEventType::COMMAND_START;
     event.command = _currentCommand;
     

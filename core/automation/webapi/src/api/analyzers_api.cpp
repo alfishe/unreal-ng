@@ -352,6 +352,22 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                 ev["type"] = static_cast<int>(events[i].type);
                 ev["formatted"] = events[i].format();
                 
+                // Core fidelity fields
+                ev["frame_number"] = static_cast<Json::UInt64>(events[i].frameNumber);
+                ev["flags"] = static_cast<int>(events[i].flags);
+                
+                // Context fields
+                Json::Value ctx;
+                ctx["pc"] = static_cast<int>(events[i].context.pc);
+                if (events[i].context.callerAddress != 0) {
+                    ctx["caller"] = static_cast<int>(events[i].context.callerAddress);
+                }
+                if (events[i].context.originalRAMCaller != 0) {
+                    ctx["original_caller"] = static_cast<int>(events[i].context.originalRAMCaller);
+                }
+                ev["context"] = ctx;
+
+                // Legacy/Direct fields
                 if (events[i].track != 0xFF)
                 {
                     ev["track"] = events[i].track;
@@ -368,6 +384,10 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                 {
                     ev["filename"] = events[i].filename;
                 }
+                
+                // Add FDC state info
+                ev["fdc_status"] = static_cast<int>(events[i].fdcStatus);
+                ev["fdc_cmd_reg"] = static_cast<int>(events[i].fdcCommand);
 
                 eventsJson.append(ev);
             }
