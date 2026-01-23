@@ -409,12 +409,168 @@ Commands to view and analyze the internal state of the selected emulator instanc
 | Command | Aliases | Arguments | Description |
 | :--- | :--- | :--- | :--- |
 | `registers` | `regs`, `r` | | Display complete Z80 CPU register state. Shows main registers (AF, BC, DE, HL, IX, IY, SP, PC), alternate register set (AF', BC', DE', HL'), special registers (I, R, IFF1, IFF2), and flags (S, Z, Y, H, X, P/V, N, C). Output formatted for readability with hex and decimal values. |
-| `memory <addr> [len]` | `mem`, `m` | `<address> [length]` | Display hex dump of memory contents starting at `<address>`. Default length is 128 bytes if not specified. Shows hex values and ASCII representation side-by-side. Addresses in Z80 address space (0x0000-0xFFFF) with automatic bank resolution. |
 | `debugmode <on\|off>` | | `on` or `off` | Enable or disable detailed memory access tracking. When ON, the emulator records every memory read/write for analysis via `memcounters`. **Warning**: Significant performance impact (~50% slower). Use only when analyzing specific memory access patterns. |
 | `memcounters [reset]` | `memstats` | `[reset]` | Display memory access statistics when debug mode is active. Shows: <br/>• Read/write/execute access counts per address<br/>• Hotspot identification (most frequently accessed)<br/>• Access type breakdown (code vs data)<br/>If `reset` is specified, clears all accumulated statistics. Requires `debugmode on` to collect data. |
 | `calltrace [depth]` | | `[max-entries]` | Display execution call trace history (CALL/RET tracking). Shows:<br/>• Call stack with return addresses<br/>• Function entry points<br/>• Nesting level<br/>• Symbolic names if loaded from .map file<br/>Default shows last 50 entries. Specify `depth` to override (max 1000). The trace buffer is circular and maintained during execution. |
 
-**Implementation Details**:
+#### 3.1 Memory Commands
+
+The `memory` command provides unified access to emulator memory with two addressing modes:
+- **Z80 Address Space**: Virtual 64KB through current bank configuration
+- **Physical Pages**: Direct access to RAM/ROM/Cache/Misc pages
+
+##### Memory Command Summary
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `memory read <addr> [len]` | Z80 address | Read from Z80 virtual address space |
+| `memory write <addr> <bytes...>` | Z80 address + data | Write to Z80 virtual address space |
+| `memory read <type> <page> <offset> [len]` | type + page + offset | Read from physical page |
+| `memory write <type> <page> <offset> <bytes...>` | type + page + offset + data | Write to physical page |
+| `memory dump <type> <page>` | type + page | Dump entire 16KB page to stdout |
+| `memory save bank <N> <file>` | bank 0-3 + file | Save Z80 bank (16KB) to file |
+| `memory save <type> <page> <file>` | type + page + file | Save physical page (16KB) to file |
+| `memory load bank <N> <file>` | bank 0-3 + file | Load file into Z80 bank |
+| `memory load <type> <page> <file> [--force]` | type + page + file | Load file into physical page |
+| `memory fill <type> <page> <offset> <len> <byte>` | type + page + offset + fill params | Fill region with byte |
+| `memory info` | | Show memory configuration |
+
+**Page Types**: `ram` | `rom` | `cache` | `misc`
+
+**Address Formats**: All commands support multiple formats:
+- `0x8000` (C-style hex), `$8000` (assembly), `#8000` (ZX Spectrum), `32768` (decimal)
+
+##### Z80 Address Space Commands
+
+**`memory read <addr> [len]`** (aliases: `mem`, `m`)
+
+Read from Z80 virtual 64KB address space using current bank configuration.
+
+```bash
+> memory read 0x5C00
+5C00: 00 00 C3 CB 11 FF 00 00 | ........
+5C10: F7 C9 FE 06 38 11 A9 6F | ....8..o
+
+> memory read 0x5C00 32
+> m $8000 16
+```
+
+**`memory write <addr> <bytes...>`**
+
+Write to Z80 virtual address space. ROM writes are silently ignored (hardware behavior).
+
+```bash
+> memory write 0x5000 FF 00 C3
+Wrote 3 bytes at 0x5000
+```
+
+##### Physical Page Commands
+
+**`memory read <type> <page> <offset> [len]`**
+
+Read from physical memory page, bypassing Z80 bank configuration.
+
+| Type | Pages | Size | Description |
+| :--- | :--- | :--- | :--- |
+| `ram` | 0-255 | 4MB max | Main RAM (model-dependent: 48K=3, 128K=8, Pentagon=16) |
+| `rom` | 0-3 | 64KB | ROM: 0=48K, 1=128K, 2=TR-DOS, 3=System |
+| `cache` | 0-15 | 256KB | Cache RAM (ZX-Evo/TSConf only) |
+| `misc` | 0-15 | 256KB | Misc pages (ZX-Evo/TSConf only) |
+
+```bash
+> memory read ram 5 0 256      # Read 256 bytes from RAM page 5
+> memory read rom 2 0 16       # Read TR-DOS ROM signature
+```
+
+**`memory write <type> <page> <offset> <bytes...> [--force]`**
+
+Write to physical memory page. ROM writes require `--force` flag.
+
+```bash
+> memory write ram 5 0x1800 07 07 07    # Write to screen attributes
+> memory write rom 0 0x0000 F3 --force  # Patch ROM (requires --force)
+```
+
+**`memory dump <type> <page>`**
+
+Dump entire 16KB page as hex.
+
+```bash
+> memory dump ram 5 > screen.hex
+```
+
+**`memory save bank <N> <file>`** / **`memory save <type> <page> <file>`**
+
+Save memory to binary file.
+
+```bash
+> memory save bank 0 bank0.bin        # Save Z80 bank 0 (current mapping)
+> memory save ram 5 screen.bin        # Save RAM page 5
+> memory save rom 2 trdos.bin         # Save TR-DOS ROM
+```
+
+**`memory load bank <N> <file>`** / **`memory load <type> <page> <file> [--force]`**
+
+Load binary file into memory.
+
+```bash
+> memory load bank 2 code.bin              # Load into Z80 bank 2
+> memory load ram 5 screen.bin             # Load into RAM page 5
+> memory load rom 0 custom.bin --force     # Load into ROM (requires --force)
+```
+
+**`memory fill <type> <page> <offset> <len> <byte>`**
+
+Fill region with byte value.
+
+```bash
+> memory fill ram 5 0x1800 768 0x38
+Filled 768 bytes with 0x38 in RAM page 5 at offset 0x1800
+```
+
+**`memory info`**
+
+Show memory configuration for current model.
+
+```bash
+> memory info
+Memory Configuration (Pentagon 128):
+  RAM:   pages 0-15 (256KB)
+  ROM:   pages 0-3  (64KB)
+  Cache: not available
+  Misc:  not available
+
+Current Z80 Bank Mapping:
+  Bank 0 (0x0000-0x3FFF): ROM page 0 (48K BASIC)
+  Bank 1 (0x4000-0x7FFF): RAM page 5 (contended)
+  Bank 2 (0x8000-0xBFFF): RAM page 2
+  Bank 3 (0xC000-0xFFFF): RAM page 0
+```
+
+##### Implementation Details
+
+**Z80 Address Commands**:
+- Uses `Memory::DirectReadFromZ80Memory()` / `Memory::DirectWriteToZ80Memory()`
+- Respects current bank configuration (ROM/RAM page switches)
+- Output format: 16 bytes per line with hex + ASCII
+
+**Physical Page Commands**:
+- RAM: `Memory::RAMPageAddress(page) + offset`
+- ROM: `Memory::ROMPageHostAddress(page) + offset`
+- ROM writes modify in-memory buffer only (not ROM file on disk)
+- Changes persist until emulator reset or ROM reload
+
+**File Operations**:
+- Binary format (raw bytes, no headers)
+- File size validated (max 16KB per page)
+- Files smaller than 16KB load from offset 0, remaining bytes unchanged
+
+**Tips**:
+- Use `memory info` to see current bank configuration before reading/writing
+- Use physical page access to manipulate memory not currently mapped to Z80 address space
+- Use `memory save`/`memory load` for memory snapshot comparison during debugging
+
+**Implementation Details (Other Commands)**:
 
 **`registers`**:
 - Reads CPU state via `Z80::GetState()`
@@ -428,17 +584,6 @@ Commands to view and analyze the internal state of the selected emulator instanc
   Stack: SP=0xFF24  PC=0x0605
   Int:   I=0x3F R=0x1B IFF1=1 IFF2=1 IM=1
   Flags: SZ-H-PNC [S=0 Z=1 H=0 P=1 N=0 C=0]
-  ```
-
-**`memory <addr> [len]`**:
-- Parses address as hex (0x8000) or decimal (32768)
-- Validates address range (0x0000-0xFFFF)
-- Reads from current memory bank configuration
-- Hex dump format: 16 bytes per line
-- Example output:
-  ```
-  0x8000: 00 00 C3 CB 11 FF 00 00 | FE 03 20 1A 07 A9 6F 10 | .... .... .. . .o.
-  0x8010: F7 C9 FE 06 38 11 A9 6F | CB 27 CB 15 30 09 07 A9 | ....8..o .'..0....
   ```
 
 **`debugmode`**:
@@ -479,7 +624,7 @@ Commands to view and analyze the internal state of the selected emulator instanc
   0      0x0608  ----     RET
   ```
 
-**Tips**:
+**General Tips**:
 - Use `registers` after each `step` to see instruction effects
 - Enable `debugmode` only for short debugging sessions
 - Use `calltrace` to understand program flow without stepping through each instruction

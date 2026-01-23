@@ -187,6 +187,32 @@ ram_size = mem:get_ram_size()
 rom_size = mem:get_rom_size()
 ```
 
+### Physical Page Access
+
+> **Status**: ✅ Implemented (2026-01)
+
+Access physical memory pages directly, bypassing Z80 paging. Useful for ROM patching, shadow memory inspection, and cache/misc memory access.
+
+```lua
+-- Read/write single byte from physical page
+-- type: "ram", "rom", "cache", "misc"
+-- page: page number (0-255 for RAM, 0-63 for ROM, etc.)
+-- offset: offset within 16KB page (0-16383)
+value = page_read("ram", 5, 0x100)
+page_write("ram", 5, 0x100, 0xFF)
+
+-- Block operations
+data = page_read_block("rom", 2, 0, 256)    -- Read 256 bytes from ROM page 2
+page_write_block("ram", 7, 0x1000, data)    -- Write block to RAM page 7
+
+-- Get memory configuration
+info = memory_info()
+-- Returns: {
+--   pages = {ram_count=256, rom_count=64, cache_count=4, misc_count=4},
+--   z80_banks = {{bank=0, start=0, end=16383, mapping="ROM0"}, ...}
+-- }
+```
+
 ### Breakpoint Manager
 
 ```lua

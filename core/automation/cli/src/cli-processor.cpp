@@ -105,9 +105,6 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Disk control commands
                         {"disk", &CLIProcessor::HandleDisk},
 
-                        // Memory access commands
-                        {"page", &CLIProcessor::HandlePage},
-                        {"rom", &CLIProcessor::HandleROMProtect},
 
                         // Memory aliases
                         {"mem", &CLIProcessor::HandleMemory},

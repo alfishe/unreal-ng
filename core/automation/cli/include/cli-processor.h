@@ -86,6 +86,19 @@ private:
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Memory command helpers
+    void ShowMemoryHelp(const ClientSession& session);
+    void HandleMemoryRead(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
+    void HandleMemoryWrite(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
+    void HandleMemoryDump(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
+    void HandleMemorySave(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
+    void HandleMemoryLoad(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
+    void HandleMemoryFill(const ClientSession& session, Memory* memory, const std::vector<std::string>& args);
+    void HandleMemoryInfo(const ClientSession& session, Memory* memory);
+    void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
+    void DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length);
+    void WriteToPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, const std::vector<uint8_t>& bytes);
+
     // Breakpoint command handlers
     void HandleBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPList(const ClientSession& session, const std::vector<std::string>& args);
@@ -111,10 +124,6 @@ private:
 
     // Analyzer command handlers
     void HandleAnalyzer(const ClientSession& session, const std::vector<std::string>& args);
-
-    // Memory access command handlers
-    void HandlePage(const ClientSession& session, const std::vector<std::string>& args);
-    void HandleROMProtect(const ClientSession& session, const std::vector<std::string>& args);
 
 
     // Settings command handlers

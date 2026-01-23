@@ -172,7 +172,111 @@ namespace PythonBindings
                     data.push_back(static_cast<char>(mem->MemoryReadFast(addr + i, false)));
                 }
                 return py::bytes(data);
-            }, "Read block of bytes from memory")
+            }, "Read block of bytes from memory", py::arg("addr"), py::arg("len"))
+            .def("mem_write_block", [](Emulator& self, uint16_t addr, py::bytes data) {
+                Memory* mem = self.GetMemory();
+                if (!mem) return;
+                std::string bytes = data;
+                for (size_t i = 0; i < bytes.size(); i++) {
+                    mem->MemoryWriteFast((addr + i) & 0xFFFF, static_cast<uint8_t>(bytes[i]));
+                }
+            }, "Write block of bytes to memory", py::arg("addr"), py::arg("data"))
+            
+            // Physical page access (ram/rom/cache/misc)
+            .def("page_read", [](Emulator& self, const std::string& type, int page, int offset) -> int {
+                Memory* mem = self.GetMemory();
+                if (!mem) return 0;
+                uint8_t* pagePtr = nullptr;
+                if (type == "ram" && page < MAX_RAM_PAGES)
+                    pagePtr = mem->RAMPageAddress(page);
+                else if (type == "rom" && page < MAX_ROM_PAGES)
+                    pagePtr = mem->ROMPageHostAddress(page);
+                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                    pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+                else if (type == "misc" && page < MAX_MISC_PAGES)
+                    pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+                if (!pagePtr || offset < 0 || offset >= PAGE_SIZE) return 0;
+                return pagePtr[offset];
+            }, "Read byte from physical page", py::arg("type"), py::arg("page"), py::arg("offset"))
+            .def("page_write", [](Emulator& self, const std::string& type, int page, int offset, uint8_t value) {
+                Memory* mem = self.GetMemory();
+                if (!mem) return;
+                uint8_t* pagePtr = nullptr;
+                if (type == "ram" && page < MAX_RAM_PAGES)
+                    pagePtr = mem->RAMPageAddress(page);
+                else if (type == "rom" && page < MAX_ROM_PAGES)
+                    pagePtr = mem->ROMPageHostAddress(page);  // Allows ROM patching
+                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                    pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+                else if (type == "misc" && page < MAX_MISC_PAGES)
+                    pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+                if (pagePtr && offset >= 0 && offset < PAGE_SIZE) {
+                    pagePtr[offset] = value;
+                }
+            }, "Write byte to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("value"))
+            .def("page_read_block", [](Emulator& self, const std::string& type, int page, int offset, int len) -> py::bytes {
+                Memory* mem = self.GetMemory();
+                if (!mem) return py::bytes("");
+                uint8_t* pagePtr = nullptr;
+                if (type == "ram" && page < MAX_RAM_PAGES)
+                    pagePtr = mem->RAMPageAddress(page);
+                else if (type == "rom" && page < MAX_ROM_PAGES)
+                    pagePtr = mem->ROMPageHostAddress(page);
+                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                    pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+                else if (type == "misc" && page < MAX_MISC_PAGES)
+                    pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+                if (!pagePtr) return py::bytes("");
+                // Clamp to page boundary
+                if (offset < 0) offset = 0;
+                if (offset >= PAGE_SIZE) return py::bytes("");
+                if (offset + len > PAGE_SIZE) len = PAGE_SIZE - offset;
+                return py::bytes(reinterpret_cast<char*>(pagePtr + offset), len);
+            }, "Read block from physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("len"))
+            .def("page_write_block", [](Emulator& self, const std::string& type, int page, int offset, py::bytes data) {
+                Memory* mem = self.GetMemory();
+                if (!mem) return;
+                uint8_t* pagePtr = nullptr;
+                if (type == "ram" && page < MAX_RAM_PAGES)
+                    pagePtr = mem->RAMPageAddress(page);
+                else if (type == "rom" && page < MAX_ROM_PAGES)
+                    pagePtr = mem->ROMPageHostAddress(page);
+                else if (type == "cache" && page < MAX_CACHE_PAGES)
+                    pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+                else if (type == "misc" && page < MAX_MISC_PAGES)
+                    pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+                if (!pagePtr) return;
+                std::string bytes = data;
+                if (offset < 0 || offset >= PAGE_SIZE) return;
+                // Clamp to page boundary
+                size_t maxLen = PAGE_SIZE - offset;
+                size_t writeLen = std::min(bytes.size(), maxLen);
+                std::memcpy(pagePtr + offset, bytes.data(), writeLen);
+            }, "Write block to physical page", py::arg("type"), py::arg("page"), py::arg("offset"), py::arg("data"))
+            .def("memory_info", [](Emulator& self) -> py::dict {
+                py::dict info;
+                Memory* mem = self.GetMemory();
+                if (!mem) return info;
+                
+                py::dict pages;
+                pages["ram_count"] = MAX_RAM_PAGES;
+                pages["rom_count"] = MAX_ROM_PAGES;
+                pages["cache_count"] = MAX_CACHE_PAGES;
+                pages["misc_count"] = MAX_MISC_PAGES;
+                info["pages"] = pages;
+                
+                py::list banks;
+                for (int bank = 0; bank < 4; bank++) {
+                    py::dict bankInfo;
+                    bankInfo["bank"] = bank;
+                    bankInfo["start"] = bank * 0x4000;
+                    bankInfo["end"] = (bank + 1) * 0x4000 - 1;
+                    bankInfo["mapping"] = mem->GetCurrentBankName(bank);
+                    banks.append(bankInfo);
+                }
+                info["z80_banks"] = banks;
+                return info;
+            }, "Get memory configuration info")
             
             // Feature management (using correct FeatureManager API)
             .def("feature_get", [](Emulator& self, const std::string& name) -> bool {

@@ -825,6 +825,518 @@ void EmulatorAPI::getMemory(const HttpRequestPtr& req, std::function<void(const 
     callback(resp);
 }
 
+/// @brief PUT /api/v1/emulator/{id}/memory/{addr}
+/// @brief Write memory at address
+/// @brief Request body: {"data": [0x00, 0x01, ...]} or {"hex": "00 01 02 ..."}
+void EmulatorAPI::putMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id, const std::string& addrStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    Memory* mem = emulator->GetMemory();
+    if (!mem)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Parse address
+    uint16_t addr = 0;
+    try
+    {
+        if (addrStr.substr(0, 2) == "0x" || addrStr.substr(0, 2) == "0X")
+            addr = static_cast<uint16_t>(std::stoul(addrStr.substr(2), nullptr, 16));
+        else if (addrStr[0] == '$')
+            addr = static_cast<uint16_t>(std::stoul(addrStr.substr(1), nullptr, 16));
+        else
+            addr = static_cast<uint16_t>(std::stoul(addrStr));
+    }
+    catch (...)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid address format";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    auto json = req->getJsonObject();
+    if (!json)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request body required";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    std::vector<uint8_t> bytes;
+    
+    // Parse data from array or hex string
+    if (json->isMember("data") && (*json)["data"].isArray())
+    {
+        for (const auto& val : (*json)["data"])
+        {
+            bytes.push_back(static_cast<uint8_t>(val.asUInt()));
+        }
+    }
+    else if (json->isMember("hex"))
+    {
+        std::string hexData = (*json)["hex"].asString();
+        std::istringstream iss(hexData);
+        std::string token;
+        while (iss >> token)
+        {
+            bytes.push_back(static_cast<uint8_t>(std::stoul(token, nullptr, 16)));
+        }
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Provide 'data' array or 'hex' string";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Write memory
+    for (size_t i = 0; i < bytes.size(); i++)
+    {
+        mem->DirectWriteToZ80Memory((addr + i) & 0xFFFF, bytes[i]);
+    }
+    
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["address"] = addr;
+    ret["length"] = static_cast<unsigned>(bytes.size());
+    ret["message"] = "Wrote " + std::to_string(bytes.size()) + " bytes";
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/memory/{type}/{page}/{offset}
+/// @brief Read from physical page
+/// @brief Query param: len (default 128, max 16384)
+void EmulatorAPI::getMemoryPage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id, const std::string& typeStr, 
+                                const std::string& pageStr, const std::string& offsetStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    Memory* mem = emulator->GetMemory();
+    if (!mem)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Parse type
+    int pageType = -1;
+    if (typeStr == "ram") pageType = 0;
+    else if (typeStr == "rom") pageType = 1;
+    else if (typeStr == "cache") pageType = 2;
+    else if (typeStr == "misc") pageType = 3;
+    
+    if (pageType < 0)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid page type. Use: ram, rom, cache, misc";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    unsigned page = std::stoul(pageStr);
+    unsigned offset = std::stoul(offsetStr);
+    
+    // Get length from query param
+    unsigned len = 128;
+    auto lenParam = req->getParameter("len");
+    if (!lenParam.empty()) len = std::stoul(lenParam);
+    if (len > 16384) len = 16384;
+    if (len < 1) len = 1;
+    
+    // Clamp to page boundary
+    if (offset + len > 16384) len = 16384 - offset;
+    
+    // Get page pointer
+    uint8_t* pagePtr = nullptr;
+    const char* typeName = nullptr;
+    
+    switch (pageType)
+    {
+        case 0:  // RAM
+            if (page >= MAX_RAM_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid RAM page";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            pagePtr = mem->RAMPageAddress(page);
+            typeName = "ram";
+            break;
+        case 1:  // ROM
+            if (page >= MAX_ROM_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid ROM page";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            pagePtr = mem->ROMPageHostAddress(page);
+            typeName = "rom";
+            break;
+        case 2:  // Cache
+            if (page >= MAX_CACHE_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid cache page";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+            typeName = "cache";
+            break;
+        case 3:  // Misc
+            if (page >= MAX_MISC_PAGES)
+            {
+                Json::Value error;
+                error["error"] = "Bad Request";
+                error["message"] = "Invalid misc page";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(HttpStatusCode::k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+            typeName = "misc";
+            break;
+    }
+    
+    if (!pagePtr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Page not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Read memory
+    Json::Value ret;
+    ret["type"] = typeName;
+    ret["page"] = page;
+    ret["offset"] = offset;
+    ret["length"] = len;
+    
+    Json::Value data(Json::arrayValue);
+    for (unsigned i = 0; i < len; i++)
+    {
+        data.append(pagePtr[offset + i]);
+    }
+    ret["data"] = data;
+    
+    // Hex string
+    std::stringstream hexStr;
+    for (unsigned i = 0; i < len; i++)
+    {
+        hexStr << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
+               << static_cast<int>(pagePtr[offset + i]);
+        if (i < len - 1) hexStr << " ";
+    }
+    ret["hex"] = hexStr.str();
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/memory/{type}/{page}/{offset}
+/// @brief Write to physical page
+/// @brief Request body: {"data": [0x00, 0x01, ...], "force": true} or {"hex": "00 01", "force": true}
+void EmulatorAPI::putMemoryPage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id, const std::string& typeStr,
+                                const std::string& pageStr, const std::string& offsetStr) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    Memory* mem = emulator->GetMemory();
+    if (!mem)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Parse type
+    int pageType = -1;
+    if (typeStr == "ram") pageType = 0;
+    else if (typeStr == "rom") pageType = 1;
+    else if (typeStr == "cache") pageType = 2;
+    else if (typeStr == "misc") pageType = 3;
+    
+    if (pageType < 0)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid page type. Use: ram, rom, cache, misc";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    unsigned page = std::stoul(pageStr);
+    unsigned offset = std::stoul(offsetStr);
+    
+    auto json = req->getJsonObject();
+    if (!json)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request body required";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    bool forceFlag = json->isMember("force") && (*json)["force"].asBool();
+    
+    // ROM requires force
+    if (pageType == 1 && !forceFlag)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "ROM write requires 'force': true";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    std::vector<uint8_t> bytes;
+    
+    // Parse data
+    if (json->isMember("data") && (*json)["data"].isArray())
+    {
+        for (const auto& val : (*json)["data"])
+        {
+            bytes.push_back(static_cast<uint8_t>(val.asUInt()));
+        }
+    }
+    else if (json->isMember("hex"))
+    {
+        std::string hexData = (*json)["hex"].asString();
+        std::istringstream iss(hexData);
+        std::string token;
+        while (iss >> token)
+        {
+            bytes.push_back(static_cast<uint8_t>(std::stoul(token, nullptr, 16)));
+        }
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Provide 'data' array or 'hex' string";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Get page pointer
+    uint8_t* pagePtr = nullptr;
+    const char* typeName = nullptr;
+    
+    switch (pageType)
+    {
+        case 0:
+            if (page >= MAX_RAM_PAGES) { /* error */ return; }
+            pagePtr = mem->RAMPageAddress(page);
+            typeName = "ram";
+            break;
+        case 1:
+            if (page >= MAX_ROM_PAGES) { /* error */ return; }
+            pagePtr = mem->ROMPageHostAddress(page);
+            typeName = "rom";
+            break;
+        case 2:
+            if (page >= MAX_CACHE_PAGES) { /* error */ return; }
+            pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
+            typeName = "cache";
+            break;
+        case 3:
+            if (page >= MAX_MISC_PAGES) { /* error */ return; }
+            pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
+            typeName = "misc";
+            break;
+    }
+    
+    if (!pagePtr)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Page not available";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Check bounds
+    if (offset + bytes.size() > PAGE_SIZE)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Write would exceed page boundary";
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    // Write
+    for (size_t i = 0; i < bytes.size(); i++)
+    {
+        pagePtr[offset + i] = bytes[i];
+    }
+    
+    Json::Value ret;
+    ret["status"] = "success";
+    ret["type"] = typeName;
+    ret["page"] = page;
+    ret["offset"] = offset;
+    ret["length"] = static_cast<unsigned>(bytes.size());
+    ret["message"] = "Wrote " + std::to_string(bytes.size()) + " bytes";
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/memory/info
+/// @brief Get memory configuration
+void EmulatorAPI::getMemoryInfo(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    Memory* mem = emulator->GetMemory();
+    if (!mem)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    
+    Json::Value ret;
+    
+    // Page counts
+    Json::Value pages;
+    pages["ram"]["count"] = MAX_RAM_PAGES;
+    pages["ram"]["size_kb"] = MAX_RAM_PAGES * 16;
+    pages["rom"]["count"] = MAX_ROM_PAGES;
+    pages["rom"]["size_kb"] = MAX_ROM_PAGES * 16;
+    pages["cache"]["count"] = MAX_CACHE_PAGES;
+    pages["cache"]["size_kb"] = MAX_CACHE_PAGES * 16;
+    pages["misc"]["count"] = MAX_MISC_PAGES;
+    pages["misc"]["size_kb"] = MAX_MISC_PAGES * 16;
+    ret["pages"] = pages;
+    
+    // Current bank mapping
+    Json::Value banks;
+    for (int bank = 0; bank < 4; bank++)
+    {
+        Json::Value bankInfo;
+        bankInfo["start_address"] = bank * 0x4000;
+        bankInfo["end_address"] = (bank + 1) * 0x4000 - 1;
+        bankInfo["mapping"] = mem->GetCurrentBankName(bank);
+        banks["bank" + std::to_string(bank)] = bankInfo;
+    }
+    ret["z80_banks"] = banks;
+    
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 // endregion Memory Inspection
 
 // region Analysis

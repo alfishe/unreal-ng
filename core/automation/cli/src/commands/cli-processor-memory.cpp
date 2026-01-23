@@ -10,11 +10,16 @@
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/platform.h>
 
+#include <cstring>
+#include <fstream>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 
-// HandleMemory - lines 1202-1270
+// HandleMemory - Unified memory command dispatcher
+// Supports two addressing modes:
+// 1. Z80 address space: memory read <addr> [len], memory write <addr> <bytes...>
+// 2. Physical pages: memory read <type> <page> <offset> [len], etc.
 void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<std::string>& args)
 {
     auto emulator = GetSelectedEmulator(session);
@@ -27,149 +32,935 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
 
     if (args.empty())
     {
-        session.SendResponse(std::string("Usage:") + NEWLINE);
-        session.SendResponse(std::string("  memory read <address> [length]   - Read memory (default 128 bytes)") + NEWLINE);
-        session.SendResponse(std::string("  memory write <address> <bytes>   - Write bytes") + NEWLINE);
-        session.SendResponse(std::string("") + NEWLINE);
-        session.SendResponse(std::string("Address formats: 0x1000, $1000, #1000, 4096") + NEWLINE);
-        session.SendResponse(std::string("") + NEWLINE);
-        session.SendResponse(std::string("Examples:") + NEWLINE);
-        session.SendResponse(std::string("  memory read 0x5C00           - Read 128 bytes at 0x5C00") + NEWLINE);
-        session.SendResponse(std::string("  memory read 0x5C00 32        - Read 32 bytes at 0x5C00") + NEWLINE);
-        session.SendResponse(std::string("  memory write 0x5000 FF 00 C3 - Write 3 bytes") + NEWLINE);
+        ShowMemoryHelp(session);
         return;
     }
 
-    // Check for read subcommand (optional - for consistency with write)
-    if (args[0] == "read" || args[0] == "r")
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
     {
-        if (args.size() < 2)
+        session.SendResponse("Memory not available" + std::string(NEWLINE));
+        return;
+    }
+
+    const std::string& subcommand = args[0];
+
+    if (subcommand == "read")
+    {
+        HandleMemoryRead(session, memory, args);
+    }
+    else if (subcommand == "write")
+    {
+        HandleMemoryWrite(session, memory, args);
+    }
+    else if (subcommand == "dump")
+    {
+        HandleMemoryDump(session, memory, args);
+    }
+    else if (subcommand == "save")
+    {
+        HandleMemorySave(session, memory, args);
+    }
+    else if (subcommand == "load")
+    {
+        HandleMemoryLoad(session, memory, args);
+    }
+    else if (subcommand == "fill")
+    {
+        HandleMemoryFill(session, memory, args);
+    }
+    else if (subcommand == "info")
+    {
+        HandleMemoryInfo(session, memory);
+    }
+    else
+    {
+        // Legacy mode: treat first arg as address for backwards compatibility
+        // memory 0x8000 -> memory read 0x8000
+        uint16_t address;
+        if (ParseAddress(args[0], address))
         {
-            session.SendResponse("Usage: memory read <address> [length]" + std::string(NEWLINE));
-            session.SendResponse("  Address formats: 0x1000, $1000, #1000, 4096" + std::string(NEWLINE));
+            // Default length is 128 bytes
+            uint16_t length = 128;
+            if (args.size() > 1)
+            {
+                if (!ParseAddress(args[1], length, 0xFFFF))
+                {
+                    session.SendResponse("Invalid length format" + std::string(NEWLINE));
+                    return;
+                }
+            }
+            DumpZ80Memory(session, memory, address, length);
+        }
+        else
+        {
+            session.SendResponse("Unknown subcommand: " + subcommand + NEWLINE);
+            ShowMemoryHelp(session);
+        }
+    }
+}
+
+// Show memory command help
+void CLIProcessor::ShowMemoryHelp(const ClientSession& session)
+{
+    std::ostringstream oss;
+    oss << "Usage: memory <subcommand> [args]" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Z80 Address Space:" << NEWLINE;
+    oss << "  memory read <addr> [len]          - Read from Z80 address space" << NEWLINE;
+    oss << "  memory write <addr> <bytes...>    - Write to Z80 address space" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Physical Pages (ram|rom|cache|misc):" << NEWLINE;
+    oss << "  memory read <type> <page> <offset> [len]   - Read from physical page" << NEWLINE;
+    oss << "  memory write <type> <page> <offset> <bytes...> [--force]  - Write to page" << NEWLINE;
+    oss << "  memory dump <type> <page>                  - Dump entire 16KB page" << NEWLINE;
+    oss << "  memory fill <type> <page> <offset> <len> <byte>  - Fill region" << NEWLINE;
+    oss << NEWLINE;
+    oss << "File Operations:" << NEWLINE;
+    oss << "  memory save bank <N> <file>       - Save Z80 bank to file" << NEWLINE;
+    oss << "  memory save <type> <page> <file>  - Save physical page to file" << NEWLINE;
+    oss << "  memory load bank <N> <file>       - Load file into Z80 bank" << NEWLINE;
+    oss << "  memory load <type> <page> <file> [--force] - Load file into page" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Configuration:" << NEWLINE;
+    oss << "  memory info                       - Show memory configuration" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Page Types: ram (0-255), rom (0-3), cache (0-15), misc (0-15)" << NEWLINE;
+    oss << "Address formats: 0x8000, $8000, #8000, 32768" << NEWLINE;
+    session.SendResponse(oss.str());
+}
+
+// Determine if a string is a page type
+static bool IsPageType(const std::string& str)
+{
+    return str == "ram" || str == "rom" || str == "cache" || str == "misc";
+}
+
+// Parse page type string to enum-like value
+static int ParsePageType(const std::string& str)
+{
+    if (str == "ram") return 0;
+    if (str == "rom") return 1;
+    if (str == "cache") return 2;
+    if (str == "misc") return 3;
+    return -1;
+}
+
+// memory read <addr> [len]  OR  memory read <type> <page> <offset> [len]
+void CLIProcessor::HandleMemoryRead(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
+{
+    if (args.size() < 2)
+    {
+        session.SendResponse("Usage: memory read <addr> [len]  OR  memory read <type> <page> <offset> [len]" + std::string(NEWLINE));
+        return;
+    }
+
+    // Check if second arg is a page type (physical page mode) or address (Z80 mode)
+    if (IsPageType(args[1]))
+    {
+        // Physical page mode: memory read <type> <page> <offset> [len]
+        if (args.size() < 4)
+        {
+            session.SendResponse("Usage: memory read <type> <page> <offset> [len]" + std::string(NEWLINE));
             return;
         }
 
+        int pageType = ParsePageType(args[1]);
+        uint16_t page, offset;
+        uint16_t length = 128;
+
+        if (!ParseAddress(args[2], page, 0xFF))
+        {
+            session.SendResponse("Invalid page number (0-255)" + std::string(NEWLINE));
+            return;
+        }
+
+        if (!ParseAddress(args[3], offset, 0x3FFF))
+        {
+            session.SendResponse("Invalid offset (0-16383)" + std::string(NEWLINE));
+            return;
+        }
+
+        if (args.size() > 4)
+        {
+            if (!ParseAddress(args[4], length, 0x4000))
+            {
+                session.SendResponse("Invalid length (max 16384)" + std::string(NEWLINE));
+                return;
+            }
+        }
+
+        // Clamp length to not exceed page boundary
+        if (offset + length > 0x4000)
+        {
+            length = 0x4000 - offset;
+        }
+
+        DumpPhysicalPage(session, memory, pageType, page, offset, length);
+    }
+    else
+    {
+        // Z80 mode: memory read <addr> [len]
         uint16_t address;
         if (!ParseAddress(args[1], address))
         {
-            std::ostringstream oss;
-            oss << "Invalid address: '" << args[1] << "'" << NEWLINE;
-            oss << "Valid formats: 0x1000 (hex), $1000 (hex), #1000 (hex), 4096 (decimal)" << NEWLINE;
-            session.SendResponse(oss.str());
+            session.SendResponse("Invalid address format" + std::string(NEWLINE));
             return;
         }
 
-        Memory* memory = emulator->GetMemory();
-        if (!memory)
-        {
-            session.SendResponse("Memory not available\n");
-            return;
-        }
-
-        // Parse optional length
         uint16_t length = 128;
         if (args.size() > 2)
         {
-            uint16_t tempLen;
-            if (ParseAddress(args[2], tempLen))
-                length = tempLen;
+            if (!ParseAddress(args[2], length, 0xFFFF))
+            {
+                session.SendResponse("Invalid length format" + std::string(NEWLINE));
+                return;
+            }
         }
 
-        std::ostringstream oss;
-        oss << "Memory at 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << address << ":"
-            << NEWLINE;
+        DumpZ80Memory(session, memory, address, length);
+    }
+}
 
-        // Display hex dump
-        for (uint16_t row = 0; row < (length + 15) / 16; ++row)
+// Dump Z80 address space memory
+void CLIProcessor::DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length)
+{
+    std::ostringstream oss;
+    oss << "Memory at 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << address << ":" << NEWLINE;
+
+    uint16_t remaining = length;
+    uint16_t currentAddr = address;
+
+    while (remaining > 0)
+    {
+        uint16_t rowLen = std::min((uint16_t)16, remaining);
+        
+        oss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << currentAddr << ": ";
+
+        // Hex values
+        for (uint16_t i = 0; i < rowLen; ++i)
         {
-            uint16_t rowAddr = address + (row * 16);
-            oss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << rowAddr << ": ";
-
-            for (int col = 0; col < 16 && (row * 16 + col) < length; ++col)
-            {
-                uint16_t byteAddr = rowAddr + col;
-                uint8_t value = memory->DirectReadFromZ80Memory(byteAddr);
-                oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(value) << " ";
-            }
-
-            oss << " | ";
-
-            for (int col = 0; col < 16 && (row * 16 + col) < length; ++col)
-            {
-                uint16_t byteAddr = rowAddr + col;
-                uint8_t value = memory->DirectReadFromZ80Memory(byteAddr);
-                oss << (value >= 32 && value <= 126 ? static_cast<char>(value) : '.');
-            }
-
-            oss << NEWLINE;
+            uint8_t value = memory->DirectReadFromZ80Memory(currentAddr + i);
+            oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(value) << " ";
         }
 
-        session.SendResponse(oss.str());
+        // Padding for incomplete rows
+        for (uint16_t i = rowLen; i < 16; ++i)
+        {
+            oss << "   ";
+        }
+
+        oss << " | ";
+
+        // ASCII representation
+        for (uint16_t i = 0; i < rowLen; ++i)
+        {
+            uint8_t value = memory->DirectReadFromZ80Memory(currentAddr + i);
+            oss << (value >= 32 && value <= 126 ? static_cast<char>(value) : '.');
+        }
+
+        oss << NEWLINE;
+
+        currentAddr += rowLen;
+        remaining -= rowLen;
+    }
+
+    session.SendResponse(oss.str());
+}
+
+// Dump physical page memory
+void CLIProcessor::DumpPhysicalPage(const ClientSession& session, Memory* memory, int pageType, uint16_t page, uint16_t offset, uint16_t length)
+{
+    uint8_t* pagePtr = nullptr;
+    const char* typeName = nullptr;
+
+    switch (pageType)
+    {
+        case 0:  // RAM
+            if (page >= MAX_RAM_PAGES)
+            {
+                session.SendResponse("Invalid RAM page (max " + std::to_string(MAX_RAM_PAGES - 1) + ")" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->RAMPageAddress(page);
+            typeName = "RAM";
+            break;
+        case 1:  // ROM
+            if (page >= MAX_ROM_PAGES)
+            {
+                session.SendResponse("Invalid ROM page (max " + std::to_string(MAX_ROM_PAGES - 1) + ")" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->ROMPageHostAddress(page);
+            typeName = "ROM";
+            break;
+        case 2:  // Cache
+            if (page >= MAX_CACHE_PAGES)
+            {
+                session.SendResponse("Invalid cache page (max " + std::to_string(MAX_CACHE_PAGES - 1) + ")" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->CacheBase() + (page * PAGE_SIZE);
+            typeName = "Cache";
+            break;
+        case 3:  // Misc
+            if (page >= MAX_MISC_PAGES)
+            {
+                session.SendResponse("Invalid misc page (max " + std::to_string(MAX_MISC_PAGES - 1) + ")" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->MiscBase() + (page * PAGE_SIZE);
+            typeName = "Misc";
+            break;
+        default:
+            session.SendResponse("Unknown page type" + std::string(NEWLINE));
+            return;
+    }
+
+    if (!pagePtr)
+    {
+        session.SendResponse("Page not available" + std::string(NEWLINE));
         return;
     }
 
-    // Check for write subcommand
-    if (args[0] == "write" || args[0] == "w")
+    std::ostringstream oss;
+    oss << typeName << " page " << page << " at offset 0x" << std::hex << std::uppercase 
+        << std::setw(4) << std::setfill('0') << offset << ":" << NEWLINE;
+
+    uint16_t remaining = length;
+    uint16_t currentOffset = offset;
+
+    while (remaining > 0)
     {
-        if (args.size() < 3)
+        uint16_t rowLen = std::min((uint16_t)16, remaining);
+        
+        oss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << currentOffset << ": ";
+
+        // Hex values
+        for (uint16_t i = 0; i < rowLen; ++i)
         {
-            session.SendResponse("Usage: memory write <address> <byte1> [byte2] [...]" + std::string(NEWLINE));
-            session.SendResponse("  Address formats: 0x1000, $1000, #1000, 4096" + std::string(NEWLINE));
-            session.SendResponse("  Byte values: 0x00-0xFF or 0-255" + std::string(NEWLINE));
+            uint8_t value = pagePtr[currentOffset + i];
+            oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << static_cast<int>(value) << " ";
+        }
+
+        // Padding for incomplete rows
+        for (uint16_t i = rowLen; i < 16; ++i)
+        {
+            oss << "   ";
+        }
+
+        oss << " | ";
+
+        // ASCII representation
+        for (uint16_t i = 0; i < rowLen; ++i)
+        {
+            uint8_t value = pagePtr[currentOffset + i];
+            oss << (value >= 32 && value <= 126 ? static_cast<char>(value) : '.');
+        }
+
+        oss << NEWLINE;
+
+        currentOffset += rowLen;
+        remaining -= rowLen;
+    }
+
+    session.SendResponse(oss.str());
+}
+
+// memory write <addr> <bytes...>  OR  memory write <type> <page> <offset> <bytes...> [--force]
+void CLIProcessor::HandleMemoryWrite(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
+{
+    if (args.size() < 3)
+    {
+        session.SendResponse("Usage: memory write <addr> <bytes...>  OR  memory write <type> <page> <offset> <bytes...> [--force]" + std::string(NEWLINE));
+        return;
+    }
+
+    // Check if second arg is a page type (physical page mode) or address (Z80 mode)
+    if (IsPageType(args[1]))
+    {
+        // Physical page mode
+        if (args.size() < 5)
+        {
+            session.SendResponse("Usage: memory write <type> <page> <offset> <bytes...> [--force]" + std::string(NEWLINE));
             return;
         }
 
+        int pageType = ParsePageType(args[1]);
+        uint16_t page, offset;
+
+        if (!ParseAddress(args[2], page, 0xFF))
+        {
+            session.SendResponse("Invalid page number" + std::string(NEWLINE));
+            return;
+        }
+
+        if (!ParseAddress(args[3], offset, 0x3FFF))
+        {
+            session.SendResponse("Invalid offset" + std::string(NEWLINE));
+            return;
+        }
+
+        // Check for --force flag (required for ROM)
+        bool forceFlag = false;
+        std::vector<uint8_t> bytes;
+        
+        for (size_t i = 4; i < args.size(); ++i)
+        {
+            if (args[i] == "--force")
+            {
+                forceFlag = true;
+                continue;
+            }
+            
+            uint16_t byteVal;
+            if (!ParseAddress(args[i], byteVal, 0xFF))
+            {
+                session.SendResponse("Invalid byte value: " + args[i] + NEWLINE);
+                return;
+            }
+            bytes.push_back(static_cast<uint8_t>(byteVal));
+        }
+
+        if (bytes.empty())
+        {
+            session.SendResponse("No bytes to write" + std::string(NEWLINE));
+            return;
+        }
+
+        // ROM requires --force
+        if (pageType == 1 && !forceFlag)
+        {
+            session.SendResponse("Error: ROM write requires --force flag" + std::string(NEWLINE));
+            return;
+        }
+
+        WriteToPhysicalPage(session, memory, pageType, page, offset, bytes);
+    }
+    else
+    {
+        // Z80 mode: memory write <addr> <bytes...>
         uint16_t address;
         if (!ParseAddress(args[1], address))
         {
-            std::ostringstream oss;
-            oss << "Invalid address: '" << args[1] << "'" << NEWLINE;
-            oss << "Valid formats: 0x1000 (hex), $1000 (hex), #1000 (hex), 4096 (decimal)" << NEWLINE;
-            session.SendResponse(oss.str());
+            session.SendResponse("Invalid address format" + std::string(NEWLINE));
             return;
         }
 
-        Memory* memory = emulator->GetMemory();
-        if (!memory)
+        std::vector<uint8_t> bytes;
+        for (size_t i = 2; i < args.size(); ++i)
         {
-            session.SendResponse("Memory not available\n");
-            return;
-        }
-
-        // Parse and write bytes
-        size_t bytesWritten = 0;
-        std::ostringstream oss;
-        for (size_t i = 2; i < args.size(); i++)
-        {
-            uint16_t value;
-            if (!ParseAddress(args[i], value, 0xFF))
+            uint16_t byteVal;
+            if (!ParseAddress(args[i], byteVal, 0xFF))
             {
-                oss << "Invalid byte value at position " << (i - 2) << ": '" << args[i] << "'" << NEWLINE;
-                oss << "Valid formats: 0x00-0xFF or 0-255" << NEWLINE;
-                session.SendResponse(oss.str());
+                session.SendResponse("Invalid byte value: " + args[i] + NEWLINE);
                 return;
             }
-            memory->DirectWriteToZ80Memory(address + bytesWritten, static_cast<uint8_t>(value));
-            bytesWritten++;
+            bytes.push_back(static_cast<uint8_t>(byteVal));
         }
 
-        oss << "Wrote " << bytesWritten << " bytes starting at 0x" << std::hex << std::uppercase
+        if (bytes.empty())
+        {
+            session.SendResponse("No bytes to write" + std::string(NEWLINE));
+            return;
+        }
+
+        // Write to Z80 address space
+        for (size_t i = 0; i < bytes.size(); ++i)
+        {
+            uint16_t addr = address + static_cast<uint16_t>(i);
+            memory->DirectWriteToZ80Memory(addr, bytes[i]);
+        }
+
+        std::ostringstream oss;
+        oss << "Wrote " << bytes.size() << " bytes at 0x" << std::hex << std::uppercase 
             << std::setw(4) << std::setfill('0') << address << NEWLINE;
         session.SendResponse(oss.str());
+    }
+}
+
+// Write to physical page
+void CLIProcessor::WriteToPhysicalPage(const ClientSession& session, Memory* memory, int pageType, 
+                                        uint16_t page, uint16_t offset, const std::vector<uint8_t>& bytes)
+{
+    uint8_t* pagePtr = nullptr;
+    const char* typeName = nullptr;
+
+    switch (pageType)
+    {
+        case 0:  // RAM
+            if (page >= MAX_RAM_PAGES)
+            {
+                session.SendResponse("Invalid RAM page" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->RAMPageAddress(page);
+            typeName = "RAM";
+            break;
+        case 1:  // ROM
+            if (page >= MAX_ROM_PAGES)
+            {
+                session.SendResponse("Invalid ROM page" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->ROMPageHostAddress(page);
+            typeName = "ROM";
+            break;
+        case 2:  // Cache
+            if (page >= MAX_CACHE_PAGES)
+            {
+                session.SendResponse("Invalid cache page" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->CacheBase() + (page * PAGE_SIZE);
+            typeName = "Cache";
+            break;
+        case 3:  // Misc
+            if (page >= MAX_MISC_PAGES)
+            {
+                session.SendResponse("Invalid misc page" + std::string(NEWLINE));
+                return;
+            }
+            pagePtr = memory->MiscBase() + (page * PAGE_SIZE);
+            typeName = "Misc";
+            break;
+        default:
+            session.SendResponse("Unknown page type" + std::string(NEWLINE));
+            return;
+    }
+
+    if (!pagePtr)
+    {
+        session.SendResponse("Page not available" + std::string(NEWLINE));
         return;
     }
 
-    // Direct address (legacy form: memory <address>)
-    // User requested explicit subcommands - show help instead
+    // Check bounds
+    if (offset + bytes.size() > PAGE_SIZE)
+    {
+        session.SendResponse("Write would exceed page boundary" + std::string(NEWLINE));
+        return;
+    }
+
+    // Write bytes
+    for (size_t i = 0; i < bytes.size(); ++i)
+    {
+        pagePtr[offset + i] = bytes[i];
+    }
+
     std::ostringstream oss;
-    oss << "Unknown subcommand: '" << args[0] << "'" << NEWLINE;
+    oss << "Wrote " << bytes.size() << " bytes to " << typeName << " page " << page 
+        << " at offset 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << offset << NEWLINE;
+    session.SendResponse(oss.str());
+}
+
+// memory dump <type> <page>
+void CLIProcessor::HandleMemoryDump(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
+{
+    if (args.size() < 3)
+    {
+        session.SendResponse("Usage: memory dump <type> <page>" + std::string(NEWLINE));
+        return;
+    }
+
+    if (!IsPageType(args[1]))
+    {
+        session.SendResponse("Invalid page type. Use: ram, rom, cache, misc" + std::string(NEWLINE));
+        return;
+    }
+
+    int pageType = ParsePageType(args[1]);
+    uint16_t page;
+
+    if (!ParseAddress(args[2], page, 0xFF))
+    {
+        session.SendResponse("Invalid page number" + std::string(NEWLINE));
+        return;
+    }
+
+    // Dump entire page (16KB)
+    DumpPhysicalPage(session, memory, pageType, page, 0, PAGE_SIZE);
+}
+
+// memory save bank <N> <file>  OR  memory save <type> <page> <file>
+void CLIProcessor::HandleMemorySave(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
+{
+    if (args.size() < 4)
+    {
+        session.SendResponse("Usage: memory save bank <N> <file>  OR  memory save <type> <page> <file>" + std::string(NEWLINE));
+        return;
+    }
+
+    const std::string& target = args[1];
+    
+    if (target == "bank")
+    {
+        // Save Z80 bank
+        uint16_t bankNum;
+        if (!ParseAddress(args[2], bankNum, 3))
+        {
+            session.SendResponse("Invalid bank number (0-3)" + std::string(NEWLINE));
+            return;
+        }
+
+        const std::string& filename = args[3];
+        
+        // Get bank base address
+        uint16_t bankAddr = bankNum * 0x4000;
+        
+        // Read 16KB from Z80 address space
+        std::vector<uint8_t> buffer(PAGE_SIZE);
+        for (size_t i = 0; i < PAGE_SIZE; ++i)
+        {
+            buffer[i] = memory->DirectReadFromZ80Memory(bankAddr + static_cast<uint16_t>(i));
+        }
+
+        // Write to file
+        std::ofstream file(filename, std::ios::binary);
+        if (!file)
+        {
+            session.SendResponse("Failed to create file: " + filename + NEWLINE);
+            return;
+        }
+
+        file.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        file.close();
+
+        std::ostringstream oss;
+        oss << "Saved " << PAGE_SIZE << " bytes to " << filename << NEWLINE;
+        session.SendResponse(oss.str());
+    }
+    else if (IsPageType(target))
+    {
+        // Save physical page
+        int pageType = ParsePageType(target);
+        uint16_t page;
+
+        if (!ParseAddress(args[2], page, 0xFF))
+        {
+            session.SendResponse("Invalid page number" + std::string(NEWLINE));
+            return;
+        }
+
+        const std::string& filename = args[3];
+        
+        uint8_t* pagePtr = nullptr;
+        const char* typeName = nullptr;
+
+        switch (pageType)
+        {
+            case 0:
+                if (page >= MAX_RAM_PAGES) { session.SendResponse("Invalid RAM page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->RAMPageAddress(page);
+                typeName = "RAM";
+                break;
+            case 1:
+                if (page >= MAX_ROM_PAGES) { session.SendResponse("Invalid ROM page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->ROMPageHostAddress(page);
+                typeName = "ROM";
+                break;
+            case 2:
+                if (page >= MAX_CACHE_PAGES) { session.SendResponse("Invalid cache page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->CacheBase() + (page * PAGE_SIZE);
+                typeName = "Cache";
+                break;
+            case 3:
+                if (page >= MAX_MISC_PAGES) { session.SendResponse("Invalid misc page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->MiscBase() + (page * PAGE_SIZE);
+                typeName = "Misc";
+                break;
+        }
+
+        if (!pagePtr)
+        {
+            session.SendResponse("Page not available" + std::string(NEWLINE));
+            return;
+        }
+
+        std::ofstream file(filename, std::ios::binary);
+        if (!file)
+        {
+            session.SendResponse("Failed to create file: " + filename + NEWLINE);
+            return;
+        }
+
+        file.write(reinterpret_cast<const char*>(pagePtr), PAGE_SIZE);
+        file.close();
+
+        std::ostringstream oss;
+        oss << "Saved " << typeName << " page " << page << " (" << PAGE_SIZE << " bytes) to " << filename << NEWLINE;
+        session.SendResponse(oss.str());
+    }
+    else
+    {
+        session.SendResponse("Invalid target. Use 'bank' or page type (ram, rom, cache, misc)" + std::string(NEWLINE));
+    }
+}
+
+// memory load bank <N> <file>  OR  memory load <type> <page> <file> [--force]
+void CLIProcessor::HandleMemoryLoad(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
+{
+    if (args.size() < 4)
+    {
+        session.SendResponse("Usage: memory load bank <N> <file>  OR  memory load <type> <page> <file> [--force]" + std::string(NEWLINE));
+        return;
+    }
+
+    const std::string& target = args[1];
+    bool forceFlag = false;
+    
+    // Check for --force flag
+    for (const auto& arg : args)
+    {
+        if (arg == "--force") forceFlag = true;
+    }
+
+    if (target == "bank")
+    {
+        // Load into Z80 bank
+        uint16_t bankNum;
+        if (!ParseAddress(args[2], bankNum, 3))
+        {
+            session.SendResponse("Invalid bank number (0-3)" + std::string(NEWLINE));
+            return;
+        }
+
+        const std::string& filename = args[3];
+        
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file)
+        {
+            session.SendResponse("Failed to open file: " + filename + NEWLINE);
+            return;
+        }
+
+        std::streamsize fileSize = file.tellg();
+        if (fileSize > PAGE_SIZE)
+        {
+            session.SendResponse("File too large (max 16384 bytes)" + std::string(NEWLINE));
+            return;
+        }
+
+        file.seekg(0, std::ios::beg);
+        std::vector<uint8_t> buffer(fileSize);
+        file.read(reinterpret_cast<char*>(buffer.data()), fileSize);
+        file.close();
+
+        // Write to Z80 address space
+        uint16_t bankAddr = bankNum * 0x4000;
+        for (size_t i = 0; i < buffer.size(); ++i)
+        {
+            memory->DirectWriteToZ80Memory(bankAddr + static_cast<uint16_t>(i), buffer[i]);
+        }
+
+        std::ostringstream oss;
+        oss << "Loaded " << buffer.size() << " bytes into bank " << bankNum << NEWLINE;
+        session.SendResponse(oss.str());
+    }
+    else if (IsPageType(target))
+    {
+        int pageType = ParsePageType(target);
+        uint16_t page;
+
+        if (!ParseAddress(args[2], page, 0xFF))
+        {
+            session.SendResponse("Invalid page number" + std::string(NEWLINE));
+            return;
+        }
+
+        // ROM requires --force
+        if (pageType == 1 && !forceFlag)
+        {
+            session.SendResponse("Error: ROM load requires --force flag" + std::string(NEWLINE));
+            return;
+        }
+
+        const std::string& filename = args[3];
+        
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file)
+        {
+            session.SendResponse("Failed to open file: " + filename + NEWLINE);
+            return;
+        }
+
+        std::streamsize fileSize = file.tellg();
+        if (fileSize > PAGE_SIZE)
+        {
+            session.SendResponse("File too large (max 16384 bytes)" + std::string(NEWLINE));
+            return;
+        }
+
+        file.seekg(0, std::ios::beg);
+        std::vector<uint8_t> buffer(fileSize);
+        file.read(reinterpret_cast<char*>(buffer.data()), fileSize);
+        file.close();
+
+        uint8_t* pagePtr = nullptr;
+        const char* typeName = nullptr;
+
+        switch (pageType)
+        {
+            case 0:
+                if (page >= MAX_RAM_PAGES) { session.SendResponse("Invalid RAM page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->RAMPageAddress(page);
+                typeName = "RAM";
+                break;
+            case 1:
+                if (page >= MAX_ROM_PAGES) { session.SendResponse("Invalid ROM page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->ROMPageHostAddress(page);
+                typeName = "ROM";
+                break;
+            case 2:
+                if (page >= MAX_CACHE_PAGES) { session.SendResponse("Invalid cache page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->CacheBase() + (page * PAGE_SIZE);
+                typeName = "Cache";
+                break;
+            case 3:
+                if (page >= MAX_MISC_PAGES) { session.SendResponse("Invalid misc page" + std::string(NEWLINE)); return; }
+                pagePtr = memory->MiscBase() + (page * PAGE_SIZE);
+                typeName = "Misc";
+                break;
+        }
+
+        if (!pagePtr)
+        {
+            session.SendResponse("Page not available" + std::string(NEWLINE));
+            return;
+        }
+
+        // Copy data to page
+        std::memcpy(pagePtr, buffer.data(), buffer.size());
+
+        std::ostringstream oss;
+        oss << "Loaded " << buffer.size() << " bytes into " << typeName << " page " << page << NEWLINE;
+        session.SendResponse(oss.str());
+    }
+    else
+    {
+        session.SendResponse("Invalid target. Use 'bank' or page type (ram, rom, cache, misc)" + std::string(NEWLINE));
+    }
+}
+
+// memory fill <type> <page> <offset> <len> <byte>
+void CLIProcessor::HandleMemoryFill(const ClientSession& session, Memory* memory, const std::vector<std::string>& args)
+{
+    if (args.size() < 6)
+    {
+        session.SendResponse("Usage: memory fill <type> <page> <offset> <len> <byte>" + std::string(NEWLINE));
+        return;
+    }
+
+    if (!IsPageType(args[1]))
+    {
+        session.SendResponse("Invalid page type. Use: ram, rom, cache, misc" + std::string(NEWLINE));
+        return;
+    }
+
+    int pageType = ParsePageType(args[1]);
+    uint16_t page, offset, length, byteVal;
+
+    if (!ParseAddress(args[2], page, 0xFF))
+    {
+        session.SendResponse("Invalid page number" + std::string(NEWLINE));
+        return;
+    }
+
+    if (!ParseAddress(args[3], offset, 0x3FFF))
+    {
+        session.SendResponse("Invalid offset" + std::string(NEWLINE));
+        return;
+    }
+
+    if (!ParseAddress(args[4], length, 0x4000))
+    {
+        session.SendResponse("Invalid length" + std::string(NEWLINE));
+        return;
+    }
+
+    if (!ParseAddress(args[5], byteVal, 0xFF))
+    {
+        session.SendResponse("Invalid byte value" + std::string(NEWLINE));
+        return;
+    }
+
+    // ROM fill would require --force but we don't support it for fill
+    if (pageType == 1)
+    {
+        session.SendResponse("Error: Cannot fill ROM pages" + std::string(NEWLINE));
+        return;
+    }
+
+    uint8_t* pagePtr = nullptr;
+    const char* typeName = nullptr;
+
+    switch (pageType)
+    {
+        case 0:
+            if (page >= MAX_RAM_PAGES) { session.SendResponse("Invalid RAM page" + std::string(NEWLINE)); return; }
+            pagePtr = memory->RAMPageAddress(page);
+            typeName = "RAM";
+            break;
+        case 2:
+            if (page >= MAX_CACHE_PAGES) { session.SendResponse("Invalid cache page" + std::string(NEWLINE)); return; }
+            pagePtr = memory->CacheBase() + (page * PAGE_SIZE);
+            typeName = "Cache";
+            break;
+        case 3:
+            if (page >= MAX_MISC_PAGES) { session.SendResponse("Invalid misc page" + std::string(NEWLINE)); return; }
+            pagePtr = memory->MiscBase() + (page * PAGE_SIZE);
+            typeName = "Misc";
+            break;
+    }
+
+    if (!pagePtr)
+    {
+        session.SendResponse("Page not available" + std::string(NEWLINE));
+        return;
+    }
+
+    // Clamp length to not exceed page boundary
+    if (offset + length > PAGE_SIZE)
+    {
+        length = PAGE_SIZE - offset;
+    }
+
+    // Fill memory
+    std::memset(pagePtr + offset, static_cast<uint8_t>(byteVal), length);
+
+    std::ostringstream oss;
+    oss << "Filled " << length << " bytes with 0x" << std::hex << std::uppercase 
+        << std::setw(2) << std::setfill('0') << byteVal 
+        << " in " << typeName << " page " << std::dec << page 
+        << " at offset 0x" << std::hex << std::setw(4) << std::setfill('0') << offset << NEWLINE;
+    session.SendResponse(oss.str());
+}
+
+// memory info
+void CLIProcessor::HandleMemoryInfo(const ClientSession& session, Memory* memory)
+{
+    std::ostringstream oss;
+    oss << "Memory Configuration:" << NEWLINE;
+    oss << "  RAM:   pages 0-" << (MAX_RAM_PAGES - 1) << " (" << (MAX_RAM_PAGES * 16) << " KB)" << NEWLINE;
+    oss << "  ROM:   pages 0-" << (MAX_ROM_PAGES - 1) << " (" << (MAX_ROM_PAGES * 16) << " KB)" << NEWLINE;
+    oss << "  Cache: pages 0-" << (MAX_CACHE_PAGES - 1) << " (" << (MAX_CACHE_PAGES * 16) << " KB)" << NEWLINE;
+    oss << "  Misc:  pages 0-" << (MAX_MISC_PAGES - 1) << " (" << (MAX_MISC_PAGES * 16) << " KB)" << NEWLINE;
     oss << NEWLINE;
-    oss << "Usage:" << NEWLINE;
-    oss << "  memory read <address> [length]   - Read memory" << NEWLINE;
-    oss << "  memory write <address> <bytes>   - Write bytes" << NEWLINE;
-    oss << NEWLINE;
-    oss << "Address formats: 0x1000, $1000, #1000, 4096" << NEWLINE;
+    oss << "Current Z80 Bank Mapping:" << NEWLINE;
+
+    for (int bank = 0; bank < 4; ++bank)
+    {
+        uint16_t startAddr = bank * 0x4000;
+        uint16_t endAddr = startAddr + 0x3FFF;
+        
+        oss << "  Bank " << bank << " (0x" << std::hex << std::uppercase 
+            << std::setw(4) << std::setfill('0') << startAddr << "-0x" 
+            << std::setw(4) << std::setfill('0') << endAddr << "): ";
+        
+        std::string bankName = memory->GetCurrentBankName(bank);
+        oss << bankName << NEWLINE;
+    }
+
     session.SendResponse(oss.str());
 }
 
@@ -714,243 +1505,3 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
     session.SendResponse("Unknown calltrace command. Use 'calltrace help' for usage." + std::string(NEWLINE));
 }
 
-// Static flag for ROM write protection (default: protected)
-static bool s_romWriteProtected = true;
-
-// HandlePage - Read/write from explicit RAM/ROM pages
-void CLIProcessor::HandlePage(const ClientSession& session, const std::vector<std::string>& args)
-{
-    auto emulator = GetSelectedEmulator(session);
-    if (!emulator)
-    {
-        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
-        return;
-    }
-
-    Memory* memory = emulator->GetMemory();
-    if (!memory)
-    {
-        session.SendResponse("Memory not available\n");
-        return;
-    }
-
-    if (args.empty())
-    {
-        session.SendResponse(std::string("Usage: page read <ram|rom> <page> <offset> [length]") + NEWLINE);
-        session.SendResponse(std::string("       page write <ram|rom> <page> <offset> <bytes...>") + NEWLINE);
-        session.SendResponse(std::string("Examples:") + NEWLINE);
-        session.SendResponse(std::string("  page read ram 0 0 32    - Read 32 bytes from RAM page 0 offset 0") + NEWLINE);
-        session.SendResponse(std::string("  page read rom 0 0 32    - Read 32 bytes from ROM page 0 offset 0") + NEWLINE);
-        session.SendResponse(std::string("  page write ram 5 0 FF   - Write 0xFF to RAM page 5 offset 0") + NEWLINE);
-        return;
-    }
-
-    std::string subcommand = args[0];
-    
-    if (subcommand == "read" || subcommand == "r")
-    {
-        if (args.size() < 4)
-        {
-            session.SendResponse("Usage: page read <ram|rom> <page> <offset> [length]" + std::string(NEWLINE));
-            return;
-        }
-
-        std::string type = args[1];
-        bool isROM = (type == "rom");
-        bool isRAM = (type == "ram");
-        
-        if (!isROM && !isRAM)
-        {
-            session.SendResponse("Type must be 'ram' or 'rom'" + std::string(NEWLINE));
-            return;
-        }
-
-        uint16_t page, offset;
-        if (!ParseAddress(args[2], page, 0xFF))
-        {
-            session.SendResponse("Invalid page number (must be 0-255)" + std::string(NEWLINE));
-            return;
-        }
-        if (!ParseAddress(args[3], offset))
-        {
-            session.SendResponse("Invalid offset (must be 0-65535)" + std::string(NEWLINE));
-            return;
-        }
-
-        uint16_t length = 128;  // Default
-        if (args.size() > 4)
-        {
-            if (!ParseAddress(args[4], length))
-            {
-                session.SendResponse("Invalid length" + std::string(NEWLINE));
-                return;
-            }
-        }
-
-        // Get page pointer
-        uint8_t* pagePtr = nullptr;
-        if (isRAM)
-        {
-            pagePtr = memory->RAMPageAddress(page);
-        }
-        else
-        {
-            pagePtr = memory->ROMPageHostAddress(page);
-        }
-
-        if (!pagePtr)
-        {
-            session.SendResponse("Invalid page or page not available" + std::string(NEWLINE));
-            return;
-        }
-
-        // Read and display hex dump
-        std::ostringstream oss;
-        oss << (isROM ? "ROM" : "RAM") << " page " << page << " at offset 0x" 
-            << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << offset << ":" << NEWLINE;
-
-        for (uint16_t row = 0; row < (length + 15) / 16; row++)
-        {
-            uint16_t rowOffset = offset + (row * 16);
-            oss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << rowOffset << ": ";
-
-            for (int col = 0; col < 16 && (row * 16 + col) < length; col++)
-            {
-                uint16_t byteOffset = rowOffset + col;
-                if (byteOffset < PAGE_SIZE)
-                {
-                    oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
-                        << static_cast<int>(pagePtr[byteOffset]) << " ";
-                }
-            }
-            oss << NEWLINE;
-        }
-        session.SendResponse(oss.str());
-    }
-    else if (subcommand == "write" || subcommand == "w")
-    {
-        if (args.size() < 5)
-        {
-            session.SendResponse("Usage: page write <ram|rom> <page> <offset> <byte1> [byte2] [...]" + std::string(NEWLINE));
-            return;
-        }
-
-        std::string type = args[1];
-        bool isROM = (type == "rom");
-        bool isRAM = (type == "ram");
-        
-        if (!isROM && !isRAM)
-        {
-            session.SendResponse("Type must be 'ram' or 'rom'" + std::string(NEWLINE));
-            return;
-        }
-
-        if (isROM && s_romWriteProtected)
-        {
-            session.SendResponse("ROM write protected. Use 'rom protect off' to enable ROM writes." + std::string(NEWLINE));
-            return;
-        }
-
-        uint16_t page, offset;
-        if (!ParseAddress(args[2], page, 0xFF))
-        {
-            session.SendResponse("Invalid page number (must be 0-255)" + std::string(NEWLINE));
-            return;
-        }
-        if (!ParseAddress(args[3], offset))
-        {
-            session.SendResponse("Invalid offset (must be 0-65535)" + std::string(NEWLINE));
-            return;
-        }
-
-        uint8_t* pagePtr = nullptr;
-        if (isRAM)
-        {
-            pagePtr = memory->RAMPageAddress(page);
-        }
-        else
-        {
-            pagePtr = memory->ROMPageHostAddress(page);
-        }
-
-        if (!pagePtr)
-        {
-            session.SendResponse("Invalid page or page not available" + std::string(NEWLINE));
-            return;
-        }
-
-        // Write bytes
-        size_t bytesWritten = 0;
-        for (size_t i = 4; i < args.size(); i++)
-        {
-            uint16_t value;
-            if (!ParseAddress(args[i], value, 0xFF))
-            {
-                std::ostringstream oss;
-                oss << "Invalid byte value: " << args[i] << NEWLINE;
-                session.SendResponse(oss.str());
-                return;
-            }
-            if (offset + bytesWritten >= PAGE_SIZE)
-            {
-                session.SendResponse("Offset exceeds page size" + std::string(NEWLINE));
-                return;
-            }
-            pagePtr[offset + bytesWritten] = static_cast<uint8_t>(value);
-            bytesWritten++;
-        }
-
-        std::ostringstream oss;
-        oss << "Wrote " << bytesWritten << " bytes to " << (isROM ? "ROM" : "RAM") << " page " << page
-            << " at offset 0x" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << offset << NEWLINE;
-        session.SendResponse(oss.str());
-    }
-    else
-    {
-        session.SendResponse("Unknown subcommand. Use 'page read' or 'page write'." + std::string(NEWLINE));
-    }
-}
-
-// HandleROMProtect - Control ROM write protection
-void CLIProcessor::HandleROMProtect(const ClientSession& session, const std::vector<std::string>& args)
-{
-    if (args.empty())
-    {
-        std::ostringstream oss;
-        oss << "ROM write protection: " << (s_romWriteProtected ? "ON (protected)" : "OFF (writable)") << NEWLINE;
-        oss << "Usage: rom protect <on|off>" << NEWLINE;
-        session.SendResponse(oss.str());
-        return;
-    }
-
-    if (args[0] == "protect")
-    {
-        if (args.size() < 2)
-        {
-            std::ostringstream oss;
-            oss << "ROM write protection: " << (s_romWriteProtected ? "ON (protected)" : "OFF (writable)") << NEWLINE;
-            oss << "Usage: rom protect <on|off>" << NEWLINE;
-            session.SendResponse(oss.str());
-            return;
-        }
-
-        if (args[1] == "on" || args[1] == "1")
-        {
-            s_romWriteProtected = true;
-            session.SendResponse("ROM write protection enabled." + std::string(NEWLINE));
-        }
-        else if (args[1] == "off" || args[1] == "0")
-        {
-            s_romWriteProtected = false;
-            session.SendResponse("ROM write protection disabled. ROM pages are now writable." + std::string(NEWLINE));
-        }
-        else
-        {
-            session.SendResponse("Usage: rom protect <on|off>" + std::string(NEWLINE));
-        }
-    }
-    else
-    {
-        session.SendResponse("Usage: rom protect <on|off>" + std::string(NEWLINE));
-    }
-}
