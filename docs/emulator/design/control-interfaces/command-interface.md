@@ -2663,17 +2663,43 @@ Detect advanced graphics techniques.
 - **Pattern Database**: User-extensible signature database
 - **Python/Lua API**: Create custom analyzers in scripts
 
+### Analyzer Control Interface (Capture Sessions)
+
+The analyzer framework supports **Capture Sessions** to isolate analysis data.
+
+| Command | Arguments | Description |
+|:---|:---|:---|
+| `analyzer activate` | `id` | **Start Session**: Create new session and start capturing. Clears previous data for this analyzer. |
+| `analyzer deactivate` | `id` | **End Session**: Stop capturing and close/archive the session. Data remains available until next activation. |
+| `analyzer pause` | `id` | **Pause Capture**: Suspend event capture but keep session open. Low overhead mode. |
+| `analyzer resume` | `id` | **Resume Capture**: Resume capturing events into the current active session. |
+| `analyzer status` | `id` | Get session state (IDLE, ACTIVE, PAUSED) and event counts. |
+
+#### Data Access (Active Session)
+
+| Command | Arguments | Description |
+|:---|:---|:---|
+| `analyzer events` | `id` | Get **Semantic Events** (high-level patterns) from active session. |
+| `analyzer raw fdc` | `id` | Get **Raw FDC Events** (register/port snapshots) from active session. |
+| `analyzer raw breakpoints` | `id` | Get **Raw Breakpoint Events** (CPU/Stack snapshots) from active session. |
+| `analyzer export` | `id`, `path` | Export full session data to JSON file. |
+
 **Example Usage**:
 ```bash
-# Detect everything
-analyze all --format json --output report.json
+# Start analysis
+analyzer activate trdos
 
-# Chain analyzers
-basic extract | analyze
-music detect | music rip game.pt3
+# Perform disk operations...
 
-# Custom analyzer in Python
-python my_analyzer.py --memory 0x8000 0x4000
+# Pause to inspect without noise
+analyzer pause trdos
+
+# Get captured data
+analyzer events trdos --limit 50
+analyzer raw fdc trdos
+
+# Finish
+analyzer deactivate trdos
 ```
 
 ### 9. LLM Integration Interfaces (MCP/A2A)

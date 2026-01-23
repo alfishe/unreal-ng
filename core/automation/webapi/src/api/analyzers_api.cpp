@@ -468,5 +468,393 @@ void EmulatorAPI::clearAnalyzerEvents(const HttpRequestPtr& req, std::function<v
     callback(resp);
 }
 
+/// @brief POST /api/v1/emulator/{id}/analyzer/{name}/session
+/// @brief Control analyzer capture session (activate, deactivate, pause, resume)
+void EmulatorAPI::analyzerSession(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id, const std::string& name) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    AnalyzerManager* analyzerManager = context && context->pDebugManager 
+        ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+
+    if (!analyzerManager)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Analyzer manager not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!analyzerManager->hasAnalyzer(name))
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Unknown analyzer: " + name;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse request body
+    auto json = req->getJsonObject();
+    if (!json || !json->isMember("action"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Missing 'action' field in request body (expected: activate, deactivate, pause, resume)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    std::string action = (*json)["action"].asString();
+    bool success = false;
+    std::string message;
+
+    if (action == "activate" || action == "start")
+    {
+        success = analyzerManager->activate(name);
+        
+        // Clear buffers on activation for fresh session
+        if (success && name == "trdos")
+        {
+            TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(analyzerManager->getAnalyzer(name));
+            if (trdos)
+            {
+                trdos->clear();
+            }
+        }
+        message = success ? "Session activated" : "Failed to activate session";
+    }
+    else if (action == "deactivate" || action == "stop")
+    {
+        success = analyzerManager->deactivate(name);
+        message = "Session deactivated";
+    }
+    else
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid action: " + action + " (expected: activate, deactivate)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    if (!success && action == "activate")
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = message;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["analyzer_id"] = name;
+    ret["action"] = action;
+    ret["success"] = success;
+    ret["message"] = message;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/analyzer/{name}/raw/fdc
+/// @brief Get raw FDC events from an analyzer
+void EmulatorAPI::getAnalyzerRawFDC(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id, const std::string& name) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    AnalyzerManager* analyzerManager = context && context->pDebugManager 
+        ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+
+    if (!analyzerManager || !analyzerManager->hasAnalyzer(name))
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Unknown analyzer: " + name;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse limit parameter
+    size_t limit = 100;  // Default
+    auto limitParam = req->getParameter("limit");
+    if (!limitParam.empty())
+    {
+        try
+        {
+            limit = std::stoul(limitParam);
+        }
+        catch (...)
+        {
+            // Keep default
+        }
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["analyzer_id"] = name;
+
+    // TRDOSAnalyzer specific raw FDC event handling
+    if (name == "trdos")
+    {
+        TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(analyzerManager->getAnalyzer(name));
+        if (trdos)
+        {
+            auto events = trdos->getRawFDCEvents();
+            Json::Value eventsJson(Json::arrayValue);
+
+            size_t start = (events.size() > limit) ? events.size() - limit : 0;
+            for (size_t i = start; i < events.size(); i++)
+            {
+                const auto& ev = events[i];
+                Json::Value jsonEv;
+                
+                // Timing
+                jsonEv["tstate"] = static_cast<Json::UInt64>(ev.tstate);
+                jsonEv["frame_number"] = static_cast<Json::UInt>(ev.frameNumber);
+                
+                // FDC registers
+                jsonEv["command_reg"] = static_cast<unsigned>(ev.commandReg);
+                jsonEv["status_reg"] = static_cast<unsigned>(ev.statusReg);
+                jsonEv["track_reg"] = static_cast<unsigned>(ev.trackReg);
+                jsonEv["sector_reg"] = static_cast<unsigned>(ev.sectorReg);
+                jsonEv["data_reg"] = static_cast<unsigned>(ev.dataReg);
+                jsonEv["system_reg"] = static_cast<unsigned>(ev.systemReg);
+                
+                // Z80 context
+                jsonEv["pc"] = ev.pc;
+                jsonEv["sp"] = ev.sp;
+                
+                // Main registers
+                jsonEv["af"] = static_cast<unsigned>((ev.a << 8) | ev.f);
+                jsonEv["bc"] = static_cast<unsigned>((ev.b << 8) | ev.c);
+                jsonEv["de"] = static_cast<unsigned>((ev.d << 8) | ev.e);
+                jsonEv["hl"] = static_cast<unsigned>((ev.h << 8) | ev.l);
+                
+                // Interrupt/Mode registers
+                jsonEv["iff1"] = static_cast<unsigned>(ev.iff1);
+                jsonEv["iff2"] = static_cast<unsigned>(ev.iff2);
+                jsonEv["im"] = static_cast<unsigned>(ev.im);
+                
+                // Stack snapshot
+                Json::Value stack(Json::arrayValue);
+                for (size_t j = 0; j < 16; ++j)
+                {
+                    stack.append(static_cast<unsigned>(ev.stack[j]));
+                }
+                jsonEv["stack"] = stack;
+
+                eventsJson.append(jsonEv);
+            }
+
+            ret["events"] = eventsJson;
+            ret["total_events"] = static_cast<Json::UInt64>(events.size());
+            ret["showing"] = static_cast<Json::UInt64>(eventsJson.size());
+        }
+    }
+    else
+    {
+        ret["events"] = Json::Value(Json::arrayValue);
+        ret["message"] = "Raw FDC events not supported for this analyzer";
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints
+/// @brief Get raw breakpoint events from an analyzer
+void EmulatorAPI::getAnalyzerRawBreakpoints(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                            const std::string& id, const std::string& name) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto* context = emulator->GetContext();
+    AnalyzerManager* analyzerManager = context && context->pDebugManager 
+        ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+
+    if (!analyzerManager || !analyzerManager->hasAnalyzer(name))
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Unknown analyzer: " + name;
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse limit parameter
+    size_t limit = 100;  // Default
+    auto limitParam = req->getParameter("limit");
+    if (!limitParam.empty())
+    {
+        try
+        {
+            limit = std::stoul(limitParam);
+        }
+        catch (...)
+        {
+            // Keep default
+        }
+    }
+
+    Json::Value ret;
+    ret["emulator_id"] = id;
+    ret["analyzer_id"] = name;
+
+    // TRDOSAnalyzer specific raw breakpoint event handling
+    if (name == "trdos")
+    {
+        TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(analyzerManager->getAnalyzer(name));
+        if (trdos)
+        {
+            auto events = trdos->getRawBreakpointEvents();
+            Json::Value eventsJson(Json::arrayValue);
+
+            size_t start = (events.size() > limit) ? events.size() - limit : 0;
+            for (size_t i = start; i < events.size(); i++)
+            {
+                const auto& ev = events[i];
+                Json::Value jsonEv;
+                
+                // Timing
+                jsonEv["tstate"] = static_cast<Json::UInt64>(ev.tstate);
+                jsonEv["frame_number"] = static_cast<Json::UInt>(ev.frameNumber);
+                
+                // Breakpoint info
+                jsonEv["address"] = ev.address;
+                
+                // Z80 context
+                jsonEv["pc"] = ev.pc;
+                jsonEv["sp"] = ev.sp;
+                
+                // Main registers
+                jsonEv["af"] = ev.af;
+                jsonEv["bc"] = ev.bc;
+                jsonEv["de"] = ev.de;
+                jsonEv["hl"] = ev.hl;
+                
+                // Alternate registers
+                jsonEv["af_"] = ev.af_;
+                jsonEv["bc_"] = ev.bc_;
+                jsonEv["de_"] = ev.de_;
+                jsonEv["hl_"] = ev.hl_;
+                
+                // Index registers
+                jsonEv["ix"] = ev.ix;
+                jsonEv["iy"] = ev.iy;
+                
+                // Special registers
+                jsonEv["i"] = static_cast<unsigned>(ev.i);
+                jsonEv["r"] = ev.r;
+                
+                jsonEv["iff1"] = static_cast<unsigned>(ev.iff1);
+                jsonEv["iff2"] = static_cast<unsigned>(ev.iff2);
+                jsonEv["im"] = static_cast<unsigned>(ev.im);
+                
+                // Stack snapshot
+                Json::Value stack(Json::arrayValue);
+                for (size_t j = 0; j < 16; ++j)
+                {
+                    stack.append(static_cast<unsigned>(ev.stack[j]));
+                }
+                jsonEv["stack"] = stack;
+
+                eventsJson.append(jsonEv);
+            }
+
+            ret["events"] = eventsJson;
+            ret["total_events"] = static_cast<Json::UInt64>(events.size());
+            ret["showing"] = static_cast<Json::UInt64>(eventsJson.size());
+        }
+    }
+    else
+    {
+        ret["events"] = Json::Value(Json::arrayValue);
+        ret["message"] = "Raw breakpoint events not supported for this analyzer";
+    }
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 }  // namespace v1
 }  // namespace api

@@ -288,11 +288,14 @@ GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakp
 
 ### Analyzers
 ```
-GET    /api/v1/emulator/{id}/analyzers              # List all analyzers
-GET    /api/v1/emulator/{id}/analyzer/{name}        # Get analyzer status
-PUT    /api/v1/emulator/{id}/analyzer/{name}        # Enable/disable analyzer
-GET    /api/v1/emulator/{id}/analyzer/{name}/events # Get captured events
-DELETE /api/v1/emulator/{id}/analyzer/{name}/events # Clear events
+GET    /api/v1/emulator/{id}/analyzers                       # List all analyzers
+GET    /api/v1/emulator/{id}/analyzer/{name}                 # Get analyzer status
+PUT    /api/v1/emulator/{id}/analyzer/{name}                 # Enable/disable analyzer
+GET    /api/v1/emulator/{id}/analyzer/{name}/events          # Get semantic events
+DELETE /api/v1/emulator/{id}/analyzer/{name}/events          # Clear events
+POST   /api/v1/emulator/{id}/analyzer/{name}/session         # Session control (activate/deactivate)
+GET    /api/v1/emulator/{id}/analyzer/{name}/raw/fdc         # Get raw FDC events
+GET    /api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints # Get raw breakpoint events
 ```
 
 **Example - List Analyzers**:
@@ -331,6 +334,123 @@ Response:
   "total_events": 47
 }
 ```
+
+**Example - Session Control (Activate)**:
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/analyzer/trdos/session \
+     -H "Content-Type: application/json" \
+     -d '{"action": "activate"}'
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "analyzer_id": "trdos",
+  "action": "activate",
+  "success": true,
+  "message": "Session activated"
+}
+```
+
+> [!NOTE]
+> Session control actions:
+> - `activate` - Activates analyzer and clears event buffers for fresh session
+> - `deactivate` - Deactivates analyzer and closes session
+
+**Example - Get Raw FDC Events**:
+```bash
+curl "http://localhost:8090/api/v1/emulator/{id}/analyzer/trdos/raw/fdc?limit=5"
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "analyzer_id": "trdos",
+  "total_events": 96,
+  "showing": 5,
+  "events": [
+    {
+      "tstate": 15386112,
+      "frame_number": 22725,
+      "pc": 16075,
+      "sp": 65320,
+      "af": 6172,
+      "bc": 2057,
+      "de": 23802,
+      "hl": 23802,
+      "command_reg": 0,
+      "status_reg": 32,
+      "track_reg": 1,
+      "sector_reg": 14,
+      "data_reg": 9,
+      "system_reg": 0,
+      "iff1": 1,
+      "iff2": 1,
+      "im": 1,
+      "stack": [91, 62, 155, 1, 147, 62, 9, 2, 134, 30, 97, 94, 33, 2, 66, 19]
+    }
+  ]
+}
+```
+
+> [!IMPORTANT]
+> **JSON Format**: All values are JSON numbers (not hex strings) for programmatic use.
+> - PC, SP, registers: numeric (e.g., `"pc": 16075` = 0x3ECB)
+> - Stack bytes: array of numbers (e.g., `[91, 62, ...]`)
+>
+> **Raw FDC Events** include:
+> - Full Z80 main registers (AF, BC, DE, HL)
+> - FDC register snapshot (command, status, track, sector, data, system)
+> - 16-byte stack snapshot for call chain reconstruction
+> - Timing (tstate, frame_number)
+
+**Example - Get Raw Breakpoint Events**:
+```bash
+curl "http://localhost:8090/api/v1/emulator/{id}/analyzer/trdos/raw/breakpoints?limit=2"
+```
+Response:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "analyzer_id": "trdos",
+  "total_events": 7,
+  "showing": 2,
+  "events": [
+    {
+      "tstate": 6243328,
+      "frame_number": 12486,
+      "address": 119,
+      "pc": 119,
+      "sp": 65326,
+      "af": 12570,
+      "bc": 6,
+      "de": 0,
+      "hl": 0,
+      "af_": 0,
+      "bc_": 0,
+      "de_": 0,
+      "hl_": 0,
+      "ix": 23610,
+      "iy": 23738,
+      "i": 63,
+      "r": 18,
+      "iff1": 1,
+      "iff2": 1,
+      "im": 1,
+      "stack": [61, 47, 0, 0, 0, 0, 97, 94, 33, 2, 66, 19, 97, 94, 9, 19]
+    }
+  ]
+}
+```
+
+> [!IMPORTANT]
+> **Raw Breakpoint Events** include complete Z80 state:
+> - Main registers: AF, BC, DE, HL
+> - Alternate registers: AF', BC', DE', HL'
+> - Index registers: IX, IY
+> - Special registers: I, R
+> - 16-byte stack snapshot
+> - Timing information (tstate, frame_number)
 
 ### Snapshots
 

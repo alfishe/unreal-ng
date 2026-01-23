@@ -927,13 +927,125 @@ class TRDOSAnalyzerVerifier:
         else:
             self.print_warning("Event Fidelity Check Failed (Missing fields)")
             
-        # Dump events to file for analysis
-        with open('trdos_events.json', 'w') as f:
+        # Dump semantic events to file for analysis
+        with open('trdos_semantic_events.json', 'w') as f:
             import json
             json.dump(events, f, indent=2)
-        self.print_info(f"Dumped {len(events)} events to trdos_events.json")
+        self.print_info(f"Dumped {len(events)} semantic events to trdos_semantic_events.json")
 
         return all_found and fidelity_passed
+    
+    def get_raw_session_data(self) -> Tuple[bool, Dict, Dict]:
+        """Retrieve raw FDC and breakpoint events from analyzer session"""
+        self.print_step("6.5", "Retrieving raw session data...")
+        
+        # Get raw FDC events
+        fdc_url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/analyzer/trdos/raw/fdc?limit=10"
+        bp_url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/analyzer/trdos/raw/breakpoints?limit=10"
+        
+        fdc_data = {}
+        bp_data = {}
+        
+        try:
+            # Fetch raw FDC events
+            response = self.session.get(fdc_url, timeout=5)
+            response.raise_for_status()
+            fdc_data = response.json()
+            
+            fdc_events = fdc_data.get('events', [])
+            self.print_success(f"Retrieved {len(fdc_events)} raw FDC event(s)")
+            
+            if fdc_events:
+                # Show sample FDC event structure
+                print(f"\n{Colors.BOLD}Sample Raw FDC Event:{Colors.END}")
+                sample = fdc_events[0]
+                print(f"  tstate: {sample.get('tstate')}")
+                print(f"  frame_number: {sample.get('frame_number')}")
+                print(f"  pc: 0x{sample.get('pc', 0):04X}")
+                print(f"  sp: 0x{sample.get('sp', 0):04X}")
+                print(f"  status_reg: 0x{sample.get('status_reg', 0):02X}")
+                print(f"  track_reg: {sample.get('track_reg', 0)}")
+                print(f"  sector_reg: {sample.get('sector_reg', 0)}")
+                stack = sample.get('stack', [])
+                if stack:
+                    stack_hex = ' '.join([f"{b:02X}" for b in stack[:8]])
+                    print(f"  stack (first 8 bytes): {stack_hex}")
+        except requests.exceptions.HTTPError as e:
+            self.print_error(f"HTTP error retrieving raw FDC events: {e}")
+            return False, {}, {}
+        except Exception as e:
+            self.print_error(f"Failed to retrieve raw FDC events: {e}")
+            return False, {}, {}
+        
+        try:
+            # Fetch raw breakpoint events
+            response = self.session.get(bp_url, timeout=5)
+            response.raise_for_status()
+            bp_data = response.json()
+            
+            bp_events = bp_data.get('events', [])
+            self.print_success(f"Retrieved {len(bp_events)} raw breakpoint event(s)")
+            
+            if bp_events:
+                # Show sample breakpoint event structure
+                print(f"\n{Colors.BOLD}Sample Raw Breakpoint Event:{Colors.END}")
+                sample = bp_events[0]
+                print(f"  tstate: {sample.get('tstate')}")
+                print(f"  address: 0x{sample.get('address', 0):04X}")
+                print(f"  pc: 0x{sample.get('pc', 0):04X}")
+                print(f"  sp: 0x{sample.get('sp', 0):04X}")
+                print(f"  af: 0x{sample.get('af', 0):04X}")
+                print(f"  bc: 0x{sample.get('bc', 0):04X}")
+                print(f"  de: 0x{sample.get('de', 0):04X}")
+                print(f"  hl: 0x{sample.get('hl', 0):04X}")
+                print(f"  ix: 0x{sample.get('ix', 0):04X}")
+                print(f"  iy: 0x{sample.get('iy', 0):04X}")
+                stack = sample.get('stack', [])
+                if stack:
+                    stack_hex = ' '.join([f"{b:02X}" for b in stack[:8]])
+                    print(f"  stack (first 8 bytes): {stack_hex}")
+                    
+        except requests.exceptions.HTTPError as e:
+            self.print_error(f"HTTP error retrieving raw breakpoint events: {e}")
+            return False, {}, {}
+        except Exception as e:
+            self.print_error(f"Failed to retrieve raw breakpoint events: {e}")
+            return False, {}, {}
+        
+        # Verify JSON structure (all values should be numbers, not hex strings)
+        self.print_info("Verifying JSON structure...")
+        if fdc_events:
+            sample = fdc_events[0]
+            if isinstance(sample.get('pc'), int):
+                self.print_success("✓ PC is numeric (not hex string)")
+            else:
+                self.print_error(f"✗ PC is not numeric: {type(sample.get('pc'))}")
+                
+            if isinstance(sample.get('status_reg'), int):
+                self.print_success("✓ status_reg is numeric")
+            else:
+                self.print_error(f"✗ status_reg is not numeric")
+                
+            stack = sample.get('stack', [])
+            if stack and isinstance(stack[0], int):
+                self.print_success("✓ Stack bytes are numeric")
+            else:
+                self.print_error(f"✗ Stack bytes are not numeric")
+        
+        # Dump raw data to files
+        if fdc_data:
+            with open('trdos_raw_fdc.json', 'w') as f:
+                import json
+                json.dump(fdc_data, f, indent=2)
+            self.print_info(f"Dumped raw FDC data to trdos_raw_fdc.json")
+            
+        if bp_data:
+            with open('trdos_raw_breakpoints.json', 'w') as f:
+                import json
+                json.dump(bp_data, f, indent=2)
+            self.print_info(f"Dumped raw breakpoint data to trdos_raw_breakpoints.json")
+        
+        return True, fdc_data, bp_data
         
     def deactivate_analyzer(self) -> bool:
         """Deactivate TR-DOS analyzer"""
@@ -1034,6 +1146,11 @@ class TRDOSAnalyzerVerifier:
         
         # Step 6: Verify events
         verification_passed = self.verify_events(events)
+        
+        # Step 6.5: Retrieve raw session data
+        raw_success, fdc_data, bp_data = self.get_raw_session_data()
+        if not raw_success:
+            self.print_warning("Raw session data retrieval failed, but continuing...")
         
         # Step 7: Deactivate analyzer
         self.deactivate_analyzer()

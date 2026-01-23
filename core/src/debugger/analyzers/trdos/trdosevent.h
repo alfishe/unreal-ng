@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <array>
 
 /// TR-DOS event types
 enum class TRDOSEventType : uint8_t
@@ -45,13 +46,72 @@ enum class TRDOSEventType : uint8_t
     PROTECTION_DETECTED,// Copy protection detected
 };
 
+// ==================== Layer 1: Raw Events ====================
+// Fast capture with full Z80 context for offline analysis
+
+/// Raw FDC port access event (captured on every port I/O)
+struct RawFDCEvent
+{
+    // Timing
+    uint64_t tstate;
+    uint32_t frameNumber;
+    uint64_t timestamp;  // Duplicate of tstate for RingBuffer compatibility
+    
+    // FDC Port Access
+    uint8_t port;              // 0x1F, 0x3F, 0x5F, 0x7F, 0xFF
+    uint8_t direction;         // 0=READ(IN), 1=WRITE(OUT)
+    uint8_t value;             // Value read/written
+    
+    // FDC Register Snapshot
+    uint8_t commandReg;
+    uint8_t statusReg;
+    uint8_t trackReg;
+    uint8_t sectorReg;
+    uint8_t dataReg;
+    uint8_t systemReg;         // Port 0xFF (drive/side/density)
+    
+    // Z80 Context
+    uint16_t pc;
+    uint16_t sp;
+    uint8_t a, f, b, c, d, e, h, l;
+    uint8_t iff1, iff2, im;
+    
+    // Stack snapshot (8 return addresses for call chain reconstruction)
+    // See TDD Stack Trace Validation section for address validation rules
+    std::array<uint8_t, 16> stack;
+};
+
+/// Raw breakpoint hit event (captured on ROM entry points)
+struct RawBreakpointEvent
+{
+    // Timing
+    uint64_t tstate;
+    uint32_t frameNumber;
+    uint64_t timestamp;  // Duplicate of tstate for RingBuffer compatibility
+    
+    // Breakpoint
+    uint16_t address;          // Breakpoint address hit
+    
+    // Z80 Context (full snapshot)
+    uint16_t pc;
+    uint16_t sp;
+    uint16_t af, bc, de, hl;
+    uint16_t af_, bc_, de_, hl_;  // Alternate set
+    uint16_t ix, iy;
+    uint8_t i, r;
+    uint8_t iff1, iff2, im;
+    
+    // Stack snapshot (8 return addresses)
+    std::array<uint8_t, 16> stack;
+};
+
 /// TR-DOS command types
 enum class TRDOSCommand : uint8_t
 {
     UNKNOWN = 0,
     LOAD,
     SAVE,
-    CAT,
+    CAT,        // LIST
     RUN,
     FORMAT,
     ERASE,
@@ -59,6 +119,8 @@ enum class TRDOSCommand : uint8_t
     VERIFY,
     MERGE,
     MOVE,
+    NEW,        // Rename
+    GOTO,       // Change drive
 };
 
 /// Semantic event captured by the analyzer

@@ -130,6 +130,13 @@ public:
     ADD_METHOD_TO(EmulatorAPI::setAnalyzer, "/api/v1/emulator/{id}/analyzer/{name}", drogon::Put, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getAnalyzerEvents, "/api/v1/emulator/{id}/analyzer/{name}/events", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::clearAnalyzerEvents, "/api/v1/emulator/{id}/analyzer/{name}/events", drogon::Delete);
+    
+    // Session control
+    ADD_METHOD_TO(EmulatorAPI::analyzerSession, "/api/v1/emulator/{id}/analyzer/{name}/session", drogon::Post);
+    
+    // Raw data access
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzerRawFDC, "/api/v1/emulator/{id}/analyzer/{name}/raw/fdc", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzerRawBreakpoints, "/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints", drogon::Get);
     // endregion Analyzer Management
 
     // region Memory State (implementation: api/state_memory_api.cpp)
@@ -398,6 +405,17 @@ public:
 
     void clearAnalyzerEvents(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id, const std::string& name) const;
+    
+    // Session control
+    void analyzerSession(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id, const std::string& name) const;
+    
+    // Raw data access
+    void getAnalyzerRawFDC(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& name) const;
+    
+    void getAnalyzerRawBreakpoints(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id, const std::string& name) const;
     // endregion Analyzer Management Methods
 
     // region Memory State Methods (implementation: api/state_memory_api.cpp)

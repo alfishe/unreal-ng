@@ -115,6 +115,8 @@ std::string TRDOSEvent::format() const
 TRDOSAnalyzer::TRDOSAnalyzer(EmulatorContext* context)
     : _context(context)
     , _events(SEMANTIC_BUFFER_SIZE)
+    , _rawFdcEvents(RAW_BUFFER_SIZE)
+    , _rawBreakpointEvents(RAW_BUFFER_SIZE)
 {
     _uuid = UUID::Generate().toString();
 }
@@ -251,6 +253,10 @@ void TRDOSAnalyzer::onDeactivate()
 
 void TRDOSAnalyzer::onBreakpointHit(uint16_t address, Z80* cpu)
 {
+    // Layer 1: Capture raw breakpoint event with full context
+    captureRawBreakpointEvent(address, cpu);
+    
+    // Layer 2: Semantic processing
     switch (address)
     {
         case BP_TRDOS_ENTRY:
@@ -308,6 +314,14 @@ void TRDOSAnalyzer::onFrameEnd()
 
 void TRDOSAnalyzer::onFDCCommand(uint8_t command, const WD1793& fdc)
 {
+    // Layer 1: Capture raw FDC event with full context
+    Z80* cpu = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
+    if (cpu)
+    {
+        captureRawFDCEvent(fdc, cpu);
+    }
+    
+    // Layer 2: Semantic processing
     if (_state == TRDOSAnalyzerState::IDLE)
     {
         // Relax restriction: Monitor FDC even in IDLE to catch custom loaders.
@@ -538,7 +552,32 @@ size_t TRDOSAnalyzer::getEventCount() const
 void TRDOSAnalyzer::clear()
 {
     _events.clear();
+    _rawFdcEvents.clear();
+    _rawBreakpointEvents.clear();
+    _rawBuffersOverflow = false;
     _lastQueryTime = 0;
+}
+
+// ==================== Raw Event Query API ====================
+
+std::vector<RawFDCEvent> TRDOSAnalyzer::getRawFDCEvents() const
+{
+    return _rawFdcEvents.getAll();
+}
+
+std::vector<RawFDCEvent> TRDOSAnalyzer::getRawFDCEventsSince(uint64_t timestamp) const
+{
+    return _rawFdcEvents.getSince(timestamp);
+}
+
+std::vector<RawBreakpointEvent> TRDOSAnalyzer::getRawBreakpointEvents() const
+{
+    return _rawBreakpointEvents.getAll();
+}
+
+std::vector<RawBreakpointEvent> TRDOSAnalyzer::getRawBreakpointEventsSince(uint64_t timestamp) const
+{
+    return _rawBreakpointEvents.getSince(timestamp);
 }
 
 // ==================== Private methods ====================
@@ -714,4 +753,104 @@ std::string TRDOSAnalyzer::readFilenameFromMemory(uint16_t address)
     }
     
     return filename;
+}
+
+void TRDOSAnalyzer::captureRawFDCEvent(const WD1793& fdc, Z80* cpu)
+{
+    // Overflow protection: stop capturing if buffer is full
+    if (_rawFdcEvents.isFull())
+    {
+        _rawBuffersOverflow = true;
+        return;
+    }
+    
+    RawFDCEvent event{};
+    event.tstate = cpu ? cpu->tt : 0;
+    event.timestamp = event.tstate;  // Keep in sync for RingBuffer
+    event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    
+    // FDC state - use actual method names from WD1793
+    event.commandReg = 0;  // TODO: WD1793 doesn't expose command register directly
+    event.statusReg = fdc.getStatusRegister();
+    event.trackReg = fdc.getTrackRegister();
+    event.sectorReg = fdc.getSectorRegister();
+    event.dataReg = fdc.getDataRegister();
+    event.systemReg = 0;  // TODO: System register (port 0xFF) not in WD1793 interface
+    
+    // Z80 context
+    if (cpu)
+    {
+        event.pc = cpu->pc;
+        event.sp = cpu->sp;
+        event.a = cpu->a;
+        event.f = cpu->f;
+        event.b = cpu->b;
+        event.c = cpu->c;
+        event.d = cpu->d;
+        event.e = cpu->e;
+        event.h = cpu->h;
+        event.l = cpu->l;
+        event.iff1 = cpu->iff1;
+        event.iff2 = cpu->iff2;
+        event.im = cpu->im;
+        
+        // Capture stack snapshot (16 bytes = 8 return addresses)
+        if (_context && _context->pMemory)
+        {
+            for (int i = 0; i < 16; ++i)
+            {
+                event.stack[i] = _context->pMemory->DirectReadFromZ80Memory(cpu->sp + i);
+            }
+        }
+    }
+    
+    _rawFdcEvents.push(std::move(event));
+}
+
+void TRDOSAnalyzer::captureRawBreakpointEvent(uint16_t address, Z80* cpu)
+{
+    // Overflow protection: stop capturing if buffer is full
+    if (_rawBreakpointEvents.isFull())
+    {
+        _rawBuffersOverflow = true;
+        return;
+    }
+    
+    RawBreakpointEvent event{};
+    event.tstate = cpu ? cpu->tt : 0;
+    event.timestamp = event.tstate;  // Keep in sync for RingBuffer
+    event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    event.address = address;
+    
+    if (cpu)
+    {
+        event.pc = cpu->pc;
+        event.sp = cpu->sp;
+        event.af = (cpu->a << 8) | cpu->f;
+        event.bc = (cpu->b << 8) | cpu->c;
+        event.de = (cpu->d << 8) | cpu->e;
+        event.hl = (cpu->h << 8) | cpu->l;
+        event.af_ = (cpu->alt.a << 8) | cpu->alt.f;
+        event.bc_ = (cpu->alt.b << 8) | cpu->alt.c;
+        event.de_ = (cpu->alt.d << 8) | cpu->alt.e;
+        event.hl_ = (cpu->alt.h << 8) | cpu->alt.l;
+        event.ix = cpu->ix;
+        event.iy = cpu->iy;
+        event.i = cpu->i;
+        event.r = (cpu->r_hi << 8) | cpu->r_low;  // R register is split
+        event.iff1 = cpu->iff1;
+        event.iff2 = cpu->iff2;
+        event.im = cpu->im;
+        
+        // Capture stack snapshot
+        if (_context && _context->pMemory)
+        {
+            for (int i = 0; i < 16; ++i)
+            {
+                event.stack[i] = _context->pMemory->DirectReadFromZ80Memory(cpu->sp + i);
+            }
+        }
+    }
+    
+    _rawBreakpointEvents.push(std::move(event));
 }

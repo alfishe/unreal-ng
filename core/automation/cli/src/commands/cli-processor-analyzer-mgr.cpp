@@ -41,12 +41,20 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
     {
         std::stringstream ss;
         ss << "Analyzer commands:" << NEWLINE;
-        ss << "  analyzer list                   - List all registered analyzers" << NEWLINE;
-        ss << "  analyzer enable <name>          - Activate an analyzer" << NEWLINE;
-        ss << "  analyzer disable <name>         - Deactivate an analyzer" << NEWLINE;
-        ss << "  analyzer status [<name>]        - Show analyzer status" << NEWLINE;
-        ss << "  analyzer <name> events [--limit=N]  - Get captured events" << NEWLINE;
-        ss << "  analyzer <name> clear           - Clear event buffer" << NEWLINE;
+        ss << "  analyzer list                        - List all registered analyzers" << NEWLINE;
+        ss << "  analyzer activate <name>             - Activate analyzer and start new session" << NEWLINE;
+        ss << "  analyzer deactivate <name>           - Deactivate analyzer and close session" << NEWLINE;
+        ss << "  analyzer pause <name>                - Pause event capture (keep session open)" << NEWLINE;
+        ss << "  analyzer resume <name>               - Resume event capture" << NEWLINE;
+        ss << "  analyzer status [<name>]             - Show analyzer status" << NEWLINE;
+        ss << "  analyzer <name> events [--limit=N]   - Get semantic events" << NEWLINE;
+        ss << "  analyzer <name> raw fdc [--limit=N]  - Get raw FDC events" << NEWLINE;
+        ss << "  analyzer <name> raw breakpoints      - Get raw breakpoint events" << NEWLINE;
+        ss << "  analyzer <name> clear                - Clear event buffer" << NEWLINE;
+        ss << "" << NEWLINE;
+        ss << "Legacy aliases:" << NEWLINE;
+        ss << "  analyzer enable <name>               - Alias for 'activate'" << NEWLINE;
+        ss << "  analyzer disable <name>              - Alias for 'deactivate'" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -79,12 +87,12 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
         return;
     }
 
-    // ==================== enable <name> ====================
-    if (subcommand == "enable")
+    // ==================== activate|enable <name> ====================
+    if (subcommand == "activate" || subcommand == "enable")
     {
         if (args.size() < 2)
         {
-            session.SendResponse(std::string("Error: analyzer enable requires a name.") + NEWLINE);
+            session.SendResponse(std::string("Error: analyzer activate requires a name.") + NEWLINE);
             return;
         }
 
@@ -93,7 +101,13 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
         
         if (success)
         {
-            session.SendResponse("Analyzer '" + name + "' activated." + NEWLINE);
+            // Also clear buffers on activation to start fresh session
+            if (name == "trdos")
+            {
+                TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(manager->getAnalyzer(name));
+                if (trdos) trdos->clear();
+            }
+            session.SendResponse("Analyzer '" + name + "' activated (new session started)." + NEWLINE);
         }
         else
         {
@@ -102,12 +116,12 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
         return;
     }
 
-    // ==================== disable <name> ====================
-    if (subcommand == "disable")
+    // ==================== deactivate|disable <name> ====================
+    if (subcommand == "deactivate" || subcommand == "disable")
     {
         if (args.size() < 2)
         {
-            session.SendResponse(std::string("Error: analyzer disable requires a name.") + NEWLINE);
+            session.SendResponse(std::string("Error: analyzer deactivate requires a name.") + NEWLINE);
             return;
         }
 
@@ -116,11 +130,60 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
         
         if (success)
         {
-            session.SendResponse("Analyzer '" + name + "' deactivated." + NEWLINE);
+            session.SendResponse("Analyzer '" + name + "' deactivated (session closed)." + NEWLINE);
         }
         else
         {
             session.SendResponse("Error: Failed to deactivate '" + name + "'." + NEWLINE);
+        }
+        return;
+    }
+
+    // ==================== pause <name> ====================
+    if (subcommand == "pause")
+    {
+        if (args.size() < 2)
+        {
+            session.SendResponse(std::string("Error: analyzer pause requires a name.") + NEWLINE);
+            return;
+        }
+
+        std::string name = args[1];
+        // For now, pause = deactivate but keep data
+        // TODO: Implement proper pause (stop capture without deactivating breakpoints)
+        bool success = manager->deactivate(name);
+        
+        if (success)
+        {
+            session.SendResponse("Analyzer '" + name + "' paused (session data preserved)." + NEWLINE);
+        }
+        else
+        {
+            session.SendResponse("Error: Failed to pause '" + name + "'." + NEWLINE);
+        }
+        return;
+    }
+
+    // ==================== resume <name> ====================
+    if (subcommand == "resume")
+    {
+        if (args.size() < 2)
+        {
+            session.SendResponse(std::string("Error: analyzer resume requires a name.") + NEWLINE);
+            return;
+        }
+
+        std::string name = args[1];
+        // Resume = reactivate without clearing
+        bool success = manager->activate(name);
+        
+        if (success)
+        {
+            session.SendResponse("Analyzer '" + name + "' resumed." + NEWLINE);
+        }
+        else
+        {
+            session.SendResponse("Error: Failed to resume '" + name + "'." + NEWLINE);
         }
         return;
     }
@@ -243,6 +306,98 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
             else
             {
                 session.SendResponse("Error: events not implemented for '" + analyzerName + "'." + NEWLINE);
+            }
+            return;
+        }
+
+        // ==================== <name> raw fdc/breakpoints ====================
+        if (action == "raw")
+        {
+            if (args.size() < 3)
+            {
+                session.SendResponse("Error: analyzer " + analyzerName + " raw requires a subcommand (fdc|breakpoints)." + NEWLINE);
+                return;
+            }
+
+            std::string rawType = args[2];
+
+            if (analyzerName == "trdos")
+            {
+                TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(manager->getAnalyzer(analyzerName));
+                if (!trdos)
+                {
+                    session.SendResponse(std::string("Error: TRDOSAnalyzer not available.") + NEWLINE);
+                    return;
+                }
+
+                std::stringstream ss;
+
+                if (rawType == "fdc")
+                {
+                    // Parse --limit option
+                    size_t limit = 50;
+                    for (size_t i = 3; i < args.size(); i++)
+                    {
+                        if (args[i].substr(0, 8) == "--limit=")
+                        {
+                            limit = std::stoul(args[i].substr(8));
+                        }
+                    }
+
+                    auto events = trdos->getRawFDCEvents();
+                    size_t start = (events.size() > limit) ? events.size() - limit : 0;
+
+                    ss << "Raw FDC Events (" << events.size() << " total):" << NEWLINE;
+                    for (size_t i = start; i < events.size(); i++)
+                    {
+                        const auto& e = events[i];
+                        ss << "[" << std::setw(10) << e.tstate << "] "
+                           << "Port=" << std::hex << std::setw(2) << std::setfill('0') << (int)e.port << std::dec
+                           << " " << (e.direction ? "OUT" : "IN")
+                           << " Val=0x" << std::hex << std::setw(2) << std::setfill('0') << (int)e.value << std::dec
+                           << " PC=0x" << std::hex << std::setw(4) << std::setfill('0') << e.pc << std::dec
+                           << NEWLINE;
+                    }
+
+                    if (events.empty())
+                    {
+                        ss << "(no raw FDC events captured)" << NEWLINE;
+                    }
+                    else if (start > 0)
+                    {
+                        ss << "... (" << start << " earlier events not shown, use --limit=N)" << NEWLINE;
+                    }
+                }
+                else if (rawType == "breakpoints")
+                {
+                    auto events = trdos->getRawBreakpointEvents();
+                    ss << "Raw Breakpoint Events (" << events.size() << " total):" << NEWLINE;
+
+                    for (const auto& e : events)
+                    {
+                        ss << "[" << std::setw(10) << e.tstate << "] "
+                           << "BP=0x" << std::hex << std::setw(4) << std::setfill('0') << e.address
+                           << " PC=0x" << std::setw(4) << std::setfill('0') << e.pc
+                           << " SP=0x" << std::setw(4) << std::setfill('0') << e.sp << std::dec
+                           << NEWLINE;
+                    }
+
+                    if (events.empty())
+                    {
+                        ss << "(no raw breakpoint events captured)" << NEWLINE;
+                    }
+                }
+                else
+                {
+                    session.SendResponse("Error: Unknown raw type '" + rawType + "'. Use 'fdc' or 'breakpoints'." + NEWLINE);
+                    return;
+                }
+
+                session.SendResponse(ss.str());
+            }
+            else
+            {
+                session.SendResponse("Error: raw data not implemented for '" + analyzerName + "'." + NEWLINE);
             }
             return;
         }

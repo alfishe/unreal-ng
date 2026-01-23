@@ -87,7 +87,21 @@ public:
     /// Get event count
     size_t getEventCount() const;
     
-    /// Clear all captured events
+    // ==================== Raw Event Query API ====================
+    
+    /// Get all raw FDC events
+    std::vector<RawFDCEvent> getRawFDCEvents() const;
+    
+    /// Get raw FDC events since T-state timestamp
+    std::vector<RawFDCEvent> getRawFDCEventsSince(uint64_t timestamp) const;
+    
+    /// Get all raw breakpoint events
+    std::vector<RawBreakpointEvent> getRawBreakpointEvents() const;
+    
+    /// Get raw breakpoint events since T-state timestamp
+    std::vector<RawBreakpointEvent> getRawBreakpointEventsSince(uint64_t timestamp) const;
+    
+    /// Clear all captured events (both raw and semantic)
     void clear();
     
     /// Get current analyzer state
@@ -113,12 +127,19 @@ private:
     
     // Event storage
     RingBuffer<TRDOSEvent> _events;
+    RingBuffer<RawFDCEvent> _rawFdcEvents;
+    RingBuffer<RawBreakpointEvent> _rawBreakpointEvents;
     
     // Tracking for getNewEvents()
     uint64_t _lastQueryTime = 0;
     
+    // Overflow protection
+    bool _rawBuffersOverflow = false;
+    
     // Private methods
     void emitEvent(TRDOSEvent&& event);
+    void captureRawFDCEvent(const WD1793& fdc, Z80* cpu);
+    void captureRawBreakpointEvent(uint16_t address, Z80* cpu);
     void handleTRDOSEntry(Z80* cpu);
     void handleCommandDispatch(Z80* cpu);
     void handleTRDOSExit(Z80* cpu);
