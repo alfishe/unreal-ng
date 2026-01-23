@@ -594,6 +594,121 @@ class TRDOSAnalyzerVerifier:
         """Capture screen to see command execution results"""
         self.print_step("5b", f"Capturing {description}...")
         return self.capture_screen_ocr(description)
+    
+    def verify_breakpoints(self) -> bool:
+        """Verify that analyzer breakpoints are registered"""
+        self.print_step("3.5", "Verifying analyzer breakpoints...")
+        
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/breakpoints"
+        
+        try:
+            response = self.session.get(url, timeout=5)
+            response.raise_for_status()
+            
+            result = response.json()
+            breakpoints = result.get('breakpoints', [])
+            
+            # Expected TR-DOS breakpoints
+            expected_bps = [0x3D00, 0x3D21, 0x0077]
+            # Execution breakpoints have execute=true (type is 'memory' or 'port', not 'execution')
+            found_bps = [bp.get('address') for bp in breakpoints if bp.get('execute') == True]
+            
+            self.print_info(f"Found {len(found_bps)} execution breakpoints: {[hex(addr) for addr in found_bps]}")
+            
+            for addr in expected_bps:
+                if addr in found_bps:
+                    self.print_success(f"Breakpoint registered at 0x{addr:04X}")
+                else:
+                    self.print_warning(f"Missing breakpoint at 0x{addr:04X}")
+            
+            return len(found_bps) > 0
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                self.print_warning("Breakpoint API not available")
+                return True  # Not critical
+            self.print_warning(f"Could not verify breakpoints: {e}")
+            return True  # Not critical
+        except Exception as e:
+            self.print_warning(f"Breakpoint verification failed: {e}")
+            return True  # Not critical
+    
+    def check_rom_state(self) -> Tuple[bool, int]:
+        """Check current ROM page"""
+        self.print_step("4.5", "Checking ROM state...")
+        
+        # Read current ROM page from memory (port 0x7FFD mirror or direct query)
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/memory/rom"
+        
+        try:
+            response = self.session.get(url, timeout=5)
+            if response.status_code == 404:
+                # Try alternative: read from system state
+                url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}"
+                response = self.session.get(url, timeout=5)
+                response.raise_for_status()
+                state = response.json()
+                rom_page = state.get('rom_page', -1)
+            else:
+                response.raise_for_status()
+                result = response.json()
+                rom_page = result.get('page', -1)
+            
+            if rom_page >= 0:
+                rom_names = {0: "Service ROM", 1: "TR-DOS ROM", 2: "128K Editor", 3: "48K BASIC (SOS)"}
+                rom_name = rom_names.get(rom_page, f"Unknown (page {rom_page})")
+                self.print_info(f"Current ROM: Page {rom_page} ({rom_name})")
+                
+                if rom_page == 1:
+                    self.print_success("TR-DOS ROM is paged in!")
+                elif rom_page == 3:
+                    self.print_warning("SOS ROM (48K BASIC) is paged - TR-DOS may be calling it")
+                else:
+                    self.print_warning(f"Unexpected ROM page: {rom_page}")
+                
+                return True, rom_page
+            else:
+                self.print_warning("Could not determine ROM page")
+                return False, -1
+                
+        except Exception as e:
+            self.print_warning(f"ROM state check failed: {e}")
+            return False, -1
+    
+    def check_analyzer_state(self) -> bool:
+        """Check analyzer internal state"""
+        self.print_step("5.5", "Checking analyzer state...")
+        
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/analyzer/trdos"
+        
+        try:
+            response = self.session.get(url, timeout=5)
+            response.raise_for_status()
+            
+            result = response.json()
+            enabled = result.get('enabled', False)
+            state = result.get('state', 'unknown')
+            event_count = result.get('event_count', 0)
+            
+            self.print_info(f"Analyzer enabled: {enabled}")
+            self.print_info(f"Analyzer state: {state}")
+            self.print_info(f"Event count: {event_count}")
+            
+            if not enabled:
+                self.print_error("Analyzer is not enabled!")
+                return False
+            
+            return True
+            
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                self.print_warning("Analyzer state API not available")
+                return True  # Not critical
+            self.print_warning(f"Could not check analyzer state: {e}")
+            return True  # Not critical
+        except Exception as e:
+            self.print_warning(f"Analyzer state check failed: {e}")
+            return True  # Not critical
             
     def get_events(self) -> Tuple[bool, List[Dict]]:
         """Retrieve analyzer events"""
@@ -731,9 +846,10 @@ class TRDOSAnalyzerVerifier:
         if not self.activate_analyzer():
             return False
         
-        # TODO: Verify analyzer state and breakpoints
-        self.print_info("Analyzer activated - breakpoints should be set at 0x3D00, 0x3D21")
-            
+        # Step 3.5: Verify breakpoints are registered (IMMEDIATELY after activation)
+        # This must happen before any commands to avoid false positives from breakpoint removal
+        self.verify_breakpoints()
+        
         # Step 4: TEST INJECTION - Inject LOAD command and verify it appears on screen
         # This tests the BasicEncoder injection mode (TR-DOS mode)
         if not self.verify_command_injection('LOAD'):
@@ -764,7 +880,10 @@ class TRDOSAnalyzerVerifier:
         if not success:
             self.deactivate_analyzer()
             return False
-            
+        
+        # Step 5.5: Check analyzer state
+        self.check_analyzer_state()
+        
         # Step 6: Verify events
         verification_passed = self.verify_events(events)
         

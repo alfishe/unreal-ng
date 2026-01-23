@@ -1056,15 +1056,16 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     // Write end-of-area marker
     memory->DirectWriteToZ80Memory(currentAddr++, 0x80);
     
+    
     // Set WORKSP to point after the buffer content
     memory->DirectWriteToZ80Memory(WORKSP, currentAddr & 0xFF);
     memory->DirectWriteToZ80Memory(WORKSP + 1, (currentAddr >> 8) & 0xFF);
     
-    // Also update STKBOT and STKEND for calculator stack
-    memory->DirectWriteToZ80Memory(STKBOT, currentAddr & 0xFF);
-    memory->DirectWriteToZ80Memory(STKBOT + 1, (currentAddr >> 8) & 0xFF);
-    memory->DirectWriteToZ80Memory(STKEND, currentAddr & 0xFF);
-    memory->DirectWriteToZ80Memory(STKEND + 1, (currentAddr >> 8) & 0xFF);
+    // DO NOT update STKBOT/STKEND in TR-DOS!
+    // TR-DOS manages its own stack, and modifying these system variables
+    // corrupts the return stack, causing hangs and screen corruption.
+    // Unlike 48K BASIC which uses these for calculator stack management,
+    // TR-DOS relies on the Z80 SP register and ROM stack handling.
     
     // Trigger screen refresh by injecting a keypress
     // This makes the injected text visible on screen by triggering the ROM's
