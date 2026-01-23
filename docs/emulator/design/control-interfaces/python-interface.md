@@ -191,6 +191,31 @@ class Memory:
         """Get direct view of ROM (read-only)"""
 ```
 
+### Physical Page Access
+
+> **Status**: ✅ Implemented (2026-01)
+
+Access physical memory pages directly, bypassing Z80 paging. Useful for ROM patching, shadow memory inspection, and cache/misc memory access.
+
+```python
+# Page types: "ram", "rom", "cache", "misc"
+
+# Read/write single byte from physical page
+value = emu.page_read("ram", 5, 0x100)        # page 5, offset 0x100
+emu.page_write("ram", 5, 0x100, 0xFF)
+
+# Block operations
+data = emu.page_read_block("rom", 2, 0, 256)  # Read 256 bytes from ROM page 2
+emu.page_write_block("ram", 7, 0x1000, data)  # Write block to RAM page 7
+
+# Get memory configuration
+info = emu.memory_info()
+# Returns: {
+#   'pages': {'ram_count': 256, 'rom_count': 64, 'cache_count': 4, 'misc_count': 4},
+#   'z80_banks': [{'bank': 0, 'start': 0, 'end': 16383, 'mapping': 'ROM0'}, ...]
+# }
+```
+
 ### BreakpointManager Class
 
 ```python
