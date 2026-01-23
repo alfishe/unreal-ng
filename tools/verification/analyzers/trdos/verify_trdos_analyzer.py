@@ -747,10 +747,33 @@ class TRDOSAnalyzerVerifier:
             
         # Print event summary
         print(f"\n{Colors.BOLD}Event Summary:{Colors.END}")
+        
+        # Map integer types to strings for verification
+        EVENT_TYPE_MAP = {
+            0: 'TRDOS_ENTRY',
+            1: 'TRDOS_EXIT',
+            2: 'COMMAND_START',
+            3: 'COMMAND_COMPLETE',
+            8: 'FDC_CMD_RESTORE',
+            9: 'FDC_CMD_SEEK',
+            10: 'FDC_CMD_STEP',
+            11: 'FDC_CMD_READ',
+            12: 'FDC_CMD_WRITE',
+            13: 'FDC_CMD_READ_ADDR',
+            14: 'FDC_CMD_READ_TRACK',
+            15: 'FDC_CMD_WRITE_TRACK',
+            16: 'SECTOR_TRANSFER'
+        }
+        
         event_types = {}
         for event in events:
-            event_type = event.get('type', 'UNKNOWN')
-            event_types[event_type] = event_types.get(event_type, 0) + 1
+            raw_type = event.get('type')
+            if isinstance(raw_type, int):
+                type_name = EVENT_TYPE_MAP.get(raw_type, f"UNKNOWN({raw_type})")
+            else:
+                type_name = str(raw_type)
+                
+            event_types[type_name] = event_types.get(type_name, 0) + 1
             
         for event_type, count in event_types.items():
             print(f"  {event_type}: {count}")
