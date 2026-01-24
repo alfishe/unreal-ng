@@ -1297,7 +1297,7 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     }
 
     // Filter: Only process frames from our adopted emulator
-    if (payload->_emulatorId != _emulator->GetId())
+    if (payload->_emulatorId != _emulator->GetUUID())
     {
         // This frame is from a different emulator instance - ignore it
         return;
