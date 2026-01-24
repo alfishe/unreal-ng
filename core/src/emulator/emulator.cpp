@@ -750,7 +750,9 @@ void Emulator::Resume(bool broadcast)
     _isPaused = false;
     // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
 
-    _isRunning = true;
+    // Note: Don't unconditionally set _isRunning = true here.
+    // In synchronous test mode, _isRunning may be false and should stay false.
+    // The main RunAsync() path handles _isRunning appropriately.
 
     // Update state and broadcast only if requested
     if (broadcast)

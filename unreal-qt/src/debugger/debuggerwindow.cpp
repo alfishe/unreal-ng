@@ -716,9 +716,8 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
     // Handle step over/out breakpoints
     if (breakpoint->note == STEP_OVER_NOTE)
     {
-        // Step-over breakpoints are now handled by the core Emulator::StepOver() method
-        // Just remove the breakpoint and continue
-        bpManager->RemoveBreakpointByID(breakpointID);
+        // Step-over breakpoints are handled by core Emulator::StepOver() lambda
+        // No action needed here - just let UI update proceed
     }
     else if (breakpoint->note == STEP_OUT_NOTE)
     {
@@ -819,8 +818,12 @@ void DebuggerWindow::stepOver()
         return;
 
     // Use the new core Emulator::StepOver() method
+    // Note: For step-in fallback (non-call instructions), this executes synchronously
+    // and we need to update UI. For actual step-over (call instructions), the UI
+    // will also update via breakpoint notification, but updating here is harmless.
     _emulator->StepOver();
-
+    
+    // Always update UI - handles both step-in fallback and ensures immediate feedback
     updateState();
 }
 

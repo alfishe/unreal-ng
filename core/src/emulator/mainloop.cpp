@@ -241,6 +241,13 @@ void MainLoop::OnCPUStep()
     if (!_context)
         return;
 
+    // Validate pointers before use
+    if (!_context->pScreen || !_context->pBetaDisk || !_context->pSoundManager)
+    {
+        MLOGERROR("MainLoop::OnCPUStep - null peripheral pointer detected");
+        return;
+    }
+
     _context->pScreen->UpdateScreen();  // Trigger screen update after each CPU command cycle
 
     _context->pBetaDisk->handleStep();

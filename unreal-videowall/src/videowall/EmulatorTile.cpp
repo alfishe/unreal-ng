@@ -14,7 +14,7 @@ EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) 
 {
     setFixedSize(TILE_WIDTH, TILE_HEIGHT);
     // Cache emulator UUID
-    _emulatorId = _emulator ? _emulator->GetUUID() : "";
+    _emulatorId = _emulator ? _emulator->GetId() : "";
     setFocusPolicy(Qt::StrongFocus);
     setAcceptDrops(true);
 
