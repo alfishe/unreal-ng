@@ -135,7 +135,31 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] Memory& memory = *_context->pMemory;
     [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
-    // Let debugger process step event
+    /// region  <Ports logic - ROM paging BEFORE breakpoint dispatch>
+    // IMPORTANT: ROM paging must happen BEFORE breakpoint dispatch so that 
+    // page-specific breakpoints (e.g., TR-DOS ROM at $1EDD) see the correct ROM page.
+    // Previously, breakpoints were checked before paging, causing Hazard #144:
+    // "Landmark Order Conflict" - page-specific breakpoints failed to match.
+
+    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
+    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
+    {
+        state.flags |= CF_TRDOS;
+
+        // Apply ROM page changes
+        memory.UpdateZ80Banks();
+    }
+    else if ((state.flags & CF_TRDOS) &&
+             (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
+    {
+        state.flags &= ~CF_TRDOS;
+
+        // Apply ROM page changes
+        memory.UpdateZ80Banks();
+    }
+    /// endregion  </Ports logic - ROM paging>
+
+    // Let debugger process step event (AFTER paging so page-specific breakpoints work)
     if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
     {
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
@@ -187,24 +211,7 @@ void Z80::Z80Step(bool skipBreakpoints)
         }
     }
 
-    /// region  <Ports logic>
-
-    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
-    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
-    {
-        state.flags |= CF_TRDOS;
-
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
-    }
-    else if ((state.flags & CF_TRDOS) &&
-             (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
-    {
-        state.flags &= ~CF_TRDOS;
-
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
-    }
+    /// region  <Additional Ports logic>
 
     /* TODO: move to Ports class
     if (state.flags & CF_SETDOSROM)

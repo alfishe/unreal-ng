@@ -344,9 +344,160 @@ x0271:  LD      A,(#5B00)   ; Check auto-boot flag
 
 ---
 
-## 5. State Machine for Command Detection
+## 5. FORMAT Command Automation (CPU Injection)
 
-### 5.1 Analyzer State Transitions
+### 5.1 The Problem
+
+When FORMAT command is executed, TR-DOS 5.04T shows interactive prompts:
+1. **"Press T for TURBO-FORMAT / Other key for FORMAT"** - User must choose format type
+2. **"Press R for repeat FORMAT, other key for TR-DOS"** - After format completes
+
+These prompts block execution waiting for keyboard input, preventing automated testing.
+
+### 5.2 The Wait Routine: `$1052`
+
+The FORMAT command calls `$3200`, which uses `$1052` to wait for a keypress:
+
+```asm
+x3200       LD      HL,x322C    ; Text: "Press T for TURBO-FORMAT..."
+            RST     #18         ; Print it
+            CALL    x1052       ; <--- THE CPU WAITS HERE
+            CP      "T"         ; Check if 'T' was returned in A
+            JR      Z,x3217     ; If 'T', jump to Turbo logic
+```
+
+### 5.3 Method A: The "Instant Return" (Cleanest)
+
+If your analyzer/emulator can modify registers during a breakpoint hit:
+
+1. **Set breakpoint** at `$1052` (4178 decimal) - entry to keyboard wait routine
+2. **When hit**, check the stack to see if return address is `$3207` (confirms FORMAT prompt, not other wait)
+3. **Perform injection**:
+   - To select **Turbo Format**: Set `A = 0x54` ('T')
+   - To select **Regular Format**: Set `A = 0x20` (Space) or any non-'T' value
+4. **Bypass the wait**: Pop the return address from stack into PC (simulates routine finishing instantly)
+
+```cpp
+void bypassKeyboardWait(Z80* cpu, Memory* memory, uint8_t resultKey)
+{
+    // Set the result key in A register
+    cpu->a = resultKey;
+    
+    // Pop return address from stack into PC (bypass the wait)
+    uint16_t returnAddr = memory->DirectReadFromZ80Memory(cpu->sp);
+    returnAddr |= memory->DirectReadFromZ80Memory(cpu->sp + 1) << 8;
+    cpu->sp += 2;
+    cpu->pc = returnAddr;
+}
+```
+
+### 5.4 Method B: Skip the CALL at `$1EDD` (PREFERRED ✅)
+
+> **UPDATED 2026-01-23**: This is the cleanest approach. Instead of intercepting the keyboard wait, skip the entire `CALL $3200` that triggers the prompt.
+
+From the TR-DOS ROM disassembly at `$1EDD`:
+
+```asm
+x1EDD       CALL    x3200       ; select fast or normal format (keyboard prompt)
+x1EE0       AND     #80         ; check if 40-track drive
+            LD      A,#28       ; 40 tracks
+            JR      Z,x1EE8
+```
+
+**Strategy**: Set breakpoint at `$1EDD`, when hit:
+1. Set `A = 0x00` (normal format) or `A = 0x80` (turbo format)
+2. Set `PC = $1EE0` (skip the CALL, continue at `AND #80`)
+3. No stack manipulation needed!
+
+```cpp
+void skipFormatPrompt(Z80* cpu)
+{
+    // Skip CALL $3200 entirely - no keyboard interaction
+    cpu->a = 0x00;     // Normal format (not turbo)
+    cpu->pc = 0x1EE0;  // Continue at AND #80 (instruction after CALL)
+}
+```
+
+**Advantages over Method A:**
+- No stack manipulation
+- No return address checking
+- Works regardless of which $1052 call we're in
+- Single, deterministic breakpoint
+
+### 5.6 Handling the "Repeat" Prompt (After FORMAT Completes)
+
+After format finishes, TR-DOS asks another question at `$326B`:
+
+```asm
+x326B       LD      A,#D
+            RST     #10
+            LD      HL,x328C    ; "Press R for repeat..."
+            RST     #18
+            CALL    x1052       ; <--- IT WAITS AGAIN
+            CP      "R"
+            JR      Z,x327C     ; If 'R', restart format
+            JP      x01D3       ; Else, Exit back to A> prompt
+```
+
+**To automate exit (return to A> prompt):**
+1. Set breakpoint at `$3276` (the CALL to x1052 in repeat loop)
+2. Force `A = 0x20` (Space)
+3. Force `PC = $3279` (instruction after the CALL)
+4. This triggers `JP $01D3` and returns to prompt automatically
+
+### 5.7 Summary: Critical Addresses for FORMAT Automation
+
+| Purpose | Address (Hex) | Address (Dec) | Notes |
+|---------|--------------|---------------|-------|
+| **FORMAT CALL (PREFERRED)** | **`$1EDD`** | **7901** | **Set breakpoint here, skip to $1EE0** |
+| Next instruction after CALL | `$1EE0` | 7904 | Set PC here to skip format-type prompt |
+| Keyboard wait routine | `$1052` | 4178 | Alternative: intercept keypresses here |
+| FORMAT prompt return | `$3207` | 12807 | Check if this is on stack to confirm format prompt |
+| Repeat prompt CALL | `$3276` | 12918 | Intercept to bypass repeat question |
+| Repeat prompt next | `$3279` | 12921 | Skip to this after injection |
+| Exit to prompt | `$01D3` | 467 | Final exit back to A> |
+
+### 5.8 Implementation Example for Tests
+
+```cpp
+class FORMATAutomation : public IBreakpointObserver
+{
+    void onBreakpoint(uint16_t addr, Z80* cpu, Memory* memory) override
+    {
+        if (addr == 0x1052)  // Keyboard wait
+        {
+            // Check if we're in FORMAT prompt by examining return address on stack
+            uint16_t retAddr = memory->read16(cpu->sp);
+            
+            if (retAddr == 0x3207)  // FORMAT type prompt
+            {
+                cpu->a = 0x20;  // Select Regular FORMAT (not Turbo)
+                bypassCall(cpu, memory);  // Pop return and set PC
+            }
+            else if (retAddr == 0x3279)  // Repeat prompt
+            {
+                cpu->a = 0x20;  // Select "other key" (exit)
+                bypassCall(cpu, memory);
+            }
+        }
+    }
+    
+    void bypassCall(Z80* cpu, Memory* memory)
+    {
+        uint16_t retAddr = memory->read16(cpu->sp);
+        cpu->sp += 2;
+        cpu->pc = retAddr;
+    }
+};
+```
+
+> **Pro-Tip**: FORMAT actually writes to disk, so it's a great way to verify FDC Write Track (`Service #15`) event detection!
+
+---
+
+## 6. State Machine for Command Detection
+
+### 6.1 Analyzer State Transitions
 
 ```
 IDLE ──[$3D00]──▶ IN_TRDOS ──[$3D13]──▶ IN_COMMAND ──[$0077]──▶ IN_TRDOS

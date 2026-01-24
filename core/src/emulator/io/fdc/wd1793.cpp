@@ -1,6 +1,8 @@
 #include "wd1793.h"
 
 #include <sstream>
+#include <fstream>
+#include <iomanip>
 
 #include "common/dumphelper.h"
 #include "common/filehelper.h"
@@ -1947,6 +1949,19 @@ void WD1793::processSearchID()
         // Set pointers to Address Mark record and to sector data
         _idamData = (uint8_t*)track->getIDForSector(_sectorRegister) + 1;  // We need to skip id_address_mark = 0xFE
         _sectorData = track->getDataForSector(_sectorRegister);
+        
+        // Safety check: after FORMAT/reindexFromMFM, sector data may not be available
+        if (_sectorData == nullptr)
+        {
+            MLOGWARNING("processSearchID: Sector %d data unavailable (track may need rebuild)", _sectorRegister);
+            _idamData = nullptr;
+            _rawDataBuffer = nullptr;
+            
+            raiseRecordNotFound();
+            _statusRegister |= WDS_NOTFOUND;
+            transitionFSM(S_END_COMMAND);
+            return;
+        }
 
         // TODO: apply the delay related to disk rotation so searching for ID Address Mark may take up to a full disk
         // revolution
@@ -2089,7 +2104,9 @@ void WD1793::processWriteSector()
         _operationFIFO.push(writeSector);
     }
 
-    transitionFSM(WD1793::S_WRITE_BYTE);
+    // Give CPU time to respond to DRQ before checking for lost data
+    // This matches the behavior of WRITE TRACK which uses delayed transitions
+    transitionFSMWithDelay(WD1793::S_WRITE_BYTE, WD93_TSTATES_PER_FDC_BYTE);
 }
 
 void WD1793::processWriteByte()
@@ -2180,20 +2197,30 @@ void WD1793::processReadTrack()
 /// All other values are written literally
 void WD1793::processWriteTrack()
 {
-    // Check if DRQ was serviced - if not, it's Lost Data
-    if (_drq_out && !_drq_served)
-    {
-        // Host didn't provide data in time - Lost Data
-        _statusRegister |= WDS_LOSTDATA;
-        MLOGWARNING("Write Track: Lost Data - DRQ not serviced");
-        transitionFSM(S_END_COMMAND);
-        return;
-    }
-
-    // Check if we've written all bytes (6250)
+    // Check if we've written all bytes (6250) FIRST - before checking DRQ
+    // This prevents infinite loop if DRQ is still raised after last byte
     if (_bytesToWrite <= 0 || _rawDataBufferIndex >= DiskImage::RawTrack::RAW_TRACK_SIZE)
     {
         MLOGINFO("Write Track complete: %zu bytes written", _rawDataBufferIndex);
+        
+        // Debug: Dump full track data to file for analysis
+        static int trackDumpCount = 0;
+        std::string filename = "/tmp/write_track_" + std::to_string(trackDumpCount++) + ".hex";
+        std::ofstream hexFile(filename, std::ios::binary);
+        if (hexFile.is_open())
+        {
+            hexFile.write(reinterpret_cast<const char*>(_rawDataBuffer), _rawDataBufferIndex);
+            hexFile.close();
+            std::cout << "[WD1793] WRITE_TRACK dump saved to: " << filename << " (" << _rawDataBufferIndex << " bytes)\n";
+        }
+        
+        // Also show first 50 bytes in console for quick reference
+        std::cout << "[WD1793] First 50 bytes: ";
+        for (size_t i = 0; i < 50 && i < _rawDataBufferIndex; i++)
+        {
+            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)_rawDataBuffer[i] << " ";
+        }
+        std::cout << std::dec << "...\n";
         
         // Reindex sector structure by parsing raw MFM data
         // This uses MFMParser to find IDAMs and rebuild sectorsOrderedRef[]
@@ -2211,13 +2238,22 @@ void WD1793::processWriteTrack()
             {
                 MLOGWARNING("Write Track MFM validation: FAILED (%zu/16 sectors, %zu errors)",
                             result.parseResult.validSectors, result.issues.size());
-                // Detailed report available via result.report()
+                std::cout << "[WD1793] MFM Validation Report:\n" << result.report() << "\n";
             }
             
             _writeTrackTarget = nullptr;  // Clear after use
         }
         
         transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    // If DRQ is pending (host hasn't written data yet), wait instead of immediately failing
+    // This matches unrealspeccy's notready() pattern - re-enter S_WAIT to give CPU time
+    if (_drq_out && !_drq_served)
+    {
+        // Re-schedule this state after one byte time - give CPU a chance to write
+        transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, WD93_TSTATES_PER_FDC_BYTE);
         return;
     }
 

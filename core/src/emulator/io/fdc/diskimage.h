@@ -293,21 +293,22 @@ public:
         /// @see SECTORS_PER_TRACK
         RawSectorBytes* getSector(uint8_t sectorNo)
         {
-            sectorNo &= 0x0F;
+            // Convert 1-based sector number (1-16) to 0-based index (0-15)
+            uint8_t idx = (sectorNo - 1) & 0x0F;
 
-            RawSectorBytes* result = sectorsOrderedRef[sectorNo];
+            RawSectorBytes* result = sectorsOrderedRef[idx];
 
-            return result;
+            return result;  // May be nullptr if sector not found after FORMAT
         }
 
         AddressMarkRecord* getIDForSector(uint8_t sectorNo)
         {
-            // Ensure sector number is in range [0..15]
-            sectorNo &= 0x0F;
+            // Convert 1-based sector number (1-16) to 0-based index (0-15)
+            uint8_t idx = (sectorNo - 1) & 0x0F;
 
-            AddressMarkRecord* result = sectorIDsOrderedRef[sectorNo];
+            AddressMarkRecord* result = sectorIDsOrderedRef[idx];
 
-            return result;
+            return result;  // May be nullptr if sector not found after FORMAT
         }
 
         /// Returns pointer to sector data
@@ -315,34 +316,48 @@ public:
         /// @return Sector
         uint8_t* getDataForSector(uint8_t sectorNo)
         {
-            // Ensure sector number is in range [0..15]
-            sectorNo &= 0x0F;
+            // Convert 1-based sector number (1-16) to 0-based index (0-15)
+            uint8_t idx = (sectorNo - 1) & 0x0F;
 
-            uint8_t* result = sectorsOrderedRef[sectorNo]->data;
+            // Safety check: sectorsOrderedRef may be nullptr after failed FORMAT/reindexFromMFM
+            if (sectorsOrderedRef[idx] == nullptr)
+                return nullptr;
+
+            uint8_t* result = sectorsOrderedRef[idx]->data;
 
             return result;
         }
 
         uint16_t getCRCForSector(uint8_t sectorNo)
         {
-            uint16_t result = sectorsOrderedRef[sectorNo]->data_crc;
+            // Convert 1-based sector number (1-16) to 0-based index (0-15)
+            uint8_t idx = (sectorNo - 1) & 0x0F;
+            
+            // Safety check: sectorsOrderedRef may be nullptr after failed FORMAT/reindexFromMFM
+            if (sectorsOrderedRef[idx] == nullptr)
+                return 0xFFFF;
+
+            uint16_t result = sectorsOrderedRef[idx]->data_crc;
 
             return result;
         }
 
         void setCRCForSector(uint8_t sectorNo, uint16_t crc)
         {
-            sectorsOrderedRef[sectorNo]->data_crc = crc;
+            uint8_t idx = (sectorNo - 1) & 0x0F;
+            sectorsOrderedRef[idx]->data_crc = crc;
         }
 
         void calculateDataCRCForSector(uint8_t sectorNo)
         {
-            sectorsOrderedRef[sectorNo]->recalculateDataCRC();
+            uint8_t idx = (sectorNo - 1) & 0x0F;
+            sectorsOrderedRef[idx]->recalculateDataCRC();
         }
 
         uint8_t* getCRCForSectorAddress(uint8_t sectorNo)
         {
-            uint8_t* result = (uint8_t*)&sectorsOrderedRef[sectorNo]->data_crc;
+            uint8_t idx = (sectorNo - 1) & 0x0F;
+            uint8_t* result = (uint8_t*)&sectorsOrderedRef[idx]->data_crc;
 
             return result;
         }
@@ -465,20 +480,18 @@ public:
         /// @return Validation result with detailed diagnostics
         MFMValidator::ValidationResult reindexFromMFM()
         {
+            // FIRST: Establish baseline pointers using default sector layout
+            // This ensures sectorsOrderedRef[] is never nullptr, even if MFM parsing fails
+            // (Same approach as disk image loading)
+            reindexSectors();
+            
             // Get raw track data pointer
             const uint8_t* rawData = reinterpret_cast<const uint8_t*>(static_cast<RawTrack*>(this));
             
             // Validate the track using MFM parser
             auto result = MFMValidator::validate(rawData, RAW_TRACK_SIZE);
             
-            // Clear existing references
-            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
-            {
-                sectorsOrderedRef[i] = nullptr;
-                sectorIDsOrderedRef[i] = nullptr;
-            }
-            
-            // Rebuild references from parsed sectors
+            // Rebuild references from parsed sectors - only overwrite if parsing found valid data
             for (size_t i = 0; i < 16; i++)
             {
                 const auto& parsed = result.parseResult.sectors[i];
