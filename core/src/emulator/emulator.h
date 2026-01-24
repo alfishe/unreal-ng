@@ -3,19 +3,17 @@
 #ifndef _INCLUDED_EMULATOR_H_
 #define _INCLUDED_EMULATOR_H_
 
+#include "stdafx.h"
+
 #include <atomic>
 #include <chrono>
-#include <ctime>
-#include <iomanip>
-#include <memory>
 #include <mutex>
 #include <random>
-#include <sstream>
 #include <string>
 
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
-#include "common/logger.h"
+#include "common/uuid.h"
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
@@ -23,7 +21,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/mainloop.h"
 #include "emulatorcontext.h"
-#include "stdafx.h"
+
 
 class BreakpointManager;
 
@@ -63,7 +61,8 @@ protected:
     /// region <Fields>
 protected:
     // Emulator identity
-    std::string _emulatorId;                              // Auto-generated UUID
+    UUID _uuid;                                           // Auto-generated UUID
+    std::string _emulatorId;                              // Symbolic representation  of the UUID
     std::string _symbolicId;                              // Optional user-provided symbolic ID
     std::chrono::system_clock::time_point _createdAt;     // When instance was created
     std::chrono::system_clock::time_point _lastActivity;  // When last operation was performed
@@ -115,9 +114,6 @@ public:
     [[nodiscard]] bool Init();
     void Release();
 
-    // Helper to generate UUID
-    static std::string GenerateUUID();
-
     // Timestamp helpers
     void UpdateLastActivity();
     std::chrono::system_clock::time_point GetCreationTime() const;
@@ -125,7 +121,7 @@ public:
     std::string GetUptimeString() const;
 
     // ID management
-    std::string GetUUID() const;
+    UUID GetUUID() const;
     std::string GetSymbolicId() const;
     void SetSymbolicId(const std::string& symbolicId);
 

@@ -7,8 +7,6 @@
 #include <chrono>
 #include <functional>
 #include <iomanip>
-#include <random>
-#include <sstream>
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -29,7 +27,8 @@ Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
 Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 {
-    _emulatorId = GenerateUUID();
+    _uuid = UUID::Generate(); // Generate new unique UUID
+    _emulatorId = _uuid.toString();
     _symbolicId = symbolicId;
     _createdAt = std::chrono::system_clock::now();
     _lastActivity = _createdAt;
@@ -1433,9 +1432,26 @@ Z80State* Emulator::GetZ80State()
 // region Status
 
 // Identity and state methods
+
+UUID Emulator::GetUUID() const
+{
+    return _uuid;
+}
+
 const std::string& Emulator::GetId() const
 {
     return _emulatorId;
+}
+
+std::string Emulator::GetSymbolicId() const
+{
+    return _symbolicId;
+}
+
+void Emulator::SetSymbolicId(const std::string& symbolicId)
+{
+    _symbolicId = symbolicId;
+    UpdateLastActivity();
 }
 
 // Timestamp helpers
@@ -1466,23 +1482,6 @@ std::string Emulator::GetUptimeString() const
     ss << std::setw(2) << std::setfill('0') << hours << ":" << std::setw(2) << std::setfill('0') << minutes << ":"
        << std::setw(2) << std::setfill('0') << seconds;
     return ss.str();
-}
-
-// ID management
-std::string Emulator::GetUUID() const
-{
-    return _emulatorId;
-}
-
-std::string Emulator::GetSymbolicId() const
-{
-    return _symbolicId;
-}
-
-void Emulator::SetSymbolicId(const std::string& symbolicId)
-{
-    _symbolicId = symbolicId;
-    UpdateLastActivity();
 }
 
 EmulatorStateEnum Emulator::GetState()
@@ -1559,42 +1558,5 @@ std::string Emulator::GetStatistics()
     return result;
 }
 
-std::string Emulator::GenerateUUID()
-{
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(0, 15);
-    static std::uniform_int_distribution<> dis2(8, 11);
-
-    std::stringstream ss;
-    int i;
-    ss << std::hex;
-    for (i = 0; i < 8; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (i = 0; i < 4; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-4";
-    for (i = 0; i < 3; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-";
-    ss << dis2(gen);
-    for (i = 0; i < 3; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (i = 0; i < 12; i++)
-    {
-        ss << dis(gen);
-    };
-    return ss.str();
-}
 
 // endregion
