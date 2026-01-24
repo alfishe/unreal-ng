@@ -512,6 +512,7 @@ public:
 protected:
     bool _loaded = false;
     std::vector<Track> _tracks;
+    std::string _filePath;  // Source file path (set during load, used for tracking)
 
     uint8_t _cylinders;
     uint8_t _sides;
@@ -519,6 +520,8 @@ protected:
 
     /// region <Properties>
 public:
+    const std::string& getFilePath() const { return _filePath; }
+    void setFilePath(const std::string& path) { _filePath = path; }
     uint8_t getCylinders() { return _cylinders; }
     uint8_t getSides() { return _sides; }
 

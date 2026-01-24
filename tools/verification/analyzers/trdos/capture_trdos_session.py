@@ -325,6 +325,24 @@ class TRDOSSessionCapture:
             event_count = len(raw_bp_data.get('events', []))
             self.print_success(f"Saved: raw_breakpoint_events.json ({event_count} events)")
             
+    def query_emulator_config(self) -> dict:
+        """Query emulator configuration to get currently loaded files"""
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}"
+        try:
+            response = self.session.get(url, timeout=5)
+            response.raise_for_status()
+            config = response.json()
+            
+            # Try to get disk info from config if available
+            if 'disk_a' in config and config['disk_a']:
+                self.disk_image_path = config['disk_a']
+            if 'snapshot' in config and config['snapshot']:
+                self.snapshot_path = config['snapshot']
+                
+            return config
+        except Exception:
+            return {}
+            
     def run(self, emulator_uuid: Optional[str] = None, 
             snapshot_path: Optional[str] = None,
             disk_path: Optional[str] = None) -> bool:
@@ -339,9 +357,15 @@ class TRDOSSessionCapture:
             
         if not self.select_emulator(emulator_uuid):
             return False
-            
-        # Note: User should load snapshot/disk manually before running this script
-        # The script only activates the analyzer for whatever is currently loaded
+        
+        # Query emulator config to get currently loaded files
+        self.query_emulator_config()
+        
+        # Optionally load snapshot/disk if paths provided
+        if snapshot_path:
+            self.load_snapshot(snapshot_path)
+        if disk_path:
+            self.load_disk(disk_path)
             
         # Activate analyzer
         if not self.activate_analyzer():

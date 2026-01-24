@@ -408,12 +408,12 @@ TEST_F(TRDOSIntegration_test, CompleteSectorReadSequence)
         _analyzer->onBreakpointHit(0x3D00, _z80);
     }
     
-    // 2. Command dispatch
+    // 2. Service call entry (BP_SERVICE_ENTRY) - emits COMMAND_START
     if (_z80)
     {
-        _z80->pc = 0x3D21;
+        _z80->pc = 0x3D13;
         _z80->tt = 2000;
-        _analyzer->onBreakpointHit(0x3D21, _z80);
+        _analyzer->onBreakpointHit(0x3D13, _z80);
     }
     
     // 3. FDC Seek command
@@ -685,11 +685,11 @@ TEST_F(TRDOSIntegration_test, EventQueryNew)
     auto secondQuery = _analyzer->getNewEvents();
     EXPECT_EQ(secondQuery.size(), 0);
     
-    // Generate another event
+    // Generate another event (use a valid breakpoint address)
     if (_z80)
     {
         _z80->tt = 2000;
-        _analyzer->onBreakpointHit(0x3D21, _z80);
+        _analyzer->onBreakpointHit(0x3D13, _z80);  // BP_SERVICE_ENTRY
     }
     
     // Query new events (should get the second event only)
@@ -980,10 +980,10 @@ TEST_F(TRDOSIntegration_test, RealExecution_TRDOSEntryAndCommandDispatch)
     _z80->tt = 1000;
     _analyzer->onBreakpointHit(0x3D00, _z80);
     
-    // 2. Trigger command dispatch breakpoint at $3D21
-    _z80->pc = 0x3D21;
+    // 2. Trigger service call entry breakpoint at $3D13 (emits COMMAND_START)
+    _z80->pc = 0x3D13;
     _z80->tt = 2000;
-    _analyzer->onBreakpointHit(0x3D21, _z80);
+    _analyzer->onBreakpointHit(0x3D13, _z80);
     
     std::cout << "[E2E Entry+Dispatch] Events: " << _analyzer->getEventCount() << "\n";
     

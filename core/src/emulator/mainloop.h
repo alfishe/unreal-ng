@@ -64,3 +64,13 @@ public:
 public:
     void handleAudioBufferHalfFull(int id, Message* message);
 };
+
+/// CUT (Component Under Test) wrapper for unit testing
+/// Exposes protected and private methods for direct testing access
+class MainLoop_CUT : public MainLoop
+{
+public:
+    using MainLoop::MainLoop;  // Inherit constructors
+    using MainLoop::RunFrame;
+    using MainLoop::ExecuteCPUFrameCycle;
+};

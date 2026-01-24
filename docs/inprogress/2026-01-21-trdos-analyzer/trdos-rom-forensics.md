@@ -28,24 +28,126 @@ This document captures critical findings from TR-DOS ROM forensic analysis, incl
 | **15649** | `$3D21` | COMMAND_DISPATCH | Internal command dispatch (C may be invalid here) |
 | **119** | `$0077` | EXIT | Return to BASIC/SOS ROM |
 
-### 1.2 Critical Discovery: C Register at $3D13
+### 1.2 Critical Discovery: C Register at $3D13 Contains SERVICE CODES
 
-At `$3D13` (SERVICE_ENTRY), the Z80 C register contains the TR-DOS service/command number:
+> ⚠️ **HAZARD #140**: The C register at `$3D13` contains **low-level disk SERVICE codes**, NOT user command identifiers! These are API calls for machine code programs.
 
-| C Value | Command | Description |
-|---------|---------|-------------|
-| `$01` | LOAD | Load file from disk |
-| `$02` | SAVE | Save file to disk |
-| `$03` | VERIFY | Verify file against disk |
-| `$04` | MERGE | Merge BASIC program |
-| `$05` | **RUN** | Load and execute file |
-| `$06` | ERASE | Delete file from disk |
-| `$07` | MOVE | Move/rename file |
-| `$09` | COPY | Copy file |
-| `$0A` | FORMAT | Format disk |
-| `$0F` | CAT | List directory |
+At `$3D13` (SERVICE_ENTRY), the Z80 C register contains the TR-DOS **service/function** number:
 
-> **Hazard #138 - Wrong Entry Point**: At `$3D21`, the C register may NOT contain a valid command. Command detection must only occur at `$3D13`.
+| C Value | Service Name | Description | Registers |
+|---------|--------------|-------------|-----------|
+| `$00` | **Restore** | Move head to Track 0 | - |
+| `$01` | **Select Drive** | Select drive 0-3 | A = drive |
+| `$02` | **Seek Track** | Move head to track | A = track |
+| `$03` | **Set Sector** | Set sector register | A = sector |
+| `$04` | **Set DMA** | Set transfer address | HL = address |
+| `$05` | **Read Sectors** | Read sectors from disk | D=track, E=sector, B=count, HL=dest |
+| `$06` | **Write Sectors** | Write sectors to disk | D=track, E=sector, B=count, HL=src |
+| `$07` | **Catalog** | Print directory | A = stream |
+| `$08` | **Read Descriptor** | Read catalog entry N | A = entry (0-127) |
+| `$09` | **Write Descriptor** | Write catalog entry | A = entry |
+| `$0A` | **Find File** | Search for file in `$5CDD` | Returns C=entry, Z=found |
+| `$0B` | **Save File** | Save file to disk | HL=start, DE=length |
+| `$0C` | **Save BASIC** | Save BASIC program | uses $5CDD |
+| `$0D` | **Exit** | Return to BASIC | - |
+| `$0E` | **Load File** | Load file | A=0:orig addr, A=3:HL addr |
+| `$12` | **Delete Sector** | Internal delete op | - |
+| `$13` | **Move Descriptor In** | Copy descriptor to $5CDD | HL=source |
+| `$14` | **Move Descriptor Out** | Copy $5CDD to memory | HL=dest |
+| `$15` | **Format Track** | Format single track | - |
+| `$16` | **Select Side 0** | Select upper disk side | - |
+| `$17` | **Select Side 1** | Select lower disk side | - |
+| `$18` | **Read System Sector** | Read Track 0, Sec 9 | Updates free space vars |
+
+### 1.3 Important: Service Codes ≠ User Commands!
+
+**User commands** (RUN, LOAD, CAT) typed at the TR-DOS prompt are processed by the **Command Processor** at `$3D03`, NOT by the service dispatcher at `$3D13`.
+
+When you type `RUN "game"`:
+1. Command Processor parses the command at `$3D03`
+2. It may call `$3D13` with C=`$0E` (Load File) internally
+3. Then it may call `$3D13` with C=`$05` (Read Sectors) multiple times to load data
+
+> **Reference**: See `/docs/inprogress/2026-01-21-trdos-analyzer/materials/detailed_trdos_internals.md` Section 5 for complete API documentation.
+
+### 1.4 How to Detect USER COMMANDS (RUN, LOAD, CAT, etc.)
+
+To detect **user-typed commands** (not low-level service calls), you must monitor the **Command Processor** entry points and read the tokenized command from memory.
+
+#### Entry Points for User Commands
+
+> ⚠️ **HAZARD #142**: When TR-DOS is **already active** at the `A>` prompt, user commands do NOT go through `$3D1A` or `$3D03`. They are processed by the **Internal Command Processor Loop** inside the ROM!
+
+| Address | Hex | Name | Purpose |
+|---------|-----|------|---------|
+| **15619** | `$3D03` | Command Processor | Entry from BASIC (`RANDOMIZE USR 15619`) |
+| **15642** | `$3D1A` | Command Entry | After init, before parsing (from BASIC ROM only!) |
+| **778** | `$030A` | **Internal Dispatcher** | **Best Sniff Point** - A register = command token |
+| **715** | `$02CB` | Command Loop Entry | Top of resident command processor loop |
+| **751** | `$02EF` | After Tokenization | Command has been tokenized |
+
+#### Detection Strategy (Updated)
+
+There are **two scenarios** for detecting user commands:
+
+**Scenario 1: Command from BASIC** (e.g., `RANDOMIZE USR 15619: REM: CAT`)
+- Use breakpoint at `$3D1A`
+- Read token from CH_ADD (`$5C5D`)
+
+**Scenario 2: Command from A> prompt** (TR-DOS already active)
+- Use breakpoint at **`$030A`** (Internal Command Dispatcher)
+- Read token from **A register** directly
+- The command has already been tokenized at this point
+
+```asm
+; Address #030A - Command Dispatcher (best sniff point)
+x030A:  LD      A,(HL)      ; A = first token/character
+        ...
+        LD      HL,x2FF3    ; Address of Command Token Table
+```
+
+#### BASIC Token → TR-DOS Command Mapping
+
+| Token | Hex | BASIC Keyword | TR-DOS Interpretation |
+|-------|-----|---------------|----------------------|
+| **CAT** | `$CF` | CAT | List directory |
+| **SAVE** | `$F8` | SAVE | Save file |
+| **LOAD** | `$EF` | LOAD | Load/RUN/MERGE* |
+| **FORMAT** | `$D0` | FORMAT | Format disk |
+| **MOVE** | `$D1` | MOVE | Rename file |
+| **ERASE** | `$D2` | ERASE | Delete file |
+| **COPY** | `$FF` | COPY | Copy file |
+| **MERGE** | `$D5` | MERGE | Merge BASIC |
+| **VERIFY** | `$D6` | VERIFY | Verify file |
+
+> **Note**: LOAD, RUN, and MERGE all use token `$EF`. TR-DOS disambiguates them by examining the characters/context in the BASIC line via the parser at `$030A`.
+
+#### Implementation Example
+
+```cpp
+void TRDOSAnalyzer::handleCommandEntry(Z80* cpu, Memory* memory)
+{
+    // Read CH_ADD from $5C5D (pointer to command token)
+    uint16_t chAdd = memory->DirectReadFromZ80Memory(0x5C5D) |
+                     (memory->DirectReadFromZ80Memory(0x5C5E) << 8);
+    
+    // Read the token at that address
+    uint8_t token = memory->DirectReadFromZ80Memory(chAdd);
+    
+    // Map token to command
+    switch (token)
+    {
+        case 0xCF: _userCommand = "CAT"; break;
+        case 0xF8: _userCommand = "SAVE"; break;
+        case 0xEF: _userCommand = "LOAD/RUN"; break;  // needs disambiguation
+        case 0xD0: _userCommand = "FORMAT"; break;
+        case 0xD1: _userCommand = "MOVE"; break;
+        case 0xD2: _userCommand = "ERASE"; break;
+        case 0xFF: _userCommand = "COPY"; break;
+        default:   _userCommand = "UNKNOWN"; break;
+    }
+}
+```
 
 ---
 
@@ -72,7 +174,51 @@ event.filename = readFilenameFromMemory(0x5CD1);
 event.filename = readFilenameFromMemory(0x5CDD);
 ```
 
-### 2.3 Filename Setup Routine (`$1C57`)
+### 2.3 When to Read Filename (Command-Dependent)
+
+Based on the TR-DOS ROM jump table at `x3008`, not all commands use filenames. Only read filename when appropriate:
+
+| Handler Address | Command | Needs Filename? | Notes |
+|-----------------|---------|-----------------|-------|
+| `$0433` | CAT | **NO** | Directory listing |
+| `$1018` | `*` (Drive) | **NO** | Drive letter only |
+| `$1EC2` | FORMAT | **NO** | Uses disk label, not file |
+| `$053A` | NEW/RENAME | **YES** | `$5CDD` |
+| `$0787` | ERASE | **YES** | `$5CDD` |
+| `$1815` | LOAD | **YES** | `$5CDD` |
+| `$1AD0` | SAVE | **YES** | `$5CDD` |
+| `$19B1` | MERGE | **YES** | `$5CDD` |
+| `$1D4D` | RUN | **YES** | `$5CDD` |
+| `$1810` | VERIFY | **YES** | `$5CDD` |
+| `$0690` | COPY | **YES** | `$5CDD` |
+
+#### Avoiding Garbage Data
+
+TR-DOS initializes filename buffers with spaces (`0x20`), not nulls. Before reading:
+
+1. **Check first byte of `$5CDD`**:
+   - `0x00` = Empty/end of directory → skip
+   - `0x01` = Deleted file marker → skip
+   - `< 0x20` = Control character (garbage) → skip
+   
+2. **Only accept printable ASCII** (`0x20-0x7E`)
+
+3. **Read extension** from `$5CE5` (1 byte: 'B', 'C', 'D', '#')
+
+```cpp
+// Example: Proper filename extraction
+bool commandRequiresFilename(TRDOSUserCommand cmd) {
+    switch (cmd) {
+        case SAVE: case LOAD: case ERASE: case COPY:
+        case MOVE: case MERGE: case VERIFY:
+            return true;
+        default:
+            return false;  // CAT, FORMAT, etc.
+    }
+}
+```
+
+### 2.4 Filename Setup Routine (`$1C57`)
 
 The TR-DOS ROM routine at `$1C57` sets up the filename:
 
@@ -274,6 +420,15 @@ void TRDOSAnalyzer::handleCommandDispatch(uint16_t address, Z80* cpu)
 **Cause**: Reading from `$5CD1` (autostart line) instead of `$5CDD` (filename).
 **Fix**: Read filename from `$5CDD`.
 
+### Hazard #140 - Confusing Service Codes with User Commands (CRITICAL)
+**Problem**: Thought C=0x05 at `$3D13` was "RUN" command, saw 8 "RUN" events.
+**Cause**: **Service codes ≠ User commands!** C=0x05 is "Read Sectors", not RUN.
+**Reality**: We were seeing a game loader reading disk sectors, not 8 RUN commands.
+**Fix**: 
+- Rename enum from `TRDOSCommand` to `TRDOSService`
+- Update mapping to use correct service names
+- To detect user commands, monitor `$3D03` (Command Processor) instead
+
 ---
 
 ## 8. Related Files
@@ -285,28 +440,75 @@ void TRDOSAnalyzer::handleCommandDispatch(uint16_t address, Z80* cpu)
 
 ---
 
-## Appendix A: C Register Command Mapping (identifyCommand)
+## Appendix A: C Register SERVICE Code Mapping
+
+> ⚠️ **These are low-level disk API service codes, NOT user commands!**
 
 ```cpp
-TRDOSCommand TRDOSAnalyzer::identifyCommand(uint16_t address, Z80* cpu)
+// CORRECTED: These are SERVICE codes for machine code API
+TRDOSService TRDOSAnalyzer::identifyService(Z80* cpu)
 {
-    if (!cpu) return TRDOSCommand::UNKNOWN;
+    if (!cpu) return TRDOSService::UNKNOWN;
     
-    uint8_t cmdByte = cpu->c;  // Read C register at $3D13
+    uint8_t svcCode = cpu->c;  // Read C register at $3D13
     
-    switch (cmdByte)
+    switch (svcCode)
     {
-        case 0x01: return TRDOSCommand::LOAD;
-        case 0x02: return TRDOSCommand::SAVE;
-        case 0x03: return TRDOSCommand::VERIFY;
-        case 0x04: return TRDOSCommand::MERGE;
-        case 0x05: return TRDOSCommand::RUN;
-        case 0x06: return TRDOSCommand::ERASE;
-        case 0x07: return TRDOSCommand::MOVE;
-        case 0x09: return TRDOSCommand::COPY;
-        case 0x0A: return TRDOSCommand::FORMAT;
-        case 0x0F: return TRDOSCommand::CAT;
-        default:   return TRDOSCommand::UNKNOWN;
+        case 0x00: return TRDOSService::RESTORE;        // Head to Track 0
+        case 0x01: return TRDOSService::SELECT_DRIVE;   // Select drive A=0-3
+        case 0x02: return TRDOSService::SEEK_TRACK;     // Seek to track A
+        case 0x03: return TRDOSService::SET_SECTOR;     // Set sector register
+        case 0x04: return TRDOSService::SET_DMA;        // Set transfer address HL
+        case 0x05: return TRDOSService::READ_SECTORS;   // Read B sectors
+        case 0x06: return TRDOSService::WRITE_SECTORS;  // Write B sectors
+        case 0x07: return TRDOSService::CATALOG;        // Print directory
+        case 0x08: return TRDOSService::READ_DESCRIPTOR; // Read catalog entry
+        case 0x09: return TRDOSService::WRITE_DESCRIPTOR;// Write catalog entry
+        case 0x0A: return TRDOSService::FIND_FILE;      // Search for file
+        case 0x0B: return TRDOSService::SAVE_FILE;      // Save file
+        case 0x0C: return TRDOSService::SAVE_BASIC;     // Save BASIC program
+        case 0x0D: return TRDOSService::EXIT;           // Return to BASIC
+        case 0x0E: return TRDOSService::LOAD_FILE;      // Load file
+        case 0x12: return TRDOSService::DELETE_SECTOR;  // Internal delete
+        case 0x13: return TRDOSService::MOVE_DESC_IN;   // Copy desc to $5CDD
+        case 0x14: return TRDOSService::MOVE_DESC_OUT;  // Copy $5CDD to memory
+        case 0x15: return TRDOSService::FORMAT_TRACK;   // Format track
+        case 0x16: return TRDOSService::SELECT_SIDE_0;  // Upper side
+        case 0x17: return TRDOSService::SELECT_SIDE_1;  // Lower side
+        case 0x18: return TRDOSService::READ_SYS_SECTOR;// Read Track 0, Sec 9
+        default:   return TRDOSService::UNKNOWN;
     }
 }
 ```
+
+## Appendix B: Detecting User Commands (Summary)
+
+### Quick Reference
+
+| Goal | Breakpoint | What to Read |
+|------|------------|--------------|
+| **User command typed** | `$3D1A` | Token at `($5C5D)` |
+| **Low-level disk API** | `$3D13` | Service code in C register |
+
+### User Command Detection Procedure
+
+1. Set breakpoint at **`$3D1A`** (15642)
+2. Read 2 bytes from **`$5C5D`** (CH_ADD) → this is a pointer
+3. Read 1 byte from that pointer address → this is the **BASIC token**
+4. Map token to command:
+   - `$CF` = CAT
+   - `$F8` = SAVE  
+   - `$EF` = LOAD/RUN/MERGE (needs further disambiguation)
+   - `$D0` = FORMAT
+   - `$D1` = MOVE
+   - `$D2` = ERASE
+
+### Why $3D13 Shows Many "Read Sectors" Calls
+
+When you type `RUN "game"`:
+1. **One** command entry at `$3D1A` (the user's RUN command)
+2. TR-DOS loads the game loader
+3. Game loader bypasses BASIC and calls `$3D13` with C=`$05` (Read Sectors) **many times**
+4. This is the game loading its data directly via the disk API
+
+So: **1 user command → Many low-level service calls**

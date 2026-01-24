@@ -15,61 +15,140 @@
 std::string TRDOSEvent::format() const
 {
     std::ostringstream ss;
-    ss << "[" << std::setw(10) << timestamp << "] ";
+    
+    // Frame-based timing is more readable than raw tstates
+    ss << "[Frame " << frameNumber << "] ";
     
     switch (type)
     {
         case TRDOSEventType::TRDOS_ENTRY:
-            ss << "TR-DOS Entry (PC=$" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << context.pc << ")";
-            // Add Interrupt State info
-            ss << " [" << (context.iff1 ? "EI" : "DI") << " IM" << (int)context.im << "]";
-
+            ss << "TR-DOS Entered";
             break;
+            
         case TRDOSEventType::TRDOS_EXIT:
             ss << "TR-DOS Exit";
             break;
+            
         case TRDOSEventType::COMMAND_START:
-            ss << "Command: ";
-            switch (command)
+            // User command (typed at A> prompt or from BASIC)
+            if (userCommand != TRDOSUserCommand::UNKNOWN)
             {
-                case TRDOSCommand::LOAD: ss << "LOAD"; break;
-                case TRDOSCommand::SAVE: ss << "SAVE"; break;
-                case TRDOSCommand::CAT: ss << "CAT"; break;
-                case TRDOSCommand::RUN: ss << "RUN"; break;
-                case TRDOSCommand::FORMAT: ss << "FORMAT"; break;
-                default: ss << "UNKNOWN"; break;
+                switch (userCommand)
+                {
+                    case TRDOSUserCommand::CAT: 
+                        ss << "CAT - List directory"; 
+                        break;
+                    case TRDOSUserCommand::SAVE: 
+                        ss << "SAVE \"" << filename << "\""; 
+                        break;
+                    case TRDOSUserCommand::LOAD_RUN_MERGE: 
+                        ss << "LOAD/RUN \"" << filename << "\""; 
+                        break;
+                    case TRDOSUserCommand::FORMAT: 
+                        ss << "FORMAT disk"; 
+                        break;
+                    case TRDOSUserCommand::MOVE: 
+                        ss << "RENAME \"" << filename << "\""; 
+                        break;
+                    case TRDOSUserCommand::ERASE: 
+                        ss << "ERASE \"" << filename << "\""; 
+                        break;
+                    case TRDOSUserCommand::COPY: 
+                        ss << "COPY \"" << filename << "\""; 
+                        break;
+                    case TRDOSUserCommand::MERGE: 
+                        ss << "MERGE \"" << filename << "\""; 
+                        break;
+                    case TRDOSUserCommand::VERIFY: 
+                        ss << "VERIFY \"" << filename << "\""; 
+                        break;
+                    default: 
+                        ss << "Command (token 0x" << std::hex << static_cast<int>(userCommand) << std::dec << ")"; 
+                        break;
+                }
             }
-            if (!filename.empty())
+            else if (service != TRDOSService::UNKNOWN)
             {
-                ss << " \"" << filename << "\"";
+                // Low-level API service call
+                switch (service)
+                {
+                    case TRDOSService::RESTORE: 
+                        ss << "Drive: Head to Track 0"; 
+                        break;
+                    case TRDOSService::SELECT_DRIVE: 
+                        ss << "Drive: Select"; 
+                        break;
+                    case TRDOSService::SEEK_TRACK: 
+                        ss << "Drive: Seek to Track " << (int)track; 
+                        break;
+                    case TRDOSService::READ_SECTORS: 
+                    case TRDOSService::LOAD_FILE:
+                        if (!filename.empty())
+                            ss << "Loading \"" << filename << "\"";
+                        else
+                            ss << "Read Sector T" << (int)track << "/S" << (int)sector;
+                        break;
+                    case TRDOSService::WRITE_SECTORS: 
+                    case TRDOSService::SAVE_FILE:
+                        if (!filename.empty())
+                            ss << "Saving \"" << filename << "\"";
+                        else
+                            ss << "Write Sector T" << (int)track << "/S" << (int)sector;
+                        break;
+                    case TRDOSService::CATALOG: 
+                        ss << "Reading Catalog"; 
+                        break;
+                    case TRDOSService::FIND_FILE: 
+                        ss << "Finding \"" << filename << "\""; 
+                        break;
+                    case TRDOSService::FORMAT_TRACK: 
+                        ss << "Formatting Track " << (int)track; 
+                        break;
+                    default: 
+                        ss << "API Call (service=" << static_cast<int>(service) << ")"; 
+                        break;
+                }
+            }
+            else
+            {
+                ss << "Command Started";
             }
             break;
+            
         case TRDOSEventType::FDC_CMD_READ:
-            ss << "FDC Read Sector T" << (int)track << "/S" << (int)sector;
+            ss << "Read Sector T" << (int)track << "/S" << (int)sector;
             break;
+            
         case TRDOSEventType::FDC_CMD_WRITE:
-            ss << "FDC Write Sector T" << (int)track << "/S" << (int)sector;
+            ss << "Write Sector T" << (int)track << "/S" << (int)sector;
             break;
+            
         case TRDOSEventType::FDC_CMD_SEEK:
-            ss << "FDC Seek T" << (int)track;
+            ss << "Seek to Track " << (int)track;
             break;
+            
         case TRDOSEventType::FDC_CMD_RESTORE:
-            ss << "FDC Restore (T0)";
+            ss << "Head to Track 0";
             break;
+            
         case TRDOSEventType::SECTOR_TRANSFER:
-            ss << "Sector Transfer: " << bytesTransferred << " bytes, T" << (int)track << "/S" << (int)sector;
+            ss << "Transferred " << bytesTransferred << " bytes (T" << (int)track << "/S" << (int)sector << ")";
             break;
+            
         case TRDOSEventType::FDC_CMD_READ_ADDR:
-            ss << "FDC Read Address";
+            ss << "Read Address Mark";
             break;
+            
         case TRDOSEventType::FDC_CMD_READ_TRACK:
-            ss << "FDC Read Track (T" << (int)track << ")";
+            ss << "Read Track " << (int)track;
             break;
+            
         case TRDOSEventType::FDC_CMD_WRITE_TRACK:
-            ss << "FDC Write Track (Format T" << (int)track << ")";
+            ss << "Format Track " << (int)track;
             break;
+            
         case TRDOSEventType::FDC_CMD_STEP:
-            ss << "FDC Step";
+            ss << "Step Head";
             break;
         case TRDOSEventType::FILE_FOUND:
             ss << "File Found: " << filename;
@@ -147,31 +226,28 @@ void TRDOSAnalyzer::onActivate(AnalyzerManager* manager)
     // This ensures they only trigger when executing in TR-DOS ROM, not other ROMs at same address
     if (_context && _context->pMemory && _context->pMemory->base_dos_rom != nullptr)
     {
-        /* 
-           DEBUG: Force global breakpoints to rule out paging issues. 
-           The page calculation might be off or the debugger dispatch might fail for banked ROMs.
-        */
-        
-        // Memory& memory = *_context->pMemory;
-        // uint8_t dosRomPage = static_cast<uint8_t>(memory.GetROMPageFromAddress(memory.base_dos_rom));
+        Memory& memory = *_context->pMemory;
+        uint8_t dosRomPage = static_cast<uint8_t>(memory.GetROMPageFromAddress(memory.base_dos_rom));
         
         // Use page-specific breakpoints that only fire when TR-DOS ROM is mapped
-        // manager->requestExecutionBreakpointInPage(BP_TRDOS_ENTRY, dosRomPage, BANK_ROM, _registrationId);
-        // manager->requestExecutionBreakpointInPage(BP_COMMAND_DISPATCH, dosRomPage, BANK_ROM, _registrationId);
-        // manager->requestExecutionBreakpointInPage(BP_EXIT, dosRomPage, BANK_ROM, _registrationId);
+        // These addresses are in the TR-DOS ROM address space
+        manager->requestExecutionBreakpointInPage(BP_TRDOS_ENTRY, dosRomPage, BANK_ROM, _registrationId);    // $3D00
+        manager->requestExecutionBreakpointInPage(BP_INIT_VARS, dosRomPage, BANK_ROM, _registrationId);      // $3DCE
+        manager->requestExecutionBreakpointInPage(BP_SERVICE_ENTRY, dosRomPage, BANK_ROM, _registrationId);  // $3D13
+        manager->requestExecutionBreakpointInPage(BP_COMMAND_ENTRY, dosRomPage, BANK_ROM, _registrationId);  // $3D1A - User command entry
+        manager->requestExecutionBreakpointInPage(BP_EXIT, dosRomPage, BANK_ROM, _registrationId);           // $0077
         
-        // Fallback to global for debugging:
-        manager->requestExecutionBreakpoint(BP_TRDOS_ENTRY, _registrationId);
-        manager->requestExecutionBreakpoint(BP_COMMAND_DISPATCH, _registrationId);
-        manager->requestExecutionBreakpoint(BP_SERVICE_ENTRY, _registrationId);
-        manager->requestExecutionBreakpoint(BP_EXIT, _registrationId);
+        // Internal command dispatcher is in lower ROM range - also page-specific
+        manager->requestExecutionBreakpointInPage(BP_CMD_DISPATCHER, dosRomPage, BANK_ROM, _registrationId); // $030A
     }
     else
     {
         // Fallback: use regular breakpoints (will trigger in any ROM - less accurate)
         manager->requestExecutionBreakpoint(BP_TRDOS_ENTRY, _registrationId);
         manager->requestExecutionBreakpoint(BP_SERVICE_ENTRY, _registrationId);
-        manager->requestExecutionBreakpoint(BP_COMMAND_DISPATCH, _registrationId);
+        manager->requestExecutionBreakpoint(BP_INIT_VARS, _registrationId);
+        manager->requestExecutionBreakpoint(BP_COMMAND_ENTRY, _registrationId);  // User command entry
+        manager->requestExecutionBreakpoint(BP_CMD_DISPATCHER, _registrationId); // Internal command dispatcher (A = token)
         manager->requestExecutionBreakpoint(BP_DOS_ENTRY, _registrationId);
         manager->requestExecutionBreakpoint(BP_EXIT, _registrationId);
     }
@@ -231,7 +307,8 @@ void TRDOSAnalyzer::onActivate(AnalyzerManager* manager)
         _state = TRDOSAnalyzerState::IDLE;
     }
     
-    _currentCommand = TRDOSCommand::UNKNOWN;
+    _currentService = TRDOSService::UNKNOWN;
+    _currentUserCommand = TRDOSUserCommand::UNKNOWN;
 }
 
 void TRDOSAnalyzer::onDeactivate()
@@ -248,7 +325,8 @@ void TRDOSAnalyzer::onDeactivate()
     
     // Reset state fully
     _state = TRDOSAnalyzerState::IDLE;
-    _currentCommand = TRDOSCommand::UNKNOWN;
+    _currentService = TRDOSService::UNKNOWN;
+    _currentUserCommand = TRDOSUserCommand::UNKNOWN;
 }
 
 void TRDOSAnalyzer::onBreakpointHit(uint16_t address, Z80* cpu)
@@ -262,12 +340,31 @@ void TRDOSAnalyzer::onBreakpointHit(uint16_t address, Z80* cpu)
         case BP_TRDOS_ENTRY:
             handleTRDOSEntry(cpu);
             break;
-        case BP_COMMAND_DISPATCH:
-        case BP_SERVICE_ENTRY:
-             // Pass address so we know which entry point we're at
-             // 3D13 has C register with command, 3D21 may not
-            handleCommandDispatch(address, cpu);
+            
+        case BP_COMMAND_ENTRY:
+            // User command entry point ($3D1A) - read token from CH_ADD
+            handleUserCommandEntry(cpu);
             break;
+            
+        case BP_SERVICE_ENTRY:
+            // Low-level disk API ($3D13) - C register contains service code
+            handleServiceCall(address, cpu);
+            break;
+            
+        case BP_INIT_VARS:
+            // Init system variables - just note we're in TR-DOS
+            if (_state == TRDOSAnalyzerState::IDLE)
+            {
+                _state = TRDOSAnalyzerState::IN_TRDOS;
+            }
+            break;
+            
+        case BP_CMD_DISPATCHER:
+            // Internal command dispatcher ($030A) - A register contains BASIC token
+            // This fires when TR-DOS is already active at A> prompt
+            handleInternalCommandDispatch(cpu);
+            break;
+            
         case BP_DOS_ENTRY:
             // Custom loader detected entering via non-standard point
             if (_state != TRDOSAnalyzerState::IN_TRDOS && _state != TRDOSAnalyzerState::IN_COMMAND)
@@ -301,13 +398,15 @@ void TRDOSAnalyzer::onBreakpointHit(uint16_t address, Z80* cpu)
                  emitEvent(std::move(entryEvent));
             }
             break;
+            
         case BP_EXIT:
             // Exit from TR-DOS - if we were in command, transition back to IN_TRDOS
             // This allows the next service call to be treated as a new command
             if (_state == TRDOSAnalyzerState::IN_COMMAND)
             {
                 _state = TRDOSAnalyzerState::IN_TRDOS;
-                _currentCommand = TRDOSCommand::UNKNOWN;
+                _currentService = TRDOSService::UNKNOWN;
+                _currentUserCommand = TRDOSUserCommand::UNKNOWN;
             }
             break;
     }
@@ -380,7 +479,7 @@ void TRDOSAnalyzer::onFDCCommand(uint8_t command, const WD1793& fdc)
     }
 
     
-    // Note: COMMAND_START events are generated by handleCommandDispatch() 
+    // Note: COMMAND_START events are generated by handleServiceCall() 
     // when breakpoint at 0x3D13 is hit - it has proper command byte extraction.
     // FDC observer only tracks state for FDC-level events, not command semantics.
 
@@ -610,7 +709,7 @@ void TRDOSAnalyzer::handleTRDOSEntry(Z80* cpu)
     */
 }
 
-void TRDOSAnalyzer::handleCommandDispatch(uint16_t address, Z80* cpu)
+void TRDOSAnalyzer::handleServiceCall(uint16_t address, Z80* cpu)
 {
     // Auto-transition: If we hit command dispatch from IDLE, we're entering TR-DOS
     if (_state == TRDOSAnalyzerState::IDLE)
@@ -628,17 +727,17 @@ void TRDOSAnalyzer::handleCommandDispatch(uint16_t address, Z80* cpu)
     }
 
     // Only emit COMMAND_START when at BP_SERVICE_ENTRY (0x3D13)
-    // At 0x3D13, the C register contains the TR-DOS service/command number
-    // At 0x3D21 (BP_COMMAND_DISPATCH), C register may not contain valid command
+    // At 0x3D13, the C register contains the TR-DOS SERVICE code (not user command!)
     if (address != BP_SERVICE_ENTRY)
     {
         return;
     }
 
-    // If in IN_COMMAND state, this is an internal service call - don't emit new COMMAND_START
+    // Don't emit for internal service calls during command execution
+    // (game loaders call READ_SECTORS many times during a single LOAD operation)
     if (_state == TRDOSAnalyzerState::IN_COMMAND)
     {
-        // Internal service call during command execution - skip semantic event
+        // Just log the service call without emitting a new COMMAND_START
         return;
     }
     
@@ -649,7 +748,7 @@ void TRDOSAnalyzer::handleCommandDispatch(uint16_t address, Z80* cpu)
     }
     
     _state = TRDOSAnalyzerState::IN_COMMAND;
-    _currentCommand = identifyCommand(BP_SERVICE_ENTRY, cpu);
+    _currentService = identifyService(cpu);
     
     uint64_t now = cpu ? cpu->tt : 0;
     
@@ -657,10 +756,103 @@ void TRDOSAnalyzer::handleCommandDispatch(uint16_t address, Z80* cpu)
     event.timestamp = now;
     event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
     event.type = TRDOSEventType::COMMAND_START;
-    event.command = _currentCommand;
+    event.service = _currentService;
+    event.userCommand = _currentUserCommand;  // Set from previous BP_COMMAND_ENTRY hit
     
-    // Try to read filename from TR-DOS system area ($5CDD = filename, 8 chars)
-    event.filename = readFilenameFromMemory(0x5CDD);
+    // Read filename + extension from TR-DOS system variables ($5CDD + $5CE5)
+    event.filename = readTRDOSFilename();
+    
+    emitEvent(std::move(event));
+}
+
+/// Handle user command entry at $3D1A - read BASIC token from CH_ADD
+void TRDOSAnalyzer::handleUserCommandEntry(Z80* cpu)
+{
+    if (!_context || !_context->pMemory)
+    {
+        return;
+    }
+    
+    // Ensure we're in TR-DOS
+    if (_state == TRDOSAnalyzerState::IDLE)
+    {
+        _state = TRDOSAnalyzerState::IN_TRDOS;
+    }
+    
+    // Read user command from CH_ADD (pointer at $5C5D)
+    _currentUserCommand = identifyUserCommand();
+    
+    // Emit USER_COMMAND event with the BASIC token
+    TRDOSEvent event{};
+    event.timestamp = cpu ? cpu->tt : 0;
+    event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
+    event.type = TRDOSEventType::COMMAND_START;
+    event.userCommand = _currentUserCommand;
+    event.service = TRDOSService::UNKNOWN;  // No service call yet
+    event.flags = 0x10;  // Flag as user command (not service call)
+    
+    // Read filename + extension from TR-DOS system variables ($5CDD + $5CE5)
+    event.filename = readTRDOSFilename();
+    
+    emitEvent(std::move(event));
+}
+
+/// Handle internal command dispatcher at $030A - read token from memory at (HL)
+/// This fires when TR-DOS is already active at the A> prompt (resident loop)
+/// Note: At $030A, the instruction is "LD A,(HL)" which hasn't executed yet,
+///       so we read the token from memory at (HL), not from A register.
+void TRDOSAnalyzer::handleInternalCommandDispatch(Z80* cpu)
+{
+    if (!cpu || !_context || !_context->pMemory)
+    {
+        return;
+    }
+    
+    // We're definitely in TR-DOS if we hit this
+    _state = TRDOSAnalyzerState::IN_TRDOS;
+    
+    // At $030A, the instruction is "LD A,(HL)" - breakpoint fires BEFORE execution
+    // So we need to read the token from memory at address (HL), not from A register
+    uint16_t commandStrAddr = cpu->hl;
+    uint8_t token = _context->pMemory->DirectReadFromZ80Memory(commandStrAddr);
+    
+    // Map token to user command
+    switch (token)
+    {
+        case 0xCF: _currentUserCommand = TRDOSUserCommand::CAT; break;
+        case 0xF8: _currentUserCommand = TRDOSUserCommand::SAVE; break;
+        case 0xEF: _currentUserCommand = TRDOSUserCommand::LOAD_RUN_MERGE; break;  // Needs disambiguation
+        case 0xD0: _currentUserCommand = TRDOSUserCommand::FORMAT; break;
+        case 0xD1: _currentUserCommand = TRDOSUserCommand::MOVE; break;
+        case 0xD2: _currentUserCommand = TRDOSUserCommand::ERASE; break;
+        case 0xFF: _currentUserCommand = TRDOSUserCommand::COPY; break;
+        case 0xD5: _currentUserCommand = TRDOSUserCommand::MERGE; break;
+        case 0xD6: _currentUserCommand = TRDOSUserCommand::VERIFY; break;
+        default:   _currentUserCommand = TRDOSUserCommand::UNKNOWN; break;
+    }
+    
+    // Emit command event
+    TRDOSEvent event{};
+    event.timestamp = cpu->tt;
+    event.frameNumber = _context->emulatorState.frame_counter;
+    event.type = TRDOSEventType::COMMAND_START;
+    event.userCommand = _currentUserCommand;
+    event.service = TRDOSService::UNKNOWN;  // User command, not API call
+    event.flags = 0x20;  // Flag as internal dispatcher command
+    
+    // Capture context
+    event.context.pc = cpu->pc;
+    event.context.iff1 = cpu->iff1;
+    event.context.im = cpu->im;
+    
+    // Only read filename for file-oriented commands
+    // Based on TR-DOS ROM jump table analysis (x3008):
+    // CAT, FORMAT, DRIVE(*) - don't use filename
+    // SAVE, LOAD, RUN, ERASE, NEW, VERIFY, MERGE, COPY - use filename at $5CDD
+    if (commandRequiresFilename(_currentUserCommand))
+    {
+        event.filename = readTRDOSFilename();
+    }
     
     emitEvent(std::move(event));
 }
@@ -681,38 +873,178 @@ void TRDOSAnalyzer::handleTRDOSExit(Z80* cpu)
     emitEvent(std::move(event));
     
     _state = TRDOSAnalyzerState::IDLE;
-    _currentCommand = TRDOSCommand::UNKNOWN;
+    _currentService = TRDOSService::UNKNOWN;
+    _currentUserCommand = TRDOSUserCommand::UNKNOWN;
 }
 
-TRDOSCommand TRDOSAnalyzer::identifyCommand(uint16_t address, Z80* cpu)
+/// Identify low-level SERVICE from C register at $3D13
+TRDOSService TRDOSAnalyzer::identifyService(Z80* cpu)
 {
-    (void)address;  // Unused for now
     if (!cpu)
     {
-        return TRDOSCommand::UNKNOWN;
+        return TRDOSService::UNKNOWN;
     }
     
-    // TR-DOS 0x3D13 service entry: service number passed in C register
-    // This is the standard way TR-DOS receives commands from BASIC
-    uint8_t cmdByte = cpu->c;
+    // C register contains the SERVICE code (not user command!)
+    uint8_t svcCode = cpu->c;
     
-    // Map TR-DOS command bytes to TRDOSCommand enum
-    switch (cmdByte)
+    // Map to TRDOSService enum (values match C register directly)
+    switch (svcCode)
     {
-        case 0x01: return TRDOSCommand::LOAD;
-        case 0x02: return TRDOSCommand::SAVE;
-        case 0x03: return TRDOSCommand::VERIFY;
-        case 0x04: return TRDOSCommand::MERGE;
-        case 0x05: return TRDOSCommand::RUN;
-        case 0x06: return TRDOSCommand::ERASE;
-        case 0x07: return TRDOSCommand::MOVE;
-        case 0x0F: return TRDOSCommand::CAT;
-        case 0x09: return TRDOSCommand::COPY;
-        case 0x0A: return TRDOSCommand::FORMAT;
-        default:  return TRDOSCommand::UNKNOWN;  // Unmapped service
+        case 0x00: return TRDOSService::RESTORE;
+        case 0x01: return TRDOSService::SELECT_DRIVE;
+        case 0x02: return TRDOSService::SEEK_TRACK;
+        case 0x03: return TRDOSService::SET_SECTOR;
+        case 0x04: return TRDOSService::SET_DMA;
+        case 0x05: return TRDOSService::READ_SECTORS;
+        case 0x06: return TRDOSService::WRITE_SECTORS;
+        case 0x07: return TRDOSService::CATALOG;
+        case 0x08: return TRDOSService::READ_DESCRIPTOR;
+        case 0x09: return TRDOSService::WRITE_DESCRIPTOR;
+        case 0x0A: return TRDOSService::FIND_FILE;
+        case 0x0B: return TRDOSService::SAVE_FILE;
+        case 0x0C: return TRDOSService::SAVE_BASIC;
+        case 0x0D: return TRDOSService::EXIT;
+        case 0x0E: return TRDOSService::LOAD_FILE;
+        case 0x12: return TRDOSService::DELETE_SECTOR;
+        case 0x13: return TRDOSService::MOVE_DESC_IN;
+        case 0x14: return TRDOSService::MOVE_DESC_OUT;
+        case 0x15: return TRDOSService::FORMAT_TRACK;
+        case 0x16: return TRDOSService::SELECT_SIDE_0;
+        case 0x17: return TRDOSService::SELECT_SIDE_1;
+        case 0x18: return TRDOSService::READ_SYS_SECTOR;
+        default:   return TRDOSService::UNKNOWN;
     }
 }
 
+/// Identify USER COMMAND from BASIC token at CH_ADD address
+TRDOSUserCommand TRDOSAnalyzer::identifyUserCommand()
+{
+    if (!_context || !_context->pMemory)
+    {
+        return TRDOSUserCommand::UNKNOWN;
+    }
+    
+    Memory* memory = _context->pMemory;
+    
+    // Read CH_ADD pointer from $5C5D (2 bytes, little endian)
+    uint16_t chAdd = memory->DirectReadFromZ80Memory(0x5C5D) |
+                     (memory->DirectReadFromZ80Memory(0x5C5E) << 8);
+    
+    // Read the BASIC token at that address
+    uint8_t token = memory->DirectReadFromZ80Memory(chAdd);
+    
+    // Map BASIC token to user command
+    switch (token)
+    {
+        case 0xCF: return TRDOSUserCommand::CAT;
+        case 0xF8: return TRDOSUserCommand::SAVE;
+        case 0xEF: return TRDOSUserCommand::LOAD_RUN_MERGE;  // Needs further disambiguation
+        case 0xD0: return TRDOSUserCommand::FORMAT;
+        case 0xD1: return TRDOSUserCommand::MOVE;
+        case 0xD2: return TRDOSUserCommand::ERASE;
+        case 0xFF: return TRDOSUserCommand::COPY;
+        case 0xD5: return TRDOSUserCommand::MERGE;
+        case 0xD6: return TRDOSUserCommand::VERIFY;
+        default:   return TRDOSUserCommand::UNKNOWN;
+    }
+}
+
+/// Check if a user command requires filename extraction from $5CDD
+/// Based on TR-DOS ROM jump table analysis (x3008)
+bool TRDOSAnalyzer::commandRequiresFilename(TRDOSUserCommand cmd)
+{
+    switch (cmd)
+    {
+        // File-oriented commands - need filename from $5CDD
+        case TRDOSUserCommand::SAVE:
+        case TRDOSUserCommand::LOAD_RUN_MERGE:
+        case TRDOSUserCommand::ERASE:
+        case TRDOSUserCommand::MOVE:   // NEW/RENAME
+        case TRDOSUserCommand::COPY:
+        case TRDOSUserCommand::MERGE:
+        case TRDOSUserCommand::VERIFY:
+            return true;
+            
+        // Commands that don't use filename
+        case TRDOSUserCommand::CAT:       // Directory listing
+        case TRDOSUserCommand::FORMAT:    // Disk format (uses disk label, not file)
+        case TRDOSUserCommand::UNKNOWN:
+        default:
+            return false;
+    }
+}
+
+/// Read TR-DOS filename from standard system variables
+/// Filename: $5CDD (8 bytes), Extension: $5CE5 (1 byte)
+/// Returns empty string if data is garbage (not yet parsed)
+std::string TRDOSAnalyzer::readTRDOSFilename()
+{
+    if (!_context || !_context->pMemory)
+    {
+        return "";
+    }
+    
+    Memory* mem = _context->pMemory;
+    
+    // TR-DOS system variables for filename
+    constexpr uint16_t TRDOS_FILENAME = 0x5CDD;  // 8 bytes
+    constexpr uint16_t TRDOS_EXTENSION = 0x5CE5; // 1 byte
+    
+    // First byte check - detect garbage data
+    uint8_t firstByte = mem->DirectReadFromZ80Memory(TRDOS_FILENAME);
+    
+    // Skip if:
+    // - 0x00 = Empty/end of directory
+    // - 0x01 = Deleted file marker
+    // - < 0x20 = Control character (garbage)
+    if (firstByte == 0x00 || firstByte == 0x01 || firstByte < 0x20)
+    {
+        return "";
+    }
+    
+    // Read 8-byte filename
+    std::string filename;
+    for (int i = 0; i < 8; ++i)
+    {
+        uint8_t ch = mem->DirectReadFromZ80Memory(TRDOS_FILENAME + i);
+        
+        // Only accept printable ASCII (0x20-0x7E)
+        if (ch >= 0x20 && ch <= 0x7E)
+        {
+            filename += static_cast<char>(ch);
+        }
+        else
+        {
+            // Non-printable = garbage, return empty
+            return "";
+        }
+    }
+    
+    // Trim trailing spaces (TR-DOS pads with 0x20)
+    while (!filename.empty() && filename.back() == ' ')
+    {
+        filename.pop_back();
+    }
+    
+    // If filename is all spaces, return empty
+    if (filename.empty())
+    {
+        return "";
+    }
+    
+    // Read 1-byte extension from $5CE5
+    uint8_t ext = mem->DirectReadFromZ80Memory(TRDOS_EXTENSION);
+    if (ext >= 0x20 && ext <= 0x7E && ext != ' ')
+    {
+        filename += '.';
+        filename += static_cast<char>(ext);
+    }
+    
+    return filename;
+}
+
+/// Legacy function - kept for compatibility
 std::string TRDOSAnalyzer::readFilenameFromMemory(uint16_t address)
 {
     if (!_context || !_context->pMemory)
@@ -721,14 +1053,31 @@ std::string TRDOSAnalyzer::readFilenameFromMemory(uint16_t address)
     }
     
     std::string filename;
+    bool hasValidChars = false;
+    
     for (int i = 0; i < 8; ++i)
     {
         uint8_t ch = _context->pMemory->DirectReadFromZ80Memory(address + i);
-        if (ch == 0 || ch == ' ') // Stop at null or space padding? TR-DOS pads with spaces usually.
+        
+        // Stop at null terminator
+        if (ch == 0)
         {
-             if (ch == 0) break;
+            break;
         }
-        filename += static_cast<char>(ch);
+        
+        // Only accept printable ASCII characters (0x20-0x7E)
+        if (ch >= 0x20 && ch <= 0x7E)
+        {
+            filename += static_cast<char>(ch);
+            if (ch != ' ')
+            {
+                hasValidChars = true;
+            }
+        }
+        else
+        {
+            return "";
+        }
     }
     
     // Trim trailing spaces
@@ -737,7 +1086,7 @@ std::string TRDOSAnalyzer::readFilenameFromMemory(uint16_t address)
         filename.pop_back();
     }
     
-    return filename;
+    return hasValidChars ? filename : "";
 }
 
 void TRDOSAnalyzer::captureRawFDCEvent(const WD1793& fdc, Z80* cpu)
@@ -807,6 +1156,39 @@ void TRDOSAnalyzer::captureRawBreakpointEvent(uint16_t address, Z80* cpu)
     event.frameNumber = _context ? _context->emulatorState.frame_counter : 0;
     event.address = address;
     
+    // Set address label based on known TR-DOS ROM entry points
+    event.address_label = getAddressLabel(address);
+    
+    // Determine physical page info based on Z80 address
+    // TR-DOS ROM is paged in at $0000-$3FFF when active
+    if (address < 0x4000)
+    {
+        // Could be ROM (BASIC/TR-DOS) or RAM page
+        // When in TR-DOS, this is TR-DOS ROM (page 4 typically)
+        event.page_type = "ROM";
+        event.page_index = 4;  // TR-DOS ROM
+        event.page_offset = address;
+    }
+    else if (address < 0x8000)
+    {
+        event.page_type = "RAM";
+        event.page_index = 5;  // Standard RAM 5 at $4000-$7FFF
+        event.page_offset = address - 0x4000;
+    }
+    else if (address < 0xC000)
+    {
+        event.page_type = "RAM";
+        event.page_index = 2;  // Standard RAM 2 at $8000-$BFFF
+        event.page_offset = address - 0x8000;
+    }
+    else
+    {
+        event.page_type = "RAM";
+        // Page 0 or banked - would need to read port $7FFD
+        event.page_index = 0;
+        event.page_offset = address - 0xC000;
+    }
+    
     if (cpu)
     {
         event.pc = cpu->pc;
@@ -838,4 +1220,46 @@ void TRDOSAnalyzer::captureRawBreakpointEvent(uint16_t address, Z80* cpu)
     }
     
     _rawBreakpointEvents.push(std::move(event));
+}
+
+/// Get human-readable label for known TR-DOS ROM addresses
+std::string TRDOSAnalyzer::getAddressLabel(uint16_t address)
+{
+    // TR-DOS ROM entry points and key addresses
+    switch (address)
+    {
+        // Standard entry points
+        case 0x3D00: return "TRDOS_ENTRY";
+        case 0x3D03: return "CMD_PROCESSOR";
+        case 0x3D13: return "SERVICE_ENTRY";
+        case 0x3D1A: return "COMMAND_ENTRY";
+        case 0x3D21: return "INIT_VARS";
+        
+        // Internal command processing
+        case 0x030A: return "CMD_DISPATCHER";
+        case 0x02CB: return "CMD_LOOP";
+        case 0x02EF: return "CMD_TOKENIZED";
+        
+        // ROM trampoline / exit
+        case 0x0077: return "ROM_TRAMPOLINE";
+        
+        // Command handlers (from x3008 jump table)
+        case 0x0433: return "CAT_HANDLER";
+        case 0x1018: return "DRIVE_HANDLER";
+        case 0x1EC2: return "FORMAT_HANDLER";
+        case 0x053A: return "NEW_HANDLER";
+        case 0x0787: return "ERASE_HANDLER";
+        case 0x1815: return "LOAD_HANDLER";
+        case 0x1AD0: return "SAVE_HANDLER";
+        case 0x19B1: return "MERGE_HANDLER";
+        case 0x1D4D: return "RUN_HANDLER";
+        case 0x1810: return "VERIFY_HANDLER";
+        case 0x0690: return "COPY_HANDLER";
+        
+        // FDC routines
+        case 0x3DC8: return "ACTIVATE_DRIVE";
+        case 0x1C57: return "SETUP_FILENAME";
+        
+        default: return "";
+    }
 }

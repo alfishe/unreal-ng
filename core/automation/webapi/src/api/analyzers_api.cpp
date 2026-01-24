@@ -391,7 +391,10 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                 if (events[i].type == TRDOSEventType::COMMAND_START ||
                     events[i].type == TRDOSEventType::COMMAND_COMPLETE)
                 {
-                    ev["command"] = static_cast<int>(events[i].command);
+                    // Low-level disk service code (C register at $3D13)
+                    ev["service"] = static_cast<int>(events[i].service);
+                    // User command (BASIC token at CH_ADD from $3D1A)
+                    ev["user_command"] = static_cast<int>(events[i].userCommand);
                 }
                 
                 // Add FDC state info
@@ -805,8 +808,15 @@ void EmulatorAPI::getAnalyzerRawBreakpoints(const HttpRequestPtr& req, std::func
                 jsonEv["tstate"] = static_cast<Json::UInt64>(ev.tstate);
                 jsonEv["frame_number"] = static_cast<Json::UInt>(ev.frameNumber);
                 
-                // Breakpoint info
+                // Breakpoint info with label and page context
                 jsonEv["address"] = ev.address;
+                if (!ev.address_label.empty())
+                {
+                    jsonEv["address_label"] = ev.address_label;
+                }
+                jsonEv["page_type"] = ev.page_type;
+                jsonEv["page_index"] = static_cast<unsigned>(ev.page_index);
+                jsonEv["page_offset"] = ev.page_offset;
                 
                 // Z80 context
                 jsonEv["pc"] = ev.pc;

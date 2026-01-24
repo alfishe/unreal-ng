@@ -376,8 +376,12 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                     for (const auto& e : events)
                     {
                         ss << "[" << std::setw(10) << e.tstate << "] "
-                           << "BP=0x" << std::hex << std::setw(4) << std::setfill('0') << e.address
-                           << " PC=0x" << std::setw(4) << std::setfill('0') << e.pc
+                           << "BP=0x" << std::hex << std::setw(4) << std::setfill('0') << e.address;
+                        if (!e.address_label.empty())
+                        {
+                            ss << " (" << e.address_label << ")";
+                        }
+                        ss << " PC=0x" << std::setw(4) << std::setfill('0') << e.pc
                            << " SP=0x" << std::setw(4) << std::setfill('0') << e.sp << std::dec
                            << NEWLINE;
                     }

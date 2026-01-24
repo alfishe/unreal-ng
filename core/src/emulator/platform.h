@@ -41,6 +41,8 @@ constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
+constexpr char const* NC_FDD_DISK_INSERTED = "FDD_DISK_INSERT";                 // Disk image inserted (payload: StringPayload with path)
+constexpr char const* NC_FDD_DISK_EJECTED = "FDD_DISK_EJECT";                   // Disk image ejected (payload: drive ID)
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 

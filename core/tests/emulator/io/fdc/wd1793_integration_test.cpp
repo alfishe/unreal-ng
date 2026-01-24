@@ -207,28 +207,6 @@ TEST_F(WD1793_Integration_Test, AllTracksPopulated)
     EXPECT_EQ(tracksChecked, 160) << "Should verify all 160 tracks";
 }
 
-/// @brief Integration test: Execute BASIC command via TRDOSTestHelper
-/// Verifies the helper can execute BASIC commands successfully
-TEST_F(WD1793_Integration_Test, TRDOS_BasicCommandExecution)
-{
-    if (!_emulator)
-    {
-        GTEST_SKIP() << "Emulator initialization failed";
-    }
-
-    // Create TR-DOS test helper
-    TRDOSTestHelper helper(_emulator);
-
-    // Execute a simple BASIC command
-    uint64_t cycles = helper.executeTRDOSCommandViaBasic("PRINT \"TEST\"");
-    
-    // Should execute some cycles
-    EXPECT_GT(cycles, 0) << "BASIC command should execute";
-
-    // Verify TR-DOS helper is functional
-    EXPECT_TRUE(helper.verifyTRDOSVariables()) << "System variables should be valid";
-}
-
 /// @brief Integration test: Full FORMAT operation with disk validation
 /// Executes REAL TR-DOS FORMAT command through emulator (exercises WD1793 Write Track)
 /// Then validates the resulting disk image externally

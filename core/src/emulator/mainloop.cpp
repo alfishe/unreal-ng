@@ -10,6 +10,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator.h"
+#include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "stdafx.h"
 

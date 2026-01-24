@@ -29,9 +29,10 @@ void ROMPrintDetector::onActivate(AnalyzerManager* manager)
     
     // Request breakpoints for ROM print routines
     // These will be automatically cleaned up on deactivation
-    BreakpointId bp1 = _manager->requestExecutionBreakpoint(RST_10, "RST 0x10 - Print char");
-    BreakpointId bp2 = _manager->requestExecutionBreakpoint(PRINT_OUT, "PRINT-OUT");
-    BreakpointId bp3 = _manager->requestExecutionBreakpoint(PRINT_A_2, "PRINT-A-2");
+    // Second parameter is analyzer ID (from IAnalyzer::_registrationId)
+    BreakpointId bp1 = _manager->requestExecutionBreakpoint(RST_10, _registrationId);
+    BreakpointId bp2 = _manager->requestExecutionBreakpoint(PRINT_OUT, _registrationId);
+    BreakpointId bp3 = _manager->requestExecutionBreakpoint(PRINT_A_2, _registrationId);
     
     if (bp1 != BRK_INVALID) _breakpoints.push_back(bp1);
     if (bp2 != BRK_INVALID) _breakpoints.push_back(bp2);
