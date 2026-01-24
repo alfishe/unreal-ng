@@ -333,16 +333,9 @@ protected:
     uint8_t _trashRegister;  // Redirect DDCB operation writes with no destination registers here (related to
                              // op_ddcb.cpp and direct_registers[6] unused pointer)
 
-    bool _pauseRequested = false;
-
 protected:
     int _nmi_pending_count = 0;
     /// endregion </Fields>
-
-    /// region <Properties>
-public:
-    bool IsPaused();
-    /// endregion </Properties>
 
     /// region <Constructors / Destructors>
 public:
@@ -369,9 +362,6 @@ public:
 
     // Z80 CPU control methods
     void Reset();  // Z80 chip reset
-    void Pause();
-    void Resume();
-
     void Z80Step(bool skipBreakpoints = false);  // Single opcode execution
 
 public:
@@ -393,7 +383,6 @@ public:
     // Debugger interfacing
 public:
     void ProcessDebuggerEvents();
-    void WaitUntilResumed();
     void (*callbackM1_Prefetch)();   // Corrected function pointer declaration
     void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 

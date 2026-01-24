@@ -69,7 +69,6 @@ void MainLoop::Run(volatile bool& stopRequested)
     }
 
     _stopRequested = false;
-    _pauseRequested = false;
     _isRunning = true;
 
     // Subscribe to audio buffer state event(s)
@@ -94,7 +93,9 @@ void MainLoop::Run(volatile bool& stopRequested)
         [[maybe_unused]] unsigned duration1 = measure_us(&MainLoop::RunFrame, this);
 
         /// region <Handle Pause>
-        if (_pauseRequested)
+        // Check if Emulator has requested pause (Emulator is single source of truth)
+        Emulator* emulator = _context->pEmulator;
+        if (emulator && emulator->IsPaused())
         {
             MLOGINFO("Pause requested");
 
@@ -105,7 +106,7 @@ void MainLoop::Run(volatile bool& stopRequested)
             }
             _pauseCV.notify_all();  // Wake up any thread waiting for pause confirmation
 
-            while (_pauseRequested)
+            while (emulator->IsPaused())
             {
                 // React on stop request while paused
                 if (stopRequested)
@@ -116,8 +117,8 @@ void MainLoop::Run(volatile bool& stopRequested)
 
                 // Use condition variable to wait for resume (more responsive than polling)
                 std::unique_lock<std::mutex> lock(_pauseMutex);
-                _pauseCV.wait_for(lock, std::chrono::milliseconds(20), [this]() {
-                    return !_pauseRequested || _stopRequested;
+                _pauseCV.wait_for(lock, std::chrono::milliseconds(20), [emulator, &stopRequested]() {
+                    return !emulator->IsPaused() || stopRequested;
                 });
             }
 
@@ -166,34 +167,6 @@ void MainLoop::Run(volatile bool& stopRequested)
 void MainLoop::Stop()
 {
     _stopRequested = true;
-}
-
-void MainLoop::Pause()
-{
-    _pauseRequested = true;
-
-    _cpu->Pause();
-    
-    // Wait for Z80 thread to confirm it's paused (max 100ms timeout)
-    std::unique_lock<std::mutex> lock(_pauseMutex);
-    bool confirmed = _pauseCV.wait_for(lock, std::chrono::milliseconds(100), [this]() {
-        return _isPausedConfirmed.load(std::memory_order_acquire);
-    });
-    
-    if (!confirmed)
-    {
-        MLOGWARNING("Pause confirmation timeout - Z80 thread may still be in mid-frame");
-    }
-}
-
-void MainLoop::Resume()
-{
-    _pauseRequested = false;
-
-    _cpu->Resume();
-    
-    // Signal the pause CV to wake up the paused Z80 thread
-    _pauseCV.notify_all();
 }
 
 void MainLoop::RunFrame()

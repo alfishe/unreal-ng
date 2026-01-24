@@ -194,14 +194,12 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
-        Z80& z80 = *_context->pCore->GetZ80();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
         uint16_t breakpointID = brk.HandleMemoryRead(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered
@@ -209,15 +207,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-            if (z80.IsPaused())
-            {
-                while (z80.IsPaused())
-                {
-                    sleep_ms(20);
-                }
-            }
+            // Wait until emulator resumed externally
+            emulator.WaitWhilePaused();
         }
     }
     /// endregion </Read breakpoint logic>
@@ -273,13 +264,11 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
-        Z80& z80 = *_context->pCore->GetZ80();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         uint16_t breakpointID = brk.HandleMemoryWrite(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered
@@ -287,9 +276,8 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-            z80.WaitUntilResumed();
+            // Wait until emulator resumed externally
+            emulator.WaitWhilePaused();
         }
     }
     /// endregion </Write breakpoint logic>

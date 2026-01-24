@@ -100,15 +100,6 @@ Z80::~Z80()
 
 /// endregion </Constructors / Destructors>
 
-/// region <Properties>
-
-bool Z80::IsPaused()
-{
-    return _pauseRequested;
-}
-
-/// endregion </Properties
-
 /// region <Methods>
 
 /// Handle Z80 reset signal
@@ -132,16 +123,6 @@ void Z80::Reset()
 
     // All that takes 3 clock cycles
     IncrementCPUCyclesCounter(3);
-}
-
-void Z80::Pause()
-{
-    _pauseRequested = true;
-}
-
-void Z80::Resume()
-{
-    _pauseRequested = false;
 }
 
 /// Single CPU command cycle (non-interruptable)
@@ -192,8 +173,7 @@ void Z80::Z80Step(bool skipBreakpoints)
             // Only pause for debugger breakpoints (not analyzer-owned)
             if (!isAnalyzerBreakpoint)
             {
-                // Request to pause emulator
-                // Important note: Emulator.Pause() is needed, not Core.Pause() or Z80.Pause() for successful resume later
+                // Pause emulator (single source of truth)
                 emulator.Pause();
 
                 // Broadcast notification - breakpoint triggered
@@ -202,7 +182,7 @@ void Z80::Z80Step(bool skipBreakpoints)
                 messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
                 // Wait until emulator resumed externally (by debugger or scripting engine)
-                WaitUntilResumed();
+                emulator.WaitWhilePaused();
             }
         }
     }
@@ -216,13 +196,6 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // Apply ROM page changes
         memory.UpdateZ80Banks();
-
-        // TODO: remove Debug
-        /// region <Debug>
-        // emulator.Pause();
-        //  Wait until emulator resumed externally (by debugger or scripting engine)
-        // WaitUntilResumed();
-        /// endregion </Debug
     }
     else if ((state.flags & CF_TRDOS) &&
              (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
@@ -661,18 +634,6 @@ void Z80::OnCPUStep()
 
     // MainLoop will dispatch the call to all peripherals
     _context->pMainLoop->OnCPUStep();
-}
-
-void Z80::WaitUntilResumed()
-{
-    // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-    if (_pauseRequested)
-    {
-        while (_pauseRequested)
-        {
-            sleep_ms(20);
-        }
-    }
 }
 
 //

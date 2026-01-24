@@ -199,7 +199,7 @@ TEST_F(AnalyzerManagerIntegration_test, InteractiveBreakpointTriggersMessageCent
         messageCenterNotifications++;
         breakpointHit = true;
         // Resume execution so we don't hang
-        _z80->Resume();
+        _emulator->Resume();  // Resume via Emulator (single source of truth)
         (void)id;
         (void)message;
     };

@@ -131,10 +131,9 @@ TEST_F(BreakpointManager_test, executionBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
-    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+    auto handler = [&breakpointTriggered, emulator](int id, Message* message) {
         breakpointTriggered.store(true);
-        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+        emulator->Resume();  // Resume via Emulator (single source of truth)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
@@ -214,10 +213,9 @@ TEST_F(BreakpointManager_test, memoryReadBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
-    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+    auto handler = [&breakpointTriggered, emulator](int id, Message* message) {
         breakpointTriggered.store(true);
-        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+        emulator->Resume();  // Resume via Emulator (single source of truth)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
@@ -299,11 +297,10 @@ TEST_F(BreakpointManager_test, memoryWriteBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
-    auto handler = [&breakpointTriggered, z80](int id, Message* message)
+    auto handler = [&breakpointTriggered, emulator](int id, Message* message)
     {
         breakpointTriggered.store(true);
-        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+        emulator->Resume();  // Resume via Emulator (single source of truth)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
@@ -377,10 +374,9 @@ TEST_F(BreakpointManager_test, portInBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
-    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+    auto handler = [&breakpointTriggered, emulator](int id, Message* message) {
         breakpointTriggered.store(true);
-        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+        emulator->Resume();  // Resume via Emulator (single source of truth)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 
@@ -450,10 +446,9 @@ TEST_F(BreakpointManager_test, portOutBreakpoint)
 
     // Register MessageCenter event handler as lambda
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    Z80* z80 = emulator->GetContext()->pCore->GetZ80();
-    auto handler = [&breakpointTriggered, z80](int id, Message* message) {
+    auto handler = [&breakpointTriggered, emulator](int id, Message* message) {
         breakpointTriggered.store(true);
-        z80->Resume();  // Resume Z80 directly, not through Emulator (mainloop not started)
+        emulator->Resume();  // Resume via Emulator (single source of truth)
     };
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, handler);
 

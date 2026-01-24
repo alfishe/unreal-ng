@@ -99,14 +99,12 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
     if (_context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
-        Z80& z80 = *_context->pCore->GetZ80();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
         uint16_t breakpointID = brk.HandlePortIn(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered
@@ -114,9 +112,8 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-            z80.WaitUntilResumed();
+            // Wait until emulator resumed externally
+            emulator.WaitWhilePaused();
         }
     }
 
@@ -145,14 +142,12 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
     if (_context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
-        Z80& z80 = *_context->pCore->GetZ80();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
         uint16_t breakpointID = brk.HandlePortOut(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered
@@ -160,9 +155,8 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-            z80.WaitUntilResumed();
+            // Wait until emulator resumed externally
+            emulator.WaitWhilePaused();
         }
     }
 

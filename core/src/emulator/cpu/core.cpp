@@ -440,20 +440,6 @@ void Core::Reset()
     messageCenter.Post(topicID, new SimpleTextPayload("Core reset finished"));
 }
 
-void Core::Pause()
-{
-    _pauseRequested = true;
-
-    _z80->Pause();
-}
-
-void Core::Resume()
-{
-    _pauseRequested = false;
-
-    _z80->Resume();
-}
-
 //
 // Set main Z80 Core clock speed
 // Multplier from 3.5MHz

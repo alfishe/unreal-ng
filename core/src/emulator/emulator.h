@@ -97,6 +97,8 @@ protected:
 
     // Step-over synchronization
     AutoResetEvent _stepOverSyncEvent;
+    uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
+    std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -153,6 +155,7 @@ public:
     void StartAsync();
     void Pause(bool broadcast = true);   // broadcast=false for internal operations (won't trigger UI updates)
     void Resume(bool broadcast = true);  // broadcast=false for internal operations (won't trigger UI updates)
+    void WaitWhilePaused();              // Block until resumed (used by breakpoint handlers)
     void Stop();
 
     // File format operations
