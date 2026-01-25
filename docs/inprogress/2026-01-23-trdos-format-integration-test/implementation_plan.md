@@ -3,7 +3,7 @@
 ## unrealspeccy Reference Implementation (wd93cmd.cpp)
 
 ### Key FSM States
-- `S_WRTRACK` (L262-274): Initial state after command, waits for DRQ, then calls [getindex()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/other/unrealspeccy/wd93cmd.cpp#493-500) to wait for index pulse
+- `S_WRTRACK` (L262-274): Initial state after command, waits for DRQ, then calls [getindex()](other/unrealspeccy/wd93cmd.cpp#493-500) to wait for index pulse
 - `S_WR_TRACK_DATA` (L276-336): Main write loop - writes bytes from `rwptr=0` until `rwlen=0`
 
 ### Critical Code (L276-336):
@@ -57,8 +57,8 @@ void write(unsigned pos, unsigned char byte, char index) {
 
 ### Key Observations:
 1. **Clock mark bitmap** - unrealspeccy uses `trki[]` array to track MFM clock marks (bit per byte)
-2. **rwptr/rwlen** - Position and remaining length set by [getindex()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/other/unrealspeccy/wd93cmd.cpp#493-500) which gets track length from disk
-3. **Index-to-index semantics** - [getindex()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/other/unrealspeccy/wd93cmd.cpp#493-500) calculates wait until index pulse, sets `rwlen = trklen`
+2. **rwptr/rwlen** - Position and remaining length set by [getindex()](other/unrealspeccy/wd93cmd.cpp#493-500) which gets track length from disk
+3. **Index-to-index semantics** - [getindex()](other/unrealspeccy/wd93cmd.cpp#493-500) calculates wait until index pulse, sets `rwlen = trklen`
 4. **Track is written IN PLACE** - `seldrive->t.trkd[]` IS the raw track buffer in FDD
 5. **Sector invalidation** - `sf = JUST_SEEK` invalidates parsed sector cache after write
 
@@ -70,12 +70,12 @@ void write(unsigned pos, unsigned char byte, char index) {
 
 1. **No `rwptr`/`rwlen` semantics** - Uses `_rawDataBufferIndex` and `_bytesToWrite` instead
 2. **No clock mark bitmap** - Missing `trki[]` equivalent for special MFM bytes (0xA1, 0xC2)
-3. **Buffer initialization** - [getindex()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/other/unrealspeccy/wd93cmd.cpp#493-500) equivalent may not properly set `rwlen`
+3. **Buffer initialization** - [getindex()](other/unrealspeccy/wd93cmd.cpp#493-500) equivalent may not properly set `rwlen`
 4. **In-place write** - Does write to DiskImage directly via `_rawDataBuffer`
 5. **Missing sector invalidation** - Needs to mark sector cache dirty after write
 
 ### Missing from unreal-ng:
-- The [write(pos, byte, marker)](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/other/unrealspeccy/wd93.h#42-53) function that sets clock mark bits
+- The [write(pos, byte, marker)](other/unrealspeccy/wd93.h#42-53) function that sets clock mark bits
 - Clock mark bitmap in DiskImage::Track
 
 ---
@@ -101,7 +101,7 @@ void writeWithClockMark(unsigned pos, uint8_t byte, bool clockMark) {
 }
 ```
 
-But wait - DiskImage already has this! Check [FullTrack](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/diskimage.h#229-234):
+But wait - DiskImage already has this! Check [FullTrack](core/src/emulator/io/fdc/diskimage.h#229-234):
 ```cpp
 struct FullTrack : public RawTrack {
     uint8_t clockMarksBitmap[TRACK_BITMAP_SIZE_BYTES] = {};  // Already exists!
@@ -109,4 +109,4 @@ struct FullTrack : public RawTrack {
 };
 ```
 
-So unreal-ng DOES have clock mark support in the disk image structure, just not using it in [processWriteTrack()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/io/fdc/wd1793.cpp#2172-2311).
+So unreal-ng DOES have clock mark support in the disk image structure, just not using it in [processWriteTrack()](core/src/emulator/io/fdc/wd1793.cpp#2172-2311).
