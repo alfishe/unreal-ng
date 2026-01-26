@@ -4,8 +4,8 @@
 
 The current pause/resume mechanism is **inconsistent and buggy**:
 - 4 classes with their own `_pauseRequested` flags (redundant)
-- [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679) checks `Z80::_pauseRequested`, but `emulator.Pause()` doesn't set it directly
-- Confusing semantics: which [Pause()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.cpp#443-449) to call when?
+- [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679) checks `Z80::_pauseRequested`, but `emulator.Pause()` doesn't set it directly
+- Confusing semantics: which [Pause()](core/src/emulator/cpu/core.cpp#443-449) to call when?
 
 ---
 
@@ -73,11 +73,11 @@ graph TD
 
 | Class | Method | Sets Flag | Calls Down | Notes |
 |-------|--------|-----------|------------|-------|
-| **Emulator** | [Pause(broadcast)](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.cpp#443-449) | `_isPaused` | `MainLoop::Pause()` | Broadcasts state change, does NOT set Z80 flag |
-| **MainLoop** | [Pause()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.cpp#443-449) | `_pauseRequested` | `Core::Pause()` | Waits for confirm via CV |
-| **Core** | [Pause()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.cpp#443-449) | `_pauseRequested` | `Z80::Pause()` | Simple delegation |
-| **Z80** | [Pause()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.cpp#443-449) | `_pauseRequested` | - | Sets the flag that [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679) checks |
-| **Z80** | [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679) | - | - | Spins while `_pauseRequested` is true |
+| **Emulator** | [Pause(broadcast)](core/src/emulator/cpu/core.cpp#443-449) | `_isPaused` | `MainLoop::Pause()` | Broadcasts state change, does NOT set Z80 flag |
+| **MainLoop** | [Pause()](core/src/emulator/cpu/core.cpp#443-449) | `_pauseRequested` | `Core::Pause()` | Waits for confirm via CV |
+| **Core** | [Pause()](core/src/emulator/cpu/core.cpp#443-449) | `_pauseRequested` | `Z80::Pause()` | Simple delegation |
+| **Z80** | [Pause()](core/src/emulator/cpu/core.cpp#443-449) | `_pauseRequested` | - | Sets the flag that [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679) checks |
+| **Z80** | [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679) | - | - | Spins while `_pauseRequested` is true |
 
 ## Current Breakpoint Pause Implementations
 
@@ -116,9 +116,9 @@ z80.WaitUntilResumed();  // Will NOT wait!
 
 | Method | Calls | Purpose |
 |--------|-------|---------|
-| [pauseExecution()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/debugger/debuggerwindow.cpp#778-794) | `_emulator->Pause()` | User clicks Pause button |
-| [continueExecution()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/debugger/debuggerwindow.cpp#757-777) | `_emulator->Resume()` | User clicks Continue button |
-| [handleMessageBreakpointTriggered()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/unreal-qt/src/debugger/debuggerwindow.cpp#639-737) | `_emulator->Pause()` | Respond to interrupt breakpoint |
+| [pauseExecution()](unreal-qt/src/debugger/debuggerwindow.cpp#778-794) | `_emulator->Pause()` | User clicks Pause button |
+| [continueExecution()](unreal-qt/src/debugger/debuggerwindow.cpp#757-777) | `_emulator->Resume()` | User clicks Continue button |
+| [handleMessageBreakpointTriggered()](unreal-qt/src/debugger/debuggerwindow.cpp#639-737) | `_emulator->Pause()` | Respond to interrupt breakpoint |
 
 The UI only uses `Emulator::Pause/Resume`, which is correct for its level.
 
@@ -131,7 +131,7 @@ The **semantic confusion** between layers:
 1. **`Emulator::Pause()`** = "Tell the UI we're paused, tell MainLoop to stop running frames"
 2. **`MainLoop::Pause()`** = "Stop the frame loop, tell Core to pause"
 3. **`Core::Pause()`** = "Tell Z80 to pause"
-4. **`Z80::Pause()`** = "Set the flag that [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679) checks"
+4. **`Z80::Pause()`** = "Set the flag that [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679) checks"
 5. **`Z80::WaitUntilResumed()`** = "Spin until `_pauseRequested` is false"
 
 **The bug**: Code calling `emulator.Pause()` expected `Z80::_pauseRequested` to be set, but it's only set if `Z80::Pause()` is called directly.
@@ -141,7 +141,7 @@ The **semantic confusion** between layers:
 ## Proposed Refactoring
 
 ### Option A: Fix All Call Sites (Minimal Change)
-Add `z80.Pause()` call to all breakpoint locations that call `emulator.Pause()` + [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679).
+Add `z80.Pause()` call to all breakpoint locations that call `emulator.Pause()` + [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679).
 
 **Files to fix:**
 - [x] `z80.cpp:198` - Fixed
@@ -186,7 +186,7 @@ void Z80::Pause()
 
 **Wait - the chain SHOULD work!** Let me check if `_cpu` in MainLoop is valid, or if `_z80` in Core is valid...
 
-Actually, the issue is that **the chain IS working for frame-based pause**, but when breakpoints call `emulator.Pause()` and then immediately call [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679), there's a **race condition** - the async chain hasn't completed yet!
+Actually, the issue is that **the chain IS working for frame-based pause**, but when breakpoints call `emulator.Pause()` and then immediately call [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679), there's a **race condition** - the async chain hasn't completed yet!
 
 The breakpoint code does:
 ```cpp
@@ -199,7 +199,7 @@ WaitUntilResumed();      // Immediately checks _pauseRequested which may still b
 For breakpoint handling, we need **synchronous** pause, not async. The breakpoint code should:
 1. Call `z80.Pause()` directly (synchronous, immediate)
 2. Post notification
-3. Call [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679)
+3. Call [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679)
 
 `emulator.Pause()` is still useful for UI/frame-level pause but is **not the right tool** for breakpoint pausing.
 
@@ -209,13 +209,13 @@ For breakpoint handling, we need **synchronous** pause, not async. The breakpoin
 
 ### Fix 1: All Breakpoint Locations Should Call Z80::Pause() Directly
 
-#### [MODIFY] [z80.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp)
-Already fixed - calls [Pause()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/core.cpp#443-449) before [WaitUntilResumed()](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/cpu/z80.cpp#668-679).
+#### [MODIFY] [z80.cpp](core/src/emulator/cpu/z80.cpp)
+Already fixed - calls [Pause()](core/src/emulator/cpu/core.cpp#443-449) before [WaitUntilResumed()](core/src/emulator/cpu/z80.cpp#668-679).
 
-#### [MODIFY] [portdecoder.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/ports/portdecoder.cpp)
+#### [MODIFY] [portdecoder.cpp](core/src/emulator/ports/portdecoder.cpp)
 Add `z80.Pause();` after `emulator.Pause();` in both Port In and Port Out breakpoint handlers.
 
-#### [MODIFY] [memory.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/src/emulator/memory/memory.cpp)
+#### [MODIFY] [memory.cpp](core/src/emulator/memory/memory.cpp)
 Add `z80.Pause();` after `emulator.Pause();` in both Read and Write breakpoint handlers.
 
 ### Fix 2: Update Comments to Clarify Semantics
@@ -235,7 +235,7 @@ void BreakpointManager::PauseForBreakpoint(Emulator& emulator, Z80& z80)
 
 ## Verification Plan
 
-1. After applying fixes, run [breakpoints_test.cpp](file:///Volumes/TB4-4Tb/Projects/Test/unreal-ng/core/tests/debugger/breakpoints_test.cpp) tests
+1. After applying fixes, run [breakpoints_test.cpp](core/tests/debugger/breakpoints_test.cpp) tests
 2. Run FORMAT integration test to verify execution breakpoints work
 3. Manual test: Set port breakpoint, verify it pauses
 4. Manual test: Set memory read/write breakpoint, verify it pauses
