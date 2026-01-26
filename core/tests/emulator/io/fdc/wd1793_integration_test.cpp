@@ -400,7 +400,7 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
     while (!formatDone && !formatFailed && std::chrono::steady_clock::now() < deadline)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        
+
         if (!_emulator->IsRunning())
         {
             std::cout << "[STEP 6b] ⚠ Emulator stopped unexpectedly!\n" << std::flush;
@@ -409,7 +409,45 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
             break;
         }
 
+        // Check WD1793 status register for hardware errors
+        uint8_t wdStatus = wd1793->getStatusRegister();
+        bool wdBusy = (wdStatus & 0x01);  // WDS_BUSY
+
+        if (wdStatus & 0x04)  // WDS_LOSTDATA (read/write commands only)
+        {
+            std::cout << "[STEP 6b] ⚠ WD1793 Lost Data error detected (status=0x"
+                      << std::hex << (int)wdStatus << std::dec << ")\n" << std::flush;
+            formatFailed = true;
+            failureReason = "WD1793 Lost Data error";
+            break;
+        }
+        if (wdStatus & 0x20)  // WDS_WRITEFAULT
+        {
+            std::cout << "[STEP 6b] ⚠ WD1793 Write Fault detected (status=0x"
+                      << std::hex << (int)wdStatus << std::dec << ")\n" << std::flush;
+            formatFailed = true;
+            failureReason = "WD1793 Write Fault";
+            break;
+        }
+
         screen = ScreenOCR::ocrScreen(emulatorId);
+
+        // If WD1793 is idle but we haven't seen completion, check if we're stuck
+        // Note: Only check after initial startup (progress > 4 = ~2 seconds)
+        if (!wdBusy && progress > 4)
+        {
+            // WD1793 is not busy - format might have failed silently
+            // Check screen for error messages more thoroughly
+            if (screen.find("A>") == std::string::npos &&
+                screen.find("HEAD") == std::string::npos &&
+                screen.find("Press R") == std::string::npos)
+            {
+                std::cout << "[STEP 6b] ⚠ WD1793 idle but no progress/completion detected\n" << std::flush;
+                formatFailed = true;
+                failureReason = "WD1793 idle without completion or error message";
+                break;
+            }
+        }
         
         // Extract HEAD/CYLINDER progress from screen
         std::string currentProgress;
