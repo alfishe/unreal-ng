@@ -775,7 +775,16 @@ void Emulator::WaitWhilePaused()
 {
     while (_isPaused)
     {
-        sleep_ms(20);
+        if (!_stopRequested)
+        {
+            // Wait in a loop if stop is not requested
+            sleep_ms(20);
+        }
+        else
+        {
+            // Stop requested - exit the loop
+            break;
+        }
     }
 }
 
