@@ -2350,6 +2350,14 @@ void WD1793::processWriteTrack()
         // Note: CRC is calculated on-demand from _crcStartPosition when F7 is written
     }
 
+    // Check if buffer is now full - if so, don't request another byte
+    if (_rawDataBufferIndex >= DiskImage::RawTrack::RAW_TRACK_SIZE)
+    {
+        // Buffer is full - transition to complete the command on next process() call
+        transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, WD93_TSTATES_PER_FDC_BYTE);
+        return;
+    }
+
     // Request next byte from CPU with proper timing
     // Reset _drq_served BEFORE raising DRQ so we can detect if CPU responds
     _drq_served = false;
