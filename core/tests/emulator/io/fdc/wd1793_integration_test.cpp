@@ -410,7 +410,9 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         }
 
         // Check WD1793 status register for hardware errors
-        uint8_t wdStatus = wd1793->getStatusRegister();
+        // Use const reference to access public const getter (non-const version is protected)
+        const WD1793& wdConst = *wd1793;
+        uint8_t wdStatus = wdConst.getStatusRegister();
         bool wdBusy = (wdStatus & 0x01);  // WDS_BUSY
 
         if (wdStatus & 0x04)  // WDS_LOSTDATA (read/write commands only)
