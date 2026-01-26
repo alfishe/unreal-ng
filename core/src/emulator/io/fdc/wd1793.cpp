@@ -2180,17 +2180,55 @@ void WD1793::processReadTrack()
 /// All other values are written literally
 void WD1793::processWriteTrack()
 {
-    // Check if DRQ was serviced - if not, it's Lost Data
-    if (_drq_out && !_drq_served)
+    /// ═══════════════════════════════════════════════════════════════════════════════
+    /// DRQ TIMING FOR WRITE TRACK COMMAND
+    /// ═══════════════════════════════════════════════════════════════════════════════
+    /// 
+    /// The WD1793 WRITE TRACK command uses DRQ (Data Request) to synchronize data
+    /// transfer between the FDC and the host CPU. The timing works as follows:
+    ///
+    /// FIRST BYTE (special case - _rawDataBufferIndex == 0):
+    ///   - DRQ was raised in cmdWriteTrack() when the command was issued
+    ///   - The CPU has NOT YET had time to respond to this DRQ
+    ///   - We SKIP the Lost Data check on first entry to allow CPU time to respond
+    ///   - This is essential because processWriteTrack() is called immediately after
+    ///     the index pulse is detected, before any CPU instruction cycles have elapsed
+    ///
+    /// SUBSEQUENT BYTES (_rawDataBufferIndex > 0):
+    ///   - After each byte is written, we raise DRQ for the next byte
+    ///   - We then transition with a delay (WD93_TSTATES_PER_FDC_BYTE ≈ 114 T-states)
+    ///   - On the next call, we check if the CPU has responded (_drq_served == true)
+    ///   - If DRQ is still pending and not served, it's a Lost Data error
+    ///
+    /// Per WD1793 datasheet: The host must respond within one byte interval (~32µs at
+    /// 250kbps MFM) or the FDC sets Lost Data and terminates the operation.
+    /// ═══════════════════════════════════════════════════════════════════════════════
+
+
+    // Detect if FSMEvent action failed during setup (returned early without initializing buffer)
+    // This happens when the lambda in cmdWriteTrack() couldn't get a valid track/disk
+    if (_rawDataBuffer == nullptr || (_bytesToWrite <= 0 && _rawDataBufferIndex == 0))
     {
-        // Host didn't provide data in time - Lost Data
-        _statusRegister |= WDS_LOSTDATA;
-        MLOGWARNING("Write Track: Lost Data - DRQ not serviced");
+        MLOGWARNING("Write Track: Setup failed - no valid buffer or track (buffer=%p, bytesToWrite=%d)", 
+                    _rawDataBuffer, _bytesToWrite);
+        // Status register should already have WDS_NOTRDY or WDS_NOTFOUND set by the action
         transitionFSM(S_END_COMMAND);
         return;
     }
 
-    // Check if we've written all bytes (6250)
+    // Lost Data check - only applicable AFTER at least one byte has been written
+    // First byte: DRQ was raised in cmdWriteTrack(), CPU hasn't had time to respond yet
+    // Subsequent bytes: Check if CPU responded to DRQ within the byte interval delay
+    if (_drq_out && !_drq_served && _rawDataBufferIndex > 0)
+    {
+        // Host didn't provide data within the byte interval - Lost Data error
+        _statusRegister |= WDS_LOSTDATA;
+        MLOGWARNING("Write Track: Lost Data - DRQ not serviced at byte %zu", _rawDataBufferIndex);
+        transitionFSM(S_END_COMMAND);
+        return;
+    }
+
+    // Check if we've written all bytes (6250 for a standard MFM track)
     if (_bytesToWrite <= 0 || _rawDataBufferIndex >= DiskImage::RawTrack::RAW_TRACK_SIZE)
     {
         MLOGINFO("Write Track complete: %zu bytes written", _rawDataBufferIndex);
@@ -2266,8 +2304,11 @@ void WD1793::processWriteTrack()
                 _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);   // High byte second
                 _bytesToWrite--;
             }
-            // CRC bytes written - request next data
+            
+            // CRC bytes written - request next data with proper timing delay
+            _drq_served = false;
             raiseDrq();
+            transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, WD93_TSTATES_PER_FDC_BYTE);
             return;  // Don't write a third byte
         }
 
@@ -2305,8 +2346,14 @@ void WD1793::processWriteTrack()
         // Note: CRC is calculated on-demand from _crcStartPosition when F7 is written
     }
 
-    // Request next byte
+    // Request next byte from CPU with proper timing
+    // Reset _drq_served BEFORE raising DRQ so we can detect if CPU responds
+    _drq_served = false;
     raiseDrq();
+    
+    // Give CPU one byte interval to respond before checking for Lost Data
+    // WD93_TSTATES_PER_FDC_BYTE ≈ 114 T-states at 3.5MHz (≈32µs at 250kbps MFM)
+    transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, WD93_TSTATES_PER_FDC_BYTE);
 }
 
 void WD1793::processReadCRC()

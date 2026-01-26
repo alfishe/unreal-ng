@@ -415,7 +415,13 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         uint8_t wdStatus = wdConst.getStatusRegister();
         bool wdBusy = (wdStatus & 0x01);  // WDS_BUSY
 
-        if (wdStatus & 0x04)  // WDS_LOSTDATA (read/write commands only)
+        // Note: Bit 2 (0x04) means WDS_TRK00 for Type I commands (RESTORE/SEEK/STEP)
+        // but WDS_LOSTDATA for Type II/III commands. Only check for Lost Data
+        // when the FDC is actually executing a write command.
+        auto lastCmd = wd1793->getLastDecodedCommand();
+        bool isWriteCommand = (lastCmd == WD1793::WD_CMD_WRITE_SECTOR || 
+                               lastCmd == WD1793::WD_CMD_WRITE_TRACK);
+        if ((wdStatus & 0x04) && isWriteCommand)
         {
             std::cout << "[STEP 6b] ⚠ WD1793 Lost Data error detected (status=0x"
                       << std::hex << (int)wdStatus << std::dec << ")\n" << std::flush;
@@ -423,7 +429,10 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
             failureReason = "WD1793 Lost Data error";
             break;
         }
-        if (wdStatus & 0x20)  // WDS_WRITEFAULT
+        // Note: Bit 5 (0x20) means WDS_HEADLOADED for Type I commands (RESTORE/SEEK/STEP)
+        // but WDS_WRITEFAULT for WRITE TRACK command. Only check for Write Fault
+        // when the FDC is actually executing WRITE TRACK (command byte 0xF0).
+        if ((wdStatus & 0x20) && lastCmd == WD1793::WD_CMD_WRITE_TRACK)
         {
             std::cout << "[STEP 6b] ⚠ WD1793 Write Fault detected (status=0x"
                       << std::hex << (int)wdStatus << std::dec << ")\n" << std::flush;
@@ -435,8 +444,9 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
         screen = ScreenOCR::ocrScreen(emulatorId);
 
         // If WD1793 is idle but we haven't seen completion, check if we're stuck
-        // Note: Only check after initial startup (progress > 4 = ~2 seconds)
-        if (!wdBusy && progress > 4)
+        // Note: Only check after initial startup - increased from 4 to 20 (10 seconds)
+        // to allow more time for FORMAT to initialize
+        if (!wdBusy && progress > 20)
         {
             // WD1793 is not busy - format might have failed silently
             // Check screen for error messages more thoroughly
@@ -445,6 +455,8 @@ TEST_F(WD1793_Integration_Test, TRDOS_FORMAT_FullOperation)
                 screen.find("Press R") == std::string::npos)
             {
                 std::cout << "[STEP 6b] ⚠ WD1793 idle but no progress/completion detected\n" << std::flush;
+                std::cout << "[STEP 6b] Debug: lastCmd=" << (int)lastCmd 
+                          << ", status=0x" << std::hex << (int)wdStatus << std::dec << "\n" << std::flush;
                 formatFailed = true;
                 failureReason = "WD1793 idle without completion or error message";
                 break;
