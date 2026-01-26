@@ -1181,6 +1181,16 @@ void WD1793::cmdReadSector(uint8_t value)
 
         uint8_t sectorIndex = sectorReg - 1;
         this->_sectorData = track->getDataForSector(sectorIndex);
+        
+        // Check if sector data was found (may be null if reindexFromIDAM failed to parse this sector)
+        if (!this->_sectorData)
+        {
+            this->_statusRegister |= WDS_NOTFOUND;
+            MLOGWARNING("cmdReadSector: Sector %d data not found on track %d side %d", 
+                        sectorReg, trackReg, sideUp);
+            return;
+        }
+        
         this->_rawDataBuffer = this->_sectorData;
         this->_bytesToRead = this->_sectorSize;
     });
@@ -1790,6 +1800,15 @@ void WD1793::processFetchFIFO()
         _operationFIFO.pop();
 
         fsmEvent.executeAction();
+        
+        // Check if action failed (set error status) - abort command instead of continuing
+        // Actions return early if validation fails (disk not inserted, sector not found, etc.)
+        if (_statusRegister & (WDS_NOTRDY | WDS_NOTFOUND))
+        {
+            MLOGWARNING("processFetchFIFO: Action failed with status 0x%02X - aborting command", _statusRegister);
+            transitionFSM(WDSTATE::S_END_COMMAND);
+            return;
+        }
 
         WDSTATE nextState = fsmEvent.getState();
         size_t delayTStates = fsmEvent.getDelay();
@@ -2089,7 +2108,8 @@ void WD1793::processWriteSector()
         _operationFIFO.push(writeSector);
     }
 
-    transitionFSM(WD1793::S_WRITE_BYTE);
+    // Use delayed transition to give CPU time to respond to DRQ before first byte check
+    transitionFSMWithDelay(WD1793::S_WRITE_BYTE, WD93_TSTATES_PER_FDC_BYTE);
 }
 
 void WD1793::processWriteByte()
@@ -2233,24 +2253,13 @@ void WD1793::processWriteTrack()
     {
         MLOGINFO("Write Track complete: %zu bytes written", _rawDataBufferIndex);
         
-        // Reindex sector structure by parsing raw MFM data
-        // This uses MFMParser to find IDAMs and rebuild sectorsOrderedRef[]
+        // Reindex sector structure by reading IDAM sector numbers from each physical sector
+        // This correctly handles TR-DOS's 1:2 interleave pattern where sector numbers
+        // in the IDAM don't match their physical array positions
         if (_writeTrackTarget)
         {
-            auto result = _writeTrackTarget->reindexFromMFM();
-            
-            // Log validation result
-            if (result.passed)
-            {
-                MLOGINFO("Write Track MFM validation: PASSED (%zu/16 sectors)", 
-                         result.parseResult.validSectors);
-            }
-            else
-            {
-                MLOGWARNING("Write Track MFM validation: FAILED (%zu/16 sectors, %zu errors)",
-                            result.parseResult.validSectors, result.issues.size());
-                // Detailed report available via result.report()
-            }
+            // Map sectors by their IDAM sector numbers, not by array position
+            _writeTrackTarget->reindexFromIDAM();
             
             _writeTrackTarget = nullptr;  // Clear after use
         }
@@ -2282,26 +2291,21 @@ void WD1793::processWriteTrack()
         case 0xF7:
         {
             // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
-            // Use CRC-CCITT (same as unrealspeccy wd93_crc function)
-            uint16_t crc = 0xCDB4;
-            for (size_t i = _crcStartPosition; i < _rawDataBufferIndex; i++)
-            {
-                crc ^= static_cast<uint16_t>(_rawDataBuffer[i]) << 8;
-                for (int j = 0; j < 8; j++)
-                {
-                    crc = (crc << 1) ^ ((crc & 0x8000) ? 0x1021 : 0);
-                }
-            }
+            // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
+            // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
+            size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
+            uint16_t crc = CRCHelper::crcWD1793(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen));
             
-            // Write CRC LOW byte first, then HIGH byte (matching unrealspeccy)
+            // Write CRC bytes - crcWD1793 returns bytes in swapped order ready for disk
+            // So write HIGH byte of returned value first (which is actually LOW byte of raw CRC)
             if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
             {
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF);  // Low byte first
+                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);   // High byte of swapped CRC
                 _bytesToWrite--;
             }
             if (_rawDataBufferIndex < DiskImage::RawTrack::RAW_TRACK_SIZE)
             {
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);   // High byte second
+                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF); // Low byte of swapped CRC
                 _bytesToWrite--;
             }
             

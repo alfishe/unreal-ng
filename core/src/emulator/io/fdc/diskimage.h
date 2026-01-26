@@ -318,6 +318,12 @@ public:
             // Ensure sector number is in range [0..15]
             sectorNo &= 0x0F;
 
+            // Check if sector reference exists (may be null after reindexFromMFM fails)
+            if (!sectorsOrderedRef[sectorNo])
+            {
+                return nullptr;
+            }
+            
             uint8_t* result = sectorsOrderedRef[sectorNo]->data;
 
             return result;
@@ -457,6 +463,34 @@ public:
 
                 sectorsOrderedRef[i] = sectorRef;                       // Store sector reference
                 sectorIDsOrderedRef[i] = &sectorRef->address_record;    // Store ID record reference
+            }
+        }
+        
+        /// Reindex sector access by reading IDAM sector numbers from each physical sector
+        /// Called after Write Track to rebuild sector mapping based on what was actually written
+        /// This handles TR-DOS's 1:2 interleave pattern correctly
+        void reindexFromIDAM()
+        {
+            // Clear existing references
+            for (uint8_t i = 0; i < SECTORS_PER_TRACK; i++)
+            {
+                sectorsOrderedRef[i] = nullptr;
+                sectorIDsOrderedRef[i] = nullptr;
+            }
+            
+            // Scan all 16 physical sectors and map by their IDAM sector number
+            for (uint8_t physIdx = 0; physIdx < SECTORS_PER_TRACK; physIdx++)
+            {
+                RawSectorBytes* sectorRef = &sectors[physIdx];
+                uint8_t sectorNo = sectorRef->address_record.sector;
+                
+                // TR-DOS uses sector numbers 1-16
+                if (sectorNo >= 1 && sectorNo <= 16)
+                {
+                    uint8_t logicalIdx = sectorNo - 1;  // Convert to 0-based index
+                    sectorsOrderedRef[logicalIdx] = sectorRef;
+                    sectorIDsOrderedRef[logicalIdx] = &sectorRef->address_record;
+                }
             }
         }
         
