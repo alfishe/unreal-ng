@@ -135,6 +135,31 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] Memory& memory = *_context->pMemory;
     [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
+    /// region  <Ports logic>
+    
+    // ROM paging MUST happen BEFORE breakpoint dispatch so that page-specific breakpoints
+    // (e.g., TR-DOS ROM at $1EDD) can match the correct memory page.
+    // Previously this was after breakpoint dispatch, causing page-specific breakpoints to fail.
+
+    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
+    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
+    {
+        state.flags |= CF_TRDOS;
+
+        // Apply ROM page changes
+        memory.UpdateZ80Banks();
+    }
+    else if ((state.flags & CF_TRDOS) &&
+             (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
+    {
+        state.flags &= ~CF_TRDOS;
+
+        // Apply ROM page changes
+        memory.UpdateZ80Banks();
+    }
+    
+    /// endregion  </Ports logic>
+
     // Let debugger process step event
     if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
     {
@@ -185,25 +210,6 @@ void Z80::Z80Step(bool skipBreakpoints)
                 emulator.WaitWhilePaused();
             }
         }
-    }
-
-    /// region  <Ports logic>
-
-    // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
-    if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
-    {
-        state.flags |= CF_TRDOS;
-
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
-    }
-    else if ((state.flags & CF_TRDOS) &&
-             (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
-    {
-        state.flags &= ~CF_TRDOS;
-
-        // Apply ROM page changes
-        memory.UpdateZ80Banks();
     }
 
     /* TODO: move to Ports class
