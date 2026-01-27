@@ -5,6 +5,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
 #include <map>
 
@@ -23,7 +24,7 @@ protected:
     BreakpointManager* _breakpoints = nullptr;
     LabelManager* _labels = nullptr;
     std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
-    std::unique_ptr<class AnalyzerManager> _analyzerManager = nullptr;
+    std::unique_ptr<AnalyzerManager> _analyzerManager = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
