@@ -329,11 +329,47 @@ Response:
   "emulator_id": "550e8400-...",
   "analyzer_id": "trdos",
   "events": [
-    {"timestamp": 1234567, "type": 1, "formatted": "[0001234] TR-DOS Entry (PC=$3D00)"}
+    {
+      "timestamp": 1234567,
+      "type": 1,
+      "formatted": "[0001234] TR-DOS Entry (PC=$3D00)",
+      "frame_number": 12486,
+      "flags": 0,
+      "context": {
+        "pc": 15616,
+        "caller": 32768,
+        "iff1": 1,
+        "im": 1
+      },
+      "fdc_status": 0,
+      "fdc_cmd_reg": 0
+    }
   ],
-  "total_events": 47
+  "total_events": 47,
+  "showing": 47
 }
 ```
+
+> [!NOTE]
+> **Event Fields** (all events include):
+> - `timestamp` - T-state when event occurred
+> - `type` - Event type enum value (see TRDOSEventType)
+> - `formatted` - Human-readable event description
+> - `frame_number` - Video frame number
+> - `context.pc` - Program counter at event
+> - `context.caller` - Return address from stack (if applicable)
+> - `context.iff1`, `context.im` - Interrupt state
+> - `fdc_status`, `fdc_cmd_reg` - FDC register state
+>
+> **Phase 1 Fields** (ROM_INTERNAL_CALL events):
+> - `target_routine` - IX register value at `$3D2F` trampoline (internal ROM routine address)
+> - `loader_type` - Classification: 0=UNKNOWN, 1=INTERACTIVE, 2=BASIC_COMMAND, 3=API_LOADER, 4=ROM_INTERNAL, 5=DIRECT_FDC
+>
+> **Optional Fields** (type-dependent):
+> - `track`, `sector` - Disk location (if applicable)
+> - `bytes_transferred` - Data transfer size
+> - `filename` - TR-DOS filename
+> - `service`, `user_command` - Command info (COMMAND_START/COMPLETE)
 
 **Example - Session Control (Activate)**:
 ```bash

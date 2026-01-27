@@ -1,28 +1,114 @@
-# TR-DOS Analyzer and Automated Execution Fixes
+# TR-DOS Analyzer - Task Tracker
 
-## Tasks
+> **Updated**: 2026-01-26
 
-- [x] **Refactor BasicEncoder API**
-    - [x] Implement physical ENTER key injection for TR-DOS ([injectEnterPhysical](core/src/debugger/analyzers/basic-lang/basicencoder.cpp#1233-1245))
-    - [x] Move [injectEnterPhysical](core/src/debugger/analyzers/basic-lang/basicencoder.cpp#1233-1245) to a dedicated method in [BasicEncoder](core/src/debugger/analyzers/basic-lang/basicencoder.h#58-59)
-    - [x] Update [runCommand](core/src/debugger/analyzers/basic-lang/basicencoder.cpp#1187-1232) to call [injectEnterPhysical](core/src/debugger/analyzers/basic-lang/basicencoder.cpp#1233-1245)
-- [x] **Fix TR-DOS Analyzer Event Collection**
-    - [x] Handle active TR-DOS state in [onActivate](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#93-185)
-    - [x] Implement [identifyCommand](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#523-562) logic to detect TR-DOS commands (LIST, LOAD, etc.)
-    - [x] Implement [readFilenameFromMemory](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#563-589) to capture file operations
-- [x] **Verification**
-    - [x] Re-run [verify_trdos_analyzer.py](tools/verification/analyzers/trdos/verify_trdos_analyzer.py)
-    - [x] Verify events are correctly captured with timestamps and filenames
-    - [x] Ensure event log output is human-readable and clean
-    - [x] Verify PC context capture (no longer $0000)
-    - [x] Ensure timestamps are sorted/monotonic (handled frame resets)
-    - [x] Improve timestamp precision (millisecond resolution)
-- [ ] **Enhance Non-Standard Loader Support**
-    - [ ] Add breakpoints for `#3D13` and `#3D2F`
-    - [ ] Relax FDC monitoring to capture IO outside standard ROM states
-    - [ ] Implement `IN_CUSTOM` state detection for direct ROM calls
-    - [ ] **Implement Interrupt State Capture**
-        - [ ] Add `iff1` and [im](core/src/debugger/analyzers/basic-lang/basicencoder.cpp#395-403) fields to [TRDOSEvent](core/src/debugger/analyzers/trdos/trdosevent.h#74-108) struct
-        - [ ] Populate these fields in [TRDOSAnalyzer](core/src/debugger/analyzers/trdos/trdosanalyzer.cpp#76-82) from Z80 context
-        - [ ] Update event formatting to display `DI/EI` and `IM` status
-    - [ ] Verify with custom loader logic (mock or simulation)
+---
+
+## v1 Tasks (Completed)
+
+### Refactor BasicEncoder API ✅
+- [x] Implement physical ENTER key injection for TR-DOS
+- [x] Move `injectEnterPhysical` to a dedicated method
+- [x] Update `runCommand` to use new method
+
+### Fix TR-DOS Analyzer Event Collection ✅
+- [x] Handle active TR-DOS state in `onActivate`
+- [x] Implement `identifyService` for C register at $3D13
+- [x] Implement `identifyUserCommand` for token at CH_ADD
+- [x] Read filename from correct address ($5CDD, not $5CD1)
+
+### Event Capture Improvements ✅
+- [x] Add `TRDOSUserCommand` enum (CAT, SAVE, LOAD, FORMAT, etc.)
+- [x] Add breakpoint at $030A (internal command dispatcher)
+- [x] Distinguish service codes from user commands
+- [x] Add interrupt state capture (iff1, im)
+- [x] Add caller address to event context
+
+### Raw Event Logging ✅ (2026-01-26)
+- [x] Add `RawFDCEventType` enum (CMD_START, CMD_END, PORT_ACCESS)
+- [x] Add `eventType` field to `RawFDCEvent`
+- [x] Capture command byte at START
+- [x] Capture status byte at END
+- [x] Log track/sector registers at both points
+
+---
+
+## v2 Tasks (Planned)
+
+> See [v2-upgrade-plan.md](./v2-upgrade-plan.md) for detailed design
+
+### Phase 1: $3D2F Trampoline Detection ✅ COMPLETE
+- [x] Add breakpoint at $3D2F (ROM switch trampoline)
+- [x] Capture IX register (target internal routine address)
+- [x] Add `TRDOSEventType::ROM_INTERNAL_CALL` event type
+- [x] Map IX values to routine names via `getInternalRoutineName()`
+- [x] Add `targetRoutine` field to `TRDOSEvent`
+- [x] Add `LoaderType` enum
+- [x] Update WebAPI to expose `target_routine` and `loader_type` fields
+- [x] Update webapi-interface.md documentation
+
+**Implementation Notes**: Custom loaders using $3D2F trampoline now generate ROM_INTERNAL_CALL events with IX captured.
+
+### Phase 2: System Register Capture 🔴 TODO
+- [ ] Populate `systemReg` field in `RawFDCEvent`
+- [ ] Add `getSystemRegister()` to WD1793 or BetaDisk
+- [ ] Parse density (FM/MFM) and side selection from system register
+- [ ] Include in raw event formatting
+
+**Why needed**: FORMAT debugging requires knowing density and side selection.
+
+### Phase 3: Loader Type Classification 🟡 DESIGN
+- [ ] Add `LoaderType` enum:
+  - `INTERACTIVE` - User at A> prompt
+  - `BASIC_COMMAND` - RUN/LOAD from BASIC
+  - `API_LOADER` - Uses $3D13 correctly
+  - `ROM_INTERNAL` - Uses $3D2F trampoline
+  - `DIRECT_FDC` - No ROM calls (exotic)
+- [ ] Set loader type in events based on detection method
+- [ ] Update event formatting to show loader type
+
+### Phase 4: Stack-Based Classification 🟡 DESIGN
+- [ ] Implement `stackContainsROMAddress()` helper
+- [ ] In `captureRawFDCEvent()`, analyze stack
+- [ ] PC in RAM + no ROM in stack → DIRECT_FDC
+- [ ] PC in RAM + ROM in stack → ROM_INTERNAL
+- [ ] PC in ROM → API_LOADER or INTERACTIVE
+
+### Phase 5: Enhanced Formatting 🔵 NICE-TO-HAVE
+- [ ] Add `format()` method to `RawFDCEvent`
+- [ ] Human-readable output with command names
+- [ ] Parseable format for offline analysis
+
+---
+
+## System Constants Updates ✅ (2026-01-26)
+
+Added to `spectrumconstants.h`:
+- [x] Fixed disk type values (0x16=80T/DS, not 0x19)
+- [x] `TRDOS::SideFlags` namespace
+- [x] `TRDOS::ROMVariables` namespace with actual ROM addresses
+- [x] `TRDOS::ROMVariables::SysSector` - sector 9 field offsets
+- [x] `TRDOS::SystemRegister` - port 0xFF bit definitions
+
+---
+
+## Documentation Updates ✅ (2026-01-26)
+
+- [x] Created `/docs/beta-disk-interface/TRDOS_Format_Procedure.md` - comprehensive FORMAT documentation
+- [x] Fixed RESTORE opcode ($08, not $00)
+- [x] Fixed auto-detect logic (checks H register for Track 1)
+- [x] Fixed system sector offsets (E2h=First Free Track, F4h=Deleted Files)
+- [x] Added Catch-22 clarification (FORMAT has own working detection)
+- [x] Added verify mask note (#7F check at x3F39)
+
+---
+
+## Testing Status
+
+| Test | Status | Notes |
+|------|--------|-------|
+| Unit tests | ✅ Pass | 20/20 tests |
+| CAT command | ✅ Works | Shows COMMAND_START with CAT |
+| RUN "boot" | ✅ Works | Shows user command + service calls |
+| Custom loader | ⚠️ Partial | Shows FDC commands, but no $3D2F detection yet |
+| FORMAT | ⚠️ Partial | Shows WRITE_TRACK commands, needs system register |

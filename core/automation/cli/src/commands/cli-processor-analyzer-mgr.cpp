@@ -381,9 +381,24 @@ void CLIProcessor::HandleAnalyzer(const ClientSession& session, const std::vecto
                         {
                             ss << " (" << e.address_label << ")";
                         }
-                        ss << " PC=0x" << std::setw(4) << std::setfill('0') << e.pc
-                           << " SP=0x" << std::setw(4) << std::setfill('0') << e.sp << std::dec
-                           << NEWLINE;
+                        
+                        // Show trampoline target if present
+                        if (e.trampolineTarget != 0)
+                        {
+                            ss << " -> 0x" << std::setw(4) << std::setfill('0') << e.trampolineTarget;
+                            if (!e.trampolineLabel.empty())
+                            {
+                                ss << " (" << e.trampolineLabel << ")";
+                            }
+                        }
+                        
+                        // Show repeat count if > 1 (deduplicated events)
+                        if (e.repeatCount > 1)
+                        {
+                            ss << std::dec << " [x" << e.repeatCount << "]";
+                        }
+                        
+                        ss << std::dec << NEWLINE;
                     }
 
                     if (events.empty())

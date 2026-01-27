@@ -1017,7 +1017,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
         "Maximum number of events to return (default: 100)";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["responses"]["200"]["description"] =
-        "List of raw FDC events with Z80 main registers and 16-byte stack snapshot";
+        "List of raw FDC events with Z80 main registers and 8 return addresses for stack trace";
 
     // Raw breakpoint events endpoint
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["summary"] = "Get raw breakpoint events";
@@ -1039,7 +1039,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
         "Maximum number of events to return (default: 100)";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["responses"]["200"]["description"] =
-        "List of raw breakpoint events with full Z80 state (main, alternate, IX, IY, I, R) and 16-byte stack snapshot";
+        "List of raw breakpoint events with full Z80 state (main, alternate, IX, IY, I, R) and 8 return addresses for stack trace";
 
 
     // Debug Commands endpoints

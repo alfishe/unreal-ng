@@ -25,10 +25,17 @@ Output files:
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import yaml
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
 from typing import Optional
 
 try:
@@ -277,9 +284,73 @@ class TRDOSSessionCapture:
             self.print_info(f"Failed to deactivate analyzer: {e}")
             return True  # Not critical
             
-    def dump_session_data(self):
-        """Dump all session data to JSON files"""
-        self.print_header("Dumping session data to files...")
+    def _add_hex_comments(self, yaml_str: str) -> str:
+        """Add hex comments to Z80 registers and addresses in YAML string"""
+        hex_keys = [
+            "address", "pc", "sp", "af", "bc", "de", "hl", "af_", "bc_", "de_", 
+            "hl_", "ix", "iy", "trampoline_target", "page_offset", "target_routine",
+            "callerAddress", "originalRAMCaller",
+            # Z80 byte registers
+            "a", "f", "b", "c", "d", "e", "h", "l", "i", "r",
+            # FDC registers and I/O
+            "command_reg", "status_reg", "track_reg", "sector_reg", "data_reg", "system_reg",
+            "commandReg", "statusReg", "trackReg", "sectorReg", "dataReg", "systemReg",
+            "port", "value"
+        ]
+        
+        # Annotate keys: "pc: 123" -> "pc: 123      # $007B"
+        for key in hex_keys:
+            pattern = fr'^(\s*{key}:)\s*(\d+)$'
+            # Determine if we should use 2 or 4 hex digits
+            is_byte = key in ["a", "f", "b", "c", "d", "e", "h", "l", "i", "r", 
+                            "command_reg", "status_reg", "track_reg", "sector_reg", "data_reg", "system_reg",
+                            "commandReg", "statusReg", "trackReg", "sectorReg", "dataReg", "systemReg",
+                            "port", "value"]
+            fmt = "02X" if is_byte else "04X"
+            
+            yaml_str = re.sub(pattern, 
+                              lambda m: f"{m.group(1)} {m.group(2):<8} # ${int(m.group(2)):{fmt}}", 
+                              yaml_str, flags=re.MULTILINE)
+            
+        # Annotate list items: "    - 123" -> "    - 123      # $007B"
+        # Stack items are 16-bit addresses
+        yaml_str = re.sub(r'^(\s+-\s+)(\d+)$', 
+                          lambda m: f"{m.group(1)}{m.group(2):<8} # ${int(m.group(2)):04X}", 
+                          yaml_str, flags=re.MULTILINE)
+        
+        return yaml_str
+
+    def _save_data(self, filepath: Path, data: dict, output_format: str):
+        """Save data to file in specified format (json or yaml)"""
+        if output_format == "yaml":
+            # Dump to string first to allow post-processing (adding comments)
+            import io
+            stream = io.StringIO()
+            yaml.dump(data, stream, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            yaml_content = self._add_hex_comments(stream.getvalue())
+            with open(filepath, 'w') as f:
+                f.write(yaml_content)
+        else:
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+    def dump_session_data(self, session_name: str = "capture", output_format: str = "yaml"):
+        """Dump all session data to files in timestamped results folder"""
+        ext = output_format
+        if output_format == "yaml" and not YAML_AVAILABLE:
+            self.print_info("PyYAML not available, falling back to JSON")
+            ext = "json"
+            output_format = "json"
+        
+        self.print_header(f"Dumping session data to {ext.upper()} files...")
+        
+        # Create timestamped results folder
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+        script_dir = Path(__file__).resolve().parent
+        results_dir = script_dir / "results" / f"{timestamp}-{session_name}"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.print_info(f"Results folder: {results_dir}")
         
         # Session metadata
         metadata = {
@@ -297,33 +368,29 @@ class TRDOSSessionCapture:
             "analyzer": "trdos"
         }
         
-        with open('session_metadata.json', 'w') as f:
-            json.dump(metadata, f, indent=2)
-        self.print_success("Saved: session_metadata.json")
+        self._save_data(results_dir / f'session_metadata.{ext}', metadata, output_format)
+        self.print_success(f"Saved: session_metadata.{ext}")
         
         # Semantic events
         semantic_data = self.get_semantic_events()
         if semantic_data:
-            with open('semantic_events.json', 'w') as f:
-                json.dump(semantic_data, f, indent=2)
+            self._save_data(results_dir / f'semantic_events.{ext}', semantic_data, output_format)
             event_count = len(semantic_data.get('events', []))
-            self.print_success(f"Saved: semantic_events.json ({event_count} events)")
+            self.print_success(f"Saved: semantic_events.{ext} ({event_count} events)")
             
         # Raw FDC events
         raw_fdc_data = self.get_raw_fdc_events()
         if raw_fdc_data:
-            with open('raw_fdc_events.json', 'w') as f:
-                json.dump(raw_fdc_data, f, indent=2)
+            self._save_data(results_dir / f'raw_fdc_events.{ext}', raw_fdc_data, output_format)
             event_count = len(raw_fdc_data.get('events', []))
-            self.print_success(f"Saved: raw_fdc_events.json ({event_count} events)")
+            self.print_success(f"Saved: raw_fdc_events.{ext} ({event_count} events)")
             
         # Raw breakpoint events
         raw_bp_data = self.get_raw_breakpoint_events()
         if raw_bp_data:
-            with open('raw_breakpoint_events.json', 'w') as f:
-                json.dump(raw_bp_data, f, indent=2)
+            self._save_data(results_dir / f'raw_breakpoint_events.{ext}', raw_bp_data, output_format)
             event_count = len(raw_bp_data.get('events', []))
-            self.print_success(f"Saved: raw_breakpoint_events.json ({event_count} events)")
+            self.print_success(f"Saved: raw_breakpoint_events.{ext} ({event_count} events)")
             
     def query_emulator_config(self) -> dict:
         """Query emulator configuration to get currently loaded files"""
@@ -345,7 +412,9 @@ class TRDOSSessionCapture:
             
     def run(self, emulator_uuid: Optional[str] = None, 
             snapshot_path: Optional[str] = None,
-            disk_path: Optional[str] = None) -> bool:
+            disk_path: Optional[str] = None,
+            session_name: str = "capture",
+            output_format: str = "yaml") -> bool:
         """Run the capture session"""
         print(f"\n{Colors.BOLD}{'='*60}{Colors.END}")
         print(f"{Colors.BOLD}TR-DOS Analyzer Session Capture{Colors.END}")
@@ -385,7 +454,7 @@ class TRDOSSessionCapture:
             
         # Deactivate first, then dump data (testing data persistence after deactivation)
         self.deactivate_analyzer()
-        self.dump_session_data()
+        self.dump_session_data(session_name, output_format)
         
         print(f"\n{Colors.BOLD}{'='*60}{Colors.END}")
         print(f"{Colors.GREEN}{Colors.BOLD}✓ Session data captured successfully!{Colors.END}")
@@ -421,6 +490,10 @@ Examples:
                         help='TR-DOS snapshot path (auto-finds if not provided)')
     parser.add_argument('--disk', default=None,
                         help='Disk image path (auto-finds if not provided)')
+    parser.add_argument('--name', default='capture',
+                        help='Session name for results folder (default: capture)')
+    parser.add_argument('--format', default='yaml', choices=['yaml', 'json'],
+                        help='Output format (default: yaml)')
     
     args = parser.parse_args()
     
@@ -430,7 +503,9 @@ Examples:
         success = capture.run(
             emulator_uuid=args.uuid,
             snapshot_path=args.snapshot,
-            disk_path=args.disk
+            disk_path=args.disk,
+            session_name=args.name,
+            output_format=args.format
         )
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:

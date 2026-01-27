@@ -44,10 +44,30 @@ enum class TRDOSEventType : uint8_t
     // Special
     LOADER_DETECTED,    // Custom loader detected
     PROTECTION_DETECTED,// Copy protection detected
+    ROM_INTERNAL_CALL,  // $3D2F trampoline call (IX = target routine)
+};
+
+/// Loader type classification (how disk access was initiated)
+enum class LoaderType : uint8_t
+{
+    UNKNOWN = 0,
+    INTERACTIVE,        // User at A> prompt (BP at $030A)
+    BASIC_COMMAND,      // RUN/LOAD from BASIC (BP at $3D1A)
+    API_LOADER,         // Uses $3D13 API correctly
+    ROM_INTERNAL,       // Uses $3D2F trampoline (custom loader)
+    DIRECT_FDC,         // No ROM calls, direct port access (exotic)
 };
 
 // ==================== Layer 1: Raw Events ====================
 // Fast capture with full Z80 context for offline analysis
+
+/// Raw FDC event type (command lifecycle)
+enum class RawFDCEventType : uint8_t
+{
+    CMD_START,      // FDC command started (-> RESTORE, -> SEEK, etc.)
+    CMD_END,        // FDC command completed (<-- status)
+    PORT_ACCESS,    // Generic port read/write
+};
 
 /// Raw FDC port access event (captured on every port I/O)
 struct RawFDCEvent
@@ -56,6 +76,9 @@ struct RawFDCEvent
     uint64_t tstate;
     uint32_t frameNumber;
     uint64_t timestamp;  // Duplicate of tstate for RingBuffer compatibility
+    
+    // Event type (START/END/PORT_ACCESS)
+    RawFDCEventType eventType;
     
     // FDC Port Access
     uint8_t port;              // 0x1F, 0x3F, 0x5F, 0x7F, 0xFF
@@ -70,15 +93,20 @@ struct RawFDCEvent
     uint8_t dataReg;
     uint8_t systemReg;         // Port 0xFF (drive/side/density)
     
+    // WD1793 status register decoded description (command-type specific)
+    std::string statusDescription;
+    
+    // Human-readable event description (command + context)
+    std::string description;
+    
     // Z80 Context
     uint16_t pc;
     uint16_t sp;
     uint8_t a, f, b, c, d, e, h, l;
     uint8_t iff1, iff2, im;
     
-    // Stack snapshot (8 return addresses for call chain reconstruction)
-    // See TDD Stack Trace Validation section for address validation rules
-    std::array<uint8_t, 16> stack;
+    // Stack snapshot (8 return addresses as 16-bit values)
+    std::array<uint16_t, 8> stack;
 };
 
 /// Raw breakpoint hit event (captured on ROM entry points)
@@ -107,8 +135,22 @@ struct RawBreakpointEvent
     uint8_t i, r;
     uint8_t iff1, iff2, im;
     
-    // Stack snapshot (8 return addresses)
-    std::array<uint8_t, 16> stack;
+    // Stack snapshot (8 return addresses as 16-bit values)
+    std::array<uint16_t, 8> stack;
+    
+    // $3D2F trampoline target resolution (when address == 0x3D2F)
+    // Stack [SP] contains the target ROM routine address
+    uint16_t trampolineTarget;      // Target routine address from stack
+    std::string trampolineLabel;    // Resolved routine name (e.g., "SECTOR_LOOP")
+    std::string trampolineDesc;     // Routine description
+    
+    // Repeat count for deduplicated polling events
+    // If repeatCount > 1, this event represents multiple identical calls
+    // e.g., WAIT_INTRQ_CHK called 4000 times becomes one event with repeatCount=4000
+    uint32_t repeatCount = 1;
+    
+    // Human-readable description of what this breakpoint represents
+    std::string description;
 };
 
 /// TR-DOS low-level service codes (C register at $3D13)
@@ -180,6 +222,7 @@ struct TRDOSEvent
     
     // Classification
     TRDOSEventType type;
+    LoaderType loaderType;      // How this operation was initiated
     
     // Context
     EventContext context;
@@ -194,6 +237,9 @@ struct TRDOSEvent
     // Service/Command info (if applicable)
     TRDOSService service;           // Low-level service code (C register at $3D13)
     TRDOSUserCommand userCommand;   // User-typed command (token at CH_ADD)
+    
+    // ROM internal call info (for ROM_INTERNAL_CALL events)
+    uint16_t targetRoutine;     // IX value when hitting $3D2F (internal ROM routine)
     
     // Transfer info
     uint16_t bytesTransferred;

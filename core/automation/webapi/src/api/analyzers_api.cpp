@@ -397,6 +397,19 @@ void EmulatorAPI::getAnalyzerEvents(const HttpRequestPtr& req, std::function<voi
                     ev["user_command"] = static_cast<int>(events[i].userCommand);
                 }
                 
+                // Phase 1: ROM trampoline detection ($3D2F)
+                if (events[i].type == TRDOSEventType::ROM_INTERNAL_CALL)
+                {
+                    ev["target_routine"] = events[i].targetRoutine;
+                    ev["loader_type"] = static_cast<int>(events[i].loaderType);
+                }
+                
+                // Include loader type for all events if set (not UNKNOWN)
+                if (events[i].loaderType != LoaderType::UNKNOWN)
+                {
+                    ev["loader_type"] = static_cast<int>(events[i].loaderType);
+                }
+                
                 // Add FDC state info
                 ev["fdc_status"] = static_cast<int>(events[i].fdcStatus);
                 ev["fdc_cmd_reg"] = static_cast<int>(events[i].fdcCommand);
@@ -705,11 +718,23 @@ void EmulatorAPI::getAnalyzerRawFDC(const HttpRequestPtr& req, std::function<voi
                 jsonEv["iff2"] = static_cast<unsigned>(ev.iff2);
                 jsonEv["im"] = static_cast<unsigned>(ev.im);
                 
-                // Stack snapshot
-                Json::Value stack(Json::arrayValue);
-                for (size_t j = 0; j < 16; ++j)
+                // Status description (WD1793 decoded)
+                if (!ev.statusDescription.empty())
                 {
-                    stack.append(static_cast<unsigned>(ev.stack[j]));
+                    jsonEv["status_description"] = ev.statusDescription;
+                }
+                
+                // Human-readable description
+                if (!ev.description.empty())
+                {
+                    jsonEv["description"] = ev.description;
+                }
+                
+                // Stack snapshot (8 return addresses as 16-bit values)
+                Json::Value stack(Json::arrayValue);
+                for (size_t j = 0; j < 8; ++j)
+                {
+                    stack.append(ev.stack[j]);
                 }
                 jsonEv["stack"] = stack;
 
@@ -846,13 +871,39 @@ void EmulatorAPI::getAnalyzerRawBreakpoints(const HttpRequestPtr& req, std::func
                 jsonEv["iff2"] = static_cast<unsigned>(ev.iff2);
                 jsonEv["im"] = static_cast<unsigned>(ev.im);
                 
-                // Stack snapshot
+                // Stack snapshot (8 return addresses as 16-bit values)
                 Json::Value stack(Json::arrayValue);
-                for (size_t j = 0; j < 16; ++j)
+                for (size_t j = 0; j < 8; ++j)
                 {
-                    stack.append(static_cast<unsigned>(ev.stack[j]));
+                    stack.append(ev.stack[j]);
                 }
                 jsonEv["stack"] = stack;
+                
+                // Trampoline target (for $3D2F ROM gateway calls)
+                if (ev.trampolineTarget != 0 || !ev.trampolineLabel.empty())
+                {
+                    jsonEv["trampoline_target"] = ev.trampolineTarget;
+                    if (!ev.trampolineLabel.empty())
+                    {
+                        jsonEv["trampoline_label"] = ev.trampolineLabel;
+                    }
+                    if (!ev.trampolineDesc.empty())
+                    {
+                        jsonEv["trampoline_desc"] = ev.trampolineDesc;
+                    }
+                }
+                
+                // Include repeat_count if > 1 (deduplicated polling events)
+                if (ev.repeatCount > 1)
+                {
+                    jsonEv["repeat_count"] = static_cast<Json::UInt>(ev.repeatCount);
+                }
+                
+                // Human-readable description
+                if (!ev.description.empty())
+                {
+                    jsonEv["description"] = ev.description;
+                }
 
                 eventsJson.append(jsonEv);
             }

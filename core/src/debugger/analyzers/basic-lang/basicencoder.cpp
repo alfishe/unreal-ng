@@ -453,7 +453,7 @@ bool BasicEncoder::isTRDOSInitialized(Memory* memory)
     if (!memory)
         return false;
     
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     using namespace SystemVariables48k;
     
     // Check for RAM stub containing RET instruction
@@ -493,7 +493,7 @@ bool BasicEncoder::stackContainsDOSReturnAddress(Memory* memory, uint16_t z80SP,
     if (z80SP >= 0xFFFE)
         return false;
     
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     
     // Garbage detection counters
     int zeroCount = 0;       // Consecutive $0000 entries

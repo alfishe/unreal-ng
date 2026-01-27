@@ -535,7 +535,7 @@ TEST_F(BasicEncoder_Test, StateDetection_TRDOSInitialized)
 {
     // Scenario: TR-DOS has been initialized (RAM stub at $5CC2 = $C9)
     // Write the RAM stub that TR-DOS installs
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     using namespace SystemVariables48k;
     
     // Write RET ($C9) at RAM stub location
@@ -552,7 +552,7 @@ TEST_F(BasicEncoder_Test, StateDetection_TRDOSInitialized)
 TEST_F(BasicEncoder_Test, StateDetection_TRDOSNotInitialized_WrongStub)
 {
     // Scenario: RAM stub has wrong opcode
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     using namespace SystemVariables48k;
     
     // Write wrong opcode at stub location
@@ -569,7 +569,7 @@ TEST_F(BasicEncoder_Test, StateDetection_TRDOSNotInitialized_WrongStub)
 TEST_F(BasicEncoder_Test, StateDetection_TRDOSNotInitialized_WrongCHANS)
 {
     // Scenario: CHANS has wrong value (standard 48K value)
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     using namespace SystemVariables48k;
     
     // Write correct stub
@@ -586,7 +586,7 @@ TEST_F(BasicEncoder_Test, StateDetection_TRDOSNotInitialized_WrongCHANS)
 TEST_F(BasicEncoder_Test, StateDetection_StackContainsDOSAddress_SingleEntry)
 {
     // Scenario: Stack contains a single TR-DOS trap address ($3D2F)
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     
     uint16_t sp = 0xFF00;
     
@@ -601,7 +601,7 @@ TEST_F(BasicEncoder_Test, StateDetection_StackContainsDOSAddress_SingleEntry)
 TEST_F(BasicEncoder_Test, StateDetection_StackContainsDOSAddress_Nested)
 {
     // Scenario: Multiple nested calls, DOS address buried in stack
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     
     uint16_t sp = 0xFF00;
     
@@ -664,7 +664,7 @@ TEST_F(BasicEncoder_Test, StateDetection_TRDOSLogicallyActive_SOSWithDOSOnStack)
     // Scenario: SOS ROM paged (48K BASIC), but TR-DOS initialized and $3D2F on stack
     // This is the "TR-DOS calling SOS" scenario
     
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     using namespace SystemVariables48k;
     
     // Initialize TR-DOS markers
@@ -688,7 +688,7 @@ TEST_F(BasicEncoder_Test, StateDetection_TRDOSLogicallyActive_SOSWithDOSOnStack)
 TEST_F(BasicEncoder_Test, StateDetection_StackScanMaxDepth)
 {
     // Verify stack scanning respects max depth limit
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     
     uint16_t sp = 0xFF00;
     
@@ -718,7 +718,7 @@ TEST_F(BasicEncoder_Test, StateDetection_StackScanMaxDepth)
 TEST_F(BasicEncoder_Test, StateDetection_TrapRangeBoundaries)
 {
     // Verify trap range detection at boundaries
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     
     uint16_t sp = 0xFF00;
     
@@ -802,7 +802,7 @@ TEST_F(BasicEncoder_Test, StateDetection_StackGarbageDetection_TooManyFFFF)
 TEST_F(BasicEncoder_Test, StateDetection_StackGarbageDetection_ValidWithSomeZeros)
 {
     // Test that a few zeros don't trigger false garbage detection
-    using namespace TRDOS::ROMSwitch;
+    using namespace TRDOS::BetaDiskHardware;
     
     uint16_t sp = 0xFF00;
     

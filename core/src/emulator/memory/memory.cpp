@@ -1165,10 +1165,20 @@ void Memory::SetROMDOS(bool updatePorts)
     // Update ROM page identification flags
     SetROMPageFlags();
     
-    // Update port decoder state if requested (like regular Z80 OUT to port 1FFD)
-    if (updatePorts && _context->pPortDecoder)
+    // Update emulator state flags if requested
+    // This ensures UpdateZ80Banks() keeps DOS ROM mapped when called by Z80Step
+    if (updatePorts)
     {
-        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_dos_rom));
+        _context->emulatorState.flags |= CF_TRDOS;
+        
+        // Also set p7FFD bit 4 so UpdateZ80Banks() selects DOS ROM correctly
+        // (CF_TRDOS + bit4=1 -> SetROMDOS, CF_TRDOS + bit4=0 -> SetROMSystem)
+        _context->emulatorState.p7FFD |= 0x10;
+        
+        if (_context->pPortDecoder)
+        {
+            _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_dos_rom));
+        }
     }
 }
 

@@ -199,18 +199,91 @@ namespace EntryPoints
     constexpr uint16_t FORMAT_DISK = 0x1EC2;   // FORMAT command entry point (v5.04T)
 } // namespace EntryPoints
 
-// Disk Type Identifiers (used in DISK_TYPE variable)
+// Disk Type Identifiers (used in DISK_TYPE variable and Sector 9 byte E3h)
+// Reference: TR-DOS 5.04T ROM at x1F31-x1F55 decision tree
 namespace DiskTypes
 {
-    constexpr uint8_t DISK_40T_SS = 0x17;      // 40 tracks, single-sided (624 free sectors)
-    constexpr uint8_t DISK_40T_DS = 0x16;      // 40 tracks, double-sided (1264 free sectors) 
+    constexpr uint8_t DISK_80T_DS = 0x16;      // 80 tracks, double-sided (2544 free sectors)
+    constexpr uint8_t DISK_40T_DS = 0x17;      // 40 tracks, double-sided (1264 free sectors) 
     constexpr uint8_t DISK_80T_SS = 0x18;      // 80 tracks, single-sided (1264 free sectors)
-    constexpr uint8_t DISK_80T_DS = 0x19;      // 80 tracks, double-sided (2544 free sectors)
+    constexpr uint8_t DISK_40T_SS = 0x19;      // 40 tracks, single-sided (624 free sectors)
 } // namespace DiskTypes
 
-// ROM Switching Mechanism (Beta 128 Hardware)
+// Side Flag Values (at address 0x5CDA)
+namespace SideFlags
+{
+    constexpr uint8_t SINGLE_SIDED = 0x00;    // Single-sided format (or detection failed)
+    constexpr uint8_t DOUBLE_SIDED = 0x80;    // Double-sided format confirmed
+} // namespace SideFlags
+
+// TR-DOS 5.04T System Variables (derived from ROM disassembly)
+// These are the actual addresses used by the ROM at runtime
+namespace TRDOS504T
+{
+    // Sector buffer starts at 0x5D25 (256 bytes for one sector)
+    constexpr uint16_t SECTOR_BUFFER = 0x5D25;
+    constexpr uint16_t SECTOR_BUFFER_END = 0x5E25;
+    
+    // System sector (Track 0, Sector 9) field offsets relative to SECTOR_BUFFER
+    // Absolute addresses when sector 9 is loaded into buffer
+    namespace SysSector
+    {
+        constexpr uint8_t OFFSET_FIRST_FREE_SECTOR = 0xE1;  // Buffer[E1h] = first free sector
+        constexpr uint8_t OFFSET_FIRST_FREE_TRACK = 0xE2;   // Buffer[E2h] = first free track
+        constexpr uint8_t OFFSET_DISK_TYPE = 0xE3;          // Buffer[E3h] = disk type (0x16-0x19)
+        constexpr uint8_t OFFSET_FILE_COUNT = 0xE4;         // Buffer[E4h] = number of files
+        constexpr uint8_t OFFSET_FREE_SECTORS_LO = 0xE5;    // Buffer[E5h] = free sectors (low)
+        constexpr uint8_t OFFSET_FREE_SECTORS_HI = 0xE6;    // Buffer[E6h] = free sectors (high)
+        constexpr uint8_t OFFSET_TRDOS_ID = 0xE7;           // Buffer[E7h] = 0x10 (TR-DOS magic byte)
+        constexpr uint8_t OFFSET_DELETED_FILES = 0xF4;      // Buffer[F4h] = deleted files count
+        constexpr uint8_t OFFSET_DISK_LABEL = 0xF5;         // Buffer[F5h-FCh] = disk label (8 bytes)
+    }
+    
+    // Current operation state variables
+    constexpr uint16_t TRACK_COUNT = 0x5CD7;      // Number of tracks (40 or 80), set by x1FCA
+    constexpr uint16_t VERIFY_FLAG = 0x5CD8;      // Non-zero = skip verification during format
+    constexpr uint16_t CURRENT_SIDE = 0x5CD9;     // Current side (0 or 1)
+    constexpr uint16_t SIDE_FLAG = 0x5CDA;        // 0x80 = double-sided, 0x00 = single-sided
+    
+    // Filename buffer (8 chars + 1 extension)
+    constexpr uint16_t FILENAME = 0x5CDD;         // 8-byte filename buffer
+    constexpr uint16_t FILE_EXTENSION = 0x5CE5;   // 1-byte file extension
+    
+    // Filename length and check length
+    constexpr uint16_t NAME_LENGTH = 0x5D06;      // Length of name part to check in search
+    
+    // File descriptor found position
+    constexpr uint16_t FILE_NUMBER = 0x5D0F;      // File number found (0-127), 0xFF = not found
+    constexpr uint16_t FILE_INDEX = 0x5D1E;       // File index in current sector
+    
+    // Default drive
+    constexpr uint16_t DEFAULT_DRIVE = 0x5D19;    // Default drive (0-3)
+    
+    // Stepping rate table (4 rates: 6ms, 12ms, 20ms, 30ms)
+    constexpr uint16_t STEPPING_RATES = 0x5CFA;   // 4-byte stepping rate table
+    
+    // Machine code call flag
+    constexpr uint16_t MCODE_FLAG = 0x5D1F;       // Non-zero = called from machine code
+} // namespace TRDOS504T
+
+// Port 0xFF (Beta 128 System Register) bit definitions
+namespace SystemRegister
+{
+    constexpr uint8_t DRIVE_A = 0x00;             // Drive A selected
+    constexpr uint8_t DRIVE_B = 0x01;             // Drive B selected
+    constexpr uint8_t DRIVE_C = 0x02;             // Drive C selected
+    constexpr uint8_t DRIVE_D = 0x03;             // Drive D selected
+    constexpr uint8_t DRIVE_MASK = 0x03;          // Bits 0-1: drive select
+    constexpr uint8_t RESET_FDC = 0x04;           // Bit 2: 0=reset FDC, 1=normal
+    constexpr uint8_t HEAD_LOAD = 0x08;           // Bit 3: head load (active low on some clones)
+    constexpr uint8_t SIDE_SELECT = 0x10;         // Bit 4: 0=side 1 (bottom), 1=side 0 (top)
+    constexpr uint8_t DENSITY_MFM = 0x20;         // Bit 5: 0=FM (single), 1=MFM (double density)
+    constexpr uint8_t ROM_ENABLE = 0x80;          // Bit 7: 0=DOS ROM, 1=SOS ROM (depends on clone)
+} // namespace SystemRegister
+
+// Beta Disk Interface Hardware Switching Mechanism
 // Based on analysis of TR-DOS 5.04T ROM interaction with 48K ROM
-namespace ROMSwitch
+namespace BetaDiskHardware
 {
     // Trap address range - when PC fetches opcode from this range:
     // - If SOS ROM paged -> hardware switches to DOS ROM
@@ -222,7 +295,8 @@ namespace ROMSwitch
     constexpr uint16_t ENTRY_COMMAND = 0x3D03;   // Execute TR-DOS command from BASIC
     constexpr uint16_t ENTRY_FILE_IN = 0x3D06;   // Data file input routine  
     constexpr uint16_t ENTRY_FILE_OUT = 0x3D0E;  // Data file output routine
-    constexpr uint16_t ENTRY_MCODE = 0x3D13;     // Machine code calls
+    constexpr uint16_t ENTRY_MCODE = 0x3D13;     // Machine code calls (C = service code)
+    constexpr uint16_t ENTRY_USER_CMD = 0x3D1A;  // User command entry (reads CH_ADD)
     constexpr uint16_t ROM_TRAMPOLINE = 0x3D2F;  // ROM switch trampoline (return from SOS)
     constexpr uint16_t ENTRY_FULL = 0x3D31;      // Full DOS entry with sys vars init
     
@@ -236,9 +310,8 @@ namespace ROMSwitch
     constexpr uint16_t CHANS_TRDOS_VALUE = 0x5D25; // CHANS value when TR-DOS sys vars present
     constexpr uint16_t SYS_REG_MIRROR = 0x5D16;    // Mirror of last value written to port $FF
     constexpr uint16_t SPLASH_FLAG = 0x5D17;       // $AA = skip splash screen
-    constexpr uint16_t DEFAULT_DRIVE = 0x5D19;     // Default drive number (0-3)
-    constexpr uint16_t MCODE_FLAG = 0x5D1F;        // Non-zero if called from machine code
-} // namespace ROMSwitch
+    constexpr uint16_t MCODE_MARKER = 0x5D1F;      // Non-zero if called from machine code
+} // namespace BetaDiskHardware
 
 } // namespace TRDOS
 
