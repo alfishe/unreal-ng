@@ -122,10 +122,14 @@ TOTAL_END=$(date +%s)
 TOTAL_DURATION=$((TOTAL_END - TOTAL_START))
 
 # Cleanup
+echo ""
 if [[ "$KEEP_RAM" == "true" ]]; then
     echo "Keeping RAM disk mounted at $RAM_DISK_MOUNT_POINT"
 else
-    "${SCRIPT_DIR}/cleanup_ram_disk.sh"
+    # Cleanup is best-effort - don't fail if Docker is still holding the volume
+    if ! "${SCRIPT_DIR}/cleanup_ram_disk.sh"; then
+        echo "Note: RAM disk cleanup delayed (Docker may still be using it)"
+    fi
 fi
 
 echo ""

@@ -92,6 +92,15 @@ Docker volume mounts on macOS have significant I/O overhead due to the Linux VM 
   - Insufficient permissions for RAM disk creation
   - Project root not found (CMakeLists.txt missing)
 
+**RAM disk won't unmount after build:**
+- Normal on macOS - Docker's VM holds volume references briefly
+- The build succeeded! This is just a cleanup delay
+- Solutions:
+  - Wait 30-60 seconds and try `./cleanup_ram_disk.sh` again
+  - Restart Docker Desktop (fastest way to release)
+  - Leave it mounted - it will auto-release when Docker is idle
+  - Manual: `diskutil unmount force /Volumes/UnrealDockerRAM`
+
 **Docker not available:**
 ```bash
 # Check Docker daemon is running
