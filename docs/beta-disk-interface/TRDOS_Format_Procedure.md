@@ -14,7 +14,7 @@ FORMAT "DiskName"
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. PARSE COMMAND                                               │
 │     - Parse disk name from command line                         │
-│     - Check for '$' prefix → indicates double-sided format      │
+│     - Check for '$' prefix → indicates SINGLE-sided format      │
 │     - Ask user: Turbo (T) or Normal format?                     │
 │       → Normal: 2:1 interleave (SEC_TABLE)                      │
 │       → Turbo:  1:1 sequential (SEC_TURBO_TABLE)                │
@@ -22,17 +22,32 @@ FORMAT "DiskName"
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  2. DETERMINE DISK GEOMETRY                                     │
-│     - Get track count (40 or 80) from drive type                │
-│     - Check if disk name starts with '$' → double-sided format  │
-│     - Determine disk type ID (#16-#19) and sector count         │
-│     → See detailed "Disk Geometry Detection" section below      │
+│  2. DETECT DISK GEOMETRY & SIDES                                │
+│                                                                 │
+│     - Get track count (40 or 80) from drive type (x1FCA)        │
+│                                                                 │
+│     IF disk_name[0] == '$':                                     │
+│         side_flag = 0x00          ; Force Single-Sided          │
+│     ELSE:                                                       │
+│         ; Auto-Detect: Probe Side 1 at Track 1                  │
+│         SEEK Track 1                                            │
+│         SELECT_SIDE_1             ; Port #FF bit 4 = 0          │
+│         DELAY_SETTLE              ; Wait for head               │
+│         READ_ADDRESS              ; Try to read IDAM            │
+│         LD A,H : CP 1             ; Check if Track 1 was read   │
+│         IF H == 1:                ; IDAM reports Track 1        │
+│             side_flag = 0x80      ; Double-sided confirmed      │
+│         ELSE:                     ; Wrong track or probe failed │
+│             side_flag = 0x00      ; Single-sided                │
+│                                                                 │
+│     - Determine disk type ID (#16-#19) based on tracks+sides    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. RESTORE (Seek to Track 0)                                   │
-│     CALL DISK_RESTORE     ; FDC Command: RESTORE ($00)          │
+│     CALL DISK_RESTORE     ; FDC Command: RESTORE ($08)          │
+│     ; Note: $08 sets Head Load (h) bit, not plain $00           │
 │     CALL SELECT_SIDE_0    ; Select Side 0 via system register   │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -49,13 +64,13 @@ FORMAT "DiskName"
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  5. FORMAT SIDE 1 (If Double-Sided)                             │
+│  5. FORMAT SIDE 1 (If Double-Sided Detected)                    │
 │                                                                 │
-│     IF disk_name starts with '$':                               │
+│     IF side_flag == 0x80:         ; Check flag from Step 2      │
 │         FOR track = 0 TO (num_tracks - 1):                      │
 │             PRINT "HEAD 1 CYLINDER {track}"                     │
 │             CALL FORMAT_TRACK(track, side=1)                    │
-│             CALL VERIFY_TRACK(track, side=1) ; ← Read Sectors!  │
+│             CALL VERIFY_TRACK(track, side=1)                    │
 │         NEXT track                                              │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -63,12 +78,15 @@ FORMAT "DiskName"
 ┌─────────────────────────────────────────────────────────────────┐
 │  6. INITIALIZE SYSTEM SECTOR (Track 0, Sector 9)                │
 │                                                                 │
-│     Buffer[E2h] = 01          ; Deleted files count             │
-│     Buffer[E3h] = disk_type   ; Disk type ID (#16-#19)          │
-│     Buffer[E5h] = free_sects  ; Free sectors (2 bytes)          │
-│     Buffer[E7h] = 10h         ; TR-DOS magic byte               │
-│     Buffer[EAh..F1h] = spaces ; Password area (8 bytes)         │
-│     Buffer[F5h..FCh] = name   ; Disk label (8 bytes)            │
+│     Buffer[E1h] = first_free_sec  ; First free sector           │
+│     Buffer[E2h] = first_free_trk  ; First free track (=1)       │
+│     Buffer[E3h] = disk_type       ; Disk type ID (#16-#19)      │
+│     Buffer[E4h] = total_files     ; Number of files (=0)        │
+│     Buffer[E5h] = free_sects_lo   ; Free sectors (low byte)     │
+│     Buffer[E6h] = free_sects_hi   ; Free sectors (high byte)    │
+│     Buffer[E7h] = 10h             ; TR-DOS magic byte           │
+│     Buffer[F4h] = deleted_files   ; Deleted files count (=0)    │
+│     Buffer[F5h..FCh] = name       ; Disk label (8 bytes)        │
 │                                                                 │
 │     WRITE_SECTOR(track=0, sector=9, buffer)                     │
 └─────────────────────────────────────────────────────────────────┘
@@ -242,11 +260,14 @@ FDC writes these bytes to disk using FM/MFM encoding, resulting in ~6,250 raw by
 
 | Phase | Command | Opcode | Description |
 |-------|---------|--------|-------------|
-| Init | RESTORE | $00 | Seek to track 0 |
+| Init | RESTORE | $08 | Seek to track 0 (with Head Load bit set) |
 | Position | SEEK | $18 | Seek to target track |
 | Format | WRITE TRACK | $F0 | Write entire track structure |
 | Verify | READ SECTOR | $80 | Read back sector to verify CRC |
 | System | WRITE SECTOR | $A0 | Write system sector (Track 0, Sector 9) |
+
+> [!NOTE]
+> **Verify Status Check:** At x3F39, TR-DOS checks status against `#7F` mask. Bit 6 ($40) is checked first for Write Protection. Any set bit in the lower 7 bits (except Record Type in some cases) triggers the "Retry, Abort, Ignore" prompt.
 
 ---
 
@@ -265,7 +286,9 @@ If any sector fails verification, TR-DOS reports a format error. This is why you
 
 ## Disk Geometry Detection (Detailed Analysis)
 
-> **IMPORTANT:** TR-DOS does **NOT** automatically detect disk geometry from hardware!
+TR-DOS **automatically detects** disk geometry:
+- **Track count (40/80)**: Hardware detection via TRACK00 signal
+- **Double-sided**: Probes Side 1 of disk for readable sector headers (IDAMs)
 
 ### Track Count Determination (Physical Detection)
 
@@ -538,24 +561,40 @@ TR-DOS uses the physical detection routine `x1FCA` instead.
 
 ### Double-Sided Determination
 
-**Location:** `$1F01-$1F18` in TR-DOS 5.04T
+**Location:** `x1F02-x1F1B` in TR-DOS 5.04T
 
-Double-sided format is triggered by the **`$` prefix** in the disk name - this is a **user-specified** option, not hardware detection:
+TR-DOS performs **automatic detection** of double-sided disks by probing Side 1 with READ ADDRESS. The `$` prefix **bypasses** this detection and forces single-sided format:
 
 ```asm
-1F01:  3A DD 5C      LD    A,(FILE_NAME)  ; Get first char of disk name
-1F04:  FE 24         CP    '$'            ; Is it '$'?
-1F06:  28 13         JR    Z,#1F1B        ; If NOT '$', skip side 1
-...
-1F16:  3E 80         LD    A,#80          ; Set double-sided flag
-1F18:  32 DA 5C      LD    (#5CDA),A      ; Store flag
+; Address x1F02 - Check for $ prefix first
+x1F02:  3A DD 5C      LD    A,(#5CDD)     ; Get first char of disk label
+        FE 24         CP    '$'            ; Is it '$'?
+        28 13         JR    Z,x1F1B        ; IF '$': Skip detection → Single-sided
+
+; Auto-detection (only if no $ prefix):
+x1F06:  CALL x1FF6    ; Select Side 1 (Head 1) via Port #FF bit 4
+        CALL x3EA0    ; Delay for head settle
+        CALL x3EB5    ; Try READ ADDRESS (0xC0) from Side 1
+        LD   A,H      ; Get track number from IDAM
+        CP   1        ; Did we read Track 1 successfully?
+        JR   NZ,x1F1B ; No? → Single-sided (detection failed)
+        
+x1F16:  LD   A,#80    ; Yes! Side 1 is readable
+        LD   (#5CDA),A ; Set side_flag = 0x80 (Double-sided)
+
+x1F1B:  ; Continue to formatting loop...
 ```
+
+> [!IMPORTANT]
+> **Auto-Detection Limitation:** The detection relies on Side 1 of Track 1 having readable sector headers (IDAMs). If formatting a brand-new blank disk, the READ ADDRESS probe will fail and TR-DOS will format single-sided only. Previously-used disks work correctly.
+>
+> **Note:** The FORMAT command (x1EC2) has its own dedicated, functional side-probing logic at x1F06. There is a separate bug in the general Drive Activation routine (x3DCB) where it fails to probe sides, but this only affects normal file operations (LOAD/SAVE), not the FORMAT command.
 
 ### Usage Examples
 
 ```
-FORMAT "mydisk"     → Single-sided format (side 0 only)
-FORMAT "$mydisk"    → Double-sided format (both sides)
+FORMAT "test"      → Auto-detect (probes Side 1) → Usually Double-sided (2544 sectors on 80T)
+FORMAT "$test"     → Force Single-sided (skip detection) → 1264 sectors on 80T
 ```
 
 ### Final Disk Type Selection
@@ -596,9 +635,13 @@ Based on track count (`SC_0B`) and double-sided flag (`#5CDA`):
 
 ### Potential Emulator Issues
 
-If you're only getting single-sided disks formatted:
+If you're only getting single-sided disks formatted (when expecting double-sided):
 
-1. **Not using `$` prefix** - User must explicitly use `FORMAT "$name"` for double-sided
-2. **TURBO_FMT returning wrong value** - Bit 7 may not be set for 80-track drives
-3. **`#5CDA` flag not being set** - The double-sided flag storage may be failing
-4. **`FORMAT_SIDE_1_IF_NEEDED` not executing** - Check the logic at $20BD
+1. **Auto-detection failing on blank disks** - The ROM probes Side 1 with READ ADDRESS. If the disk has no IDAM headers on Side 1 (brand new disk), detection fails → single-sided. Pre-format the disk or ensure your emulator creates disks with valid headers.
+2. **READ ADDRESS (0xC0) not implemented correctly** - The WD1793 emulator must return valid Track/Side/Sector/Size in registers after READ ADDRESS command.
+3. **Side selection via Port #FF bit 4 not working** - Ensure `processBeta128()` correctly parses bit 4 for side selection and `_sideUp` is passed to `getTrackForCylinderAndSide()`.
+4. **`#5CDA` flag not being checked at x20D4** - The formatting loop checks this flag to decide whether to format Side 1.
+
+If you're getting double-sided when expecting single-sided:
+
+1. **User forgot `$` prefix** - Use `FORMAT "$name"` to force single-sided format.

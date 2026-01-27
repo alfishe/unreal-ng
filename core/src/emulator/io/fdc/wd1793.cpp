@@ -203,18 +203,53 @@ void WD1793::enterSleepMode()
 }
 
 /// Handle Beta128 interface system controller commands
-/// @param value
+/// @param value System register value from port 0xFF
+/// 
+/// Beta128 System Register (port 0xFF) - Output:
+/// +-----+-----+-----+-----+-----+-----+-----+-----+
+/// | Bit |  7  |  6  |  5  |  4  |  3  |  2  |  1  |  0  |
+/// +-----+-----+-----+-----+-----+-----+-----+-----+-----+
+/// |     | n/a | DEN | n/a |SIDE | HLT | RST | D1  | D0  |
+/// +-----+-----+-----+-----+-----+-----+-----+-----+-----+
+/// 
+/// D0-D1 (bits 0-1): Drive select (0-3)
+///   00 = Drive A
+///   01 = Drive B
+///   10 = Drive C
+///   11 = Drive D
+///
+/// RST (bit 2): FDC Reset, active LOW
+///   0 = Reset WD1793
+///   1 = Normal operation
+///
+/// HLT (bit 3): Head Load Timing (directly connected to WD1793 HLT pin)
+///   Used to control index pulse timing
+///
+/// SIDE (bit 4): Disk side select, active LOW (directly connected to FDD)
+///   0 = Side 1 (top/upper head) 
+///   1 = Side 0 (bottom/lower head)
+///
+/// DEN (bit 6): Density select
+///   0 = Double density (MFM)
+///   1 = Single density (FM)
+///
 void WD1793::processBeta128(uint8_t value)
 {
-    // Set active drive, Bits[0,1] (0..3)
+    // Bits[0,1]: Drive select (0-3: A, B, C, D)
     _drive = value & 0b0000'0011;
 
-    // TODO: Select different drive if requested
+    // TODO: Implement multi-drive support
+    // Currently only one drive is supported. To support drive switching:
+    // 1. Add FDD _drives[4] array to WD1793
+    // 2. Select drive: _selectedDrive = &_drives[_drive];
+    // 3. Invalidate track cache on drive change (like UnrealSpeccy: seldrive->t.clear())
 
-    // Set side Bit[4] (0..1)
+    // Bit[4]: Side select (active LOW signal - inverted logic)
+    // Hardware: SIDE pin LOW = upper head (side 1), SIDE pin HIGH = lower head (side 0)
+    // Register: bit4=0 → SIDE LOW → side 1 (top), bit4=1 → SIDE HIGH → side 0 (bottom)
     _sideUp = ~(value >> 4) & 0b0000'0001;
 
-    // Reset Bit[3] (active low)
+    // Bit[2]: Reset (active LOW)
     bool reset = !(value & 0b0000'0100);
 
     if (reset)
