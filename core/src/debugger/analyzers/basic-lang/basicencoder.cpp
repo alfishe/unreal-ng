@@ -1035,7 +1035,8 @@ BasicEncoder::InjectionResult BasicEncoder::injectToTRDOS(Memory* memory, const 
     
     // Validate E_LINE points to reasonable RAM area
     // After TR-DOS initialization, E_LINE should point past TR-DOS sys vars (~$5D3C)
-    if (eLineAddr < 0x5B00 || eLineAddr > 0xFFFF)
+    // Note: eLineAddr is uint16_t, so > 0xFFFF check is redundant
+    if (eLineAddr < 0x5B00)
     {
         result.message = "Error: Invalid E_LINE address: " + std::to_string(eLineAddr);
         return result;
