@@ -83,6 +83,43 @@ Docker volume mounts on macOS have significant I/O overhead due to the Linux VM 
 
 ## Troubleshooting
 
+### Common Issues
+
+**Script exits with no output:**
+- Fixed in latest version - script now reports which step failed
+- Common causes:
+  - Docker not installed or not running: `docker info`
+  - Insufficient permissions for RAM disk creation
+  - Project root not found (CMakeLists.txt missing)
+
+**Docker not available:**
+```bash
+# Check Docker daemon is running
+docker info
+
+# Start Docker Desktop (macOS) or Docker service (Linux)
+```
+
+**Build failures:**
+```bash
+# Keep RAM disk mounted to inspect logs
+./run_all.sh --keep
+
+# Check logs
+cat /Volumes/UnrealDockerRAM/unreal-ng/build-logs/*.log
+```
+
+**RAM disk issues:**
+```bash
+# Check if RAM disk is mounted
+mount | grep UnrealDockerRAM
+
+# Manual cleanup
+./cleanup_ram_disk.sh
+```
+
+### Manual Commands
+
 ```bash
 # Check Docker image exists
 docker images | grep unrealng-build
@@ -90,6 +127,6 @@ docker images | grep unrealng-build
 # Force rebuild image
 ./ensure_image.sh --rebuild
 
-# Interactive container shell
+# Interactive container shell (after creating RAM disk)
 docker run -it --rm -v /Volumes/UnrealDockerRAM/unreal-ng:/workspace unrealng-build:qt6.9.3 bash
 ```

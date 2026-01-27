@@ -25,8 +25,21 @@
 
 set -e
 
+# Error trap to report what failed
+trap 'echo ""; echo "╔══════════════════════════════════════════════════════════════╗"; echo "║  ❌ SCRIPT FAILED AT LINE $LINENO                            ║"; echo "║  Command: $BASH_COMMAND"; echo "╚══════════════════════════════════════════════════════════════╝"; exit 1' ERR
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+
+# Source common.sh with explicit error message
+if ! source "${SCRIPT_DIR}/common.sh" 2>&1; then
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  ❌ FAILED TO LOAD common.sh                                 ║"
+    echo "║  Check that you're in the correct directory and Docker is    ║"
+    echo "║  installed and running.                                      ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    exit 1
+fi
 
 # Parse arguments
 RAM_SIZE_GIB=$DEFAULT_RAM_SIZE_GIB
@@ -41,14 +54,14 @@ for arg in "$@"; do
     esac
 done
 
-echo "╔══════════════════════════════════════════════════════════════╗"
+echo "╔═════════════════════════════════════════════════════════════╗"
 echo "║         Unreal-NG Docker Build Verification                 ║"
-echo "╠══════════════════════════════════════════════════════════════╣"
+echo "╠═════════════════════════════════════════════════════════════╣"
 echo "║  Platform:    $(printf '%-45s' "$(get_platform_arch)")║"
 echo "║  RAM Size:    $(printf '%-45s' "${RAM_SIZE_GIB}GiB")║"
 echo "║  Docker:      $(printf '%-45s' "$DOCKER_FULL_IMAGE")║"
 echo "║  Project:     $(printf '%-45s' "$(basename $PROJECT_ROOT)")║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "╚═════════════════════════════════════════════════════════════╝"
 echo ""
 
 TOTAL_START=$(date +%s)
@@ -56,25 +69,40 @@ TOTAL_START=$(date +%s)
 # 1) Ensure Docker image exists
 echo "Step 1/5: Ensuring Docker image..."
 if [[ "$REBUILD_IMAGE" == "true" ]]; then
-    "${SCRIPT_DIR}/ensure_image.sh" --rebuild
+    if ! "${SCRIPT_DIR}/ensure_image.sh" --rebuild; then
+        echo "❌ Failed to build/verify Docker image"
+        exit 1
+    fi
 else
-    "${SCRIPT_DIR}/ensure_image.sh"
+    if ! "${SCRIPT_DIR}/ensure_image.sh"; then
+        echo "❌ Failed to verify Docker image exists"
+        exit 1
+    fi
 fi
 echo ""
 
 # 2) Create RAM disk
 echo "Step 2/5: Creating RAM disk..."
-"${SCRIPT_DIR}/create_ram_disk.sh" "$RAM_SIZE_GIB"
+if ! "${SCRIPT_DIR}/create_ram_disk.sh" "$RAM_SIZE_GIB"; then
+    echo "❌ Failed to create RAM disk"
+    exit 1
+fi
 echo ""
 
 # 3) Wipe any stale content
 echo "Step 3/5: Preparing RAM disk..."
-"${SCRIPT_DIR}/cleanup_ram_disk.sh" --wipe
+if ! "${SCRIPT_DIR}/cleanup_ram_disk.sh" --wipe; then
+    echo "❌ Failed to prepare RAM disk"
+    exit 1
+fi
 echo ""
 
 # 4) Copy project to RAM
 echo "Step 4/5: Syncing project..."
-"${SCRIPT_DIR}/copy_to_ram.sh"
+if ! "${SCRIPT_DIR}/copy_to_ram.sh"; then
+    echo "❌ Failed to sync project to RAM disk"
+    exit 1
+fi
 echo ""
 
 # 5) Build in Docker
