@@ -21,6 +21,7 @@
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screencapture.h>
 #include <emulator/cpu/opcode_profiler.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 
 class LuaEmulator
 {
@@ -1251,6 +1252,104 @@ public:
                 result[idx++] = item;
             }
             return result;
+        });
+
+        // Keyboard injection
+        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> framesOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            uint16_t frames = framesOpt.value_or(2);
+            ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, frames);
+            return true;
+        });
+
+        lua.set_function("key_press", [this](const std::string& keyName) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+            return true;
+        });
+
+        lua.set_function("key_release", [this](const std::string& keyName) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+            return true;
+        });
+
+        lua.set_function("key_combo", [this](sol::table keys, sol::optional<uint16_t> framesOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            uint16_t frames = framesOpt.value_or(2);
+            std::vector<std::string> keyNames;
+            for (auto& pair : keys) {
+                keyNames.push_back(pair.second.as<std::string>());
+            }
+            ctx->pDebugManager->GetKeyboardManager()->TapCombo(keyNames, frames);
+            return true;
+        });
+
+        lua.set_function("key_macro", [this](const std::string& macroName) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            return ctx->pDebugManager->GetKeyboardManager()->ExecuteNamedSequence(macroName);
+        });
+
+        lua.set_function("key_type", [this](const std::string& text, sol::optional<uint16_t> delayOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            uint16_t delay = delayOpt.value_or(2);
+            ctx->pDebugManager->GetKeyboardManager()->TypeText(text, delay);
+            return true;
+        });
+
+        lua.set_function("key_trdos_command", [this](const std::string& keyword, sol::optional<std::string> argOpt) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            std::string argument = argOpt.value_or("");
+            ctx->pDebugManager->GetKeyboardManager()->TypeTRDOSCommand(keyword, argument);
+            return true;
+        });
+
+        lua.set_function("key_release_all", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pDebugManager->GetKeyboardManager()) {
+                ctx->pDebugManager->GetKeyboardManager()->ReleaseAllKeys();
+            }
+        });
+
+        lua.set_function("key_is_running", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+            return ctx->pDebugManager->GetKeyboardManager()->IsSequenceRunning();
+        });
+
+        lua.set_function("key_abort", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (ctx && ctx->pDebugManager->GetKeyboardManager()) {
+                ctx->pDebugManager->GetKeyboardManager()->AbortSequence();
+            }
+        });
+
+        lua.set_function("key_list", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table keys = lua_view.create_table();
+            auto names = DebugKeyboardManager::GetAllKeyNames();
+            int idx = 1;
+            for (const auto& name : names) {
+                keys[idx++] = name;
+            }
+            return keys;
         });
 
         // Set the emulator instance in the Lua environment

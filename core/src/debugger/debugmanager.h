@@ -25,6 +25,9 @@ protected:
     LabelManager* _labels = nullptr;
     std::unique_ptr<Z80Disassembler> _disassembler = nullptr;
     std::unique_ptr<AnalyzerManager> _analyzerManager = nullptr;
+    
+    // Keyboard injection manager for automation/debugging
+    class DebugKeyboardManager* _keyboardManager = nullptr;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -41,6 +44,7 @@ public:
     LabelManager* GetLabelManager();
     std::unique_ptr<Z80Disassembler>& GetDisassembler();
     AnalyzerManager* GetAnalyzerManager();
+    DebugKeyboardManager* GetKeyboardManager();
 
     /// endregion </Properties>
 

@@ -119,7 +119,11 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"snapshot", &CLIProcessor::HandleSnapshot},
 
                         // Capture commands (OCR, screen, ROM text)
-                        {"capture", &CLIProcessor::HandleCapture}};
+                        {"capture", &CLIProcessor::HandleCapture},
+
+                        // Keyboard injection commands
+                        {"key", &CLIProcessor::HandleKey},
+                        {"keyboard", &CLIProcessor::HandleKey}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -541,6 +545,16 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  capture ocr                    - OCR text from screen (ROM font)" << NEWLINE;
     oss << "  capture romtext                - Capture ROM print output (TODO)" << NEWLINE;
     oss << "  capture screen [5|7|shadow]    - Capture screen bitmap (TODO)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Keyboard Injection:" << NEWLINE;
+    oss << "  key tap <key>                  - Tap a key (press and release)" << NEWLINE;
+    oss << "  key press <key>                - Press and hold a key" << NEWLINE;
+    oss << "  key release <key>              - Release a held key" << NEWLINE;
+    oss << "  key combo <key1> <key2>...     - Tap multiple keys simultaneously" << NEWLINE;
+    oss << "  key macro <name>               - Execute predefined macro (e_mode, format, cat, etc.)" << NEWLINE;
+    oss << "  key type <text>                - Type text with auto modifier handling" << NEWLINE;
+    oss << "  key list                       - List all recognized key names" << NEWLINE;
+    oss << "  key clear                      - Release all keys" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;

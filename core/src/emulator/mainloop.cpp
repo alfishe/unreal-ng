@@ -9,6 +9,7 @@
 #include "common/timehelper.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
@@ -380,6 +381,13 @@ void MainLoop::OnFrameEnd()
     if (_context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
     {
         _context->pDebugManager->GetAnalyzerManager()->dispatchFrameEnd();
+    }
+    
+    // Process keyboard injection sequences (for automation)
+    // This is called each frame to advance any queued key sequences (tap/release timing)
+    if (_context->pDebugManager && _context->pDebugManager->GetKeyboardManager())
+    {
+        _context->pDebugManager->GetKeyboardManager()->OnFrame();
     }
 }
 

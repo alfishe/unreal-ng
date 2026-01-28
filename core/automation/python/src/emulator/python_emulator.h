@@ -21,6 +21,7 @@
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screencapture.h>
 #include <emulator/cpu/opcode_profiler.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 
 namespace py = pybind11;
 
@@ -960,6 +961,74 @@ namespace PythonBindings
                     result.append(item);
                 }
                 return result;
-            }, "Get recent execution trace", py::arg("count") = 100);
+            }, "Get recent execution trace", py::arg("count") = 100)
+            
+            // Keyboard injection
+            .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames);
+                return true;
+            }, "Tap a key (press, hold, release)", py::arg("key"), py::arg("frames") = 2)
+            .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+                return true;
+            }, "Press and hold a key", py::arg("key"))
+            .def("key_release", [](Emulator& self, const std::string& keyName) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+                return true;
+            }, "Release a held key", py::arg("key"))
+            .def("key_combo", [](Emulator& self, const std::vector<std::string>& keyNames, uint16_t holdFrames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TapCombo(keyNames, holdFrames);
+                return true;
+            }, "Tap multiple keys simultaneously", py::arg("keys"), py::arg("frames") = 2)
+            .def("key_macro", [](Emulator& self, const std::string& macroName) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                return ctx->pDebugManager->GetKeyboardManager()->ExecuteNamedSequence(macroName);
+            }, "Execute predefined macro (e_mode, format, cat, etc.)", py::arg("name"))
+            .def("key_type", [](Emulator& self, const std::string& text, uint16_t charDelayFrames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames);
+                return true;
+            }, "Type text with auto modifier handling", py::arg("text"), py::arg("delay_frames") = 2)
+            .def("key_trdos_command", [](Emulator& self, const std::string& keyword, const std::string& argument) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TypeTRDOSCommand(keyword, argument);
+                return true;
+            }, "Type TR-DOS command with argument", py::arg("keyword"), py::arg("argument") = "")
+            .def("key_release_all", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pDebugManager->GetKeyboardManager()) {
+                    ctx->pDebugManager->GetKeyboardManager()->ReleaseAllKeys();
+                }
+            }, "Release all currently pressed keys")
+            .def("key_is_running", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                return ctx->pDebugManager->GetKeyboardManager()->IsSequenceRunning();
+            }, "Check if a key sequence is currently running")
+            .def("key_abort", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pDebugManager->GetKeyboardManager()) {
+                    ctx->pDebugManager->GetKeyboardManager()->AbortSequence();
+                }
+            }, "Abort current key sequence")
+            .def("key_list", []() -> py::list {
+                py::list keys;
+                auto names = DebugKeyboardManager::GetAllKeyNames();
+                for (const auto& name : names) {
+                    keys.append(name);
+                }
+                return keys;
+            }, "List all recognized key names");
     }
 }

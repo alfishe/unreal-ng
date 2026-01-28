@@ -162,6 +162,18 @@ private:
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
 
+    // Keyboard injection command handlers
+    void HandleKey(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowKeyHelp(const ClientSession& session);
+    void HandleKeyPress(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyRelease(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyTap(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyCombo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyMacro(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyType(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyList(const ClientSession& session);
+    void HandleKeyClear(const ClientSession& session, EmulatorContext* context);
+
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);

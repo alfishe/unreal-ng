@@ -561,6 +561,79 @@ Response contains type-specific fields based on breakpoint type:
 }
 ```
 
+### Keyboard Injection
+
+> **Status**: ✅ Implemented (2026-01)
+
+Programmatic keyboard input injection for automation and testing.
+
+```
+POST /api/v1/emulator/{id}/keyboard/tap         Tap key (press + auto-release)
+POST /api/v1/emulator/{id}/keyboard/press       Press and hold key
+POST /api/v1/emulator/{id}/keyboard/release     Release held key
+POST /api/v1/emulator/{id}/keyboard/combo       Tap modifier+key combo (e.g., SS+P for quote)
+POST /api/v1/emulator/{id}/keyboard/macro       Execute predefined macro
+POST /api/v1/emulator/{id}/keyboard/type        Type text sequence
+POST /api/v1/emulator/{id}/keyboard/release_all Release all pressed keys
+POST /api/v1/emulator/{id}/keyboard/abort       Abort current sequence
+GET  /api/v1/emulator/{id}/keyboard/status      Get keyboard state
+GET  /api/v1/emulator/{id}/keyboard/keys        List recognized key names
+```
+
+**Single Key Tap**:
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/tap \
+     -H "Content-Type: application/json" \
+     -d '{"key": "a", "frames": 3}'
+```
+
+**Key Combo** (e.g., SYMBOL+P for double-quote):
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/combo \
+     -H "Content-Type: application/json" \
+     -d '{"keys": ["ss", "p"], "frames": 3}'
+```
+
+**Type Text** (plain literal characters):
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/type \
+     -H "Content-Type: application/json" \
+     -d '{"text": "hello world", "delay_frames": 3}'
+```
+
+**Type BASIC Command** (tokenized mode - first char = K-mode keyword):
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/type \
+     -H "Content-Type: application/json" \
+     -d '{"text": "P\"hello\"", "tokenized": true, "delay_frames": 3}'
+```
+Result: Types `PRINT "hello"` (P → PRINT token, quotes handled automatically)
+
+> [!NOTE]
+> **`tokenized` parameter**: When `true`, the first character produces a K-mode keyword token (e.g., 'P' → PRINT), and quotes are handled as SS+P combos. When `false` (default), all characters are typed literally.
+
+**Execute Macro**:
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
+     -H "Content-Type: application/json" \
+     -d '{"name": "format"}'
+```
+
+**Type Request Body**:
+```json
+{
+  "text": "P\"hello\"",
+  "delay_frames": 3,
+  "tokenized": true
+}
+```
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `text` | string | Yes | - | Text to type |
+| `delay_frames` | number | No | 2 | Frames between characters |
+| `tokenized` | boolean | No | false | Enable K-mode token for first char |
+
 ## Planned Endpoints (Not Yet Implemented)
 
 ### Disassembly
