@@ -20,6 +20,7 @@ set(SOURCES
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-capture.cpp
+    src/commands/cli-processor-profiler.cpp
 )
 
 # Create the library

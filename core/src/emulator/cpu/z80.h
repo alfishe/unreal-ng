@@ -7,6 +7,9 @@
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
 extern uint8_t* direct_registers[8];
 
+// Forward declaration
+class OpcodeProfiler;
+
 /// region <Structures>
 
 // Disable compiler alignment for packed structures
@@ -335,6 +338,10 @@ protected:
 
 protected:
     int _nmi_pending_count = 0;
+    
+    // Opcode profiling
+    OpcodeProfiler* _opcodeProfiler = nullptr;
+    bool _feature_opcodeprofiler_enabled = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -409,4 +416,9 @@ public:
     static std::string DumpFlags(uint8_t flags);
 
     /// endregion </Debug methods>
+    
+    /// region <Feature Cache>
+    void UpdateFeatureCache();
+    OpcodeProfiler* GetOpcodeProfiler() { return _opcodeProfiler; }
+    /// endregion </Feature Cache>
 };

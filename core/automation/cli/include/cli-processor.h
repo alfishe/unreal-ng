@@ -125,6 +125,18 @@ private:
     // Analyzer command handlers
     void HandleAnalyzer(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Profiler command handlers
+    void HandleProfiler(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowProfilerHelp(const ClientSession& session);
+    void ShowProfilerOpcodeHelp(const ClientSession& session);
+    void HandleProfilerOpcodeStart(const ClientSession& session, EmulatorContext* context, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeStop(const ClientSession& session, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeClear(const ClientSession& session, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeStatus(const ClientSession& session, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeCounters(const ClientSession& session, class OpcodeProfiler* profiler, size_t limit);
+    void HandleProfilerOpcodeTrace(const ClientSession& session, class OpcodeProfiler* profiler, size_t count);
+    void HandleProfilerOpcodeSave(const ClientSession& session, class OpcodeProfiler* profiler, const std::string& path);
+
 
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);

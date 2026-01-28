@@ -20,6 +20,7 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screencapture.h>
+#include <emulator/cpu/opcode_profiler.h>
 
 class LuaEmulator
 {
@@ -1142,6 +1143,114 @@ public:
             DiskImage* disk = fdd->getDiskImage();
             if (!disk) return "";
             return disk->DumpSectorHex(trackNo, sector);
+        });
+
+        // Opcode profiler
+        lua.set_function("profiler_start", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return false;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return false;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return false;
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            if (fm) fm->setFeature("opcode_profiler", true);
+            profiler->Start();
+            return true;
+        });
+
+        lua.set_function("profiler_stop", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return false;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return false;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return false;
+            profiler->Stop();
+            return true;
+        });
+
+        lua.set_function("profiler_clear", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (profiler) profiler->Clear();
+        });
+
+        lua.set_function("profiler_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return result;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return result;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return result;
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            auto status = profiler->GetStatus();
+            result["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+            result["capturing"] = status.capturing;
+            result["total_executions"] = status.totalExecutions;
+            result["trace_size"] = status.traceSize;
+            result["trace_capacity"] = status.traceCapacity;
+            return result;
+        });
+
+        lua.set_function("profiler_counters", [this](sol::optional<size_t> limitOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return result;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return result;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return result;
+            size_t limit = limitOpt.value_or(100);
+            auto counters = profiler->GetTopOpcodes(limit);
+            int idx = 1;
+            for (const auto& counter : counters) {
+                sol::table entry = lua_view.create_table();
+                entry["prefix"] = counter.prefix;
+                entry["opcode"] = counter.opcode;
+                entry["count"] = counter.count;
+                entry["mnemonic"] = counter.mnemonic;
+                result[idx++] = entry;
+            }
+            return result;
+        });
+
+        lua.set_function("profiler_trace", [this](sol::optional<size_t> countOpt) -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return result;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return result;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return result;
+            size_t count = countOpt.value_or(100);
+            auto trace = profiler->GetRecentTrace(count);
+            int idx = 1;
+            for (const auto& entry : trace) {
+                sol::table item = lua_view.create_table();
+                item["pc"] = entry.pc;
+                item["prefix"] = entry.prefix;
+                item["opcode"] = entry.opcode;
+                item["flags"] = entry.flags;
+                item["a"] = entry.a;
+                item["frame"] = entry.frame;
+                item["tstate"] = entry.tState;
+                result[idx++] = item;
+            }
+            return result;
         });
 
         // Set the emulator instance in the Lua environment

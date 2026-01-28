@@ -20,6 +20,7 @@
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <debugger/analyzers/rom-print/screenocr.h>
 #include <emulator/video/screencapture.h>
+#include <emulator/cpu/opcode_profiler.h>
 
 namespace py = pybind11;
 
@@ -869,6 +870,96 @@ namespace PythonBindings
             .def("is_calltrace", [](Emulator& self) -> bool {
                 FeatureManager* fm = self.GetFeatureManager();
                 return fm ? fm->isEnabled("calltrace") : false;
-            }, "Check if call trace is enabled");
+            }, "Check if call trace is enabled")
+            
+            // Opcode profiler
+            .def("profiler_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) fm->setFeature("opcode_profiler", true);
+                profiler->Start();
+                return true;
+            }, "Start opcode profiler session (enables feature, clears data)")
+            .def("profiler_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                profiler->Stop();
+                return true;
+            }, "Stop opcode profiler session")
+            .def("profiler_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (profiler) profiler->Clear();
+            }, "Clear profiler data")
+            .def("profiler_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return result;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return result;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return result;
+                FeatureManager* fm = self.GetFeatureManager();
+                auto status = profiler->GetStatus();
+                result["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                result["capturing"] = status.capturing;
+                result["total_executions"] = status.totalExecutions;
+                result["trace_size"] = status.traceSize;
+                result["trace_capacity"] = status.traceCapacity;
+                return result;
+            }, "Get profiler status")
+            .def("profiler_counters", [](Emulator& self, size_t limit) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return result;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return result;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return result;
+                auto counters = profiler->GetTopOpcodes(limit);
+                for (const auto& counter : counters) {
+                    py::dict entry;
+                    entry["prefix"] = counter.prefix;
+                    entry["opcode"] = counter.opcode;
+                    entry["count"] = counter.count;
+                    entry["mnemonic"] = counter.mnemonic;
+                    result.append(entry);
+                }
+                return result;
+            }, "Get top opcodes by execution count", py::arg("limit") = 100)
+            .def("profiler_trace", [](Emulator& self, size_t count) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return result;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return result;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return result;
+                auto trace = profiler->GetRecentTrace(count);
+                for (const auto& entry : trace) {
+                    py::dict item;
+                    item["pc"] = entry.pc;
+                    item["prefix"] = entry.prefix;
+                    item["opcode"] = entry.opcode;
+                    item["flags"] = entry.flags;
+                    item["a"] = entry.a;
+                    item["frame"] = entry.frame;
+                    item["tstate"] = entry.tState;
+                    result.append(item);
+                }
+                return result;
+            }, "Get recent execution trace", py::arg("count") = 100);
     }
 }

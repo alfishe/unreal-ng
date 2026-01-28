@@ -302,6 +302,35 @@ local enabled = emu:feature_get("debugmode")
 > [!NOTE]
 > Memory counters (`memcounters`) and call trace (`calltrace`) are available via CLI and WebAPI. Full Lua bindings for these analysis features are planned.
 
+### Opcode Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track Z80 opcode execution statistics and capture execution traces for crash forensics.
+
+```lua
+-- Session control
+profiler_start()    -- Enable feature, clear data, start capture
+profiler_stop()     -- Stop capture (data preserved)
+profiler_clear()    -- Clear all profiler data
+
+-- Status query
+local status = profiler_status()
+-- status.feature_enabled = true
+-- status.capturing = true
+-- status.total_executions = 15234567
+-- status.trace_size = 10000
+-- status.trace_capacity = 10000
+
+-- Get opcode execution counters (optional limit parameter, default 100)
+local counters = profiler_counters(100)
+-- Each entry: {prefix=0, opcode=126, count=2156789, mnemonic="LD A,(HL)"}
+
+-- Get recent execution trace (for crash forensics)
+local trace = profiler_trace(500)
+-- Each entry: {pc=0x1234, prefix=0, opcode=0x7E, flags=0x44, a=0x42, frame=1200, tstate=45000}
+```
+
 ## Usage Examples
 
 ### Register Dump Macro

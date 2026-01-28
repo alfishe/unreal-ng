@@ -452,6 +452,64 @@ Response:
 > - 16-byte stack snapshot
 > - Timing information (tstate, frame_number)
 
+### Opcode Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track Z80 opcode execution statistics and capture execution traces.
+
+```
+POST /api/v1/emulator/{id}/profiler/opcode/session    Session control (body: {"action": "start|stop|clear"})
+GET  /api/v1/emulator/{id}/profiler/opcode/status     Get profiler status
+GET  /api/v1/emulator/{id}/profiler/opcode/counters   Get opcode counters (?limit=N, default 100)
+GET  /api/v1/emulator/{id}/profiler/opcode/trace      Get execution trace (?count=N, default 100)
+```
+
+**Session Control**:
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/profiler/opcode/session \
+     -H "Content-Type: application/json" \
+     -d '{"action": "start"}'
+```
+Actions: `start` (enable feature, clear data, begin capture), `stop` (pause capture), `clear` (reset data)
+
+**Status Response**:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "feature_enabled": true,
+  "capturing": true,
+  "total_executions": 15234567,
+  "trace_size": 10000,
+  "trace_capacity": 10000
+}
+```
+
+**Counters Response** (`?limit=50`):
+```json
+{
+  "emulator_id": "550e8400-...",
+  "total_executions": 15234567,
+  "count": 50,
+  "counters": [
+    {"prefix": 0, "prefix_name": "none", "opcode": 126, "count": 2156789},
+    {"prefix": 203, "prefix_name": "CB", "opcode": 110, "count": 1500000}
+  ]
+}
+```
+
+**Trace Response** (`?count=100`):
+```json
+{
+  "emulator_id": "550e8400-...",
+  "requested_count": 100,
+  "returned_count": 100,
+  "trace": [
+    {"pc": 0x1234, "prefix": 0, "opcode": 126, "flags": 68, "a": 66, "frame": 1200, "tstate": 45000}
+  ]
+}
+```
+
 ### Snapshots
 
 #### List Breakpoints Response

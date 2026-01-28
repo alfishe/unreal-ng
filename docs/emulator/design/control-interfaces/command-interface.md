@@ -794,6 +794,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `screenhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
 | `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
 | `sharedmemory` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. Alias: `shm`. | Low (startup overhead when enabled, minimal runtime impact) |
+| `opcodeprofiler` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
 
 **Feature Dependencies**:
 
@@ -883,6 +884,78 @@ Commands to view and control emulator runtime features for the selected emulator
 - WebAPI: `/api/v1/emulator/{id}/feature` endpoint
 - Python: `emulator.feature(name, state)` or `emulator.feature.list()`
 - Lua: `emu:feature(name, state)` or `emu:feature_list()`
+
+#### 5.1 Opcode Profiler Commands
+
+The opcode profiler tracks Z80 instruction execution for debugging and performance analysis. Requires `feature opcodeprofiler on`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler opcode start` | | Start capture session, clear previous data | 🔮 Planned |
+| `profiler opcode stop` | | Stop capturing, data remains accessible | 🔮 Planned |
+| `profiler opcode clear` | | Reset all counters and trace buffer | 🔮 Planned |
+| `profiler opcode status` | | Show capture status and totals | 🔮 Planned |
+| `profiler opcode counters [limit]` | `[N]` | Show top N opcodes by execution count (default: 50) | 🔮 Planned |
+| `profiler opcode trace [count]` | `[N]` | Show last N trace entries (default: 100) | 🔮 Planned |
+| `profiler opcode save <file>` | `<file-path>` | Export profiler data to YAML file | 🔮 Planned |
+
+**Data Collected**:
+
+- **Counters**: Execution count for each of 1792 unique opcodes (256 non-prefixed + CB/DD/ED/FD/DDCB/FDCB variants)
+- **Trace**: Ring buffer (10,000 entries) with PC, prefix, opcode, flags, A register, frame number, t-state
+
+**Example Usage**:
+
+```bash
+# Enable profiler feature
+feature opcodeprofiler on
+
+# Start capture session
+profiler opcode start
+
+# Run program / reproduce crash
+resume
+# ... execution ...
+pause
+
+# View top executed opcodes
+profiler opcode counters 20
+
+# View trace (crash forensics)
+profiler opcode trace 50
+
+# Export for analysis
+profiler opcode save /tmp/profile.yaml
+
+# Clear and restart
+profiler opcode clear
+```
+
+**Output Format (counters)**:
+
+```
+Opcode Profile (capturing: YES, total: 15,234,567)
+┌──────────────────┬───────────┬─────────┐
+│ Opcode           │ Count     │ %       │
+├──────────────────┼───────────┼─────────┤
+│ LD A,(HL)   7E   │ 2,156,789 │ 14.15%  │
+│ JP NZ,nn    C2   │ 1,023,456 │  6.72%  │
+│ LD (HL),A   77   │   890,123 │  5.84%  │
+└──────────────────┴───────────┴─────────┘
+```
+
+**WebAPI Endpoints**:
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| POST | `/api/v1/emulator/{id}/profiler/opcode/start` | Start capture |
+| POST | `/api/v1/emulator/{id}/profiler/opcode/stop` | Stop capture |
+| POST | `/api/v1/emulator/{id}/profiler/opcode/clear` | Clear data |
+| GET | `/api/v1/emulator/{id}/profiler/opcode/status` | Get status |
+| GET | `/api/v1/emulator/{id}/profiler/opcode/counters` | Get counters (JSON) |
+| GET | `/api/v1/emulator/{id}/profiler/opcode/trace?count=N` | Get trace (JSON) |
+
+**Python/Lua Bindings**: See [python-interface.md](./python-interface.md) and [lua-interface.md](./lua-interface.md).
 
 ### 6. System State Inspection
 

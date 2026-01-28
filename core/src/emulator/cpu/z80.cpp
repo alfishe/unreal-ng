@@ -8,6 +8,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/op_noprefix.h"
+#include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -77,6 +78,9 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     direct_registers[6] =
         &_trashRegister;  // Redirect DDCB operation writes with no destination registers to unused register variable
     direct_registers[7] = &a;
+    
+    // Create opcode profiler
+    _opcodeProfiler = new OpcodeProfiler(context);
 }
 
 Z80::~Z80()
@@ -91,6 +95,12 @@ Z80::~Z80()
     {
         delete DbgMemIf;
         DbgMemIf = nullptr;
+    }
+    
+    if (_opcodeProfiler)
+    {
+        delete _opcodeProfiler;
+        _opcodeProfiler = nullptr;
     }
 
     _context = nullptr;
@@ -279,6 +289,20 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // 2. Emulate fetched Z80 opcode
         (normal_opcode[opcode])(&cpu);
+        
+        // 2a. Opcode profiling hook (after opcode execution)
+        if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
+        {
+            _opcodeProfiler->LogExecution(
+                m1_pc,
+                prefix,
+                opcode,
+                f,
+                a,
+                _context->emulatorState.frame_counter,
+                t
+            );
+        }
 
         // 3. Update Q register based on whether flags were modified
         // Q captures YF/XF from flag-modifying instructions only
@@ -771,3 +795,15 @@ std::string Z80::DumpFlags(uint8_t flags)
 }
 
 /// endregion </Debug methods>
+
+/// region <Feature Cache>
+
+void Z80::UpdateFeatureCache()
+{
+    if (_context && _context->pFeatureManager)
+    {
+        _feature_opcodeprofiler_enabled = _context->pFeatureManager->isEnabled(Features::kOpcodeProfiler);
+    }
+}
+
+/// endregion </Feature Cache>

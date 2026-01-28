@@ -169,6 +169,7 @@ set(COMMON_SOURCES
     src/api/analyzers_api.cpp
     src/api/debug_api.cpp
     src/api/capture_api.cpp
+    src/api/profiler_api.cpp
     src/emulator_websocket.cpp
     src/emulator_websocket.h
     src/automation-webapi.cpp

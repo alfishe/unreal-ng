@@ -1348,6 +1348,73 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] = "Disassembled instructions from physical page";
 
+    // Opcode Profiler endpoints
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["summary"] = "Control opcode profiler session";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["description"] =
+        "Start, stop, or clear profiler session. Start enables feature and clears previous data.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["enum"].append("start");
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["enum"].append("stop");
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["enum"].append("clear");
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["description"] = "Session action: start, stop, or clear";
+    paths["/api/v1/emulator/{id}/profiler/opcode/session"]["post"]["responses"]["200"]["description"] = "Session action completed";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["summary"] = "Get opcode profiler status";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["description"] =
+        "Get current profiler status including capturing state, total executions, and trace buffer size.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["description"] = "Profiler status";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/ProfilerStatusResponse";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["summary"] = "Get opcode execution counters";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["description"] =
+        "Get top N opcodes by execution count, sorted by frequency.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["description"] = "Maximum opcodes to return (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["description"] = "Opcode counters";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/ProfilerCountersResponse";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["summary"] = "Get recent execution trace";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["description"] =
+        "Get recent opcode execution trace with PC, prefix, opcode, and CPU state.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["name"] = "count";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["description"] = "Number of trace entries (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["description"] = "Execution trace";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/ProfilerTraceResponse";
+
     spec["paths"] = paths;
 
     // Components/Schemas
@@ -1580,6 +1647,52 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SnapshotInfoResponse"]["properties"]["loaded"]["type"] = "boolean";
     schemas["SnapshotInfoResponse"]["properties"]["filename"]["type"] = "string";
 
+    // Opcode Profiler schemas
+    schemas["ProfilerStatusResponse"]["type"] = "object";
+    schemas["ProfilerStatusResponse"]["description"] = "Opcode profiler status";
+    schemas["ProfilerStatusResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["ProfilerStatusResponse"]["properties"]["capturing"]["type"] = "boolean";
+    schemas["ProfilerStatusResponse"]["properties"]["total_executions"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["trace_size"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["trace_capacity"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["feature_enabled"]["type"] = "boolean";
+
+    schemas["ProfilerCountersResponse"]["type"] = "object";
+    schemas["ProfilerCountersResponse"]["description"] = "Opcode execution counters";
+    schemas["ProfilerCountersResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["ProfilerCountersResponse"]["properties"]["total_executions"]["type"] = "integer";
+    schemas["ProfilerCountersResponse"]["properties"]["limit"]["type"] = "integer";
+    schemas["ProfilerCountersResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["ProfilerCountersResponse"]["properties"]["counters"]["type"] = "array";
+    schemas["ProfilerCountersResponse"]["properties"]["counters"]["items"]["$ref"] = "#/components/schemas/OpcodeCounter";
+
+    schemas["OpcodeCounter"]["type"] = "object";
+    schemas["OpcodeCounter"]["description"] = "Single opcode counter entry";
+    schemas["OpcodeCounter"]["properties"]["prefix"]["type"] = "integer";
+    schemas["OpcodeCounter"]["properties"]["prefix"]["description"] = "Prefix code (0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB)";
+    schemas["OpcodeCounter"]["properties"]["prefix_name"]["type"] = "string";
+    schemas["OpcodeCounter"]["properties"]["opcode"]["type"] = "integer";
+    schemas["OpcodeCounter"]["properties"]["count"]["type"] = "integer";
+    
+    schemas["ProfilerTraceResponse"]["type"] = "object";
+    schemas["ProfilerTraceResponse"]["description"] = "Opcode execution trace";
+    schemas["ProfilerTraceResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["ProfilerTraceResponse"]["properties"]["trace_size"]["type"] = "integer";
+    schemas["ProfilerTraceResponse"]["properties"]["requested_count"]["type"] = "integer";
+    schemas["ProfilerTraceResponse"]["properties"]["returned_count"]["type"] = "integer";
+    schemas["ProfilerTraceResponse"]["properties"]["trace"]["type"] = "array";
+    schemas["ProfilerTraceResponse"]["properties"]["trace"]["items"]["$ref"] = "#/components/schemas/TraceEntry";
+
+    schemas["TraceEntry"]["type"] = "object";
+    schemas["TraceEntry"]["description"] = "Single trace entry";
+    schemas["TraceEntry"]["properties"]["pc"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["prefix"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["opcode"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["flags"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["a"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
+
     spec["components"]["schemas"] = schemas;
 
     // Tags
@@ -1648,6 +1761,11 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagAnalyzer["name"] = "Analyzer Management";
     tagAnalyzer["description"] = "Control and query analyzer modules (TRDOSAnalyzer, etc.)";
     tags.append(tagAnalyzer);
+
+    Json::Value tagProfiler;
+    tagProfiler["name"] = "Opcode Profiler";
+    tagProfiler["description"] = "Z80 opcode profiling and execution trace capture";
+    tags.append(tagProfiler);
 
     spec["tags"] = tags;
 

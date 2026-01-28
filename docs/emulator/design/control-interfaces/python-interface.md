@@ -337,6 +337,50 @@ emu.disasm_page("rom", 2, offset=0, count=20)  # Disassemble physical ROM page (
 emu.disasm_page("ram", 5, offset=0x100, count=10)  # Disassemble physical RAM page
 # Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, target (if jump)
 ```
+
+### Opcode Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track Z80 opcode execution statistics and capture execution traces for crash forensics.
+
+```python
+# Session control
+emu.profiler_start()    # Enable feature, clear data, start capture
+emu.profiler_stop()     # Stop capture (data preserved)
+emu.profiler_clear()    # Clear all profiler data
+
+# Status query
+status = emu.profiler_status()
+# Returns: {
+#     'feature_enabled': True,
+#     'capturing': True,
+#     'total_executions': 15234567,
+#     'trace_size': 10000,
+#     'trace_capacity': 10000
+# }
+
+# Get opcode execution counters (top N by count)
+counters = emu.profiler_counters(100)
+# Returns: list of {
+#     'prefix': 0,        # 0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB
+#     'opcode': 126,
+#     'count': 2156789,
+#     'mnemonic': 'LD A,(HL)'
+# }
+
+# Get recent execution trace (for crash forensics)
+trace = emu.profiler_trace(500)
+# Returns: list of {
+#     'pc': 0x1234,
+#     'prefix': 0,
+#     'opcode': 0x7E,
+#     'flags': 0x44,
+#     'a': 0x42,
+#     'frame': 1200,
+#     'tstate': 45000
+# }
+```
 ### Enumerations
 
 ```python

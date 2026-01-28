@@ -222,6 +222,16 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getDisasm, "/api/v1/emulator/{id}/disasm", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
+
+    // region Profiler Commands (implementation: api/profiler_api.cpp)
+    // Opcode profiler session control
+    ADD_METHOD_TO(EmulatorAPI::profilerSession, "/api/v1/emulator/{id}/profiler/opcode/session", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getProfilerStatus, "/api/v1/emulator/{id}/profiler/opcode/status", drogon::Get);
+    
+    // Opcode profiler data retrieval
+    ADD_METHOD_TO(EmulatorAPI::getProfilerCounters, "/api/v1/emulator/{id}/profiler/opcode/counters", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getProfilerTrace, "/api/v1/emulator/{id}/profiler/opcode/trace", drogon::Get);
+    // endregion Profiler Commands
     METHOD_LIST_END
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
@@ -574,6 +584,20 @@ public:
     void getDisasmPage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
     // endregion Debug Commands Methods
+
+    // region Profiler Commands Methods (implementation: api/profiler_api.cpp)
+    // Session control
+    void profilerSession(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id) const;
+    void getProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    
+    // Data retrieval
+    void getProfilerCounters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void getProfilerTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    // endregion Profiler Commands Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:

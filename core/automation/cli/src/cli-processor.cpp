@@ -84,6 +84,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Analyzer commands
                         {"analyzer", &CLIProcessor::HandleAnalyzer},
 
+                        // Profiler commands
+                        {"profiler", &CLIProcessor::HandleProfiler},
+
                         // Settings commands
                         {"setting", &CLIProcessor::HandleSetting},
                         {"settings", &CLIProcessor::HandleSetting},
