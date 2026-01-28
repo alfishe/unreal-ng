@@ -348,6 +348,8 @@ Track Z80 opcode execution statistics and capture execution traces for crash for
 # Session control
 emu.profiler_start()    # Enable feature, clear data, start capture
 emu.profiler_stop()     # Stop capture (data preserved)
+emu.profiler_pause()    # Pause capture (retain data)
+emu.profiler_resume()   # Resume paused capture
 emu.profiler_clear()    # Clear all profiler data
 
 # Status query
@@ -355,6 +357,7 @@ status = emu.profiler_status()
 # Returns: {
 #     'feature_enabled': True,
 #     'capturing': True,
+#     'session_state': 'capturing',  # 'stopped', 'capturing', 'paused'
 #     'total_executions': 15234567,
 #     'trace_size': 10000,
 #     'trace_capacity': 10000
@@ -362,25 +365,91 @@ status = emu.profiler_status()
 
 # Get opcode execution counters (top N by count)
 counters = emu.profiler_counters(100)
-# Returns: list of {
-#     'prefix': 0,        # 0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB
-#     'opcode': 126,
-#     'count': 2156789,
-#     'mnemonic': 'LD A,(HL)'
-# }
 
 # Get recent execution trace (for crash forensics)
 trace = emu.profiler_trace(500)
-# Returns: list of {
-#     'pc': 0x1234,
-#     'prefix': 0,
-#     'opcode': 0x7E,
-#     'flags': 0x44,
-#     'a': 0x42,
-#     'frame': 1200,
-#     'tstate': 45000
+```
+
+### Memory Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track memory access patterns (reads/writes/executes) across all physical memory pages.
+
+```python
+# Session control
+emu.memory_profiler_start()    # Enable feature, start capture
+emu.memory_profiler_stop()     # Stop capture
+emu.memory_profiler_pause()    # Pause capture (retain data)
+emu.memory_profiler_resume()   # Resume paused capture
+emu.memory_profiler_clear()    # Clear all data
+
+# Status query
+status = emu.memory_profiler_status()
+# Returns: {'feature_enabled': True, 'capturing': True, 'session_state': 'capturing', 'tracking_mode': 'physical'}
+
+# Data retrieval
+pages = emu.memory_profiler_pages(limit=20)   # Get per-page access summaries
+counters = emu.memory_profiler_counters(page=5, mode='physical')  # Address-level counters
+regions = emu.memory_profiler_regions()       # Monitored region statistics
+emu.memory_profiler_save('/path/output', format='yaml')  # Save data to file
+```
+
+### Call Trace Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track CPU control flow events (CALL, RET, JP, JR, RST, etc.).
+
+```python
+# Session control
+emu.calltrace_profiler_start()    # Enable feature, start capture
+emu.calltrace_profiler_stop()     # Stop capture
+emu.calltrace_profiler_pause()    # Pause capture (retain data)
+emu.calltrace_profiler_resume()   # Resume paused capture
+emu.calltrace_profiler_clear()    # Clear all data
+
+# Status query
+status = emu.calltrace_profiler_status()
+# Returns: {'feature_enabled': True, 'capturing': True, 'session_state': 'capturing', 
+#           'entry_count': 450, 'buffer_capacity': 10000}
+
+# Data retrieval
+entries = emu.calltrace_profiler_entries(count=100)  # Get trace entries
+stats = emu.calltrace_profiler_stats()     # Get call/return statistics
+```
+
+### Unified Profiler Control
+
+> **Status**: ✅ Implemented (2026-01)
+
+Control all profilers (opcode, memory, calltrace) simultaneously.
+
+```python
+# Start all profilers (enables features automatically)
+emu.profilers_start_all()
+
+# Pause all profilers (retain data)
+emu.profilers_pause_all()
+
+# Resume all paused profilers
+emu.profilers_resume_all()
+
+# Stop all profilers
+emu.profilers_stop_all()
+
+# Clear all profiler data
+emu.profilers_clear_all()
+
+# Get status of all profilers
+status = emu.profilers_status_all()
+# Returns: {
+#     'opcode': {'session_state': 'capturing', 'total_executions': 15234567},
+#     'memory': {'session_state': 'capturing', 'feature_enabled': True},
+#     'calltrace': {'session_state': 'capturing', 'entry_count': 450}
 # }
 ```
+
 ### Enumerations
 
 ```python

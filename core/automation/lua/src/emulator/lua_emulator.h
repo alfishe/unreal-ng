@@ -1254,6 +1254,363 @@ public:
             return result;
         });
 
+        lua.set_function("profiler_pause", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return false;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return false;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return false;
+            profiler->Pause();
+            return true;
+        });
+
+        lua.set_function("profiler_resume", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return false;
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return false;
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return false;
+            profiler->Resume();
+            return true;
+        });
+
+        lua.set_function("profiler_opcode_session_state", [this]() -> std::string {
+            if (!_emulator) return "unavailable";
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pCore) return "unavailable";
+            Z80* z80 = ctx->pCore->GetZ80();
+            if (!z80) return "unavailable";
+            OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+            if (!profiler) return "unavailable";
+            switch (profiler->GetSessionState()) {
+                case ProfilerSessionState::Stopped: return "stopped";
+                case ProfilerSessionState::Capturing: return "capturing";
+                case ProfilerSessionState::Paused: return "paused";
+                default: return "unknown";
+            }
+        });
+
+        // Memory profiler session control
+        lua.set_function("memory_profiler_start", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            auto* tracker = &ctx->pMemory->GetAccessTracker();
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            if (fm) {
+                fm->setFeature("debugmode", true);
+                fm->setFeature("memorytracking", true);
+                tracker->UpdateFeatureCache();
+            }
+            tracker->StartMemorySession();
+            return true;
+        });
+
+        lua.set_function("memory_profiler_pause", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            ctx->pMemory->GetAccessTracker().PauseMemorySession();
+            return true;
+        });
+
+        lua.set_function("memory_profiler_resume", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            ctx->pMemory->GetAccessTracker().ResumeMemorySession();
+            return true;
+        });
+
+        lua.set_function("memory_profiler_stop", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            ctx->pMemory->GetAccessTracker().StopMemorySession();
+            return true;
+        });
+
+        lua.set_function("memory_profiler_clear", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return;
+            ctx->pMemory->GetAccessTracker().ClearMemoryData();
+        });
+
+        lua.set_function("memory_profiler_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return result;
+            auto& tracker = ctx->pMemory->GetAccessTracker();
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            result["feature_enabled"] = fm ? fm->isEnabled("memorytracking") : false;
+            result["capturing"] = tracker.IsMemoryCapturing();
+            switch (tracker.GetMemorySessionState()) {
+                case ProfilerSessionState::Stopped: result["session_state"] = "stopped"; break;
+                case ProfilerSessionState::Capturing: result["session_state"] = "capturing"; break;
+                case ProfilerSessionState::Paused: result["session_state"] = "paused"; break;
+                default: result["session_state"] = "unknown"; break;
+            }
+            return result;
+        });
+
+        // Calltrace profiler session control
+        lua.set_function("calltrace_profiler_start", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            auto* tracker = &ctx->pMemory->GetAccessTracker();
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            if (fm) {
+                fm->setFeature("debugmode", true);
+                fm->setFeature("calltrace", true);
+                tracker->UpdateFeatureCache();
+            }
+            tracker->StartCalltraceSession();
+            return true;
+        });
+
+        lua.set_function("calltrace_profiler_pause", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            ctx->pMemory->GetAccessTracker().PauseCalltraceSession();
+            return true;
+        });
+
+        lua.set_function("calltrace_profiler_resume", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            ctx->pMemory->GetAccessTracker().ResumeCalltraceSession();
+            return true;
+        });
+
+        lua.set_function("calltrace_profiler_stop", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return false;
+            ctx->pMemory->GetAccessTracker().StopCalltraceSession();
+            return true;
+        });
+
+        lua.set_function("calltrace_profiler_clear", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return;
+            ctx->pMemory->GetAccessTracker().ClearCalltraceData();
+        });
+
+        lua.set_function("calltrace_profiler_status", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pMemory) return result;
+            auto& tracker = ctx->pMemory->GetAccessTracker();
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            result["feature_enabled"] = fm ? fm->isEnabled("calltrace") : false;
+            result["capturing"] = tracker.IsCalltraceCapturing();
+            switch (tracker.GetCalltraceSessionState()) {
+                case ProfilerSessionState::Stopped: result["session_state"] = "stopped"; break;
+                case ProfilerSessionState::Capturing: result["session_state"] = "capturing"; break;
+                case ProfilerSessionState::Paused: result["session_state"] = "paused"; break;
+                default: result["session_state"] = "unknown"; break;
+            }
+            auto* buffer = tracker.GetCallTraceBuffer();
+            if (buffer) {
+                result["entry_count"] = buffer->GetCount();
+                result["capacity"] = buffer->GetCapacity();
+            }
+            return result;
+        });
+
+        // Unified profiler control (all profilers at once)
+        lua.set_function("profilers_start_all", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return false;
+            FeatureManager* fm = _emulator->GetFeatureManager();
+            
+            if (fm) {
+                fm->setFeature("debugmode", true);
+                fm->setFeature("memorytracking", true);
+                fm->setFeature("calltrace", true);
+                fm->setFeature("opcode_profiler", true);
+            }
+            
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                tracker.UpdateFeatureCache();
+                tracker.StartMemorySession();
+                tracker.StartCalltraceSession();
+            }
+            
+            if (ctx->pCore) {
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (z80) {
+                    z80->UpdateFeatureCache();
+                    OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                    if (profiler) profiler->Start();
+                }
+            }
+            return true;
+        });
+
+        lua.set_function("profilers_pause_all", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return false;
+            
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                tracker.PauseMemorySession();
+                tracker.PauseCalltraceSession();
+            }
+            if (ctx->pCore) {
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (z80) {
+                    OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                    if (profiler) profiler->Pause();
+                }
+            }
+            return true;
+        });
+
+        lua.set_function("profilers_resume_all", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return false;
+            
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                tracker.ResumeMemorySession();
+                tracker.ResumeCalltraceSession();
+            }
+            if (ctx->pCore) {
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (z80) {
+                    OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                    if (profiler) profiler->Resume();
+                }
+            }
+            return true;
+        });
+
+        lua.set_function("profilers_stop_all", [this]() -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return false;
+            
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                tracker.StopMemorySession();
+                tracker.StopCalltraceSession();
+            }
+            if (ctx->pCore) {
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (z80) {
+                    OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                    if (profiler) profiler->Stop();
+                }
+            }
+            return true;
+        });
+
+        lua.set_function("profilers_clear_all", [this]() {
+            if (!_emulator) return;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return;
+            
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                tracker.ClearMemoryData();
+                tracker.ClearCalltraceData();
+            }
+            if (ctx->pCore) {
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (z80) {
+                    OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                    if (profiler) profiler->Clear();
+                }
+            }
+        });
+
+        lua.set_function("profilers_status_all", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            if (!_emulator) return result;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx) return result;
+            
+            // Memory profiler status
+            sol::table memStatus = lua_view.create_table();
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = _emulator->GetFeatureManager();
+                memStatus["feature_enabled"] = fm ? fm->isEnabled("memorytracking") : false;
+                memStatus["capturing"] = tracker.IsMemoryCapturing();
+                switch (tracker.GetMemorySessionState()) {
+                    case ProfilerSessionState::Stopped: memStatus["session_state"] = "stopped"; break;
+                    case ProfilerSessionState::Capturing: memStatus["session_state"] = "capturing"; break;
+                    case ProfilerSessionState::Paused: memStatus["session_state"] = "paused"; break;
+                    default: memStatus["session_state"] = "unknown"; break;
+                }
+            }
+            result["memory"] = memStatus;
+            
+            // Calltrace profiler status
+            sol::table ctStatus = lua_view.create_table();
+            if (ctx->pMemory) {
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = _emulator->GetFeatureManager();
+                ctStatus["feature_enabled"] = fm ? fm->isEnabled("calltrace") : false;
+                ctStatus["capturing"] = tracker.IsCalltraceCapturing();
+                switch (tracker.GetCalltraceSessionState()) {
+                    case ProfilerSessionState::Stopped: ctStatus["session_state"] = "stopped"; break;
+                    case ProfilerSessionState::Capturing: ctStatus["session_state"] = "capturing"; break;
+                    case ProfilerSessionState::Paused: ctStatus["session_state"] = "paused"; break;
+                    default: ctStatus["session_state"] = "unknown"; break;
+                }
+                auto* buffer = tracker.GetCallTraceBuffer();
+                if (buffer) {
+                    ctStatus["entry_count"] = buffer->GetCount();
+                }
+            }
+            result["calltrace"] = ctStatus;
+            
+            // Opcode profiler status
+            sol::table opStatus = lua_view.create_table();
+            if (ctx->pCore) {
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (z80) {
+                    OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                    if (profiler) {
+                        FeatureManager* fm = _emulator->GetFeatureManager();
+                        auto status = profiler->GetStatus();
+                        opStatus["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                        opStatus["capturing"] = status.capturing;
+                        opStatus["total_executions"] = status.totalExecutions;
+                        switch (profiler->GetSessionState()) {
+                            case ProfilerSessionState::Stopped: opStatus["session_state"] = "stopped"; break;
+                            case ProfilerSessionState::Capturing: opStatus["session_state"] = "capturing"; break;
+                            case ProfilerSessionState::Paused: opStatus["session_state"] = "paused"; break;
+                            default: opStatus["session_state"] = "unknown"; break;
+                        }
+                    }
+                }
+            }
+            result["opcode"] = opStatus;
+            
+            return result;
+        });
+
         // Keyboard injection
         lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> framesOpt) -> bool {
             if (!_emulator) return false;

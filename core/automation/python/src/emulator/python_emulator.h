@@ -962,8 +962,325 @@ namespace PythonBindings
                 }
                 return result;
             }, "Get recent execution trace", py::arg("count") = 100)
+            .def("profiler_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                profiler->Pause();
+                return true;
+            }, "Pause opcode profiler (retain data)")
+            .def("profiler_resume", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                profiler->Resume();
+                return true;
+            }, "Resume paused opcode profiler")
+            .def("profiler_opcode_session_state", [](Emulator& self) -> std::string {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return "unavailable";
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return "unavailable";
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return "unavailable";
+                switch (profiler->GetSessionState()) {
+                    case ProfilerSessionState::Stopped: return "stopped";
+                    case ProfilerSessionState::Capturing: return "capturing";
+                    case ProfilerSessionState::Paused: return "paused";
+                    default: return "unknown";
+                }
+            }, "Get opcode profiler session state")
             
-            // Keyboard injection
+            // Memory profiler session control
+            .def("memory_profiler_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                auto* tracker = &ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) {
+                    fm->setFeature("debugmode", true);
+                    fm->setFeature("memorytracking", true);
+                    tracker->UpdateFeatureCache();
+                }
+                tracker->StartMemorySession();
+                return true;
+            }, "Start memory profiler session (enables features, clears data)")
+            .def("memory_profiler_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().PauseMemorySession();
+                return true;
+            }, "Pause memory profiler (retain data)")
+            .def("memory_profiler_resume", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().ResumeMemorySession();
+                return true;
+            }, "Resume paused memory profiler")
+            .def("memory_profiler_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().StopMemorySession();
+                return true;
+            }, "Stop memory profiler (retain data)")
+            .def("memory_profiler_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return;
+                ctx->pMemory->GetAccessTracker().ClearMemoryData();
+            }, "Clear memory profiler data")
+            .def("memory_profiler_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return result;
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                result["feature_enabled"] = fm ? fm->isEnabled("memorytracking") : false;
+                result["capturing"] = tracker.IsMemoryCapturing();
+                switch (tracker.GetMemorySessionState()) {
+                    case ProfilerSessionState::Stopped: result["session_state"] = "stopped"; break;
+                    case ProfilerSessionState::Capturing: result["session_state"] = "capturing"; break;
+                    case ProfilerSessionState::Paused: result["session_state"] = "paused"; break;
+                    default: result["session_state"] = "unknown"; break;
+                }
+                return result;
+            }, "Get memory profiler status")
+            
+            // Calltrace profiler session control
+            .def("calltrace_profiler_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                auto* tracker = &ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) {
+                    fm->setFeature("debugmode", true);
+                    fm->setFeature("calltrace", true);
+                    tracker->UpdateFeatureCache();
+                }
+                tracker->StartCalltraceSession();
+                return true;
+            }, "Start calltrace profiler session (enables features, clears data)")
+            .def("calltrace_profiler_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().PauseCalltraceSession();
+                return true;
+            }, "Pause calltrace profiler (retain data)")
+            .def("calltrace_profiler_resume", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().ResumeCalltraceSession();
+                return true;
+            }, "Resume paused calltrace profiler")
+            .def("calltrace_profiler_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().StopCalltraceSession();
+                return true;
+            }, "Stop calltrace profiler (retain data)")
+            .def("calltrace_profiler_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return;
+                ctx->pMemory->GetAccessTracker().ClearCalltraceData();
+            }, "Clear calltrace profiler data")
+            .def("calltrace_profiler_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return result;
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                result["feature_enabled"] = fm ? fm->isEnabled("calltrace") : false;
+                result["capturing"] = tracker.IsCalltraceCapturing();
+                switch (tracker.GetCalltraceSessionState()) {
+                    case ProfilerSessionState::Stopped: result["session_state"] = "stopped"; break;
+                    case ProfilerSessionState::Capturing: result["session_state"] = "capturing"; break;
+                    case ProfilerSessionState::Paused: result["session_state"] = "paused"; break;
+                    default: result["session_state"] = "unknown"; break;
+                }
+                auto* buffer = tracker.GetCallTraceBuffer();
+                if (buffer) {
+                    result["entry_count"] = buffer->GetCount();
+                    result["capacity"] = buffer->GetCapacity();
+                }
+                return result;
+            }, "Get calltrace profiler status")
+            
+            // Unified profiler control (all profilers at once)
+            .def("profilers_start_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                FeatureManager* fm = self.GetFeatureManager();
+                
+                // Enable all profiler features
+                if (fm) {
+                    fm->setFeature("debugmode", true);
+                    fm->setFeature("memorytracking", true);
+                    fm->setFeature("calltrace", true);
+                    fm->setFeature("opcode_profiler", true);
+                }
+                
+                // Start memory and calltrace profilers
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.UpdateFeatureCache();
+                    tracker.StartMemorySession();
+                    tracker.StartCalltraceSession();
+                }
+                
+                // Start opcode profiler
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        z80->UpdateFeatureCache();
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Start();
+                    }
+                }
+                return true;
+            }, "Start all profilers (opcode, memory, calltrace)")
+            .def("profilers_pause_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.PauseMemorySession();
+                    tracker.PauseCalltraceSession();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Pause();
+                    }
+                }
+                return true;
+            }, "Pause all profilers")
+            .def("profilers_resume_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.ResumeMemorySession();
+                    tracker.ResumeCalltraceSession();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Resume();
+                    }
+                }
+                return true;
+            }, "Resume all profilers")
+            .def("profilers_stop_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.StopMemorySession();
+                    tracker.StopCalltraceSession();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Stop();
+                    }
+                }
+                return true;
+            }, "Stop all profilers")
+            .def("profilers_clear_all", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx) return;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.ClearMemoryData();
+                    tracker.ClearCalltraceData();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Clear();
+                    }
+                }
+            }, "Clear all profiler data")
+            .def("profilers_status_all", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx) return result;
+                
+                // Memory profiler status
+                py::dict memStatus;
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    FeatureManager* fm = self.GetFeatureManager();
+                    memStatus["feature_enabled"] = fm ? fm->isEnabled("memorytracking") : false;
+                    memStatus["capturing"] = tracker.IsMemoryCapturing();
+                    switch (tracker.GetMemorySessionState()) {
+                        case ProfilerSessionState::Stopped: memStatus["session_state"] = "stopped"; break;
+                        case ProfilerSessionState::Capturing: memStatus["session_state"] = "capturing"; break;
+                        case ProfilerSessionState::Paused: memStatus["session_state"] = "paused"; break;
+                        default: memStatus["session_state"] = "unknown"; break;
+                    }
+                }
+                result["memory"] = memStatus;
+                
+                // Calltrace profiler status
+                py::dict ctStatus;
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    FeatureManager* fm = self.GetFeatureManager();
+                    ctStatus["feature_enabled"] = fm ? fm->isEnabled("calltrace") : false;
+                    ctStatus["capturing"] = tracker.IsCalltraceCapturing();
+                    switch (tracker.GetCalltraceSessionState()) {
+                        case ProfilerSessionState::Stopped: ctStatus["session_state"] = "stopped"; break;
+                        case ProfilerSessionState::Capturing: ctStatus["session_state"] = "capturing"; break;
+                        case ProfilerSessionState::Paused: ctStatus["session_state"] = "paused"; break;
+                        default: ctStatus["session_state"] = "unknown"; break;
+                    }
+                    auto* buffer = tracker.GetCallTraceBuffer();
+                    if (buffer) {
+                        ctStatus["entry_count"] = buffer->GetCount();
+                    }
+                }
+                result["calltrace"] = ctStatus;
+                
+                // Opcode profiler status
+                py::dict opStatus;
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) {
+                            FeatureManager* fm = self.GetFeatureManager();
+                            auto status = profiler->GetStatus();
+                            opStatus["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                            opStatus["capturing"] = status.capturing;
+                            opStatus["total_executions"] = status.totalExecutions;
+                            switch (profiler->GetSessionState()) {
+                                case ProfilerSessionState::Stopped: opStatus["session_state"] = "stopped"; break;
+                                case ProfilerSessionState::Capturing: opStatus["session_state"] = "capturing"; break;
+                                case ProfilerSessionState::Paused: opStatus["session_state"] = "paused"; break;
+                                default: opStatus["session_state"] = "unknown"; break;
+                            }
+                        }
+                    }
+                }
+                result["opcode"] = opStatus;
+                
+                return result;
+            }, "Get status of all profilers")
+            
             .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;

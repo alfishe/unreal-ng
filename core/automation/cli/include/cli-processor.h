@@ -136,6 +136,9 @@ private:
     void HandleProfilerOpcodeCounters(const ClientSession& session, class OpcodeProfiler* profiler, size_t limit);
     void HandleProfilerOpcodeTrace(const ClientSession& session, class OpcodeProfiler* profiler, size_t count);
     void HandleProfilerOpcodeSave(const ClientSession& session, class OpcodeProfiler* profiler, const std::string& path);
+    void HandleProfilerMemory(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleProfilerCalltrace(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleProfilerAll(const ClientSession& session, const std::vector<std::string>& args);
 
 
     // Settings command handlers

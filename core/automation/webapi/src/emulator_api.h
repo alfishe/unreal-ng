@@ -224,13 +224,40 @@ public:
     // endregion Debug Commands
 
     // region Profiler Commands (implementation: api/profiler_api.cpp)
-    // Opcode profiler session control
-    ADD_METHOD_TO(EmulatorAPI::profilerSession, "/api/v1/emulator/{id}/profiler/opcode/session", drogon::Post);
+    // Opcode profiler control
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerStart, "/api/v1/emulator/{id}/profiler/opcode/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerStop, "/api/v1/emulator/{id}/profiler/opcode/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerPause, "/api/v1/emulator/{id}/profiler/opcode/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerResume, "/api/v1/emulator/{id}/profiler/opcode/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerClear, "/api/v1/emulator/{id}/profiler/opcode/clear", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getProfilerStatus, "/api/v1/emulator/{id}/profiler/opcode/status", drogon::Get);
-    
-    // Opcode profiler data retrieval
     ADD_METHOD_TO(EmulatorAPI::getProfilerCounters, "/api/v1/emulator/{id}/profiler/opcode/counters", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getProfilerTrace, "/api/v1/emulator/{id}/profiler/opcode/trace", drogon::Get);
+    
+    // Memory profiler control
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerStart, "/api/v1/emulator/{id}/profiler/memory/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerStop, "/api/v1/emulator/{id}/profiler/memory/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerPause, "/api/v1/emulator/{id}/profiler/memory/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerResume, "/api/v1/emulator/{id}/profiler/memory/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerClear, "/api/v1/emulator/{id}/profiler/memory/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerStatus, "/api/v1/emulator/{id}/profiler/memory/status", drogon::Get);
+    
+    // Call trace profiler control
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerStart, "/api/v1/emulator/{id}/profiler/calltrace/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerStop, "/api/v1/emulator/{id}/profiler/calltrace/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerPause, "/api/v1/emulator/{id}/profiler/calltrace/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerResume, "/api/v1/emulator/{id}/profiler/calltrace/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerClear, "/api/v1/emulator/{id}/profiler/calltrace/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getCalltraceProfilerStatus, "/api/v1/emulator/{id}/profiler/calltrace/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getCalltraceProfilerEntries, "/api/v1/emulator/{id}/profiler/calltrace/entries", drogon::Get);
+    
+    // Unified profiler control (all profilers at once)
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStop, "/api/v1/emulator/{id}/profiler/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerPause, "/api/v1/emulator/{id}/profiler/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerResume, "/api/v1/emulator/{id}/profiler/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerClear, "/api/v1/emulator/{id}/profiler/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getUnifiedProfilerStatus, "/api/v1/emulator/{id}/profiler/status", drogon::Get);
     // endregion Profiler Commands
 
     // region Keyboard Injection (implementation: api/keyboard_api.cpp)
@@ -600,17 +627,67 @@ public:
     // endregion Debug Commands Methods
 
     // region Profiler Commands Methods (implementation: api/profiler_api.cpp)
-    // Session control
-    void profilerSession(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
-                         const std::string& id) const;
+    // Opcode profiler control
+    void opcodeProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void opcodeProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void opcodeProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void opcodeProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void opcodeProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
     void getProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                            const std::string& id) const;
-    
-    // Data retrieval
     void getProfilerCounters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                              const std::string& id) const;
     void getProfilerTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& id) const;
+    
+    // Memory profiler control
+    void memoryProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void memoryProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void memoryProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void memoryProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void memoryProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void getMemoryProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const;
+    
+    // Call trace profiler control
+    void calltraceProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void calltraceProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    void calltraceProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void calltraceProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const;
+    void calltraceProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void getCalltraceProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const;
+    void getCalltraceProfilerEntries(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const;
+    
+    // Unified profiler control
+    void unifiedProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void unifiedProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void unifiedProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void unifiedProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    void unifiedProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void getUnifiedProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
     // endregion Profiler Commands Methods
 
     // region Keyboard Injection Methods (implementation: api/keyboard_api.cpp)

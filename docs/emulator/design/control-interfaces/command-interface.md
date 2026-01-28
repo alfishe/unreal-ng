@@ -891,13 +891,15 @@ The opcode profiler tracks Z80 instruction execution for debugging and performan
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `profiler opcode start` | | Start capture session, clear previous data | 🔮 Planned |
-| `profiler opcode stop` | | Stop capturing, data remains accessible | 🔮 Planned |
-| `profiler opcode clear` | | Reset all counters and trace buffer | 🔮 Planned |
-| `profiler opcode status` | | Show capture status and totals | 🔮 Planned |
-| `profiler opcode counters [limit]` | `[N]` | Show top N opcodes by execution count (default: 50) | 🔮 Planned |
-| `profiler opcode trace [count]` | `[N]` | Show last N trace entries (default: 100) | 🔮 Planned |
-| `profiler opcode save <file>` | `<file-path>` | Export profiler data to YAML file | 🔮 Planned |
+| `profiler opcode start` | | Start capture session, clear previous data | ✅ Implemented |
+| `profiler opcode stop` | | Stop capturing, data remains accessible | ✅ Implemented |
+| `profiler opcode pause` | | Pause capture (retain data) | ✅ Implemented |
+| `profiler opcode resume` | | Resume paused capture | ✅ Implemented |
+| `profiler opcode clear` | | Reset all counters and trace buffer | ✅ Implemented |
+| `profiler opcode status` | | Show capture status and totals | ✅ Implemented |
+| `profiler opcode counters [limit]` | `[N]` | Show top N opcodes by execution count (default: 50) | ✅ Implemented |
+| `profiler opcode trace [count]` | `[N]` | Show last N trace entries (default: 100) | ✅ Implemented |
+| `profiler opcode save <file>` | `<file-path>` | Export profiler data to YAML file | ✅ Implemented |
 
 **Data Collected**:
 
@@ -956,6 +958,63 @@ Opcode Profile (capturing: YES, total: 15,234,567)
 | GET | `/api/v1/emulator/{id}/profiler/opcode/trace?count=N` | Get trace (JSON) |
 
 **Python/Lua Bindings**: See [python-interface.md](./python-interface.md) and [lua-interface.md](./lua-interface.md).
+
+#### 5.2 Memory Profiler Commands
+
+The memory profiler tracks memory access patterns (reads/writes) across all 64KB address space. Requires `feature memorytracking on`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler memory start` | | Start memory tracking session | ✅ Implemented |
+| `profiler memory stop` | | Stop tracking, data remains accessible | ✅ Implemented |
+| `profiler memory pause` | | Pause tracking (retain data) | ✅ Implemented |
+| `profiler memory resume` | | Resume paused tracking | ✅ Implemented |
+| `profiler memory clear` | | Reset all counters | ✅ Implemented |
+| `profiler memory status` | | Show tracking status | ✅ Implemented |
+
+**Alias**: `profiler mem` is equivalent to `profiler memory`.
+
+#### 5.3 Call Trace Profiler Commands
+
+The call trace profiler records CPU control flow events (CALL, RET, JP, JR, RST, etc.) for debugging and analysis. Requires `feature calltrace on`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler calltrace start` | | Start call trace capture | ✅ Implemented |
+| `profiler calltrace stop` | | Stop capture, data remains accessible | ✅ Implemented |
+| `profiler calltrace pause` | | Pause capture (retain data) | ✅ Implemented |
+| `profiler calltrace resume` | | Resume paused capture | ✅ Implemented |
+| `profiler calltrace clear` | | Clear trace buffer | ✅ Implemented |
+| `profiler calltrace status` | | Show capture status and buffer info | ✅ Implemented |
+
+**Alias**: `profiler ct` is equivalent to `profiler calltrace`.
+
+#### 5.4 Unified Profiler Control
+
+Control all profilers (opcode, memory, calltrace) simultaneously for coordinated capture sessions.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler all start` | | Start all profilers (enables features automatically) | ✅ Implemented |
+| `profiler all stop` | | Stop all profilers | ✅ Implemented |
+| `profiler all pause` | | Pause all profilers (retain data) | ✅ Implemented |
+| `profiler all resume` | | Resume all paused profilers | ✅ Implemented |
+| `profiler all clear` | | Clear all profiler data | ✅ Implemented |
+| `profiler all status` | | Show status of all profilers | ✅ Implemented |
+
+**Session State Model**:
+
+```
+┌───────────┐   start    ┌─────────────┐   pause   ┌────────────┐
+│  STOPPED  │──────────▶ │  CAPTURING  │─────────▶│   PAUSED   │
+└───────────┘            └─────────────┘          └────────────┘
+      ▲                        │    ▲                  │
+      │         stop           │    │                  │ resume
+      └────────────────────────┘    └──────────────────┘
+                               │
+                         clear ▼
+                        (reset data)
+```
 
 ### 6. System State Inspection
 

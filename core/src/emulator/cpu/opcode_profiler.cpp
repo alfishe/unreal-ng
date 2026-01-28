@@ -30,12 +30,29 @@ void OpcodeProfiler::Start()
     std::lock_guard<std::mutex> lock(_mutex);
     
     Clear();  // Clear previous data
-    _capturing = true;
+    _sessionState = ProfilerSessionState::Capturing;
+}
+
+void OpcodeProfiler::Pause()
+{
+    ProfilerSessionState expected = ProfilerSessionState::Capturing;
+    _sessionState.compare_exchange_strong(expected, ProfilerSessionState::Paused);
+}
+
+void OpcodeProfiler::Resume()
+{
+    ProfilerSessionState expected = ProfilerSessionState::Paused;
+    _sessionState.compare_exchange_strong(expected, ProfilerSessionState::Capturing);
 }
 
 void OpcodeProfiler::Stop()
 {
-    _capturing = false;
+    // Stop from any active state (Capturing or Paused)
+    ProfilerSessionState state = _sessionState.load();
+    if (state == ProfilerSessionState::Capturing || state == ProfilerSessionState::Paused)
+    {
+        _sessionState = ProfilerSessionState::Stopped;
+    }
 }
 
 void OpcodeProfiler::Clear()
@@ -61,7 +78,7 @@ void OpcodeProfiler::Clear()
 void OpcodeProfiler::LogExecution(uint16_t pc, uint16_t prefix, uint8_t opcode,
                                    uint8_t flags, uint8_t a, uint32_t frame, uint32_t tState)
 {
-    if (!_capturing)
+    if (_sessionState != ProfilerSessionState::Capturing)
         return;
 
     // Tier 1: Increment execution counter
@@ -102,7 +119,7 @@ void OpcodeProfiler::LogExecution(uint16_t pc, uint16_t prefix, uint8_t opcode,
 ProfilerStatus OpcodeProfiler::GetStatus() const
 {
     ProfilerStatus status;
-    status.capturing = _capturing;
+    status.capturing = (_sessionState == ProfilerSessionState::Capturing);
     status.totalExecutions = GetTotalExecutions();
     status.traceSize = static_cast<uint32_t>(_traceCount);
     status.traceCapacity = static_cast<uint32_t>(_traceBuffer.size());

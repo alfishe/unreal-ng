@@ -111,7 +111,7 @@ class OpcodeProfilerCapture:
             return []
             
     def select_emulator(self, uuid: Optional[str] = None) -> bool:
-        """Select an emulator instance"""
+        """Select an emulator instance, creating one if none exists"""
         self.print_header("Selecting emulator...")
         
         if uuid:
@@ -121,58 +121,76 @@ class OpcodeProfilerCapture:
             
         emulators = self.discover_emulators()
         if not emulators:
-            self.print_error("No running emulator instances found")
-            self.print_info("Please start an emulator instance first")
-            return False
+            self.print_info("No running emulator instances found, creating one...")
+            if not self._create_emulator():
+                return False
+            # Re-discover after creation
+            emulators = self.discover_emulators()
+            if not emulators:
+                self.print_error("Failed to find created emulator")
+                return False
             
         self.emulator_uuid = emulators[0]['id']
         self.print_success(f"Auto-selected emulator: {self.emulator_uuid[:8]}...")
         return True
         
-    def start_profiler(self) -> bool:
-        """Start profiler capture session (auto-enables feature)"""
-        self.print_header("Starting opcode profiler session...")
+    def _create_emulator(self, model: str = "PENTAGON") -> bool:
+        """Create and start a new emulator instance"""
+        try:
+            url = f"{self.base_url}/api/v1/emulator/start"
+            response = self.session.post(url, json={"model": model}, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+            self.print_success(f"Created and started emulator: {result.get('id', 'unknown')[:8]}... (model: {model})")
+            return True
+        except Exception as e:
+            self.print_error(f"Failed to create emulator: {e}")
+            return False
         
-        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/opcode/session"
-        payload = {"action": "start"}
+    def start_profiler(self) -> bool:
+        """Start all profiler capture sessions (opcode, memory, calltrace)"""
+        self.print_header("Starting all profiler sessions...")
+        
+        # Use unified endpoint to start all profilers at once
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/start"
         
         try:
-            response = self.session.post(url, json=payload, timeout=5)
+            response = self.session.post(url, timeout=5)
             response.raise_for_status()
             result = response.json()
             
-            if result.get('capturing'):
-                self.session_start = datetime.now()
-                self.print_success("Opcode profiler session started (feature enabled, data cleared)")
-                return True
-            else:
-                self.print_error(f"Failed to start profiler: {result.get('message', 'Unknown error')}")
-                return False
+            self.session_start = datetime.now()
+            self.print_success("All profiler sessions started (opcode, memory, calltrace)")
+            
+            # Show individual profiler status
+            status = result.get('status', {})
+            for profiler, state in status.items():
+                self.print_info(f"  {profiler}: {state}")
+            
+            return True
         except Exception as e:
-            self.print_error(f"Failed to start profiler: {e}")
+            self.print_error(f"Failed to start profilers: {e}")
             return False
             
     def stop_profiler(self) -> bool:
-        """Stop profiler capture"""
-        self.print_header("Stopping profiler capture...")
+        """Stop all profiler capture sessions"""
+        self.print_header("Stopping all profiler sessions...")
         
-        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/opcode/session"
-        payload = {"action": "stop"}
+        # Use unified endpoint to stop all profilers
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/stop"
         
         try:
-            response = self.session.post(url, json=payload, timeout=5)
+            response = self.session.post(url, timeout=5)
             response.raise_for_status()
-            result = response.json()
-            total = result.get('total_executions', 0)
-            self.print_success(f"Profiler stopped ({total:,} total executions)")
+            self.print_success("All profiler sessions stopped")
             return True
         except Exception as e:
-            self.print_info(f"Failed to stop profiler: {e}")
+            self.print_info(f"Failed to stop profilers: {e}")
             return True  # Not critical
             
     def get_profiler_status(self) -> dict:
-        """Get profiler status"""
-        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/opcode/status"
+        """Get unified profiler status"""
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/status"
         try:
             response = self.session.get(url, timeout=5)
             response.raise_for_status()
@@ -205,7 +223,7 @@ class OpcodeProfilerCapture:
             
     def create_results_dir(self) -> Path:
         """Create timestamped results directory"""
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-opcodeprofiler")
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-profiler")
         results_dir = Path(__file__).parent / "results" / timestamp
         results_dir.mkdir(parents=True, exist_ok=True)
         return results_dir
@@ -226,7 +244,7 @@ class OpcodeProfilerCapture:
             "duration_seconds": duration,
             "api_host": self.base_url,
             "emulator_id": self.emulator_uuid,
-            "capture_type": "opcode_profiler"
+            "capture_type": "all_profilers"
         }
         
         metadata_path = self.results_dir / "session_metadata.yaml"
@@ -261,13 +279,71 @@ class OpcodeProfilerCapture:
             count = trace.get('returned_count', 0)
             self.print_success(f"Saved: {trace_path.name} ({count} trace entries)")
         
+        # Memory profiler status (includes access counts)
+        memory_status = self.get_memory_status()
+        if memory_status:
+            memory_path = self.results_dir / "memory_status.yaml"
+            with open(memory_path, 'w') as f:
+                yaml.dump(memory_status, f, default_flow_style=False, sort_keys=False)
+            self.print_success(f"Saved: {memory_path.name}")
+        
+        # Call trace profiler data - entries
+        entries = self.get_calltrace_entries(500)
+        if entries and entries.get('entries'):
+            entries_path = self.results_dir / "calltrace_entries.yaml"
+            with open(entries_path, 'w') as f:
+                yaml.dump(entries, f, default_flow_style=False, sort_keys=False)
+            count = len(entries.get('entries', []))
+            self.print_success(f"Saved: {entries_path.name} ({count} entries)")
+        
+        # Call trace profiler status
+        calltrace_status = self.get_calltrace_status()
+        if calltrace_status:
+            status_path = self.results_dir / "calltrace_status.yaml"
+            with open(status_path, 'w') as f:
+                yaml.dump(calltrace_status, f, default_flow_style=False, sort_keys=False)
+            self.print_success(f"Saved: {status_path.name}")
+        
         self.print_info(f"Results saved to: {self.results_dir}")
+    
+    def get_memory_status(self) -> dict:
+        """Get memory profiler status"""
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/memory/status"
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            self.print_error(f"Failed to retrieve memory status: {e}")
+            return {}
+    
+    def get_calltrace_entries(self, count: int = 500) -> dict:
+        """Get call trace entries"""
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/calltrace/entries?count={count}"
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            self.print_error(f"Failed to retrieve calltrace entries: {e}")
+            return {}
+    
+    def get_calltrace_status(self) -> dict:
+        """Get call trace profiler status"""
+        url = f"{self.base_url}/api/v1/emulator/{self.emulator_uuid}/profiler/calltrace/status"
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            self.print_error(f"Failed to retrieve calltrace status: {e}")
+            return {}
         
     def run(self, emulator_uuid: Optional[str] = None) -> bool:
         """Run the capture session"""
         
         print(f"\n{Colors.BOLD}{'='*60}{Colors.END}")
-        print(f"{Colors.BOLD}Z80 Opcode Profiler Session Capture{Colors.END}")
+        print(f"{Colors.BOLD}Z80 Unified Profiler Session Capture{Colors.END}")
         print(f"{Colors.BOLD}{'='*60}{Colors.END}")
         
         # Connect and setup
@@ -283,12 +359,12 @@ class OpcodeProfilerCapture:
             
         # Wait for user
         print(f"\n{Colors.BOLD}{'='*60}{Colors.END}")
-        print(f"{Colors.GREEN}Profiler is now capturing!{Colors.END}")
+        print(f"{Colors.GREEN}All profilers are now capturing!{Colors.END}")
         print(f"{Colors.BOLD}Run your Z80 code in the emulator.{Colors.END}")
-        print(f"{Colors.CYAN}Tips:{Colors.END}")
-        print(f"  - Execute specific routines you want to profile")
-        print(f"  - The profiler tracks every opcode execution")
-        print(f"  - Trace buffer holds last 10,000 entries")
+        print(f"{Colors.CYAN}Active profilers:{Colors.END}")
+        print(f"  - Opcode: execution counts + trace")
+        print(f"  - Memory: read/write/execute patterns")
+        print(f"  - Calltrace: CALL/RET/JP/JR events")
         print(f"\n{Colors.YELLOW}Press ENTER when done to capture and save session data...{Colors.END}")
         print(f"{Colors.BOLD}{'='*60}{Colors.END}\n")
         

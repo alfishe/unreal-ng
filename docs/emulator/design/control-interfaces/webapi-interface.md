@@ -452,6 +452,117 @@ Response:
 > - 16-byte stack snapshot
 > - Timing information (tstate, frame_number)
 
+### Memory Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track memory access patterns (reads/writes/executes) across all physical memory pages (RAM/ROM/Cache).
+
+```
+POST /api/v1/emulator/{id}/profiler/memory/start      Start profiler, enable feature
+POST /api/v1/emulator/{id}/profiler/memory/stop       Stop profiler, preserve data
+POST /api/v1/emulator/{id}/profiler/memory/pause      Pause profiler, retain data
+POST /api/v1/emulator/{id}/profiler/memory/resume     Resume paused session
+POST /api/v1/emulator/{id}/profiler/memory/clear      Clear all profiler data
+GET  /api/v1/emulator/{id}/profiler/memory/status     Get profiler status
+GET  /api/v1/emulator/{id}/profiler/memory/pages      Get per-page access summaries (?limit=N)
+GET  /api/v1/emulator/{id}/profiler/memory/counters   Get address-level counters (?page=N, ?mode=z80|physical)
+GET  /api/v1/emulator/{id}/profiler/memory/regions    Get monitored region statistics
+POST /api/v1/emulator/{id}/profiler/memory/save       Save access data to file (body: {"path": "...", "format": "yaml"})
+```
+
+**Status Response**:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "session_state": "capturing",
+  "feature_enabled": true,
+  "tracking_mode": "physical"
+}
+```
+
+**Pages Response** (`?limit=20`):
+```json
+{
+  "emulator_id": "550e8400-...",
+  "pages": [
+    {"page": 0, "type": "RAM", "reads": 15234, "writes": 1200, "executes": 45000},
+    {"page": 1, "type": "RAM", "reads": 8900, "writes": 500, "executes": 12000}
+  ]
+}
+```
+
+**Counters Response** (`?page=5&mode=physical`):
+```json
+{
+  "emulator_id": "550e8400-...",
+  "mode": "physical",
+  "page": 5,
+  "counters": {
+    "reads": [0, 0, 15, 230, ...],
+    "writes": [0, 0, 0, 5, ...],
+    "executes": [100, 200, 0, 0, ...]
+  }
+}
+```
+
+### Call Trace Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track CPU control flow events (CALL, RET, JP, JR, RST, etc.).
+
+```
+POST /api/v1/emulator/{id}/profiler/calltrace/start    Start profiler, enable feature
+POST /api/v1/emulator/{id}/profiler/calltrace/stop     Stop profiler, preserve data
+POST /api/v1/emulator/{id}/profiler/calltrace/pause    Pause profiler, retain data
+POST /api/v1/emulator/{id}/profiler/calltrace/resume   Resume paused session
+POST /api/v1/emulator/{id}/profiler/calltrace/clear    Clear all profiler data
+GET  /api/v1/emulator/{id}/profiler/calltrace/status   Get profiler status
+GET  /api/v1/emulator/{id}/profiler/calltrace/entries  Get trace entries (?count=N, default 100)
+GET  /api/v1/emulator/{id}/profiler/calltrace/stats    Get call/return statistics
+```
+
+**Status Response**:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "session_state": "capturing",
+  "feature_enabled": true,
+  "entry_count": 4500,
+  "buffer_capacity": 10000
+}
+```
+
+**Entries Response** (`?count=50`):
+```json
+{
+  "emulator_id": "550e8400-...",
+  "requested_count": 50,
+  "returned_count": 50,
+  "entries": [
+    {"type": "CALL", "from_pc": 0x1234, "to_pc": 0x5678, "sp": 0xFFFE, "frame": 1200, "tstate": 45000},
+    {"type": "RET", "from_pc": 0x567A, "to_pc": 0x1237, "sp": 0x0000, "frame": 1200, "tstate": 45100}
+  ]
+}
+```
+
+**Stats Response**:
+```json
+{
+  "emulator_id": "550e8400-...",
+  "total_calls": 12500,
+  "total_returns": 12480,
+  "total_jumps": 45000,
+  "call_depth_max": 24,
+  "top_targets": [
+    {"address": 0x0038, "count": 5000, "type": "RST"},
+    {"address": 0x1234, "count": 2500, "type": "CALL"}
+  ]
+}
+```
+
+
 ### Opcode Profiler
 
 > **Status**: ✅ Implemented (2026-01)
@@ -459,19 +570,21 @@ Response:
 Track Z80 opcode execution statistics and capture execution traces.
 
 ```
-POST /api/v1/emulator/{id}/profiler/opcode/session    Session control (body: {"action": "start|stop|clear"})
+POST /api/v1/emulator/{id}/profiler/opcode/start      Start profiler, enable feature
+POST /api/v1/emulator/{id}/profiler/opcode/stop       Stop profiler, preserve data
+POST /api/v1/emulator/{id}/profiler/opcode/pause      Pause profiler, retain data
+POST /api/v1/emulator/{id}/profiler/opcode/resume     Resume paused session
+POST /api/v1/emulator/{id}/profiler/opcode/clear      Clear all profiler data
 GET  /api/v1/emulator/{id}/profiler/opcode/status     Get profiler status
 GET  /api/v1/emulator/{id}/profiler/opcode/counters   Get opcode counters (?limit=N, default 100)
 GET  /api/v1/emulator/{id}/profiler/opcode/trace      Get execution trace (?count=N, default 100)
 ```
 
-**Session Control**:
+**Start Profiler**:
 ```bash
-curl -X POST http://localhost:8090/api/v1/emulator/{id}/profiler/opcode/session \
-     -H "Content-Type: application/json" \
-     -d '{"action": "start"}'
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/profiler/opcode/start
 ```
-Actions: `start` (enable feature, clear data, begin capture), `stop` (pause capture), `clear` (reset data)
+Other actions: `stop`, `pause`, `resume`, `clear`
 
 **Status Response**:
 ```json
@@ -509,6 +622,36 @@ Actions: `start` (enable feature, clear data, begin capture), `stop` (pause capt
   ]
 }
 ```
+
+### Unified Profiler Control
+
+> **Status**: ✅ Implemented (2026-01)
+
+Control all profilers (opcode, memory, calltrace) simultaneously.
+
+```
+POST /api/v1/emulator/{id}/profiler/start      Start all profilers
+POST /api/v1/emulator/{id}/profiler/stop       Stop all profilers
+POST /api/v1/emulator/{id}/profiler/pause      Pause all profilers
+POST /api/v1/emulator/{id}/profiler/resume     Resume all profilers
+POST /api/v1/emulator/{id}/profiler/clear      Clear all profiler data
+GET  /api/v1/emulator/{id}/profiler/status     Get status of all profilers
+```
+
+**Start All Profilers**:
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/profiler/start
+```
+
+**Status Response** (all profilers):
+```json
+{
+  "opcode": {"session_state": "capturing", "total_executions": 1523456},
+  "memory": {"session_state": "capturing", "feature_enabled": true},
+  "calltrace": {"session_state": "capturing", "entry_count": 450}
+}
+```
+
 
 ### Snapshots
 

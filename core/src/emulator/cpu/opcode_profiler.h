@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+// Forward declaration for ProfilerSessionState
+#include "emulator/memory/memoryaccesstracker.h"
+
 class EmulatorContext;
 
 /// @brief Trace entry capturing a single opcode execution for forensics
@@ -83,6 +86,12 @@ public:
     /// @brief Start capture session, clears previous data
     void Start();
 
+    /// @brief Pause capturing, data retained
+    void Pause();
+    
+    /// @brief Resume a paused capture session
+    void Resume();
+
     /// @brief Stop capturing, data remains accessible
     void Stop();
 
@@ -90,7 +99,10 @@ public:
     void Clear();
 
     /// @brief Check if currently capturing
-    bool IsCapturing() const { return _capturing; }
+    bool IsCapturing() const { return _sessionState == ProfilerSessionState::Capturing; }
+    
+    /// @brief Get current session state
+    ProfilerSessionState GetSessionState() const { return _sessionState; }
 
     /// endregion </Session Control>
 
@@ -152,7 +164,7 @@ private:
     EmulatorContext* _context;
 
     // Capture state
-    std::atomic<bool> _capturing{false};
+    std::atomic<ProfilerSessionState> _sessionState{ProfilerSessionState::Stopped};
 
     // Tier 1: Statistical counters (1792 entries, ~14KB)
     std::array<std::atomic<uint64_t>, COUNTER_TABLE_SIZE> _counters{};
