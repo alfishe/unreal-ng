@@ -1,7 +1,6 @@
 /**
  * Z80Test Verification Runner
  * 
- * Runs all 115 CRC-validated z80test cases against the unreal-ng Z80 emulator.
  * Iterates through test vectors, executes opcodes, computes CRC, and compares.
  */
 
@@ -19,67 +18,23 @@
 #include <iomanip>
 #include <fstream>
 #include <map>
+#include <filesystem>
 #include "_helpers/test_path_helper.h"
 
 // Relative path from project root to reference CSVs
 static const std::string REFERENCE_REL_PATH = "tools/verification/z80/reference/";
 
-// Map test names to CSV filenames - includes all tests with CSV reference
-static const std::map<std::string, std::string> TEST_CSV_MAP = {
-    // Original passing tests
-    {"SBC HL,RR", "073_sbc_hl_rr.csv"},
-    {"ADC HL,RR", "071_adc_hl_rr.csv"},
-    {"ADD HL,RR", "069_add_hl_rr.csv"},
-    // Tests requiring Python fix (use C++ as ground truth)
-    {"ALO A,(HL)", "029_alo_a__p_hl.csv"},
-    {"ALO A,(XY)", "032_alo_a__p_xy.csv"},
-    {"RLC [R,(HL)]", "047_rlc__r__p_hl_.csv"},
-    {"RRC [R,(HL)]", "048_rrc__r__p_hl_.csv"},
-    {"RL [R,(HL)]", "049_rl__r__p_hl_.csv"},
-    {"RR [R,(HL)]", "050_rr__r__p_hl_.csv"},
-    {"SLA [R,(HL)]", "051_sla__r__p_hl_.csv"},
-    {"SRA [R,(HL)]", "052_sra__r__p_hl_.csv"},
-    {"SLIA [R,(HL)]", "053_slia__r__p_hl_.csv"},
-    {"SRL [R,(HL)]", "054_srl__r__p_hl_.csv"},
-    {"SRO (XY)", "055_sro__p_xy.csv"},
-    {"SRO (XY),R", "056_sro__p_xy_r.csv"},
-    {"INC [R,(HL)]", "059_inc__r__p_hl_.csv"},
-    {"DEC [R,(HL)]", "060_dec__r__p_hl_.csv"},
-    {"INC (XY)", "063_inc__p_xy.csv"},
-    {"DEC (XY)", "064_dec__p_xy.csv"},
-    {"BIT N,(HL)", "075_bit_n__p_hl.csv"},
-    {"BIT N,[R,(HL)]", "076_bit_n__r__p_hl_.csv"},
-    {"BIT N,(XY)", "077_bit_n__p_xy.csv"},
-    {"BIT N,(XY),-", "078_bit_n__p_xy_-.csv"},
-    {"LDI", "089_ldi.csv"},
-    {"LDD", "090_ldd.csv"},
-    {"LDIR", "091_ldir.csv"},
-    {"LDDR", "092_lddr.csv"},
-    {"LDIR->NOP'", "093_ldir-_nop_prime.csv"},
-    {"LDDR->NOP'", "094_lddr-_nop_prime.csv"},
-    {"CPI", "095_cpi.csv"},
-    {"CPD", "096_cpd.csv"},
-    {"CPIR", "097_cpir.csv"},
-    {"CPDR", "098_cpdr.csv"},
-    {"IN R,(C)", "100_in_r__p_c.csv"},
-    {"IN (C)", "101_in__p_c.csv"},
-    {"INI", "102_ini.csv"},
-    {"IND", "103_ind.csv"},
-    {"INIR", "104_inir.csv"},
-    {"INDR", "105_indr.csv"},
-    {"INIR->NOP'", "106_inir-_nop_prime.csv"},
-    {"INDR->NOP'", "107_indr-_nop_prime.csv"},
-    {"OUTI", "111_outi.csv"},
-    {"OUTD", "112_outd.csv"},
-    {"OTIR", "113_otir.csv"},
-    {"OTDR", "114_otdr.csv"},
-    {"PUSH+POP RR", "129_push_plus_pop_rr.csv"},
-    {"POP+PUSH AF", "130_pop_plus_push_af.csv"},
-    {"LD [R,(HL)],[R,(HL)]", "137_ld__r__p_hl___r__p_hl_.csv"},
-    {"LD [X,(XY)],[X,(XY)]", "138_ld__x__p_xy___x__p_xy_.csv"},
-    {"LD R,(XY)", "139_ld_r__p_xy.csv"},
-    {"LD (XY),R", "140_ld__p_xy_r.csv"},
-};
+// Helper function to construct CSV filename from test index and name
+// Matches format used by GenerateReferenceCSVs test
+static std::string getCSVFilename(size_t index, const char* testName)
+{
+    std::string filename = testName;
+    for (char& c : filename) {
+        if (c == ' ' || c == ',' || c == '(' || c == ')' || c == '[' || c == ']' || c == '+' || c == '\'') c = '_';
+        if (c == '/') c = '-';
+    }
+    return std::to_string(index) + "_" + filename + ".csv";
+}
 
 class Z80TestVerification : public ::testing::Test
 {
@@ -120,8 +75,12 @@ protected:
     /**
      * Execute a single test iteration.
      * Sets up Z80 state from combined vector, executes opcode, returns F register.
+     * 
+     * @param base The original test vector (used for fixed addresses like mem location)
+     * @param combined The combined test vector (base XOR counter XOR shifter)
      */
-    uint8_t executeIteration(const std::array<uint8_t, VEC_SIZE>& combined)
+    uint8_t executeIteration(const std::array<uint8_t, VEC_SIZE>& base, 
+                             const std::array<uint8_t, VEC_SIZE>& combined)
     {
         // Extract opcode bytes from vector positions 0-3
         uint8_t opcode[4] = {combined[0], combined[1], combined[2], combined[3]};
@@ -136,10 +95,27 @@ protected:
         z80_->iy = combined[14] | (combined[15] << 8);
         z80_->sp = combined[18] | (combined[19] << 8);
         
-        // Write memory operand at HL (for (HL) tests)
-        uint16_t hl = z80_->hl;
-        z80_->DirectWrite(hl, combined[16]);
-        z80_->DirectWrite(hl + 1, combined[17]);
+        // z80test writes the entire 16-byte data area (F,A,BC,DE,HL,IX,IY,mem,SP)
+        // to consecutive addresses starting at data.regs. When registers like HL
+        // are shifted, they may point into any part of this data area. We need to
+        // write all 16 combined bytes so reads from any offset work correctly.
+        // The data area starts at base HL (data.mem location, which HL points to).
+        // Layout: bytes 4-19 of combined vector go to addresses [base_hl-12..base_hl+3]
+        // But for simplicity, we write just the mem region at base_hl which is
+        // where most tests read from. For tests that shift HL by small amounts,
+        // having mem_lo at base_hl and mem_hi at base_hl+1 covers +/- 1 shifts.
+        uint16_t base_hl = base[10] | (base[11] << 8);
+        
+        // Write full 16-byte data region around the mem location
+        // z80test layout: regs(12) + mem(2) + sp(2) = 16 bytes
+        // mem is at offset 12 in the data area, so regs start at base_hl - 12
+        // BUT: this is complex. Simple fix: write mem (2 bytes) AND surrounding data
+        // For now, write bytes 4-19 to addresses base_hl-12 to base_hl+3
+        // This way any read within this region gets correct combined value
+        uint16_t data_start = base_hl - 12;  // regs start 12 bytes before mem
+        for (int i = 0; i < 16; i++) {
+            z80_->DirectWrite(data_start + i, combined[4 + i]);
+        }
         
         // Handle EX AF,AF' (opcode 0x08) - bytes 16-17 contain F'/A' instead of MEM
         if (opcode[0] == 0x08)
@@ -158,12 +134,15 @@ protected:
             z80_->iff2 = (combined[17] != 0) ? 1 : 0;  // IFF2 affects P/V flag
         }
         
-        // Handle indexed memory ops - write at IX+d or IY+d if applicable
-        // Displacement is in opcode[2] for DD CB dd xx or FD CB dd xx
+        // Handle indexed memory ops - write at base IX/IY + base displacement
+        // Use base index register AND base displacement for fixed address
+        // This matches z80test where mem is at fixed data.mem location
         if (opcode[0] == 0xDD || opcode[0] == 0xFD) {
-            uint16_t base = (opcode[0] == 0xDD) ? z80_->ix : z80_->iy;
-            int8_t d = static_cast<int8_t>(opcode[2]);
-            uint16_t addr = base + d;
+            uint16_t base_ix = base[12] | (base[13] << 8);
+            uint16_t base_iy = base[14] | (base[15] << 8);
+            uint16_t idx_base = (opcode[0] == 0xDD) ? base_ix : base_iy;
+            int8_t base_d = static_cast<int8_t>(base[2]);  // Use BASE displacement, not combined
+            uint16_t addr = idx_base + base_d;
             z80_->DirectWrite(addr, combined[16]);
         }
         
@@ -184,9 +163,13 @@ protected:
         // - EX AF,AF': 08 F1 xx 08 (4 single-byte instructions)
         // - LD A,I: ED 47 ED 57 (LD I,A then LD A,I - 2 instructions)
         // - LD A,R: ED 4F ED 5F (LD R,A then LD A,R - 2 instructions)
+        // - SCF+CCF: 37 3F (SCF then CCF - 2 single-byte instructions)
+        // - CCF+SCF: 3F 37 (CCF then SCF - 2 single-byte instructions)
         bool isExAfSequence = (opcode[0] == 0x08 && opcode[1] == 0xF1 && opcode[3] == 0x08);
         bool isLdAI = (opcode[0] == 0xED && opcode[1] == 0x47 && opcode[2] == 0xED && opcode[3] == 0x57);
         bool isLdAR = (opcode[0] == 0xED && opcode[1] == 0x4F && opcode[2] == 0xED && opcode[3] == 0x5F);
+        bool isScfCcf = (opcode[0] == 0x37 && opcode[1] == 0x3F);  // SCF then CCF
+        bool isCcfScf = (opcode[0] == 0x3F && opcode[1] == 0x37);  // CCF then SCF
         
         if (isExAfSequence || isLdAI || isLdAR)
         {
@@ -197,6 +180,12 @@ protected:
             {
                 z80_->Z80Step(true);
             }
+        }
+        else if (isScfCcf || isCcfScf)
+        {
+            // Execute 2 single-byte instructions (SCF+CCF or CCF+SCF)
+            z80_->Z80Step(true);  // First instruction
+            z80_->Z80Step(true);  // Second instruction
         }
         else
         {
@@ -217,12 +206,10 @@ protected:
 TEST_F(Z80TestVerification, RunAllVectors)
 {
     // Blacklist tests that require non-Zilog Z80 flavor (NEC NMOS, ST CMOS)
-    // Also EX AF,AF' which requires multi-instruction sequence (08 F1 C5 08)
     static const std::vector<std::string> BLACKLIST =
     {
         "SCF (NEC)", "CCF (NEC)",
         "SCF (ST)", "CCF (ST)",
-        "SCF+CCF", "CCF+SCF",
     };
     
     auto isBlacklisted = [&](const char* name)
@@ -262,7 +249,7 @@ TEST_F(Z80TestVerification, RunAllVectors)
         
         while (iter.next(combined))
         {
-            uint8_t f_out = executeIteration(combined);
+            uint8_t f_out = executeIteration(vec.base, combined);
             crc = crc32_update(crc, f_out);
             iterations++;
             if (f_outputs.size() < 20)
@@ -300,16 +287,17 @@ TEST_F(Z80TestVerification, RunAllVectors)
                << "\n  Iterations: " << std::dec << iterations
                << " (expected " << vec.expected_iterations << ")"
                << "\n  First 10 F_out values: ";
-            for (size_t j = 0; j < std::min(f_outputs.size(), (size_t)10); j++) {
+            for (size_t j = 0; j < std::min(f_outputs.size(), (size_t)10); j++)
+            {
                 ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << (int)f_outputs[j] << " ";
             }
             
             // Second pass: compare against CSV reference to find first mismatch
-            auto csv_it = TEST_CSV_MAP.find(vec.name);
-            if (csv_it != TEST_CSV_MAP.end()) {
-                std::string csv_path = (TestPathHelper::findProjectRoot() / REFERENCE_REL_PATH / csv_it->second).string();
-                std::ifstream csv_file(csv_path);
-                if (csv_file.is_open()) {
+            std::string csv_filename = getCSVFilename(i, vec.name);
+            std::string csv_path = (TestPathHelper::findProjectRoot() / REFERENCE_REL_PATH / csv_filename).string();
+            std::ifstream csv_file(csv_path);
+            if (csv_file.is_open())
+            {
                     std::string line;
                     std::getline(csv_file, line); // Skip header
                     
@@ -319,16 +307,20 @@ TEST_F(Z80TestVerification, RunAllVectors)
                     uint32_t iter_num = 0;
                     bool found_mismatch = false;
                     
-                    while (iter2.next(combined2) && std::getline(csv_file, line)) {
-                        uint8_t f_actual = executeIteration(combined2);
+                    while (iter2.next(combined2) && std::getline(csv_file, line))
+                    {
+                        uint8_t f_actual = executeIteration(vec.base, combined2);
                         
-                        // Parse F_out from CSV line (field 9, after iter,F_in,A_in,BC_in,DE_in,HL_in,IX_in,IY_in,SP_in,F_out)
+                        // Parse F_out from CSV line (field 1: iter,f_out,vec0...)
                         std::istringstream line_stream(line);
                         std::string field;
-                        for (int f = 0; f <= 9 && std::getline(line_stream, field, ','); f++) {
-                            if (f == 9) {  // F_out field
+                        for (int f = 0; f <= 1 && std::getline(line_stream, field, ','); f++)
+                        {
+                            if (f == 1)  // F_out field
+                            {
                                 uint8_t f_expected = (uint8_t)std::stoul(field, nullptr, 16);
-                                if (f_actual != f_expected) {
+                                if (f_actual != f_expected)
+                                {
                                     ss << "\n  First mismatch at iter " << std::dec << iter_num << ":"
                                        << " actual=0x" << std::hex << std::setw(2) << std::setfill('0') << (int)f_actual
                                        << " expected=0x" << std::setw(2) << std::setfill('0') << (int)f_expected
@@ -336,7 +328,8 @@ TEST_F(Z80TestVerification, RunAllVectors)
                                     
                                     // Show opcode for context
                                     ss << "\n  Opcode: 0x" << std::setw(2) << std::setfill('0') << (int)combined2[0];
-                                    if (combined2[0] == 0xED) {
+                                    if (combined2[0] == 0xED)
+                                    {
                                         ss << " 0x" << std::setw(2) << std::setfill('0') << (int)combined2[1];
                                     }
                                     found_mismatch = true;
@@ -347,12 +340,14 @@ TEST_F(Z80TestVerification, RunAllVectors)
                         if (found_mismatch) break;
                         iter_num++;
                     }
-                    if (!found_mismatch) {
+                    if (!found_mismatch)
+                    {
                         ss << "\n  No per-iteration mismatch found (CRC computation issue?)";
                     }
-                } else {
-                    ss << "\n  (CSV not found at " << csv_path << ")";
-                }
+            }
+            else
+            {
+                ss << "\n  (CSV not found at " << csv_path << ")";
             }
             
             ADD_FAILURE() << ss.str();
@@ -395,7 +390,7 @@ TEST_F(Z80TestVerification, SCF_Individual)
     
     while (iter.next(combined))
     {
-        uint8_t f_out = executeIteration(combined);
+        uint8_t f_out = executeIteration(scf->base, combined);
         crc = crc32_update(crc, f_out);
         iterations++;
         
@@ -414,4 +409,53 @@ TEST_F(Z80TestVerification, SCF_Individual)
     
     EXPECT_EQ(iterations, scf->expected_iterations);
     EXPECT_EQ(crc, scf->expected_crc);
+}
+
+// Generate reference CSVs for all tests - run manually when needed
+// These CSVs serve as ground truth for Python reference comparison
+TEST_F(Z80TestVerification, DISABLED_GenerateReferenceCSVs)
+{
+    auto refPath = TestPathHelper::findProjectRoot() / "tools/verification/z80/reference";
+    std::filesystem::create_directories(refPath);
+    
+    std::cout << "Generating reference CSVs to: " << refPath << std::endl;
+    
+    for (size_t i = 0; i < NUM_VECTORS; i++)
+    {
+        const Z80TestVector& vec = VECTORS[i];
+        
+        // Create sanitized filename from test name
+        std::string filename = vec.name;
+        for (char& c : filename)
+        {
+            if (c == ' ' || c == ',' || c == '(' || c == ')' || c == '[' || c == ']' || c == '+' || c == '\'') c = '_';
+            if (c == '/') c = '-';
+        }
+        filename = std::to_string(i) + "_" + filename + ".csv";
+        
+        std::ofstream csv(refPath / filename);
+        csv << "iter,f_out";
+        for (int j = 0; j < 20; j++) csv << ",vec" << j;
+        csv << "\n";
+        
+        Z80TestIterator iter(vec.base, vec.counter, vec.shifter);
+        std::array<uint8_t, VEC_SIZE> combined;
+        uint32_t iteration = 0;
+        
+        while (iter.next(combined))
+        {
+            uint8_t f_out = executeIteration(vec.base, combined);
+            csv << std::dec << iteration << "," << std::hex << "0x" << std::setw(2) << std::setfill('0') << (int)f_out;
+            for (int j = 0; j < 20; j++)
+            {
+                csv << ",0x" << std::setw(2) << std::setfill('0') << (int)combined[j];
+            }
+            csv << "\n";
+            iteration++;
+        }
+        
+        std::cout << "  " << vec.name << ": " << std::dec << iteration << " iterations -> " << filename << std::endl;
+    }
+    
+    std::cout << "Done generating " << NUM_VECTORS << " reference CSVs" << std::endl;
 }
