@@ -25,6 +25,7 @@ constexpr int MNEMONIC_COL_WIDTH = 24;   // Instruction mnemonic
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/rom.h"
 #include "ui_disassemblerwidget.h"
 
 DisassemblerWidget::DisassemblerWidget(QWidget* parent) : QWidget(parent), ui(new Ui::DisassemblerWidget)
@@ -715,45 +716,46 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
         return;
 
     Memory& memory = *getMemory();
+    EmulatorContext* ctx = getEmulator()->GetContext();
 
     // Get the physical address for the current address
     uint8_t* physicalAddress = memory.MapZ80AddressToPhysicalAddress(address);
     std::string bankName = "Unknown";
+    std::string romTitle;
 
     // Determine bank based on address range
     if (address < 0x4000)
     {
-        // ROM 0 (0-16K)
-        bankName = "ROM 0";
+        // ROM at 0x0000-0x3FFF - get human-readable ROM title
+        uint8_t romPage = memory.GetROMPage();
+        if (ctx && ctx->pCore && ctx->pCore->GetROM())
+        {
+            romTitle = ctx->pCore->GetROM()->GetROMTitleByAddress(physicalAddress);
+        }
+        if (romTitle.empty())
+        {
+            bankName = "ROM " + std::to_string(romPage);
+        }
+        else
+        {
+            bankName = "ROM " + std::to_string(romPage) + " - " + romTitle;
+        }
     }
     else if (address < 0x8000)
     {
-        // ROM 1-N (16K-32K)
-        uint8_t romPage = memory.GetROMPage();
-        bankName = "ROM " + std::to_string(romPage);
+        // RAM 5 (fixed) or ROM for some models at 0x4000-0x7FFF
+        bankName = "RAM 5";
     }
     else if (address < 0xC000)
     {
-        // RAM banks (32K-48K)
-        // Try to get the RAM page if the method is available
-        uint8_t ramPage = 0;
-
-        // Use different methods based on address range
-        if (address >= 0x8000 && address < 0xA000)
-        {
-            ramPage = 2;  // Common convention for this range
-        }
-        else if (address >= 0xA000 && address < 0xC000)
-        {
-            ramPage = 3;  // Common convention for this range
-        }
-
-        bankName = "RAM " + std::to_string(ramPage);
+        // RAM 2 (fixed) at 0x8000-0xBFFF
+        bankName = "RAM 2";
     }
     else
     {
-        // System RAM (48K-64K)
-        bankName = "System RAM";
+        // Paged RAM at 0xC000-0xFFFF
+        uint8_t ramPage = memory.GetRAMPageForBank(3);  // Bank 3 is 0xC000-0xFFFF
+        bankName = "RAM " + std::to_string(ramPage);
     }
 
     // Add the address range for clarity
