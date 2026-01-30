@@ -232,6 +232,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         connect(m_binding, &EmulatorBinding::stateChanged, this, &DebuggerWindow::onBindingStateChanged);
         connect(m_binding, &EmulatorBinding::ready, this, &DebuggerWindow::onBindingReady);
         connect(m_binding, &EmulatorBinding::notReady, this, &DebuggerWindow::onBindingNotReady);
+        
+        // Connect CPU step complete signal for automation-triggered steps (WebAPI, Python, Lua, CLI)
+        // Use updateState() instead of onBindingReady() to ensure setZ80State() is called on widgets
+        connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::updateState);
 
         qDebug() << "DebuggerWindow: Connected to EmulatorBinding";
 
