@@ -221,11 +221,14 @@ public:
 
     /// @brief Clear DRQ signal
     /// @details Clears DRQ signal and updates corresponding beta128 bit
+    /// NOTE: Does NOT clear _drq_served - that flag tracks whether the CPU has read 
+    /// the data register, not the DRQ signal state. These are distinct concepts.
     void clearDrq()
     {
         _beta128status &= ~DRQ;
         _drq_out = false;
-        _drq_served = false;
+        // _drq_served is NOT reset here - it's set by readDataRegister/writeDataRegister
+        // and checked by processReadByte/processWriteByte for Lost Data detection
     }
 
     void raiseCrcError()

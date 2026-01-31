@@ -1147,12 +1147,12 @@ void WD1793::cmdReadSector(uint8_t value)
     startType2Command();
 
     // Step 1: search for ID address mark
-    /*
-    FSMEvent searchIDAM(WDSTATE::S_SEARCH_ID,
-                        []() {}
-                        );
-    _operationFIFO.push(searchIDAM);
-    */
+    // Per WD1793 datasheet: "If a comparison is not made within 5 index pulses,
+    // the interrupt line is made active and the Record-Not-Found status bit is set."
+    //
+    // Note: Current implementation uses immediate sector lookup (no rotational delay).
+    // For full accuracy, we would need to simulate disk rotation and IDAM search timing.
+    // The sector search itself is handled by the S_READ_SECTOR callback below.
 
     // Step 2: start sector reading (queue correspondent command to the FIFO)
     // Capture values to avoid dangling pointer issues when drive state changes
@@ -1186,6 +1186,7 @@ void WD1793::cmdReadSector(uint8_t value)
         if (!this->_sectorData)
         {
             this->_statusRegister |= WDS_NOTFOUND;
+            this->_rawDataBuffer = nullptr;  // Ensure processReadSector can detect and terminate
             MLOGWARNING("cmdReadSector: Sector %d data not found on track %d side %d", 
                         sectorReg, trackReg, sideUp);
             return;
@@ -1197,7 +1198,19 @@ void WD1793::cmdReadSector(uint8_t value)
     _operationFIFO.push(readSector);
 
     // Start FSM playback using FIFO queue
-    transitionFSM(WDSTATE::S_FETCH_FIFO);
+    // Apply E-flag delay (15ms @ 2MHz) if E=1 in command byte
+    if (_commandRegister & CMD_DELAY)
+    {
+        // Per WD1793 datasheet: "If the E flag = 1, HLD is made active and HLT is 
+        // sampled after a 15 ms delay."
+        constexpr size_t HEAD_SETTLE_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 15;  // 15ms in t-states
+        transitionFSMWithDelay(WDSTATE::S_FETCH_FIFO, HEAD_SETTLE_DELAY_TSTATES);
+        MLOGINFO("E-flag set: adding 15ms head settle delay");
+    }
+    else
+    {
+        transitionFSM(WDSTATE::S_FETCH_FIFO);
+    }
 }
 
 void WD1793::cmdWriteSector(uint8_t value)
@@ -1273,7 +1286,19 @@ void WD1793::cmdWriteSector(uint8_t value)
     _operationFIFO.push(writeSector);
 
     // Start FSM playback using FIFO queue
-    transitionFSM(WDSTATE::S_FETCH_FIFO);
+    // Apply E-flag delay (15ms @ 2MHz) if E=1 in command byte
+    if (_commandRegister & CMD_DELAY)
+    {
+        // Per WD1793 datasheet: "If the E flag = 1, HLD is made active and HLT is 
+        // sampled after a 15 ms delay."
+        constexpr size_t HEAD_SETTLE_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 15;  // 15ms in t-states
+        transitionFSMWithDelay(WDSTATE::S_FETCH_FIFO, HEAD_SETTLE_DELAY_TSTATES);
+        MLOGINFO("E-flag set: adding 15ms head settle delay");
+    }
+    else
+    {
+        transitionFSM(WDSTATE::S_FETCH_FIFO);
+    }
 }
 
 /// Upon receipt of the Read Address command, the head is loaded and the Busy Status bit is set.
@@ -1993,6 +2018,14 @@ void WD1793::processSearchID()
 // Handles read sector operation
 void WD1793::processReadSector()
 {
+    // Check if sector data was found (null if sector doesn't exist on track)
+    if (!_rawDataBuffer)
+    {
+        // WDS_NOTFOUND was set by the FSMEvent callback in cmdReadSector
+        transitionFSM(WDSTATE::S_END_COMMAND);
+        return;
+    }
+
     _bytesToRead = _sectorSize;
 
     // If multiple sectors requested - register a follow-up operation in FIFO
@@ -2031,14 +2064,18 @@ void WD1793::processReadSector()
 /// _rawDataBuffer and _bytesToRead values must be set before reading the first byte
 void WD1793::processReadByte()
 {
-    // TODO: implement DRQ serve time timeout
-    if (false && !_drq_served)
+    // Per WD1793 datasheet: "If the Computer has not read the previous contents of the DR
+    // before a new character is transferred, that character is lost and the Lost Data
+    // Status bit is set. This sequence continues until the complete data field has been
+    // inputted to the computer."
+    //
+    // Note: Lost Data does NOT terminate the command - FDC continues reading.
+    // CPU can "recover" by reading later bytes. Only bytes overwritten before being read are lost.
+    if (!_drq_served && _bytesToRead < _sectorSize)  // Skip first byte check (no previous byte)
     {
-        // Data was not fetched by CPU from Data Register
-        // Set LOST_DATA error and terminate
+        // Previous byte was not fetched by CPU - it's now overwritten (lost)
         _statusRegister |= WDS_LOSTDATA;
-        transitionFSM(WDSTATE::S_END_COMMAND);
-        return;
+        MLOGWARNING("Lost Data: byte %zu overwritten before CPU read", _sectorSize - _bytesToRead);
     }
 
     // Validate buffer pointer before use (multi-instance safety)
@@ -2049,7 +2086,7 @@ void WD1793::processReadByte()
         return;
     }
 
-    // Reset Data Register access flag
+    // Reset DRQ served flag BEFORE raising new DRQ (so we can detect if CPU reads this byte)
     _drq_served = false;
     clearDrq();
 
@@ -2616,6 +2653,9 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
         case PORT_7F:  // Return data byte and update internal state
             // Read Data Register
             result = readDataRegister();
+
+            // Mark DRQ as served since CPU has read from the data register
+            _drq_served = true;
 
             // Reset DRQ (Data Request) flag
             clearDrq();

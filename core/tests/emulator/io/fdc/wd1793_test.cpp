@@ -3853,3 +3853,282 @@ TEST_F(WD1793_Test, ReadSector_NormalDataMark_ClearsStatusBit5)
 }
 
 /// endregion </Read Sector CRC and DAM Tests>
+
+/// region <Lost Data, E-Flag, and Sector Not Found Tests>
+
+/// Test that Lost Data is detected when DRQ is not serviced before next byte
+/// Per WD1793 datasheet: "If the Computer has not read the previous contents of the DR
+/// before a new character is transferred, that character is lost and the Lost Data Status bit is set."
+TEST_F(WD1793_Test, ReadSector_LostData_When_DRQ_Not_Serviced)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with formatted track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+    
+    // Initialize sector CRCs
+    for (int i = 0; i < 16; i++)
+    {
+        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        if (sector) sector->recalculateDataCRC();
+    }
+
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+    fdc.prolongFDDMotorRotation();
+
+    // Set Track and Sector registers
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+
+    // Issue Read Sector command
+    fdc._commandRegister = 0x80;  // Read Sector
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    fdc.cmdReadSector(0x80);
+
+    // Run simulation but DON'T read any bytes - simulate CPU not responding
+    size_t drqCount = 0;
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if (fdc._beta128status & WD1793::DRQ)
+        {
+            drqCount++;
+            // Deliberately NOT reading the data register - CPU too slow
+        }
+
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+
+    // Per datasheet: Lost Data is set but command completes normally
+    bool lostData = fdc._statusRegister & WD1793::WDS_LOSTDATA;
+    EXPECT_TRUE(lostData) << "WDS_LOSTDATA should be set when CPU doesn't read bytes in time";
+    
+    // Command should still complete (not terminate early)
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should complete even with Lost Data";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that CPU can "recover" from Lost Data mid-transfer
+/// Per WD1793 datasheet: Command continues, CPU can read later bytes
+TEST_F(WD1793_Test, ReadSector_LostData_CPU_Recovers_MidTransfer)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with formatted track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+    
+    for (int i = 0; i < 16; i++)
+    {
+        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        if (sector) sector->recalculateDataCRC();
+    }
+
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+    fdc.prolongFDDMotorRotation();
+
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+    fdc._commandRegister = 0x80;
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    fdc.cmdReadSector(0x80);
+
+    // Skip first 100 bytes (cause Lost Data), then start reading
+    uint8_t buffer[256];
+    size_t bytesRead = 0;
+    size_t skippedDRQs = 0;
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if ((fdc._beta128status & WD1793::DRQ) && bytesRead < sizeof(buffer))
+        {
+            if (skippedDRQs < 100)
+            {
+                // Skip first 100 DRQs - cause Lost Data
+                skippedDRQs++;
+            }
+            else
+            {
+                // Start reading after byte 100
+                buffer[bytesRead] = fdc.readDataRegister();
+                bytesRead++;
+            }
+        }
+
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+
+    // Lost Data should be set (we skipped bytes)
+    bool lostData = fdc._statusRegister & WD1793::WDS_LOSTDATA;
+    EXPECT_TRUE(lostData) << "WDS_LOSTDATA should be set for skipped bytes";
+    
+    // But we should have recovered and read remaining bytes
+    EXPECT_GE(bytesRead, 100u) << "CPU should be able to read bytes after 'recovering'";
+    
+    // Command should complete
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should complete";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that E-flag adds 15ms head settle delay before sector read
+/// Per WD1793 datasheet: "If the E flag = 1, HLD is made active and HLT is sampled after a 15 ms delay"
+TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
+{
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+    static constexpr size_t const E_FLAG_DELAY_TSTATES = (Z80_FREQUENCY / 1000) * 15;  // 15ms
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with formatted track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+    
+    for (int i = 0; i < 16; i++)
+    {
+        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        if (sector) sector->recalculateDataCRC();
+    }
+
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+
+    // Issue Read Sector with E-flag SET (bit 2 = 0x04)
+    fdc._commandRegister = 0x84;  // Read Sector + E-flag
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    size_t startTime = fdc._time;
+    fdc.cmdReadSector(0x84);
+
+    // Find when first DRQ occurs (data transfer starts)
+    size_t firstDRQTime = 0;
+    for (size_t clk = startTime; clk < startTime + E_FLAG_DELAY_TSTATES * 2; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if (fdc._beta128status & WD1793::DRQ)
+        {
+            firstDRQTime = clk;
+            break;
+        }
+    }
+
+    // With E-flag, first DRQ should be delayed by at least 15ms
+    size_t delayTStates = firstDRQTime - startTime;
+    EXPECT_GE(delayTStates, E_FLAG_DELAY_TSTATES - 1000) 
+        << "E-flag should add ~15ms delay before sector read starts";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that sector not found sets WDS_NOTFOUND status bit
+/// When requesting a sector on a track that doesn't exist
+TEST_F(WD1793_Test, ReadSector_SectorNotFound_SetsStatusBit)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with 80 cylinders
+    DiskImage* diskImage = new DiskImage(80, 2);
+    // Only format track 0 as a control
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+
+    // Request sector on cylinder 100 (beyond disk's 80 cylinders) - track doesn't exist
+    fdc._trackRegister = 100;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+
+    fdc._commandRegister = 0x80;
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    fdc.cmdReadSector(0x80);
+
+    // Run simulation
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+
+    // Sector not found should be set
+    bool notFound = fdc._statusRegister & WD1793::WDS_NOTFOUND;
+    EXPECT_TRUE(notFound) << "WDS_NOTFOUND should be set when sector data doesn't exist";
+    
+    // Command should terminate
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should terminate after sector not found";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// endregion </Lost Data, E-Flag, and Sector Not Found Tests>
