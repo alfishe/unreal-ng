@@ -1662,8 +1662,10 @@ void WD1793::startType2Command()
     if (!_selectedDrive || !_selectedDrive->isDiskInserted())
         _statusRegister |= WDS_NOTRDY;
 
-    // Type2 commands have timeout for data availability in Data Register
-    _drq_served = false;
+    // At command start, there's no "previous byte" that could have been lost.
+    // Set true so first processReadByte doesn't trigger Lost Data.
+    // processReadByte will set this to false after loading each byte.
+    _drq_served = true;
 
     // Clear Data Request and Interrupt request bits before starting command processing
     clearDrq();
@@ -1709,8 +1711,10 @@ void WD1793::startType3Command()
     if (!_selectedDrive || !_selectedDrive->isDiskInserted())
         _statusRegister |= WDS_NOTRDY;
 
-    // Type2 commands have timeout for data availability in Data Register
-    _drq_served = false;
+    // At command start, there's no "previous byte" that could have been lost.
+    // Set true so first processReadByte doesn't trigger Lost Data.
+    // processReadByte will set this to false after loading each byte.
+    _drq_served = true;
 
     // Clear Data Request and Interrupt request bits before starting command processing
     clearDrq();
@@ -2071,11 +2075,12 @@ void WD1793::processReadByte()
     //
     // Note: Lost Data does NOT terminate the command - FDC continues reading.
     // CPU can "recover" by reading later bytes. Only bytes overwritten before being read are lost.
-    if (!_drq_served && _bytesToRead < _sectorSize)  // Skip first byte check (no previous byte)
+    // _drq_served is initialized to true at command start, so first byte is never flagged as lost.
+    if (!_drq_served)
     {
         // Previous byte was not fetched by CPU - it's now overwritten (lost)
         _statusRegister |= WDS_LOSTDATA;
-        MLOGWARNING("Lost Data: byte %zu overwritten before CPU read", _sectorSize - _bytesToRead);
+        MLOGWARNING("Lost Data: CPU did not read previous byte before next transfer");
     }
 
     // Validate buffer pointer before use (multi-instance safety)

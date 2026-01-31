@@ -210,13 +210,17 @@ public:
 
     /// @brief Raise DRQ signal
     /// @details Sets DRQ signal and updates corresponding beta128 bit
+    /// Note: _drq_served is managed by processReadByte/processWriteByte, not here.
+    /// This separation allows command start to set _drq_served = true to skip
+    /// first-byte Lost Data detection (there's no "previous byte" to be lost).
     void raiseDrq()
     {
         MLOGDEBUG("DRQ asserted");
 
         _beta128status |= DRQ;
         _drq_out = true;
-        _drq_served = false;
+        // _drq_served is NOT reset here - processReadByte sets it false before
+        // calling raiseDrq, so the flag state is preserved correctly.
     }
 
     /// @brief Clear DRQ signal
@@ -258,7 +262,8 @@ public:
 
     void clearAllErrors()
     {
-        _drq_served = false;
+        // Note: _drq_served is NOT an error flag - it's a service tracking flag
+        // for Lost Data detection. It should be managed separately.
         _lost_data = false;
         _crc_error = false;
         _record_not_found = false;
