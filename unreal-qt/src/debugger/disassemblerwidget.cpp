@@ -623,6 +623,31 @@ uint16_t DisassemblerWidget::findInstructionBoundaryBefore(uint16_t targetAddres
     return (targetAddress - 1) & 0xFFFF;
 }
 
+uint16_t DisassemblerWidget::getCenteredStartAddress(uint16_t targetPC, size_t instructionsBeforePC)
+{
+    if (!getEmulator() || !getMemory())
+        return targetPC;
+
+    // Walk backwards from targetPC to find the starting address
+    // This will position targetPC roughly in the middle of the display
+    uint16_t startAddress = targetPC;
+    
+    for (size_t i = 0; i < instructionsBeforePC; i++)
+    {
+        uint16_t prevAddress = getPreviousCommandAddress(startAddress);
+        
+        // Safety check: avoid infinite loop if we hit address 0 or wrap around
+        if (prevAddress >= startAddress && startAddress != 0)
+        {
+            break;
+        }
+        
+        startAddress = prevAddress;
+    }
+    
+    return startAddress;
+}
+
 void DisassemblerWidget::navigateUp()
 {
     if (!getEmulator() || !getZ80Registers())
@@ -780,8 +805,45 @@ void DisassemblerWidget::refresh()
     // Update the disassembly view with current PC
     if (getEmulator() && getZ80Registers())
     {
+        static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
+        static constexpr size_t INSTRUCTIONS_BEFORE_PC = 10;  // Show ~10 instructions before PC
+        static constexpr size_t MARGIN_TOP = 3;               // Scroll when PC reaches top 3 lines
+        static constexpr size_t MARGIN_BOTTOM = 3;            // Scroll when PC reaches bottom 3 lines
+        
         uint16_t currentPC = getZ80Registers()->pc;
-        setDisassemblerAddress(currentPC);
+        
+        // Check if the current PC is within the currently displayed address range
+        bool pcInView = false;
+        int pcLineNumber = -1;
+        
+        for (const auto& [lineNum, addr] : m_addressMap)
+        {
+            if (addr == currentPC)
+            {
+                pcInView = true;
+                pcLineNumber = lineNum;
+                break;
+            }
+        }
+        
+        // Determine how to position the view
+        uint16_t displayStart;
+        
+        if (pcInView && pcLineNumber >= (int)MARGIN_TOP && 
+            pcLineNumber < (int)(INSTRUCTIONS_TO_DISASSEMBLE - MARGIN_BOTTOM))
+        {
+            // PC is visible and not at the edge margins - keep current display start
+            // Just refresh at the current display address to update highlights
+            displayStart = m_displayAddress;
+        }
+        else
+        {
+            // PC is not visible or at the edge - recenter the display
+            // Position PC roughly in the middle by walking backwards
+            displayStart = getCenteredStartAddress(currentPC, INSTRUCTIONS_BEFORE_PC);
+        }
+        
+        setDisassemblerAddress(displayStart);
 
         // Also directly update the bank indicator to ensure it's current
         updateBankIndicator(currentPC);

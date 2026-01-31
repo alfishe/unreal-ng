@@ -141,6 +141,7 @@ protected:
     uint16_t getNextCommandAddress(uint16_t currentAddress);
     uint16_t getPreviousCommandAddress(uint16_t currentAddress);
     uint16_t findInstructionBoundaryBefore(uint16_t targetAddress);
+    uint16_t getCenteredStartAddress(uint16_t targetPC, size_t instructionsBeforePC);
     
     // Breakpoint methods
     void toggleBreakpointAtAddress(uint16_t address);
