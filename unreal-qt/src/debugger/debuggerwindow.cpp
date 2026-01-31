@@ -143,7 +143,8 @@ DebuggerWindow::~DebuggerWindow()
 {
     qDebug() << "DebuggerWindow::~DebuggerWindow()";
 
-    // NOTE: DebuggerWindow does not subscribe to any global MessageCenter events,
+    // Block all refreshes during shutdown
+    _isClosing = true;
     // so there's nothing to unsubscribe from here. All event handling is done via
     // explicit method calls from MainWindow.
 
@@ -373,6 +374,12 @@ void DebuggerWindow::clearInterruptBreakpoints()
 
 void DebuggerWindow::updateState()
 {
+    // Block refreshes during shutdown to prevent crash
+    if (_isClosing)
+    {
+        return;
+    }
+
     qDebug() << "DebuggerWindow::updateState() called - emulator state:"
              << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
     if (_emulator)
