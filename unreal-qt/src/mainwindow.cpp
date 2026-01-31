@@ -302,6 +302,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
         deviceScreen->prepareForShutdown();
     }
 
+    // Also notify EmulatorManager to block automation requests
+    _emulatorManager->PrepareForShutdown();
+
     qDebug() << "QCloseEvent : Phase 1 complete - All widgets notified";
 
     // ============================================================
