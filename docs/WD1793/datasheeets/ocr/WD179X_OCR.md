@@ -192,7 +192,7 @@ graph TB
         DO_BUF --> CR[COMMAND REG]
         DO_BUF --> SR[SECTOR REG]
         DO_BUF --> TR[TRACK REG]
-        DO_BUF <-- STR[STATUS REG]
+        STR[STATUS REG] --> DO_BUF
     end
 
     subgraph Internal_Logic
@@ -214,7 +214,7 @@ graph TB
         CRC --> DSR
         
         CONTROL_COMP --> INT_PINS[IRQ, DRQ]
-        CONTROL_COMP <-- HOST_PINS[CS, RE, WE, A0, A1]
+        HOST_PINS[CS, RE, WE, A0, A1] --> CONTROL_COMP
         
         CONTROL_DISK --> DISK_OUT[WG, TG43, WPRT, WF/VFOE, IP, TR00, READY, STEP, DIRC, EARLY, LATE, RG/SSO, HLD, HLT]
         
