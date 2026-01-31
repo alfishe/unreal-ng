@@ -1090,3 +1090,35 @@ void DebuggerWindow::showLabelManager()
 }
 
 /// endregion </Event handlers / Slots>
+
+void DebuggerWindow::prepareForShutdown()
+{
+    qDebug() << "DebuggerWindow::prepareForShutdown() - Propagating to all child widgets";
+
+    // Set our own flag first
+    _isClosing = true;
+
+    // Propagate to all child widgets that have refresh methods
+    if (ui)
+    {
+        if (ui->disassemblerWidget)
+        {
+            ui->disassemblerWidget->prepareForShutdown();
+        }
+        if (ui->registersWidget)
+        {
+            ui->registersWidget->prepareForShutdown();
+        }
+        if (ui->memorypagesWidget)
+        {
+            ui->memorypagesWidget->prepareForShutdown();
+        }
+        if (ui->stackWidget)
+        {
+            ui->stackWidget->prepareForShutdown();
+        }
+        // hexView is a 3rd party widget without our shutdown pattern
+    }
+
+    qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";
+}

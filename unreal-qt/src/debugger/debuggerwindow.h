@@ -41,6 +41,9 @@ public:
 
     void reset();
 
+    /// @brief Prepare for application shutdown - blocks all refreshes
+    void prepareForShutdown();
+
     /// region <Helper methods>
 protected:
     void updateState();

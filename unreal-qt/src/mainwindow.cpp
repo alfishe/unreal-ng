@@ -280,11 +280,40 @@ void MainWindow::showEvent(QShowEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    qDebug() << "QCloseEvent : Closing application";
+
+    // ============================================================
+    // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
+    // This must happen FIRST, before ANY cleanup, to block all
+    // pending UI refreshes that could crash on inconsistent state
+    // ============================================================
+    qDebug() << "QCloseEvent : Phase 1 - Notifying all windows/widgets";
+
+    if (debuggerWindow)
+    {
+        debuggerWindow->prepareForShutdown();  // Propagates to all child widgets
+    }
+    if (logWindow)
+    {
+        logWindow->prepareForShutdown();
+    }
+    if (deviceScreen)
+    {
+        deviceScreen->prepareForShutdown();
+    }
+
+    qDebug() << "QCloseEvent : Phase 1 complete - All widgets notified";
+
+    // ============================================================
+    // PHASE 2: DEINITIALIZE (existing cleanup code)
+    // Now safe to proceed - all UI refreshes are blocked
+    // ============================================================
+    qDebug() << "QCloseEvent : Phase 2 - Deinitialization";
+
     // Clean up automation resources
     cleanupAutomation();
 
     event->accept();
-    qDebug() << "QCloseEvent : Closing application";
 
     // Unsubscribe from all message bus events
     unsubscribeFromMessageBus();

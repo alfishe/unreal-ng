@@ -121,3 +121,9 @@ void LogWindow::handleSaveButtonClick()
         }
     }
 }
+
+void LogWindow::prepareForShutdown()
+{
+    qDebug() << "LogWindow::prepareForShutdown()";
+    m_isShuttingDown = true;
+}

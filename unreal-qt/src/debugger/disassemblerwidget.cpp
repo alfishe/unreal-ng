@@ -186,6 +186,12 @@ BreakpointManager* DisassemblerWidget::getBreakpointManager() const
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     // Number of instructions to disassemble
     static constexpr size_t INSTRUCTIONS_TO_DISASSEMBLE = 20;
 
@@ -800,6 +806,12 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
 
 void DisassemblerWidget::refresh()
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     qDebug() << "DisassemblerWidget::refresh() called";
 
     // Update the disassembly view with current PC
@@ -1087,4 +1099,10 @@ bool DisassemblerWidget::eventFilter(QObject* obj, QEvent* event)
 
     // Pass the event to the parent class
     return QWidget::eventFilter(obj, event);
+}
+
+void DisassemblerWidget::prepareForShutdown()
+{
+    qDebug() << "DisassemblerWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
 }

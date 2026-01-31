@@ -54,6 +54,12 @@ void DeviceScreen::detach()
 
 void DeviceScreen::refresh()
 {
+    // Block updates during shutdown
+    if (_isShuttingDown)
+    {
+        return;
+    }
+
     update();
 }
 
@@ -195,4 +201,10 @@ void DeviceScreen::resizeEvent(QResizeEvent* event)
     resize(newWidth, newHeight);
 
     QWidget::resizeEvent(event);
+}
+
+void DeviceScreen::prepareForShutdown()
+{
+    qDebug() << "DeviceScreen::prepareForShutdown()";
+    _isShuttingDown = true;
 }

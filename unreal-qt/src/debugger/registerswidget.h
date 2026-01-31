@@ -43,6 +43,7 @@ protected:
 public slots:
     void reset();
     void refresh();
+    void prepareForShutdown();  // Block refreshes during shutdown
 
     void bc_doubleClicked();
     void de_doubleClicked();
@@ -68,6 +69,7 @@ private:
     DebuggerWindow* m_debuggerWindow;
 
     Z80Registers* m_z80Registers;
+    bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown
 };
 
 #endif // REGISTERWIDGET_H
