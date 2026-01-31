@@ -3630,3 +3630,226 @@ TEST_F(WD1793_Test, WaitIndex_Uses_TState_Delay)
 }
 
 /// endregion </Write Track CRC Regression Tests>
+
+/// region <Read Sector CRC and DAM Tests>
+
+/// Test that CRC error during Read Sector sets WDS_CRCERR status bit
+/// Per WD1793 datasheet: "If there is a CRC error at the end of the data field, 
+/// the CRC error status bit is set, and the command is terminated"
+TEST_F(WD1793_Test, ReadSector_CRCError_SetsStatusBit)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with formatted track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+    
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+    fdc.prolongFDDMotorRotation();
+
+    // Corrupt CRC in sector 1 on track 0
+    DiskImage::RawSectorBytes* sector = track0->getSector(0);  // Sector 1 (0-based index)
+    ASSERT_NE(sector, nullptr);
+    sector->recalculateDataCRC();  // First calculate valid CRC
+    sector->data_crc = 0xDEAD;     // Then corrupt it
+
+    // Set Track and Sector registers
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+
+    // Issue Read Sector command
+    fdc._commandRegister = 0x80;  // Read Sector, no flags
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    fdc.cmdReadSector(0x80);
+
+    // Run simulation until command completes
+    uint8_t buffer[256];
+    size_t bytesRead = 0;
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if ((fdc._beta128status & WD1793::DRQ) && bytesRead < sizeof(buffer))
+        {
+            buffer[bytesRead] = fdc.readDataRegister();
+            bytesRead++;
+        }
+
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+
+    // Verify CRC error status bit is set
+    bool crcError = fdc._statusRegister & WD1793::WDS_CRCERR;
+    EXPECT_TRUE(crcError) << "WDS_CRCERR should be set after reading sector with corrupted CRC";
+
+    // Command should have terminated
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should terminate after CRC error";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that Deleted Data Mark (0xF8) sets Status Bit 5
+/// Per WD1793 datasheet: "The type of Data Address Mark is recorded in Status Bit 5"
+/// Bit 5 = 1 for Deleted Data Mark, 0 for Normal Data Mark
+TEST_F(WD1793_Test, ReadSector_DeletedDataMark_SetsStatusBit5)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with formatted track
+    DiskImage* diskImage = new DiskImage(80, 2);
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+    
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+    fdc.prolongFDDMotorRotation();
+
+    // Set sector 1 to have Deleted Data Mark (0xF8)
+    DiskImage::RawSectorBytes* sector = track0->getSector(0);  // Sector 1 (0-based index)
+    ASSERT_NE(sector, nullptr);
+    sector->data_address_mark = 0xF8;  // Deleted Data Mark
+    sector->recalculateDataCRC();      // Update CRC with new DAM
+
+    // Set Track and Sector registers
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+
+    // Issue Read Sector command
+    fdc._commandRegister = 0x80;  // Read Sector, no flags
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    fdc.cmdReadSector(0x80);
+
+    // Run simulation until command completes
+    uint8_t buffer[256];
+    size_t bytesRead = 0;
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if ((fdc._beta128status & WD1793::DRQ) && bytesRead < sizeof(buffer))
+        {
+            buffer[bytesRead] = fdc.readDataRegister();
+            bytesRead++;
+        }
+
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+
+    // Verify Status Bit 5 (WDS_RECORDTYPE) is set for Deleted Data Mark
+    bool recordType = fdc._statusRegister & WD1793::WDS_RECORDTYPE;
+    EXPECT_TRUE(recordType) << "WDS_RECORDTYPE (bit 5) should be set for Deleted Data Mark (0xF8)";
+
+    // Should NOT have CRC error (CRC was recalculated)
+    bool crcError = fdc._statusRegister & WD1793::WDS_CRCERR;
+    EXPECT_FALSE(crcError) << "No CRC error expected when CRC was recalculated";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// Test that Normal Data Mark (0xFB) clears Status Bit 5
+TEST_F(WD1793_Test, ReadSector_NormalDataMark_ClearsStatusBit5)
+{
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
+
+    _context->pModuleLogger->SetLoggingLevel(LogError);
+
+    WD1793CUT fdc(_context);
+
+    // Setup: Insert disk with formatted track (sectors have normal 0xFB DAM by default)
+    DiskImage* diskImage = new DiskImage(80, 2);
+    DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
+    track0->formatTrack(0, 0);
+    track0->reindexSectors();
+    
+    // Initialize sector CRCs
+    for (int i = 0; i < 16; i++)
+    {
+        DiskImage::RawSectorBytes* sector = track0->getSector(i);
+        if (sector) sector->recalculateDataCRC();
+    }
+    
+    fdc._selectedDrive->insertDisk(diskImage);
+    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
+                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc.prolongFDDMotorRotation();
+    fdc.resetTime();
+    fdc.prolongFDDMotorRotation();
+
+    // Pre-set Status Bit 5 to verify it gets cleared
+    fdc._statusRegister = WD1793::WDS_RECORDTYPE;
+
+    // Set Track and Sector registers
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 1;
+    fdc._sideUp = 0;
+
+    // Issue Read Sector command
+    fdc._commandRegister = 0x80;  // Read Sector
+    fdc._lastDecodedCmd = WD1793::WD_CMD_READ_SECTOR;
+    fdc.cmdReadSector(0x80);
+
+    // Run simulation until command completes
+    uint8_t buffer[256];
+    size_t bytesRead = 0;
+    for (size_t clk = 0; clk < TEST_DURATION_TSTATES; clk += TEST_INCREMENT_TSTATES)
+    {
+        fdc._time = clk;
+        fdc.process();
+
+        if ((fdc._beta128status & WD1793::DRQ) && bytesRead < sizeof(buffer))
+        {
+            buffer[bytesRead] = fdc.readDataRegister();
+            bytesRead++;
+        }
+
+        if (fdc._state == WD1793::S_IDLE)
+        {
+            break;
+        }
+    }
+
+    // Verify Status Bit 5 is cleared for Normal Data Mark
+    bool recordType = fdc._statusRegister & WD1793::WDS_RECORDTYPE;
+    EXPECT_FALSE(recordType) << "WDS_RECORDTYPE (bit 5) should be cleared for Normal Data Mark (0xFB)";
+
+    // Cleanup
+    fdc._selectedDrive->ejectDisk();
+    delete diskImage;
+}
+
+/// endregion </Read Sector CRC and DAM Tests>

@@ -2067,8 +2067,9 @@ void WD1793::processReadByte()
     }
     else
     {
-        // We still need to give host time to read the byte
-        transitionFSMWithDelay(WDSTATE::S_END_COMMAND, WD93_TSTATES_PER_FDC_BYTE);
+        // After all sector bytes, FDC reads 2 CRC bytes (224 t-states total)
+        // S_READ_CRC will verify CRC and handle multi-sector/end command
+        transitionFSMWithDelay(WDSTATE::S_READ_CRC, WD93_TSTATES_PER_FDC_BYTE * 2);
     }
 }
 
@@ -2372,10 +2373,68 @@ void WD1793::processReadCRC()
 {
     MLOGDEBUG("processReadCRC");
 
-    _bytesToRead = 2;
+    // Per WD1793 datasheet:
+    // 1. Record DAM type in Status Bit 5 (1=Deleted, 0=Normal)
+    // 2. Verify sector data CRC
+    // 3. CRC error terminates even multi-sector commands
 
-    // Use regular data read flog. DRQ will be asserted on CRC bytes as well
-    transitionFSM(WD1793::S_READ_BYTE);
+    bool crcValid = true;
+    
+    // Get the sector we just read
+    if (_selectedDrive && _selectedDrive->isDiskInserted())
+    {
+        DiskImage* diskImage = _selectedDrive->getDiskImage();
+        if (diskImage)
+        {
+            DiskImage::Track* track = diskImage->getTrackForCylinderAndSide(_trackRegister, _sideUp);
+            if (track)
+            {
+                DiskImage::RawSectorBytes* sector = track->getSector(_sectorRegister - 1);
+                if (sector)
+                {
+                    // Set Status Bit 5 based on Data Address Mark type
+                    // 0xF8 = Deleted Data Mark -> Bit 5 = 1
+                    // 0xFB = Normal Data Mark  -> Bit 5 = 0
+                    if (sector->data_address_mark == 0xF8)
+                    {
+                        _statusRegister |= WDS_RECORDTYPE;
+                        MLOGINFO("Read sector %d: Deleted Data Mark detected", _sectorRegister);
+                    }
+                    else
+                    {
+                        _statusRegister &= ~WDS_RECORDTYPE;
+                    }
+                    
+                    // Verify CRC
+                    crcValid = sector->isDataCRCValid();
+                    if (!crcValid)
+                    {
+                        MLOGWARNING("Read sector %d: CRC error detected", _sectorRegister);
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!crcValid)
+    {
+        // CRC error - set status bit and terminate (even for multi-sector)
+        _statusRegister |= WDS_CRCERR;
+        transitionFSM(WDSTATE::S_END_COMMAND);
+        return;
+    }
+    
+    // CRC OK - continue with multi-sector or end command
+    if (!_operationFIFO.empty())
+    {
+        // More sectors to read (multi-sector mode)
+        transitionFSM(WDSTATE::S_FETCH_FIFO);
+    }
+    else
+    {
+        // All sectors done
+        transitionFSM(WDSTATE::S_END_COMMAND);
+    }
 }
 
 void WD1793::processWriteCRC()
