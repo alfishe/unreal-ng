@@ -119,20 +119,50 @@ uint8_t PortDecoder::DecodePortIn(uint16_t addr, [[maybe_unused]] uint16_t pc)
 
     /// endregion </Port In breakpoint logic>
 
-    // Get the result from the peripheral device
+    // NOTE: Hardware I/O is handled by subclass via PeripheralPortIn().
+    // This base implementation is for legacy compatibility only.
+    // Subclasses should call OnPortInComplete() after performing I/O.
     result = PeripheralPortIn(addr);
 
-    // Track port read access if memory access tracker is available
+    // Track port read access
     if (_memory && _memory->_memoryAccessTracker)
     {
-        // Get the current PC as caller address
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
-
-        // Track port read access
         _memory->_memoryAccessTracker->TrackPortRead(addr, result, callerAddress);
     }
 
     return result;
+}
+
+/// Called by subclasses AFTER hardware read completes.
+/// Handles breakpoints, tracking, and future analyzer notifications.
+void PortDecoder::OnPortInComplete(uint16_t port, uint8_t result, [[maybe_unused]] uint16_t pc)
+{
+    // 1. Breakpoint handling
+    if (_context->pDebugManager != nullptr)
+    {
+        Emulator& emulator = *_context->pEmulator;
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+
+        uint16_t breakpointID = brk.HandlePortIn(port);
+        if (breakpointID != BRK_INVALID)
+        {
+            emulator.Pause();
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+            emulator.WaitWhilePaused();
+        }
+    }
+
+    // 2. Port access tracking
+    if (_memory && _memory->_memoryAccessTracker)
+    {
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        _memory->_memoryAccessTracker->TrackPortRead(port, result, callerAddress);
+    }
+
+    // 3. Future: Analyzer notifications can be added here
 }
 
 void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [[maybe_unused]] uint16_t pc)
@@ -147,34 +177,60 @@ void PortDecoder::DecodePortOut(uint16_t addr, [[maybe_unused]] uint8_t value, [
         uint16_t breakpointID = brk.HandlePortOut(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Pause emulator (single source of truth)
             emulator.Pause();
-
-            // Broadcast notification - breakpoint triggered
             MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-            // Wait until emulator resumed externally
             emulator.WaitWhilePaused();
         }
     }
 
     /// endregion </Port Out breakpoint logic>
 
-    // Forward the port write to the peripheral device
+    // NOTE: Hardware I/O is handled by subclass via PeripheralPortOut().
+    // This base implementation is for legacy compatibility only.
+    // Subclasses should call OnPortOutComplete() after performing I/O.
     PeripheralPortOut(addr, value);
 
-    // Track port write access if memory access tracker is available
+    // Track port write access
     if (_memory && _memory->_memoryAccessTracker)
     {
-        // Get the current PC as caller address
         uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
-
-        // Track port write access
         _memory->_memoryAccessTracker->TrackPortWrite(addr, value, callerAddress);
     }
 }
+
+/// Called by subclasses AFTER hardware write completes.
+/// Handles breakpoints, tracking, and future analyzer notifications.
+void PortDecoder::OnPortOutComplete(uint16_t port, uint8_t value, [[maybe_unused]] uint16_t pc)
+{
+    // 1. Breakpoint handling
+    if (_context->pDebugManager != nullptr)
+    {
+        Emulator& emulator = *_context->pEmulator;
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+
+        uint16_t breakpointID = brk.HandlePortOut(port);
+        if (breakpointID != BRK_INVALID)
+        {
+            emulator.Pause();
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+            emulator.WaitWhilePaused();
+        }
+    }
+
+    // 2. Port access tracking
+    if (_memory && _memory->_memoryAccessTracker)
+    {
+        uint16_t callerAddress = _context->pCore->GetZ80()->m1_pc;
+        _memory->_memoryAccessTracker->TrackPortWrite(port, value, callerAddress);
+    }
+
+    // 3. Future: Analyzer notifications can be added here
+}
+
 
 /// Keyboard ports:
 /// #FEFE
