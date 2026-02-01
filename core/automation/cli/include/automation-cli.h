@@ -1,25 +1,25 @@
 #pragma once
 
+#include <emulator/emulator.h>
+
+#include <atomic>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
-#include <atomic>
-#include <mutex>
-#include <functional>
 #include <unordered_map>
 #include <vector>
-#include "platform-sockets.h"
-#include <emulator/emulator.h>
-#include "cli-processor.h"
-#include "../lib/cli11/CLI11.hpp"
 
+#include "../lib/cli11/CLI11.hpp"
+#include "cli-processor.h"
+#include "platform-sockets.h"
 
 ///
 /// @brief Automation CLI class that handles the TCP server for CLI connections
 class AutomationCLI
 {
 public:
-
     explicit AutomationCLI();
     virtual ~AutomationCLI();
 
@@ -35,13 +35,14 @@ public:
 private:
     void run();
     void handleClientConnection(SOCKET clientSocket);
-    
+
     // CLI processor for handling commands
     std::unique_ptr<CLIProcessor> createProcessor();
-    
+
     // Send a response to a client, with optional prompt
     // If prompt is true, adds a '> ' prefix and optional reason in parentheses
-    void SendResponse(SOCKET clientSocket, const std::string& message, bool prompt = false, const std::string& reason = "") const;
+    void SendResponse(SOCKET clientSocket, const std::string& message, bool prompt = false,
+                      const std::string& reason = "") const;
 
     // CLI11 app instance
     CLI::App _cliApp;
@@ -56,10 +57,14 @@ private:
     mutable std::mutex _mutex;
     uint16_t _port;
     SOCKET _serverSocket{INVALID_SOCKET};
-    
+
     // Track active client connections for clean shutdown
     std::vector<SOCKET> _activeClientSockets;
     std::mutex _clientSocketsMutex;
+
+    // Track client handler threads for proper cleanup (don't detach!)
+    std::vector<std::thread> _clientThreads;
+    std::mutex _clientThreadsMutex;
 };
 
 // Factory function for creating the CLI module

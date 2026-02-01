@@ -98,7 +98,8 @@ void DockingManager::updateDockedWindows()
 
 void DockingManager::moveDockedWindows(const QPoint& delta)
 {
-    if (!_mainWindow) return;
+    if (!_mainWindow)
+        return;
 
     for (auto it = _dockableWindows.begin(); it != _dockableWindows.end(); ++it)
     {
@@ -106,7 +107,7 @@ void DockingManager::moveDockedWindows(const QPoint& delta)
         {
             QWidget* window = it.key();
             DockingInfo& info = it.value();
-            
+
             QScopedValueRollback<bool> guard(info.isBeingSetByManager, true);
             window->move(window->pos() + delta);
         }
@@ -188,7 +189,8 @@ void DockingManager::updateWindowPosition(QWidget* window, DockingInfo& info)
 bool DockingManager::isCloseToEdge(QWidget* window, Qt::Edge& edge) const
 {
     // A window can only be snapped if it's on the same screen as the main window.
-    if (window->screen() != _mainWindow->screen()) {
+    if (window->screen() != _mainWindow->screen())
+    {
         return false;
     }
 
@@ -244,7 +246,8 @@ void DockingManager::onEnterFullscreen()
         QWidget* window = it.key();
 
         // If the window is on a different screen, leave it alone.
-        if (window->screen() != mainScreen) {
+        if (window->screen() != mainScreen)
+        {
             continue;
         }
 
@@ -252,7 +255,8 @@ void DockingManager::onEnterFullscreen()
         DockingInfo& info = it.value();
         PreFullscreenState state;
         state.snappedEdge = info.snappedEdge;
-        if (window->isVisible()) {
+        if (window->isVisible())
+        {
             state.geometry = window->geometry();
         }
         _preFullscreenState.insert(window, state);
@@ -262,20 +266,24 @@ void DockingManager::onEnterFullscreen()
 
     // 2. Find a target screen for any snapped windows we just hid.
     auto screens = QApplication::screens();
-    if (screens.count() <= 1) {
-        return; // No other screen to move to.
+    if (screens.count() <= 1)
+    {
+        return;  // No other screen to move to.
     }
 
     QScreen* targetScreen = nullptr;
-    for (QScreen* screen : screens) {
-        if (screen != mainScreen) {
+    for (QScreen* screen : screens)
+    {
+        if (screen != mainScreen)
+        {
             targetScreen = screen;
             break;
         }
     }
 
-    if (!targetScreen) {
-        return; // Should be rare, but possible.
+    if (!targetScreen)
+    {
+        return;  // Should be rare, but possible.
     }
 
     // 3. Move and show windows that were both visible and snapped.
@@ -305,14 +313,17 @@ void DockingManager::onExitFullscreen()
         if (savedState.geometry.isValid())
         {
             window->setGeometry(savedState.geometry);
-            
+
             // Restore snap state
             if (_dockableWindows.contains(window))
             {
                 _dockableWindows[window].snappedEdge = savedState.snappedEdge;
             }
 
+            // Show window but immediately lower it to preserve z-order
+            // (main window should stay on top)
             window->show();
+            window->lower();
         }
         else
         {

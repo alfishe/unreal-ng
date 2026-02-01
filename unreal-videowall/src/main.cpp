@@ -7,6 +7,12 @@
 
 int main(int argc, char* argv[])
 {
+    // Disable macOS state restoration via Qt before creating QApplication
+    // Or use 'defaults write com.unrealng.videowall NSQuitAlwaysKeepsWindows -bool false' in Terminal
+#if defined(__APPLE__)
+    QCoreApplication::setAttribute(Qt::AA_DisableSessionManager, true);
+#endif
+
     QApplication app(argc, argv);
 
     // Set application metadata

@@ -126,10 +126,14 @@ void TileGrid::updateLayout()
         }
     }
 
-    // Resize widget to fit grid (DO NOT use setMinimumSize - it prevents window shrinking!)
-    int windowWidth = cols * TILE_WIDTH;
-    int windowHeight = rows * TILE_HEIGHT;
-    resize(windowWidth, windowHeight);
+    // Resize widget to fit grid (but NOT in fullscreen mode - size constraints break fullscreen on Linux)
+    // Use resize() instead of setMinimumSize() to allow window shrinking on Windows
+    if (!_isFullscreen)
+    {
+        int windowWidth = cols * TILE_WIDTH;
+        int windowHeight = rows * TILE_HEIGHT;
+        resize(windowWidth, windowHeight);
+    }
 
     _inUpdateLayout = false;
 }

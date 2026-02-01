@@ -67,31 +67,31 @@ if (BUILD_ZLIB)
     )
     
     # Set variables for find_package compatibility
+    # Use the target name for linking - CMake will resolve the actual library path
     set(ZLIB_FOUND TRUE CACHE BOOL "ZLIB found (bundled)" FORCE)
-    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${ZLIB_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
+    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${zlib_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
     set(ZLIB_LIBRARIES ${ZLIB_TARGET_NAME} CACHE STRING "ZLIB libraries" FORCE)
-    set(ZLIB_LIBRARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/zlib/libz.a" CACHE INTERNAL "Path to zlib library" FORCE)
     set(ZLIB_VERSION_STRING "1.3.1" CACHE STRING "ZLIB version" FORCE)
 
-    # Make sure the library is built before anything that depends on it
-    add_dependencies(${ZLIB_TARGET_NAME} ${ZLIB_TARGET_NAME})
+    # Set include directories for find_package compatibility
     set(ZLIB_INCLUDE_DIRS 
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
         CACHE INTERNAL "ZLIB include directories (bundled)" FORCE
     )
     set(ZLIB_INCLUDE_DIR 
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
         CACHE INTERNAL "ZLIB include directory (bundled)" FORCE
     )
     # Use target name instead of file path - CMake will resolve the actual file at link time
     set(ZLIB_LIBRARY ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
 
-    # Set output name to just 'z' for compatibility
+    # Set output directory and name for predictable library location
     set_target_properties(${ZLIB_TARGET_NAME} PROPERTIES
         OUTPUT_NAME z
         POSITION_INDEPENDENT_CODE ON
+        ARCHIVE_OUTPUT_DIRECTORY "${zlib_BINARY_DIR}"
     )
     
     # Create ZLIB::ZLIB IMPORTED target that Drogon expects from find_package(ZLIB)
