@@ -61,9 +61,6 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
 
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortIn(port, pc);
-
     uint8_t result = 0xFF;
 
     if (IsPort_FE(port))
@@ -83,6 +80,9 @@ uint8_t PortDecoder_Spectrum3::DecodePortIn(uint16_t port, uint16_t pc)
     }
     /// endregion </Debug logging>
 
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortInComplete(port, result, pc);
+
     return result;
 }
 
@@ -95,9 +95,6 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
     //    ZX Spectrum 128 +2A/+2B/+3
     //    port: #7FFD
     //    port: #1FFD
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortOut(port, value, pc);
 
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
@@ -121,6 +118,9 @@ void PortDecoder_Spectrum3::DecodePortOut(uint16_t port, uint8_t value, uint16_t
         MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
     /// endregion </Debug logging>
+
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortOutComplete(port, value, pc);
 }
 
 void PortDecoder_Spectrum3::SetRAMPage(uint8_t page)

@@ -155,6 +155,11 @@ public:
     std::vector<Z80ControlFlowEvent> GetAll() const;
     bool SaveToFile(const std::string& filename) const;
     bool LogIfControlFlow(EmulatorContext* context, Memory* memory, uint16_t address, uint64_t current_frame);
+    
+    // Convenience accessors for unified profiler API
+    size_t GetCount() const { return ColdSize() + HotSize(); }
+    size_t GetCapacity() const { return ColdCapacity(); }
+    std::vector<Z80ControlFlowEvent> GetRecentEntries(size_t count) const { return GetLatestCold(count); }
 
 private:
     std::vector<Z80ControlFlowEvent> _coldBuffer;

@@ -794,6 +794,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `screenhq` | ON | High-quality video mode. When enabled, uses per-t-state rendering for cycle-accurate "racing the beam" multicolor effects in demos. When disabled, uses batch 8-pixel rendering (25x faster) but breaks demo multicolor effects. | Very High (~25x faster screen rendering when OFF) |
 | `recording` | OFF | Enable recording subsystem (video, audio, GIF capture). When enabled, the RecordingManager is active and ready for recording commands. When disabled, all recording API calls early-exit with zero overhead. Heavy functionality - enable explicitly when needed. | Varies (zero when OFF, depends on codec when recording) |
 | `sharedmemory` | OFF | Export emulator memory via POSIX/Windows shared memory for external tool access. Enables real-time memory inspection by debuggers, analyzers, or visualization tools. Memory content preserved during enable/disable transitions. Alias: `shm`. | Low (startup overhead when enabled, minimal runtime impact) |
+| `opcodeprofiler` | OFF | Track Z80 opcode execution statistics and sequential trace. Records execution counts for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes) and maintains a 10,000-entry ring buffer of recent executed instructions with PC, flags, and A register for crash forensics. Required for `profiler opcode` commands. | Medium (~12-18% CPU overhead, ~174KB memory) |
 
 **Feature Dependencies**:
 
@@ -883,6 +884,137 @@ Commands to view and control emulator runtime features for the selected emulator
 - WebAPI: `/api/v1/emulator/{id}/feature` endpoint
 - Python: `emulator.feature(name, state)` or `emulator.feature.list()`
 - Lua: `emu:feature(name, state)` or `emu:feature_list()`
+
+#### 5.1 Opcode Profiler Commands
+
+The opcode profiler tracks Z80 instruction execution for debugging and performance analysis. Requires `feature opcodeprofiler on`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler opcode start` | | Start capture session, clear previous data | ✅ Implemented |
+| `profiler opcode stop` | | Stop capturing, data remains accessible | ✅ Implemented |
+| `profiler opcode pause` | | Pause capture (retain data) | ✅ Implemented |
+| `profiler opcode resume` | | Resume paused capture | ✅ Implemented |
+| `profiler opcode clear` | | Reset all counters and trace buffer | ✅ Implemented |
+| `profiler opcode status` | | Show capture status and totals | ✅ Implemented |
+| `profiler opcode counters [limit]` | `[N]` | Show top N opcodes by execution count (default: 50) | ✅ Implemented |
+| `profiler opcode trace [count]` | `[N]` | Show last N trace entries (default: 100) | ✅ Implemented |
+| `profiler opcode save <file>` | `<file-path>` | Export profiler data to YAML file | ✅ Implemented |
+
+**Data Collected**:
+
+- **Counters**: Execution count for each of 1792 unique opcodes (256 non-prefixed + CB/DD/ED/FD/DDCB/FDCB variants)
+- **Trace**: Ring buffer (10,000 entries) with PC, prefix, opcode, flags, A register, frame number, t-state
+
+**Example Usage**:
+
+```bash
+# Enable profiler feature
+feature opcodeprofiler on
+
+# Start capture session
+profiler opcode start
+
+# Run program / reproduce crash
+resume
+# ... execution ...
+pause
+
+# View top executed opcodes
+profiler opcode counters 20
+
+# View trace (crash forensics)
+profiler opcode trace 50
+
+# Export for analysis
+profiler opcode save /tmp/profile.yaml
+
+# Clear and restart
+profiler opcode clear
+```
+
+**Output Format (counters)**:
+
+```
+Opcode Profile (capturing: YES, total: 15,234,567)
+┌──────────────────┬───────────┬─────────┐
+│ Opcode           │ Count     │ %       │
+├──────────────────┼───────────┼─────────┤
+│ LD A,(HL)   7E   │ 2,156,789 │ 14.15%  │
+│ JP NZ,nn    C2   │ 1,023,456 │  6.72%  │
+│ LD (HL),A   77   │   890,123 │  5.84%  │
+└──────────────────┴───────────┴─────────┘
+```
+
+**WebAPI Endpoints**:
+
+| Method | Path | Description |
+| :--- | :--- | :--- |
+| POST | `/api/v1/emulator/{id}/profiler/opcode/start` | Start capture |
+| POST | `/api/v1/emulator/{id}/profiler/opcode/stop` | Stop capture |
+| POST | `/api/v1/emulator/{id}/profiler/opcode/clear` | Clear data |
+| GET | `/api/v1/emulator/{id}/profiler/opcode/status` | Get status |
+| GET | `/api/v1/emulator/{id}/profiler/opcode/counters` | Get counters (JSON) |
+| GET | `/api/v1/emulator/{id}/profiler/opcode/trace?count=N` | Get trace (JSON) |
+
+**Python/Lua Bindings**: See [python-interface.md](./python-interface.md) and [lua-interface.md](./lua-interface.md).
+
+#### 5.2 Memory Profiler Commands
+
+The memory profiler tracks memory access patterns (reads/writes) across all 64KB address space. Requires `feature memorytracking on`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler memory start` | | Start memory tracking session | ✅ Implemented |
+| `profiler memory stop` | | Stop tracking, data remains accessible | ✅ Implemented |
+| `profiler memory pause` | | Pause tracking (retain data) | ✅ Implemented |
+| `profiler memory resume` | | Resume paused tracking | ✅ Implemented |
+| `profiler memory clear` | | Reset all counters | ✅ Implemented |
+| `profiler memory status` | | Show tracking status | ✅ Implemented |
+
+**Alias**: `profiler mem` is equivalent to `profiler memory`.
+
+#### 5.3 Call Trace Profiler Commands
+
+The call trace profiler records CPU control flow events (CALL, RET, JP, JR, RST, etc.) for debugging and analysis. Requires `feature calltrace on`.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler calltrace start` | | Start call trace capture | ✅ Implemented |
+| `profiler calltrace stop` | | Stop capture, data remains accessible | ✅ Implemented |
+| `profiler calltrace pause` | | Pause capture (retain data) | ✅ Implemented |
+| `profiler calltrace resume` | | Resume paused capture | ✅ Implemented |
+| `profiler calltrace clear` | | Clear trace buffer | ✅ Implemented |
+| `profiler calltrace status` | | Show capture status and buffer info | ✅ Implemented |
+
+**Alias**: `profiler ct` is equivalent to `profiler calltrace`.
+
+#### 5.4 Unified Profiler Control
+
+Control all profilers (opcode, memory, calltrace) simultaneously for coordinated capture sessions.
+
+| Command | Arguments | Description | Status |
+| :--- | :--- | :--- | :--- |
+| `profiler all start` | | Start all profilers (enables features automatically) | ✅ Implemented |
+| `profiler all stop` | | Stop all profilers | ✅ Implemented |
+| `profiler all pause` | | Pause all profilers (retain data) | ✅ Implemented |
+| `profiler all resume` | | Resume all paused profilers | ✅ Implemented |
+| `profiler all clear` | | Clear all profiler data | ✅ Implemented |
+| `profiler all status` | | Show status of all profilers | ✅ Implemented |
+
+**Session State Model**:
+
+```
+┌───────────┐   start    ┌─────────────┐   pause   ┌────────────┐
+│  STOPPED  │──────────▶ │  CAPTURING  │─────────▶│   PAUSED   │
+└───────────┘            └─────────────┘          └────────────┘
+      ▲                        │    ▲                  │
+      │         stop           │    │                  │ resume
+      └────────────────────────┘    └──────────────────┘
+                               │
+                         clear ▼
+                        (reset data)
+```
 
 ### 6. System State Inspection
 
@@ -2310,17 +2442,59 @@ Intelligent analysis and extraction of various content types from memory or file
 #### 8.1 BASIC Program Extractor
 
 **Status**: ✅ Implemented  
-**Implementation**: `core/src/debugger/analyzers/basicextractor.h/cpp`
+**Implementation**: `core/src/debugger/analyzers/basic-lang/basicextractor.h/cpp`, `core/src/debugger/analyzers/basic-lang/basicencoder.h/cpp`
 
-Extract and detokenize ZX Spectrum BASIC programs from memory or files.
+Extract and detokenize ZX Spectrum BASIC programs from memory or files. Inject commands and programs into BASIC editor.
 
-| Command | Arguments | Description | Status |
-| :--- | :--- | :--- | :--- |
-| `basic extract` | | Extract BASIC program from current memory (using PROG/VARS system variables). Returns detokenized BASIC listing. | ✅ Implemented |
-| `basic extract <addr> <len>` | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
-| `basic extract file <file>` | `<filename>` | Extract BASIC from .tap, .tzx, or raw file. | 🔮 Planned |
-| `basic save <file>` | `<filename>` | Save extracted BASIC to text file. | 🔮 Planned |
-| `basic load <file>` | `<filename>` | Load ASCII BASIC from text file: tokenize into memory and adjust system variables (PROG, VARS, E_LINE). | 🔮 Planned |
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `basic extract` | | | Extract BASIC program from current memory (using PROG/VARS system variables). Returns detokenized BASIC listing. | ✅ Implemented |
+| `basic extract <addr> <len>` | | `<address> <length>` | Extract BASIC program from specific memory region. | 🔮 Planned |
+| `basic inject <command>` | | `<basic-cmd>` | Inject command into BASIC edit buffer WITHOUT executing. Uses `BasicEncoder::injectCommand()`. Works for 48K (E_LINE) and 128K (SLEB) BASIC modes. Returns error if TR-DOS active or not in editor. | ✅ Implemented |
+| `basic run [<command>]` | | `[<basic-cmd>]` | Inject command into edit buffer AND execute via ENTER. Uses `BasicEncoder::runCommand()`. Default command is "RUN" if not specified. Handles 128K menu navigation. | ✅ Implemented |
+| `basic program <code>` | | `<basic-code>` | Load multi-line BASIC program into PROG area. Uses `BasicEncoder::loadProgram()`. Program must have line numbers (e.g., `"10 PRINT 1\n20 GOTO 10"`). | ✅ Implemented |
+| `basic list` | | | Display currently loaded BASIC program from memory (detokenized). | ✅ Implemented |
+| `basic clear` | | | Clear current BASIC program from memory (NEW command). | ✅ Implemented |
+| `basic state` | | | Get current BASIC environment state (48K/128K mode, TR-DOS active, menu vs editor). | ✅ Implemented |
+
+**BASIC Injection Workflow Examples**:
+
+```bash
+# Method 1: Inject command and execute immediately
+basic run PRINT 1+1
+basic run LIST
+
+# Method 2: Inject without executing (appears in editor)
+basic inject PRINT "Hello"
+# (command appears in edit buffer, press ENTER manually to execute)
+
+# Method 3: Inject complete program
+basic inject "10 PRINT \"Hello, World!\"\n20 STOP"
+basic run
+
+# Method 4: Load from file
+basic load /tmp/test.bas
+basic run
+
+# Check current state
+basic state
+# => state: basic48k, in_editor: true, ready_for_commands: true
+
+# Check what's loaded
+basic list
+```
+
+**Implementation Notes**:
+- **`basic inject`**: Uses `BasicEncoder::injectCommand()` to tokenize and write to edit buffer. Does NOT execute.
+  - 48K BASIC: Writes to E_LINE buffer at `$5C59` system variable
+  - 128K BASIC: Writes to SLEB buffer at `$EC16` in RAM bank 7
+  - Returns structured `InjectionResult` with success flag, detected state, and message
+- **`basic run`**: Uses `BasicEncoder::runCommand()` which combines `injectCommand()` + `injectEnter()`. Executes immediately.
+- **State Detection**: Uses `BasicEncoder::detectState()` with three-tier detection:
+  - Tier 1: TR-DOS ROM hardware page check
+  - Tier 2: Stack context analysis (detects SOS calls from DOS)
+  - Tier 3: System variable initialization check
+
 
 **Features**:
 - Detokenizes all Spectrum 48K/128K BASIC tokens (0xA3-0xFF)
@@ -2335,7 +2509,38 @@ Extract and detokenize ZX Spectrum BASIC programs from memory or files.
 - Convert tokenized BASIC to editable text
 - Study programming techniques in commercial software
 
-#### 8.2 Music Detector & Ripper
+#### 8.2 Capture Commands (OCR, Screen, ROM Text)
+
+**Status**: 🚧 In Progress  
+**Implementation**: `core/src/debugger/analyzers/rom-print/screenocr.h/cpp`, `core/automation/cli/src/commands/cli-processor-capture.cpp`
+
+Capture and extract various output data from the emulator: screen text via OCR, screen bitmaps, ROM print output.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `capture ocr` | | OCR text from screen using ROM font bitmap matching. Returns 24 lines × 32 characters. | ✅ Implemented |
+| `capture romtext` | | Start/show captured ROM print output (uses ROMPrintDetector). | 🔮 Planned |
+| `capture screen` | `[5\|7\|shadow]` | Capture screen bitmap. Default: screen 5. Output: base64-encoded GIF with format/size metadata. | 🔮 Planned |
+| `capture screen 5` | | Capture main screen (page 5). | 🔮 Planned |
+| `capture screen 7` | | Capture shadow screen (page 7). | 🔮 Planned |
+| `capture screen shadow` | | Alias for `capture screen 7`. | 🔮 Planned |
+
+**OCR Implementation Details**:
+- Uses `ZXSpectrum::FONT_BITMAP[96][8]` from ROM for character matching
+- Handles ZX Spectrum interleaved screen layout (3 "thirds")
+- Returns '?' for unrecognized patterns, ' ' for empty cells
+- Tested at all 768 screen positions (32×24) and all 96 font characters
+
+**WebAPI Response Format** (for `capture screen`):
+```json
+{
+  "format": "gif",
+  "size": 12345,
+  "data": "base64encodeddata..."
+}
+```
+
+#### 8.3 Music Detector & Ripper
 
 **Status**: 🔮 Planned (Q2-Q3 2026)
 
@@ -2590,17 +2795,43 @@ Detect advanced graphics techniques.
 - **Pattern Database**: User-extensible signature database
 - **Python/Lua API**: Create custom analyzers in scripts
 
+### Analyzer Control Interface (Capture Sessions)
+
+The analyzer framework supports **Capture Sessions** to isolate analysis data.
+
+| Command | Arguments | Description |
+|:---|:---|:---|
+| `analyzer activate` | `id` | **Start Session**: Create new session and start capturing. Clears previous data for this analyzer. |
+| `analyzer deactivate` | `id` | **End Session**: Stop capturing and close/archive the session. Data remains available until next activation. |
+| `analyzer pause` | `id` | **Pause Capture**: Suspend event capture but keep session open. Low overhead mode. |
+| `analyzer resume` | `id` | **Resume Capture**: Resume capturing events into the current active session. |
+| `analyzer status` | `id` | Get session state (IDLE, ACTIVE, PAUSED) and event counts. |
+
+#### Data Access (Active Session)
+
+| Command | Arguments | Description |
+|:---|:---|:---|
+| `analyzer events` | `id` | Get **Semantic Events** (high-level patterns) from active session. |
+| `analyzer raw fdc` | `id` | Get **Raw FDC Events** (register/port snapshots) from active session. |
+| `analyzer raw breakpoints` | `id` | Get **Raw Breakpoint Events** (CPU/Stack snapshots) from active session. |
+| `analyzer export` | `id`, `path` | Export full session data to JSON file. |
+
 **Example Usage**:
 ```bash
-# Detect everything
-analyze all --format json --output report.json
+# Start analysis
+analyzer activate trdos
 
-# Chain analyzers
-basic extract | analyze
-music detect | music rip game.pt3
+# Perform disk operations...
 
-# Custom analyzer in Python
-python my_analyzer.py --memory 0x8000 0x4000
+# Pause to inspect without noise
+analyzer pause trdos
+
+# Get captured data
+analyzer events trdos --limit 50
+analyzer raw fdc trdos
+
+# Finish
+analyzer deactivate trdos
 ```
 
 ### 9. LLM Integration Interfaces (MCP/A2A)

@@ -41,9 +41,18 @@ void AutomationLua::stop()
         _thread = nullptr;
     }
     
-    // Clean up pointers (actual resources cleaned up in thread)
-    _luaEmulator = nullptr;
-    _lua = nullptr;
+    // Now safe to delete Lua objects - thread is stopped
+    if (_luaEmulator)
+    {
+        delete _luaEmulator;
+        _luaEmulator = nullptr;
+    }
+
+    if (_lua)
+    {
+        delete _lua;
+        _lua = nullptr;
+    }
 
     std::cout << "Lua interpreter stopped" << std::endl;
 }

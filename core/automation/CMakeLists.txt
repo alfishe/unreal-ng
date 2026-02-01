@@ -50,6 +50,8 @@ endif ()
 set (SOURCES
     automation.cpp
     automation.h
+    batch-command-processor.cpp
+    batch-command-processor.h
 )
 
 

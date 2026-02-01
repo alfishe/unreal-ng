@@ -44,6 +44,7 @@ signals:
 public slots:
     void reset();
     void refresh();
+    void prepareForShutdown();  // Block refreshes during shutdown
 
     void sp0Value_doubleClicked();
     void sp1Value_doubleClicked();
@@ -66,6 +67,8 @@ private:
     QLabel* sp1Value;
     QLabel* sp2Value;
     QLabel* sp3Value;
+
+    bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown
 };
 
 #endif // STACKWIDGET_H

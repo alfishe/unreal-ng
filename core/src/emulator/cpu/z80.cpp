@@ -4,9 +4,11 @@
 #include "common/modulelogger.h"
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/op_noprefix.h"
+#include "emulator/cpu/opcode_profiler.h"
 #include "emulator/emulator.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/screen.h"
@@ -76,6 +78,9 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     direct_registers[6] =
         &_trashRegister;  // Redirect DDCB operation writes with no destination registers to unused register variable
     direct_registers[7] = &a;
+    
+    // Create opcode profiler
+    _opcodeProfiler = new OpcodeProfiler(context);
 }
 
 Z80::~Z80()
@@ -91,6 +96,12 @@ Z80::~Z80()
         delete DbgMemIf;
         DbgMemIf = nullptr;
     }
+    
+    if (_opcodeProfiler)
+    {
+        delete _opcodeProfiler;
+        _opcodeProfiler = nullptr;
+    }
 
     _context = nullptr;
 
@@ -98,15 +109,6 @@ Z80::~Z80()
 }
 
 /// endregion </Constructors / Destructors>
-
-/// region <Properties>
-
-bool Z80::IsPaused()
-{
-    return _pauseRequested;
-}
-
-/// endregion </Properties
 
 /// region <Methods>
 
@@ -133,16 +135,6 @@ void Z80::Reset()
     IncrementCPUCyclesCounter(3);
 }
 
-void Z80::Pause()
-{
-    _pauseRequested = true;
-}
-
-void Z80::Resume()
-{
-    _pauseRequested = false;
-}
-
 /// Single CPU command cycle (non-interruptable)
 void Z80::Z80Step(bool skipBreakpoints)
 {
@@ -153,28 +145,11 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] Memory& memory = *_context->pMemory;
     [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
-    // Let debugger process step event
-    if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
-    {
-        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
-        uint16_t breakpointID = brk.HandlePCChange(pc);
-        if (breakpointID != BRK_INVALID)
-        {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not Core.Pause() or Z80.Pause() for successful resume later
-            emulator.Pause();
-
-            // Broadcast notification - breakpoint triggered
-            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-            SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
-            messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
-
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            WaitUntilResumed();
-        }
-    }
-
     /// region  <Ports logic>
+    
+    // ROM paging MUST happen BEFORE breakpoint dispatch so that page-specific breakpoints
+    // (e.g., TR-DOS ROM at $1EDD) can match the correct memory page.
+    // Previously this was after breakpoint dispatch, causing page-specific breakpoints to fail.
 
     // Execution address is within range [0x3D00 .. 0x3DFF] => Beta Disk Interface (TR-DOS) ROM must be activated
     if (!(state.flags & CF_TRDOS) && (cpu.pch == 0x3D))
@@ -183,13 +158,6 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // Apply ROM page changes
         memory.UpdateZ80Banks();
-
-        // TODO: remove Debug
-        /// region <Debug>
-        // emulator.Pause();
-        //  Wait until emulator resumed externally (by debugger or scripting engine)
-        // WaitUntilResumed();
-        /// endregion </Debug
     }
     else if ((state.flags & CF_TRDOS) &&
              (cpu.pch >= 0x40))  // When execution leaves ROM area (>= 0x4000) - DOS must be disabled
@@ -198,6 +166,60 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // Apply ROM page changes
         memory.UpdateZ80Banks();
+    }
+    
+    /// endregion  </Ports logic>
+
+    // Let debugger process step event
+    if (cpu.isDebugMode && skipBreakpoints == false && _context->pDebugManager != nullptr)
+    {
+        BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+        uint16_t breakpointID = brk.HandlePCChange(pc);
+        if (breakpointID != BRK_INVALID)
+        {
+            AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
+            
+            // Get current memory page information for page-specific breakpoint matching
+            Memory& mem = *_context->pMemory;
+            MemoryPageDescriptor pageInfo = mem.MapZ80AddressToPhysicalPage(pc);
+            
+            // Check if this is an analyzer-owned breakpoint (should not pause)
+            // Must check both address-only AND page-specific ownership
+            bool isAnalyzerBreakpoint = false;
+            if (analyzerMgr)
+            {
+                // First check page-specific match (for breakpoints like TR-DOS ROM)
+                isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc, pageInfo.page, pageInfo.mode);
+                
+                // Fall back to address-only match (for non-page-specific breakpoints)
+                if (!isAnalyzerBreakpoint)
+                {
+                    isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc);
+                }
+            }
+            
+            // Always dispatch breakpoint hit to analyzer manager for notification
+            // Note: No MessageCenter notification is sent for analyzer breakpoints
+            if (analyzerMgr)
+            {
+                analyzerMgr->dispatchBreakpointHit(pc, breakpointID, this);
+            }
+            
+            // Only pause for debugger breakpoints (not analyzer-owned)
+            if (!isAnalyzerBreakpoint)
+            {
+                // Pause emulator (single source of truth)
+                emulator.Pause();
+
+                // Broadcast notification - breakpoint triggered
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
+                messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
+
+                // Wait until emulator resumed externally (by debugger or scripting engine)
+                emulator.WaitWhilePaused();
+            }
+        }
     }
 
     /* TODO: move to Ports class
@@ -267,6 +289,20 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // 2. Emulate fetched Z80 opcode
         (normal_opcode[opcode])(&cpu);
+        
+        // 2a. Opcode profiling hook (after opcode execution)
+        if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
+        {
+            _opcodeProfiler->LogExecution(
+                m1_pc,
+                prefix,
+                opcode,
+                f,
+                a,
+                _context->emulatorState.frame_counter,
+                t
+            );
+        }
 
         // 3. Update Q register based on whether flags were modified
         // Q captures YF/XF from flag-modifying instructions only
@@ -630,18 +666,6 @@ void Z80::OnCPUStep()
     _context->pMainLoop->OnCPUStep();
 }
 
-void Z80::WaitUntilResumed()
-{
-    // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-    if (_pauseRequested)
-    {
-        while (_pauseRequested)
-        {
-            sleep_ms(20);
-        }
-    }
-}
-
 //
 // Increment CPU cycles counter by specified number of cycles.
 // Required to keep exact timings for Z80 commands
@@ -771,3 +795,15 @@ std::string Z80::DumpFlags(uint8_t flags)
 }
 
 /// endregion </Debug methods>
+
+/// region <Feature Cache>
+
+void Z80::UpdateFeatureCache()
+{
+    if (_context && _context->pFeatureManager)
+    {
+        _feature_opcodeprofiler_enabled = _context->pFeatureManager->isEnabled(Features::kOpcodeProfiler);
+    }
+}
+
+/// endregion </Feature Cache>

@@ -389,5 +389,401 @@ void EmulatorAPI::getStateMemoryROM(const HttpRequestPtr& req,
     callback(resp);
 }
 
+// Static flag for ROM write protection (default: protected)
+static bool s_romWriteProtected = true;
+
+/// @brief GET /api/v1/emulator/{id}/memory/read/{address}
+/// @brief Read memory at Z80 address
+void EmulatorAPI::readMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id, const std::string& addressStr) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse address
+    uint16_t address = 0;
+    try
+    {
+        if (addressStr.substr(0, 2) == "0x" || addressStr.substr(0, 2) == "0X")
+            address = static_cast<uint16_t>(std::stoul(addressStr, nullptr, 16));
+        else
+            address = static_cast<uint16_t>(std::stoul(addressStr));
+    }
+    catch (...)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid address format";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Get length from query parameter (default 128)
+    uint16_t length = 128;
+    auto lengthParam = req->getOptionalParameter<std::string>("length");
+    if (lengthParam)
+    {
+        try { length = static_cast<uint16_t>(std::stoul(*lengthParam)); }
+        catch (...) { length = 128; }
+    }
+
+    Json::Value ret;
+    ret["address"] = StringHelper::Format("0x%04X", address);
+    ret["length"] = length;
+    
+    Json::Value data = Json::arrayValue;
+    for (uint16_t i = 0; i < length; i++)
+    {
+        data.append(memory->DirectReadFromZ80Memory(address + i));
+    }
+    ret["data"] = data;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/memory/write
+/// @brief Write memory at Z80 address (body: {"address": "0x5000", "data": [255, 0, 195]})
+void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                              const std::string& id) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("address") || !body->isMember("data"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request must contain 'address' and 'data' fields";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Parse address
+    uint16_t address = 0;
+    std::string addressStr = (*body)["address"].asString();
+    try
+    {
+        if (addressStr.substr(0, 2) == "0x" || addressStr.substr(0, 2) == "0X")
+            address = static_cast<uint16_t>(std::stoul(addressStr, nullptr, 16));
+        else
+            address = static_cast<uint16_t>(std::stoul(addressStr));
+    }
+    catch (...)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid address format";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    // Write data
+    Json::Value& data = (*body)["data"];
+    size_t bytesWritten = 0;
+    for (Json::ArrayIndex i = 0; i < data.size(); i++)
+    {
+        memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
+        bytesWritten++;
+    }
+
+    Json::Value ret;
+    ret["success"] = true;
+    ret["address"] = StringHelper::Format("0x%04X", address);
+    ret["bytes_written"] = static_cast<Json::UInt>(bytesWritten);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/memory/page/{type}/{page}
+/// @brief Read from specific RAM/ROM page
+void EmulatorAPI::readPage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& type, const std::string& pageStr) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    if (!memory)
+    {
+        Json::Value error;
+        error["error"] = "Internal Error";
+        error["message"] = "Memory not available";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    bool isROM = (type == "rom");
+    bool isRAM = (type == "ram");
+    if (!isROM && !isRAM)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Type must be 'ram' or 'rom'";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint8_t page = static_cast<uint8_t>(std::stoul(pageStr));
+    uint16_t offset = 0;
+    uint16_t length = 128;
+
+    auto offsetParam = req->getOptionalParameter<std::string>("offset");
+    if (offsetParam) try { offset = static_cast<uint16_t>(std::stoul(*offsetParam)); } catch (...) {}
+    
+    auto lengthParam = req->getOptionalParameter<std::string>("length");
+    if (lengthParam) try { length = static_cast<uint16_t>(std::stoul(*lengthParam)); } catch (...) {}
+
+    uint8_t* pagePtr = isRAM ? memory->RAMPageAddress(page) : memory->ROMPageHostAddress(page);
+    if (!pagePtr)
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Invalid page number";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Json::Value ret;
+    ret["type"] = type;
+    ret["page"] = page;
+    ret["offset"] = StringHelper::Format("0x%04X", offset);
+    ret["length"] = length;
+    
+    Json::Value data = Json::arrayValue;
+    for (uint16_t i = 0; i < length && (offset + i) < PAGE_SIZE; i++)
+    {
+        data.append(pagePtr[offset + i]);
+    }
+    ret["data"] = data;
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief POST /api/v1/emulator/{id}/memory/page/{type}/{page}
+/// @brief Write to specific RAM/ROM page (body: {"offset": "0x0000", "data": [255, 0]})
+void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id, const std::string& type, const std::string& pageStr) const
+{
+    auto manager = EmulatorManager::GetInstance();
+    auto emulator = manager->GetEmulator(id);
+
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator with specified ID not found";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    Memory* memory = emulator->GetMemory();
+    bool isROM = (type == "rom");
+    bool isRAM = (type == "ram");
+
+    if (isROM && s_romWriteProtected)
+    {
+        Json::Value error;
+        error["error"] = "Forbidden";
+        error["message"] = "ROM write protected. Use PUT /memory/rom/protect with {\"protected\": false} to enable writes.";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k403Forbidden);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("offset") || !body->isMember("data"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request must contain 'offset' and 'data' fields";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    uint8_t page = static_cast<uint8_t>(std::stoul(pageStr));
+    uint8_t* pagePtr = isRAM ? memory->RAMPageAddress(page) : memory->ROMPageHostAddress(page);
+
+    uint16_t offset = 0;
+    std::string offsetStr = (*body)["offset"].asString();
+    try
+    {
+        if (offsetStr.substr(0, 2) == "0x") offset = static_cast<uint16_t>(std::stoul(offsetStr, nullptr, 16));
+        else offset = static_cast<uint16_t>(std::stoul(offsetStr));
+    } catch (...) {}
+
+    Json::Value& data = (*body)["data"];
+    size_t bytesWritten = 0;
+    for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
+    {
+        pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
+        bytesWritten++;
+    }
+
+    Json::Value ret;
+    ret["success"] = true;
+    ret["type"] = type;
+    ret["page"] = page;
+    ret["offset"] = StringHelper::Format("0x%04X", offset);
+    ret["bytes_written"] = static_cast<Json::UInt>(bytesWritten);
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/memory/rom/protect
+/// @brief Get ROM write protection status
+void EmulatorAPI::getROMProtect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    Json::Value ret;
+    ret["protected"] = s_romWriteProtected;
+    ret["message"] = s_romWriteProtected ? "ROM pages are write-protected" : "ROM pages are writable";
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief PUT/POST /api/v1/emulator/{id}/memory/rom/protect
+/// @brief Set ROM write protection (body: {"protected": true/false})
+void EmulatorAPI::setROMProtect(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto body = req->getJsonObject();
+    if (!body || !body->isMember("protected"))
+    {
+        Json::Value error;
+        error["error"] = "Bad Request";
+        error["message"] = "Request must contain 'protected' field (true/false)";
+
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k400BadRequest);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+
+    s_romWriteProtected = (*body)["protected"].asBool();
+
+    Json::Value ret;
+    ret["success"] = true;
+    ret["protected"] = s_romWriteProtected;
+    ret["message"] = s_romWriteProtected ? "ROM write protection enabled" : "ROM write protection disabled - ROM pages are now writable";
+
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
 } // namespace v1
 } // namespace api

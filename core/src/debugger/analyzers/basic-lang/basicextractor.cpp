@@ -37,7 +37,35 @@ std::string BasicExtractor::extractBasic(uint8_t* data, size_t len)
         }
 
         // Format line number
-        ss << lineNumber << " ";
+        ss << lineNumber;
+
+        // Determine if we need a separator space
+        bool needsSpace = true;
+        if (offset < lineEnd)
+        {
+            uint8_t firstByte = data[offset];
+            if (firstByte >= 0xA3)
+            {
+                size_t tokenIndex = firstByte - 0xA3;
+                if (tokenIndex < sizeof(BasicTokens) / sizeof(BasicTokens[0]))
+                {
+                    const char* tokenStr = BasicTokens[tokenIndex];
+                    if (tokenStr && tokenStr[0] == ' ')
+                    {
+                        needsSpace = false;
+                    }
+                }
+            }
+            else if (firstByte == ' ')
+            {
+                needsSpace = false;
+            }
+        }
+
+        if (needsSpace)
+        {
+            ss << " ";
+        }
 
         // Process line data (starts at current offset, which is past header)
         for (size_t i = offset; i < lineEnd; ++i)

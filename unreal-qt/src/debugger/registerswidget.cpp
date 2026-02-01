@@ -207,6 +207,12 @@ void RegistersWidget::reset()
 
 void RegistersWidget::refresh()
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     QThread* currentThread = QThread::currentThread();
 
     // Ensure GUI update is in main thread
@@ -300,3 +306,9 @@ void RegistersWidget::iy_doubleClicked()
 }
 
 /// endregion </Event handlers / Slots>
+
+void RegistersWidget::prepareForShutdown()
+{
+    qDebug() << "RegistersWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
+}

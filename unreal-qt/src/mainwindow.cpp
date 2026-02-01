@@ -280,11 +280,43 @@ void MainWindow::showEvent(QShowEvent* event)
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
+    qDebug() << "QCloseEvent : Closing application";
+
+    // ============================================================
+    // PHASE 1: NOTIFY ALL WINDOWS/WIDGETS (instant)
+    // This must happen FIRST, before ANY cleanup, to block all
+    // pending UI refreshes that could crash on inconsistent state
+    // ============================================================
+    qDebug() << "QCloseEvent : Phase 1 - Notifying all windows/widgets";
+
+    if (debuggerWindow)
+    {
+        debuggerWindow->prepareForShutdown();  // Propagates to all child widgets
+    }
+    if (logWindow)
+    {
+        logWindow->prepareForShutdown();
+    }
+    if (deviceScreen)
+    {
+        deviceScreen->prepareForShutdown();
+    }
+
+    // Also notify EmulatorManager to block automation requests
+    _emulatorManager->PrepareForShutdown();
+
+    qDebug() << "QCloseEvent : Phase 1 complete - All widgets notified";
+
+    // ============================================================
+    // PHASE 2: DEINITIALIZE (existing cleanup code)
+    // Now safe to proceed - all UI refreshes are blocked
+    // ============================================================
+    qDebug() << "QCloseEvent : Phase 2 - Deinitialization";
+
     // Clean up automation resources
     cleanupAutomation();
 
     event->accept();
-    qDebug() << "QCloseEvent : Closing application";
 
     // Unsubscribe from all message bus events
     unsubscribeFromMessageBus();
@@ -1297,7 +1329,7 @@ void MainWindow::handleMessageScreenRefresh(int id, Message* message)
     }
 
     // Filter: Only process frames from our adopted emulator
-    if (payload->_emulatorId != _emulator->GetId())
+    if (payload->_emulatorId != _emulator->GetUUID())
     {
         // This frame is from a different emulator instance - ignore it
         return;

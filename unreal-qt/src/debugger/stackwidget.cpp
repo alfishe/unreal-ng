@@ -133,6 +133,12 @@ void StackWidget::reset()
 
 void StackWidget::refresh()
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     QThread* currentThread = QThread::currentThread();
 
     // Ensure GUI update is in main thread
@@ -224,3 +230,9 @@ void StackWidget::readStackIntoArray(uint16_t* outArray, uint16_t depth)
     }
 }
 /// endregion </Helper methods>
+
+void StackWidget::prepareForShutdown()
+{
+    qDebug() << "StackWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
+}

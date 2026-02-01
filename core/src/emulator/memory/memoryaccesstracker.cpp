@@ -432,8 +432,8 @@ const std::vector<TrackingSegment>& MemoryAccessTracker::GetAllSegments() const
 // Track memory read access
 void MemoryAccessTracker::TrackMemoryRead(uint16_t address, uint8_t value, uint16_t callerAddress)
 {
-    // Early return if memory tracking is disabled
-    if (!_feature_memorytracking_enabled)
+    // Early return if not actively capturing (session-based control)
+    if (!IsMemoryCapturing())
     {
         return;
     }
@@ -483,8 +483,8 @@ void MemoryAccessTracker::TrackMemoryRead(uint16_t address, uint8_t value, uint1
 // Track memory write access
 void MemoryAccessTracker::TrackMemoryWrite(uint16_t address, uint8_t value, uint16_t callerAddress)
 {
-    // Early return if memory tracking is disabled
-    if (!_feature_memorytracking_enabled)
+    // Early return if not actively capturing (session-based control)
+    if (!IsMemoryCapturing())
     {
         return;
     }
@@ -534,8 +534,8 @@ void MemoryAccessTracker::TrackMemoryWrite(uint16_t address, uint8_t value, uint
 // Track memory execute access
 void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAddress)
 {
-    // Early return if memory tracking is disabled
-    if (!_feature_memorytracking_enabled)
+    // Early return if not actively capturing (session-based control)
+    if (!IsMemoryCapturing())
     {
         return;
     }
@@ -614,7 +614,7 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
     UpdateRegionStats(address, 0, callerAddress, AccessType::Execute);
 
     // --- Call trace integration ---
-    if (_feature_calltrace_enabled && _callTraceBuffer)
+    if (IsCalltraceCapturing() && _callTraceBuffer)
     {
         _callTraceBuffer->LogIfControlFlow(_context, _memory, address, _context->emulatorState.frame_counter);
     }
@@ -1590,4 +1590,144 @@ void MemoryAccessTracker::ResetHaltDetection(uint16_t newPC)
         _lastExecutedAddress = newPC;
         _haltExecutionCount = 0;
     }
+}
+
+// ============================================================================
+// Session Control - Memory Tracking
+// ============================================================================
+
+void MemoryAccessTracker::StartMemorySession()
+{
+    // Ensure feature is enabled
+    if (!_feature_memorytracking_enabled)
+    {
+        // Can't start session if feature is disabled
+        return;
+    }
+    
+    // Ensure counters are allocated
+    if (!_isAllocated)
+    {
+        AllocateCounters();
+    }
+    
+    // Clear previous data on start
+    ResetCounters();
+    
+    // Set state to capturing
+    _memorySessionState = ProfilerSessionState::Capturing;
+}
+
+void MemoryAccessTracker::PauseMemorySession()
+{
+    if (_memorySessionState == ProfilerSessionState::Capturing)
+    {
+        _memorySessionState = ProfilerSessionState::Paused;
+    }
+}
+
+void MemoryAccessTracker::ResumeMemorySession()
+{
+    if (_memorySessionState == ProfilerSessionState::Paused)
+    {
+        _memorySessionState = ProfilerSessionState::Capturing;
+    }
+}
+
+void MemoryAccessTracker::StopMemorySession()
+{
+    if (_memorySessionState == ProfilerSessionState::Capturing ||
+        _memorySessionState == ProfilerSessionState::Paused)
+    {
+        _memorySessionState = ProfilerSessionState::Stopped;
+        // Data is retained until ClearMemoryData() is called
+    }
+}
+
+void MemoryAccessTracker::ClearMemoryData()
+{
+    ResetCounters();
+    // State remains unchanged - can be called in any state
+}
+
+ProfilerSessionState MemoryAccessTracker::GetMemorySessionState() const
+{
+    return _memorySessionState;
+}
+
+bool MemoryAccessTracker::IsMemoryCapturing() const
+{
+    return _feature_memorytracking_enabled && 
+           _memorySessionState == ProfilerSessionState::Capturing;
+}
+
+// ============================================================================
+// Session Control - Call Trace
+// ============================================================================
+
+void MemoryAccessTracker::StartCalltraceSession()
+{
+    // Ensure feature is enabled
+    if (!_feature_calltrace_enabled)
+    {
+        return;
+    }
+    
+    // Ensure call trace buffer exists
+    if (!_callTraceBuffer)
+    {
+        _callTraceBuffer = std::make_unique<CallTraceBuffer>();
+    }
+    
+    // Clear previous data on start
+    _callTraceBuffer->Reset();
+    
+    // Set state to capturing
+    _calltraceSessionState = ProfilerSessionState::Capturing;
+}
+
+void MemoryAccessTracker::PauseCalltraceSession()
+{
+    if (_calltraceSessionState == ProfilerSessionState::Capturing)
+    {
+        _calltraceSessionState = ProfilerSessionState::Paused;
+    }
+}
+
+void MemoryAccessTracker::ResumeCalltraceSession()
+{
+    if (_calltraceSessionState == ProfilerSessionState::Paused)
+    {
+        _calltraceSessionState = ProfilerSessionState::Capturing;
+    }
+}
+
+void MemoryAccessTracker::StopCalltraceSession()
+{
+    if (_calltraceSessionState == ProfilerSessionState::Capturing ||
+        _calltraceSessionState == ProfilerSessionState::Paused)
+    {
+        _calltraceSessionState = ProfilerSessionState::Stopped;
+        // Data is retained until ClearCalltraceData() is called
+    }
+}
+
+void MemoryAccessTracker::ClearCalltraceData()
+{
+    if (_callTraceBuffer)
+    {
+        _callTraceBuffer->Reset();
+    }
+    // State remains unchanged
+}
+
+ProfilerSessionState MemoryAccessTracker::GetCalltraceSessionState() const
+{
+    return _calltraceSessionState;
+}
+
+bool MemoryAccessTracker::IsCalltraceCapturing() const
+{
+    return _feature_calltrace_enabled && 
+           _calltraceSessionState == ProfilerSessionState::Capturing;
 }

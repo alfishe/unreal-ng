@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <atomic>
 
 #include "emulator.h"
 
@@ -32,6 +33,9 @@ private:
     // Global selection state (shared across CLI, WebAPI, UI)
     std::string _selectedEmulatorId;
     std::mutex _selectionMutex;
+
+    // Shutdown flag - blocks state changes during application exit
+    std::atomic<bool> _isShuttingDown{false};
 
     // Private constructor for a singleton pattern
     EmulatorManager() = default;
@@ -173,6 +177,15 @@ public:
 
     /// @brief Shutdown all emulators
     void ShutdownAllEmulators();
+
+    /// @brief Prepare for application shutdown - blocks all state change operations
+    /// @details Should be called as the FIRST step in application shutdown sequence,
+    ///          before unbinding emulators or cleaning up resources.
+    void PrepareForShutdown();
+
+    /// @brief Check if manager is in shutdown mode
+    /// @return True if PrepareForShutdown() has been called
+    bool IsShuttingDown() const { return _isShuttingDown.load(); }
 
     /// @brief Destructor - cleans up all emulator instances
     ~EmulatorManager();

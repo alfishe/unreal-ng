@@ -62,9 +62,6 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
 
     uint8_t result = 0xFF;
 
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortIn(port, pc);
-
     if (IsPort_FE(port))
     {
         // Call default implementation
@@ -82,6 +79,9 @@ uint8_t PortDecoder_Scorpion256::DecodePortIn(uint16_t port, uint16_t pc)
     }
     /// endregion </Debug logging>
 
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortInComplete(port, result, pc);
+
     return result;
 }
 
@@ -94,9 +94,6 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
     //    ZX Spectrum 128 +2A/+2B/+3
     //    port: #7FFD
     //    port: #1FFD
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortOut(port, value, pc);
 
     bool isPort_7FFD = IsPort_7FFD(port);
     if (isPort_7FFD)
@@ -120,6 +117,9 @@ void PortDecoder_Scorpion256::DecodePortOut(uint16_t port, uint8_t value, uint16
         MLOGINFO("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
     /// endregion </Debug logging>
+
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortOutComplete(port, value, pc);
 }
 
 void PortDecoder_Scorpion256::SetRAMPage(uint8_t page)
