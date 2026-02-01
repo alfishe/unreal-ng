@@ -39,6 +39,12 @@ public:
     /// Set explicit grid dimensions (bypasses automatic calculation)
     void setGridDimensions(int cols, int rows);
 
+    /// Set fullscreen mode (disables size constraints that interfere with fullscreen)
+    void setFullscreenMode(bool fullscreen)
+    {
+        _isFullscreen = fullscreen;
+    }
+
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
@@ -49,4 +55,7 @@ private:
     // Explicit grid dimensions (if set, overrides automatic calculation)
     int _explicitCols = -1;
     int _explicitRows = -1;
+
+    // Fullscreen mode flag (disables setMinimumSize in updateLayout)
+    bool _isFullscreen = false;
 };

@@ -256,8 +256,11 @@ void VideoWallWindow::keyPressEvent(QKeyEvent* event)
     {
         toggleFramelessMode();
     }
-    // Cmd+Shift+F: Toggle fullscreen mode
-    else if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
+    // Ctrl+Shift+F: Toggle fullscreen
+    // In fullscreen mode, the menu is hidden so the QAction shortcut may not work.
+    // We handle it here ONLY when in fullscreen to ensure exit works reliably.
+    else if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier) &&
+             (event->modifiers() & Qt::ShiftModifier) && _isFullscreen)
     {
         toggleFullscreenMode();
     }
@@ -547,25 +550,48 @@ void VideoWallWindow::toggleFullscreenLinux()
         _windowMode = WindowMode::Windowed;
         _isFullscreen = false;
 
+        // Tell TileGrid we're exiting fullscreen so it can use size constraints again
+        // But first clear the constraints so window can resize freely
+        _tileGrid->setFullscreenMode(true);  // Keep constraints disabled temporarily
+        _tileGrid->setMinimumSize(0, 0);
+        _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
         // Note: Sound stays disabled - user explicitly disabled it for performance
 
-        // Restore geometry and show
-        if (_savedGeometry.isValid())
-        {
-            setGeometry(_savedGeometry);
-        }
+        // Show the menu bar again
+        menuBar()->show();
+
         showNormal();
 
-        // Restore emulators after window state change
-        QTimer::singleShot(100, this, [this]() {
-            restoreSavedEmulators();
-            qDebug() << "Fullscreen → windowed (restored" << _savedEmulatorIds.size() << "tiles)";
+        // Restore geometry and tiles after window state change is complete
+        QRect savedGeom = _savedGeometry;  // Copy for lambda capture
+        QTimer::singleShot(100, this, [this, savedGeom]() {
+            // Clear size constraints again to allow resize
+            _tileGrid->setMinimumSize(0, 0);
+            _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
+            if (savedGeom.isValid())
+            {
+                qDebug() << "Restoring geometry to:" << savedGeom;
+                // Use resize + move instead of setGeometry for more reliable restoration
+                resize(savedGeom.size());
+                move(savedGeom.topLeft());
+            }
+
+            // Resize grid to fit window - keeps tiles that fit, disposes the rest
+            resizeGridIntelligently(size());
+
+            // Re-enable TileGrid size constraints now that we're done resizing
+            _tileGrid->setFullscreenMode(false);
+
+            qDebug() << "Fullscreen → windowed (" << _tileGrid->tiles().size() << "tiles)";
         });
     }
     else
     {
         // Entering fullscreen
         _savedGeometry = geometry();
+        qDebug() << "Saved geometry before fullscreen:" << _savedGeometry;
         _savedEmulatorIds.clear();
         for (const auto* tile : _tileGrid->tiles())
         {
@@ -575,15 +601,34 @@ void VideoWallWindow::toggleFullscreenLinux()
         _windowMode = WindowMode::Fullscreen;
         _isFullscreen = true;
 
+        // Tell TileGrid we're in fullscreen so it skips setMinimumSize() calls
+        _tileGrid->setFullscreenMode(true);
+
         // Note: Sound already disabled at emulator creation in addEmulatorTile()
 
+        // CRITICAL: Clear size constraints BEFORE entering fullscreen
+        // TileGrid's setMinimumSize() can prevent fullscreen on Linux window managers
+        _tileGrid->setMinimumSize(0, 0);
+        _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
         QScreen* screen = window()->screen();
+
+        // Hide menu bar for cleaner fullscreen
+        menuBar()->hide();
+
         showFullScreen();
 
-        // Calculate layout after fullscreen transition
-        QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->size());
-            qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
+        // Calculate layout after fullscreen transition is complete
+        QTimer::singleShot(200, this, [this, screen]() {
+            if (windowState() & Qt::WindowFullScreen)
+            {
+                calculateAndApplyOptimalLayout(screen->size());
+                qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
+            }
+            else
+            {
+                qDebug() << "Fullscreen transition failed - not in fullscreen state";
+            }
         });
     }
 }
@@ -707,6 +752,15 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
 
 void VideoWallWindow::restoreSavedEmulators()
 {
+    // If there were no saved emulators (went to fullscreen from empty window),
+    // resize the grid to fit the restored window instead of removing all tiles
+    if (_savedEmulatorIds.empty())
+    {
+        resizeGridIntelligently(size());
+        qDebug() << "No saved emulators - resized grid to fit window:" << _tileGrid->tiles().size() << "tiles";
+        return;
+    }
+
     // Build set of saved UUIDs for fast lookup
     std::unordered_set<std::string> savedIds(_savedEmulatorIds.begin(), _savedEmulatorIds.end());
 
