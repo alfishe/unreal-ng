@@ -313,14 +313,17 @@ void DockingManager::onExitFullscreen()
         if (savedState.geometry.isValid())
         {
             window->setGeometry(savedState.geometry);
-            
+
             // Restore snap state
             if (_dockableWindows.contains(window))
             {
                 _dockableWindows[window].snappedEdge = savedState.snappedEdge;
             }
 
+            // Show window but immediately lower it to preserve z-order
+            // (main window should stay on top)
             window->show();
+            window->lower();
         }
         else
         {
