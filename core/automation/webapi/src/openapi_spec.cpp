@@ -43,6 +43,30 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     servers.append(server);
     spec["servers"] = servers;
 
+    // Tags - defines the order of tag groups in Swagger UI
+    Json::Value tags(Json::arrayValue);
+    Json::Value tagEmulatorMgmt; tagEmulatorMgmt["name"] = "Emulator Management"; tagEmulatorMgmt["description"] = "Emulator lifecycle and information"; tags.append(tagEmulatorMgmt);
+    Json::Value tagEmulatorCtrl; tagEmulatorCtrl["name"] = "Emulator Control"; tagEmulatorCtrl["description"] = "Control emulator execution state"; tags.append(tagEmulatorCtrl);
+    Json::Value tagSettings; tagSettings["name"] = "Settings Management"; tagSettings["description"] = "Emulator configuration and settings"; tags.append(tagSettings);
+    Json::Value tagFeatures; tagFeatures["name"] = "Feature Management"; tagFeatures["description"] = "Runtime feature control"; tags.append(tagFeatures);
+    Json::Value tagTapeCtrl; tagTapeCtrl["name"] = "Tape Control"; tagTapeCtrl["description"] = "Tape image control and playback"; tags.append(tagTapeCtrl);
+    Json::Value tagDiskCtrl; tagDiskCtrl["name"] = "Disk Control"; tagDiskCtrl["description"] = "Disk image management"; tags.append(tagDiskCtrl);
+    Json::Value tagDiskInsp; tagDiskInsp["name"] = "Disk Inspection"; tagDiskInsp["description"] = "Low-level disk data inspection"; tags.append(tagDiskInsp);
+    Json::Value tagSnapshotCtrl; tagSnapshotCtrl["name"] = "Snapshot Control"; tagSnapshotCtrl["description"] = "Snapshot file loading and status"; tags.append(tagSnapshotCtrl);
+    Json::Value tagCapture; tagCapture["name"] = "Capture"; tagCapture["description"] = "Screen capture and OCR"; tags.append(tagCapture);
+    Json::Value tagBasicCtrl; tagBasicCtrl["name"] = "BASIC Control"; tagBasicCtrl["description"] = "BASIC program manipulation"; tags.append(tagBasicCtrl);
+    Json::Value tagKeyboard; tagKeyboard["name"] = "Keyboard Injection"; tagKeyboard["description"] = "Keyboard input simulation"; tags.append(tagKeyboard);
+    Json::Value tagMemState; tagMemState["name"] = "Memory State"; tagMemState["description"] = "Memory inspection (RAM/ROM)"; tags.append(tagMemState);
+    Json::Value tagScreenState; tagScreenState["name"] = "Screen State"; tagScreenState["description"] = "Screen/video state inspection"; tags.append(tagScreenState);
+    Json::Value tagAudioState; tagAudioState["name"] = "Audio State"; tagAudioState["description"] = "Audio hardware state"; tags.append(tagAudioState);
+    Json::Value tagAnalyzer; tagAnalyzer["name"] = "Analyzer Management"; tagAnalyzer["description"] = "Control analyzer modules"; tags.append(tagAnalyzer);
+    Json::Value tagDebug; tagDebug["name"] = "Debug Commands"; tagDebug["description"] = "Breakpoints, registers, and debugging"; tags.append(tagDebug);
+    Json::Value tagMemProfiler; tagMemProfiler["name"] = "Memory Profiler"; tagMemProfiler["description"] = "Track memory access patterns"; tags.append(tagMemProfiler);
+    Json::Value tagCallTrace; tagCallTrace["name"] = "Call Trace Profiler"; tagCallTrace["description"] = "Track CALL/RET/JP/JR/RST events"; tags.append(tagCallTrace);
+    Json::Value tagOpcodeProfiler; tagOpcodeProfiler["name"] = "Opcode Profiler"; tagOpcodeProfiler["description"] = "Z80 opcode execution profiling"; tags.append(tagOpcodeProfiler);
+    Json::Value tagUnifiedProfiler; tagUnifiedProfiler["name"] = "Unified Profiler"; tagUnifiedProfiler["description"] = "Control all profilers simultaneously"; tags.append(tagUnifiedProfiler);
+    spec["tags"] = tags;
+
     // Paths
     Json::Value paths;
 
@@ -477,6 +501,211 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["responses"]["200"]["description"] =
         "Snapshot status information";
 
+    // Capture Commands endpoints
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["summary"] = "OCR text from screen";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["tags"].append("Capture");
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["description"] = 
+        "Extract text from screen using ROM font bitmap matching (OCR). "
+        "Returns 24 lines x 32 characters. Uses ZX Spectrum ROM font patterns.";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["description"] =
+        "Screen OCR result";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["rows"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["cols"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["lines"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["text"]["type"] = "string";
+
+    // Capture screen endpoint
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["summary"] = "Capture screen as image";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["tags"].append("Capture");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["description"] = 
+        "Capture screen as GIF or PNG image. Returns base64-encoded data.";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["name"] = "format";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["enum"].append("gif");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][1]["schema"]["enum"].append("png");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["name"] = "mode";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["enum"].append("screen");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][2]["schema"]["enum"].append("full");
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["description"] =
+        "Screen captured successfully";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["width"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["height"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["size"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["data"]["type"] = "string";
+
+    // BASIC Control endpoints
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["summary"] = "Execute BASIC command";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["description"] = 
+        "Inject a command into BASIC edit buffer AND execute it via simulated ENTER key. "
+        "If no command specified, executes RUN. "
+        "Automatically handles 128K menu navigation if needed. "
+        "Returns error if TR-DOS is active or not in BASIC editor.";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["command"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["command"]["description"] = "BASIC command to execute (e.g., 'RUN', 'LIST', 'PRINT 1+1')";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["description"] = 
+        "Command injected and executed";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["success"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["success"]["description"] = "True if command was injected and executed";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["message"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["message"]["description"] = "Human-readable result or error message";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["command"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["basic_mode"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["basic_mode"]["description"] = "Detected BASIC mode: '48K', '128K', 'trdos', or 'unknown'";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["400"]["description"] = 
+        "Not in BASIC editor, TR-DOS active, or other injection error";
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["404"]["description"] = "Emulator not found";
+
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["summary"] = "Inject BASIC program into memory";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["description"] = 
+        "Inject a multi-line BASIC program into memory without executing. "
+        "Uses loadProgram() to tokenize and write to program area. "
+        "Lines should be separated by newlines and include line numbers.";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["program"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["program"]["description"] = "BASIC program text (e.g., '10 PRINT \"HELLO\"\\n20 GOTO 10')";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["200"]["description"] = 
+        "Program injected successfully";
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["400"]["description"] = 
+        "Missing program parameter or injection failed";
+
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["summary"] = "Extract BASIC program";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["description"] = 
+        "Extract the current BASIC program from emulator memory as plain text.";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["responses"]["200"]["description"] = 
+        "BASIC program as text";
+
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["summary"] = "Clear BASIC program";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["description"] = 
+        "Clear the BASIC program in memory (equivalent to NEW command).";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["responses"]["200"]["description"] = 
+        "Program cleared";
+
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["summary"] = "Get BASIC environment state";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["tags"].append("BASIC Control");
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["description"] = 
+        "Get the current BASIC environment state including mode (48K/128K), menu vs editor, "
+        "TR-DOS state, and readiness for commands.";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["description"] = 
+        "BASIC state information";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["state"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["state"]["description"] = "State: 'basic48k', 'basic128k', 'menu128k', 'trdos_active', 'trdos_sos_call', 'unknown'";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["in_editor"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["ready_for_commands"]["type"] = "boolean";
+
+    // Keyboard Injection endpoints
+    auto addKeyboardIdParam = [&](const std::string& path, const std::string& method) {
+        paths[path][method]["parameters"][0]["name"] = "id";
+        paths[path][method]["parameters"][0]["in"] = "path";
+        paths[path][method]["parameters"][0]["required"] = true;
+        paths[path][method]["parameters"][0]["schema"]["type"] = "string";
+        paths[path][method]["tags"].append("Keyboard Injection");
+    };
+
+    // POST /api/v1/emulator/{id}/keyboard/tap
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/tap", "post");
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["summary"] = "Tap a single key";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["key"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["frames"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["responses"]["200"]["description"] = "Key tapped";
+
+    // POST /api/v1/emulator/{id}/keyboard/combo
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/combo", "post");
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["summary"] = "Tap a key combo";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["keys"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["keys"]["items"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["responses"]["200"]["description"] = "Combo tapped";
+
+    // POST /api/v1/emulator/{id}/keyboard/type
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/type", "post");
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["summary"] = "Type text sequence";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["text"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["delay_frames"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["tokenized"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["responses"]["200"]["description"] = "Text queued";
+
+    // POST /api/v1/emulator/{id}/keyboard/macro
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/macro", "post");
+    paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["summary"] = "Execute predefined macro";
+    paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["responses"]["200"]["description"] = "Macro queued";
+
+    // POST /api/v1/emulator/{id}/keyboard/release_all
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/release_all", "post");
+    paths["/api/v1/emulator/{id}/keyboard/release_all"]["post"]["summary"] = "Release all keys";
+    paths["/api/v1/emulator/{id}/keyboard/release_all"]["post"]["responses"]["200"]["description"] = "All keys released";
+
+    // GET /api/v1/emulator/{id}/keyboard/status
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/status", "get");
+    paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["summary"] = "Get keyboard status";
+    paths["/api/v1/emulator/{id}/keyboard/status"]["get"]["responses"]["200"]["description"] = "Keyboard status";
+
+    // GET /api/v1/emulator/{id}/keyboard/keys
+    addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/keys", "get");
+    paths["/api/v1/emulator/{id}/keyboard/keys"]["get"]["summary"] = "List valid keys";
+    paths["/api/v1/emulator/{id}/keyboard/keys"]["get"]["responses"]["200"]["description"] = "Validated key names";
+
     // Settings Management endpoints
     paths["/api/v1/emulator/{id}/settings"]["get"]["summary"] = "Get all emulator settings";
     paths["/api/v1/emulator/{id}/settings"]["get"]["tags"].append("Settings Management");
@@ -742,6 +971,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
         "Audio channels information";
 
+<<<<<<< HEAD
     // Batch Execution endpoints
     paths["/api/v1/batch/execute"]["post"]["summary"] = "Execute batch commands in parallel";
     paths["/api/v1/batch/execute"]["post"]["description"] =
@@ -767,6 +997,153 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["description"] = "List of batchable commands";
     paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/BatchableCommandsResponse";
+=======
+
+    // Analyzer Management endpoints
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["summary"] = "List all analyzers";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzers"]["get"]["responses"]["200"]["description"] =
+        "List of registered analyzers with status";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["summary"] = "Get analyzer status";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["description"] =
+        "Analyzer name (e.g., trdos)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["get"]["responses"]["200"]["description"] = "Analyzer status";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["summary"] = "Enable or disable analyzer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["enabled"]["description"] = "True to enable, false to disable";
+    paths["/api/v1/emulator/{id}/analyzer/{name}"]["put"]["responses"]["200"]["description"] = "Analyzer state updated";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["summary"] = "Get analyzer events";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["description"] =
+        "Retrieve captured events from an analyzer. Use limit query param to control count.";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["description"] =
+        "Maximum number of events to return (default: 100)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["get"]["responses"]["200"]["description"] =
+        "List of analyzer events";
+
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["summary"] = "Clear analyzer events";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/events"]["delete"]["responses"]["200"]["description"] =
+        "Events cleared";
+
+    // Analyzer session control endpoint
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["summary"] = "Control analyzer session";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["description"] =
+        "Activate or deactivate analyzer session. Activate clears event buffers for fresh capture.";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["description"] =
+        "Analyzer name (e.g., trdos)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["enum"].append("activate");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["enum"].append("deactivate");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["action"]["description"] = "Session action: activate or deactivate";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["responses"]["200"]["description"] =
+        "Session action completed";
+
+    // Raw FDC events endpoint
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["summary"] = "Get raw FDC events";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["description"] =
+        "Retrieve raw FDC port I/O events with Z80 CPU context. All values are JSON numbers.";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][2]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][2]["description"] =
+        "Maximum number of events to return (default: 100)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/fdc"]["get"]["responses"]["200"]["description"] =
+        "List of raw FDC events with Z80 main registers and 16-byte stack snapshot";
+
+    // Raw breakpoint events endpoint
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["summary"] = "Get raw breakpoint events";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["tags"].append("Analyzer Management");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["description"] =
+        "Retrieve raw breakpoint hit events with complete Z80 state. Includes main, alternate, index, and special registers. All values are JSON numbers.";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][1]["name"] = "name";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["description"] =
+        "Maximum number of events to return (default: 100)";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["responses"]["200"]["description"] =
+        "List of raw breakpoint events with full Z80 state (main, alternate, IX, IY, I, R) and 16-byte stack snapshot";
+
+>>>>>>> github/master
 
     // Debug Commands endpoints
     // Stepping
@@ -1074,6 +1451,345 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] = "Disassembled instructions from physical page";
 
+    // Memory Profiler control endpoints - individual actions
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["summary"] = "Start memory profiler";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["description"] = "Start memory profiler session. Tracks read/write/execute patterns.";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["responses"]["200"]["description"] = "Profiler started";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["summary"] = "Stop memory profiler";
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["responses"]["200"]["description"] = "Profiler stopped";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["summary"] = "Pause memory profiler";
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/pause"]["post"]["responses"]["200"]["description"] = "Profiler paused";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["summary"] = "Resume memory profiler";
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["responses"]["200"]["description"] = "Profiler resumed";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["summary"] = "Clear memory profiler data";
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["responses"]["200"]["description"] = "Profiler data cleared";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["summary"] = "Get memory profiler status";
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["description"] =
+        "Get current memory profiler status including session state, tracking mode, and feature enabled status.";
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["responses"]["200"]["description"] = "Memory profiler status";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["summary"] = "Get per-page access summaries";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["description"] =
+        "Get read/write/execute access counts aggregated per physical memory page.";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["description"] = "Maximum pages to return (default: all active)";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["responses"]["200"]["description"] = "Per-page access summaries";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "Get address-level access counters";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["description"] =
+        "Get detailed read/write/execute counters for each address within a page or Z80 address space.";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["name"] = "page";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["description"] = "Physical page number (0-based)";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["name"] = "mode";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["description"] = "Address mode: z80 or physical (default: physical)";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["responses"]["200"]["description"] = "Address-level access counters";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["summary"] = "Get monitored region statistics";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["description"] =
+        "Get access statistics for all monitored memory regions.";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["responses"]["200"]["description"] = "Monitored region statistics";
+
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "Save access data to file";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["tags"].append("Memory Profiler");
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["description"] =
+        "Save memory access profiling data to a file in the specified format.";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["path"]["description"] = "Output file or directory path";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["format"]["description"] = "Output format (yaml)";
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["responses"]["200"]["description"] = "Data saved successfully";
+
+
+    // Call Trace Profiler control endpoints - individual actions
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["summary"] = "Start call trace profiler";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["description"] = "Start call trace profiler session. Tracks CALL/RET/JP/JR/RST events.";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["responses"]["200"]["description"] = "Profiler started";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["summary"] = "Stop call trace profiler";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["responses"]["200"]["description"] = "Profiler stopped";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["summary"] = "Pause call trace profiler";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["responses"]["200"]["description"] = "Profiler paused";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["summary"] = "Resume call trace profiler";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["responses"]["200"]["description"] = "Profiler resumed";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["summary"] = "Clear call trace profiler data";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["responses"]["200"]["description"] = "Profiler data cleared";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["summary"] = "Get call trace profiler status";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["description"] =
+        "Get current call trace profiler status including session state, entry count, and buffer capacity.";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["responses"]["200"]["description"] = "Call trace profiler status";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["summary"] = "Get call trace entries";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["description"] =
+        "Get recent control flow trace entries (CALL, RET, JP, JR, RST events) with PC, SP, and timing.";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["name"] = "count";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["description"] = "Number of entries to return (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["responses"]["200"]["description"] = "Call trace entries";
+
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["summary"] = "Get call/return statistics";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["tags"].append("Call Trace Profiler");
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["description"] =
+        "Get aggregated statistics including call counts, return counts, max call depth, and top targets.";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["responses"]["200"]["description"] = "Call/return statistics";
+
+
+    // Opcode Profiler control endpoints - individual actions
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["summary"] = "Start opcode profiler";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["description"] = "Start opcode profiler session. Enables feature and clears previous data.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["responses"]["200"]["description"] = "Profiler started";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["summary"] = "Stop opcode profiler";
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["description"] = "Stop opcode profiler session. Data is preserved.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["responses"]["200"]["description"] = "Profiler stopped";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["summary"] = "Pause opcode profiler";
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["description"] = "Pause profiler session. Data is retained.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["responses"]["200"]["description"] = "Profiler paused";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["summary"] = "Resume opcode profiler";
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["description"] = "Resume paused profiler session.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["responses"]["200"]["description"] = "Profiler resumed";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["summary"] = "Clear opcode profiler data";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["description"] = "Clear all profiler data without changing session state.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["responses"]["200"]["description"] = "Profiler data cleared";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["summary"] = "Get opcode profiler status";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["description"] =
+        "Get current profiler status including session state, total executions, and trace buffer size.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["description"] = "Profiler status";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/ProfilerStatusResponse";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["summary"] = "Get opcode execution counters";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["description"] =
+        "Get top N opcodes by execution count, sorted by frequency.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["name"] = "limit";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["description"] = "Maximum opcodes to return (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["description"] = "Opcode counters";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/ProfilerCountersResponse";
+
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["summary"] = "Get recent execution trace";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["tags"].append("Opcode Profiler");
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["description"] =
+        "Get recent opcode execution trace with PC, prefix, opcode, and CPU state.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["name"] = "count";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["description"] = "Number of trace entries (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["description"] = "Execution trace";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/ProfilerTraceResponse";
+
+    // Unified Profiler Control endpoints - individual actions
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["summary"] = "Start all profilers";
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["tags"].append("Unified Profiler");
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["description"] = "Start all profiler sessions (opcode, memory, calltrace) simultaneously.";
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["responses"]["200"]["description"] = "All profilers started";
+
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["summary"] = "Stop all profilers";
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["tags"].append("Unified Profiler");
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/stop"]["post"]["responses"]["200"]["description"] = "All profilers stopped";
+
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["summary"] = "Pause all profilers";
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["tags"].append("Unified Profiler");
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/pause"]["post"]["responses"]["200"]["description"] = "All profilers paused";
+
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["summary"] = "Resume all profilers";
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["tags"].append("Unified Profiler");
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/resume"]["post"]["responses"]["200"]["description"] = "All profilers resumed";
+
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["summary"] = "Clear all profiler data";
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["tags"].append("Unified Profiler");
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["responses"]["200"]["description"] = "All profiler data cleared";
+
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["summary"] = "Get status of all profilers";
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["tags"].append("Unified Profiler");
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["description"] =
+        "Get current status of all profilers (opcode, memory, calltrace) including session states.";
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/profiler/status"]["get"]["responses"]["200"]["description"] = "All profiler statuses";
+
+
     spec["paths"] = paths;
 
     // Components/Schemas
@@ -1306,6 +2022,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SnapshotInfoResponse"]["properties"]["loaded"]["type"] = "boolean";
     schemas["SnapshotInfoResponse"]["properties"]["filename"]["type"] = "string";
 
+<<<<<<< HEAD
     // Batch command schemas
     schemas["BatchCommand"]["type"] = "object";
     schemas["BatchCommand"]["description"] = "A single command in a batch";
@@ -1411,6 +2128,56 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tags.append(tag11Batch);
 
     spec["tags"] = tags;
+=======
+    // Opcode Profiler schemas
+    schemas["ProfilerStatusResponse"]["type"] = "object";
+    schemas["ProfilerStatusResponse"]["description"] = "Opcode profiler status";
+    schemas["ProfilerStatusResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["ProfilerStatusResponse"]["properties"]["capturing"]["type"] = "boolean";
+    schemas["ProfilerStatusResponse"]["properties"]["total_executions"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["trace_size"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["trace_capacity"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["feature_enabled"]["type"] = "boolean";
+
+    schemas["ProfilerCountersResponse"]["type"] = "object";
+    schemas["ProfilerCountersResponse"]["description"] = "Opcode execution counters";
+    schemas["ProfilerCountersResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["ProfilerCountersResponse"]["properties"]["total_executions"]["type"] = "integer";
+    schemas["ProfilerCountersResponse"]["properties"]["limit"]["type"] = "integer";
+    schemas["ProfilerCountersResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["ProfilerCountersResponse"]["properties"]["counters"]["type"] = "array";
+    schemas["ProfilerCountersResponse"]["properties"]["counters"]["items"]["$ref"] = "#/components/schemas/OpcodeCounter";
+
+    schemas["OpcodeCounter"]["type"] = "object";
+    schemas["OpcodeCounter"]["description"] = "Single opcode counter entry";
+    schemas["OpcodeCounter"]["properties"]["prefix"]["type"] = "integer";
+    schemas["OpcodeCounter"]["properties"]["prefix"]["description"] = "Prefix code (0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB)";
+    schemas["OpcodeCounter"]["properties"]["prefix_name"]["type"] = "string";
+    schemas["OpcodeCounter"]["properties"]["opcode"]["type"] = "integer";
+    schemas["OpcodeCounter"]["properties"]["count"]["type"] = "integer";
+    
+    schemas["ProfilerTraceResponse"]["type"] = "object";
+    schemas["ProfilerTraceResponse"]["description"] = "Opcode execution trace";
+    schemas["ProfilerTraceResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["ProfilerTraceResponse"]["properties"]["trace_size"]["type"] = "integer";
+    schemas["ProfilerTraceResponse"]["properties"]["requested_count"]["type"] = "integer";
+    schemas["ProfilerTraceResponse"]["properties"]["returned_count"]["type"] = "integer";
+    schemas["ProfilerTraceResponse"]["properties"]["trace"]["type"] = "array";
+    schemas["ProfilerTraceResponse"]["properties"]["trace"]["items"]["$ref"] = "#/components/schemas/TraceEntry";
+
+    schemas["TraceEntry"]["type"] = "object";
+    schemas["TraceEntry"]["description"] = "Single trace entry";
+    schemas["TraceEntry"]["properties"]["pc"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["prefix"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["opcode"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["flags"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["a"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
+
+    spec["components"]["schemas"] = schemas;
+
+>>>>>>> github/master
 
     auto resp = HttpResponse::newHttpJsonResponse(spec);
     addCorsHeaders(resp);

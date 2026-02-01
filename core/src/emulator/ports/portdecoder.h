@@ -64,9 +64,54 @@ typedef void (PortDevice::* PortDeviceOutMethod)(uint16_t port, uint8_t value); 
 
 /// endregion </Types>
 
+/// ============================================================================
+/// PORT DECODER ARCHITECTURE
+/// ============================================================================
+///
+/// OVERVIEW:
+/// The PortDecoder class hierarchy provides model-specific port decoding for
+/// different ZX Spectrum variants. Each model has different port address decoding
+/// and may have different peripherals attached.
+///
+/// IMPORTANT: HARDWARE I/O MUST HAPPEN EXACTLY ONCE
+/// -------------------------------------------------
+/// Many hardware devices (FDC, AY chip, etc.) have stateful registers where
+/// reading clears flags or advances internal state. Double-reading causes data loss.
+///
+/// CORRECT PATTERN (for subclasses):
+/// ```cpp
+/// uint8_t PortDecoder_ModelX::DecodePortIn(uint16_t port, uint16_t pc)
+/// {
+///     uint8_t result = 0xFF;
+///     uint16_t decodedPort = decodePort(port);  // Model-specific decoding
+///
+///     // 1. Perform hardware I/O (ONCE)
+///     result = PeripheralPortIn(decodedPort);
+///
+///     // 2. Call common handler for breakpoints, tracking, analyzers
+///     OnPortInComplete(decodedPort, result, pc);
+///
+///     return result;
+/// }
+/// ```
+///
+/// ANTI-PATTERN (DO NOT DO THIS):
+/// ```cpp
+/// uint8_t PortDecoder_ModelX::DecodePortIn(uint16_t port, uint16_t pc)
+/// {
+///     PortDecoder::DecodePortIn(port, pc);  // <-- WRONG! May cause double read
+///     result = PeripheralPortIn(decodedPort);
+///     return result;
+/// }
+/// ```
+///
+/// See: docs/emulator/design/ports/port-decoder-architecture.md
+/// ============================================================================
+
 /// Base class for all model port decoders
 class PortDecoder
 {
+
     /// region <ModuleLogger definitions for Module/Submodule>
 public:
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_IO;
@@ -119,8 +164,23 @@ public:
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
 
 protected:
+    /// Called by subclasses AFTER hardware I/O completes.
+    /// Handles: breakpoints, port access tracking, analyzer notifications.
+    /// @param port The decoded port address that was accessed
+    /// @param result The value read from the port
+    /// @param pc Program counter of the IN instruction
+    void OnPortInComplete(uint16_t port, uint8_t result, uint16_t pc);
+    
+    /// Called by subclasses AFTER hardware I/O completes.
+    /// Handles: breakpoints, port access tracking, analyzer notifications.
+    /// @param port The decoded port address that was accessed
+    /// @param value The value written to the port
+    /// @param pc Program counter of the OUT instruction
+    void OnPortOutComplete(uint16_t port, uint8_t value, uint16_t pc);
+
     virtual std::string GetPCAddressLocator(uint16_t pc);
     /// endregion </Interface methods>
+
 
     /// region <Interaction with peripherals>
 public:

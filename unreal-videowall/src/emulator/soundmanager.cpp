@@ -22,6 +22,9 @@ AppSoundManager::~AppSoundManager()
 
 bool AppSoundManager::init()
 {
+    if (_isInitialized)
+        return true;
+
     bool result = true;
 
     // Set audio output parameters
@@ -37,19 +40,30 @@ bool AppSoundManager::init()
     {
         result = false;  // Failed to initialize the device.
     }
+    else
+    {
+        _isInitialized = true;
+    }
 
     return result;
 }
 
 void AppSoundManager::deinit()
 {
+    if (!_isInitialized)
+        return;
+
     this->stop();
 
     ma_device_uninit(&_audioDevice);
+    _isInitialized = false;
 }
 
 void AppSoundManager::start()
 {
+    if (!_isInitialized || _isStarted)
+        return;
+
     ma_result result = ma_device_start(&_audioDevice);     // The device is sleeping by default, so you'll need to start it manually.
 
     if (result != MA_SUCCESS)
@@ -58,6 +72,7 @@ void AppSoundManager::start()
     }
     else
     {
+        _isStarted = true;
         qDebug() << "AppSoundManager::start() - Audio device started successfully";
     }
 
@@ -78,7 +93,11 @@ void AppSoundManager::start()
 
 void AppSoundManager::stop()
 {
+    if (!_isStarted)
+        return;
+
     ma_device_stop(&_audioDevice);
+    _isStarted = false;
 
     // Wipe ring buffer to prevent crackles during next emulation session
     _ringBuffer.clear();

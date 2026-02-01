@@ -75,6 +75,12 @@ void MemoryPagesWidget::reset()
 
 void MemoryPagesWidget::refresh()
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     QThread* currentThread = QThread::currentThread();
 
     // Ensure GUI update is in main thread
@@ -128,3 +134,9 @@ void MemoryPagesWidget::page3_doubleClicked()
 }
 
 /// endregion </Event handlers / Slots>
+
+void MemoryPagesWidget::prepareForShutdown()
+{
+    qDebug() << "MemoryPagesWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
+}

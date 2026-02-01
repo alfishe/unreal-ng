@@ -64,12 +64,18 @@ public:
     /// Check if this is a nil (all zeros) UUID
     bool isNil() const
     {
+        bool result = false;
+
         for (uint8_t b : bytes)
         {
             if (b != 0)
-                return false;
+            {
+                result = true;
+                break;
+            }
         }
-        return true;
+
+        return result;
     }
 
     /// Clear the UUID (set to all zeros)

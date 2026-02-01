@@ -34,6 +34,12 @@ protected:
 	uint8_t _ROMBanksLoaded = 0;
 
 	ROMSMap _signatures;
+	
+	// Cached ROM titles by semantic type (populated by CalculateSignatures)
+	std::string _sosRomTitle;    // 48K BASIC ROM
+	std::string _128RomTitle;    // 128K editor/menu ROM
+	std::string _dosRomTitle;    // TR-DOS ROM
+	std::string _sysRomTitle;    // System/shadow ROM
 
 	///endregion </Fields>
 
@@ -55,5 +61,6 @@ public:
 	void CalculateSignatures();
 	std::string CalculateSignature(uint8_t* buffer, size_t length);
 	std::string GetROMTitle(std::string& signature);
+	std::string GetROMTitleByAddress(uint8_t* physicalAddress);  // Get cached title for ROM at physical address
 };
 

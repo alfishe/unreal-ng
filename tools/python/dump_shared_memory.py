@@ -35,7 +35,7 @@ try:
     from emulator_discovery import (
         discover_emulators, select_emulator, connect_to_shared_memory,
         add_emulator_args, discover_and_select, cleanup_shared_memory,
-        EmulatorInfo
+        get_webapi_url, EmulatorInfo
     )
     USE_WEBAPI_DISCOVERY = True
 except ImportError:
@@ -48,6 +48,14 @@ except ImportError:
         import pywintypes
     else:
         import posix_ipc
+
+# Import requests for WebAPI interaction
+if USE_WEBAPI_DISCOVERY:
+    try:
+        import requests
+    except ImportError:
+        print("Warning: 'requests' module not found. Automatic feature management disabled.")
+        USE_WEBAPI_DISCOVERY = False
 
 # Import PIL for image processing
 try:
@@ -750,6 +758,70 @@ def dump_shared_memory(output_dir: str, shm: mmap.mmap, skip_empty: bool = True,
         return False
 
 
+def check_feature_state(emulator, feature_name: str, host: str = "localhost", port: int = 8090) -> Optional[bool]:
+    """
+    Check the state of a feature.
+    
+    Args:
+        emulator: EmulatorInfo object
+        feature_name: Name of the feature to check
+        host: WebAPI host
+        port: WebAPI port
+        
+    Returns:
+        bool: True if enabled, False if disabled, None if check failed
+    """
+    try:
+        url = f"{get_webapi_url(host, port)}/api/v1/emulator/{emulator.id}/feature/{feature_name}"
+        response = requests.get(url, timeout=5)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("enabled", False)
+        elif response.status_code == 404:
+            print(f"Feature '{feature_name}' not found.")
+            return None
+        else:
+            print(f"Error checking feature '{feature_name}': {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"Error checking feature state: {e}")
+        return None
+
+
+def set_feature_state(emulator, feature_name: str, enabled: bool, host: str = "localhost", port: int = 8090) -> bool:
+    """
+    Set the state of a feature.
+    
+    Args:
+        emulator: EmulatorInfo object
+        feature_name: Name of the feature to set
+        enabled: Desired state (True for on, False for off)
+        host: WebAPI host
+        port: WebAPI port
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        url = f"{get_webapi_url(host, port)}/api/v1/emulator/{emulator.id}/feature/{feature_name}"
+        data = {"enabled": enabled}
+        response = requests.put(url, json=data, timeout=5)
+        
+        if response.status_code == 200:
+            return True
+        else:
+            print(f"Failed to set feature '{feature_name}': {response.status_code}")
+            if response.text:
+                print(f"  Response: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"Error setting feature state: {e}")
+        return False
+
+
 def main() -> int:
     """Main function."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -783,8 +855,10 @@ Examples:
     
     args = parser.parse_args()
     
-    # Initialize shm to None for the finally block
+    # Initialize variables for the finally block
     shm = None
+    was_shared_memory_enabled = None
+    emulator = None
     
     try:
         if USE_WEBAPI_DISCOVERY:
@@ -796,14 +870,65 @@ Examples:
             if args.verbose:
                 print(f"Selected emulator: {emulator.display_name}")
             
+            # Check sharedmemory feature state
+            if 'requests' in sys.modules:
+                was_shared_memory_enabled = check_feature_state(emulator, "sharedmemory", args.host, args.port)
+                
+                if was_shared_memory_enabled is False:
+                    print("Enabling 'sharedmemory' feature...")
+                    if set_feature_state(emulator, "sharedmemory", True, args.host, args.port):
+                        if args.verbose:
+                            print("  Feature enabled successfully")
+                    else:
+                        print("  Failed to enable feature. Connection may fail.")
+                elif was_shared_memory_enabled is True:
+                     if args.verbose:
+                        print("'sharedmemory' feature is already enabled")
+            
             # Connect to shared memory using instance ID
             shm = connect_to_shared_memory(emulator)
             if not shm:
-                print("\nTip: Make sure the 'sharedmemory' feature is enabled:")
+                print("\nError: Could not connect to shared memory.")
+                print("If automatic feature enabling failed, try enabling it manually:")
                 print("     feature sharedmemory on")
                 return 1
         else:
             # Legacy: Find emulator by PID
+            # Note: find_emulator_process is not defined in this script or imported.
+            # It seems the original script assumed it was available or I missed it.
+            # Checking the original file, it was NOT defined there either, but maybe it was expected to be imported?
+            # Actually, looking at the original file provided in context:
+            # The original file had: 
+            #     # Legacy: Find emulator by PID
+            #     pid = find_emulator_process()
+            # But `find_emulator_process` was NOT defined in the provided content!
+            # The imports were:
+            #     try: ... USE_WEBAPI_DISCOVERY = True ... except: ... USE_WEBAPI_DISCOVERY = False ...
+            #     if IS_WINDOWS: ... else: import posix_ipc
+            #
+            # It seems the legacy part was broken or depended on missing code in the snippet.
+            # However, I should preserve what was there or fix it if I can.
+            # Since I am focusing on the WebAPI part, I will leave the legacy part structure 
+            # but I suspect `find_emulator_process` is missing.
+            # I will assume `find_emulator_process` was intended to be there or I should not touch that part too much
+            # BUT, I am replacing the whole main function, so I need to provide valid code.
+            # I will try to keep it as it was, but if `find_emulator_process` is missing, it will crash at runtime if taken.
+            # Let's check if I can import `psutil` and implement a simple `find_emulator_process` or just leave it.
+            # The prompt provided the file content, and `find_emulator_process` was indeed called but not defined.
+            # I will check if `emulator_discovery` has it? No.
+            # I will just leave it as `pid = find_emulator_process()` assuming it might be defined in a part of the file I didn't see?
+            # No, I read the whole file. It was missing.
+            # I will fix this by adding a simple implementation or just placeholder if I can't.
+            # Actually, I'll just check if it's defined in the global scope (maybe I missed an import or it was defined earlier).
+            # I will assume it is missing and just comment it out or add a TODO.
+            # But wait, if I replace the code, I must provide working code.
+            # Given the instruction is about WebAPI, I will assume the user uses WebAPI.
+            # For legacy, I'll add a check.
+            
+            if 'find_emulator_process' not in globals():
+                 print("Error: Legacy discovery not supported (function missing).")
+                 return 1
+
             pid = find_emulator_process()
             if not pid:
                 print("Error: Could not find the emulator process.")
@@ -840,6 +965,12 @@ Examples:
     finally:
         # Ensure shared memory is properly closed
         cleanup_shared_memory(shm, verbose=args.verbose if hasattr(args, 'verbose') else False)
+        
+        # Restore sharedmemory feature state if we changed it
+        if was_shared_memory_enabled is False and emulator and USE_WEBAPI_DISCOVERY:
+             if 'requests' in sys.modules:
+                print("Restoring 'sharedmemory' feature state (disabling)...")
+                set_feature_state(emulator, "sharedmemory", False, args.host, args.port)
 
 if __name__ == "__main__":
     sys.exit(main())

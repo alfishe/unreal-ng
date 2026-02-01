@@ -215,6 +215,75 @@ class UnrealApiClient:
         resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/snapshot/info"))
         return self._handle_response(resp)
 
+    # --- BASIC Control ---
+    def basic_run(self, emulator_id, command=None):
+        """POST /api/v1/emulator/{id}/basic/run - Execute BASIC command
+        
+        Args:
+            emulator_id: Emulator instance ID
+            command: Optional BASIC command to execute (e.g., 'FORMAT "a"', 'RUN', 'LIST')
+                     If not specified, executes 'RUN'
+        
+        Returns:
+            Response with success status, message, and BASIC mode info
+        """
+        data = {}
+        if command is not None:
+            data["command"] = command
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/basic/run"), json=data if data else None)
+        return self._handle_response(resp)
+
+    def basic_inject(self, emulator_id, program):
+        """POST /api/v1/emulator/{id}/basic/inject - Inject BASIC program
+        
+        Args:
+            emulator_id: Emulator instance ID
+            program: BASIC program text with line numbers separated by newlines
+                     (e.g., '10 PRINT "HELLO"\\n20 GOTO 10')
+        
+        Returns:
+            Response with success status
+        """
+        data = {"program": program}
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/basic/inject"), json=data)
+        return self._handle_response(resp)
+
+    def basic_extract(self, emulator_id):
+        """GET /api/v1/emulator/{id}/basic/extract - Extract BASIC program from memory
+        
+        Args:
+            emulator_id: Emulator instance ID
+        
+        Returns:
+            Response containing the BASIC program as text
+        """
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/basic/extract"))
+        return self._handle_response(resp)
+
+    def basic_clear(self, emulator_id):
+        """POST /api/v1/emulator/{id}/basic/clear - Clear BASIC program (equivalent to NEW)
+        
+        Args:
+            emulator_id: Emulator instance ID
+        
+        Returns:
+            Response with success status
+        """
+        resp = self.session.post(self._url(f"/api/v1/emulator/{emulator_id}/basic/clear"))
+        return self._handle_response(resp)
+
+    def basic_state(self, emulator_id):
+        """GET /api/v1/emulator/{id}/basic/state - Get BASIC environment state
+        
+        Args:
+            emulator_id: Emulator instance ID
+        
+        Returns:
+            Response containing state info (48K/128K mode, in_editor, ready_for_commands)
+        """
+        resp = self.session.get(self._url(f"/api/v1/emulator/{emulator_id}/basic/state"))
+        return self._handle_response(resp)
+
     # --- Settings Management ---
     def get_settings(self, emulator_id):
         """GET /api/v1/emulator/{id}/settings"""

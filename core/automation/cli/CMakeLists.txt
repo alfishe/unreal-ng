@@ -13,12 +13,16 @@ set(SOURCES
     src/commands/cli-processor-breakpoint.cpp
     src/commands/cli-processor-memory.cpp
     src/commands/cli-processor-analyzer.cpp
+    src/commands/cli-processor-analyzer-mgr.cpp
     src/commands/cli-processor-settings.cpp
     src/commands/cli-processor-tape.cpp
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-batch.cpp
+    src/commands/cli-processor-capture.cpp
+    src/commands/cli-processor-profiler.cpp
+    src/commands/cli-processor-keyboard.cpp
 )
 
 # Create the library

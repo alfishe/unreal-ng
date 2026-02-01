@@ -194,14 +194,12 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
     if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
-        Z80& z80 = *_context->pCore->GetZ80();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
 
         uint16_t breakpointID = brk.HandleMemoryRead(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered
@@ -209,15 +207,8 @@ uint8_t Memory::MemoryReadDebug(uint16_t addr, [[maybe_unused]] bool isExecution
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-            if (z80.IsPaused())
-            {
-                while (z80.IsPaused())
-                {
-                    sleep_ms(20);
-                }
-            }
+            // Wait until emulator resumed externally
+            emulator.WaitWhilePaused();
         }
     }
     /// endregion </Read breakpoint logic>
@@ -273,13 +264,11 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
     if (_feature_breakpoints_enabled && _context->pDebugManager != nullptr)
     {
         Emulator& emulator = *_context->pEmulator;
-        Z80& z80 = *_context->pCore->GetZ80();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         uint16_t breakpointID = brk.HandleMemoryWrite(addr);
         if (breakpointID != BRK_INVALID)
         {
-            // Request to pause emulator
-            // Important note: Emulator.Pause() is needed, not CPU.Pause() or Z80.Pause() for successful resume later
+            // Pause emulator (single source of truth)
             emulator.Pause();
 
             // Broadcast notification - breakpoint triggered
@@ -287,9 +276,8 @@ void Memory::MemoryWriteDebug(uint16_t addr, uint8_t value)
             SimpleNumberPayload* payload = new SimpleNumberPayload(breakpointID);
             messageCenter.Post(NC_EXECUTION_BREAKPOINT, payload);
 
-            // Wait until emulator resumed externally (by debugger or scripting engine)
-            // Pause emulation until upper-level controller (emulator / scripting) resumes execution
-            z80.WaitUntilResumed();
+            // Wait until emulator resumed externally
+            emulator.WaitWhilePaused();
         }
     }
     /// endregion </Write breakpoint logic>
@@ -1135,42 +1123,70 @@ MemoryPageDescriptor Memory::MapZ80AddressToPhysicalPage(uint16_t address)
 
 void Memory::SetROM48k(bool updatePorts)
 {
-    (void)updatePorts;
-
-    // Switch to 48k ROM page
+    // Switch to 48k (SOS) ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_sos_rom));
+    }
 }
 
 void Memory::SetROM128k(bool updatePorts)
 {
-    (void)updatePorts;
-
     // Switch to 128k ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_128_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_128_rom));
+    }
 }
 
 void Memory::SetROMDOS(bool updatePorts)
 {
-    (void)updatePorts;
-
     // Switch to DOS ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_dos_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested (like regular Z80 OUT to port 1FFD)
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_dos_rom));
+    }
 }
 
 void Memory::SetROMSystem(bool updatePorts)
 {
-    (void)updatePorts;
-
-    // Switch to DOS ROM page
+    // Switch to System ROM page
+    _bank_mode[0] = BANK_ROM;
     _bank_read[0] = base_sys_rom;
     _bank_write[0] = _memory + TRASH_MEMORY_OFFSET;
-    ;
+    
+    // Update ROM page identification flags
+    SetROMPageFlags();
+    
+    // Update port decoder state if requested
+    if (updatePorts && _context->pPortDecoder)
+    {
+        _context->pPortDecoder->SetROMPage(GetROMPageFromAddress(base_sys_rom));
+    }
 }
 
 /// endregion </Debug methods>

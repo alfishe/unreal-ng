@@ -119,8 +119,27 @@ void EmulatorBinding::onMessageCenterEvent(int id, Message* message)
 {
     Q_UNUSED(id);
 
-    if (!message || !message->obj)
+    if (!message)
     {
+        return;
+    }
+
+    // Handle NC_EXECUTION_CPU_STEP (has no payload object)
+    // This is triggered by all automation modules: WebAPI, Python, Lua, CLI
+    // When the payload is null, this is a step event
+    if (!message->obj)
+    {
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+                // Only emit if we have a bound emulator that's paused
+                if (m_emulator && m_emulator->IsPaused())
+                {
+                    cacheEmulatorState();
+                    emit cpuStepComplete();
+                }
+            },
+            Qt::QueuedConnection);
         return;
     }
 
@@ -266,6 +285,10 @@ void EmulatorBinding::subscribeToMessageCenter()
     ObserverCallbackMethod frameCallback = static_cast<ObserverCallbackMethod>(&EmulatorBinding::onMessageCenterEvent);
     messageCenter.AddObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, frameCallback);
 
+    // Subscribe to CPU step events for automation-triggered steps (WebAPI, Python, Lua, CLI)
+    ObserverCallbackMethod stepCallback = static_cast<ObserverCallbackMethod>(&EmulatorBinding::onMessageCenterEvent);
+    messageCenter.AddObserver(NC_EXECUTION_CPU_STEP, observerInstance, stepCallback);
+
     m_isSubscribed = true;
 
     qDebug() << "EmulatorBinding: Subscribed to MessageCenter events";
@@ -286,6 +309,10 @@ void EmulatorBinding::unsubscribeFromMessageCenter()
 
     ObserverCallbackMethod frameCallback = static_cast<ObserverCallbackMethod>(&EmulatorBinding::onMessageCenterEvent);
     messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, observerInstance, frameCallback);
+
+    // Unsubscribe from CPU step events
+    ObserverCallbackMethod stepCallback = static_cast<ObserverCallbackMethod>(&EmulatorBinding::onMessageCenterEvent);
+    messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, observerInstance, stepCallback);
 
     m_isSubscribed = false;
 

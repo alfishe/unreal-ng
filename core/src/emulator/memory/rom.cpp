@@ -488,25 +488,29 @@ void ROM::CalculateSignatures()
 	if (memory.base_sos_rom)
     {
         std::string signature = CalculateSignature(memory.base_sos_rom, 0x4000);
-        MLOGINFO("  base_sos_rom: %s", GetROMTitle(signature).c_str());
+        _sosRomTitle = GetROMTitle(signature);
+        MLOGINFO("  base_sos_rom: %s", _sosRomTitle.c_str());
     }
 
     if (memory.base_128_rom)
     {
         std::string signature = CalculateSignature(memory.base_128_rom, 0x4000);
-        MLOGINFO("  base_128_rom: %s", GetROMTitle(signature).c_str());
+        _128RomTitle = GetROMTitle(signature);
+        MLOGINFO("  base_128_rom: %s", _128RomTitle.c_str());
     }
 
     if (memory.base_dos_rom)
     {
         std::string signature = CalculateSignature(memory.base_dos_rom, 0x4000);
-        MLOGINFO("  base_dos_rom: %s", GetROMTitle(signature).c_str());
+        _dosRomTitle = GetROMTitle(signature);
+        MLOGINFO("  base_dos_rom: %s", _dosRomTitle.c_str());
     }
 
     if (memory.base_sys_rom)
     {
         std::string signature = CalculateSignature(memory.base_sys_rom, 0x4000);
-        MLOGINFO("  base_sys_rom: %s", GetROMTitle(signature).c_str());
+        _sysRomTitle = GetROMTitle(signature);
+        MLOGINFO("  base_sys_rom: %s", _sysRomTitle.c_str());
     }
 }
 
@@ -545,4 +549,33 @@ std::string ROM::GetROMTitle(std::string& signature)
     }
 
     return result;
+}
+
+std::string ROM::GetROMTitleByAddress(uint8_t* physicalAddress)
+{
+    if (!physicalAddress || !_context || !_context->pMemory)
+        return "";
+
+    Memory& memory = *_context->pMemory;
+
+    // Check which semantic ROM bank this address belongs to
+    // Each ROM page is 16KB (0x4000 bytes)
+    if (memory.base_sos_rom && physicalAddress >= memory.base_sos_rom && physicalAddress < memory.base_sos_rom + 0x4000)
+    {
+        return _sosRomTitle;
+    }
+    if (memory.base_128_rom && physicalAddress >= memory.base_128_rom && physicalAddress < memory.base_128_rom + 0x4000)
+    {
+        return _128RomTitle;
+    }
+    if (memory.base_dos_rom && physicalAddress >= memory.base_dos_rom && physicalAddress < memory.base_dos_rom + 0x4000)
+    {
+        return _dosRomTitle;
+    }
+    if (memory.base_sys_rom && physicalAddress >= memory.base_sys_rom && physicalAddress < memory.base_sys_rom + 0x4000)
+    {
+        return _sysRomTitle;
+    }
+
+    return "";  // Unknown ROM page
 }

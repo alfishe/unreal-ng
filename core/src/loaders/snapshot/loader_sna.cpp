@@ -501,6 +501,10 @@ bool LoaderSNA::applySnapshotFromStaging()
             // Step 5: Activate TR-DOS ROM if needed
             if (_ext128Header.is_TRDOS)
             {
+                // Set CF_TRDOS flag to indicate TR-DOS is active
+                _context->emulatorState.flags |= CF_TRDOS;
+                
+                // Activate TR-DOS ROM
                 _context->pMemory->SetROMDOS();
             }
         }
