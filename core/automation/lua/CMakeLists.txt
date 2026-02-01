@@ -37,7 +37,8 @@ set(SOL2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/sol2/sol2-3.5.0/single/inc
 #------------------------------------------------------------------------------
 set(AUTOMATION_LUA_SOURCES
     src/automation-lua.cpp
-    src/automation-main.cpp
+    # NOTE: automation-main.cpp is excluded because it contains a main() function
+    # which conflicts when linking with other executables like unreal-qt
 )
 
 set(AUTOMATION_LUA_HEADERS
@@ -85,6 +86,12 @@ else()
     else ()
         target_link_libraries(${PROJECT_NAME} PUBLIC lua::shared)
     endif ()
+endif()
+
+# MinGW: sol2's heavy template usage can exceed the COFF section limit (65535 sections).
+# The -Wa,-mbig-obj flag allows the assembler to create larger object files.
+if (MINGW)
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wa,-mbig-obj)
 endif()
 
 # Add include directories (same for both static and shared)

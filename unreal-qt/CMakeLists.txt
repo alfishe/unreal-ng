@@ -90,9 +90,9 @@ if (QT_INSTALL_PATH STREQUAL "")
             )
         elseif (WIN32)  # Windows
             set(QT_POSSIBLE_PATHS
-                "C:/Qt/6.9.3/msvc2019_64"
-                "C:/Qt/6.5.3/msvc2019_64"
-                "C:/Qt/6.5.0/msvc2019_64"
+                "C:/Qt/6.9.3/mingw_64"
+                "C:/Qt/6.5.3/mingw_64"
+                "C:/Qt/6.5.0/mingw_64"
                 "$ENV{QTDIR}"
             )
         endif ()

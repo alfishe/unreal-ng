@@ -130,13 +130,16 @@ else ()
     )
 
     # Link all automation libraries conditionally (based on their settings)
+    # NOTE: Automation sublibraries are linked PUBLIC, not PRIVATE, because they contain
+    # template instantiations (e.g., sol2 bindings in automation_lua) that need to be
+    # visible to the final executable. With PRIVATE linkage, the linker may not pull in
+    # these symbols when linking static libraries transitively.
     target_link_libraries(${PROJECT_NAME}
-        PRIVATE
+        PUBLIC
             $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${AUTOMATION_CLI_TARGET}>
             $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${AUTOMATION_LUA_TARGET}>
             $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${AUTOMATION_PYTHON_TARGET}>
             $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${AUTOMATION_WEBAPI_TARGET}>
-        PUBLIC
             unrealng::core
     )
 endif ()

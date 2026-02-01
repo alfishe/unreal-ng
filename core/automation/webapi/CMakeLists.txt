@@ -50,11 +50,10 @@ if (BUILD_ZLIB)
     set(zlib_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib" CACHE PATH "zlib source directory" FORCE)
     set(zlib_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib CACHE PATH "zlib binary directory" FORCE)
 
-    # Add zlib as a subproject
+    # Add zlib as a subproject (must be included in build to generate libz.a)
     add_subdirectory(
         ${zlib_SOURCE_DIR}
         ${zlib_BINARY_DIR}
-        EXCLUDE_FROM_ALL
     )
 
     # Set the actual library target name
@@ -86,13 +85,25 @@ if (BUILD_ZLIB)
         ${CMAKE_CURRENT_BINARY_DIR}/zlib
         CACHE INTERNAL "ZLIB include directory (bundled)" FORCE
     )
-    set(ZLIB_LIBRARY ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
+    # Use target name instead of file path - CMake will resolve the actual file at link time
+    set(ZLIB_LIBRARY ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
 
     # Set output name to just 'z' for compatibility
     set_target_properties(${ZLIB_TARGET_NAME} PROPERTIES
         OUTPUT_NAME z
         POSITION_INDEPENDENT_CODE ON
     )
+    
+    # Create ZLIB::ZLIB IMPORTED target that Drogon expects from find_package(ZLIB)
+    # Using INTERFACE IMPORTED that links to zlibstatic creates proper build dependency
+    # while also being compatible with Drogon's export (INTERFACE targets don't need to be exported)
+    if(NOT TARGET ZLIB::ZLIB)
+        add_library(ZLIB::ZLIB INTERFACE IMPORTED GLOBAL)
+        set_target_properties(ZLIB::ZLIB PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${ZLIB_TARGET_NAME}"
+            INTERFACE_INCLUDE_DIRECTORIES "${zlib_SOURCE_DIR};${CMAKE_CURRENT_BINARY_DIR}/zlib"
+        )
+    endif()
     
     # Export the target for other subdirectories
     set(ZLIB_TARGET ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB target" FORCE)

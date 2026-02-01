@@ -17,7 +17,7 @@ option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-view
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
 option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
-option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
+option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
@@ -39,6 +39,32 @@ endif (MSVC)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# ========================================
+# MinGW Static Linking (Windows only)
+# ========================================
+# This option statically links the MinGW runtime libraries (libgcc, libstdc++, libwinpthread)
+# and OpenSSL into the executables, eliminating the need to distribute these DLLs.
+option(MINGW_STATIC_LINKING "Statically link MinGW runtime and OpenSSL (Windows MinGW only)" OFF)
+
+if (MINGW AND MINGW_STATIC_LINKING)
+    message(STATUS "MinGW static linking: ENABLED")
+    
+    # Static link MinGW runtime libraries
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static-libgcc -static-libstdc++")
+    
+    # Static link libwinpthread
+    # Note: -static links ALL libraries statically, which may cause issues with Qt
+    # Instead, we link pthread statically via its specific flag
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-Bstatic -lpthread -Wl,-Bdynamic")
+    
+    # For OpenSSL static linking, prefer static libraries
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    
+    message(STATUS "  - MinGW runtime: static")
+    message(STATUS "  - OpenSSL: prefer static")
+endif()
 
 # Include CMake helper functions
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/func.cmake)
@@ -66,9 +92,9 @@ if (BUILD_QT_APPS)
             )
         elseif (WIN32)
             set(QT_POSSIBLE_PATHS
-                "C:/Qt/6.9.3/msvc2019_64"
-                "C:/Qt/6.5.3/msvc2019_64"
-                "C:/Qt/6.5.0/msvc2019_64"
+                "C:/Qt/6.9.3/mingw_64"
+                "C:/Qt/6.5.3/mingw_64"
+                "C:/Qt/6.5.0/mingw_64"
                 "$ENV{QTDIR}"
             )
         endif ()
