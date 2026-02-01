@@ -259,6 +259,20 @@ MainWindow::~MainWindow()
     if (_guiContext)
         delete _guiContext;
 
+    // Clean up menu manager (must be before dockingManager)
+    if (_menuManager)
+    {
+        delete _menuManager;
+        _menuManager = nullptr;
+    }
+
+    // Clean up binding (must be before ui)
+    if (m_binding)
+    {
+        delete m_binding;
+        m_binding = nullptr;
+    }
+
     if (_dockingManager)
         delete _dockingManager;
 
@@ -1193,7 +1207,8 @@ void MainWindow::handleFullScreenShortcutLinux()
         _preFullScreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
         _normalGeometry = geometry();  // Client geometry - matches what setGeometry() expects
 
-        qDebug() << "Saved state - maximized:" << (_preFullScreenState & Qt::WindowMaximized) << "geometry:" << _normalGeometry;
+        qDebug() << "Saved state - maximized:" << (_preFullScreenState & Qt::WindowMaximized)
+                 << "geometry:" << _normalGeometry;
 
         // Lock docking and enter fullscreen
         if (_dockingManager)
