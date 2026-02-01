@@ -126,6 +126,7 @@ private:
 
     // Saved state for restoration when exiting auto-preset modes
     QRect _savedGeometry;
+    Qt::WindowFlags _savedWindowFlags;
     std::vector<std::string> _savedEmulatorIds;
 
     // Async batch creation state

@@ -21,8 +21,8 @@ public:
     /// Add a tile to the grid
     void addTile(EmulatorTile* tile);
 
-    /// Remove a tile from the grid
-    void removeTile(EmulatorTile* tile);
+    /// Remove a tile from the grid (set skipLayout=true for batch operations)
+    void removeTile(EmulatorTile* tile, bool skipLayout = false);
 
     /// Clear all tiles
     void clearAllTiles();
@@ -49,4 +49,7 @@ private:
     // Explicit grid dimensions (if set, overrides automatic calculation)
     int _explicitCols = -1;
     int _explicitRows = -1;
+
+    // Re-entry guard for updateLayout
+    bool _inUpdateLayout = false;
 };

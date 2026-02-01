@@ -10,6 +10,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QMenuBar>
 #include <QScreen>
@@ -18,6 +19,10 @@
 #include <future>
 #include <unordered_set>
 #include <vector>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 #include "emulator/soundmanager.h"
 #include "videowall/EmulatorTile.h"
@@ -330,12 +335,13 @@ void VideoWallWindow::toggleFramelessMode()
 void VideoWallWindow::toggleFullscreenMode()
 {
     // Platform-specific fullscreen handling (from unreal-qt)
-#ifdef Q_OS_WIN
-    toggleFullscreenWindows();
-#elif defined(Q_OS_MAC)
+#ifdef Q_OS_MAC
     toggleFullscreenMacOS();
 #elif defined(Q_OS_LINUX)
     toggleFullscreenLinux();
+#else
+    // Windows and any other platform - use Windows implementation
+    toggleFullscreenWindows();
 #endif
 }
 
@@ -414,35 +420,88 @@ void VideoWallWindow::toggleFullscreenMacOS()
 
 void VideoWallWindow::toggleFullscreenWindows()
 {
-    if (windowState() & Qt::WindowFullScreen)
+    qDebug() << ">>> toggleFullscreenWindows() CALLED <<<";
+
+    // Debounce: prevent rapid toggling (must wait at least 500ms between toggles)
+    static QElapsedTimer lastToggle;
+    static bool timerInitialized = false;
+    if (!timerInitialized)
     {
-        // Exiting fullscreen
+        lastToggle.start();
+        timerInitialized = true;
+    }
+    else if (lastToggle.elapsed() < 500)
+    {
+        qDebug() << "toggleFullscreenWindows: Debouncing (too fast)";
+        return;
+    }
+    lastToggle.restart();
+
+#ifdef Q_OS_WIN
+    // Use Windows native API for reliable fullscreen toggle
+    HWND hwnd = reinterpret_cast<HWND>(winId());
+    static LONG_PTR savedStyle = 0;
+    static LONG_PTR savedExStyle = 0;
+    static RECT savedRect = {0, 0, 0, 0};
+
+    if (_isFullscreen)
+    {
+        // === EXITING FULLSCREEN ===
+        qDebug() << "Exiting fullscreen via Windows API";
+        qDebug() << "Restoring to saved geometry:" << _savedGeometry;
+
         _windowMode = WindowMode::Windowed;
         _isFullscreen = false;
 
-        // Note: Sound stays disabled - user explicitly disabled it for performance
+        // Restore the saved window styles (includes WS_CAPTION, WS_THICKFRAME, etc.)
+        SetWindowLongPtr(hwnd, GWL_STYLE, savedStyle);
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, savedExStyle);
 
-        // Restore window flags (remove frameless)
-        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        // ONLY refresh the frame - DO NOT set size/position here (let Qt handle it)
+        SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
-        // Show normal first
-        showNormal();
+        // CRITICAL: Remove minimum/maximum size constraints BEFORE setting geometry!
+        // The tiles in fullscreen mode set minimumSize which prevents shrinking the window.
+        setMinimumSize(0, 0);
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        
+        // Also clear constraints on the central widget / tile grid
+        if (_tileGrid)
+        {
+            _tileGrid->setMinimumSize(0, 0);
+            _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        }
 
-        // Restore geometry
+        // NOW we can set the actual geometry
         if (_savedGeometry.isValid())
         {
             setGeometry(_savedGeometry);
+            qDebug() << "Qt geometry set to:" << geometry();
         }
 
-        // Restore emulators after window state change
-        QTimer::singleShot(100, this, [this]() {
-            restoreSavedEmulators();
-            qDebug() << "Fullscreen → windowed (restored" << _savedEmulatorIds.size() << "tiles)";
+        // Show menu bar
+        if (menuBar())
+        {
+            menuBar()->show();
+        }
+
+        qDebug() << "Window frame restored, final geometry:" << geometry();
+
+        // Resize grid using the SAVED geometry size
+        QTimer::singleShot(200, this, [this]() {
+            resizeGridIntelligently(_savedGeometry.size());
+            qDebug() << "Fullscreen -> windowed transition complete";
         });
     }
     else
     {
-        // Entering fullscreen
+        // === ENTERING FULLSCREEN ===
+        // Save current window state BEFORE modifying anything
+        savedStyle = GetWindowLongPtr(hwnd, GWL_STYLE);
+        savedExStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+        GetWindowRect(hwnd, &savedRect);
+
         _savedGeometry = geometry();
         _savedEmulatorIds.clear();
         for (const auto* tile : _tileGrid->tiles())
@@ -450,24 +509,63 @@ void VideoWallWindow::toggleFullscreenWindows()
             _savedEmulatorIds.push_back(tile->emulator()->GetUUID());
         }
 
+        qDebug() << "Entering fullscreen from geometry:" << _savedGeometry
+                 << "with" << _savedEmulatorIds.size() << "tiles saved";
+        qDebug() << "Saved Windows style:" << Qt::hex << savedStyle;
+
         _windowMode = WindowMode::Fullscreen;
         _isFullscreen = true;
 
-        // Note: Sound already disabled at emulator creation in addEmulatorTile()
+        // Hide menu bar before going fullscreen
+        if (menuBar())
+        {
+            menuBar()->hide();
+        }
 
-        // Add frameless hint for Windows fullscreen
-        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
-        setWindowState(Qt::WindowNoState);
-
+        // Get the screen dimensions
         QScreen* screen = window()->screen();
-        showFullScreen();
+        QRect screenGeometry = screen->geometry();
 
-        // Calculate layout after fullscreen transition
-        QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->size());
-            qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
+        // Remove window decorations and maximize to screen
+        LONG_PTR newStyle = savedStyle & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZE | WS_MAXIMIZE | WS_SYSMENU);
+        SetWindowLongPtr(hwnd, GWL_STYLE, newStyle);
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, savedExStyle & ~(WS_EX_DLGMODALFRAME | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+        // Position window to cover full screen
+        SetWindowPos(hwnd, HWND_TOP,
+                     screenGeometry.x(), screenGeometry.y(),
+                     screenGeometry.width(), screenGeometry.height(),
+                     SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW);
+
+        qDebug() << "Entered fullscreen via Windows API";
+
+        // Calculate layout after fullscreen transition is complete
+        QTimer::singleShot(200, this, [this, screen]() {
+            // Smart resize: add/remove tiles as needed, don't destroy all
+            resizeGridIntelligently(screen->size());
+            qDebug() << "Windowed -> fullscreen:" << _tileGrid->tiles().size() << "tiles";
         });
     }
+#else
+    // Fallback for non-Windows platforms
+    if (_isFullscreen)
+    {
+        _windowMode = WindowMode::Windowed;
+        _isFullscreen = false;
+        showNormal();
+        if (_savedGeometry.isValid())
+        {
+            setGeometry(_savedGeometry);
+        }
+    }
+    else
+    {
+        _savedGeometry = geometry();
+        _isFullscreen = true;
+        _windowMode = WindowMode::Fullscreen;
+        showFullScreen();
+    }
+#endif
 }
 
 void VideoWallWindow::toggleFullscreenLinux()
@@ -599,34 +697,40 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
     else if (targetTotal < currentTotal)
     {
         // Need FEWER tiles - remove excess from the end
-        int tilesToRemove = currentTotal - targetTotal;
-        qDebug() << "Removing" << tilesToRemove << "excess tiles";
+        int numToRemove = currentTotal - targetTotal;
+        qDebug() << "Removing" << numToRemove << "excess tiles";
 
-        auto tiles = _tileGrid->tiles();  // Get copy of vector
-        for (int i = 0; i < tilesToRemove; i++)
+        // Collect tiles to remove FIRST (from the end)
+        std::vector<EmulatorTile*> tilesToRemove;
+        auto currentTiles = _tileGrid->tiles();
+        for (int i = 0; i < numToRemove && !currentTiles.empty(); i++)
         {
-            // Remove from the end (newest tiles first)
-            int lastIndex = tiles.size() - 1;
-            if (lastIndex >= 0)
+            tilesToRemove.push_back(currentTiles.back());
+            currentTiles.pop_back();
+        }
+
+        // Now remove them one by one
+        for (EmulatorTile* tile : tilesToRemove)
+        {
+            if (tile && tile->emulator())
             {
-                EmulatorTile* tile = tiles[lastIndex];
-                if (tile && tile->emulator())
-                {
-                    std::string emulatorId = tile->emulator()->GetUUID();
+                // Get emulator ID BEFORE preparing for deletion (reset clears the emulator reference)
+                std::string emulatorId = tile->emulator()->GetUUID();
+                qDebug() << "Removing excess tile:" << QString::fromStdString(emulatorId);
 
-                    // Stop and destroy emulator
-                    _emulatorManager->RemoveEmulator(emulatorId);
+                // CRITICAL: Stop timers and cleanup BEFORE any deletion
+                tile->prepareForDeletion();
 
-                    // Remove from grid (this deletes the tile)
-                    _tileGrid->removeTile(tile);
+                // Stop and destroy emulator instance via EmulatorManager
+                _emulatorManager->RemoveEmulator(emulatorId);
 
-                    // Update our copy
-                    tiles = _tileGrid->tiles();
-
-                    qDebug() << "Removed excess tile:" << QString::fromStdString(emulatorId);
-                }
+                // Remove from grid vector and schedule deletion (skip layout during batch)
+                _tileGrid->removeTile(tile, true);  // skipLayout = true
             }
         }
+        
+        // Final layout update after all removals
+        _tileGrid->updateLayout();
     }
     else
     {

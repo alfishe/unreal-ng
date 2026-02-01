@@ -31,7 +31,43 @@ EmulatorTile::EmulatorTile(std::shared_ptr<Emulator> emulator, QWidget* parent) 
 
 EmulatorTile::~EmulatorTile()
 {
+    // Stop all timers to prevent callbacks during destruction
+    if (_refreshTimer)
+    {
+        _refreshTimer->stop();
+    }
+    if (_blinkTimer)
+    {
+        _blinkTimer->stop();
+    }
     unsubscribeFromNotifications();
+}
+
+void EmulatorTile::prepareForDeletion()
+{
+    // Stop all timers IMMEDIATELY to prevent callbacks during pending deletion
+    if (_refreshTimer)
+    {
+        _refreshTimer->stop();
+        _refreshTimer->deleteLater();
+        _refreshTimer = nullptr;
+    }
+    if (_blinkTimer)
+    {
+        _blinkTimer->stop();
+        _blinkTimer->deleteLater();
+        _blinkTimer = nullptr;
+    }
+    
+    // Unsubscribe from notifications to prevent callbacks
+    unsubscribeFromNotifications();
+    
+    // Clear emulator reference to prevent any further access
+    _emulator.reset();
+    
+    // Disable updates to prevent paint events
+    setUpdatesEnabled(false);
+    hide();
 }
 
 void EmulatorTile::paintEvent(QPaintEvent* event)
