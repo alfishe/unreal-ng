@@ -237,8 +237,17 @@ if (BUILD_QT_APPS)
         )
     endif()
     
-    # Windows: Combined ZIP with all apps and shared resources
+    # Windows: Combined ZIP with all apps, Qt dependencies, and shared resources
     if(WIN32)
+        # Find windeployqt6 in the Qt installation
+        find_program(WINDEPLOYQT_EXECUTABLE windeployqt6
+            HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
+            DOC "Path to windeployqt6 executable"
+        )
+        
+        # MSYS2 paths for runtime DLLs
+        set(MSYS2_BIN_PATH "C:/msys64/mingw64/bin")
+        
         add_custom_target(package_suite_windows
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
@@ -254,6 +263,30 @@ if (BUILD_QT_APPS)
                 "${SUITE_STAGING_DIR}/"
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
+                "${SUITE_STAGING_DIR}/"
+            
+            # Run windeployqt6 on each executable to copy Qt DLLs and plugins
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations
+            
+            # Copy MSYS2 runtime DLLs (required for MinGW builds)
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN_PATH}/libgcc_s_seh-1.dll"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN_PATH}/libstdc++-6.dll"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN_PATH}/libwinpthread-1.dll"
+                "${SUITE_STAGING_DIR}/"
+            
+            # Copy OpenSSL DLLs (required for WebAPI/network features)
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN_PATH}/libcrypto-3-x64.dll"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MSYS2_BIN_PATH}/libssl-3-x64.dll"
                 "${SUITE_STAGING_DIR}/"
             
             # Copy shared resources (only once)
@@ -272,7 +305,7 @@ if (BUILD_QT_APPS)
                 "--format=zip" "--" "${SUITE_STAGING_DIR}"
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
-            COMMENT "Creating combined Windows ZIP with all applications"
+            COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
     endif()
     
