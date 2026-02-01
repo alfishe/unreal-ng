@@ -28,28 +28,22 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 {
     _emulatorManager = EmulatorManager::GetInstance();
 
-#ifdef ENABLE_AUTOMATION
-    // Initialize automation modules (WebAPI, CLI, Python, Lua)
-    _automation = std::make_unique<Automation>();
-    _automation->start();
-    qDebug() << "Automation modules initialized and started";
-#endif  // ENABLE_AUTOMATION
-
-    // Initialize sound manager for audio binding to focused tile
-    _soundManager = new AppSoundManager();
-    if (_soundManager->init())
-    {
-        _soundManager->start();
-        qDebug() << "Sound manager initialized and started";
-    }
-    else
-    {
-        qWarning() << "Failed to initialize sound manager";
-    }
-
     setupUI();
-    createMenus();
     createDefaultPresets();
+
+#ifdef ENABLE_AUTOMATION
+    // CRITICAL: Create Automation object immediately (not deferred) so it's guaranteed
+    // to exist when destructor runs. This prevents race condition where destructor
+    // tries to stop() an uninitialized or garbage pointer.
+    _automation = std::make_unique<Automation>();
+#endif
+
+    // CRITICAL: Defer starting automation until after the Qt event loop is running.
+    // On macOS, starting automation threads before app.exec() causes race conditions with
+    // CoreText font initialization, leading to SIGSEGV in TBaseFont::CopyOpticalSizeAxis().
+    // This single-shot timer fires after the event loop starts, ensuring the application
+    // is fully initialized before we spawn threads or access the menu bar.
+    QTimer::singleShot(0, this, &VideoWallWindow::initializeAfterEventLoopStart);
 
     // Debug: Log initial window geometry at startup
     QTimer::singleShot(100, this, [this]() {
@@ -72,13 +66,36 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 
 VideoWallWindow::~VideoWallWindow()
 {
-    // Clean up sound manager
-    if (_soundManager)
+    // Destructors must not throw - wrap everything in try-catch
+    try
     {
-        _soundManager->stop();
-        _soundManager->deinit();
-        delete _soundManager;
-        _soundManager = nullptr;
+        // CRITICAL: Stop automation FIRST, before any Qt objects are destroyed.
+        // The automation threads may reference Qt objects, so we must join all threads
+        // before the widget destruction begins.
+#ifdef ENABLE_AUTOMATION
+        if (_automation)
+        {
+            _automation->stop();
+            _automation.reset();
+        }
+#endif
+
+        // Clean up sound manager
+        if (_soundManager)
+        {
+            _soundManager->stop();
+            _soundManager->deinit();
+            delete _soundManager;
+            _soundManager = nullptr;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        qCritical() << "Exception in VideoWallWindow destructor:" << e.what();
+    }
+    catch (...)
+    {
+        qCritical() << "Unknown exception in VideoWallWindow destructor";
     }
 }
 
@@ -92,6 +109,38 @@ void VideoWallWindow::setupUI()
     QPalette pal = _tileGrid->palette();
     pal.setColor(QPalette::Window, Qt::black);
     _tileGrid->setPalette(pal);
+}
+
+void VideoWallWindow::initializeAfterEventLoopStart()
+{
+    // This method is called via QTimer::singleShot(0, ...) from the constructor.
+    // At this point, the Qt event loop is running and the window is fully initialized.
+    // This eliminates race conditions with CoreText font access on macOS.
+
+#ifdef ENABLE_AUTOMATION
+    // Start automation modules (WebAPI, CLI, Python, Lua)
+    // The Automation object was created in constructor, we only defer start().
+    if (_automation)
+    {
+        _automation->start();
+        qDebug() << "Automation modules started";
+    }
+#endif  // ENABLE_AUTOMATION
+
+    // Initialize sound manager for audio binding to focused tile
+    _soundManager = new AppSoundManager();
+    if (_soundManager->init())
+    {
+        _soundManager->start();
+        qDebug() << "Sound manager initialized and started";
+    }
+    else
+    {
+        qWarning() << "Failed to initialize sound manager";
+    }
+
+    // Now safe to create menus - the window is fully initialized
+    createMenus();
 }
 
 void VideoWallWindow::createMenus()

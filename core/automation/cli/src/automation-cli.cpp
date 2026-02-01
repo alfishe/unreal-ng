@@ -47,10 +47,20 @@ AutomationCLI::AutomationCLI()
 
 AutomationCLI::~AutomationCLI()
 {
-    stop();
-
-    // Cleanup platform sockets
-    cleanupSockets();
+    // Destructors must not throw - wrap everything in try-catch
+    try
+    {
+        stop();
+        cleanupSockets();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Exception in AutomationCLI destructor: " << e.what() << std::endl;
+    }
+    catch (...)
+    {
+        std::cerr << "Unknown exception in AutomationCLI destructor" << std::endl;
+    }
 }
 
 bool AutomationCLI::start(uint16_t port)
@@ -82,6 +92,14 @@ bool AutomationCLI::start(uint16_t port)
 
 void AutomationCLI::stop()
 {
+    // Guard: If thread is already stopped/nullptr, nothing to do.
+    // This prevents double-stop race conditions when stop() is called
+    // from both Automation::stop() and destructors.
+    if (!_thread)
+    {
+        return;
+    }
+
     std::cout << "Stopping CLI server..." << std::endl;
     std::unique_ptr<std::thread> threadToJoin;
 

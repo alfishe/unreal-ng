@@ -24,29 +24,42 @@ void AutomationLua::start()
 
 void AutomationLua::stop()
 {
+    // Guard: If thread is already stopped/nullptr, nothing to do.
+    // This prevents double-stop race conditions when stop() is called
+    // from both Automation::stop() and destructors.
+    if (!_thread)
+    {
+        return;
+    }
+
     _stopThread = true;
 
     // CRITICAL: Join thread FIRST before deleting objects it references
     // The thread may still be executing and using _lua/_luaEmulator
-    if (_thread)
-    {
-        _thread->join();
-        delete _thread;
-        _thread = nullptr;
-    }
-    _stopThread = false;
+    _thread->join();
+    delete _thread;
+    _thread = nullptr;
 
-    // Now safe to delete Lua objects - thread is stopped
-    if (_luaEmulator)
-    {
-        delete _luaEmulator;
-        _luaEmulator = nullptr;
-    }
+    // NOTE: Do NOT reset _stopThread = false here!
+    // The thread function may still be in its final cleanup phase
+    // and reading this flag. Leave it as true after stop.
 
+    // CRITICAL DESTRUCTION ORDER:
+    // Delete _lua FIRST, THEN _luaEmulator.
+    // The sol::state has registered lambdas (via registerType) that capture
+    // the LuaEmulator* pointer. When _lua is destroyed, Lua's GC runs and
+    // cleans up these lambdas. If we deleted _luaEmulator first, the GC
+    // would try to access a dangling pointer causing SIGSEGV.
     if (_lua)
     {
         delete _lua;
         _lua = nullptr;
+    }
+
+    if (_luaEmulator)
+    {
+        delete _luaEmulator;
+        _luaEmulator = nullptr;
     }
 
     std::cout << "Lua interpreter stopped" << std::endl;

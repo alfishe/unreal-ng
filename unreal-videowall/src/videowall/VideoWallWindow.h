@@ -81,6 +81,7 @@ private:
     void setupUI();
     void createMenus();
     void createDefaultPresets();
+    void initializeAfterEventLoopStart();
 
     /// Bind audio device to the specified tile's emulator
     void bindAudioToTile(EmulatorTile* tile);
