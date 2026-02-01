@@ -148,7 +148,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     contentFrame->installEventFilter(this);
     this->installEventFilter(this);
 
-    // Simplified geometry - no tracking needed in showEvent
+    // Store original window geometry before going fullscreen / maximized
+    _normalGeometry = normalGeometry();
 
     // Initialize platform-specific settings
 #ifdef Q_OS_MAC
@@ -361,7 +362,8 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     // Keep widget center-aligned. Alignment policy is not working good
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Simplified geometry - no tracking needed in resizeEvent
+    // Update normal geometry
+    _normalGeometry = normalGeometry();
 
     // Notify docked child windows
     _dockingManager->updateDockedWindows();
@@ -377,7 +379,8 @@ void MainWindow::moveEvent(QMoveEvent* event)
     if (_dockingManager)
         _dockingManager->updateDockedWindows();
 
-    // Simplified geometry - no tracking needed in moveEvent
+    // Update normal geometry
+    _normalGeometry = normalGeometry();
 }
 
 void MainWindow::changeEvent(QEvent* event)
@@ -424,22 +427,109 @@ void MainWindow::changeEvent(QEvent* event)
 
 void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::WindowStates newState)
 {
-    // Simplified handler - Linux-focused, macOS just manages basic state
-    if (newState & Qt::WindowFullScreen)
-    {
-        _isFullScreen = true;
-        qDebug() << "FullScreen state detected (macOS)";
-    }
-    else if (oldState & Qt::WindowFullScreen)
-    {
-        _isFullScreen = false;
-        qDebug() << "Exiting fullscreen (macOS)";
+    // Prevent recursive calls
+    QScopedValueRollback<bool> guard(_inHandler, true);
 
-        // Restore UI elements
-        setPalette(_originalPalette);
+    // Handle maximize state (triggered by green button or double-click)
+    if (newState & Qt::WindowMaximized && !_isFullScreen)
+    {
+        qDebug() << "Maximizing window (macOS)";
+
+        _isFullScreen = false;
+
+        // Ensure we're not in fullscreen mode
+        if (windowFlags() & Qt::FramelessWindowHint)
+        {
+            qDebug() << "Clearing frameless window hint";
+            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        }
+
+        // Restore normal palette if needed
+        if (palette() != _originalPalette)
+        {
+            setPalette(_originalPalette);
+        }
+
+        // Show menu bar if hidden
+        menuBar()->show();
         statusBar()->show();
         startButton->show();
     }
+    // Handle entering fullscreen
+    else if (newState & Qt::WindowFullScreen)
+    {
+        qDebug() << "Entering fullscreen (macOS)";
+
+        hide();
+        _isFullScreen = true;
+
+        // Store previous geometry if we're not already in fullscreen
+        if (!(oldState & Qt::WindowFullScreen))
+        {
+            _normalGeometry = (oldState & Qt::WindowMaximized) ? _normalGeometry : geometry();
+            qDebug() << "Stored normal geometry for fullscreen:" << _normalGeometry;
+        }
+
+        // Apply fullscreen palette: black background around emulated system screen
+        QPalette palette;
+        palette.setColor(QPalette::Window, Qt::black);
+        setPalette(palette);
+
+        // Hide all control elements
+        statusBar()->hide();
+        startButton->hide();
+
+        // Set frameless window hint for fullscreen
+        setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+        showFullScreen();
+    }
+    // Handle restore to normal state
+    else if (newState == Qt::WindowNoState)
+    {
+        qDebug() << "Restoring to normal state (macOS)";
+
+        _isFullScreen = false;
+
+        // Restore normal styling
+        setPalette(_originalPalette);
+
+        // Show controls
+        statusBar()->show();
+        startButton->show();
+
+        // Clear frameless window hint if set
+        if (windowFlags() & Qt::FramelessWindowHint)
+        {
+            qDebug() << "Clearing frameless window hint during restore";
+            setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        }
+
+        // Restore all window flags
+        initializePlatformMacOS();
+
+        showNormal();
+
+        // Restore to previous geometry if available
+        if (_normalGeometry.isValid())
+        {
+            qDebug() << "Restoring to normal geometry:" << _normalGeometry;
+            setGeometry(_normalGeometry);
+        }
+        else
+        {
+            qDebug() << "No stored normal geometry available, using default";
+        }
+
+        if (!isVisible())
+        {
+            qDebug() << "Window is not visible after showNormal/flag changes, explicitly calling show().";
+            show();
+        }
+    }
+
+    // Ensure the window is properly updated
+    activateWindow();
+    raise();
 }
 
 void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState)
@@ -940,42 +1030,58 @@ void MainWindow::handleFullScreenShortcutWindows()
 
 void MainWindow::handleFullScreenShortcutMacOS()
 {
-    // Simplified stub - Linux-focused, macOS gets basic implementation
     if (windowState() & Qt::WindowFullScreen)
     {
-        qDebug() << "Exiting fullscreen (macOS)";
-        _isFullScreen = false;
-
-        setWindowFlags(Qt::Window);
-        setPalette(_originalPalette);
-        statusBar()->show();
-        startButton->show();
-        showNormal();
-
         if (_dockingManager)
+            _dockingManager->setSnappingLocked(true);
+
+        setWindowFlags(Qt::Window);  // Prevent horizontal transition from full screen to system desktop
+        // Restore previous state and geometry
+        if (_preFullScreenState & Qt::WindowMaximized)
         {
-            QTimer::singleShot(100, this, [this]() {
+            if (_maximizedGeometry.isValid())
+                setGeometry(_maximizedGeometry);
+            showMaximized();
+        }
+        else
+        {
+            if (_normalGeometry.isValid())
+                setGeometry(_normalGeometry);
+            showNormal();
+        }
+
+        // Defer child window restoration and unlock until the event queue has processed the main window changes.
+        QTimer::singleShot(100, this, [this]() {
+            if (_dockingManager)
+            {
                 _dockingManager->onExitFullscreen();
+
                 QTimer::singleShot(100, this, [this]() {
                     if (_dockingManager)
                         _dockingManager->setSnappingLocked(false);
                 });
-            });
-        }
+            }
+        });
     }
     else
     {
-        qDebug() << "Entering fullscreen (macOS)";
-        _isFullScreen = true;
-
         if (_dockingManager)
-        {
             _dockingManager->setSnappingLocked(true);
+        if (_dockingManager)
             _dockingManager->onEnterFullscreen();
+
+        // Store state and geometry before entering fullscreen
+        if (windowState() & Qt::WindowMaximized)
+        {
+            _preFullScreenState = Qt::WindowMaximized;
+            _maximizedGeometry = geometry();
         }
-
+        else
+        {
+            _preFullScreenState = Qt::WindowNoState;
+            _normalGeometry = geometry();
+        }
         showFullScreen();
-
         QTimer::singleShot(100, this, [this]() {
             if (_dockingManager)
                 _dockingManager->setSnappingLocked(false);
@@ -1037,7 +1143,7 @@ void MainWindow::handleFullScreenShortcutLinux()
         startButton->show();
 
         // Step 2: Restore window state
-        if (_wasMaximized)
+        if (_preFullScreenState & Qt::WindowMaximized)
         {
             // If window was maximized before fullscreen, just restore to maximized
             // No geometry restoration needed - window manager handles maximized geometry
@@ -1046,23 +1152,23 @@ void MainWindow::handleFullScreenShortcutLinux()
         }
         else
         {
-            qDebug() << "Restoring to normal state with geometry:" << _savedGeometry;
+            qDebug() << "Restoring to normal state with geometry:" << _normalGeometry;
             showNormal();
 
             // Wait for window manager to process the state change, then restore geometry
             QTimer::singleShot(100, this, [this]() {
-                qDebug() << "Applying saved geometry:" << _savedGeometry;
-                setGeometry(_savedGeometry);
+                qDebug() << "Applying saved geometry:" << _normalGeometry;
+                setGeometry(_normalGeometry);
 
                 // Verify restoration after another brief delay
                 QTimer::singleShot(50, this, [this]() {
                     QRect actualGeometry = geometry();
-                    qDebug() << "Verification - actual geometry:" << actualGeometry << "expected:" << _savedGeometry;
+                    qDebug() << "Verification - actual geometry:" << actualGeometry << "expected:" << _normalGeometry;
 
-                    if (actualGeometry != _savedGeometry)
+                    if (actualGeometry != _normalGeometry)
                     {
                         qDebug() << "Geometry drift detected! Re-applying...";
-                        setGeometry(_savedGeometry);
+                        setGeometry(_normalGeometry);
                     }
                 });
             });
@@ -1084,10 +1190,10 @@ void MainWindow::handleFullScreenShortcutLinux()
         qDebug() << "Entering fullscreen...";
 
         // Save current state and geometry
-        _wasMaximized = (windowState() & Qt::WindowMaximized);
-        _savedGeometry = geometry();  // Client geometry - matches what setGeometry() expects
+        _preFullScreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
+        _normalGeometry = geometry();  // Client geometry - matches what setGeometry() expects
 
-        qDebug() << "Saved state - maximized:" << _wasMaximized << "geometry:" << _savedGeometry;
+        qDebug() << "Saved state - maximized:" << (_preFullScreenState & Qt::WindowMaximized) << "geometry:" << _normalGeometry;
 
         // Lock docking and enter fullscreen
         if (_dockingManager)
@@ -2151,7 +2257,8 @@ void MainWindow::initializePlatformMacOS()
     // Store the original palette for later restoration
     _originalPalette = palette();
 
-    // Simplified geometry - no tracking needed in platform init
+    // Store normal geometry
+    _normalGeometry = normalGeometry();
 
     qDebug() << "macOS window initialized with flags:" << flags;
 }

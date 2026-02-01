@@ -196,10 +196,12 @@ private:
     QShortcut* _fullScreenShortcut = nullptr;
     bool _inHandler = false;
 
-    // Simplified fullscreen geometry tracking
-    QRect _savedGeometry;        // Window client geometry (via geometry())
-    bool _wasMaximized = false;  // Was window maximized before fullscreen?
+    // Stores window geometry before going fullscreen / maximized
+    QRect _normalGeometry;
+    QRect _maximizedGeometry;
+    Qt::WindowStates _preFullScreenState = Qt::WindowNoState;
     bool _isFullScreen = false;
+    bool _inTransitionToFullScreen = false;
 
     // Last directory used for file operations
     QString _lastDirectory;
