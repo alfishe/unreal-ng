@@ -26,7 +26,7 @@ void TileGrid::addTile(EmulatorTile* tile)
     updateLayout();
 }
 
-void TileGrid::removeTile(EmulatorTile* tile)
+void TileGrid::removeTile(EmulatorTile* tile, bool skipLayout)
 {
     if (!tile)
         return;
@@ -36,7 +36,12 @@ void TileGrid::removeTile(EmulatorTile* tile)
     {
         _tiles.erase(it);
         tile->deleteLater();
-        updateLayout();
+        
+        // Skip layout during batch removal to prevent crashes
+        if (!skipLayout)
+        {
+            updateLayout();
+        }
     }
 }
 
@@ -44,19 +49,30 @@ void TileGrid::clearAllTiles()
 {
     for (EmulatorTile* tile : _tiles)
     {
-        if (tile && tile->emulator())
+        if (tile)
         {
-            // Get the emulator UUID before deleting the tile
-            std::string emulatorId = tile->emulator()->GetUUID();
+            // CRITICAL: Prepare tile for deletion FIRST - this clears the shared_ptr reference
+            // to the emulator, preventing double-destruction when EmulatorManager destroys it
+            std::string emulatorId;
+            if (tile->emulator())
+            {
+                emulatorId = tile->emulator()->GetUUID();
+            }
+            
+            // Clear tile's reference to emulator before destroying it
+            tile->prepareForDeletion();
 
             // Stop and destroy the emulator instance via EmulatorManager
-            EmulatorManager* manager = EmulatorManager::GetInstance();
-            if (manager)
+            if (!emulatorId.empty())
             {
-                manager->RemoveEmulator(emulatorId);
+                EmulatorManager* manager = EmulatorManager::GetInstance();
+                if (manager)
+                {
+                    manager->RemoveEmulator(emulatorId);
+                }
             }
 
-            // Now delete the tile widget
+            // Now delete the tile widget (shared_ptr already cleared)
             tile->deleteLater();
         }
     }
@@ -66,8 +82,16 @@ void TileGrid::clearAllTiles()
 
 void TileGrid::updateLayout()
 {
+    // Prevent re-entrant calls (e.g., from resizeEvent triggered by setMinimumSize)
+    if (_inUpdateLayout)
+    {
+        return;
+    }
+    _inUpdateLayout = true;
+
     if (_tiles.empty())
     {
+        _inUpdateLayout = false;
         return;
     }
 
@@ -94,6 +118,10 @@ void TileGrid::updateLayout()
 
     for (EmulatorTile* tile : _tiles)
     {
+        if (!tile)  // Safety check
+        {
+            continue;
+        }
         tile->move(x, y);
 
         // Move to next column
@@ -110,12 +138,15 @@ void TileGrid::updateLayout()
     }
 
     // Resize widget to fit grid (but NOT in fullscreen mode - size constraints break fullscreen on Linux)
+    // Use resize() instead of setMinimumSize() to allow window shrinking on Windows
     if (!_isFullscreen)
     {
         int windowWidth = cols * TILE_WIDTH;
         int windowHeight = rows * TILE_HEIGHT;
-        setMinimumSize(windowWidth, windowHeight);
+        resize(windowWidth, windowHeight);
     }
+
+    _inUpdateLayout = false;
 }
 
 void TileGrid::setGridDimensions(int cols, int rows)
