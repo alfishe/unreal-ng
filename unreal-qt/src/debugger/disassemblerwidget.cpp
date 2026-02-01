@@ -566,9 +566,22 @@ uint16_t DisassemblerWidget::getNextCommandAddress(uint16_t currentAddress)
         buffer[i] = memory.DirectReadFromZ80Memory(currentAddress + i);
 
     // Disassemble the current instruction to get its length
+    // Wrap in try-catch to handle invalid memory states during reset
     uint8_t commandLen = 0;
     DecodedInstruction decoded;
-    disassembler.disassembleSingleCommand(buffer, currentAddress, &commandLen, &decoded);
+    try
+    {
+        disassembler.disassembleSingleCommand(buffer, currentAddress, &commandLen, &decoded);
+    }
+    catch (const std::exception& e)
+    {
+        // During reset or inconsistent memory states, disassembly may fail
+        // Fall back to single byte advance
+        qDebug() << "DisassemblerWidget::getNextCommandAddress: disassembly failed at"
+                 << QString("0x%1").arg(currentAddress, 4, 16, QChar('0'))
+                 << "-" << e.what();
+        return (currentAddress + 1) & 0xFFFF;
+    }
 
     // Calculate the next address by adding the command length
     return (currentAddress + decoded.fullCommandLen) & 0xFFFF;
