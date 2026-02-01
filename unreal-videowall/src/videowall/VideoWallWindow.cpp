@@ -61,6 +61,11 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
         qDebug() << "==========================================";
     });
 
+    // Enable mouse tracking for auto-show menu bar in fullscreen
+    setMouseTracking(true);
+    centralWidget()->setMouseTracking(true);
+    _tileGrid->installEventFilter(this);
+
     resize(800, 600);
     setWindowTitle(tr("Unreal Speccy Video Wall"));
 }
@@ -267,6 +272,69 @@ void VideoWallWindow::keyReleaseEvent(QKeyEvent* event)
     // Key events routed to focused tile via EmulatorTile::keyReleaseEvent
     // The tile with focus receives events directly from Qt
     QMainWindow::keyReleaseEvent(event);
+}
+
+void VideoWallWindow::mouseMoveEvent(QMouseEvent* event)
+{
+    // In fullscreen mode, show menu when mouse is near top of screen
+    if (_isFullscreen && event->position().y() < MENU_TRIGGER_ZONE_HEIGHT)
+    {
+        menuBar()->show();
+
+        // Reset auto-hide timer
+        if (!_menuAutoHideTimer)
+        {
+            _menuAutoHideTimer = new QTimer(this);
+            _menuAutoHideTimer->setSingleShot(true);
+            connect(_menuAutoHideTimer, &QTimer::timeout, this, [this]() {
+                // Only hide if still in fullscreen and mouse is not over menu
+                if (_isFullscreen && !menuBar()->underMouse())
+                {
+                    menuBar()->hide();
+                }
+            });
+        }
+        _menuAutoHideTimer->stop();  // Reset timer while mouse is at top
+    }
+    else if (_isFullscreen && menuBar()->isVisible() && !menuBar()->underMouse())
+    {
+        // Mouse moved away from top - start auto-hide timer
+        if (_menuAutoHideTimer)
+        {
+            _menuAutoHideTimer->start(MENU_AUTO_HIDE_DELAY_MS);
+        }
+    }
+
+    QMainWindow::mouseMoveEvent(event);
+}
+
+bool VideoWallWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // Catch mouse moves from child widgets (tiles) to trigger menu show/hide
+    if (event->type() == QEvent::MouseMove && _isFullscreen)
+    {
+        QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+        QPoint globalPos = mouseEvent->globalPosition().toPoint();
+        QPoint localPos = mapFromGlobal(globalPos);
+
+        if (localPos.y() < MENU_TRIGGER_ZONE_HEIGHT)
+        {
+            menuBar()->show();
+            if (_menuAutoHideTimer)
+            {
+                _menuAutoHideTimer->stop();
+            }
+        }
+        else if (menuBar()->isVisible() && !menuBar()->underMouse())
+        {
+            if (_menuAutoHideTimer && !_menuAutoHideTimer->isActive())
+            {
+                _menuAutoHideTimer->start(MENU_AUTO_HIDE_DELAY_MS);
+            }
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void VideoWallWindow::toggleFramelessMode()

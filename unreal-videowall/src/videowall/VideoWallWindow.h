@@ -70,6 +70,8 @@ public:
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     /// Handle tile click for audio binding (toggle)
@@ -136,4 +138,9 @@ private:
 
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
+
+    // Auto-hide menu bar in fullscreen
+    QTimer* _menuAutoHideTimer = nullptr;
+    static constexpr int MENU_AUTO_HIDE_DELAY_MS = 2000;
+    static constexpr int MENU_TRIGGER_ZONE_HEIGHT = 10;  // pixels from top
 };
