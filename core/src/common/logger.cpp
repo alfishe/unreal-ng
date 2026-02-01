@@ -103,7 +103,7 @@ void Logger::OutEnriched(string fmt, va_list args)
 
 	time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
 
-#if defined _WIN32 && defined MSVC
+#if defined _WIN32 && defined _MSC_VER
     time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03lld.%03lld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
 #else
 	time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03d.%03d] ", (int)(tv.tv_usec / 1000), (int)(tv.tv_usec % 1000));

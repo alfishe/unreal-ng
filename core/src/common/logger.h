@@ -6,8 +6,6 @@
 #include <ostream>
 #include <stdarg.h>
 #include <string>
-#include <unistd.h>
-#include <fcntl.h>
 
 #ifndef _CODE_UNDER_TEST
 

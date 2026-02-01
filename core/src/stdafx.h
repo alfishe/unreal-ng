@@ -54,7 +54,7 @@ using std::atomic_flag;
 using std::atomic;
 
 // MSVC on Windows
-#if defined _WIN32 && defined MSVC
+#if defined _WIN32 && defined _MSC_VER
 	#define WIN32_LEAN_AND_MEAN			// Exclude rarely-used stuff from Windows headers
 	#define NOMINMAX					// No min/max macroses defined in <windows.h> - they're conflicting with STL std::min / std::max
 

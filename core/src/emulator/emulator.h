@@ -14,6 +14,7 @@
 #include "base/featuremanager.h"
 #include "common/autoresetevent.h"
 #include "common/uuid.h"
+using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
