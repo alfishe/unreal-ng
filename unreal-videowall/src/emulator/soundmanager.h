@@ -22,6 +22,8 @@ protected:
     ma_device _audioDevice;
     AudioRingBuffer<int16_t, AUDIO_BUFFER_SAMPLES_PER_FRAME * 8> _ringBuffer;
 
+    bool _isInitialized = false;
+    bool _isStarted = false;
 
     // Save to Wave file
     TinyWav _tinyWav;
