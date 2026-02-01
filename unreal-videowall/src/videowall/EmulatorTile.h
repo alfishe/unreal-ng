@@ -29,6 +29,9 @@ public:
         return _emulator;
     }
 
+    /// Prepare tile for deletion - stop timers and cleanup (call before deleteLater)
+    void prepareForDeletion();
+
     /// Check if this tile has keyboard focus
     bool hasTileFocus() const
     {

@@ -43,6 +43,18 @@ enum class TrackingEvent : uint8_t
     Custom      // User-defined event
 };
 
+/// @brief Session state for profilers (memory tracking, call trace, opcode profiler)
+/// @details Common state model for all profiling features:
+///   - Stopped: Not capturing, data may or may not be present
+///   - Capturing: Actively capturing data
+///   - Paused: Capture paused, data retained
+enum class ProfilerSessionState : uint8_t
+{
+    Stopped,    // Not capturing (feature may be enabled but session not started)
+    Capturing,  // Actively capturing data
+    Paused      // Capture paused, data retained
+};
+
 // Structure to hold tracking options for a monitored region
 struct MonitoringOptions
 {
@@ -116,6 +128,10 @@ private:
     // Feature-gate flags
     bool _feature_memorytracking_enabled = false;
     bool _feature_calltrace_enabled = false;
+
+    // Session state for memory tracking
+    ProfilerSessionState _memorySessionState = ProfilerSessionState::Stopped;
+    ProfilerSessionState _calltraceSessionState = ProfilerSessionState::Stopped;
 
     // Lazy allocation flag - counters only allocated when tracking is enabled
     bool _isAllocated = false;
@@ -193,6 +209,52 @@ public:
 
     // Update feature cache (call when features change at runtime)
     void UpdateFeatureCache();
+
+    /// region <Session Control - Memory Tracking>
+    /// @brief Start a memory tracking session (clears previous data)
+    void StartMemorySession();
+    
+    /// @brief Pause memory tracking session (retains data)
+    void PauseMemorySession();
+    
+    /// @brief Resume a paused memory tracking session
+    void ResumeMemorySession();
+    
+    /// @brief Stop memory tracking session (retains data until cleared)
+    void StopMemorySession();
+    
+    /// @brief Clear all memory tracking data
+    void ClearMemoryData();
+    
+    /// @brief Get current memory tracking session state
+    ProfilerSessionState GetMemorySessionState() const;
+    
+    /// @brief Check if memory tracking is actively capturing
+    bool IsMemoryCapturing() const;
+    /// endregion </Session Control - Memory Tracking>
+
+    /// region <Session Control - Call Trace>
+    /// @brief Start a call trace session (clears previous data)
+    void StartCalltraceSession();
+    
+    /// @brief Pause call trace session (retains data)
+    void PauseCalltraceSession();
+    
+    /// @brief Resume a paused call trace session
+    void ResumeCalltraceSession();
+    
+    /// @brief Stop call trace session (retains data until cleared)
+    void StopCalltraceSession();
+    
+    /// @brief Clear all call trace data
+    void ClearCalltraceData();
+    
+    /// @brief Get current call trace session state
+    ProfilerSessionState GetCalltraceSessionState() const;
+    
+    /// @brief Check if call trace is actively capturing
+    bool IsCalltraceCapturing() const;
+    /// endregion </Session Control - Call Trace>
     /// endregion </Initialization>
 
     /// region <Region and Port Monitoring>

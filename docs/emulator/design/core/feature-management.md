@@ -54,6 +54,7 @@ Hot paths use cached booleans
 | **Breakpoints** | `breakpoints` | `bp` | OFF | Enable breakpoint serving (~10% CPU when ON) |
 | **Memory Tracking** | `memorytracking` | `mem` | OFF | Track memory access stats (~4% CPU when ON) |
 | **Call Trace** | `calltrace` | `ct` | OFF | Collect CALL/RET trace for debugging |
+| **Opcode Profiler** | `opcodeprofiler` | `op` | OFF | Track Z80 opcode execution stats and trace (~12-18% CPU when ON) |
 
 ### Performance Features
 
@@ -151,6 +152,33 @@ Hot paths use cached booleans
 - Real-time memory debugging with external tools
 - Benchmarking (disable for accurate measurements)
 - Headless automation (disable for simplicity)
+
+---
+
+### Opcode Profiler Toggle (`opcodeprofiler`)
+
+**Purpose:** Track Z80 opcode execution statistics and sequential trace for debugging and crash forensics.
+
+**ON (Profiling Enabled):**
+- Execution counters for all 1792 opcode variants (non-prefixed + CB/DD/ED/FD/DDCB/FDCB prefixes)
+- Ring buffer trace (10,000 entries) with PC, prefix, opcode, flags, A register, frame, t-state
+- Session control: start/stop/clear via `profiler opcode` commands
+- **CPU:** ~12-18% overhead
+- **Memory:** ~174KB (14KB counters + 160KB trace buffer)
+
+**OFF (Disabled - Default):**
+- No overhead, profiler not hooked
+- `profiler opcode` commands return error
+
+**Implementation:**
+- Hook in `Z80::Z80Step()` after opcode dispatch
+- Feature cache: `_feature_opcodeprofiler_enabled`
+- Exposed via CLI, WebAPI, Python, Lua
+
+**Use Cases:**
+- Identify most executed opcodes (performance hotspots)
+- Crash forensics (trace last N instructions before failure)
+- z80test failure analysis (inspect flag states)
 
 ---
 

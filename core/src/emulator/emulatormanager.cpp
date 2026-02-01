@@ -13,6 +13,13 @@
 
 std::shared_ptr<Emulator> EmulatorManager::CreateEmulator(const std::string& symbolicId, LoggerLevel level)
 {
+    // Block new emulator creation during shutdown
+    if (_isShuttingDown.load())
+    {
+        LOGWARNING("EmulatorManager::CreateEmulator - Blocked during shutdown");
+        return nullptr;
+    }
+
     // Create a new emulator with an auto-generated UUID
     auto emulator = std::make_shared<Emulator>(symbolicId, level);
 
@@ -395,6 +402,13 @@ bool EmulatorManager::RemoveEmulator(const std::string& emulatorId)
 // Lifecycle control methods
 bool EmulatorManager::StartEmulator(const std::string& emulatorId)
 {
+    // Block state changes during shutdown
+    if (_isShuttingDown.load())
+    {
+        LOGWARNING("EmulatorManager::StartEmulator - Blocked during shutdown");
+        return false;
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     auto it = _emulators.find(emulatorId);
@@ -419,6 +433,13 @@ bool EmulatorManager::StartEmulator(const std::string& emulatorId)
 
 bool EmulatorManager::StartEmulatorAsync(const std::string& emulatorId)
 {
+    // Block state changes during shutdown
+    if (_isShuttingDown.load())
+    {
+        LOGWARNING("EmulatorManager::StartEmulatorAsync - Blocked during shutdown");
+        return false;
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     auto it = _emulators.find(emulatorId);
@@ -596,6 +617,13 @@ bool EmulatorManager::ResumeEmulator(const std::string& emulatorId)
 
 bool EmulatorManager::ResetEmulator(const std::string& emulatorId)
 {
+    // Block state changes during shutdown
+    if (_isShuttingDown.load())
+    {
+        LOGWARNING("EmulatorManager::ResetEmulator - Blocked during shutdown");
+        return false;
+    }
+
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
 
     auto it = _emulators.find(emulatorId);
@@ -758,6 +786,12 @@ void EmulatorManager::ShutdownAllEmulators()
     
     _emulators.clear();
     LOGINFO("EmulatorManager::ShutdownAllEmulators - All emulators have been shut down");
+}
+
+void EmulatorManager::PrepareForShutdown()
+{
+    LOGINFO("EmulatorManager::PrepareForShutdown - Setting shutdown flag to block automation requests");
+    _isShuttingDown.store(true);
 }
 
 EmulatorManager::~EmulatorManager()

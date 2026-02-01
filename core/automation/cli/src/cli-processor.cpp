@@ -2,7 +2,7 @@
 
 #include <3rdparty/message-center/eventqueue.h>
 #include <3rdparty/message-center/messagecenter.h>
-#include <debugger/analyzers/basicextractor.h>
+#include <debugger/analyzers/basic-lang/basicextractor.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/debugmanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -81,6 +81,12 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // BASIC commands
                         {"basic", &CLIProcessor::HandleBasic},
 
+                        // Analyzer commands
+                        {"analyzer", &CLIProcessor::HandleAnalyzer},
+
+                        // Profiler commands
+                        {"profiler", &CLIProcessor::HandleProfiler},
+
                         // Settings commands
                         {"setting", &CLIProcessor::HandleSetting},
                         {"settings", &CLIProcessor::HandleSetting},
@@ -102,8 +108,22 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Disk control commands
                         {"disk", &CLIProcessor::HandleDisk},
 
+
+                        // Memory aliases
+                        {"mem", &CLIProcessor::HandleMemory},
+                        {"m", &CLIProcessor::HandleMemory},
+                        {"regs", &CLIProcessor::HandleRegisters},
+                        {"r", &CLIProcessor::HandleRegisters},
+
                         // Snapshot control commands
-                        {"snapshot", &CLIProcessor::HandleSnapshot}};
+                        {"snapshot", &CLIProcessor::HandleSnapshot},
+
+                        // Capture commands (OCR, screen, ROM text)
+                        {"capture", &CLIProcessor::HandleCapture},
+
+                        // Keyboard injection commands
+                        {"key", &CLIProcessor::HandleKey},
+                        {"keyboard", &CLIProcessor::HandleKey}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)
@@ -502,6 +522,13 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  basic                  - Show BASIC command help" << NEWLINE;
     oss << "  basic extract          - Extract BASIC program from memory" << NEWLINE;
     oss << NEWLINE;
+    oss << "Analyzer Commands:" << NEWLINE;
+    oss << "  analyzer list          - List all registered analyzers" << NEWLINE;
+    oss << "  analyzer enable <name> - Activate an analyzer" << NEWLINE;
+    oss << "  analyzer disable <name>- Deactivate an analyzer" << NEWLINE;
+    oss << "  analyzer status [name] - Show analyzer status" << NEWLINE;
+    oss << "  analyzer <name> events - Get captured events" << NEWLINE;
+    oss << NEWLINE;
     oss << "Disk Inspection:" << NEWLINE;
     oss << "  disk list              - List all disk drives and status" << NEWLINE;
     oss << "  disk sector <drv> <cyl> <side> <sec> - Read sector data" << NEWLINE;
@@ -513,6 +540,21 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  snapshot load <file>           - Load snapshot (.sna, .z80)" << NEWLINE;
     oss << "  snapshot save <file> [--force] - Save snapshot (.sna)" << NEWLINE;
     oss << "  snapshot info                  - Show current snapshot status" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Capture Commands:" << NEWLINE;
+    oss << "  capture ocr                    - OCR text from screen (ROM font)" << NEWLINE;
+    oss << "  capture romtext                - Capture ROM print output (TODO)" << NEWLINE;
+    oss << "  capture screen [5|7|shadow]    - Capture screen bitmap (TODO)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Keyboard Injection:" << NEWLINE;
+    oss << "  key tap <key>                  - Tap a key (press and release)" << NEWLINE;
+    oss << "  key press <key>                - Press and hold a key" << NEWLINE;
+    oss << "  key release <key>              - Release a held key" << NEWLINE;
+    oss << "  key combo <key1> <key2>...     - Tap multiple keys simultaneously" << NEWLINE;
+    oss << "  key macro <name>               - Execute predefined macro (e_mode, format, cat, etc.)" << NEWLINE;
+    oss << "  key type <text>                - Type text with auto modifier handling" << NEWLINE;
+    oss << "  key list                       - List all recognized key names" << NEWLINE;
+    oss << "  key clear                      - Release all keys" << NEWLINE;
     oss << NEWLINE;
     oss << "  open [file]   - Open a file or show file dialog" << NEWLINE;
     oss << "  exit, quit    - Exit the CLI" << NEWLINE;

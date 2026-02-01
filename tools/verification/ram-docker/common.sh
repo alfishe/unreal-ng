@@ -16,7 +16,7 @@
 find_project_root() {
     local current_dir="$1"
     for ((i=0; i<10; i++)); do
-        if [[ -f "$current_dir/CMakeLists.txt" ]] && grep -q "project (unreal)" "$current_dir/CMakeLists.txt"; then
+        if [[ -f "$current_dir/CMakeLists.txt" ]] && grep -qi "project\s*(unreal)" "$current_dir/CMakeLists.txt"; then
             echo "$current_dir"
             return 0
         fi

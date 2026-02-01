@@ -240,6 +240,37 @@ count = bp_mgr:get_bp_count()
 bp_list = bp_mgr:get_all_bps()  -- Returns table of breakpoints
 ```
 
+### Analyzer Management
+
+```lua
+-- List registered analyzers
+local names = analyzer_list()  -- → {"trdos"}
+
+-- Enable/disable analyzer
+analyzer_enable("trdos")   -- → true
+analyzer_disable("trdos")  -- → true
+
+-- Get analyzer status
+local status = analyzer_status("trdos")
+-- status.enabled = true
+-- status.state = "IN_TRDOS"
+-- status.event_count = 42
+
+-- Get captured events (optional limit parameter)
+local events = analyzer_events("trdos", 50)
+-- → {"[0001234] TR-DOS Entry (PC=$3D00)", ...}
+
+-- Clear analyzer events
+analyzer_clear("trdos")
+```
+
+**TRDOSAnalyzer States:**
+- `IDLE` - Not in TR-DOS ROM
+- `IN_TRDOS` - In TR-DOS ROM but not executing command
+- `IN_COMMAND` - Executing TR-DOS command
+- `IN_SECTOR_OP` - Sector read/write in progress
+- `IN_CUSTOM` - Custom sector operation
+
 ### Debug Commands (Direct Methods)
 
 > **Status**: ✅ Implemented (2026-01)
@@ -270,6 +301,118 @@ local enabled = emu:feature_get("debugmode")
 
 > [!NOTE]
 > Memory counters (`memcounters`) and call trace (`calltrace`) are available via CLI and WebAPI. Full Lua bindings for these analysis features are planned.
+
+### Opcode Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track Z80 opcode execution statistics and capture execution traces for crash forensics.
+
+```lua
+-- Session control
+profiler_start()    -- Enable feature, clear data, start capture
+profiler_stop()     -- Stop capture (data preserved)
+profiler_pause()    -- Pause capture (retain data)
+profiler_resume()   -- Resume paused capture
+profiler_clear()    -- Clear all profiler data
+
+-- Status query
+local status = profiler_status()
+-- status.feature_enabled = true
+-- status.capturing = true
+-- status.session_state = "capturing"  -- "stopped", "capturing", "paused"
+-- status.total_executions = 15234567
+-- status.trace_size = 10000
+-- status.trace_capacity = 10000
+
+-- Get opcode execution counters (optional limit parameter, default 100)
+local counters = profiler_counters(100)
+-- Each entry: {prefix=0, opcode=126, count=2156789, mnemonic="LD A,(HL)"}
+
+-- Get recent execution trace (for crash forensics)
+local trace = profiler_trace(500)
+-- Each entry: {pc=0x1234, prefix=0, opcode=0x7E, flags=0x44, a=0x42, frame=1200, tstate=45000}
+```
+
+### Memory Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track memory access patterns across all physical memory pages (RAM/ROM/Cache).
+
+```lua
+-- Session control
+memory_profiler_start()    -- Enable feature, start capture
+memory_profiler_stop()     -- Stop capture
+memory_profiler_pause()    -- Pause capture (retain data)
+memory_profiler_resume()   -- Resume paused capture
+memory_profiler_clear()    -- Clear all data
+
+-- Status query
+local status = memory_profiler_status()
+-- status.feature_enabled, status.capturing, status.session_state, status.tracking_mode
+
+-- Data retrieval
+local pages = memory_profiler_pages(20)      -- Get per-page access summaries
+local counters = memory_profiler_counters(5, "physical")  -- Address-level counters for page
+local regions = memory_profiler_regions()    -- Monitored region statistics
+memory_profiler_save("/path/output", "yaml") -- Save data to file
+```
+
+### Call Trace Profiler
+
+> **Status**: ✅ Implemented (2026-01)
+
+Track CPU control flow events (CALL, RET, JP, JR, RST, etc.).
+
+```lua
+-- Session control
+calltrace_profiler_start()    -- Enable feature, start capture
+calltrace_profiler_stop()     -- Stop capture
+calltrace_profiler_pause()    -- Pause capture (retain data)
+calltrace_profiler_resume()   -- Resume paused capture
+calltrace_profiler_clear()    -- Clear all data
+
+-- Status query
+local status = calltrace_profiler_status()
+-- status.feature_enabled, status.capturing, status.session_state
+-- status.entry_count, status.buffer_capacity
+
+-- Data retrieval
+local entries = calltrace_profiler_entries(100)  -- Get trace entries
+local stats = calltrace_profiler_stats()    -- Get call/return statistics
+```
+
+### Unified Profiler Control
+
+> **Status**: ✅ Implemented (2026-01)
+
+Control all profilers (opcode, memory, calltrace) simultaneously.
+
+```lua
+-- Start all profilers (enables features automatically)
+profilers_start_all()
+
+-- Pause all profilers (retain data)
+profilers_pause_all()
+
+-- Resume all paused profilers
+profilers_resume_all()
+
+-- Stop all profilers
+profilers_stop_all()
+
+-- Clear all profiler data
+profilers_clear_all()
+
+-- Get status of all profilers
+local status = profilers_status_all()
+-- status.opcode.session_state = "capturing"
+-- status.opcode.total_executions = 15234567
+-- status.memory.session_state = "capturing"
+-- status.calltrace.session_state = "capturing"
+-- status.calltrace.entry_count = 450
+```
 
 ## Usage Examples
 

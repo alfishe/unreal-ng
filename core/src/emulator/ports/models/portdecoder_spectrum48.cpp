@@ -43,9 +43,6 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_IN;
     /// endregion </Override submodule>
 
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortIn(port, pc);
-
     uint8_t result = 0xFF;
 
     if (IsPort_FE(port))
@@ -61,6 +58,9 @@ uint8_t PortDecoder_Spectrum48::DecodePortIn(uint16_t port, uint16_t pc)
     MLOGWARNING("[In] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, result);
 #endif
 
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortInComplete(port, result, pc);
+
     return result;
 }
 
@@ -70,9 +70,6 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
     [[maybe_unused]]
     static const uint16_t _SUBMODULE = PlatformIOSubmodulesEnum::SUBMODULE_IO_OUT;
     /// endregion </Override submodule>
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortOut(port, value, pc);
 
     if (IsPort_FE(port))
     {
@@ -84,6 +81,9 @@ void PortDecoder_Spectrum48::DecodePortOut(uint16_t port, uint8_t value, uint16_
         std::string currentMemoryPage = GetPCAddressLocator(pc);
         LOGWARNING("[Out] [PC:%04X%s] Port: %02X; Value: %02X", pc, currentMemoryPage.c_str(), port, value);
     }
+
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortOutComplete(port, value, pc);
 }
 
 void PortDecoder_Spectrum48::SetRAMPage(uint8_t page)

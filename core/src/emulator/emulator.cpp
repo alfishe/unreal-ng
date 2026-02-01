@@ -7,8 +7,6 @@
 #include <chrono>
 #include <functional>
 #include <iomanip>
-#include <random>
-#include <sstream>
 #include <thread>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -31,7 +29,8 @@ Emulator::Emulator(LoggerLevel level) : Emulator("", level) {}
 
 Emulator::Emulator(const std::string& symbolicId, LoggerLevel level)
 {
-    _emulatorId = GenerateUUID();
+    _uuid = UUID::Generate(); // Generate new unique UUID
+    _emulatorId = _uuid.toString();
     _symbolicId = symbolicId;
     _createdAt = std::chrono::system_clock::now();
     _lastActivity = _createdAt;
@@ -366,6 +365,22 @@ void Emulator::ReleaseNoGuard()
     if (!_context)
         return;
 
+    // Cleanup any pending step-over operation (orphan cleanup)
+    if (_pendingStepOverBpId != 0 && _breakpointManager)
+    {
+        MLOGDEBUG("Emulator::ReleaseNoGuard - Cleaning up orphaned step-over breakpoint ID %d", _pendingStepOverBpId);
+        _breakpointManager->RemoveBreakpointByID(_pendingStepOverBpId);
+        
+        // Reactivate any deactivated breakpoints
+        for (uint16_t bpId : _stepOverDeactivatedBps)
+        {
+            _breakpointManager->ActivateBreakpoint(bpId);
+        }
+        
+        _pendingStepOverBpId = 0;
+        _stepOverDeactivatedBps.clear();
+    }
+
     // Release debug manager (and related components)
     if (_context->pDebugManager)
     {
@@ -687,8 +702,7 @@ void Emulator::Pause(bool broadcast)
     // The emulator thread is still active, just paused.
     // Setting _isRunning = false would cause Stop() to skip _asyncThread->join(),
     // leading to a crash when RemoveEmulator() destroys memory while thread is still running.
-
-    _mainloop->Pause();
+    // MainLoop::Run() will detect this via Emulator::IsPaused() check.
 
     // Update state and broadcast only if requested
     // broadcast=false is used for internal operations like shared memory migration
@@ -736,10 +750,11 @@ void Emulator::Resume(bool broadcast)
 
     _stopRequested = false;
     _isPaused = false;
+    // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
 
-    _mainloop->Resume();
-
-    _isRunning = true;
+    // Note: Don't unconditionally set _isRunning = true here.
+    // In synchronous test mode, _isRunning may be false and should stay false.
+    // The main RunAsync() path handles _isRunning appropriately.
 
     // Update state and broadcast only if requested
     if (broadcast)
@@ -750,6 +765,28 @@ void Emulator::Resume(bool broadcast)
         MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
         SimpleNumberPayload* payload = new SimpleNumberPayload(StateResumed);
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
+    }
+}
+
+/// @brief Blocks the calling thread until the emulator is resumed
+/// 
+/// Used by breakpoint handlers to pause execution while waiting for
+/// the debugger or user to resume. This is the single source of truth
+/// for pause/resume synchronization.
+void Emulator::WaitWhilePaused()
+{
+    while (_isPaused)
+    {
+        if (!_stopRequested)
+        {
+            // Wait in a loop if stop is not requested
+            sleep_ms(20);
+        }
+        else
+        {
+            // Stop requested - exit the loop
+            break;
+        }
     }
 }
 
@@ -768,9 +805,9 @@ void Emulator::Stop()
     _stopRequested = true;
 
     // If emulator was paused - un-pause, allowing mainloop to react
+    // MainLoop::Run() will detect this via Emulator::IsPaused() check
     if (_isPaused)
     {
-        _mainloop->Resume();
         _isPaused = false;
     }
 
@@ -1183,6 +1220,83 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
     }
 }
 
+void Emulator::RunFrame(bool skipBreakpoints)
+{
+    // If emulator is running, we need to pause it first to avoid race condition
+    bool wasRunning = IsRunning() && !IsPaused();
+    if (wasRunning)
+    {
+        Pause(false);  // Pause without broadcasting (internal operation)
+    }
+    
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+    
+    // Run CPU cycles until we reach the frame boundary
+    uint64_t frameStart = _context->emulatorState.frame_counter;
+    
+    while (_context->emulatorState.frame_counter == frameStart && !_stopRequested)
+    {
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+        
+        // Check for frame boundary
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+        }
+    }
+    
+    // Notify the debugger that a frame step has been performed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    
+    // Resume if we were running before
+    if (wasRunning)
+    {
+        Resume(false);  // Resume without broadcasting (internal operation)
+    }
+}
+
+void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
+{
+    // Pause once for all frames to avoid repeated pause/resume overhead
+    bool wasRunning = IsRunning() && !IsPaused();
+    if (wasRunning)
+    {
+        Pause(false);
+    }
+    
+    for (unsigned i = 0; i < frames && !_stopRequested; i++)
+    {
+        // Call internal frame step without pause/resume handling
+        const CONFIG& config = _context->config;
+        Z80& z80 = *_core->GetZ80();
+        
+        uint64_t frameStart = _context->emulatorState.frame_counter;
+        
+        while (_context->emulatorState.frame_counter == frameStart && !_stopRequested)
+        {
+            z80.Z80Step(skipBreakpoints);
+            z80.OnCPUStep();
+            
+            if (z80.t >= config.frame)
+            {
+                _core->AdjustFrameCounters();
+            }
+        }
+    }
+    
+    // Notify once after all frames
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    
+    if (wasRunning)
+    {
+        Resume(false);
+    }
+}
+
 void Emulator::RunUntilInterrupt()
 {
     throw std::logic_error("Not implemented");
@@ -1281,7 +1395,9 @@ void Emulator::StepOver()
         RunSingleCPUCycle(true);
         return;
     }
-    bpManager->SetBreakpointGroup(stepOverBreakpointID, "TemporaryBreakpoints");
+    // Store tracking state for orphan cleanup
+    _pendingStepOverBpId = stepOverBreakpointID;
+    _stepOverDeactivatedBps = deactivatedBreakpoints;
 
     // Save original feature states
     bool originalDebugMode = fm->isEnabled(Features::kDebugMode);
@@ -1290,10 +1406,10 @@ void Emulator::StepOver()
     fm->setFeature(Features::kBreakpoints, true);
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    std::function<void(int, Message*)> breakpoint_handler;
 
-    breakpoint_handler = [this, bpManager, stepOverBreakpointID, deactivatedBreakpoints, fm, originalDebugMode,
-                          originalBreakpoints](int /*id*/, Message* message) mutable {
+    // Lambda captures this pointer to clear tracking state
+    auto breakpoint_handler = [this, bpManager, stepOverBreakpointID, fm, originalDebugMode,
+                              originalBreakpoints](int /*id*/, Message* message) mutable {
         if (!message || !message->obj)
             return;
 
@@ -1302,34 +1418,36 @@ void Emulator::StepOver()
 
         if (triggeredBreakpointID == stepOverBreakpointID)
         {
-            MLOGDEBUG("Emulator::StepOver() - lambda cleanup started for breakpoint ID %d", stepOverBreakpointID);
+            MLOGDEBUG("Emulator::StepOver() - cleanup for breakpoint ID %d", stepOverBreakpointID);
+            
+            // Remove breakpoint
             bpManager->RemoveBreakpointByID(stepOverBreakpointID);
-            for (uint16_t deactivatedId : deactivatedBreakpoints)
+            
+            // Reactivate deactivated breakpoints
+            for (uint16_t deactivatedId : _stepOverDeactivatedBps)
             {
                 bpManager->ActivateBreakpoint(deactivatedId);
             }
+            
+            // Restore feature flags
             fm->setFeature(Features::kDebugMode, originalDebugMode);
             fm->setFeature(Features::kBreakpoints, originalBreakpoints);
 
-            // Signal the StepOver finalizer that processing is done and we cal wrap up
-            _stepOverSyncEvent.Signal();
-            MLOGDEBUG("Emulator::StepOver() - lambda finished.");
+            // Clear tracking state
+            _pendingStepOverBpId = 0;
+            _stepOverDeactivatedBps.clear();
+            
+            MLOGDEBUG("Emulator::StepOver() - cleanup complete");
         }
     };
 
     messageCenter.AddObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
 
-    // Continue execution, then wait for the lambda to signal completion
-    MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit temporary breakpoint at 0x%04X",
-              nextInstructionAddress);
+    // Resume execution - returns immediately (non-blocking)
+    MLOGDEBUG("Emulator::StepOver() - Resuming execution to hit breakpoint at 0x%04X", nextInstructionAddress);
     Resume();
-
-    // We're waiting until breakpoint_handler lambda finishes
-    _stepOverSyncEvent.Wait();
-
-    // Now it's safe to remove the observer
-    messageCenter.RemoveObserver(NC_EXECUTION_BREAKPOINT, breakpoint_handler);
-    MLOGDEBUG("Emulator::StepOver() - Operation complete, observer removed.");
+    
+    // No blocking wait - UI stays responsive
 }
 
 /// Load ROM file (up to 64 banks to ROM area)
@@ -1373,9 +1491,26 @@ Z80State* Emulator::GetZ80State()
 // region Status
 
 // Identity and state methods
+
+UUID Emulator::GetUUID() const
+{
+    return _uuid;
+}
+
 const std::string& Emulator::GetId() const
 {
     return _emulatorId;
+}
+
+std::string Emulator::GetSymbolicId() const
+{
+    return _symbolicId;
+}
+
+void Emulator::SetSymbolicId(const std::string& symbolicId)
+{
+    _symbolicId = symbolicId;
+    UpdateLastActivity();
 }
 
 // Timestamp helpers
@@ -1406,23 +1541,6 @@ std::string Emulator::GetUptimeString() const
     ss << std::setw(2) << std::setfill('0') << hours << ":" << std::setw(2) << std::setfill('0') << minutes << ":"
        << std::setw(2) << std::setfill('0') << seconds;
     return ss.str();
-}
-
-// ID management
-std::string Emulator::GetUUID() const
-{
-    return _emulatorId;
-}
-
-std::string Emulator::GetSymbolicId() const
-{
-    return _symbolicId;
-}
-
-void Emulator::SetSymbolicId(const std::string& symbolicId)
-{
-    _symbolicId = symbolicId;
-    UpdateLastActivity();
 }
 
 EmulatorStateEnum Emulator::GetState()
@@ -1499,42 +1617,5 @@ std::string Emulator::GetStatistics()
     return result;
 }
 
-std::string Emulator::GenerateUUID()
-{
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(0, 15);
-    static std::uniform_int_distribution<> dis2(8, 11);
-
-    std::stringstream ss;
-    int i;
-    ss << std::hex;
-    for (i = 0; i < 8; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (i = 0; i < 4; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-4";
-    for (i = 0; i < 3; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-";
-    ss << dis2(gen);
-    for (i = 0; i < 3; i++)
-    {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (i = 0; i < 12; i++)
-    {
-        ss << dis(gen);
-    };
-    return ss.str();
-}
 
 // endregion

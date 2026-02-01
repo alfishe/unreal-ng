@@ -610,15 +610,26 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
             if (lastIndex >= 0)
             {
                 EmulatorTile* tile = tiles[lastIndex];
-                if (tile && tile->emulator())
+                if (tile)
                 {
-                    std::string emulatorId = tile->emulator()->GetUUID();
+                    // Get emulator ID before clearing the reference
+                    std::string emulatorId;
+                    if (tile->emulator())
+                    {
+                        emulatorId = tile->emulator()->GetUUID();
+                    }
+                    
+                    // CRITICAL: Clear tile's shared_ptr reference FIRST
+                    tile->prepareForDeletion();
 
-                    // Stop and destroy emulator
-                    _emulatorManager->RemoveEmulator(emulatorId);
+                    // Destroy emulator via manager (now safe - tile no longer holds reference)
+                    if (!emulatorId.empty())
+                    {
+                        _emulatorManager->RemoveEmulator(emulatorId);
+                    }
 
                     // Remove from grid (this deletes the tile)
-                    _tileGrid->removeTile(tile);
+                    _tileGrid->removeTile(tile, true);  // skipLayout during batch
 
                     // Update our copy
                     tiles = _tileGrid->tiles();
@@ -659,18 +670,29 @@ void VideoWallWindow::restoreSavedEmulators()
     for (auto it = tilesToRemove.rbegin(); it != tilesToRemove.rend(); ++it)
     {
         EmulatorTile* tile = *it;
-        std::string uuid = tile->emulator()->GetUUID();
+        if (!tile) continue;
+        
+        // Get emulator ID before clearing the reference
+        std::string uuid;
+        if (tile->emulator())
+        {
+            uuid = tile->emulator()->GetUUID();
+        }
 
         qDebug() << "Removing excessive emulator:" << QString::fromStdString(uuid);
 
-        // Remove from grid
-        _tileGrid->removeTile(tile);
+        // CRITICAL: Clear tile's shared_ptr reference FIRST
+        tile->prepareForDeletion();
 
-        // Destroy emulator via manager
-        _emulatorManager->RemoveEmulator(uuid);
+        // Destroy emulator via manager (now safe - tile no longer holds reference)
+        if (!uuid.empty())
+        {
+            _emulatorManager->RemoveEmulator(uuid);
+        }
 
-        // Delete tile widget
-        delete tile;
+        // Remove from grid (this schedules tile for deletion via deleteLater)
+        _tileGrid->removeTile(tile, true);  // skipLayout during batch
+        // NOTE: Do NOT delete tile here - removeTile already calls deleteLater()
     }
 
     qDebug() << "Restored" << _savedEmulatorIds.size() << "emulators, removed" << tilesToRemove.size() << "excessive";

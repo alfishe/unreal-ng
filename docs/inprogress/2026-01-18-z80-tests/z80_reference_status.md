@@ -1,17 +1,20 @@
 # Z80 Reference Implementation Status
 
 **Date**: 2026-01-19  
-**Last Updated**: 01:38 EST
+**Last Updated**: 2026-01-28 (All block I/O tests fixed!)
 
 ## Current State Summary
 
 | Metric | Value |
 |--------|-------|
 | **Total Tests** | 163 |
-| **Passing** | 110 |
-| **Failing** | 53 |
-| **No Zilog Ref** | 0 (all have refs) |
-| **Pass Rate** | 67.5% |
+| **Passing** | 163 ✅ |
+| **Failing** | 0 |
+| **Pass Rate** | 100% |
+
+> [!NOTE]
+> All block I/O instruction tests (INI, IND, OUTI, OUTD, INIR, INDR, OTIR, OTDR) now pass.
+> See [z80_block_io_fixes.md](z80_block_io_fixes.md) for details on the fixes applied.
 
 ## Files Involved
 

@@ -208,4 +208,78 @@ namespace DiskTypes
     constexpr uint8_t DISK_80T_DS = 0x19;      // 80 tracks, double-sided (2544 free sectors)
 } // namespace DiskTypes
 
+// ROM Switching Mechanism (Beta 128 Hardware)
+// Based on analysis of TR-DOS 5.04T ROM interaction with 48K ROM
+namespace ROMSwitch
+{
+    // Trap address range - when PC fetches opcode from this range:
+    // - If SOS ROM paged -> hardware switches to DOS ROM
+    constexpr uint16_t TRAP_START = 0x3D00;
+    constexpr uint16_t TRAP_END = 0x3DFF;
+    
+    // Key entry points within trap range
+    constexpr uint16_t ENTRY_MAIN = 0x3D00;       // Main TR-DOS entry point
+    constexpr uint16_t ENTRY_COMMAND = 0x3D03;   // Execute TR-DOS command from BASIC
+    constexpr uint16_t ENTRY_FILE_IN = 0x3D06;   // Data file input routine  
+    constexpr uint16_t ENTRY_FILE_OUT = 0x3D0E;  // Data file output routine
+    constexpr uint16_t ENTRY_MCODE = 0x3D13;     // Machine code calls
+    constexpr uint16_t ROM_TRAMPOLINE = 0x3D2F;  // ROM switch trampoline (return from SOS)
+    constexpr uint16_t ENTRY_FULL = 0x3D31;      // Full DOS entry with sys vars init
+    
+    // RAM stub address - when PC fetches opcode from RAM (>= 0x4000):
+    // - If DOS ROM paged -> hardware switches to SOS ROM
+    // TR-DOS places RET ($C9) at this address during initialization
+    constexpr uint16_t RAM_STUB = 0x5CC2;
+    constexpr uint8_t RAM_STUB_OPCODE = 0xC9;    // RET instruction
+    
+    // System variables for detecting TR-DOS initialization
+    constexpr uint16_t CHANS_TRDOS_VALUE = 0x5D25; // CHANS value when TR-DOS sys vars present
+    constexpr uint16_t SYS_REG_MIRROR = 0x5D16;    // Mirror of last value written to port $FF
+    constexpr uint16_t SPLASH_FLAG = 0x5D17;       // $AA = skip splash screen
+    constexpr uint16_t DEFAULT_DRIVE = 0x5D19;     // Default drive number (0-3)
+    constexpr uint16_t MCODE_FLAG = 0x5D1F;        // Non-zero if called from machine code
+} // namespace ROMSwitch
+
 } // namespace TRDOS
+
+/// @brief Spectrum 128K Editor System Variables
+/// 
+/// These occupy addresses $EC00-$FFFF in physical RAM bank 7.
+/// Used by the 128K BASIC Editor, Calculator, and Menu system.
+/// 
+/// References:
+/// - ZX Spectrum 128K ROM0 Disassembly
+namespace Editor128K
+{
+// New 128K System Variables in Printer Buffer ($5B00-$5BFF)
+constexpr uint16_t SWAP = 0x5B00;        // 20 bytes: Swap paging subroutine
+constexpr uint16_t YOUNGER = 0x5B14;     // 9 bytes: Return paging subroutine
+constexpr uint16_t ONERR = 0x5B1D;       // 18 bytes: Error handler paging subroutine
+constexpr uint16_t BANK_M = 0x5B5C;      // 1 byte: Copy of last byte output to port $7FFD
+constexpr uint16_t FLAGS3 = 0x5B66;      // 1 byte: Flags - Bit 0: 1=BASIC mode, 0=Menu mode
+
+// Editor Workspace Variables (in RAM bank 7 at $EC00+)
+constexpr uint16_t EDIT_FLAGS = 0xEC00;  // 3 bytes: Flags when inserting line
+constexpr uint16_t EDIT_ERR = 0xEC03;    // 3 bytes: Flags upon error
+constexpr uint16_t EDIT_COUNT = 0xEC06;  // 2 bytes: Count of editable characters
+constexpr uint16_t EDIT_EPPC = 0xEC08;   // 2 bytes: Editor's E_PPC (last line entered)
+constexpr uint16_t MENU_INDEX = 0xEC0C;  // 1 byte: Current menu index (0=Tape, 1=128 BASIC, 2=Calc, 3=48 BASIC, 4=Tester)
+constexpr uint16_t EDITOR_FLAGS = 0xEC0D; // 1 byte: Editor flags - Bit 1=Menu displayed, Bit 4=Return to calc
+constexpr uint16_t EDITOR_MODE = 0xEC0E; // 1 byte: Mode - $00=Edit Menu, $04=Calculator, $FF=Tape Loader
+
+// Screen Line Edit Buffer (SLEB) - 128K full-screen editor buffer at $EC16
+// This is where typed commands are stored in 128K BASIC mode, NOT E_LINE
+constexpr uint16_t SLEB = 0xEC16;         // Screen Line Edit Buffer (up to 32 chars)
+constexpr uint16_t SLEB_LEN = 0xEC36;     // 1 byte: Current length of text in SLEB
+
+// Main Menu Item Indices
+namespace MenuItems
+{
+    constexpr uint8_t TAPE_LOADER = 0;   // Tape Loader
+    constexpr uint8_t BASIC_128K = 1;    // 128 BASIC
+    constexpr uint8_t CALCULATOR = 2;    // Calculator
+    constexpr uint8_t BASIC_48K = 3;     // 48 BASIC
+    constexpr uint8_t TAPE_TESTER = 4;   // Tape Tester
+} // namespace MenuItems
+
+} // namespace Editor128K

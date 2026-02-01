@@ -34,6 +34,7 @@ public slots:
     void refresh();
     void handleExternalKeyPress(QKeyEvent* event);
     void handleExternalKeyRelease(QKeyEvent* event);
+    void prepareForShutdown();  // Block refreshes during shutdown
 
 public:
     void setEmulator(std::shared_ptr<Emulator> emulator)
@@ -61,6 +62,7 @@ private:
     float ratio = 352.0f / 288.0f;
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
+    bool _isShuttingDown = false;  // Flag to block refreshes during shutdown
 };
 
 #endif  // DEVICESCREEN_H

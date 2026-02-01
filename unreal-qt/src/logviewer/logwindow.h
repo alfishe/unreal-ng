@@ -27,6 +27,7 @@ public:
 public:
     void init();
     void reset();
+    void prepareForShutdown();  // Block refreshes during shutdown
     /// endregion </Initialization
 
 public slots:
@@ -43,6 +44,7 @@ protected:
     std::stringstream m_logStream;
     int m_logMessagesCount = 0;
     int m_logMessagesSize = 0;
+    bool m_isShuttingDown = false;  // Flag to block updates during shutdown
 
     // UI fields
 private:

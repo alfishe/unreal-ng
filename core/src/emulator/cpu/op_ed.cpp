@@ -476,18 +476,17 @@ Z80OPCODE ope_69(Z80 *cpu) { // out (c),l
 Z80OPCODE ope_6A(Z80 *cpu) { // adc hl,hl
    cpu->memptr = cpu->hl + 1;
 
-    int32_t hl = cpu->hl & 0xFFFF;
-
    uint8_t flags = ((cpu->h << 1) & 0x10); // HF
-   unsigned result = hl + hl + (cpu->af & CF);
+   unsigned result = (cpu->hl & 0xFFFF) * 2 + (cpu->af & CF);
 
    if (result & 0x10000)
        flags |= CF;
    if (!(result & 0xFFFF))
        flags |= ZF;
 
-   // P/V = overflow: operands same sign (both hl), result different sign
-   if (((hl ^ hl) & 0x8000) == 0 && ((hl ^ result) & 0x8000))
+   // P/V = overflow: signed result outside 16-bit signed range
+   int32_t signedResult = 2 * (int16_t)(cpu->hl & 0xFFFF) + (cpu->af & CF);
+   if (signedResult < -0x8000 || signedResult >= 0x8000)
        flags |= PV;
 
    cpu->hl = result & 0xFFFF;
@@ -680,38 +679,74 @@ Z80OPCODE ope_A1(Z80 *cpu) { // cpi
 }
 
 Z80OPCODE ope_A2(Z80 *cpu) { // ini
-   cpu->memptr = cpu->bc + 1;
+    // Based on Xpeccy emulator implementation
+    cpu->memptr = cpu->bc + 1;
 
-   cputact(4);
+    cputact(4);
 
-   uint16_t hl = cpu->hl;
-   cpu->wd(hl++, cpu->in(cpu->bc));
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value
+    cpu->wd(hl++, value);
 
-   dec8(cpu, cpu->b);
+    // Decrement B
+    cpu->b--;
+    uint8_t b_out = cpu->b;
 
-   cpu->hl = hl;
+    // T = M + ((C + 1) & 0xFF) for INI
+    uint16_t t = value + ((cpu->c + 1) & 0xFF);
 
-   cputact(1);
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
+
+    cpu->hl = hl;
+    cputact(1);
 }
 
 Z80OPCODE ope_A3(Z80 *cpu) { // outi
+    // Based on Xpeccy emulator implementation
     cputact(1);
 
-    dec8(cpu, cpu->b);
-
     uint16_t hl = cpu->hl;
-    uint8_t value = cpu->rd(hl++);
+    uint8_t value = cpu->rd(hl);  // M = memory value
+
+    // Decrement B first
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    cpu->memptr = cpu->bc + 1;
 
     cputact(4);
 
     cpu->out(cpu->bc, value);
-    cpu->f &= ~CF;
-    if (!cpu->l)
-        cpu->f |= CF;
+    hl++;
+
+    // T = M + L (output value of L)
+    uint16_t t = value + (hl & 0xFF);
+
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
 
     cpu->hl = hl;
-
-    cpu->memptr = cpu->bc + 1;
 }
 
 Z80OPCODE ope_A8(Z80 *cpu) { // ldd
@@ -755,40 +790,74 @@ Z80OPCODE ope_A9(Z80 *cpu) { // cpd
 }
 
 Z80OPCODE ope_AA(Z80 *cpu) { // ind
+    // Based on Xpeccy emulator implementation
     cpu->memptr = cpu->bc - 1;
 
     cputact(4);
 
     uint16_t hl = cpu->hl;
-    cpu->wd(hl--, cpu->in(cpu->bc));
+    uint8_t value = cpu->in(cpu->bc);  // M = port value
+    cpu->wd(hl--, value);
 
-    dec8(cpu, cpu->b);
+    // Decrement B
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    // T = M + ((C - 1) & 0xFF) for IND
+    uint16_t t = value + ((cpu->c - 1) & 0xFF);
+
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
 
     cpu->hl = hl;
-
     cputact(1);
 }
 
 Z80OPCODE ope_AB(Z80 *cpu) { // outd
+    // Based on Xpeccy emulator implementation
     cputact(1);
 
-    dec8(cpu, cpu->b);
-
     uint16_t hl = cpu->hl;
-    uint8_t value = cpu->rd(hl--);
+    uint8_t value = cpu->rd(hl);  // M = memory value
+
+    // Decrement B first
+    cpu->b--;
+    uint8_t b_out = cpu->b;
+
+    cpu->memptr = cpu->bc - 1;
 
     cputact(4);
 
     cpu->out(cpu->bc, value);
+    hl--;
 
-    cpu->f &= ~CF;
+    // T = M + L (output value of L)
+    uint16_t t = value + (hl & 0xFF);
 
-    if (cpu->l == 0xFF)
-        cpu->f |= CF;
+    // Flags based on Xpeccy
+    cpu->f = (b_out & (SF|F3|F5));  // SF, XF, YF from B
+    if (!b_out) cpu->f |= ZF;       // ZF = (B == 0)
+    if (value & 0x80) cpu->f |= NF; // NF = M.7
+    if (t > 255) cpu->f |= (CF|HF); // CF = HF = (T > 255)
+
+    // PF = parity((T & 7) ^ B)
+    uint8_t pf = (t & 7) ^ b_out;
+    pf ^= pf >> 4;
+    pf ^= pf >> 2;
+    pf ^= pf >> 1;
+    if (!(pf & 1)) cpu->f |= PV;
 
     cpu->hl = hl;
-
-    cpu->memptr = cpu->bc - 1;
 }
 
 Z80OPCODE ope_B0(Z80 *cpu) { // ldir
@@ -835,90 +904,203 @@ Z80OPCODE ope_B1(Z80 *cpu) { // cpir
 
    cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
-   cputact(5);
-
+   // Set PV flag and XF/YF from PC BEFORE any cputact calls
+   // so interrupts occurring during cycles see correct flags
    if (--cpu->bc)
    {
       cpu->f |= PV;
 
-	  if (!(cpu->f & ZF))
-	  {
-		  cpu->pc = (cpu->pc - 2) & 0xFFFF;
+      if (!(cpu->f & ZF))
+      {
+          cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
-		  // Interrupted block instruction: YF=PC.13, XF=PC.11
-		  cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+          // Interrupted block instruction: YF=PC.13, XF=PC.11
+          cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-		  cputact(5);
+          cpu->memptr = cpu->pc + 1;
 
-		  cpu->memptr = cpu->pc + 1;
-	  }
+          cputact(10); // 5 + 5 cycles for repeat
+      }
+      else
+      {
+          cputact(5);
+      }
+   }
+   else
+   {
+      cputact(5);
    }
 
    cpu->hl = hl;
 }
 
 Z80OPCODE ope_B2(Z80 *cpu) { // inir
-   cpu->memptr = cpu->bc + 1;
+    // Based on David Banks' research
+    // For INIR: T = M + ((C + 1) & 0xFF)
+    cpu->memptr = cpu->bc + 1;
 
-   cputact(4);
+    cputact(4);
 
-   uint16_t hl = cpu->hl;
-   cpu->wd(hl++, cpu->in(cpu->bc));
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value
+    cpu->wd(hl++, value);
 
-   dec8(cpu, cpu->b);
+    // Decrement B
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
 
-   if (cpu->b)
-   {
-	   cpu->f |= PV;
-	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+    // T = M + ((C + 1) & 0xFF) for INIR
+    uint16_t t = value + ((cpu->c + 1) & 0xFF);
 
-	   // Interrupted block instruction: YF=PC.13, XF=PC.11
-	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+    // NF = M.7, CF = T > 255
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    uint8_t cf = (t > 255) ? CF : 0;
 
-	   cputact(6);
-   }
-   else
-   {
-	   cpu->f &= ~PV;
+    if (b_out)  // B != 0
+    {
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+        uint8_t hf = 0;
+        uint8_t pf;
 
-	   cputact(1);
-   }
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else
+            {
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
 
-   cpu->hl = hl;
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = sf | pf | hf | nf | cf;
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(6);
+    }
+    else
+    {
+        uint8_t hf = cf ? HF : 0;
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+
+        cputact(1);
+    }
+
+    cpu->hl = hl;
 }
 
 Z80OPCODE ope_B3(Z80 *cpu) { // otir
-   cputact(1);
+    // Based on David Banks' research:
+    // https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags
+    cputact(1);
 
-   dec8(cpu, cpu->b);
+    // Decrement B first (before output)
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
 
-   uint16_t hl = cpu->hl;
-   uint8_t value = cpu->rd(hl++);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl++);  // M = memory value
+    uint8_t l_out = hl & 0xFF;      // Lo = output value of L
 
-   cputact(4);
+    cputact(4);
 
-   cpu->out(cpu->bc, value);
+    cpu->out(cpu->bc, value);
 
-   if (cpu->b)
-   {
-	   cpu->f |= PV;
-	   cpu->pc = (cpu->pc - 2) & 0xFFFF;
+    // T = M + Lo (for OTIR/OTDR)
+    uint16_t t = value + l_out;
 
-	   // Interrupted block instruction: YF=PC.13, XF=PC.11
-	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+    // Calculate flags according to David Banks
+    // NF = M.7
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    // CF = T > 255
+    uint8_t cf = (t > 255) ? CF : 0;
 
-	   cputact(5);
-   }
-   else
-   {
-	   cpu->f &= ~PV;
-   }
+    if (b_out)  // B != 0, instruction will repeat
+    {
+        // ZF = 0, SF = Bo.7
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
 
-   cpu->f &= ~CF; if (!cpu->l) cpu->f |= CF;
+        // Calculate HF and PF based on CF and M.7
+        uint8_t hf = 0;
+        uint8_t pf;
 
-   cpu->hl = hl;
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                // Balu = Bo - 1
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else  // M.7 = 0
+            {
+                // Balu = Bo + 1
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            // Balu = Bo (no adjustment when CF=0)
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
 
-   cpu->memptr = cpu->bc + 1;
+        // Calculate parity of pf
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;  // Even parity = PV set
+
+        cpu->f = sf | pf | hf | nf | cf;
+
+        // Set PC back to instruction for repeat
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+
+        // Interrupted block instruction: YF=PC.13, XF=PC.11
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(5);
+    }
+    else  // B == 0, single iteration flags
+    {
+        // SF = 0, ZF = 1, HF = CF
+        uint8_t hf = cf ? HF : 0;
+
+        // PF = ((T & 7) ^ Bo).parity (Bo is 0 here)
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+    }
+
+    cpu->hl = hl;
+    cpu->memptr = cpu->bc + 1;
 }
 
 Z80OPCODE ope_B8(Z80 *cpu) { // lddr
@@ -962,91 +1144,186 @@ Z80OPCODE ope_B9(Z80 *cpu) { // cpdr
 
    cpu->f = cpf8b[cpu->a * 0x100 + value] + cf;
 
-   cputact(5);
-
+   // Set PV flag and XF/YF from PC BEFORE any cputact calls
+   // so interrupts occurring during cycles see correct flags
    if (--cpu->bc)
    {
       cpu->f |= PV;
 
-	  if (!(cpu->f & ZF))
-	  {
-		  cpu->pc = cpu->pc - 2;
+      if (!(cpu->f & ZF))
+      {
+          cpu->pc = (cpu->pc - 2) & 0xFFFF;
 
-		  // Interrupted block instruction: YF=PC.13, XF=PC.11
-		  cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+          // Interrupted block instruction: YF=PC.13, XF=PC.11
+          cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-		  cputact(5);
+          cpu->memptr = cpu->pc + 1;
 
-		  cpu->memptr = cpu->pc + 1;
-	  }
+          cputact(10); // 5 + 5 cycles for repeat
+      }
+      else
+      {
+          cputact(5);
+      }
+   }
+   else
+   {
+      cputact(5);
    }
 
    cpu->hl = hl;
 }
 
 Z80OPCODE ope_BA(Z80 *cpu) { // indr
-   cpu->memptr = cpu->bc - 1;
+    // Based on David Banks' research
+    // For INDR: T = M + ((C - 1) & 0xFF)
+    cpu->memptr = cpu->bc - 1;
 
-   cputact(4);
+    cputact(4);
 
-   uint16_t hl = cpu->hl;
-   cpu->wd(hl--, cpu->in(cpu->bc));
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->in(cpu->bc);  // M = port value
+    cpu->wd(hl--, value);
 
-   dec8(cpu, cpu->b);
+    // Decrement B
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
 
-   if (cpu->b)
-   {
-	   cpu->f |= PV;
-	   cpu->pc = cpu->pc - 2;
+    // T = M + ((C - 1) & 0xFF) for INDR
+    uint16_t t = value + ((cpu->c - 1) & 0xFF);
 
-	   // Interrupted block instruction: YF=PC.13, XF=PC.11
-	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+    // NF = M.7, CF = T > 255
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    uint8_t cf = (t > 255) ? CF : 0;
 
-	   cputact(6);
-   }
-   else
-   {
-	   cpu->f &= ~PV;
+    if (b_out)  // B != 0
+    {
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+        uint8_t hf = 0;
+        uint8_t pf;
 
-	   cputact(1);
-   }
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else
+            {
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
 
-   cpu->hl = hl;
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = sf | pf | hf | nf | cf;
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+
+        cputact(6);
+    }
+    else
+    {
+        uint8_t hf = cf ? HF : 0;
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+
+        cputact(1);
+    }
+
+    cpu->hl = hl;
 }
 
 Z80OPCODE ope_BB(Z80 *cpu) { // otdr
-   cputact(1);
+    // Based on David Banks' research
+    cputact(1);
 
-   dec8(cpu, cpu->b);
+    // Decrement B first (before output)
+    uint8_t b_out = cpu->b - 1;  // Bo = output value of B
+    cpu->b = b_out;
 
-   uint16_t hl = cpu->hl;
-   uint8_t value = cpu->rd(hl--);
+    uint16_t hl = cpu->hl;
+    uint8_t value = cpu->rd(hl--);  // M = memory value
+    uint8_t l_out = hl & 0xFF;      // Lo = output value of L
 
-   cputact(4);
+    cputact(4);
 
-   cpu->out(cpu->bc, value);
+    cpu->out(cpu->bc, value);
 
-   if (cpu->b)
-   {
-	   cpu->f |= PV;
-       cpu->pc = cpu->pc - 2;
+    // T = M + Lo (for OTIR/OTDR)
+    uint16_t t = value + l_out;
 
-	   // Interrupted block instruction: YF=PC.13, XF=PC.11
-	   cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
+    // NF = M.7, CF = T > 255
+    uint8_t nf = (value & 0x80) ? NF : 0;
+    uint8_t cf = (t > 255) ? CF : 0;
 
-	   cputact(5);
-   }
-   else
-	   cpu->f &= ~PV;
+    if (b_out)  // B != 0
+    {
+        uint8_t sf = (b_out & 0x80) ? SF : 0;
+        uint8_t hf = 0;
+        uint8_t pf;
 
-   cpu->f &= ~CF;
+        if (cf)
+        {
+            if (value & 0x80)  // M.7 = 1
+            {
+                uint8_t balu = b_out - 1;
+                hf = ((b_out & 0x0F) == 0) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+            else
+            {
+                uint8_t balu = b_out + 1;
+                hf = ((b_out & 0x0F) == 0x0F) ? HF : 0;
+                pf = ((t & 7) ^ b_out ^ (balu & 7));
+            }
+        }
+        else
+        {
+            hf = 0;
+            pf = ((t & 7) ^ b_out ^ (b_out & 7));
+        }
 
-   if (cpu->l == 0xFF)
-	   cpu->f |= CF;
+        pf ^= pf >> 4;
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
 
-   cpu->hl = hl;
+        cpu->f = sf | pf | hf | nf | cf;
+        cpu->pc = (cpu->pc - 2) & 0xFFFF;
+        cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
-   cpu->memptr = cpu->bc - 1;
+        cputact(5);
+    }
+    else
+    {
+        uint8_t hf = cf ? HF : 0;
+        uint8_t pf = (t & 7);
+        pf ^= pf >> 2;
+        pf ^= pf >> 1;
+        pf = (pf & 1) ? 0 : PV;
+
+        cpu->f = ZF | pf | hf | nf | cf;
+    }
+
+    cpu->hl = hl;
+    cpu->memptr = cpu->bc - 1;
 }
 
 

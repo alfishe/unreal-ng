@@ -26,6 +26,17 @@ void AutomationLua::stop()
 {
     _stopThread = true;
 
+    // CRITICAL: Join thread FIRST before deleting objects it references
+    // The thread may still be executing and using _lua/_luaEmulator
+    if (_thread)
+    {
+        _thread->join();
+        delete _thread;
+        _thread = nullptr;
+    }
+    _stopThread = false;
+
+    // Now safe to delete Lua objects - thread is stopped
     if (_luaEmulator)
     {
         delete _luaEmulator;
@@ -36,15 +47,6 @@ void AutomationLua::stop()
     {
         delete _lua;
         _lua = nullptr;
-    }
-
-    if (_thread)
-    {
-        _thread->join();
-        _stopThread = false;
-
-        delete _thread;
-        _thread = nullptr;
     }
 
     std::cout << "Lua interpreter stopped" << std::endl;
