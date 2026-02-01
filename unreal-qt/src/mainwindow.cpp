@@ -8,8 +8,8 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QMimeData>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QScopedValueRollback>
 #include <QShortcut>
 #include <QThread>
@@ -1476,9 +1476,8 @@ void MainWindow::saveFileDialog()
     }
 
     // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.sna",
-        tr("SNA Snapshots (*.sna);;All Files (*)"));
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Snapshot"), _lastSaveDirectory + "/snapshot.sna",
+                                                    tr("SNA Snapshots (*.sna);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {
@@ -1505,8 +1504,7 @@ void MainWindow::saveFileDialog()
         else
         {
             qDebug() << "Failed to save snapshot:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"),
-                                 tr("Failed to save snapshot to:\n%1").arg(filePath));
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save snapshot to:\n%1").arg(filePath));
         }
     }
 }
@@ -1521,9 +1519,8 @@ void MainWindow::saveFileDialogZ80()
     }
 
     // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Save Z80 Snapshot"), _lastSaveDirectory + "/snapshot.z80",
-        tr("Z80 Snapshots (*.z80);;All Files (*)"));
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Z80 Snapshot"), _lastSaveDirectory + "/snapshot.z80",
+                                                    tr("Z80 Snapshots (*.z80);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {
@@ -1550,8 +1547,7 @@ void MainWindow::saveFileDialogZ80()
         else
         {
             qDebug() << "Failed to save Z80 snapshot:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"),
-                                 tr("Failed to save Z80 snapshot to:\n%1").arg(filePath));
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save Z80 snapshot to:\n%1").arg(filePath));
         }
     }
 }
@@ -1728,7 +1724,7 @@ void MainWindow::handleIntParametersRequested()
     // Dialog will be auto-deleted when closed
     IntParametersDialog* dialog = new IntParametersDialog(m_binding, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    
+
     // Show the dialog (non-blocking)
     dialog->show();
     dialog->raise();
@@ -2378,4 +2374,5 @@ void MainWindow::initializePlatformLinux()
     // Set window flags for Linux behavior
     this->setWindowFlag(Qt::WindowMaximizeButtonHint);
 }
+
 // endregion </Helper methods>

@@ -82,7 +82,7 @@ private:
 
     /// Bind audio device to the specified tile's emulator
     void bindAudioToTile(EmulatorTile* tile);
-    
+
     /// Unbind audio from current tile (mute)
     void unbindAudioFromTile();
 

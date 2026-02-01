@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QScreen>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
@@ -160,10 +161,10 @@ void VideoWallWindow::addEmulatorTile()
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);
-        
+
         // Connect tile click signal for audio binding (only on user click, not Qt auto-focus)
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
-        
+
         _tileGrid->addTile(tile);
     }
 }
