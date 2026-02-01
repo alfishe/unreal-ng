@@ -420,14 +420,16 @@ void DebugKeyboardManager::TypeBasicCommand(const std::string& command, uint16_t
     seq.name = "basic_command";
     
     // Helper to add a key event with delay
-    auto addKeyWithDelay = [&](const std::vector<ZXKeysEnum>& keys) {
+    // Note: Take by value and use std::move to avoid GCC 13 false positive -Warray-bounds warning
+    // that occurs when copying std::vector<ZXKeysEnum> (enum : uint8_t)
+    auto addKeyWithDelay = [&](std::vector<ZXKeysEnum> keys) {
         if (keys.size() == 1)
         {
-            seq.events.push_back({KeyboardSequenceEvent::Action::TAP, keys, DEFAULT_HOLD_FRAMES});
+            seq.events.push_back({KeyboardSequenceEvent::Action::TAP, std::move(keys), DEFAULT_HOLD_FRAMES});
         }
         else
         {
-            seq.events.push_back({KeyboardSequenceEvent::Action::COMBO_TAP, keys, DEFAULT_HOLD_FRAMES});
+            seq.events.push_back({KeyboardSequenceEvent::Action::COMBO_TAP, std::move(keys), DEFAULT_HOLD_FRAMES});
         }
         if (charDelayFrames > 0)
         {
