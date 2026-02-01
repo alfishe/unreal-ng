@@ -7,7 +7,9 @@
 
 class TileGrid;
 class EmulatorManager;
+#ifdef ENABLE_AUTOMATION
 class Automation;
+#endif
 class EmulatorTile;
 class AppSoundManager;
 
@@ -108,8 +110,10 @@ private:
     // Using QPointer to auto-nullify when tile is deleted
     QPointer<EmulatorTile> _audioBoundTile;
 
+#ifdef ENABLE_AUTOMATION
     // Automation system (WebAPI, CLI, Python, Lua)
     std::unique_ptr<Automation> _automation;
+#endif
 
     // Configuration
     int _currentPresetIndex = -1;
