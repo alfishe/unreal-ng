@@ -64,6 +64,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     Json::Value tagMemProfiler; tagMemProfiler["name"] = "Memory Profiler"; tagMemProfiler["description"] = "Track memory access patterns"; tags.append(tagMemProfiler);
     Json::Value tagCallTrace; tagCallTrace["name"] = "Call Trace Profiler"; tagCallTrace["description"] = "Track CALL/RET/JP/JR/RST events"; tags.append(tagCallTrace);
     Json::Value tagOpcodeProfiler; tagOpcodeProfiler["name"] = "Opcode Profiler"; tagOpcodeProfiler["description"] = "Z80 opcode execution profiling"; tags.append(tagOpcodeProfiler);
+    Json::Value tagBatchExec; tagBatchExec["name"] = "Batch Execution"; tagBatchExec["description"] = "Execute multiple commands in parallel across emulator instances"; tags.append(tagBatchExec);
     Json::Value tagUnifiedProfiler; tagUnifiedProfiler["name"] = "Unified Profiler"; tagUnifiedProfiler["description"] = "Control all profilers simultaneously"; tags.append(tagUnifiedProfiler);
     spec["tags"] = tags;
 
@@ -971,7 +972,6 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
         "Audio channels information";
 
-<<<<<<< HEAD
     // Batch Execution endpoints
     paths["/api/v1/batch/execute"]["post"]["summary"] = "Execute batch commands in parallel";
     paths["/api/v1/batch/execute"]["post"]["description"] =
@@ -997,7 +997,6 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["description"] = "List of batchable commands";
     paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
         "#/components/schemas/BatchableCommandsResponse";
-=======
 
     // Analyzer Management endpoints
     paths["/api/v1/emulator/{id}/analyzers"]["get"]["summary"] = "List all analyzers";
@@ -1143,7 +1142,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["responses"]["200"]["description"] =
         "List of raw breakpoint events with full Z80 state (main, alternate, IX, IY, I, R) and 16-byte stack snapshot";
 
->>>>>>> github/master
+
 
     // Debug Commands endpoints
     // Stepping
@@ -2022,7 +2021,6 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["SnapshotInfoResponse"]["properties"]["loaded"]["type"] = "boolean";
     schemas["SnapshotInfoResponse"]["properties"]["filename"]["type"] = "string";
 
-<<<<<<< HEAD
     // Batch command schemas
     schemas["BatchCommand"]["type"] = "object";
     schemas["BatchCommand"]["description"] = "A single command in a batch";
@@ -2058,104 +2056,35 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["BatchableCommandsResponse"]["properties"]["commands"]["type"] = "array";
     schemas["BatchableCommandsResponse"]["properties"]["count"]["type"] = "integer";
 
-    spec["components"]["schemas"] = schemas;
-
-    // Tags
-    Json::Value tags(Json::arrayValue);
-    Json::Value tag1;
-    tag1["name"] = "Emulator Management";
-    tag1["description"] = "Emulator lifecycle and information";
-    tags.append(tag1);
-
-    Json::Value tag2;
-    tag2["name"] = "Emulator Control";
-    tag2["description"] = "Control emulator execution state";
-    tags.append(tag2);
-
-    Json::Value tag3Settings;
-    tag3Settings["name"] = "Settings Management";
-    tag3Settings["description"] = "Emulator configuration and settings";
-    tags.append(tag3Settings);
-
-    Json::Value tag3bFeatures;
-    tag3bFeatures["name"] = "Feature Management";
-    tag3bFeatures["description"] = "Runtime feature control (sound, breakpoints, debug modes)";
-    tags.append(tag3bFeatures);
-
-    Json::Value tag4Tape;
-    tag4Tape["name"] = "Tape Control";
-    tag4Tape["description"] = "Tape image control and playback";
-    tags.append(tag4Tape);
-
-    Json::Value tag5Disk;
-    tag5Disk["name"] = "Disk Control";
-    tag5Disk["description"] = "Disk image management";
-    tags.append(tag5Disk);
-
-    Json::Value tag5bDiskInspection;
-    tag5bDiskInspection["name"] = "Disk Inspection";
-    tag5bDiskInspection["description"] = "Low-level disk data inspection (sectors, tracks, raw bytes)";
-    tags.append(tag5bDiskInspection);
-
-    Json::Value tag6Snapshot;
-    tag6Snapshot["name"] = "Snapshot Control";
-    tag6Snapshot["description"] = "Snapshot file loading and status";
-    tags.append(tag6Snapshot);
-
-    Json::Value tag7Memory;
-    tag7Memory["name"] = "Memory State";
-    tag7Memory["description"] = "Memory inspection (RAM/ROM)";
-    tags.append(tag7Memory);
-
-    Json::Value tag8Screen;
-    tag8Screen["name"] = "Screen State";
-    tag8Screen["description"] = "Screen/video state inspection";
-    tags.append(tag8Screen);
-
-    Json::Value tag9Audio;
-    tag9Audio["name"] = "Audio State";
-    tag9Audio["description"] = "Inspect audio hardware state (with emulator ID)";
-    tags.append(tag9Audio);
-
-    Json::Value tag10AudioActive;
-    tag10AudioActive["name"] = "Audio State (Active)";
-    tag10AudioActive["description"] = "Inspect audio hardware state (active/most recent emulator)";
-    tags.append(tag10AudioActive);
-
-    Json::Value tag11Batch;
-    tag11Batch["name"] = "Batch Execution";
-    tag11Batch["description"] = "Execute multiple commands in parallel across emulator instances";
-    tags.append(tag11Batch);
-
-    spec["tags"] = tags;
-=======
     // Opcode Profiler schemas
     schemas["ProfilerStatusResponse"]["type"] = "object";
     schemas["ProfilerStatusResponse"]["description"] = "Opcode profiler status";
-    schemas["ProfilerStatusResponse"]["properties"]["emulator_id"]["type"] = "string";
-    schemas["ProfilerStatusResponse"]["properties"]["capturing"]["type"] = "boolean";
-    schemas["ProfilerStatusResponse"]["properties"]["total_executions"]["type"] = "integer";
-    schemas["ProfilerStatusResponse"]["properties"]["trace_size"]["type"] = "integer";
-    schemas["ProfilerStatusResponse"]["properties"]["trace_capacity"]["type"] = "integer";
-    schemas["ProfilerStatusResponse"]["properties"]["feature_enabled"]["type"] = "boolean";
+    schemas["ProfilerStatusResponse"]["properties"]["enabled"]["type"] = "boolean";
+    schemas["ProfilerStatusResponse"]["properties"]["instructions_executed"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["unique_opcodes"]["type"] = "integer";
+    schemas["ProfilerStatusResponse"]["properties"]["prefixes_tracked"]["type"] = "boolean";
+    schemas["ProfilerStatusResponse"]["properties"]["timing_tracked"]["type"] = "boolean";
+    schemas["ProfilerStatusResponse"]["properties"]["memory_tracked"]["type"] = "boolean";
 
-    schemas["ProfilerCountersResponse"]["type"] = "object";
-    schemas["ProfilerCountersResponse"]["description"] = "Opcode execution counters";
-    schemas["ProfilerCountersResponse"]["properties"]["emulator_id"]["type"] = "string";
-    schemas["ProfilerCountersResponse"]["properties"]["total_executions"]["type"] = "integer";
-    schemas["ProfilerCountersResponse"]["properties"]["limit"]["type"] = "integer";
-    schemas["ProfilerCountersResponse"]["properties"]["count"]["type"] = "integer";
-    schemas["ProfilerCountersResponse"]["properties"]["counters"]["type"] = "array";
-    schemas["ProfilerCountersResponse"]["properties"]["counters"]["items"]["$ref"] = "#/components/schemas/OpcodeCounter";
+    schemas["OpcodeStats"]["type"] = "object";
+    schemas["OpcodeStats"]["properties"]["prefix"]["type"] = "integer";
+    schemas["OpcodeStats"]["properties"]["opcode"]["type"] = "integer";
+    schemas["OpcodeStats"]["properties"]["count"]["type"] = "integer";
+    schemas["OpcodeStats"]["properties"]["total_tstates"]["type"] = "integer";
+    schemas["OpcodeStats"]["properties"]["min_tstates"]["type"] = "integer";
+    schemas["OpcodeStats"]["properties"]["max_tstates"]["type"] = "integer";
+    schemas["OpcodeStats"]["properties"]["avg_tstates"]["type"] = "number";
+    schemas["OpcodeStats"]["properties"]["mnemonic"]["type"] = "string";
 
-    schemas["OpcodeCounter"]["type"] = "object";
-    schemas["OpcodeCounter"]["description"] = "Single opcode counter entry";
-    schemas["OpcodeCounter"]["properties"]["prefix"]["type"] = "integer";
-    schemas["OpcodeCounter"]["properties"]["prefix"]["description"] = "Prefix code (0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB)";
-    schemas["OpcodeCounter"]["properties"]["prefix_name"]["type"] = "string";
-    schemas["OpcodeCounter"]["properties"]["opcode"]["type"] = "integer";
-    schemas["OpcodeCounter"]["properties"]["count"]["type"] = "integer";
-    
+    schemas["TraceEntry"]["type"] = "object";
+    schemas["TraceEntry"]["properties"]["pc"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["prefix"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["opcode"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["flags"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["a"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
+    schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
+
     schemas["ProfilerTraceResponse"]["type"] = "object";
     schemas["ProfilerTraceResponse"]["description"] = "Opcode execution trace";
     schemas["ProfilerTraceResponse"]["properties"]["emulator_id"]["type"] = "string";
@@ -2165,19 +2094,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["ProfilerTraceResponse"]["properties"]["trace"]["type"] = "array";
     schemas["ProfilerTraceResponse"]["properties"]["trace"]["items"]["$ref"] = "#/components/schemas/TraceEntry";
 
-    schemas["TraceEntry"]["type"] = "object";
-    schemas["TraceEntry"]["description"] = "Single trace entry";
-    schemas["TraceEntry"]["properties"]["pc"]["type"] = "integer";
-    schemas["TraceEntry"]["properties"]["prefix"]["type"] = "integer";
-    schemas["TraceEntry"]["properties"]["opcode"]["type"] = "integer";
-    schemas["TraceEntry"]["properties"]["flags"]["type"] = "integer";
-    schemas["TraceEntry"]["properties"]["a"]["type"] = "integer";
-    schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
-    schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
-
     spec["components"]["schemas"] = schemas;
-
->>>>>>> github/master
 
     auto resp = HttpResponse::newHttpJsonResponse(spec);
     addCorsHeaders(resp);
