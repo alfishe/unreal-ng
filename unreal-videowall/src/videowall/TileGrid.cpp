@@ -26,7 +26,7 @@ void TileGrid::addTile(EmulatorTile* tile)
     updateLayout();
 }
 
-void TileGrid::removeTile(EmulatorTile* tile)
+void TileGrid::removeTile(EmulatorTile* tile, bool skipLayout)
 {
     if (!tile)
         return;
@@ -36,7 +36,12 @@ void TileGrid::removeTile(EmulatorTile* tile)
     {
         _tiles.erase(it);
         tile->deleteLater();
-        updateLayout();
+        
+        // Skip layout during batch removal to prevent crashes
+        if (!skipLayout)
+        {
+            updateLayout();
+        }
     }
 }
 
@@ -77,8 +82,16 @@ void TileGrid::clearAllTiles()
 
 void TileGrid::updateLayout()
 {
+    // Prevent re-entrant calls (e.g., from resizeEvent triggered by setMinimumSize)
+    if (_inUpdateLayout)
+    {
+        return;
+    }
+    _inUpdateLayout = true;
+
     if (_tiles.empty())
     {
+        _inUpdateLayout = false;
         return;
     }
 
@@ -105,6 +118,10 @@ void TileGrid::updateLayout()
 
     for (EmulatorTile* tile : _tiles)
     {
+        if (!tile)  // Safety check
+        {
+            continue;
+        }
         tile->move(x, y);
 
         // Move to next column
@@ -120,10 +137,16 @@ void TileGrid::updateLayout()
         }
     }
 
-    // Resize widget to fit grid
-    int windowWidth = cols * TILE_WIDTH;
-    int windowHeight = rows * TILE_HEIGHT;
-    setMinimumSize(windowWidth, windowHeight);
+    // Resize widget to fit grid (but NOT in fullscreen mode - size constraints break fullscreen on Linux)
+    // Use resize() instead of setMinimumSize() to allow window shrinking on Windows
+    if (!_isFullscreen)
+    {
+        int windowWidth = cols * TILE_WIDTH;
+        int windowHeight = rows * TILE_HEIGHT;
+        resize(windowWidth, windowHeight);
+    }
+
+    _inUpdateLayout = false;
 }
 
 void TileGrid::setGridDimensions(int cols, int rows)
