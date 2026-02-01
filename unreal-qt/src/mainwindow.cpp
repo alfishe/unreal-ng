@@ -148,8 +148,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     contentFrame->installEventFilter(this);
     this->installEventFilter(this);
 
-    // Store original window geometry before going fullscreen / maximized
-    _normalGeometry = normalGeometry();
+    // Simplified geometry - no tracking needed in showEvent
 
     // Initialize platform-specific settings
 #ifdef Q_OS_MAC
@@ -362,8 +361,7 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     // Keep widget center-aligned. Alignment policy is not working good
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Update normal geometry
-    _normalGeometry = normalGeometry();
+    // Simplified geometry - no tracking needed in resizeEvent
 
     // Notify docked child windows
     _dockingManager->updateDockedWindows();
@@ -379,8 +377,7 @@ void MainWindow::moveEvent(QMoveEvent* event)
     if (_dockingManager)
         _dockingManager->updateDockedWindows();
 
-    // Update normal geometry
-    _normalGeometry = normalGeometry();
+    // Simplified geometry - no tracking needed in moveEvent
 }
 
 void MainWindow::changeEvent(QEvent* event)
@@ -2355,8 +2352,7 @@ void MainWindow::initializePlatformMacOS()
     // Store the original palette for later restoration
     _originalPalette = palette();
 
-    // Store normal geometry
-    _normalGeometry = normalGeometry();
+    // Simplified geometry - no tracking needed in platform init
 
     qDebug() << "macOS window initialized with flags:" << flags;
 }
