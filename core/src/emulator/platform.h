@@ -41,6 +41,8 @@ constexpr char const* NC_AUDIO_BUFFER_HALF_FULL = "AUDIO_BUFFER_HALF_FULL";     
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
+constexpr char const* NC_FDD_DISK_INSERTED = "FDD_DISK_INSERT";                 // Disk image inserted (payload: StringPayload with path)
+constexpr char const* NC_FDD_DISK_EJECTED = "FDD_DISK_EJECT";                   // Disk image ejected (payload: drive ID)
 
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
@@ -226,7 +228,7 @@ const uint16_t PAGE_SIZE = 0x4000U;		// Spectrum memory page size is 16Kb (0x400
 
 const uint16_t MAX_RAM_PAGES = 256;     // 4Mb RAM
 const uint16_t MAX_CACHE_PAGES = 2;     // 32K cache
-const uint16_t MAX_MISC_PAGES = 1;      // trash page
+const uint16_t MAX_MISC_PAGES = 1;      // trash page (to accomodate ROM writes and other garbage write operations)
 const uint16_t MAX_ROM_PAGES = 64;      // 1Mb
 
 // TS-conf specific settings

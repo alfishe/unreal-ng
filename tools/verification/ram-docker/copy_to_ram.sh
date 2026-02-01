@@ -9,7 +9,9 @@
 #   - Build directories (cmake-build-*, build-*)
 #   - IDE files (.idea, .vscode)
 #   - Git directory (.git)
+#   - tools/ directory (not needed for build, contains 1.9TB of test data)
 #   - Large binary test assets
+#   - Documentation artifacts
 #
 # Usage:
 #   ./copy_to_ram.sh
@@ -29,6 +31,14 @@ fi
 echo "=== Syncing Project to RAM Disk ==="
 echo "Source: $PROJECT_ROOT"
 echo "Target: $RAM_PROJECT_ROOT"
+
+# Check available space
+if is_macos; then
+    AVAIL_MB=$(df -m "$RAM_DISK_MOUNT_POINT" | tail -1 | awk '{print $4}')
+else
+    AVAIL_MB=$(df -BM "$RAM_DISK_MOUNT_POINT" | tail -1 | awk '{print $4}' | sed 's/M//')
+fi
+echo "Available space: ${AVAIL_MB}MB"
 echo "===================================="
 
 SYNC_START=$(date +%s)
@@ -37,8 +47,11 @@ rsync -a --delete \
     --exclude='.git' \
     --exclude='.idea' \
     --exclude='.vscode' \
+    --exclude='.specstory' \
     --exclude='cmake-build-*' \
     --exclude='build-*' \
+    --exclude='build' \
+    --exclude='/tools' \
     --exclude='*.o' \
     --exclude='*.a' \
     --exclude='*.so' \
@@ -46,6 +59,16 @@ rsync -a --delete \
     --exclude='node_modules' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
+    --exclude='docs/development-saga' \
+    --exclude='docs/reviews' \
+    --exclude='history' \
+    --exclude='other' \
+    --exclude='*.patch' \
+    --exclude='*.sna' \
+    --exclude='*.z80' \
+    --exclude='*.tap' \
+    --exclude='*.trd' \
+    --exclude='*.scl' \
     "$PROJECT_ROOT/" "$RAM_PROJECT_ROOT/"
 
 SYNC_END=$(date +%s)

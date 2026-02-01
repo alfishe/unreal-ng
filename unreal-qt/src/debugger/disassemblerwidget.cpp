@@ -136,6 +136,12 @@ void DisassemblerWidget::initializeTable()
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     // Validate input and state
     if (pc >= MAX_ADDRESS || !m_model || !ui || !ui->disassemblyTable)
     {
@@ -217,6 +223,12 @@ void DisassemblerWidget::reset()
 
 void DisassemblerWidget::refresh()
 {
+    // Block all operations during shutdown
+    if (m_isShuttingDown)
+    {
+        return;
+    }
+
     if (!m_emulator || !m_model)
     {
         return;
@@ -517,4 +529,10 @@ void DisassemblerWidget::setEmulator(Emulator* emulator)
 QString DisassemblerWidget::formatAddress(uint16_t address) const
 {
     return QString("$%1").arg(address, 4, 16, QChar('0')).toUpper();
+}
+
+void DisassemblerWidget::prepareForShutdown()
+{
+    qDebug() << "DisassemblerWidget::prepareForShutdown()";
+    m_isShuttingDown = true;
 }

@@ -93,6 +93,22 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getSnapshotInfo, "/api/v1/emulator/{id}/snapshot/info", drogon::Get);
     // endregion Tape/Disk/Snapshot Control
 
+    // region Capture Commands (implementation: api/capture_api.cpp)
+    // Screen OCR
+    ADD_METHOD_TO(EmulatorAPI::captureOcr, "/api/v1/emulator/{id}/capture/ocr", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::captureScreen, "/api/v1/emulator/{id}/capture/screen", drogon::Get);
+    // endregion Capture Commands
+
+    // region BASIC Control (implementation: api/basic_api.cpp)
+    // BASIC command execution and program management
+    ADD_METHOD_TO(EmulatorAPI::basicRun, "/api/v1/emulator/{id}/basic/run", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::basicInject, "/api/v1/emulator/{id}/basic/inject", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::basicExtract, "/api/v1/emulator/{id}/basic/extract", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::basicClear, "/api/v1/emulator/{id}/basic/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::basicState, "/api/v1/emulator/{id}/basic/state", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::basicMode, "/api/v1/emulator/{id}/basic/mode", drogon::Post);
+    // endregion BASIC Control
+
     // region Settings Management (implementation: api/settings_api.cpp)
     // Settings management
     ADD_METHOD_TO(EmulatorAPI::getSettings, "/api/v1/emulator/{id}/settings", drogon::Get);
@@ -107,11 +123,39 @@ public:
     ADD_METHOD_TO(EmulatorAPI::setFeature, "/api/v1/emulator/{id}/feature/{name}", drogon::Put, drogon::Post);
     // endregion Feature Management
 
+    // region Analyzer Management (implementation: api/analyzers_api.cpp)
+    // Analyzer control
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzers, "/api/v1/emulator/{id}/analyzers", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzer, "/api/v1/emulator/{id}/analyzer/{name}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setAnalyzer, "/api/v1/emulator/{id}/analyzer/{name}", drogon::Put, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzerEvents, "/api/v1/emulator/{id}/analyzer/{name}/events", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::clearAnalyzerEvents, "/api/v1/emulator/{id}/analyzer/{name}/events", drogon::Delete);
+    
+    // Session control
+    ADD_METHOD_TO(EmulatorAPI::analyzerSession, "/api/v1/emulator/{id}/analyzer/{name}/session", drogon::Post);
+    
+    // Raw data access
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzerRawFDC, "/api/v1/emulator/{id}/analyzer/{name}/raw/fdc", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getAnalyzerRawBreakpoints, "/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints", drogon::Get);
+    // endregion Analyzer Management
+
     // region Memory State (implementation: api/state_memory_api.cpp)
     // State inspection
     ADD_METHOD_TO(EmulatorAPI::getStateMemory, "/api/v1/emulator/{id}/state/memory", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateMemoryRAM, "/api/v1/emulator/{id}/state/memory/ram", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateMemoryROM, "/api/v1/emulator/{id}/state/memory/rom", drogon::Get);
+    
+    // Memory read/write operations
+    ADD_METHOD_TO(EmulatorAPI::readMemory, "/api/v1/emulator/{id}/memory/read/{address}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::writeMemory, "/api/v1/emulator/{id}/memory/write", drogon::Post);
+    
+    // Page-level memory access
+    ADD_METHOD_TO(EmulatorAPI::readPage, "/api/v1/emulator/{id}/memory/page/{type}/{page}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::writePage, "/api/v1/emulator/{id}/memory/page/{type}/{page}", drogon::Post);
+    
+    // ROM protection control
+    ADD_METHOD_TO(EmulatorAPI::getROMProtect, "/api/v1/emulator/{id}/memory/rom/protect", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setROMProtect, "/api/v1/emulator/{id}/memory/rom/protect", drogon::Put, drogon::Post);
     // endregion Memory State
 
     // region Screen State (implementation: api/state_screen_api.cpp)
@@ -178,6 +222,57 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getDisasm, "/api/v1/emulator/{id}/disasm", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
+
+    // region Profiler Commands (implementation: api/profiler_api.cpp)
+    // Opcode profiler control
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerStart, "/api/v1/emulator/{id}/profiler/opcode/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerStop, "/api/v1/emulator/{id}/profiler/opcode/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerPause, "/api/v1/emulator/{id}/profiler/opcode/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerResume, "/api/v1/emulator/{id}/profiler/opcode/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::opcodeProfilerClear, "/api/v1/emulator/{id}/profiler/opcode/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getProfilerStatus, "/api/v1/emulator/{id}/profiler/opcode/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getProfilerCounters, "/api/v1/emulator/{id}/profiler/opcode/counters", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getProfilerTrace, "/api/v1/emulator/{id}/profiler/opcode/trace", drogon::Get);
+    
+    // Memory profiler control
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerStart, "/api/v1/emulator/{id}/profiler/memory/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerStop, "/api/v1/emulator/{id}/profiler/memory/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerPause, "/api/v1/emulator/{id}/profiler/memory/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerResume, "/api/v1/emulator/{id}/profiler/memory/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::memoryProfilerClear, "/api/v1/emulator/{id}/profiler/memory/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getMemoryProfilerStatus, "/api/v1/emulator/{id}/profiler/memory/status", drogon::Get);
+    
+    // Call trace profiler control
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerStart, "/api/v1/emulator/{id}/profiler/calltrace/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerStop, "/api/v1/emulator/{id}/profiler/calltrace/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerPause, "/api/v1/emulator/{id}/profiler/calltrace/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerResume, "/api/v1/emulator/{id}/profiler/calltrace/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::calltraceProfilerClear, "/api/v1/emulator/{id}/profiler/calltrace/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getCalltraceProfilerStatus, "/api/v1/emulator/{id}/profiler/calltrace/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getCalltraceProfilerEntries, "/api/v1/emulator/{id}/profiler/calltrace/entries", drogon::Get);
+    
+    // Unified profiler control (all profilers at once)
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStop, "/api/v1/emulator/{id}/profiler/stop", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerPause, "/api/v1/emulator/{id}/profiler/pause", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerResume, "/api/v1/emulator/{id}/profiler/resume", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::unifiedProfilerClear, "/api/v1/emulator/{id}/profiler/clear", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getUnifiedProfilerStatus, "/api/v1/emulator/{id}/profiler/status", drogon::Get);
+    // endregion Profiler Commands
+
+    // region Keyboard Injection (implementation: api/keyboard_api.cpp)
+    // Key operations
+    ADD_METHOD_TO(EmulatorAPI::keyTap, "/api/v1/emulator/{id}/keyboard/tap", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyPress, "/api/v1/emulator/{id}/keyboard/press", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyRelease, "/api/v1/emulator/{id}/keyboard/release", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyCombo, "/api/v1/emulator/{id}/keyboard/combo", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyMacro, "/api/v1/emulator/{id}/keyboard/macro", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyType, "/api/v1/emulator/{id}/keyboard/type", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyReleaseAll, "/api/v1/emulator/{id}/keyboard/release_all", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyAbort, "/api/v1/emulator/{id}/keyboard/abort", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::keyStatus, "/api/v1/emulator/{id}/keyboard/status", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
+    // endregion Keyboard Injection
     METHOD_LIST_END
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
@@ -299,6 +394,28 @@ public:
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Tape/Disk/Snapshot Control Methods
 
+    // region Capture Commands Methods (implementation: api/capture_api.cpp)
+    void captureOcr(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void captureScreen(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    // endregion Capture Commands Methods
+
+    // region BASIC Control Methods (implementation: api/basic_api.cpp)
+    void basicRun(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void basicInject(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+    void basicExtract(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    void basicClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void basicState(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void basicMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    // endregion BASIC Control Methods
+
     // region Settings Management Methods (implementation: api/settings_api.cpp)
     // Settings management
     void getSettings(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -323,6 +440,35 @@ public:
                     const std::string& id, const std::string& name) const;
     // endregion Feature Management Methods
 
+    // region Analyzer Management Methods (implementation: api/analyzers_api.cpp)
+    // Analyzer control
+    void getAnalyzers(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+
+    void getAnalyzer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+
+    void setAnalyzer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id, const std::string& name) const;
+
+    void getAnalyzerEvents(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& name) const;
+
+    void clearAnalyzerEvents(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id, const std::string& name) const;
+    
+    // Session control
+    void analyzerSession(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& id, const std::string& name) const;
+    
+    // Raw data access
+    void getAnalyzerRawFDC(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id, const std::string& name) const;
+    
+    void getAnalyzerRawBreakpoints(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id, const std::string& name) const;
+    // endregion Analyzer Management Methods
+
     // region Memory State Methods (implementation: api/state_memory_api.cpp)
     // State inspection
     void getStateMemory(const drogon::HttpRequestPtr& req,
@@ -333,6 +479,27 @@ public:
 
     void getStateMemoryROM(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    // Memory read/write operations
+    void readMemory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id, const std::string& address) const;
+
+    void writeMemory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                     const std::string& id) const;
+
+    // Page-level memory access
+    void readPage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id, const std::string& type, const std::string& page) const;
+
+    void writePage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id, const std::string& type, const std::string& page) const;
+
+    // ROM protection control
+    void getROMProtect(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+
+    void setROMProtect(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
 
     void getStateScreen(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
@@ -458,6 +625,93 @@ public:
     void getDisasmPage(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
     // endregion Debug Commands Methods
+
+    // region Profiler Commands Methods (implementation: api/profiler_api.cpp)
+    // Opcode profiler control
+    void opcodeProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void opcodeProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void opcodeProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void opcodeProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void opcodeProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void getProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                           const std::string& id) const;
+    void getProfilerCounters(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void getProfilerTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                          const std::string& id) const;
+    
+    // Memory profiler control
+    void memoryProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void memoryProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& id) const;
+    void memoryProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void memoryProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void memoryProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void getMemoryProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const;
+    
+    // Call trace profiler control
+    void calltraceProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void calltraceProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    void calltraceProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void calltraceProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const;
+    void calltraceProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void getCalltraceProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const;
+    void getCalltraceProfilerEntries(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                      const std::string& id) const;
+    
+    // Unified profiler control
+    void unifiedProfilerStart(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void unifiedProfilerStop(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void unifiedProfilerPause(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void unifiedProfilerResume(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                const std::string& id) const;
+    void unifiedProfilerClear(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                               const std::string& id) const;
+    void getUnifiedProfilerStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const;
+    // endregion Profiler Commands Methods
+
+    // region Keyboard Injection Methods (implementation: api/keyboard_api.cpp)
+    void keyTap(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                const std::string& id) const;
+    void keyPress(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void keyRelease(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void keyCombo(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void keyMacro(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void keyType(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    void keyReleaseAll(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id) const;
+    void keyAbort(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void keyStatus(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
+    void keyList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                 const std::string& id) const;
+    // endregion Keyboard Injection Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:

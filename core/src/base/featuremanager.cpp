@@ -223,6 +223,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
+    registerFeature({Features::kOpcodeProfiler,
+                     Features::kOpcodeProfilerAlias,
+                     Features::kOpcodeProfilerDesc,
+                     false,  // OFF by default - analysis feature
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
 
     _dirty = false;
 }
@@ -309,6 +316,9 @@ void FeatureManager::onFeatureChanged()
 
         // Synchronize master switch with feature changes
         _context->pCore->GetZ80()->isDebugMode = _features[Features::kDebugMode].enabled;
+        
+        // Update Z80 feature cache (opcode profiler etc.)
+        _context->pCore->GetZ80()->UpdateFeatureCache();
     }
 
     // Update feature cache in SoundManager if it exists

@@ -16,6 +16,12 @@
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
+#include <debugger/analyzers/analyzermanager.h>
+#include <debugger/analyzers/trdos/trdosanalyzer.h>
+#include <debugger/analyzers/rom-print/screenocr.h>
+#include <emulator/video/screencapture.h>
+#include <emulator/cpu/opcode_profiler.h>
+#include <debugger/keyboard/debugkeyboardmanager.h>
 
 namespace py = pybind11;
 
@@ -601,6 +607,88 @@ namespace PythonBindings
             }, py::arg("type"), py::arg("page"), py::arg("offset") = 0, py::arg("count") = 10, 
                "Disassemble from physical RAM/ROM page (bypasses Z80 paging). type='ram'|'rom'")
             
+            // Analyzer management
+            .def("analyzer_list", [](Emulator& self) -> py::list {
+                py::list analyzers;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return analyzers;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return analyzers;
+                for (const auto& name : am->getRegisteredAnalyzers()) {
+                    analyzers.append(name);
+                }
+                return analyzers;
+            }, "List registered analyzers")
+            .def("analyzer_enable", [](Emulator& self, const std::string& name) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                return am ? am->activate(name) : false;
+            }, "Enable analyzer", py::arg("name"))
+            .def("analyzer_disable", [](Emulator& self, const std::string& name) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return false;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                return am ? am->deactivate(name) : false;
+            }, "Disable analyzer", py::arg("name"))
+            .def("analyzer_status", [](Emulator& self, const std::string& name) -> py::dict {
+                py::dict status;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return status;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am || !am->hasAnalyzer(name)) return status;
+                
+                status["enabled"] = am->isActive(name);
+                
+                if (name == "trdos") {
+                    TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                    if (trdos) {
+                        std::string stateStr;
+                        switch (trdos->getState()) {
+                            case TRDOSAnalyzerState::IDLE: stateStr = "IDLE"; break;
+                            case TRDOSAnalyzerState::IN_TRDOS: stateStr = "IN_TRDOS"; break;
+                            case TRDOSAnalyzerState::IN_COMMAND: stateStr = "IN_COMMAND"; break;
+                            case TRDOSAnalyzerState::IN_SECTOR_OP: stateStr = "IN_SECTOR_OP"; break;
+                            case TRDOSAnalyzerState::IN_CUSTOM: stateStr = "IN_CUSTOM"; break;
+                            default: stateStr = "UNKNOWN"; break;
+                        }
+                        status["state"] = stateStr;
+                        status["event_count"] = trdos->getEventCount();
+                    }
+                }
+                return status;
+            }, "Get analyzer status", py::arg("name"))
+            .def("analyzer_events", [](Emulator& self, const std::string& name, size_t limit) -> py::list {
+                py::list events;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return events;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return events;
+                
+                if (name == "trdos") {
+                    TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                    if (trdos) {
+                        auto evts = trdos->getEvents();
+                        size_t start = (evts.size() > limit) ? evts.size() - limit : 0;
+                        for (size_t i = start; i < evts.size(); i++) {
+                            events.append(evts[i].format());
+                        }
+                    }
+                }
+                return events;
+            }, "Get analyzer events", py::arg("name"), py::arg("limit") = 50)
+            .def("analyzer_clear", [](Emulator& self, const std::string& name) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager) return;
+                AnalyzerManager* am = ctx->pDebugManager->GetAnalyzerManager();
+                if (!am) return;
+                
+                if (name == "trdos") {
+                    TRDOSAnalyzer* trdos = dynamic_cast<TRDOSAnalyzer*>(am->getAnalyzer(name));
+                    if (trdos) trdos->clear();
+                }
+            }, "Clear analyzer events", py::arg("name"))
+            
             // Screen state
             .def("screen_get_mode", [](Emulator& self) -> std::string {
                 auto* ctx = self.GetContext();
@@ -622,6 +710,26 @@ namespace PythonBindings
                 if (!ctx || !ctx->pScreen) return 0;
                 return ctx->pScreen->GetActiveScreen();
             }, "Get active screen (0=normal, 1=shadow)")
+            
+            // Capture operations
+            .def("capture_ocr", [](Emulator& self) -> std::string {
+                return ScreenOCR::ocrScreen(self.GetId());
+            }, "OCR text from screen (32x24 chars)")
+            .def("capture_screen", [](Emulator& self, const std::string& format, bool fullFramebuffer) -> py::dict {
+                py::dict result;
+                CaptureMode mode = fullFramebuffer ? CaptureMode::FullFramebuffer : CaptureMode::ScreenOnly;
+                auto capture = ScreenCapture::captureScreen(self.GetId(), format, mode);
+                result["success"] = capture.success;
+                result["format"] = capture.format;
+                result["width"] = capture.width;
+                result["height"] = capture.height;
+                result["size"] = capture.originalSize;
+                result["data"] = capture.base64Data;
+                if (!capture.success) {
+                    result["error"] = capture.errorMessage;
+                }
+                return result;
+            }, "Capture screen as image", py::arg("format") = "gif", py::arg("full") = false)
             
             // Audio state
             .def("audio_is_muted", [](Emulator& self) -> bool {
@@ -763,6 +871,481 @@ namespace PythonBindings
             .def("is_calltrace", [](Emulator& self) -> bool {
                 FeatureManager* fm = self.GetFeatureManager();
                 return fm ? fm->isEnabled("calltrace") : false;
-            }, "Check if call trace is enabled");
+            }, "Check if call trace is enabled")
+            
+            // Opcode profiler
+            .def("profiler_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) fm->setFeature("opcode_profiler", true);
+                profiler->Start();
+                return true;
+            }, "Start opcode profiler session (enables feature, clears data)")
+            .def("profiler_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                profiler->Stop();
+                return true;
+            }, "Stop opcode profiler session")
+            .def("profiler_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (profiler) profiler->Clear();
+            }, "Clear profiler data")
+            .def("profiler_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return result;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return result;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return result;
+                FeatureManager* fm = self.GetFeatureManager();
+                auto status = profiler->GetStatus();
+                result["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                result["capturing"] = status.capturing;
+                result["total_executions"] = status.totalExecutions;
+                result["trace_size"] = status.traceSize;
+                result["trace_capacity"] = status.traceCapacity;
+                return result;
+            }, "Get profiler status")
+            .def("profiler_counters", [](Emulator& self, size_t limit) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return result;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return result;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return result;
+                auto counters = profiler->GetTopOpcodes(limit);
+                for (const auto& counter : counters) {
+                    py::dict entry;
+                    entry["prefix"] = counter.prefix;
+                    entry["opcode"] = counter.opcode;
+                    entry["count"] = counter.count;
+                    entry["mnemonic"] = counter.mnemonic;
+                    result.append(entry);
+                }
+                return result;
+            }, "Get top opcodes by execution count", py::arg("limit") = 100)
+            .def("profiler_trace", [](Emulator& self, size_t count) -> py::list {
+                py::list result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return result;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return result;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return result;
+                auto trace = profiler->GetRecentTrace(count);
+                for (const auto& entry : trace) {
+                    py::dict item;
+                    item["pc"] = entry.pc;
+                    item["prefix"] = entry.prefix;
+                    item["opcode"] = entry.opcode;
+                    item["flags"] = entry.flags;
+                    item["a"] = entry.a;
+                    item["frame"] = entry.frame;
+                    item["tstate"] = entry.tState;
+                    result.append(item);
+                }
+                return result;
+            }, "Get recent execution trace", py::arg("count") = 100)
+            .def("profiler_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                profiler->Pause();
+                return true;
+            }, "Pause opcode profiler (retain data)")
+            .def("profiler_resume", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return false;
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return false;
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return false;
+                profiler->Resume();
+                return true;
+            }, "Resume paused opcode profiler")
+            .def("profiler_opcode_session_state", [](Emulator& self) -> std::string {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pCore) return "unavailable";
+                Z80* z80 = ctx->pCore->GetZ80();
+                if (!z80) return "unavailable";
+                OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                if (!profiler) return "unavailable";
+                switch (profiler->GetSessionState()) {
+                    case ProfilerSessionState::Stopped: return "stopped";
+                    case ProfilerSessionState::Capturing: return "capturing";
+                    case ProfilerSessionState::Paused: return "paused";
+                    default: return "unknown";
+                }
+            }, "Get opcode profiler session state")
+            
+            // Memory profiler session control
+            .def("memory_profiler_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                auto* tracker = &ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) {
+                    fm->setFeature("debugmode", true);
+                    fm->setFeature("memorytracking", true);
+                    tracker->UpdateFeatureCache();
+                }
+                tracker->StartMemorySession();
+                return true;
+            }, "Start memory profiler session (enables features, clears data)")
+            .def("memory_profiler_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().PauseMemorySession();
+                return true;
+            }, "Pause memory profiler (retain data)")
+            .def("memory_profiler_resume", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().ResumeMemorySession();
+                return true;
+            }, "Resume paused memory profiler")
+            .def("memory_profiler_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().StopMemorySession();
+                return true;
+            }, "Stop memory profiler (retain data)")
+            .def("memory_profiler_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return;
+                ctx->pMemory->GetAccessTracker().ClearMemoryData();
+            }, "Clear memory profiler data")
+            .def("memory_profiler_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return result;
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                result["feature_enabled"] = fm ? fm->isEnabled("memorytracking") : false;
+                result["capturing"] = tracker.IsMemoryCapturing();
+                switch (tracker.GetMemorySessionState()) {
+                    case ProfilerSessionState::Stopped: result["session_state"] = "stopped"; break;
+                    case ProfilerSessionState::Capturing: result["session_state"] = "capturing"; break;
+                    case ProfilerSessionState::Paused: result["session_state"] = "paused"; break;
+                    default: result["session_state"] = "unknown"; break;
+                }
+                return result;
+            }, "Get memory profiler status")
+            
+            // Calltrace profiler session control
+            .def("calltrace_profiler_start", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                auto* tracker = &ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                if (fm) {
+                    fm->setFeature("debugmode", true);
+                    fm->setFeature("calltrace", true);
+                    tracker->UpdateFeatureCache();
+                }
+                tracker->StartCalltraceSession();
+                return true;
+            }, "Start calltrace profiler session (enables features, clears data)")
+            .def("calltrace_profiler_pause", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().PauseCalltraceSession();
+                return true;
+            }, "Pause calltrace profiler (retain data)")
+            .def("calltrace_profiler_resume", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().ResumeCalltraceSession();
+                return true;
+            }, "Resume paused calltrace profiler")
+            .def("calltrace_profiler_stop", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return false;
+                ctx->pMemory->GetAccessTracker().StopCalltraceSession();
+                return true;
+            }, "Stop calltrace profiler (retain data)")
+            .def("calltrace_profiler_clear", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return;
+                ctx->pMemory->GetAccessTracker().ClearCalltraceData();
+            }, "Clear calltrace profiler data")
+            .def("calltrace_profiler_status", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pMemory) return result;
+                auto& tracker = ctx->pMemory->GetAccessTracker();
+                FeatureManager* fm = self.GetFeatureManager();
+                result["feature_enabled"] = fm ? fm->isEnabled("calltrace") : false;
+                result["capturing"] = tracker.IsCalltraceCapturing();
+                switch (tracker.GetCalltraceSessionState()) {
+                    case ProfilerSessionState::Stopped: result["session_state"] = "stopped"; break;
+                    case ProfilerSessionState::Capturing: result["session_state"] = "capturing"; break;
+                    case ProfilerSessionState::Paused: result["session_state"] = "paused"; break;
+                    default: result["session_state"] = "unknown"; break;
+                }
+                auto* buffer = tracker.GetCallTraceBuffer();
+                if (buffer) {
+                    result["entry_count"] = buffer->GetCount();
+                    result["capacity"] = buffer->GetCapacity();
+                }
+                return result;
+            }, "Get calltrace profiler status")
+            
+            // Unified profiler control (all profilers at once)
+            .def("profilers_start_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                FeatureManager* fm = self.GetFeatureManager();
+                
+                // Enable all profiler features
+                if (fm) {
+                    fm->setFeature("debugmode", true);
+                    fm->setFeature("memorytracking", true);
+                    fm->setFeature("calltrace", true);
+                    fm->setFeature("opcode_profiler", true);
+                }
+                
+                // Start memory and calltrace profilers
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.UpdateFeatureCache();
+                    tracker.StartMemorySession();
+                    tracker.StartCalltraceSession();
+                }
+                
+                // Start opcode profiler
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        z80->UpdateFeatureCache();
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Start();
+                    }
+                }
+                return true;
+            }, "Start all profilers (opcode, memory, calltrace)")
+            .def("profilers_pause_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.PauseMemorySession();
+                    tracker.PauseCalltraceSession();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Pause();
+                    }
+                }
+                return true;
+            }, "Pause all profilers")
+            .def("profilers_resume_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.ResumeMemorySession();
+                    tracker.ResumeCalltraceSession();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Resume();
+                    }
+                }
+                return true;
+            }, "Resume all profilers")
+            .def("profilers_stop_all", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx) return false;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.StopMemorySession();
+                    tracker.StopCalltraceSession();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Stop();
+                    }
+                }
+                return true;
+            }, "Stop all profilers")
+            .def("profilers_clear_all", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (!ctx) return;
+                
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    tracker.ClearMemoryData();
+                    tracker.ClearCalltraceData();
+                }
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) profiler->Clear();
+                    }
+                }
+            }, "Clear all profiler data")
+            .def("profilers_status_all", [](Emulator& self) -> py::dict {
+                py::dict result;
+                auto* ctx = self.GetContext();
+                if (!ctx) return result;
+                
+                // Memory profiler status
+                py::dict memStatus;
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    FeatureManager* fm = self.GetFeatureManager();
+                    memStatus["feature_enabled"] = fm ? fm->isEnabled("memorytracking") : false;
+                    memStatus["capturing"] = tracker.IsMemoryCapturing();
+                    switch (tracker.GetMemorySessionState()) {
+                        case ProfilerSessionState::Stopped: memStatus["session_state"] = "stopped"; break;
+                        case ProfilerSessionState::Capturing: memStatus["session_state"] = "capturing"; break;
+                        case ProfilerSessionState::Paused: memStatus["session_state"] = "paused"; break;
+                        default: memStatus["session_state"] = "unknown"; break;
+                    }
+                }
+                result["memory"] = memStatus;
+                
+                // Calltrace profiler status
+                py::dict ctStatus;
+                if (ctx->pMemory) {
+                    auto& tracker = ctx->pMemory->GetAccessTracker();
+                    FeatureManager* fm = self.GetFeatureManager();
+                    ctStatus["feature_enabled"] = fm ? fm->isEnabled("calltrace") : false;
+                    ctStatus["capturing"] = tracker.IsCalltraceCapturing();
+                    switch (tracker.GetCalltraceSessionState()) {
+                        case ProfilerSessionState::Stopped: ctStatus["session_state"] = "stopped"; break;
+                        case ProfilerSessionState::Capturing: ctStatus["session_state"] = "capturing"; break;
+                        case ProfilerSessionState::Paused: ctStatus["session_state"] = "paused"; break;
+                        default: ctStatus["session_state"] = "unknown"; break;
+                    }
+                    auto* buffer = tracker.GetCallTraceBuffer();
+                    if (buffer) {
+                        ctStatus["entry_count"] = buffer->GetCount();
+                    }
+                }
+                result["calltrace"] = ctStatus;
+                
+                // Opcode profiler status
+                py::dict opStatus;
+                if (ctx->pCore) {
+                    Z80* z80 = ctx->pCore->GetZ80();
+                    if (z80) {
+                        OpcodeProfiler* profiler = z80->GetOpcodeProfiler();
+                        if (profiler) {
+                            FeatureManager* fm = self.GetFeatureManager();
+                            auto status = profiler->GetStatus();
+                            opStatus["feature_enabled"] = fm ? fm->isEnabled("opcode_profiler") : false;
+                            opStatus["capturing"] = status.capturing;
+                            opStatus["total_executions"] = status.totalExecutions;
+                            switch (profiler->GetSessionState()) {
+                                case ProfilerSessionState::Stopped: opStatus["session_state"] = "stopped"; break;
+                                case ProfilerSessionState::Capturing: opStatus["session_state"] = "capturing"; break;
+                                case ProfilerSessionState::Paused: opStatus["session_state"] = "paused"; break;
+                                default: opStatus["session_state"] = "unknown"; break;
+                            }
+                        }
+                    }
+                }
+                result["opcode"] = opStatus;
+                
+                return result;
+            }, "Get status of all profilers")
+            
+            .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames);
+                return true;
+            }, "Tap a key (press, hold, release)", py::arg("key"), py::arg("frames") = 2)
+            .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->PressKey(keyName);
+                return true;
+            }, "Press and hold a key", py::arg("key"))
+            .def("key_release", [](Emulator& self, const std::string& keyName) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->ReleaseKey(keyName);
+                return true;
+            }, "Release a held key", py::arg("key"))
+            .def("key_combo", [](Emulator& self, const std::vector<std::string>& keyNames, uint16_t holdFrames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TapCombo(keyNames, holdFrames);
+                return true;
+            }, "Tap multiple keys simultaneously", py::arg("keys"), py::arg("frames") = 2)
+            .def("key_macro", [](Emulator& self, const std::string& macroName) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                return ctx->pDebugManager->GetKeyboardManager()->ExecuteNamedSequence(macroName);
+            }, "Execute predefined macro (e_mode, format, cat, etc.)", py::arg("name"))
+            .def("key_type", [](Emulator& self, const std::string& text, uint16_t charDelayFrames) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TypeText(text, charDelayFrames);
+                return true;
+            }, "Type text with auto modifier handling", py::arg("text"), py::arg("delay_frames") = 2)
+            .def("key_trdos_command", [](Emulator& self, const std::string& keyword, const std::string& argument) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TypeTRDOSCommand(keyword, argument);
+                return true;
+            }, "Type TR-DOS command with argument", py::arg("keyword"), py::arg("argument") = "")
+            .def("key_release_all", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pDebugManager->GetKeyboardManager()) {
+                    ctx->pDebugManager->GetKeyboardManager()->ReleaseAllKeys();
+                }
+            }, "Release all currently pressed keys")
+            .def("key_is_running", [](Emulator& self) -> bool {
+                auto* ctx = self.GetContext();
+                if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
+                return ctx->pDebugManager->GetKeyboardManager()->IsSequenceRunning();
+            }, "Check if a key sequence is currently running")
+            .def("key_abort", [](Emulator& self) {
+                auto* ctx = self.GetContext();
+                if (ctx && ctx->pDebugManager->GetKeyboardManager()) {
+                    ctx->pDebugManager->GetKeyboardManager()->AbortSequence();
+                }
+            }, "Abort current key sequence")
+            .def("key_list", []() -> py::list {
+                py::list keys;
+                auto names = DebugKeyboardManager::GetAllKeyNames();
+                for (const auto& name : names) {
+                    keys.append(name);
+                }
+                return keys;
+            }, "List all recognized key names");
     }
 }

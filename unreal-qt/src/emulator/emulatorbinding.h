@@ -205,6 +205,14 @@ signals:
      */
     void frameRefresh();
 
+    /**
+     * @brief Emitted when a CPU step completes (from external sources like WebAPI/Python/Lua).
+     *
+     * @what DebuggerWindow connects to this to update UI when step commands
+     *       are triggered via automation interfaces, not the Qt UI directly.
+     */
+    void cpuStepComplete();
+
 private slots:
     /**
      * @brief Receives MessageCenter callbacks (called from background thread).

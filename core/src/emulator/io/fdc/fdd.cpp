@@ -4,7 +4,9 @@
 #include "common/filehelper.h"
 #include "loaders/disk/loader_trd.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulator.h"
 #include "emulator/cpu/core.h"
+#include "emulator/notifications.h"
 
 /// region <Constructors / destructors>
 FDD::FDD(EmulatorContext* context) : _context(context)
@@ -68,15 +70,35 @@ void FDD::insertDisk(DiskImage* diskImage)
     {
         _diskImage = diskImage;
         _diskInserted = true;
+        
+        // Notify subscribers about disk insertion with full context
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        std::string emulatorId = (_context && _context->pEmulator) ? _context->pEmulator->GetId() : "";
+        std::string path = diskImage->getFilePath();
+        messageCenter.Post(NC_FDD_DISK_INSERTED, new FDDDiskPayload(emulatorId, _driveID, path), true);
     }
 }
 
 void FDD::ejectDisk()
 {
+    // Capture path before clearing pointer
+    std::string path;
+    if (_diskImage)
+    {
+        path = _diskImage->getFilePath();
+    }
+    
+    // Get emulator ID before any cleanup
+    std::string emulatorId = (_context && _context->pEmulator) ? _context->pEmulator->GetId() : "";
+    
     // Note: FDD does not own the DiskImage, just holds a pointer to it
     // The DiskImage is owned and managed by the Emulator/CoreState
     _diskImage = nullptr;
     _diskInserted = false;
+    
+    // Notify subscribers about disk ejection with full context
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_FDD_DISK_EJECTED, new FDDDiskPayload(emulatorId, _driveID, path), true);
 }
 
 /// endregion </Methods>

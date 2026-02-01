@@ -15,6 +15,7 @@
 #include "stdafx.h"
 
 class WD1793Collector;
+class IWD1793Observer;
 
 class WD1793 : public PortDecoder, public PortDevice
 {
@@ -209,22 +210,29 @@ public:
 
     /// @brief Raise DRQ signal
     /// @details Sets DRQ signal and updates corresponding beta128 bit
+    /// Note: _drq_served is managed by processReadByte/processWriteByte, not here.
+    /// This separation allows command start to set _drq_served = true to skip
+    /// first-byte Lost Data detection (there's no "previous byte" to be lost).
     void raiseDrq()
     {
         MLOGDEBUG("DRQ asserted");
 
         _beta128status |= DRQ;
         _drq_out = true;
-        _drq_served = false;
+        // _drq_served is NOT reset here - processReadByte sets it false before
+        // calling raiseDrq, so the flag state is preserved correctly.
     }
 
     /// @brief Clear DRQ signal
     /// @details Clears DRQ signal and updates corresponding beta128 bit
+    /// NOTE: Does NOT clear _drq_served - that flag tracks whether the CPU has read 
+    /// the data register, not the DRQ signal state. These are distinct concepts.
     void clearDrq()
     {
         _beta128status &= ~DRQ;
         _drq_out = false;
-        _drq_served = false;
+        // _drq_served is NOT reset here - it's set by readDataRegister/writeDataRegister
+        // and checked by processReadByte/processWriteByte for Lost Data detection
     }
 
     void raiseCrcError()
@@ -254,7 +262,8 @@ public:
 
     void clearAllErrors()
     {
-        _drq_served = false;
+        // Note: _drq_served is NOT an error flag - it's a service tracking flag
+        // for Lost Data detection. It should be managed separately.
         _lost_data = false;
         _crc_error = false;
         _record_not_found = false;
@@ -584,6 +593,7 @@ public:
     /// region <Fields>
 protected:
     WD1793Collector* _collector = nullptr;
+    std::vector<IWD1793Observer*> _observers;
 
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
@@ -651,6 +661,7 @@ protected:
     bool _useDeletedDataMark = false;   // True = write F8 (Deleted Data Mark), False = write FB (Normal Data Mark)
     size_t _rawDataBufferIndex = 0;      // Current position in raw data buffer for track read/write
     uint16_t _crcAccumulator = 0xFFFF;   // CRC accumulator for track formatting operations
+    DiskImage::Track* _writeTrackTarget = nullptr;  // Track being written by Write Track command (for reindexing)
     size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
 
     // FDD state
@@ -746,6 +757,10 @@ public:
 
     void process();
     void ejectDisk();
+    
+    // Observer support for analyzers
+    void addObserver(IWD1793Observer* observer);
+    void removeObserver(IWD1793Observer* observer);
     /// endregion </Methods>
 
     /// region <Helper methods>

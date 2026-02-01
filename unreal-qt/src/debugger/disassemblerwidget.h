@@ -47,6 +47,7 @@ public slots:
     void reset();
     void refresh();
     void goToAddress(uint16_t address);
+    void prepareForShutdown();  // Block all refreshes during app shutdown
 
 signals:
     void addressSelected(uint16_t address);
@@ -90,4 +91,6 @@ private:
 
     static constexpr uint16_t MAX_ADDRESS = 0xFFFF;
     static constexpr int CACHE_MARGIN = 5;
+
+    bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown
 };
