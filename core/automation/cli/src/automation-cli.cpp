@@ -314,12 +314,16 @@ void AutomationCLI::run()
                     // FD_SETSIZE is typically 1024 on Linux. Using FD_SET with a larger
                     // value triggers __fdelt_chk abort. This can happen during shutdown
                     // when many file descriptors are open.
+                    // NOTE: This check is ONLY needed on Unix where fd_set is a bitmap.
+                    // On Windows, fd_set is an array of SOCKET handles, so skip this check.
+#ifndef _WIN32
                     if (sock >= FD_SETSIZE)
                     {
                         // Socket FD is too large for select(), treat as potentially invalid
                         // and remove it from tracking. The socket will be closed elsewhere.
                         return true;
                     }
+#endif
 
                     fd_set set;
                     FD_ZERO(&set);
@@ -446,13 +450,16 @@ void AutomationCLI::handleClientConnection(SOCKET clientSocket)
         FD_ZERO(&readSet);
 
         // SAFETY: Check if socket FD is within valid range for fd_set
-        // This is critical on Windows where FD_SETSIZE is only 64
+        // This is ONLY needed on Unix where fd_set is a bitmap indexed by FD number.
+        // On Windows, fd_set is an array of SOCKET handles (not FDs), so any SOCKET value is valid.
+#ifndef _WIN32
         if (clientSocket >= FD_SETSIZE)
         {
             std::cerr << "Client socket FD " << clientSocket << " exceeds FD_SETSIZE (" << FD_SETSIZE
                       << "), closing connection" << std::endl;
             break;  // Exit loop and close connection gracefully
         }
+#endif
 
         FD_SET(clientSocket, &readSet);
 
