@@ -208,6 +208,12 @@ if (BUILD_QT_APPS)
     
     # macOS: Combined DMG with all apps
     if(APPLE)
+        # Find macdeployqt in the Qt installation
+        find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+            HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
+            DOC "Path to macdeployqt executable"
+        )
+        
         add_custom_target(package_suite_macos
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
@@ -224,6 +230,26 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app"
                 "${SUITE_STAGING_DIR}/Video Wall.app"
+            
+            # Run macdeployqt on each app bundle to copy Qt frameworks and plugins
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app"
+            
+            # Copy shared resources
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy
+                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            
+            # Re-sign with ad-hoc signature (required after macdeployqt modifies bundles)
+            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/Video Wall.app"
             
             # Create combined DMG
             COMMAND hdiutil create
