@@ -14,6 +14,7 @@ if (CMAKE_VERSION VERSION_LESS "3.7.0")
 endif ()
 
 # Set paths
+get_filename_component(ROOT_DIR ../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # ========================================
@@ -45,12 +46,34 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
                 "$ENV{QTDIR}"
             )
         elseif (WIN32)
-            set(QT_POSSIBLE_PATHS
-                "C:/Qt/6.9.3/msvc2019_64"
-                "C:/Qt/6.5.3/msvc2019_64"
-                "C:/Qt/6.5.0/msvc2019_64"
-                "$ENV{QTDIR}"
-            )
+            # Auto-detect Qt path based on compiler
+            if(MINGW)
+                message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "C:/Qt/6.5.0/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            elseif(MSVC)
+                message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/msvc2019_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.0/msvc2019_64"
+                    "$ENV{QTDIR}"
+                )
+            else()
+                message(STATUS "Unknown Windows compiler - searching for any Qt build")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            endif()
         endif ()
         
         foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
@@ -209,6 +232,10 @@ endif()
 
 # Windows specific packaging
 if(WIN32)
+    # Include the shared Windows Qt deployment module
+    include(${ROOT_DIR}/cmake/WinDeployQt.cmake)
+    setup_windows_qt_deployment(${PROJECT_NAME})
+    
     # Create a custom target for Windows packaging
     add_custom_target(package_screen_viewer_windows
         COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package for Screen Viewer..."
