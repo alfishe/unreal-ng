@@ -5,10 +5,6 @@
 
 int main(int argc, char* argv[])
 {
-    // Enable high DPI scaling and high quality image rendering (improves Windows quality)
-    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
-    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
-
     QApplication app(argc, argv);
 
     // Set application metadata
