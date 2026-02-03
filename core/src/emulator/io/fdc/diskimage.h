@@ -255,6 +255,92 @@ public:
             return _diskImage;
         }
         /// endregion </Properties>
+
+        /// region <Change Tracking>
+    protected:
+        bool _dirty = false;
+        bool _rawTrackDirty = false;  // For WRITE_TRACK operations (MFM layout changes)
+        uint16_t _sectorDirtyBitmap = 0;  // Bit N = sector N is dirty (16 sectors = 16 bits)
+        
+        /// Marks track as dirty - protected, called by sector write accessors
+        void markDirty();
+        
+        /// Marks track as dirty due to raw MFM write - called by WD1793 WRITE_TRACK
+        void markRawTrackDirty();
+        
+        // Grant WD1793 friend access for WRITE_TRACK
+        friend class WD1793;
+        
+    public:
+        /// Check if track has been modified (sector or raw level)
+        bool isDirty() const { return _dirty; }
+        
+        /// Check if raw MFM data was written (WRITE_TRACK operation)
+        bool isRawTrackDirty() const { return _rawTrackDirty; }
+        
+        /// Check if specific sector is dirty
+        /// @param sectorNo Sector number (0-15)
+        bool isSectorDirty(uint8_t sectorNo) const
+        {
+            sectorNo &= 0x0F;
+            return (_sectorDirtyBitmap & (1 << sectorNo)) != 0;
+        }
+        
+        /// Check if any sector in track is marked dirty
+        bool hasAnySectorDirty() const
+        {
+            return _sectorDirtyBitmap != 0;
+        }
+        
+        /// Mark specific sector as dirty (with content-change detection)
+        /// @param sectorNo Sector number (0-15)
+        /// @param newData New data to compare against current sector data
+        /// @param len Length of data to compare
+        void markSectorDirtyIfChanged(uint8_t sectorNo, const uint8_t* newData, size_t len)
+        {
+            sectorNo &= 0x0F;
+            RawSectorBytes* sector = getSector(sectorNo);
+            if (sector && len <= sizeof(sector->data))
+            {
+                // Only mark dirty if content actually changed
+                if (std::memcmp(sector->data, newData, len) != 0)
+                {
+                    _sectorDirtyBitmap |= (1 << sectorNo);
+                    markDirty();  // Propagate to track and disk image
+                }
+            }
+        }
+        
+        /// Write sector data with content-change detection
+        /// @param sectorNo Sector number (0-15)
+        /// @param src Source data buffer
+        /// @param len Length of data to copy (max 256)
+        void writeSectorData(uint8_t sectorNo, const uint8_t* src, size_t len)
+        {
+            sectorNo &= 0x0F;
+            RawSectorBytes* sector = getSector(sectorNo);
+            if (sector)
+            {
+                if (len > sizeof(sector->data)) len = sizeof(sector->data);
+                
+                // Only mark dirty if content actually changed
+                if (std::memcmp(sector->data, src, len) != 0)
+                {
+                    std::memcpy(sector->data, src, len);
+                    _sectorDirtyBitmap |= (1 << sectorNo);
+                    markDirty();  // Propagate to track and disk image
+                }
+            }
+        }
+        
+        /// Clear dirty flags for track and all sectors (called after save)
+        void markClean()
+        {
+            _dirty = false;
+            _rawTrackDirty = false;
+            _sectorDirtyBitmap = 0;
+        }
+        /// endregion </Change Tracking>
         /// endregion </Fields>
 
         /// region <Properties>
@@ -545,12 +631,45 @@ public:
     /// region <Fields>
 protected:
     bool _loaded = false;
+    bool _dirty = false;  // Change tracking - set when any track is modified
     std::vector<Track> _tracks;
     std::string _filePath;  // Source file path (set during load, used for tracking)
 
     uint8_t _cylinders;
     uint8_t _sides;
+    
+    /// Marks disk image as dirty - protected, called by Track
+    void markDirty() { _dirty = true; }
+    
+    // Grant Track friend access for dirty propagation
+    friend struct Track;
     /// endregion </Fields>
+
+    /// region <Change Tracking>
+public:
+    /// Check if disk image has been modified
+    bool isDirty() const { return _dirty; }
+    
+    /// Recompute dirty state from all tracks
+    bool computeDirtyState() const
+    {
+        for (const Track& track : _tracks)
+        {
+            if (track.isDirty()) return true;
+        }
+        return false;
+    }
+    
+    /// Clear dirty flags for disk and all tracks (called after save)
+    void markClean()
+    {
+        _dirty = false;
+        for (Track& track : _tracks)
+        {
+            track.markClean();
+        }
+    }
+    /// endregion </Change Tracking>
 
     /// region <Properties>
 public:
