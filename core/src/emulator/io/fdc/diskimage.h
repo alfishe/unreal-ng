@@ -7,6 +7,7 @@
 #include "emulator/io/fdc/mfm_parser.h"
 #include "trdos.h"
 #include <algorithm>
+#include <cstring>
 
 // @see http://www.bitsavers.org/components/westernDigital/FD179X-01_Data_Sheet_Oct1979.pdf
 // | Data in DR (Hex) | FD179X Interpretation in FM (DDEN = 1) | FD179X Interpretation in MFM (DDEN = 0) | Notes                                  |
