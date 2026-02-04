@@ -28,11 +28,12 @@
 #include "emulator/soundmanager.h"
 // Avoid Qt 'signals' macro conflict with WD1793State::signals member
 #undef signals
-#include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/fdd.h"
+#include "emulator/io/fdc/wd1793.h"
+
 #define signals Q_SIGNALS
-#include "loaders/disk/loader_trd.h"
 #include "loaders/disk/loader_scl.h"
+#include "loaders/disk/loader_trd.h"
 #include "ui_mainwindow.h"
 
 // region <Constructors / destructors>
@@ -1017,6 +1018,7 @@ void MainWindow::handleFullScreenShortcutWindows()
 
         setPalette(_originalPalette);
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
+        menuBar()->show();
         statusBar()->show();
         startButton->show();
         showNormal();
@@ -1044,6 +1046,7 @@ void MainWindow::handleFullScreenShortcutWindows()
         QPalette palette;
         palette.setColor(QPalette::Window, Qt::black);
         setPalette(palette);
+        menuBar()->hide();
         statusBar()->hide();
         startButton->hide();
 
@@ -1498,8 +1501,7 @@ void MainWindow::saveDiskDialog()
     if (!context || !context->pBetaDisk)
     {
         qDebug() << "No Beta Disk interface available";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No Beta Disk interface available."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No Beta Disk interface available."));
         return;
     }
 
@@ -1508,8 +1510,7 @@ void MainWindow::saveDiskDialog()
     if (!drive)
     {
         qDebug() << "No drive selected";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No disk drive selected."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk drive selected."));
         return;
     }
 
@@ -1517,8 +1518,7 @@ void MainWindow::saveDiskDialog()
     if (!diskImage)
     {
         qDebug() << "No disk loaded";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No disk image loaded in the current drive."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk image loaded in the current drive."));
         return;
     }
 
@@ -1562,8 +1562,7 @@ void MainWindow::saveDiskAsTRDDialog()
     if (!context || !context->pBetaDisk)
     {
         qDebug() << "No Beta Disk interface available";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No Beta Disk interface available."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No Beta Disk interface available."));
         return;
     }
 
@@ -1572,8 +1571,7 @@ void MainWindow::saveDiskAsTRDDialog()
     if (!drive)
     {
         qDebug() << "No drive selected";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No disk drive selected."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk drive selected."));
         return;
     }
 
@@ -1581,15 +1579,13 @@ void MainWindow::saveDiskAsTRDDialog()
     if (!diskImage)
     {
         qDebug() << "No disk loaded";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No disk image loaded in the current drive."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk image loaded in the current drive."));
         return;
     }
 
     // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Save Disk Image"), _lastSaveDirectory + "/disk.trd",
-        tr("TRD Disk Images (*.trd);;All Files (*)"));
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Disk Image"), _lastSaveDirectory + "/disk.trd",
+                                                    tr("TRD Disk Images (*.trd);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {
@@ -1618,8 +1614,7 @@ void MainWindow::saveDiskAsTRDDialog()
         else
         {
             qDebug() << "Failed to save disk as TRD:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"),
-                                 tr("Failed to save disk to:\n%1").arg(filePath));
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
         }
     }
 }
@@ -1638,8 +1633,7 @@ void MainWindow::saveDiskAsSCLDialog()
     if (!context || !context->pBetaDisk)
     {
         qDebug() << "No Beta Disk interface available";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No Beta Disk interface available."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No Beta Disk interface available."));
         return;
     }
 
@@ -1648,8 +1642,7 @@ void MainWindow::saveDiskAsSCLDialog()
     if (!drive)
     {
         qDebug() << "No drive selected";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No disk drive selected."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk drive selected."));
         return;
     }
 
@@ -1657,15 +1650,14 @@ void MainWindow::saveDiskAsSCLDialog()
     if (!diskImage)
     {
         qDebug() << "No disk loaded";
-        QMessageBox::warning(this, tr("Save Failed"),
-                             tr("No disk image loaded in the current drive."));
+        QMessageBox::warning(this, tr("Save Failed"), tr("No disk image loaded in the current drive."));
         return;
     }
 
     // Show a file save dialog using the last save directory
-    QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Save Disk Image as SCL"), _lastSaveDirectory + "/disk.scl",
-        tr("SCL Disk Images (*.scl);;All Files (*)"));
+    QString filePath =
+        QFileDialog::getSaveFileName(this, tr("Save Disk Image as SCL"), _lastSaveDirectory + "/disk.scl",
+                                     tr("SCL Disk Images (*.scl);;All Files (*)"));
 
     if (!filePath.isEmpty())
     {
@@ -1694,8 +1686,7 @@ void MainWindow::saveDiskAsSCLDialog()
         else
         {
             qDebug() << "Failed to save disk as SCL:" << filePath;
-            QMessageBox::warning(this, tr("Save Failed"),
-                                 tr("Failed to save disk to:\n%1").arg(filePath));
+            QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save disk to:\n%1").arg(filePath));
         }
     }
 }

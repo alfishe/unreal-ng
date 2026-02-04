@@ -555,6 +555,9 @@ void VideoWallWindow::toggleFullscreenWindows()
         // Restore window flags (remove frameless)
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
 
+        // Show menu bar again
+        menuBar()->show();
+
         // Show normal first
         showNormal();
 
@@ -588,6 +591,9 @@ void VideoWallWindow::toggleFullscreenWindows()
         // Add frameless hint for Windows fullscreen
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         setWindowState(Qt::WindowNoState);
+
+        // Hide menu bar for cleaner fullscreen
+        menuBar()->hide();
 
         QScreen* screen = window()->screen();
         showFullScreen();
