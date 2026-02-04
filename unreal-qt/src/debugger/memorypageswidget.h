@@ -37,6 +37,7 @@ signals:
 public slots:
     void reset();
     void refresh();
+    void prepareForShutdown();  // Block refreshes during shutdown
 
     void page0_doubleClicked();
     void page1_doubleClicked();
@@ -56,6 +57,7 @@ private:
     QLabel* page2Value;
     QLabel* page3Value;
 
+    bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown
 };
 
 #endif // MEMORYPAGESWIDGET_H

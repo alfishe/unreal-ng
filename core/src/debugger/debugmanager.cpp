@@ -2,6 +2,9 @@
 
 #include "debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/trdos/trdosanalyzer.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
 
 /// region <Constructors / Destructors>
 
@@ -10,8 +13,20 @@ DebugManager::DebugManager(EmulatorContext* context)
     _context = context;
     _logger = _context->pModuleLogger;
 
-    _breakpoints = new BreakpointManager(context);
-    _labels = new LabelManager(context);
+    // Create all child components first
+    _breakpoints = new BreakpointManager(_context);
+    _labels = new LabelManager(_context);
+    _analyzerManager = std::make_unique<AnalyzerManager>(_context);
+    
+    // Keyboard injection manager for automation
+    _keyboardManager = new DebugKeyboardManager(_context);
+    
+    // Initialize AnalyzerManager after all components are created
+    // Pass 'this' because _context->pDebugManager isn't set yet
+    _analyzerManager->init(this);
+    
+    // Register built-in analyzers
+    _analyzerManager->registerAnalyzer("trdos", std::make_unique<TRDOSAnalyzer>(_context));
 
     _disassembler = std::make_unique<Z80Disassembler>(_context);
     _disassembler->SetLogger(_context->pModuleLogger);
@@ -19,6 +34,12 @@ DebugManager::DebugManager(EmulatorContext* context)
 
 DebugManager::~DebugManager()
 {
+    if (_keyboardManager)
+    {
+        delete _keyboardManager;
+        _keyboardManager = nullptr;
+    }
+    
     if (_labels)
     {
         delete _labels;
@@ -51,6 +72,16 @@ LabelManager* DebugManager::GetLabelManager()
 std::unique_ptr<Z80Disassembler>& DebugManager::GetDisassembler()
 {
     return _disassembler;
+}
+
+AnalyzerManager* DebugManager::GetAnalyzerManager()
+{
+    return _analyzerManager.get();
+}
+
+DebugKeyboardManager* DebugManager::GetKeyboardManager()
+{
+    return _keyboardManager;
 }
 
 /// endregion </Properties>

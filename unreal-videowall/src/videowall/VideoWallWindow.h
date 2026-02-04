@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QPointer>
 #include <memory>
 #include <vector>
 
@@ -101,7 +102,8 @@ private:
     AppSoundManager* _soundManager = nullptr;
 
     // Currently audio-bound tile (only one at a time)
-    EmulatorTile* _audioBoundTile = nullptr;
+    // Using QPointer to auto-nullify when tile is deleted
+    QPointer<EmulatorTile> _audioBoundTile;
 
     // Automation system (WebAPI, CLI, Python, Lua)
     std::unique_ptr<Automation> _automation;

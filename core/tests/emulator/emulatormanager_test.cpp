@@ -51,8 +51,8 @@ TEST_F(EmulatorManager_Test, CreateEmulator)
     ASSERT_NE(emulator, nullptr);
 
     // Verify the emulator has a valid ID
-    std::string emulatorId = emulator->GetUUID();
-    ASSERT_FALSE(emulatorId.empty());
+    UUID emulatorId = emulator->GetUUID();
+    ASSERT_TRUE(emulatorId.isNil());
 
     // Verify the emulator can be retrieved
     auto retrieved = _manager->GetEmulator(emulatorId);
@@ -69,7 +69,7 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithId)
     ASSERT_NE(emulator, nullptr);
 
     // Get the dynamically generated UUID
-    std::string emulatorId = emulator->GetUUID();
+    UUID emulatorId = emulator->GetUUID();
 
     // The emulator should be retrievable using its generated ID
     auto retrieved = _manager->GetEmulator(emulatorId);
@@ -252,9 +252,9 @@ TEST_F(EmulatorManager_Test, FindEmulatorsBySymbolicId)
     auto emulator3 = _manager->CreateEmulator("test3");
 
     // Get the generated IDs
-    std::string id1 = emulator1->GetUUID();
-    std::string id2 = emulator2->GetUUID();
-    std::string id3 = emulator3->GetUUID();
+    UUID id1 = emulator1->GetUUID();
+    UUID id2 = emulator2->GetUUID();
+    UUID id3 = emulator3->GetUUID();
 
     // Find emulators by symbolic ID - returns vector of emulator pointers
     auto test1Emulators = _manager->FindEmulatorsBySymbolicId("test1");
@@ -293,7 +293,7 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithDuplicateId)
     // Create first emulator
     auto emulator1 = _manager->CreateEmulator("test-emulator");
     ASSERT_NE(emulator1, nullptr);
-    std::string emulator1Id = emulator1->GetUUID();
+    UUID emulator1Id = emulator1->GetUUID();
 
     // Try to create another emulator with the same symbolic ID
     auto emulator2 = _manager->CreateEmulator("test-emulator");
@@ -307,7 +307,7 @@ TEST_F(EmulatorManager_Test, CreateEmulatorWithDuplicateId)
     ASSERT_EQ(retrieved1->GetUUID(), emulator1Id);
 
     // The second emulator should have a different ID
-    std::string emulator2Id = emulator2->GetUUID();
+    UUID emulator2Id = emulator2->GetUUID();
     ASSERT_NE(emulator1Id, emulator2Id);
 
     // The second emulator should be accessible using its ID

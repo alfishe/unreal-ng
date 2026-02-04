@@ -122,6 +122,25 @@ private:
     // BASIC command handlers
     void HandleBasic(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Analyzer command handlers
+    void HandleAnalyzer(const ClientSession& session, const std::vector<std::string>& args);
+
+    // Profiler command handlers
+    void HandleProfiler(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowProfilerHelp(const ClientSession& session);
+    void ShowProfilerOpcodeHelp(const ClientSession& session);
+    void HandleProfilerOpcodeStart(const ClientSession& session, EmulatorContext* context, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeStop(const ClientSession& session, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeClear(const ClientSession& session, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeStatus(const ClientSession& session, class OpcodeProfiler* profiler);
+    void HandleProfilerOpcodeCounters(const ClientSession& session, class OpcodeProfiler* profiler, size_t limit);
+    void HandleProfilerOpcodeTrace(const ClientSession& session, class OpcodeProfiler* profiler, size_t count);
+    void HandleProfilerOpcodeSave(const ClientSession& session, class OpcodeProfiler* profiler, const std::string& path);
+    void HandleProfilerMemory(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleProfilerCalltrace(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleProfilerAll(const ClientSession& session, const std::vector<std::string>& args);
+
+
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);
 
@@ -145,6 +164,18 @@ private:
     void HandleStateAudioGS(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioCovox(const ClientSession& session, EmulatorContext* context);
     void HandleStateAudioChannels(const ClientSession& session, EmulatorContext* context);
+
+    // Keyboard injection command handlers
+    void HandleKey(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowKeyHelp(const ClientSession& session);
+    void HandleKeyPress(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyRelease(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyTap(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyCombo(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyMacro(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyType(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleKeyList(const ClientSession& session);
+    void HandleKeyClear(const ClientSession& session, EmulatorContext* context);
 
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
@@ -211,6 +242,13 @@ private:
     void HandleSnapshotSave(const ClientSession& session, std::shared_ptr<Emulator> emulator, 
                             const std::vector<std::string>& args);
     void HandleSnapshotInfo(const ClientSession& session, EmulatorContext* context);
+
+    // Capture command handlers (OCR, screen capture, ROM text)
+    void HandleCapture(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowCaptureHelp(const ClientSession& session);
+    void HandleCaptureOCR(const ClientSession& session, std::shared_ptr<Emulator> emulator);
+    void HandleCaptureScreen(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                              const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

@@ -80,9 +80,6 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     uint8_t result = 0xFF;
     uint16_t decodedPort = decodePort(port);
 
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortIn(port, pc);
-
     if (decodedPort != 0x0000)
     {
         switch (decodedPort)
@@ -116,6 +113,9 @@ uint8_t PortDecoder_Pentagon128::DecodePortIn(uint16_t port, uint16_t pc)
     }
     /// endregion </Debug logging>
 
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortInComplete(decodedPort, result, pc);
+
     return result;
 }
 
@@ -126,9 +126,6 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
     /// endregion </Override submodule>
 
     uint16_t decodedPort = decodePort(port);
-
-    // Handle common part (like breakpoints)
-    PortDecoder::DecodePortOut(port, value, pc);
 
     if (decodedPort != 0x0000)
     {
@@ -157,6 +154,9 @@ void PortDecoder_Pentagon128::DecodePortOut(uint16_t port, uint8_t value, uint16
         MLOGINFO("[Out] [PC:%04X%s] Port: %04X; Decoded port: %04X; Value: %02X", pc, currentMemoryPage.c_str(), port, decodedPort, value);
     }
     /// endregion </Debug logging>
+
+    // Universal handler for breakpoints, tracking, analyzers
+    OnPortOutComplete(decodedPort, value, pc);
 }
 
 /// Actualize port(s) state according selected RAM page

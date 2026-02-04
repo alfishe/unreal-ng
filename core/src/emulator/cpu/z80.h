@@ -7,6 +7,9 @@
 // Defined in /emulator/cpu/op_ddcb.cpp - pointers to registers in Z80 state
 extern uint8_t* direct_registers[8];
 
+// Forward declaration
+class OpcodeProfiler;
+
 /// region <Structures>
 
 // Disable compiler alignment for packed structures
@@ -333,16 +336,13 @@ protected:
     uint8_t _trashRegister;  // Redirect DDCB operation writes with no destination registers here (related to
                              // op_ddcb.cpp and direct_registers[6] unused pointer)
 
-    bool _pauseRequested = false;
-
 protected:
     int _nmi_pending_count = 0;
+    
+    // Opcode profiling
+    OpcodeProfiler* _opcodeProfiler = nullptr;
+    bool _feature_opcodeprofiler_enabled = false;
     /// endregion </Fields>
-
-    /// region <Properties>
-public:
-    bool IsPaused();
-    /// endregion </Properties>
 
     /// region <Constructors / Destructors>
 public:
@@ -369,9 +369,6 @@ public:
 
     // Z80 CPU control methods
     void Reset();  // Z80 chip reset
-    void Pause();
-    void Resume();
-
     void Z80Step(bool skipBreakpoints = false);  // Single opcode execution
 
 public:
@@ -393,7 +390,6 @@ public:
     // Debugger interfacing
 public:
     void ProcessDebuggerEvents();
-    void WaitUntilResumed();
     void (*callbackM1_Prefetch)();   // Corrected function pointer declaration
     void (*callbackM1_Postfetch)();  // Corrected function pointer declaration
 
@@ -420,4 +416,9 @@ public:
     static std::string DumpFlags(uint8_t flags);
 
     /// endregion </Debug methods>
+    
+    /// region <Feature Cache>
+    void UpdateFeatureCache();
+    OpcodeProfiler* GetOpcodeProfiler() { return _opcodeProfiler; }
+    /// endregion </Feature Cache>
 };

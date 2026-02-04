@@ -18,7 +18,6 @@ class ModuleLogger;
 class MessageCenter;
 class Z80;
 class PortDecoder;
-// class VG93;
 class WD1793;
 
 class Core
@@ -58,7 +57,6 @@ protected:
     Screen* _screen = nullptr;
 
     ROMModeEnum _mode = ROMModeEnum::RM_NOCHANGE;
-    bool _pauseRequested = false;
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -101,8 +99,6 @@ public:
     // Z80 Core-related methods
 public:
     void Reset();
-    void Pause();
-    void Resume();
 
     void SetCPUClockSpeed(uint8_t);
     uint32_t GetBaseCPUFrequency();

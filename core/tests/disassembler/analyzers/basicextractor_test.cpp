@@ -1,4 +1,4 @@
-#include "debugger/analyzers/basicextractor.h"
+#include "debugger/analyzers/basic-lang/basicextractor.h"
 
 #include <gtest/gtest.h>
 
@@ -37,9 +37,10 @@ TEST_F(BasicExtractorTest, ExtractBasic_SimplePrint)
     BasicExtractor extractor;
     std::string result = extractor.extractBasic(data.data(), data.size());
 
-    // Expected: "10  PRINT "HELLO"\n"
-    // Note: Line number format adds space ("10 "), Token adds spaces (" PRINT ").
-    EXPECT_EQ(result, "10  PRINT \"HELLO\"\n");
+    // Expected: "10 PRINT "HELLO"\n"
+    // Note: Line number format adds space ("10 "). Token used to add leading space (" PRINT"),
+    // but now basicextractor.cpp avoids double-spacing.
+    EXPECT_EQ(result, "10 PRINT \"HELLO\"\n");
 }
 
 TEST_F(BasicExtractorTest, ExtractBasic_HiddenNumber)
@@ -69,9 +70,9 @@ TEST_F(BasicExtractorTest, ExtractBasic_HiddenNumber)
     BasicExtractor extractor;
     std::string result = extractor.extractBasic(data.data(), data.size());
 
-    // Expected: "20  LET  A=10\n"
-    // "20 " + " LET " + " A=" + "10" + (skipped 0x0E+5) + "\n"
-    EXPECT_EQ(result, "20  LET  A=10\n");
+    // Expected: "20 LET  A=10\n"
+    // "20 " + "LET " + " A=" + "10" + (skipped 0x0E+5) + "\n"
+    EXPECT_EQ(result, "20 LET  A=10\n");
 }
 
 TEST_F(BasicExtractorTest, ExtractBasic_EyeAcheFile)
@@ -96,7 +97,7 @@ TEST_F(BasicExtractorTest, ExtractBasic_EyeAcheFile)
     // Note: line number 1.
     // Content should contain "PRINT" and "USR"
     // Note: PRINT has trailing space, USR has no leading space -> " PRINT USR"
-    EXPECT_NE(result.find("1  PRINT USR "), std::string::npos);
+    EXPECT_NE(result.find("1 PRINT USR "), std::string::npos);
     EXPECT_NE(result.find(": REM !"), std::string::npos);
 }
 
@@ -119,7 +120,7 @@ TEST_F(BasicExtractorTest, ExtractBasic_AcrossFile)
     // LOAD "ACROSSLK" CODE VAL "25088" Note: Line 10.
 
     // Check for key components
-    EXPECT_NE(result.find("10  BORDER VAL \"7\": INK VAL \"7\""), std::string::npos);
+    EXPECT_NE(result.find("10 BORDER VAL \"7\": INK VAL \"7\""), std::string::npos);
     EXPECT_NE(result.find("RANDOMIZE USR VAL \"15619\""), std::string::npos);
     // Note: Our extractor now adds a space after a closing quote if the next byte is a token.
     // So LOAD "ACROSSLK"CODE becomes LOAD "ACROSSLK" CODE
@@ -171,7 +172,7 @@ TEST_F(BasicExtractorTest, ExtractBasic_FromMemory)
 
     std::cout << "FromMemory Result: '" << result << "'" << std::endl;
 
-    EXPECT_NE(result.find("10  PRINT \"HI\""), std::string::npos);
+    EXPECT_NE(result.find("10 PRINT \"HI\""), std::string::npos);
 
     delete memory;
     delete context;

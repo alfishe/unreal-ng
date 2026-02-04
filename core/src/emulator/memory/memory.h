@@ -20,6 +20,7 @@ enum MemoryBankModeEnum : uint8_t
 {
     BANK_ROM = 0,
     BANK_RAM = 1,
+    BANK_CACHE = 2,
     BANK_INVALID = 0xFF  // Sentinel for invalid/unknown page in snapshot loaders
 };
 
@@ -354,5 +355,11 @@ public:
     using Memory::_isPage0ROMDOS;
     using Memory::_isPge0ROMService;
     using Memory::_memoryAccessTracker;
+    
+    // ROM base pointers for testing ROM switching
+    using Memory::base_dos_rom;
+    using Memory::base_sos_rom;
+    using Memory::base_128_rom;
+    using Memory::base_sys_rom;
 };
 #endif  // _CODE_UNDER_TEST

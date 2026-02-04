@@ -41,6 +41,9 @@ public:
 
     void reset();
 
+    /// @brief Prepare for application shutdown - blocks all refreshes
+    void prepareForShutdown();
+
     /// region <Helper methods>
 protected:
     void updateState();
@@ -117,6 +120,7 @@ protected:
     // Step operation state tracking
     bool _inStepOutOperation = false;               // Flag indicating we're in a step-out operation
     bool _waitingForInterrupt = false;              // Flag indicating we're waiting for an interrupt
+    bool _isClosing = false;                         // Flag indicating window is being destroyed
     std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints
 
     // UI fields

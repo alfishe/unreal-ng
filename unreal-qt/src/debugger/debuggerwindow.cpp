@@ -65,7 +65,11 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(stepOutAction, &QAction::triggered, this, &DebuggerWindow::stepOut);
     toolBar->addAction(stepOutAction);
 
-    frameStepAction = toolBar->addAction("Frame step");
+    frameStepAction = new QAction("Frame step", this);
+    frameStepAction->setShortcut(QKeySequence(Qt::Key_F9));
+    connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
+    toolBar->addAction(frameStepAction);
+    
     waitInterruptAction = toolBar->addAction("Wait INT");
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
@@ -144,7 +148,8 @@ DebuggerWindow::~DebuggerWindow()
 {
     qDebug() << "DebuggerWindow::~DebuggerWindow()";
 
-    // NOTE: DebuggerWindow does not subscribe to any global MessageCenter events,
+    // Block all refreshes during shutdown
+    _isClosing = true;
     // so there's nothing to unsubscribe from here. All event handling is done via
     // explicit method calls from MainWindow.
 
@@ -233,6 +238,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         connect(m_binding, &EmulatorBinding::stateChanged, this, &DebuggerWindow::onBindingStateChanged);
         connect(m_binding, &EmulatorBinding::ready, this, &DebuggerWindow::onBindingReady);
         connect(m_binding, &EmulatorBinding::notReady, this, &DebuggerWindow::onBindingNotReady);
+        
+        // Connect CPU step complete signal for automation-triggered steps (WebAPI, Python, Lua, CLI)
+        // Use updateState() instead of onBindingReady() to ensure setZ80State() is called on widgets
+        connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::updateState);
 
         qDebug() << "DebuggerWindow: Connected to EmulatorBinding";
 
@@ -370,6 +379,12 @@ void DebuggerWindow::clearInterruptBreakpoints()
 
 void DebuggerWindow::updateState()
 {
+    // Block refreshes during shutdown to prevent crash
+    if (_isClosing)
+    {
+        return;
+    }
+
     qDebug() << "DebuggerWindow::updateState() called - emulator state:"
              << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
     if (_emulator)
@@ -717,9 +732,8 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
     // Handle step over/out breakpoints
     if (breakpoint->note == STEP_OVER_NOTE)
     {
-        // Step-over breakpoints are now handled by the core Emulator::StepOver() method
-        // Just remove the breakpoint and continue
-        bpManager->RemoveBreakpointByID(breakpointID);
+        // Step-over breakpoints are handled by core Emulator::StepOver() lambda
+        // No action needed here - just let UI update proceed
     }
     else if (breakpoint->note == STEP_OUT_NOTE)
     {
@@ -820,8 +834,12 @@ void DebuggerWindow::stepOver()
         return;
 
     // Use the new core Emulator::StepOver() method
+    // Note: For step-in fallback (non-call instructions), this executes synchronously
+    // and we need to update UI. For actual step-over (call instructions), the UI
+    // will also update via breakpoint notification, but updating here is harmless.
     _emulator->StepOver();
-
+    
+    // Always update UI - handles both step-in fallback and ensures immediate feedback
     updateState();
 }
 
@@ -896,7 +914,14 @@ void DebuggerWindow::frameStep()
 
     _breakpointTriggered = false;
 
-    updateState();
+    if (_emulator)
+    {
+        // Execute one complete video frame
+        bool skipBreakpoints = true;
+        _emulator->RunFrame(skipBreakpoints);
+
+        updateState();
+    }
 }
 
 void DebuggerWindow::waitInterrupt()
@@ -1097,3 +1122,35 @@ void DebuggerWindow::showVisualizationWindow()
 }
 
 /// endregion </Event handlers / Slots>
+
+void DebuggerWindow::prepareForShutdown()
+{
+    qDebug() << "DebuggerWindow::prepareForShutdown() - Propagating to all child widgets";
+
+    // Set our own flag first
+    _isClosing = true;
+
+    // Propagate to all child widgets that have refresh methods
+    if (ui)
+    {
+        if (ui->disassemblerWidget)
+        {
+            ui->disassemblerWidget->prepareForShutdown();
+        }
+        if (ui->registersWidget)
+        {
+            ui->registersWidget->prepareForShutdown();
+        }
+        if (ui->memorypagesWidget)
+        {
+            ui->memorypagesWidget->prepareForShutdown();
+        }
+        if (ui->stackWidget)
+        {
+            ui->stackWidget->prepareForShutdown();
+        }
+        // hexView is a 3rd party widget without our shutdown pattern
+    }
+
+    qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";
+}

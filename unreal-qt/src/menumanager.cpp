@@ -5,6 +5,12 @@
 
 #include "emulator/emulator.h"
 #include "emulator/platform.h"
+#include "emulator/notifications.h"
+// Avoid Qt 'signals' macro conflict with WD1793State::signals member
+#undef signals
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/fdc/fdd.h"
+#define signals Q_SIGNALS
 #include "mainwindow.h"
 
 MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* parent)
@@ -34,6 +40,14 @@ MenuManager::MenuManager(MainWindow* mainWindow, QMenuBar* menuBar, QObject* par
     ObserverCallbackMethod createCallback =
         static_cast<ObserverCallbackMethod>(&MenuManager::handleEmulatorInstanceCreated);
     messageCenter.AddObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
+
+    // Subscribe to FDD disk insert/eject events
+    ObserverCallbackMethod diskCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleFDDDiskChanged);
+    messageCenter.AddObserver(NC_FDD_DISK_INSERTED, observerInstance, diskCallback);
+    messageCenter.AddObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
+    messageCenter.AddObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
+    messageCenter.AddObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
 }
 
 MenuManager::~MenuManager()
@@ -48,6 +62,14 @@ MenuManager::~MenuManager()
     ObserverCallbackMethod createCallback =
         static_cast<ObserverCallbackMethod>(&MenuManager::handleEmulatorInstanceCreated);
     messageCenter.RemoveObserver(NC_EMULATOR_INSTANCE_CREATED, observerInstance, createCallback);
+
+    // Unsubscribe from FDD disk events
+    ObserverCallbackMethod diskCallback =
+        static_cast<ObserverCallbackMethod>(&MenuManager::handleFDDDiskChanged);
+    messageCenter.RemoveObserver(NC_FDD_DISK_INSERTED, observerInstance, diskCallback);
+    messageCenter.RemoveObserver(NC_FDD_DISK_EJECTED, observerInstance, diskCallback);
+    messageCenter.RemoveObserver(NC_FDD_DISK_PENDING_WRITE, observerInstance, diskCallback);
+    messageCenter.RemoveObserver(NC_FDD_DISK_WRITTEN, observerInstance, diskCallback);
 }
 
 void MenuManager::createFileMenu()
@@ -95,6 +117,25 @@ void MenuManager::createFileMenu()
     _saveSnapshotZ80Action = _saveSnapshotMenu->addAction(tr("Save as .z80..."));
     _saveSnapshotZ80Action->setStatusTip(tr("Save current emulator state to Z80 v3 snapshot format"));
     connect(_saveSnapshotZ80Action, &QAction::triggered, this, &MenuManager::saveSnapshotZ80Requested);
+
+    // Save Disk submenu
+    _saveDiskMenu = _fileMenu->addMenu(tr("Save &Disk"));
+    
+    // Save Disk (to original path)
+    _saveDiskAction = _saveDiskMenu->addAction(tr("Save Disk"));
+    _saveDiskAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+    _saveDiskAction->setStatusTip(tr("Save disk image to original path (TRD format only)"));
+    connect(_saveDiskAction, &QAction::triggered, this, &MenuManager::saveDiskRequested);
+    
+    // Save as TRD
+    _saveDiskTRDAction = _saveDiskMenu->addAction(tr("Save as .trd..."));
+    _saveDiskTRDAction->setStatusTip(tr("Save disk image in TRD format"));
+    connect(_saveDiskTRDAction, &QAction::triggered, this, &MenuManager::saveDiskAsTRDRequested);
+    
+    // Save as SCL
+    _saveDiskSCLAction = _saveDiskMenu->addAction(tr("Save as .scl..."));
+    _saveDiskSCLAction->setStatusTip(tr("Save disk image in SCL format"));
+    connect(_saveDiskSCLAction, &QAction::triggered, this, &MenuManager::saveDiskAsSCLRequested);
 
     _fileMenu->addSeparator();
 
@@ -448,6 +489,55 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);
+    
+    // File menu - Save Disk menu and actions
+    bool hasDiskLoaded = false;
+    bool isDiskDirty = false;
+    if (emulatorExists)
+    {
+        EmulatorContext* context = activeEmulator->GetContext();
+        if (context && context->pBetaDisk)
+        {
+            FDD* drive = context->pBetaDisk->getDrive();
+            if (drive && drive->getDiskImage())
+            {
+                hasDiskLoaded = true;
+                isDiskDirty = drive->getDiskImage()->isDirty();
+            }
+        }
+    }
+    
+    // Enable/disable the entire Save Disk submenu based on disk presence
+    _saveDiskMenu->setEnabled(hasDiskLoaded);
+    
+    // Update Save Disk action text and state based on dirty status
+    if (hasDiskLoaded)
+    {
+        // Update menu text: show asterisk when dirty
+        if (isDiskDirty)
+        {
+            _saveDiskAction->setText(tr("Save Disk *"));
+        }
+        else
+        {
+            _saveDiskAction->setText(tr("Save Disk"));
+        }
+        
+        // Save Disk only enabled when there are unsaved changes
+        _saveDiskAction->setEnabled(isDiskDirty);
+        
+        // Save As options always available when disk is loaded
+        _saveDiskTRDAction->setEnabled(true);
+        _saveDiskSCLAction->setEnabled(true);
+    }
+    else
+    {
+        // Reset to default text when no disk loaded
+        _saveDiskAction->setText(tr("Save Disk"));
+        _saveDiskAction->setEnabled(false);
+        _saveDiskTRDAction->setEnabled(false);
+        _saveDiskSCLAction->setEnabled(false);
+    }
 
     // Run menu states
     _startAction->setEnabled(!emulatorExists);         // Start only when no emulator
@@ -508,6 +598,36 @@ void MenuManager::handleEmulatorInstanceCreated(int id, Message* message)
                         updateMenuStates(emulator);
                     }, Qt::QueuedConnection);
             }
+        }
+    }
+}
+
+void MenuManager::handleFDDDiskChanged(int id, Message* message)
+{
+    Q_UNUSED(id);
+
+    // Only update if the event is from our active emulator instance
+    auto activeEmulator = _activeEmulator.lock();
+    if (!activeEmulator || !message || !message->obj)
+    {
+        return;
+    }
+
+    // Check if this event is for our active emulator
+    FDDDiskPayload* payload = dynamic_cast<FDDDiskPayload*>(message->obj);
+    if (payload)
+    {
+        // Compare emulator IDs
+        std::string activeId = activeEmulator->GetId();
+        std::string eventEmulatorId = payload->_emulatorId.toString();
+        
+        if (activeId == eventEmulatorId)
+        {
+            // Disk changed in our active emulator - update menu state on main thread
+            QMetaObject::invokeMethod(
+                this, [this, activeEmulator]() {
+                    updateMenuStates(activeEmulator);
+                }, Qt::QueuedConnection);
         }
     }
 }
