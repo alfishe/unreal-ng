@@ -52,6 +52,7 @@ public:
 public:
     bool loadImage();
     bool writeImage();
+    bool writeImage(const std::string& path);  // Save As - write to specified path
 
     // TR-DOS image specific method. Can be moved closer to generic TR-DOS functionality
     bool format(DiskImage* diskImage);

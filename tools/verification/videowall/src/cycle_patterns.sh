@@ -3,8 +3,10 @@
 # Videowall Pattern Cycling Script
 # Cycles through all available patterns with configurable delay
 #
-# Usage: ./cycle_patterns.sh [delay_seconds]
+# Usage: ./cycle_patterns.sh [--url URL] [delay_seconds]
+#        ./cycle_patterns.sh [delay_seconds] [--url URL]
 # Default delay: 15 seconds
+# Default URL: http://localhost:8090
 #
 # This script will:
 # - Cycle through all 10 available patterns in order
@@ -17,7 +19,7 @@
 
 # Configuration
 DEFAULT_DELAY=15
-URL="http://localhost:8090"
+DEFAULT_URL="http://localhost:8090"
 
 # Available patterns (must match the Pattern enum in test_load_pattern_snapshots.py)
 PATTERNS=(
@@ -48,12 +50,70 @@ PATTERN_DESCRIPTIONS=(
 )
 
 # Parse arguments
-DELAY=${1:-$DEFAULT_DELAY}
+URL="$DEFAULT_URL"
+DELAY=""
+BASEPATH=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --url)
+            if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                URL="$2"
+                shift 2
+            else
+                echo "ERROR: --url requires a URL argument"
+                echo "Usage: $0 [--url URL] [--basepath PATH] [delay_seconds]"
+                exit 1
+            fi
+            ;;
+        --basepath)
+            if [[ -n "$2" && ! "$2" =~ ^-- ]]; then
+                BASEPATH="$2"
+                shift 2
+            else
+                echo "ERROR: --basepath requires a path argument"
+                echo "Usage: $0 [--url URL] [--basepath PATH] [delay_seconds]"
+                exit 1
+            fi
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--url URL] [--basepath PATH] [delay_seconds]"
+            echo ""
+            echo "Options:"
+            echo "  --url URL        WebAPI base URL (default: $DEFAULT_URL)"
+            echo "  --basepath PATH  Remote project root path for cross-machine setups"
+            echo "                   Example: O:/Projects/unreal-ng/unreal-ng for Windows"
+            echo "  delay            Delay between patterns in seconds (default: $DEFAULT_DELAY)"
+            echo ""
+            echo "Examples:"
+            echo "  $0                                    # Use defaults"
+            echo "  $0 30                                 # 30 second delay"
+            echo "  $0 --url http://host:8090             # Custom URL"
+            echo "  $0 --basepath O:/Projects/unreal-ng/unreal-ng  # Remote Windows path"
+            echo "  $0 --url http://host:8090 --basepath O:/path 20"
+            exit 0
+            ;;
+        *)
+            # Assume it's the delay
+            if [[ -z "$DELAY" ]]; then
+                DELAY="$1"
+            else
+                echo "ERROR: Unknown argument: $1"
+                echo "Usage: $0 [--url URL] [--basepath PATH] [delay_seconds]"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Set default delay if not provided
+DELAY=${DELAY:-$DEFAULT_DELAY}
 
 # Validate delay is a number
 if ! [[ "$DELAY" =~ ^[0-9]+$ ]]; then
     echo "ERROR: Delay must be a positive integer (seconds)"
-    echo "Usage: $0 [delay_seconds]"
+    echo "Usage: $0 [--url URL] [delay_seconds]"
     echo "Default delay: $DEFAULT_DELAY seconds"
     exit 1
 fi
@@ -81,6 +141,10 @@ trap cleanup SIGINT SIGTERM
 
 # Main cycling loop
 echo "$(get_timestamp) - Starting videowall pattern cycling"
+echo "$(get_timestamp) - WebAPI URL: ${URL}"
+if [[ -n "$BASEPATH" ]]; then
+    echo "$(get_timestamp) - Remote basepath: ${BASEPATH}"
+fi
 echo "$(get_timestamp) - Delay between patterns: ${DELAY} seconds"
 echo "$(get_timestamp) - Available patterns: ${#PATTERNS[@]}"
 echo "$(get_timestamp) - Press Ctrl+C to stop"
@@ -100,8 +164,14 @@ while true; do
         echo "$(get_timestamp) - Loading pattern: $PATTERN"
         echo "$(get_timestamp) - Description: $DESCRIPTION"
 
+        # Build command with optional basepath
+        CMD="python3 ./test_load_pattern_snapshots.py --url \"$URL\" --pattern \"$PATTERN\""
+        if [[ -n "$BASEPATH" ]]; then
+            CMD="$CMD --basepath \"$BASEPATH\""
+        fi
+
         # Run the pattern loading script
-        if python3 ./test_load_pattern_snapshots.py --url "$URL" --pattern "$PATTERN"; then
+        if eval $CMD; then
             echo "$(get_timestamp) - ✓ Pattern '$PATTERN' loaded successfully"
         else
             echo "$(get_timestamp) - ✗ Failed to load pattern '$PATTERN'"

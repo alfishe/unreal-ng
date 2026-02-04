@@ -254,7 +254,7 @@ def generate_pattern_assignments(grid: List[List[str]], rows: int, cols: int, pa
     return assignments
 
 
-def run_test(base_url: str, pattern: Pattern, whitelist_file: str) -> bool:
+def run_test(base_url: str, pattern: Pattern, whitelist_file: str, basepath: str = None) -> bool:
     """
     Run the pattern snapshot loading test.
 
@@ -262,12 +262,13 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str) -> bool:
         base_url: WebAPI server URL
         pattern: Pattern to use for loading
         whitelist_file: Path to whitelist file containing allowed snapshots
+        basepath: Optional remote project root path for cross-machine setups
 
     Returns:
         True if test passed, False otherwise
     """
     client = WebAPIClient(base_url)
-    testdata = TestDataHelper(whitelist_file)
+    testdata = TestDataHelper(whitelist_file, basepath=basepath)
 
     log(f"Connecting to WebAPI at {base_url}...")
 
@@ -314,6 +315,8 @@ def run_test(base_url: str, pattern: Pattern, whitelist_file: str) -> bool:
         return False
 
     log(f"Found {len(snapshots)} snapshots in whitelist")
+    if snapshots:
+        log(f"  (First path: {snapshots[0]})")
 
     # Step 4: Generate pattern assignments
     log(f"Step 4: Generating {pattern.value} pattern assignments...")
@@ -404,6 +407,13 @@ def main():
              "Lines starting with # are comments. "
              "Defaults to ../whitelist.txt."
     )
+    parser.add_argument(
+        "--basepath",
+        default=None,
+        help="Remote project root path for cross-machine setups. "
+             "When specified, snapshot paths sent to the emulator will use this basepath. "
+             "Example: O:/Projects/unreal-ng for Windows remote."
+    )
 
     args = parser.parse_args()
 
@@ -420,10 +430,12 @@ def main():
     log(f"Pattern: {pattern.value}")
     log(f"Description: {get_pattern_description(pattern)}")
     log(f"Using whitelist: {args.whitelist}")
+    if args.basepath:
+        log(f"Remote basepath: {args.basepath}")
     log("=" * 60)
 
     try:
-        success = run_test(args.url, pattern, args.whitelist)
+        success = run_test(args.url, pattern, args.whitelist, args.basepath)
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         log("\nTest interrupted by user")
