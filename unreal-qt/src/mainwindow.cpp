@@ -387,8 +387,32 @@ void MainWindow::resizeEvent(QResizeEvent* event)
     // Keep widget center-aligned. Alignment policy is not working good
     updatePosition(deviceScreen, ui->contentFrame, 0.5, 0.5);
 
-    // Update normal geometry
-    _normalGeometry = normalGeometry();
+    // Update normal geometry ONLY when in normal state
+    // This preserves the geometry for: normal → maximized → fullscreen → maximized → normal
+    //
+    // IMPORTANT (Windows): resizeEvent can fire BEFORE windowState() updates. This means
+    // we might receive a maximized-size geometry while windowState() still returns NoState.
+    // Guard against this by checking if the geometry looks like a maximized size.
+    if (!(windowState() & Qt::WindowMaximized) && !(windowState() & Qt::WindowFullScreen))
+    {
+        QRect currentGeom = geometry();
+        QScreen* screen = this->screen();
+        bool looksLikeMaximized = false;
+
+        if (screen)
+        {
+            QRect availableGeom = screen->availableGeometry();
+            // Check if width and height are suspiciously close to screen size (within 50px tolerance)
+            bool widthMatchesScreen = std::abs(currentGeom.width() - availableGeom.width()) < 50;
+            bool heightMatchesScreen = std::abs(currentGeom.height() - availableGeom.height()) < 50;
+            looksLikeMaximized = widthMatchesScreen && heightMatchesScreen;
+        }
+
+        if (!looksLikeMaximized)
+        {
+            _normalGeometry = currentGeom;
+        }
+    }
 
     // Notify docked child windows
     _dockingManager->updateDockedWindows();
@@ -404,8 +428,27 @@ void MainWindow::moveEvent(QMoveEvent* event)
     if (_dockingManager)
         _dockingManager->updateDockedWindows();
 
-    // Update normal geometry
-    _normalGeometry = normalGeometry();
+    // Update normal geometry ONLY when in normal state
+    // Same guard as resizeEvent - see comments there for details about Windows race condition
+    if (!(windowState() & Qt::WindowMaximized) && !(windowState() & Qt::WindowFullScreen))
+    {
+        QRect currentGeom = geometry();
+        QScreen* screen = this->screen();
+        bool looksLikeMaximized = false;
+
+        if (screen)
+        {
+            QRect availableGeom = screen->availableGeometry();
+            bool widthMatchesScreen = std::abs(currentGeom.width() - availableGeom.width()) < 50;
+            bool heightMatchesScreen = std::abs(currentGeom.height() - availableGeom.height()) < 50;
+            looksLikeMaximized = widthMatchesScreen && heightMatchesScreen;
+        }
+
+        if (!looksLikeMaximized)
+        {
+            _normalGeometry = currentGeom;
+        }
+    }
 }
 
 void MainWindow::changeEvent(QEvent* event)
@@ -559,7 +602,17 @@ void MainWindow::handleWindowStateChangeMacOS(Qt::WindowStates oldState, Qt::Win
 
 void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::WindowStates newState)
 {
-    // Simplified handler - Linux-focused, Windows just manages basic state
+    // Track geometry when transitioning TO maximized state (from normal)
+    // This ensures _normalGeometry is preserved for the chain: normal → maximized → fullscreen → maximized → normal
+    if ((newState & Qt::WindowMaximized) && !(oldState & Qt::WindowMaximized) && !(oldState & Qt::WindowFullScreen))
+    {
+        // Going from normal to maximized - we need to save normal geometry
+        // But geometry() may already be changing, so this is just for logging
+        // The actual preservation happens in handleFullScreenShortcutWindows()
+        qDebug() << "Maximized state detected (Windows) - _normalGeometry preserved:" << _normalGeometry;
+    }
+
+    // Handle ENTERING fullscreen state styling
     if (newState & Qt::WindowFullScreen)
     {
         _isFullScreen = true;
@@ -572,17 +625,28 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
         statusBar()->hide();
         startButton->hide();
     }
-    else if (oldState & Qt::WindowFullScreen)
-    {
-        _isFullScreen = false;
-        qDebug() << "Exiting fullscreen (Windows)";
 
-        // Restore UI elements
-        setPalette(_originalPalette);
-        setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
-        statusBar()->show();
-        startButton->show();
+    // Handle EXITING maximized state (restore button clicked)
+    // This restores _normalGeometry when going from maximized → normal
+    if ((oldState & Qt::WindowMaximized) && !(newState & Qt::WindowMaximized) && !(newState & Qt::WindowFullScreen))
+    {
+        // Going from maximized to normal - restore saved normal geometry
+        if (_normalGeometry.isValid() && !_normalGeometry.isEmpty())
+        {
+            qDebug() << "Exiting maximized (Windows) - restoring normal geometry:" << _normalGeometry;
+            // Use a timer to ensure the window manager has processed the state change
+            QRect savedGeom = _normalGeometry;
+            QTimer::singleShot(50, this, [this, savedGeom]() {
+                if (!(windowState() & Qt::WindowMaximized) && !(windowState() & Qt::WindowFullScreen))
+                {
+                    qDebug() << "Applying normal geometry after un-maximize:" << savedGeom;
+                    setGeometry(savedGeom);
+                }
+            });
+        }
     }
+    // Note: Exiting fullscreen is handled by handleFullScreenShortcutWindows()
+    // Do NOT duplicate that logic here as it would interfere with geometry restoration
 }
 
 void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::WindowStates newState)
@@ -1010,18 +1074,39 @@ void MainWindow::handleFullScreenShortcut()
 
 void MainWindow::handleFullScreenShortcutWindows()
 {
-    // Simplified stub - Linux-focused, Windows gets basic implementation
     if (isFullScreen())
     {
+        // ========== EXITING FULLSCREEN ==========
         qDebug() << "Exiting fullscreen (Windows)";
         _isFullScreen = false;
 
+        // Restore UI elements
         setPalette(_originalPalette);
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
         menuBar()->show();
         statusBar()->show();
         startButton->show();
-        showNormal();
+
+        // Restore window state
+        if (_preFullScreenState & Qt::WindowMaximized)
+        {
+            // If window was maximized before fullscreen, restore to maximized
+            qDebug() << "Restoring to maximized state";
+            showMaximized();
+        }
+        else
+        {
+            // Capture geometry by VALUE - it may be overwritten before timer fires
+            QRect savedGeom = _normalGeometry;
+            qDebug() << "Restoring to normal state with geometry:" << savedGeom;
+            showNormal();
+
+            // Wait for window manager to process the state change, then restore geometry
+            QTimer::singleShot(100, this, [this, savedGeom]() {
+                qDebug() << "Applying saved geometry:" << savedGeom;
+                setGeometry(savedGeom);
+            });
+        }
 
         if (_dockingManager)
         {
@@ -1034,7 +1119,25 @@ void MainWindow::handleFullScreenShortcutWindows()
     }
     else
     {
-        qDebug() << "Entering fullscreen (Windows)";
+        // ========== ENTERING FULLSCREEN ==========
+        // CRITICAL: Save geometry properly based on current state
+        // This supports the full chain: normal → maximized → fullscreen → maximized → normal
+        _preFullScreenState = (windowState() & Qt::WindowMaximized) ? Qt::WindowMaximized : Qt::WindowNoState;
+
+        if (_preFullScreenState & Qt::WindowMaximized)
+        {
+            // Entering from MAXIMIZED state - save maximized geometry, preserve normal geometry
+            _maximizedGeometry = geometry();
+            qDebug() << "Entering fullscreen (Windows) from MAXIMIZED - saved maximized geometry:" << _maximizedGeometry
+                     << "preserving normal geometry:" << _normalGeometry;
+        }
+        else
+        {
+            // Entering from NORMAL state - save normal geometry
+            _normalGeometry = geometry();
+            qDebug() << "Entering fullscreen (Windows) from NORMAL - saved geometry:" << _normalGeometry;
+        }
+
         _isFullScreen = true;
 
         if (_dockingManager)
