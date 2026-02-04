@@ -305,15 +305,15 @@ void VideoWallWindow::keyPressEvent(QKeyEvent* event)
     {
         toggleFramelessMode();
     }
-    // Cmd+F / Ctrl+F: Toggle fullscreen mode
+    // Ctrl+F: Toggle fullscreen mode
     else if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier))
     {
         toggleFullscreenMode();
     }
-    // ESC: Exit fullscreen mode (restore windowed mode)
+    // Escape: Exit fullscreen mode
     else if (event->key() == Qt::Key_Escape && (windowState() & Qt::WindowFullScreen))
     {
-        toggleFullscreenMode();  // This will restore the saved window size
+        toggleFullscreenMode();
     }
     else
     {
@@ -783,7 +783,7 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                     {
                         emulatorId = tile->emulator()->GetUUID();
                     }
-                    
+
                     // CRITICAL: Clear tile's shared_ptr reference FIRST
                     tile->prepareForDeletion();
 
@@ -844,8 +844,9 @@ void VideoWallWindow::restoreSavedEmulators()
     for (auto it = tilesToRemove.rbegin(); it != tilesToRemove.rend(); ++it)
     {
         EmulatorTile* tile = *it;
-        if (!tile) continue;
-        
+        if (!tile)
+            continue;
+
         // Get emulator ID before clearing the reference
         std::string uuid;
         if (tile->emulator())
