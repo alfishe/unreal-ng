@@ -1027,7 +1027,7 @@ std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
     };
     static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 
-    if (mode >= 0 && mode < M_MAX)
+    if (mode < M_MAX)
         return videoModeName[mode];
 
     return "";
