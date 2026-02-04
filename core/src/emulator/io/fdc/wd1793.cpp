@@ -7,6 +7,8 @@
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
 #include "wd1793_collector.h"
 #include "iwd1793observer.h"
 
@@ -1282,6 +1284,9 @@ void WD1793::cmdWriteSector(uint8_t value)
 
         this->_sectorData = track->getDataForSector(sectorReg - 1);
         this->_rawDataBuffer = this->_sectorData;
+        
+        // Store track reference for dirty marking when write completes
+        this->_writeTrackTarget = track;
     });
     _operationFIFO.push(writeSector);
 
@@ -2303,8 +2308,7 @@ void WD1793::processWriteTrack()
         {
             // Map sectors by their IDAM sector numbers, not by array position
             _writeTrackTarget->reindexFromIDAM();
-            
-            _writeTrackTarget = nullptr;  // Clear after use
+            // Note: Track dirty marking and _writeTrackTarget clearing handled in processEndCommand
         }
         
         transitionFSM(S_END_COMMAND);
@@ -2545,6 +2549,31 @@ void WD1793::processEndCommand()
     for (auto* obs : _observers)
     {
         obs->onFDCCommandComplete(_statusRegister, *this);
+    }
+    
+    // If this was a write command, mark track dirty and notify
+    if (_lastDecodedCmd == WD_CMD_WRITE_SECTOR || _lastDecodedCmd == WD_CMD_WRITE_TRACK)
+    {
+        // Mark the track as dirty - this propagates to the disk image
+        if (_writeTrackTarget)
+        {
+            _writeTrackTarget->markDirty();
+            _writeTrackTarget = nullptr;  // Clear after use
+        }
+        
+        // Emit notification if disk is now dirty
+        DiskImage* diskImage = _selectedDrive ? _selectedDrive->getDiskImage() : nullptr;
+        if (diskImage && diskImage->isDirty())
+        {
+            // Emit pending write notification
+            std::string emulatorId = _context->pEmulator->GetId();
+            uint8_t driveId = _drive;  // Currently selected drive index [0..3]
+            std::string diskPath = diskImage->getFilePath();
+            
+            MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+            messageCenter.Post(NC_FDD_DISK_PENDING_WRITE, 
+                new FDDDiskPayload(emulatorId, driveId, diskPath), true);
+        }
     }
 
     // Transition to IDLE state

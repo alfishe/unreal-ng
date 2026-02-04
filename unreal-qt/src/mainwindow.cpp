@@ -26,6 +26,13 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/soundmanager.h"
+// Avoid Qt 'signals' macro conflict with WD1793State::signals member
+#undef signals
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/fdc/fdd.h"
+#define signals Q_SIGNALS
+#include "loaders/disk/loader_trd.h"
+#include "loaders/disk/loader_scl.h"
 #include "ui_mainwindow.h"
 
 // region <Constructors / destructors>
@@ -122,6 +129,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::openDiskRequested, this, &MainWindow::openFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotRequested, this, &MainWindow::saveFileDialog);
     connect(_menuManager, &MenuManager::saveSnapshotZ80Requested, this, &MainWindow::saveFileDialogZ80);
+    connect(_menuManager, &MenuManager::saveDiskRequested, this, &MainWindow::saveDiskDialog);
+    connect(_menuManager, &MenuManager::saveDiskAsTRDRequested, this, &MainWindow::saveDiskAsTRDDialog);
+    connect(_menuManager, &MenuManager::saveDiskAsSCLRequested, this, &MainWindow::saveDiskAsSCLDialog);
     connect(_menuManager, &MenuManager::startRequested, this, &MainWindow::handleStartEmulator);
     connect(_menuManager, &MenuManager::pauseRequested, this, &MainWindow::handlePauseEmulator);
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
@@ -1470,6 +1480,222 @@ void MainWindow::saveFileDialogZ80()
         {
             qDebug() << "Failed to save Z80 snapshot:" << filePath;
             QMessageBox::warning(this, tr("Save Failed"), tr("Failed to save Z80 snapshot to:\n%1").arg(filePath));
+        }
+    }
+}
+
+void MainWindow::saveDiskDialog()
+{
+    // Check if emulator is running
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save disk";
+        return;
+    }
+
+    // Get the current disk image from the FDC
+    EmulatorContext* context = _emulator->GetContext();
+    if (!context || !context->pBetaDisk)
+    {
+        qDebug() << "No Beta Disk interface available";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No Beta Disk interface available."));
+        return;
+    }
+
+    WD1793* fdc = context->pBetaDisk;
+    FDD* drive = fdc->getDrive();
+    if (!drive)
+    {
+        qDebug() << "No drive selected";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No disk drive selected."));
+        return;
+    }
+
+    DiskImage* diskImage = drive->getDiskImage();
+    if (!diskImage)
+    {
+        qDebug() << "No disk loaded";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No disk image loaded in the current drive."));
+        return;
+    }
+
+    // Get original file path from DiskImage
+    std::string originalPath = diskImage->getFilePath();
+    if (originalPath.empty())
+    {
+        // No original path - redirect to Save As TRD
+        saveDiskAsTRDDialog();
+        return;
+    }
+
+    // Save using TRD format (preserves all TR-DOS metadata)
+    LoaderTRD loader(context, originalPath);
+    loader.setImage(diskImage);
+    bool result = loader.writeImage();
+
+    if (result)
+    {
+        qDebug() << "Disk saved successfully:" << QString::fromStdString(originalPath);
+    }
+    else
+    {
+        qDebug() << "Failed to save disk:" << QString::fromStdString(originalPath);
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("Failed to save disk to:\n%1").arg(QString::fromStdString(originalPath)));
+    }
+}
+
+void MainWindow::saveDiskAsTRDDialog()
+{
+    // Check if emulator is running
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save disk";
+        return;
+    }
+
+    // Get the current disk image from the FDC
+    EmulatorContext* context = _emulator->GetContext();
+    if (!context || !context->pBetaDisk)
+    {
+        qDebug() << "No Beta Disk interface available";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No Beta Disk interface available."));
+        return;
+    }
+
+    WD1793* fdc = context->pBetaDisk;
+    FDD* drive = fdc->getDrive();
+    if (!drive)
+    {
+        qDebug() << "No drive selected";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No disk drive selected."));
+        return;
+    }
+
+    DiskImage* diskImage = drive->getDiskImage();
+    if (!diskImage)
+    {
+        qDebug() << "No disk loaded";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No disk image loaded in the current drive."));
+        return;
+    }
+
+    // Show a file save dialog using the last save directory
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Save Disk Image"), _lastSaveDirectory + "/disk.trd",
+        tr("TRD Disk Images (*.trd);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        // Ensure .trd extension
+        if (!filePath.toLower().endsWith(".trd"))
+        {
+            filePath += ".trd";
+        }
+
+        // Save directory to settings
+        QFileInfo fileInfo(filePath);
+        _lastSaveDirectory = fileInfo.absolutePath();
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+        // Save using TRD format
+        std::string file = filePath.toStdString();
+        LoaderTRD loader(context, file);
+        loader.setImage(diskImage);
+        bool result = loader.writeImage();
+
+        if (result)
+        {
+            qDebug() << "Disk saved as TRD successfully:" << filePath;
+        }
+        else
+        {
+            qDebug() << "Failed to save disk as TRD:" << filePath;
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Failed to save disk to:\n%1").arg(filePath));
+        }
+    }
+}
+
+void MainWindow::saveDiskAsSCLDialog()
+{
+    // Check if emulator is running
+    if (!_emulator)
+    {
+        qDebug() << "No emulator running, cannot save disk";
+        return;
+    }
+
+    // Get the current disk image from the FDC
+    EmulatorContext* context = _emulator->GetContext();
+    if (!context || !context->pBetaDisk)
+    {
+        qDebug() << "No Beta Disk interface available";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No Beta Disk interface available."));
+        return;
+    }
+
+    WD1793* fdc = context->pBetaDisk;
+    FDD* drive = fdc->getDrive();
+    if (!drive)
+    {
+        qDebug() << "No drive selected";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No disk drive selected."));
+        return;
+    }
+
+    DiskImage* diskImage = drive->getDiskImage();
+    if (!diskImage)
+    {
+        qDebug() << "No disk loaded";
+        QMessageBox::warning(this, tr("Save Failed"),
+                             tr("No disk image loaded in the current drive."));
+        return;
+    }
+
+    // Show a file save dialog using the last save directory
+    QString filePath = QFileDialog::getSaveFileName(
+        this, tr("Save Disk Image as SCL"), _lastSaveDirectory + "/disk.scl",
+        tr("SCL Disk Images (*.scl);;All Files (*)"));
+
+    if (!filePath.isEmpty())
+    {
+        // Ensure .scl extension
+        if (!filePath.toLower().endsWith(".scl"))
+        {
+            filePath += ".scl";
+        }
+
+        // Save directory to settings
+        QFileInfo fileInfo(filePath);
+        _lastSaveDirectory = fileInfo.absolutePath();
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("LastSaveDirectory", _lastSaveDirectory);
+
+        // Save using SCL format
+        std::string file = filePath.toStdString();
+        LoaderSCL loader(context, file);
+        loader.setImage(diskImage);
+        bool result = loader.writeImage();
+
+        if (result)
+        {
+            qDebug() << "Disk saved as SCL successfully:" << filePath;
+        }
+        else
+        {
+            qDebug() << "Failed to save disk as SCL:" << filePath;
+            QMessageBox::warning(this, tr("Save Failed"),
+                                 tr("Failed to save disk to:\n%1").arg(filePath));
         }
     }
 }

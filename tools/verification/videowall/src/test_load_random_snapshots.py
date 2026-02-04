@@ -35,19 +35,20 @@ def log(message: str):
     print(f"[{timestamp}] {message}")
 
 
-def run_test(base_url: str, whitelist_file: str) -> bool:
+def run_test(base_url: str, whitelist_file: str, basepath: str = None) -> bool:
     """
     Run the random snapshot loading test.
 
     Args:
         base_url: WebAPI server URL
         whitelist_file: Path to whitelist file containing allowed snapshots
+        basepath: Optional remote project root path for cross-machine setups
 
     Returns:
         True if test passed, False otherwise
     """
     client = WebAPIClient(base_url)
-    testdata = TestDataHelper(whitelist_file)
+    testdata = TestDataHelper(whitelist_file, basepath=basepath)
     
     log(f"Connecting to WebAPI at {base_url}...")
     
@@ -179,16 +180,25 @@ def main():
              "Lines starting with # are comments. "
              "Defaults to ../whitelist.txt."
     )
+    parser.add_argument(
+        "--basepath",
+        default=None,
+        help="Remote project root path for cross-machine setups. "
+             "When specified, snapshot paths sent to the emulator will use this basepath. "
+             "Example: O:/Projects/unreal-ng/unreal-ng for Windows remote."
+    )
 
     args = parser.parse_args()
 
     log("=" * 50)
     log("VIDEOWALL TEST: Load Random Snapshots")
     log(f"Using whitelist: {args.whitelist}")
+    if args.basepath:
+        log(f"Remote basepath: {args.basepath}")
     log("=" * 50)
 
     try:
-        success = run_test(args.url, args.whitelist)
+        success = run_test(args.url, args.whitelist, args.basepath)
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:
         log("\nTest interrupted by user")

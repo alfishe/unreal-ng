@@ -179,7 +179,7 @@ void VideoWallWindow::createMenus()
     connect(framelessAction, &QAction::triggered, this, &VideoWallWindow::toggleFramelessMode);
 
     QAction* fullscreenAction = viewMenu->addAction(tr("F&ullscreen Mode"));
-    fullscreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+    fullscreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     fullscreenAction->setCheckable(true);
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
@@ -312,13 +312,15 @@ void VideoWallWindow::keyPressEvent(QKeyEvent* event)
     {
         toggleFramelessMode();
     }
-    // Ctrl+Shift+F: Toggle fullscreen
-    // In fullscreen mode, the menu is hidden so the QAction shortcut may not work.
-    // We handle it here ONLY when in fullscreen to ensure exit works reliably.
-    else if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier) &&
-             (event->modifiers() & Qt::ShiftModifier) && _isFullscreen)
+    // Cmd+F / Ctrl+F: Toggle fullscreen mode
+    else if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier))
     {
         toggleFullscreenMode();
+    }
+    // ESC: Exit fullscreen mode (restore windowed mode)
+    else if (event->key() == Qt::Key_Escape && (windowState() & Qt::WindowFullScreen))
+    {
+        toggleFullscreenMode();  // This will restore the saved window size
     }
     else
     {
