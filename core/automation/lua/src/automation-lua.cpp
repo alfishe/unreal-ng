@@ -36,15 +36,22 @@ void AutomationLua::stop()
     }
     _stopThread = false;
 
-    // Now safe to delete Lua objects - thread is stopped
+    // Delete LuaEmulator first (it holds references to Lua userdata)
     if (_luaEmulator)
     {
         delete _luaEmulator;
         _luaEmulator = nullptr;
     }
 
+    // CRITICAL: Force full garbage collection before destroying Lua state
+    // This properly cleans up all registered userdata and prevents crashes
+    // in the GC's deletelist when the state is destroyed
     if (_lua)
     {
+        // Run GC multiple times to ensure all weak references are collected
+        _lua->collect_garbage();
+        _lua->collect_garbage();
+        
         delete _lua;
         _lua = nullptr;
     }
