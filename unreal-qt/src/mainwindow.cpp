@@ -635,12 +635,16 @@ void MainWindow::handleWindowStateChangeWindows(Qt::WindowStates oldState, Qt::W
         {
             qDebug() << "Exiting maximized (Windows) - restoring normal geometry:" << _normalGeometry;
             // Use a timer to ensure the window manager has processed the state change
+            // IMPORTANT: Use QPointer to guard against object destruction before timer fires
             QRect savedGeom = _normalGeometry;
-            QTimer::singleShot(50, this, [this, savedGeom]() {
-                if (!(windowState() & Qt::WindowMaximized) && !(windowState() & Qt::WindowFullScreen))
+            QPointer<MainWindow> guard(this);
+            QTimer::singleShot(50, this, [guard, savedGeom]() {
+                if (!guard)
+                    return;  // Object was destroyed, bail out
+                if (!(guard->windowState() & Qt::WindowMaximized) && !(guard->windowState() & Qt::WindowFullScreen))
                 {
                     qDebug() << "Applying normal geometry after un-maximize:" << savedGeom;
-                    setGeometry(savedGeom);
+                    guard->setGeometry(savedGeom);
                 }
             });
         }
@@ -1102,18 +1106,26 @@ void MainWindow::handleFullScreenShortcutWindows()
             showNormal();
 
             // Wait for window manager to process the state change, then restore geometry
-            QTimer::singleShot(100, this, [this, savedGeom]() {
+            // IMPORTANT: Use QPointer to guard against object destruction before timer fires
+            QPointer<MainWindow> guard(this);
+            QTimer::singleShot(100, this, [guard, savedGeom]() {
+                if (!guard)
+                    return;  // Object was destroyed, bail out
                 qDebug() << "Applying saved geometry:" << savedGeom;
-                setGeometry(savedGeom);
+                guard->setGeometry(savedGeom);
             });
         }
 
         if (_dockingManager)
         {
             _dockingManager->onExitFullscreen();
-            QTimer::singleShot(200, this, [this]() {
-                if (_dockingManager)
-                    _dockingManager->setSnappingLocked(false);
+            // IMPORTANT: Use QPointer to guard against object destruction before timer fires
+            QPointer<MainWindow> guard(this);
+            QTimer::singleShot(200, this, [guard]() {
+                if (!guard)
+                    return;  // Object was destroyed, bail out
+                if (guard->_dockingManager)
+                    guard->_dockingManager->setSnappingLocked(false);
             });
         }
     }
@@ -1156,9 +1168,13 @@ void MainWindow::handleFullScreenShortcutWindows()
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         showFullScreen();
 
-        QTimer::singleShot(100, this, [this]() {
-            if (_dockingManager)
-                _dockingManager->setSnappingLocked(false);
+        // IMPORTANT: Use QPointer to guard against object destruction before timer fires
+        QPointer<MainWindow> guard(this);
+        QTimer::singleShot(100, this, [guard]() {
+            if (!guard)
+                return;  // Object was destroyed, bail out
+            if (guard->_dockingManager)
+                guard->_dockingManager->setSnappingLocked(false);
         });
     }
 }
