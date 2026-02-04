@@ -66,7 +66,9 @@ public:
 public:
     bool loadImage();
     bool writeImage();
+    bool writeImage(const std::string& path);  // Save As - write to specified path
     DiskImage* getImage();
+    void setImage(DiskImage* diskImage);
     /// endregion </Basic methods>
 
     /// region <Helper methods>

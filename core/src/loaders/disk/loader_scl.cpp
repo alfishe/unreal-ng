@@ -1,6 +1,9 @@
 #include "loader_scl.h"
 
 #include "common/filehelper.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
 
 /// region <Basic methods>
 bool LoaderSCL::loadImage()
@@ -32,9 +35,155 @@ bool LoaderSCL::loadImage()
 
 bool LoaderSCL::writeImage()
 {
+    return writeImage(_filepath);
+}
+
+bool LoaderSCL::writeImage(const std::string& path)
+{
     bool result = false;
 
+    if (!_diskImage || path.empty())
+    {
+        return result;
+    }
+
+    // Read TR-DOS catalog to get file list
+    DiskImage::Track* track0 = _diskImage->getTrackForCylinderAndSide(0, 0);
+    if (!track0)
+    {
+        return result;
+    }
+
+    DiskImage::RawSectorBytes* volumeSector = track0->getSector(TRD_VOLUME_SECTOR);
+    if (!volumeSector)
+    {
+        return result;
+    }
+
+    TRDVolumeInfo* volumeInfo = (TRDVolumeInfo*)volumeSector->data;
+    uint8_t fileCount = volumeInfo->fileCount;
+
+    if (fileCount > TRD_MAX_FILES)
+    {
+        // Invalid file count
+        return result;
+    }
+
+    // Calculate total size: header + descriptors + all file data + CRC
+    size_t headerSize = 8 + 1;  // "SINCLAIR" + file count
+    size_t descriptorsSize = fileCount * sizeof(TRDOSDirectoryEntryBase);
+
+    // Calculate total file data size by reading all descriptors
+    size_t totalDataSize = 0;
+    std::vector<TRDOSDirectoryEntry> fileDescriptors;
+    fileDescriptors.reserve(fileCount);
+
+    for (uint8_t i = 0; i < fileCount; i++)
+    {
+        uint8_t sectorNo = i / 16;  // 16 file descriptors per sector
+        uint8_t entryNo = i % 16;
+
+        DiskImage::RawSectorBytes* catalogSector = track0->getRawSector(sectorNo);
+        if (!catalogSector)
+        {
+            return result;
+        }
+
+        TRDOSDirectoryEntry* entry = (TRDOSDirectoryEntry*)(catalogSector->data + entryNo * sizeof(TRDOSDirectoryEntry));
+        fileDescriptors.push_back(*entry);
+        totalDataSize += entry->SizeInSectors * TRD_SECTORS_SIZE_BYTES;
+    }
+
+    size_t totalSize = headerSize + descriptorsSize + totalDataSize + 4;  // +4 for CRC
+
+    // Allocate buffer for SCL file
+    std::vector<uint8_t> buffer(totalSize);
+    size_t offset = 0;
+
+    // Write signature "SINCLAIR"
+    std::memcpy(buffer.data() + offset, "SINCLAIR", 8);
+    offset += 8;
+
+    // Write file count
+    buffer[offset++] = fileCount;
+
+    // Write file descriptors (14 bytes each - without start sector/track)
+    for (const auto& desc : fileDescriptors)
+    {
+        std::memcpy(buffer.data() + offset, &desc, sizeof(TRDOSDirectoryEntryBase));
+        offset += sizeof(TRDOSDirectoryEntryBase);
+    }
+
+    // Write file data
+    for (const auto& desc : fileDescriptors)
+    {
+        uint16_t fileSectorLocator = desc.StartTrack * TRD_SECTORS_PER_TRACK + desc.StartSector;
+
+        for (size_t i = 0; i < desc.SizeInSectors; i++, fileSectorLocator++)
+        {
+            uint8_t fileTrackNo = fileSectorLocator / TRD_SECTORS_PER_TRACK;
+            uint8_t fileSectorNo = fileSectorLocator % TRD_SECTORS_PER_TRACK;
+
+            DiskImage::Track* fileTrack = _diskImage->getTrack(fileTrackNo);
+            if (!fileTrack)
+            {
+                return result;
+            }
+
+            DiskImage::RawSectorBytes* fileSector = fileTrack->getSector(fileSectorNo);
+            if (!fileSector)
+            {
+                return result;
+            }
+
+            std::memcpy(buffer.data() + offset, fileSector->data, TRD_SECTORS_SIZE_BYTES);
+            offset += TRD_SECTORS_SIZE_BYTES;
+        }
+    }
+
+    // Calculate and write CRC (sum of all preceding bytes)
+    uint32_t crc = 0;
+    for (size_t i = 0; i < offset; i++)
+    {
+        crc += buffer[i];
+    }
+    std::memcpy(buffer.data() + offset, &crc, 4);
+
+    // Write to file
+    FILE* file = FileHelper::OpenFile(path, "wb");
+    if (file)
+    {
+        if (FileHelper::SaveBufferToFile(file, buffer.data(), buffer.size()))
+        {
+            // Mark disk as clean after successful save
+            _diskImage->markClean();
+            
+            // Emit notification that disk was saved
+            if (_context && _context->pEmulator)
+            {
+                std::string emulatorId = _context->pEmulator->GetId();
+                // Note: We don't know which drive this disk is in from the loader context
+                // Use drive 0 as default - the receiver can check all drives if needed
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                messageCenter.Post(NC_FDD_DISK_WRITTEN, 
+                    new FDDDiskPayload(emulatorId, 0, path), true);
+            }
+            
+            // Update stored file path
+            _diskImage->setFilePath(path);
+            
+            result = true;
+        }
+        FileHelper::CloseFile(file);
+    }
+
     return result;
+}
+
+void LoaderSCL::setImage(DiskImage* diskImage)
+{
+    // Note: Does not take ownership - caller must manage diskImage lifetime
+    _diskImage = diskImage;
 }
 
 DiskImage* LoaderSCL::getImage()

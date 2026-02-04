@@ -225,20 +225,57 @@ class TestDataHelper:
 
     Uses project root detection to locate testdata directory.
     Supports filtering snapshots via whitelist.
+    Supports remote basepath for cross-machine setups (e.g., local script, remote Windows emulator).
     """
 
-    def __init__(self, whitelist_file: str = None):
+    def __init__(self, whitelist_file: str = None, basepath: str = None):
         """
-        Initialize TestDataHelper with optional whitelist filtering.
+        Initialize TestDataHelper with optional whitelist filtering and remote basepath.
 
         Args:
             whitelist_file: Path to whitelist file containing allowed snapshot filenames.
                            Each line should contain one filename (with or without extension).
                            Lines starting with # are comments. Empty lines are ignored.
+            basepath: Optional remote project root path. When specified, returned paths
+                     will use this basepath instead of the locally detected path.
+                     Useful when running scripts locally against a remote emulator
+                     (e.g., basepath="O:/Projects/unreal-ng/unreal-ng" for Windows).
         """
         self.project_root = find_project_root()
         self.testdata_dir = os.path.join(self.project_root, "testdata")
         self.whitelist = self._load_whitelist(whitelist_file) if whitelist_file else None
+        
+        # Remote basepath for cross-machine operation
+        self.remote_basepath = basepath
+        if self.remote_basepath:
+            # Normalize the basepath (handle Windows paths)
+            self.remote_basepath = self.remote_basepath.rstrip('/\\')
+    
+    def _to_remote_path(self, local_path: str) -> str:
+        """
+        Convert a local path to a remote path if basepath is configured.
+        
+        Args:
+            local_path: Local filesystem path
+            
+        Returns:
+            Remote path if basepath is set, otherwise the original local path
+        """
+        if not self.remote_basepath:
+            return local_path
+        
+        # Get the relative path from project root
+        rel_path = os.path.relpath(local_path, self.project_root)
+        
+        # Determine path separator for remote (detect Windows paths by drive letter)
+        if len(self.remote_basepath) >= 2 and self.remote_basepath[1] == ':':
+            # Windows remote path - use backslashes
+            rel_path = rel_path.replace('/', '\\')
+            return f"{self.remote_basepath}\\{rel_path}"
+        else:
+            # Unix remote path - use forward slashes
+            rel_path = rel_path.replace('\\', '/')
+            return f"{self.remote_basepath}/{rel_path}"
 
     def _load_whitelist(self, whitelist_file: str) -> set:
         """
@@ -298,7 +335,8 @@ class TestDataHelper:
             extensions: List of extensions to include (default: ['.sna', '.z80'])
 
         Returns:
-            List of absolute paths to snapshot files (filtered by whitelist if set)
+            List of absolute paths to snapshot files (filtered by whitelist if set).
+            If basepath is configured, returns remote paths instead of local paths.
         """
         if extensions is None:
             extensions = ['.sna', '.z80']
@@ -313,7 +351,8 @@ class TestDataHelper:
                     if filename.lower().endswith(ext):
                         full_path = os.path.join(ext_dir, filename)
                         if self._is_snapshot_allowed(full_path):
-                            snapshots.append(full_path)
+                            # Convert to remote path if basepath is configured
+                            snapshots.append(self._to_remote_path(full_path))
 
         return snapshots
     
