@@ -320,10 +320,12 @@ void DockingManager::onExitFullscreen()
                 _dockableWindows[window].snappedEdge = savedState.snappedEdge;
             }
 
-            // Show window but immediately lower it to preserve z-order
-            // (main window should stay on top)
+            // Show window WITHOUT stealing focus, then lower it to preserve z-order
+            // (main window should stay on top and keep focus)
+            window->setAttribute(Qt::WA_ShowWithoutActivating, true);
             window->show();
             window->lower();
+            window->setAttribute(Qt::WA_ShowWithoutActivating, false);
         }
         else
         {

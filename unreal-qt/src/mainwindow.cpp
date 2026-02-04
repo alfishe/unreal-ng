@@ -22,6 +22,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "emulator/filemanager.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/notifications.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/soundmanager.h"
@@ -1067,6 +1068,25 @@ void MainWindow::handleStartButton()
 
 void MainWindow::handleFullScreenShortcut()
 {
+    // IMPORTANT: Release modifier keys (Ctrl, Shift) to prevent stuck keys in emulator.
+    // The fullscreen shortcut (Ctrl+F) sends a Ctrl press to the emulator. During
+    // window state transitions, the key release may be missed, causing the Ctrl key
+    // to stay "stuck" in the emulator's keyboard state.
+    if (_emulator)
+    {
+        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+        std::string targetId = _emulator->GetUUID();
+
+        // Release CAPS_SHIFT (Ctrl on PC keyboard) - value 0x04 but logs show 0x05
+        // ZXKEY_CAPS_SHIFT = 0x04, plus 1 for press/release offset
+        messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_CAPS_SHIFT, KEY_RELEASED, targetId));
+
+        // Release SYM_SHIFT (Shift on PC keyboard) as well
+        messageCenter.Post(MC_KEY_RELEASED, new KeyboardEvent(ZXKEY_SYM_SHIFT, KEY_RELEASED, targetId));
+
+        qDebug() << "Released modifier keys (CAPS_SHIFT, SYM_SHIFT) before fullscreen toggle";
+    }
+
 #ifdef Q_OS_WIN
     handleFullScreenShortcutWindows();
 #elif defined(Q_OS_MAC)
@@ -1119,14 +1139,24 @@ void MainWindow::handleFullScreenShortcutWindows()
         if (_dockingManager)
         {
             _dockingManager->onExitFullscreen();
-            // IMPORTANT: Use QPointer to guard against object destruction before timer fires
+            // Delay unlocking snapping to allow window state to settle
             QPointer<MainWindow> guard(this);
             QTimer::singleShot(200, this, [guard]() {
                 if (!guard)
-                    return;  // Object was destroyed, bail out
+                    return;
                 if (guard->_dockingManager)
                     guard->_dockingManager->setSnappingLocked(false);
             });
+        }
+
+        // Restore focus to main window and device screen for keyboard input
+        // DockingManager now uses WA_ShowWithoutActivating so it won't steal focus
+        activateWindow();
+        raise();
+        if (deviceScreen)
+        {
+            deviceScreen->setFocus();
+            qDebug() << "Focus restored to deviceScreen after exiting fullscreen";
         }
     }
     else
@@ -1176,6 +1206,13 @@ void MainWindow::handleFullScreenShortcutWindows()
             if (guard->_dockingManager)
                 guard->_dockingManager->setSnappingLocked(false);
         });
+
+        // Set focus to device screen for keyboard input
+        if (deviceScreen)
+        {
+            deviceScreen->setFocus();
+            qDebug() << "Focus set to deviceScreen after entering fullscreen";
+        }
     }
 }
 
