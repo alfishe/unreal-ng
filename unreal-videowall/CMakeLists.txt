@@ -307,6 +307,8 @@ if(APPLE)
     )
     
     # Create a macOS application bundle
+    # Use custom Info.plist that disables state restoration to prevent crash
+    # during the crash recovery dialog (before Qt/Cocoa fully initialize)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Video Wall"
@@ -314,6 +316,7 @@ if(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.videowall"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
     )
     
     # Copy resources to bundle
