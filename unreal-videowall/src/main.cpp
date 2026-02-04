@@ -3,8 +3,28 @@
 #include <QApplication>
 #include <QDebug>
 #include <QTimer>
+#include <QStandardPaths>
+#include <QDir>
 
 #include "videowall/VideoWallWindow.h"
+
+/// Clear macOS saved application state to prevent crash on startup after previous crash
+/// macOS saves window state and may try to restore it, which can cause QuartzCore crashes
+/// if the saved state is corrupted or incompatible with current app version
+static void clearMacOSSavedState()
+{
+#ifdef Q_OS_MACOS
+    // Delete saved state directory for this app
+    // This must be called AFTER QApplication exists (QStandardPaths requires it)
+    QString savedStatePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+        + "/Saved Application State/com.unrealng.videowall.savedState";
+    QDir savedStateDir(savedStatePath);
+    if (savedStateDir.exists()) {
+        qDebug() << "Clearing macOS saved application state:" << savedStatePath;
+        savedStateDir.removeRecursively();
+    }
+#endif
+}
 
 int main(int argc, char* argv[])
 {
@@ -15,6 +35,11 @@ int main(int argc, char* argv[])
 #endif
 
     QApplication app(argc, argv);
+    
+    // Clear macOS saved state AFTER QApplication but BEFORE window creation
+#ifdef Q_OS_MACOS
+    clearMacOSSavedState();
+#endif
 
     // Set application metadata
     QCoreApplication::setOrganizationName("UnrealNG");
