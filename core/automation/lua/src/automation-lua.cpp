@@ -52,6 +52,10 @@ void AutomationLua::stop()
     // would try to access a dangling pointer causing SIGSEGV.
     if (_lua)
     {
+        // Run GC to clean up registered userdata before state destruction
+        _lua->collect_garbage();
+        _lua->collect_garbage();
+        
         delete _lua;
         _lua = nullptr;
     }

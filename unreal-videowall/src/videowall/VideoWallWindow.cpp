@@ -317,10 +317,11 @@ void VideoWallWindow::keyPressEvent(QKeyEvent* event)
     {
         toggleFullscreenMode();
     }
-    // ESC: Exit fullscreen mode (restore windowed mode)
-    else if (event->key() == Qt::Key_Escape && (windowState() & Qt::WindowFullScreen))
+    // Escape: Exit fullscreen mode
+    // Use _isFullscreen flag (not windowState()) for macOS native fullscreen compatibility
+    else if (event->key() == Qt::Key_Escape && _isFullscreen)
     {
-        toggleFullscreenMode();  // This will restore the saved window size
+        toggleFullscreenMode();
     }
     else
     {
