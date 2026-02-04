@@ -442,3 +442,134 @@ TEST_F(DiskImage_Test, FormatTrack)
     }
     /// endregion </Check track ID information>
 }
+
+/// region <Dirty Tracking Tests>
+
+/// Test initial dirty state is clean
+TEST_F(DiskImage_Test, DirtyTracking_InitialState)
+{
+    DiskImage disk(80, 2);
+    
+    // Disk should start clean
+    EXPECT_FALSE(disk.isDirty()) << "New DiskImage should not be dirty";
+    
+    // All tracks should start clean
+    for (size_t i = 0; i < disk.getCylinders() * disk.getSides(); i++)
+    {
+        Track* track = disk.getTrack(i);
+        ASSERT_NE(track, nullptr);
+        EXPECT_FALSE(track->isDirty()) << "Track " << i << " should not be dirty initially";
+        EXPECT_FALSE(track->isRawTrackDirty()) << "Track " << i << " should not have raw track dirty initially";
+        EXPECT_FALSE(track->hasAnySectorDirty()) << "Track " << i << " should not have any sector dirty initially";
+    }
+}
+
+/// Test writeSectorData marks track and disk as dirty
+TEST_F(DiskImage_Test, DirtyTracking_WriteSectorData)
+{
+    DiskImage disk(80, 2);
+    Track* track = disk.getTrack(0);
+    ASSERT_NE(track, nullptr);
+    
+    // Prepare test data
+    uint8_t testData[256];
+    std::fill(testData, testData + 256, 0xAB);
+    
+    // Write sector data
+    track->writeSectorData(1, testData, 256);
+    
+    // Track should be dirty
+    EXPECT_TRUE(track->isDirty()) << "Track should be dirty after writeSectorData";
+    EXPECT_TRUE(track->isSectorDirty(1)) << "Sector 1 should be dirty after write";
+    EXPECT_FALSE(track->isSectorDirty(0)) << "Sector 0 should not be dirty";
+    EXPECT_TRUE(track->hasAnySectorDirty()) << "Track should have at least one dirty sector";
+    
+    // Disk should be dirty (auto-propagation)
+    EXPECT_TRUE(disk.isDirty()) << "DiskImage should be dirty after sector write";
+}
+
+/// Test writeSectorData with no change does NOT mark dirty
+TEST_F(DiskImage_Test, DirtyTracking_NoChangeNoDirty)
+{
+    DiskImage disk(1, 1);
+    Track* track = disk.getTrack(0);
+    ASSERT_NE(track, nullptr);
+    
+    // Get current sector data and write same data back
+    DiskImage::RawSectorBytes* sector = track->getSector(0);
+    ASSERT_NE(sector, nullptr);
+    
+    uint8_t originalData[256];
+    std::memcpy(originalData, sector->data, 256);
+    
+    // Write identical data
+    track->writeSectorData(0, originalData, 256);
+    
+    // Should NOT be dirty since content didn't change
+    EXPECT_FALSE(track->isDirty()) << "Track should NOT be dirty when writing identical data";
+    EXPECT_FALSE(track->isSectorDirty(0)) << "Sector should NOT be dirty when writing identical data";
+    EXPECT_FALSE(disk.isDirty()) << "Disk should NOT be dirty when writing identical data";
+}
+
+/// Test markClean resets all dirty flags
+TEST_F(DiskImage_Test, DirtyTracking_MarkClean)
+{
+    DiskImage disk(80, 2);
+    Track* track0 = disk.getTrack(0);
+    Track* track1 = disk.getTrack(1);
+    ASSERT_NE(track0, nullptr);
+    ASSERT_NE(track1, nullptr);
+    
+    // Write data to make dirty
+    uint8_t testData[256];
+    std::fill(testData, testData + 256, 0xCD);
+    
+    track0->writeSectorData(5, testData, 256);
+    track1->writeSectorData(10, testData, 256);
+    
+    // Verify dirty
+    EXPECT_TRUE(disk.isDirty());
+    EXPECT_TRUE(track0->isDirty());
+    EXPECT_TRUE(track1->isDirty());
+    
+    // Mark clean
+    disk.markClean();
+    
+    // All should be clean now
+    EXPECT_FALSE(disk.isDirty()) << "Disk should be clean after markClean()";
+    EXPECT_FALSE(track0->isDirty()) << "Track 0 should be clean after markClean()";
+    EXPECT_FALSE(track1->isDirty()) << "Track 1 should be clean after markClean()";
+    EXPECT_FALSE(track0->hasAnySectorDirty()) << "Track 0 should have no dirty sectors after markClean()";
+    EXPECT_FALSE(track1->hasAnySectorDirty()) << "Track 1 should have no dirty sectors after markClean()";
+}
+
+/// Test dirty tracking across multiple sectors
+TEST_F(DiskImage_Test, DirtyTracking_MultipleSectors)
+{
+    DiskImage disk(1, 1);
+    Track* track = disk.getTrack(0);
+    ASSERT_NE(track, nullptr);
+    
+    uint8_t testData[256];
+    
+    // Write to sectors 0, 5, 15
+    std::fill(testData, testData + 256, 0x01);
+    track->writeSectorData(0, testData, 256);
+    
+    std::fill(testData, testData + 256, 0x05);
+    track->writeSectorData(5, testData, 256);
+    
+    std::fill(testData, testData + 256, 0x0F);
+    track->writeSectorData(15, testData, 256);
+    
+    // Verify correct sectors are dirty
+    EXPECT_TRUE(track->isSectorDirty(0)) << "Sector 0 should be dirty";
+    EXPECT_FALSE(track->isSectorDirty(1)) << "Sector 1 should NOT be dirty";
+    EXPECT_TRUE(track->isSectorDirty(5)) << "Sector 5 should be dirty";
+    EXPECT_FALSE(track->isSectorDirty(10)) << "Sector 10 should NOT be dirty";
+    EXPECT_TRUE(track->isSectorDirty(15)) << "Sector 15 should be dirty";
+    
+    EXPECT_TRUE(track->hasAnySectorDirty());
+}
+
+/// endregion </Dirty Tracking Tests>
