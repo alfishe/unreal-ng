@@ -908,7 +908,11 @@ void MainWindow::handleStartButton()
                 portDecoder.MuteLoggingForPort(0xFFFD);
                 portDecoder.MuteLoggingForPort(0xBFFD);
 
-                if (false)
+                // NOTE: Disabled debug code that redirects logger output to LogWindow.
+                // The pointer-to-member cast triggers MSVC C4407 warning due to multiple inheritance.
+                // Uncomment and fix the callback binding if this functionality is needed.
+                /*
+                if (true)  // Change to true to enable
                 {
                     // Redirect all module logger output to the LogWindow
                     ModuleLoggerObserver* loggerObserverInstance = static_cast<ModuleLoggerObserver*>(logWindow);
@@ -918,6 +922,7 @@ void MainWindow::handleStartButton()
                     logWindow->reset();
                     logWindow->show();
                 }
+                */
             }
 
             /// endregion </Setup logging>

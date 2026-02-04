@@ -22,9 +22,13 @@ if (NOT DEFINED ENABLE_CLI_AUTOMATION)
     option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 endif()
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard - use parent CMakeLists.txt setting when included from parent
+# (C++20 is now set globally in root CMakeLists.txt for all compilers)
+
+# MSVC: Define WIN32_LEAN_AND_MEAN and NOMINMAX to prevent winsock header conflicts
+if(MSVC)
+    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+endif()
 
 if (CMAKE_VERSION VERSION_LESS "3.7.0")
     set(CMAKE_INCLUDE_CURRENT_DIR ON)

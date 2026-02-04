@@ -5,9 +5,7 @@ project(automation_webapi
     LANGUAGES CXX
 )
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 # Set paths
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -25,6 +23,27 @@ if (NOT OpenSSL_FOUND)
         set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
         set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
         message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
+    # Fallback: Windows OpenSSL installations
+    elseif (WIN32)
+        # Check common Windows OpenSSL installation paths
+        set(OPENSSL_SEARCH_PATHS
+            "C:/Program Files/OpenSSL-Win64"
+            "C:/OpenSSL-Win64"
+            "$ENV{OPENSSL_ROOT_DIR}"
+        )
+        
+        # For MSVC, also check vcpkg paths
+        if(MSVC AND DEFINED ENV{VCPKG_ROOT})
+            list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
+        endif()
+        
+        foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
+            if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
+                set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
+                message(STATUS "[automation_webapi] Using OpenSSL from: ${OPENSSL_ROOT_DIR}")
+                break()
+            endif()
+        endforeach()
     endif ()
     find_package(OpenSSL REQUIRED)
 endif ()

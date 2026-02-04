@@ -5,9 +5,7 @@ message(">> core/benchmarks CMakeLists.txt")
 
 project (core-benchmarks LANGUAGES CXX)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
@@ -117,7 +115,8 @@ endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
 # All standard libraries required
 if (WIN32 AND MSVC)
-    set(common_libraries stdc++ iconv)
+    # MSVC uses its own runtime, no need for stdc++ or iconv
+    set(common_libraries Shlwapi ws2_32)
 endif (WIN32 AND MSVC)
 
 if (WIN32 AND MINGW)

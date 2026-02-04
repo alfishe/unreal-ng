@@ -1,9 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(automation_python LANGUAGES CXX)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 # Set paths
 get_filename_component(ROOT_DIR ../../../ ABSOLUTE BASE_DIR ${CMAKE_CURRENT_SOURCE_DIR})

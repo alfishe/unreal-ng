@@ -167,7 +167,7 @@ void AutomationCLI::stop()
     // Final cleanup of any remaining client sockets
     {
         std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-        for (int clientSocket : _activeClientSockets)
+        for (SOCKET clientSocket : _activeClientSockets)
         {
             if (clientSocket != INVALID_SOCKET)
             {
@@ -303,7 +303,7 @@ void AutomationCLI::run()
             if (!_stopThread)
             {
                 std::lock_guard<std::mutex> lock(_clientSocketsMutex);
-                auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](int sock) {
+                auto it = std::remove_if(_activeClientSockets.begin(), _activeClientSockets.end(), [](SOCKET sock) {
                     // First check if socket is still valid (not already closed)
                     if (sock == INVALID_SOCKET)
                     {

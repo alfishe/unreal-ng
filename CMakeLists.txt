@@ -3,9 +3,35 @@ cmake_minimum_required(VERSION 3.16)
 
 message(">> Unreal CMakeLists.txt (Unified Build)")
 
-# Set C++ standard to 17 globally
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# ========================================
+# vcpkg auto-discovery (before project())
+# ========================================
+# Auto-detect vcpkg if available and not already configured
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    # Check common vcpkg locations
+    if(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
+        message(STATUS "Auto-detected vcpkg at C:/vcpkg")
+    elseif(EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
+        message(STATUS "Auto-detected vcpkg from VCPKG_ROOT environment variable")
+    endif()
+endif()
+
+# Auto-detect vcpkg triplet for MSVC on Windows (before project())
+if(CMAKE_TOOLCHAIN_FILE AND WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
+    # Check if x64-windows-static is available
+    get_filename_component(VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
+    get_filename_component(VCPKG_ROOT "${VCPKG_ROOT}" DIRECTORY)
+    get_filename_component(VCPKG_ROOT "${VCPKG_ROOT}" DIRECTORY)
+    if(EXISTS "${VCPKG_ROOT}/installed/x64-windows-static")
+        set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "vcpkg triplet" FORCE)
+        message(STATUS "Auto-detected vcpkg triplet: x64-windows-static")
+    elseif(EXISTS "${VCPKG_ROOT}/installed/x64-windows")
+        set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg triplet" FORCE)
+        message(STATUS "Auto-detected vcpkg triplet: x64-windows")
+    endif()
+endif()
 
 # ========================================
 # Build Options
@@ -23,6 +49,16 @@ option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
 project(unreal)
 
+# ========================================
+# C++ Standard Configuration (MUST be after project())
+# ========================================
+# Using C++20 for all compilers. MSVC requires it for designated initializers,
+# and GCC/Clang benefit from additional C++20 features.
+# Note: Using CACHE FORCE to ensure sub-projects don't override this.
+set(CMAKE_CXX_STANDARD 20 CACHE STRING "C++ standard" FORCE)
+set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "C++ standard required" FORCE)
+message(STATUS "C++ Standard: C++20")
+
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
@@ -31,8 +67,11 @@ endif (NOT CMAKE_BUILD_TYPE)
 message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 
 # Disable modern SDK warnings about insecurity for POSIX functions
+# Also define WIN32_LEAN_AND_MEAN and NOMINMAX to prevent winsock/windows.h conflicts
 if (MSVC)
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+	add_definitions(-DWIN32_LEAN_AND_MEAN)
+	add_definitions(-DNOMINMAX)
 endif (MSVC)
 
 # Set the output directories
@@ -66,8 +105,20 @@ if (MINGW AND MINGW_STATIC_LINKING)
     message(STATUS "  - OpenSSL: prefer static")
 endif()
 
+# MSVC: Always prefer static OpenSSL from vcpkg
+if (MSVC)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    message(STATUS "MSVC: Preferring static OpenSSL")
+endif()
+
 # Include CMake helper functions
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/func.cmake)
+
+# Include dependency checking module
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/DependencyCheck.cmake)
+
+# Run dependency checks (provides hints for missing dependencies)
+run_dependency_checks()
 
 # ========================================
 # Qt Detection (for Qt-based applications)
@@ -91,12 +142,27 @@ if (BUILD_QT_APPS)
                 "$ENV{QTDIR}"
             )
         elseif (WIN32)
-            set(QT_POSSIBLE_PATHS
-                "C:/Qt/6.9.3/mingw_64"
-                "C:/Qt/6.5.3/mingw_64"
-                "C:/Qt/6.5.0/mingw_64"
-                "$ENV{QTDIR}"
-            )
+            # Detect compiler type and search for matching Qt builds
+            if(MINGW)
+                message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "C:/Qt/6.5.0/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            elseif(MSVC)
+                message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/msvc2019_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.0/msvc2019_64"
+                    "$ENV{QTDIR}"
+                )
+            else()
+                message(FATAL_ERROR "Unknown Windows compiler. Only MinGW and MSVC are supported. CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}")
+            endif()
         endif ()
         
         foreach(POSSIBLE_PATH ${QT_POSSIBLE_PATHS})
@@ -271,9 +337,7 @@ if (BUILD_QT_APPS)
             DOC "Path to windeployqt6 executable"
         )
         
-        # MSYS2 paths for runtime DLLs
-        set(MSYS2_BIN_PATH "C:/msys64/mingw64/bin")
-        
+        # Create base packaging target (common to all Windows toolchains)
         add_custom_target(package_suite_windows
             # Create staging directory
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
@@ -291,29 +355,10 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
                 "${SUITE_STAGING_DIR}/"
             
-            # Run windeployqt6 on each executable to copy Qt DLLs and plugins
+            # Run windeployqt on each executable to copy Qt DLLs and plugins
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations
-            
-            # Copy MSYS2 runtime DLLs (required for MinGW builds)
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MSYS2_BIN_PATH}/libgcc_s_seh-1.dll"
-                "${SUITE_STAGING_DIR}/"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MSYS2_BIN_PATH}/libstdc++-6.dll"
-                "${SUITE_STAGING_DIR}/"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MSYS2_BIN_PATH}/libwinpthread-1.dll"
-                "${SUITE_STAGING_DIR}/"
-            
-            # Copy OpenSSL DLLs (required for WebAPI/network features)
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MSYS2_BIN_PATH}/libcrypto-3-x64.dll"
-                "${SUITE_STAGING_DIR}/"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${MSYS2_BIN_PATH}/libssl-3-x64.dll"
-                "${SUITE_STAGING_DIR}/"
             
             # Copy shared resources (only once)
             COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -333,6 +378,37 @@ if (BUILD_QT_APPS)
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
+        
+        # MinGW-specific: Add target to copy MSYS2 runtime DLLs
+        if(MINGW)
+            # Get MSYS2 bin path from compiler location
+            get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            message(STATUS "MinGW bin directory for packaging: ${MINGW_BIN_DIR}")
+            
+            add_custom_target(package_mingw_runtime
+                # Copy MinGW runtime DLLs
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+                    "${SUITE_STAGING_DIR}/"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libstdc++-6.dll"
+                    "${SUITE_STAGING_DIR}/"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+                    "${SUITE_STAGING_DIR}/"
+                    
+                # Copy OpenSSL DLLs (required for WebAPI/network features)
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libcrypto-3-x64.dll"
+                    "${SUITE_STAGING_DIR}/"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libssl-3-x64.dll"
+                    "${SUITE_STAGING_DIR}/"
+                    
+                DEPENDS package_suite_windows
+                COMMENT "Copying MinGW/MSYS2 runtime DLLs for packaging"
+            )
+        endif()
     endif()
     
     # Linux: Combined tarball with all apps and shared resources

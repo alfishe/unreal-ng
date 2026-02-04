@@ -12,9 +12,8 @@ option(AUTOMATION_LUA_SHARED "Build automation_lua as shared library instead of 
 option(LUA_BUILD_STATIC "Build static library for Lua" ON)
 option(LUA_BUILD_SHARED "Build shared library for Lua" OFF)
 
-# Set C++17 standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
+# Keep CMAKE_CXX_EXTENSIONS OFF to ensure standard-compliant code
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Define project root directory for consistent path references

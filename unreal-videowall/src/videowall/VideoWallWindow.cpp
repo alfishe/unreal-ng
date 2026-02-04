@@ -1,8 +1,15 @@
-#include "videowall/VideoWallWindow.h"
+// MSVC: winsock2.h must be included before any header that includes windows.h
+#ifdef _MSC_VER
+#include <windows.h>
+#include <winsock2.h>
+
+#endif
 
 #include <base/featuremanager.h>
 #include <emulatormanager.h>
 #include <platform.h>
+
+#include "videowall/VideoWallWindow.h"
 
 #ifdef ENABLE_AUTOMATION
 #include <automation/automation.h>
@@ -781,7 +788,7 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                     {
                         emulatorId = tile->emulator()->GetUUID();
                     }
-                    
+
                     // CRITICAL: Clear tile's shared_ptr reference FIRST
                     tile->prepareForDeletion();
 
@@ -842,8 +849,9 @@ void VideoWallWindow::restoreSavedEmulators()
     for (auto it = tilesToRemove.rbegin(); it != tilesToRemove.rend(); ++it)
     {
         EmulatorTile* tile = *it;
-        if (!tile) continue;
-        
+        if (!tile)
+            continue;
+
         // Get emulator ID before clearing the reference
         std::string uuid;
         if (tile->emulator())

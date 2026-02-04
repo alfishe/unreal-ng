@@ -1004,46 +1004,49 @@ void Screen::DrawBorder(uint32_t n)
 
 std::string Screen::GetVideoVideoModeName(VideoModeEnum mode)
 {
-    static char const* videoModeName[] = {
-        [M_NUL] = "Null",                    // Non-existing mode
-        [M_ZX48] = "ZX-Spectrum 48k",        // Sinclair ZX Spectrum 48k
-        [M_ZX128] = "ZX-Spectrum 128k",      // Sinclair ZX Spectrum 128k
-        [M_PENTAGON128K] = "Pengagon 128k",  // Pentagon 128k
-        [M_PMC] = "Pentagon multicolor",     // Pentagon Multicolor
-        [M_P16] = "Pentagon 16c",            // Pentagon 16c
-        [M_P384] = "Pentagon 384x384",       // Pentagon 384x304
-        [M_PHR] = "Pentagon HiRes",          // Pentagon HiRes
-        [M_TIMEX] = "Timex ULA+",            // Timex with 32 x 192 attributes (2 colors per line)
-        [M_TS16] = "TSConf 16c",             // TS 16c
-        [M_TS256] = "TSConf 256c",           // TS 256c
-        [M_TSTX] = "TSConf Text",            // TS Text
-        [M_ATM16] = "ATM 16c",               // ATM 16c
-        [M_ATMHR] = "ATM HiRes",             // ATM HiRes
-        [M_ATMTX] = "ATM Text",              // ATM Text
-        [M_ATMTL] = "ATM Text Linear",       // ATM Text Linear
-        [M_PROFI] = "Profi",                 // Profi
-        [M_GMX] = "GMX",                     // GMX
-        [M_BRD] = "Border only",             // Border only
-        [M_MAX] = ""};
+    static const char* const videoModeName[] = {
+        "Null",                 // M_NUL
+        "ZX-Spectrum 48k",      // M_ZX48
+        "ZX-Spectrum 128k",     // M_ZX128
+        "Pentagon 128k",        // M_PENTAGON128K
+        "Pentagon multicolor",  // M_PMC
+        "Pentagon 16c",         // M_P16
+        "Pentagon 384x384",     // M_P384
+        "Pentagon HiRes",       // M_PHR
+        "Timex ULA+",           // M_TIMEX
+        "TSConf 16c",           // M_TS16
+        "TSConf 256c",          // M_TS256
+        "TSConf Text",          // M_TSTX
+        "ATM 16c",              // M_ATM16
+        "ATM HiRes",            // M_ATMHR
+        "ATM Text",             // M_ATMTX
+        "ATM Text Linear",      // M_ATMTL
+        "Profi",                // M_PROFI
+        "GMX",                  // M_GMX
+        "Border only",          // M_BRD
+    };
+    static_assert(std::size(videoModeName) == M_MAX, "videoModeName array size mismatch with VideoModeEnum");
 
-    std::string result;
+    if (mode >= 0 && mode < M_MAX)
+        return videoModeName[mode];
 
-    if (mode < M_MAX)
-        result = videoModeName[mode];
-
-    return result;
+    return "";
 }
 
 std::string Screen::GetRenderTypeName(RenderTypeEnum type)
 {
-    static char const* renderTypeName[] = {[RT_BLANK] = "BLANK", [RT_BORDER] = "BORDER", [RT_SCREEN] = "SCREEN"};
-
-    std::string result;
-
-    if (type <= RT_SCREEN)
-        result = renderTypeName[type];
-
-    return result;
+    // Using switch instead of C99-style designated array initializers (not supported by MSVC)
+    switch (type)
+    {
+        case RT_BLANK:
+            return "BLANK";
+        case RT_BORDER:
+            return "BORDER";
+        case RT_SCREEN:
+            return "SCREEN";
+        default:
+            return "";
+    }
 }
 
 /// endregion </Helper methods

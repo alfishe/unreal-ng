@@ -6,6 +6,7 @@
 
 #if defined(_MSC_VER)
     #pragma pack(push, 1)
+    #define PACKED  // Empty - packing handled by pragma. Needed for cross-compiler compatibility
 #else
     #define PACKED __attribute__((packed))
 #endif
@@ -35,11 +36,10 @@ struct PACKED SCLHeader
 };
 
 #if defined(_MSC_VER)
-    #pragma pack(pop)
+#pragma pack(pop)
 #else
-    #undef PACKED
+#undef PACKED
 #endif
-
 
 class LoaderSCL
 {
@@ -94,7 +94,8 @@ protected:
 };
 
 //
-// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing / benchmark purposes
+// Code Under Test (CUT) wrapper to allow access to protected and private properties and methods for unit testing /
+// benchmark purposes
 //
 #ifdef _CODE_UNDER_TEST
 
@@ -102,10 +103,11 @@ class LoaderSCLCUT : public LoaderSCL
 {
 public:
     LoaderSCLCUT(EmulatorContext* context, const std::string& filepath) : LoaderSCL(context, filepath) {};
-    using LoaderSCL::loadSCL;
     using LoaderSCL::addFile;
     using LoaderSCL::checkSCLFileCRC;
+    using LoaderSCL::loadSCL;
+
 public:
     using LoaderSCL::_diskImage;
 };
-#endif // _CODE_UNDER_TEST
+#endif  // _CODE_UNDER_TEST

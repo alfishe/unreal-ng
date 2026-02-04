@@ -1,9 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(automation LANGUAGES CXX)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 message(">> <${PROJECT_NAME}>")
 
