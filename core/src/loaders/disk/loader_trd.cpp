@@ -1,6 +1,9 @@
 #include "loader_trd.h"
 
 #include "common/filehelper.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
 
 /// region <Properties>
 DiskImage* LoaderTRD::getImage()
@@ -10,11 +13,7 @@ DiskImage* LoaderTRD::getImage()
 
 void LoaderTRD::setImage(DiskImage* diskImage)
 {
-    if (_diskImage)
-    {
-        delete _diskImage;
-    }
-
+    // Note: Does not take ownership - caller must manage diskImage lifetime
     _diskImage = diskImage;
 }
 /// endregion </Properties>
@@ -60,11 +59,16 @@ bool LoaderTRD::loadImage()
 
 bool LoaderTRD::writeImage()
 {
+    return writeImage(_filepath);
+}
+
+bool LoaderTRD::writeImage(const std::string& path)
+{
     bool result = false;
 
-    if (_diskImage)
+    if (_diskImage && !path.empty())
     {
-        FILE* file = FileHelper::OpenFile(_filepath, "wb");
+        FILE* file = FileHelper::OpenFile(path, "wb");
 
         if (file)
         {
@@ -77,12 +81,29 @@ bool LoaderTRD::writeImage()
                 {
                     uint8_t *sectorData = track->getDataForSector(sectors);
                     [[maybe_unused]] bool saveResult = FileHelper::SaveBufferToFile(file, sectorData, TRD_SECTORS_SIZE_BYTES);
-            }
-
-            result = true;
+                }
             }
             
             FileHelper::CloseFile(file);
+            
+            // Mark disk as clean after successful save
+            _diskImage->markClean();
+            
+            // Emit notification that disk was saved
+            if (_context && _context->pEmulator)
+            {
+                std::string emulatorId = _context->pEmulator->GetId();
+                // Note: We don't know which drive this disk is in from the loader context
+                // Use drive 0 as default - the receiver can check all drives if needed
+                MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+                messageCenter.Post(NC_FDD_DISK_WRITTEN, 
+                    new FDDDiskPayload(emulatorId, 0, path), true);
+            }
+            
+            // Update stored file path
+            _diskImage->setFilePath(path);
+            
+            result = true;
         }
     }
 

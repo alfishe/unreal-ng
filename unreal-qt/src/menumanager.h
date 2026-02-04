@@ -34,6 +34,7 @@ public:
     // Observer callback for emulator state changes
     void handleEmulatorStateChanged(int id, Message* message);
     void handleEmulatorInstanceCreated(int id, Message* message);
+    void handleFDDDiskChanged(int id, Message* message);
 
 signals:
     // Signal emitted when user requests to open a file
@@ -43,6 +44,11 @@ signals:
     void openDiskRequested();
     void saveSnapshotRequested();
     void saveSnapshotZ80Requested();
+    
+    // Disk save signals
+    void saveDiskRequested();       // Save to original path
+    void saveDiskAsTRDRequested();  // Save As TRD
+    void saveDiskAsSCLRequested();  // Save As SCL
 
     // Emulator control signals
     void startRequested();
@@ -102,6 +108,10 @@ private:
     QMenu* _saveSnapshotMenu;
     QAction* _saveSnapshotSNAAction;
     QAction* _saveSnapshotZ80Action;
+    QMenu* _saveDiskMenu;
+    QAction* _saveDiskAction;       // Save (to original path)
+    QAction* _saveDiskTRDAction;    // Save as TRD
+    QAction* _saveDiskSCLAction;    // Save as SCL
     QAction* _recentFilesAction;
     QAction* _exitAction;
 
