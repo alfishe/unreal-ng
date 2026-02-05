@@ -122,6 +122,35 @@ function(check_cmake_version)
 endfunction()
 
 # ========================================
+# Python Detection with Auto-install Hints
+# ========================================
+function(check_python_dependency)
+    # Static Python builds from source don't need system Python detection
+    # Only check for MinGW which requires MSYS2's Python
+    
+    if(WIN32 AND MINGW)
+        # MinGW uses MSYS2's Python (dynamic)
+        find_package(Python3 QUIET COMPONENTS Development)
+        
+        if(Python3_FOUND)
+            message(STATUS "[DependencyCheck] MSYS2 Python found: ${Python3_VERSION}")
+        else()
+            message(WARNING 
+                "[DependencyCheck] Python not found for MinGW build\n"
+                "[DependencyCheck] Install via MSYS2 (run in MSYS2 MinGW64 shell):\n"
+                "  pacman -S mingw-w64-x86_64-python\n"
+                "  pacman -S mingw-w64-x86_64-pybind11\n"
+                "  pacman -S mingw-w64-x86_64-python-pip"
+            )
+        endif()
+    else()
+        # Static build: CPython is built from source, no system dependency
+        message(STATUS "[DependencyCheck] Python will be built from source (static)")
+        message(STATUS "[DependencyCheck] Build requirements: C compiler, autotools (Unix)")
+    endif()
+endfunction()
+
+# ========================================
 # Run All Checks
 # ========================================
 macro(run_dependency_checks)
@@ -133,5 +162,9 @@ macro(run_dependency_checks)
     
     if(ENABLE_WEBAPI_AUTOMATION)
         check_openssl_dependency()
+    endif()
+    
+    if(ENABLE_PYTHON_AUTOMATION)
+        check_python_dependency()
     endif()
 endmacro()
