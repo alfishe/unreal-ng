@@ -1533,7 +1533,13 @@ void Memory::UpdateFeatureCache()
                         memcpy(_memory, oldMemory, _memorySize);
                         
                         // Flush shared memory to ensure external processes see the data immediately
+#ifdef _WIN32
+                        // Windows: FlushViewOfFile is the equivalent of msync
+                        FlushViewOfFile(_memory, _memorySize);
+#else
+                        // POSIX (Linux, macOS): use msync
                         msync(_memory, _memorySize, MS_SYNC | MS_INVALIDATE);
+#endif
 
                         // Migrate all cached pointers to reference new memory location
                         // See MigratePointersAfterReallocation() for full documentation

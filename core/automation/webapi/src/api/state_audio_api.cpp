@@ -1,12 +1,15 @@
 // WebAPI State Audio Inspection Implementation
 // Extracted from emulator_api.cpp - 2026-01-08
 
-#include "../emulator_api.h"
-
 #include <drogon/HttpResponse.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
 #include <json/json.h>
+
+#include <bitset>
+
+#include "../emulator_api.h"
+
 
 using namespace drogon;
 using namespace api::v1;
@@ -940,5 +943,5 @@ void EmulatorAPI::getStateAudioChannelsActive(const HttpRequestPtr& req,
     getStateAudioChannels(req, std::move(callback), emulator->GetId());
 }
 
-} // namespace v1
-} // namespace api
+}  // namespace v1
+}  // namespace api

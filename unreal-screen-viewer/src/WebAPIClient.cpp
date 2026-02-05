@@ -151,7 +151,7 @@ void WebAPIClient::onEnableSharedMemoryReply()
     QString shortId = emulatorId.right(12).remove('-');
     
 #ifdef _WIN32
-    QString shmName = QString("Local\\\\zxspectrum_memory-%1").arg(shortId);
+    QString shmName = QString("Local\\zxspectrum_memory-%1").arg(shortId);
 #else
     QString shmName = QString("/zxspectrum_memory-%1").arg(shortId);
 #endif

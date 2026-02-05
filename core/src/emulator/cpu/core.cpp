@@ -55,12 +55,12 @@ bool Core::Init()
     // See: https://worldofspectrum.org/faq/reference/128kreference.htm
     switch (_context->config.mem_model)
     {
-    [[maybe_unused]] MM_SPECTRUM48:
-        baseFrequency = 3'500'000;
-        break;
-    [[maybe_unused]] MM_SPECTRUM128:
-        baseFrequency = 3'546'900;
-        break;
+        case MM_SPECTRUM48:
+            baseFrequency = 3'500'000;
+            break;
+        case MM_SPECTRUM128:
+            baseFrequency = 3'546'900;
+            break;
         default:
             baseFrequency = 3'500'000;
             break;

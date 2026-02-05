@@ -1,15 +1,15 @@
 #include "ScreenViewer.h"
 
-#include <QPainter>
-#include <QMouseEvent>
 #include <QDebug>
+#include <QMouseEvent>
+#include <QPainter>
 
 #ifdef _WIN32
-    #include <windows.h>
+#include <windows.h>
 #else
-    #include <fcntl.h>
-    #include <sys/mman.h>
-    #include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 // ZX Spectrum standard color palette (ARGB format)
@@ -33,19 +33,18 @@ const uint32_t ScreenViewer::_zxPalette[16] = {
     0xFFFFFFFF   // 15: White (bright)
 };
 
-ScreenViewer::ScreenViewer(QWidget* parent)
-    : QWidget(parent)
+ScreenViewer::ScreenViewer(QWidget* parent) : QWidget(parent)
 {
     setMinimumSize(SCREEN_WIDTH, SCREEN_HEIGHT);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMouseTracking(true);
-    
+
     // Initialize both images with black placeholder
     _currentImage = QImage(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
     _currentImage.fill(Qt::black);
     _shadowImage = QImage(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
     _shadowImage.fill(Qt::black);
-    
+
     _refreshTimer = new QTimer(this);
     connect(_refreshTimer, &QTimer::timeout, this, &ScreenViewer::refreshScreen);
 }
@@ -55,22 +54,19 @@ ScreenViewer::~ScreenViewer()
     detachFromSharedMemory();
 }
 
-void ScreenViewer::attachToSharedMemory(const QString& emulatorId, 
-                                         const QString& shmName, 
-                                         qint64 shmSize)
+void ScreenViewer::attachToSharedMemory(const QString& emulatorId, const QString& shmName, qint64 shmSize)
 {
     // Detach from previous if any
     if (_isAttached)
     {
         detachFromSharedMemory();
     }
-    
+
     _emulatorId = emulatorId;
     _shmName = shmName;
     _shmSize = shmSize;
-    
-    qDebug() << "ScreenViewer: Attaching to shared memory:" << shmName 
-             << "size:" << shmSize;
+
+    qDebug() << "ScreenViewer: Attaching to shared memory:" << shmName << "size:" << shmSize;
 
 #ifdef _WIN32
     // Windows: Open named file mapping
@@ -78,18 +74,16 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId,
     HANDLE hMapFile = OpenFileMappingW(FILE_MAP_READ, FALSE, wname.c_str());
     if (hMapFile == NULL)
     {
-        qDebug() << "ScreenViewer: Failed to open shared memory (Windows):"
-                 << GetLastError();
+        qDebug() << "ScreenViewer: Failed to open shared memory (Windows):" << GetLastError();
         return;
     }
-    
+
     _shmData = MapViewOfFile(hMapFile, FILE_MAP_READ, 0, 0, shmSize);
     CloseHandle(hMapFile);  // Can close handle after mapping
-    
+
     if (_shmData == NULL)
     {
-        qDebug() << "ScreenViewer: Failed to map shared memory (Windows):"
-                 << GetLastError();
+        qDebug() << "ScreenViewer: Failed to map shared memory (Windows):" << GetLastError();
         return;
     }
 #else
@@ -98,19 +92,17 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId,
     _shmFd = shm_open(nameBytes.constData(), O_RDONLY, 0);
     if (_shmFd < 0)
     {
-        qDebug() << "ScreenViewer: Failed to open shared memory (POSIX):"
-                 << strerror(errno);
+        qDebug() << "ScreenViewer: Failed to open shared memory (POSIX):" << strerror(errno);
         return;
     }
-    
+
     _shmData = mmap(nullptr, shmSize, PROT_READ, MAP_SHARED, _shmFd, 0);
     ::close(_shmFd);  // fd can be closed after mmap
     _shmFd = -1;
-    
+
     if (_shmData == MAP_FAILED)
     {
-        qDebug() << "ScreenViewer: Failed to mmap shared memory:"
-                 << strerror(errno);
+        qDebug() << "ScreenViewer: Failed to mmap shared memory:" << strerror(errno);
         _shmData = nullptr;
         return;
     }
@@ -118,10 +110,10 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId,
 
     _isAttached = true;
     qDebug() << "ScreenViewer: Successfully attached to shared memory";
-    
+
     // Do an initial refresh immediately
     refreshScreen();
-    
+
     // Start the periodic refresh timer
     startRefreshTimer();
 }
@@ -129,7 +121,7 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId,
 void ScreenViewer::detachFromSharedMemory()
 {
     stopRefreshTimer();
-    
+
     if (!_isAttached)
         return;
 
@@ -150,12 +142,12 @@ void ScreenViewer::detachFromSharedMemory()
     _isAttached = false;
     _emulatorId.clear();
     _shmName.clear();
-    
+
     // Reset both screens to black
     _currentImage.fill(Qt::black);
     _shadowImage.fill(Qt::black);
     update();
-    
+
     qDebug() << "ScreenViewer: Detached from shared memory";
 }
 
@@ -174,9 +166,7 @@ void ScreenViewer::toggleScreenPage()
     // Only toggle in single mode
     if (_viewMode == ViewMode::Single)
     {
-        setScreenPage(_currentPage == ScreenPage::Main 
-                      ? ScreenPage::Shadow 
-                      : ScreenPage::Main);
+        setScreenPage(_currentPage == ScreenPage::Main ? ScreenPage::Shadow : ScreenPage::Main);
     }
 }
 
@@ -217,19 +207,19 @@ void ScreenViewer::refreshScreen()
 {
     if (!_isAttached || _shmData == nullptr)
         return;
-    
+
 #ifndef _WIN32
     // Invalidate our view of shared memory to ensure we see latest writes
     msync(const_cast<void*>(_shmData), _shmSize, MS_INVALIDATE);
 #endif
-    
+
     // Always render main screen
     const uint8_t* mainData = getScreenData(ScreenPage::Main);
     if (mainData != nullptr)
     {
         _currentImage = renderScreen(mainData);
     }
-    
+
     // In dual mode, also render shadow screen
     if (_viewMode == ViewMode::Dual)
     {
@@ -239,7 +229,7 @@ void ScreenViewer::refreshScreen()
             _shadowImage = renderScreen(shadowData);
         }
     }
-    
+
     repaint();
 }
 
@@ -247,29 +237,29 @@ const uint8_t* ScreenViewer::getScreenData(ScreenPage page) const
 {
     if (_shmData == nullptr)
         return nullptr;
-    
+
     // Calculate offset to the requested RAM page
     size_t pageOffset = static_cast<size_t>(page) * PAGE_SIZE;
-    
+
     // Bounds check
     if (pageOffset + SCREEN_TOTAL_SIZE > static_cast<size_t>(_shmSize))
     {
         return nullptr;
     }
-    
+
     return static_cast<const uint8_t*>(_shmData) + pageOffset;
 }
 
 QImage ScreenViewer::renderScreen(const uint8_t* ramData)
 {
     QImage image(SCREEN_WIDTH, SCREEN_HEIGHT, QImage::Format_ARGB32);
-    
+
     if (ramData == nullptr)
     {
         image.fill(Qt::black);
         return image;
     }
-    
+
     // ZX Spectrum screen layout:
     // - Bitmap: 6144 bytes at offset 0 (256x192 pixels, 1 bit per pixel)
     // - Attributes: 768 bytes at offset 6144 (32x24 chars, 8x8 pixel cells)
@@ -282,9 +272,9 @@ QImage ScreenViewer::renderScreen(const uint8_t* ramData)
 
     const uint8_t* bitmap = ramData;
     const uint8_t* attrs = ramData + SCREEN_BITMAP_SIZE;
-    
+
     uint32_t* pixels = reinterpret_cast<uint32_t*>(image.bits());
-    
+
     for (int y = 0; y < SCREEN_HEIGHT; ++y)
     {
         for (int x = 0; x < SCREEN_WIDTH; ++x)
@@ -292,60 +282,60 @@ QImage ScreenViewer::renderScreen(const uint8_t* ramData)
             // Calculate bitmap byte address using ZX Spectrum screen layout
             int bitmapAddr = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2) | (x >> 3);
             int bitIndex = 7 - (x & 7);  // Bits are MSB first
-            
+
             // Calculate attribute byte address
             int attrAddr = (y >> 3) * 32 + (x >> 3);
-            
+
             uint8_t bitmapByte = bitmap[bitmapAddr];
             uint8_t attrByte = attrs[attrAddr];
-            
+
             // Extract attribute components
             bool bright = (attrByte & 0x40) != 0;
             uint8_t paper = (attrByte >> 3) & 0x07;
             uint8_t ink = attrByte & 0x07;
-            
+
             // Apply bright modifier
             if (bright)
             {
                 paper += 8;
                 ink += 8;
             }
-            
+
             // Get pixel color (0 = paper, 1 = ink)
             bool pixelSet = (bitmapByte & (1 << bitIndex)) != 0;
             uint32_t color = pixelSet ? _zxPalette[ink] : _zxPalette[paper];
-            
+
             pixels[y * SCREEN_WIDTH + x] = color;
         }
     }
-    
+
     return image;
 }
 
 void ScreenViewer::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
-    
+
     QPainter painter(this);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);  // High quality scaling
     painter.fillRect(rect(), Qt::black);
-    
+
     QSize targetSize = size();
-    
+
     if (_viewMode == ViewMode::Single)
     {
         // Single mode: calculate scaled size maintaining 4:3 aspect ratio
         float scaleX = static_cast<float>(targetSize.width()) / SCREEN_WIDTH;
         float scaleY = static_cast<float>(targetSize.height()) / SCREEN_HEIGHT;
         float scale = qMin(scaleX, scaleY);
-        
+
         int scaledWidth = static_cast<int>(SCREEN_WIDTH * scale);
         int scaledHeight = static_cast<int>(SCREEN_HEIGHT * scale);
         int offsetX = (targetSize.width() - scaledWidth) / 2;
         int offsetY = (targetSize.height() - scaledHeight) / 2;
-        
+
         QRect targetRect(offsetX, offsetY, scaledWidth, scaledHeight);
-        
+
         // In single mode, show current page (main or shadow based on toggle)
         const QImage& displayImage = (_currentPage == ScreenPage::Main) ? _currentImage : _shadowImage;
         QString label = QString("Page %1").arg(static_cast<int>(_currentPage));
@@ -356,21 +346,21 @@ void ScreenViewer::paintEvent(QPaintEvent* event)
         // Dual mode: display both screens
         int screenW, screenH;
         QRect rect1, rect2;
-        
+
         if (_dualLayout == DualLayout::Horizontal)
         {
             // Side-by-side: 8:3 aspect ratio (512x192)
             float scaleX = static_cast<float>(targetSize.width()) / (SCREEN_WIDTH * 2);
             float scaleY = static_cast<float>(targetSize.height()) / SCREEN_HEIGHT;
             float scale = qMin(scaleX, scaleY);
-            
+
             screenW = static_cast<int>(SCREEN_WIDTH * scale);
             screenH = static_cast<int>(SCREEN_HEIGHT * scale);
-            
+
             int totalW = screenW * 2;
             int offsetX = (targetSize.width() - totalW) / 2;
             int offsetY = (targetSize.height() - screenH) / 2;
-            
+
             rect1 = QRect(offsetX, offsetY, screenW, screenH);
             rect2 = QRect(offsetX + screenW, offsetY, screenW, screenH);
         }
@@ -380,44 +370,75 @@ void ScreenViewer::paintEvent(QPaintEvent* event)
             float scaleX = static_cast<float>(targetSize.width()) / SCREEN_WIDTH;
             float scaleY = static_cast<float>(targetSize.height()) / (SCREEN_HEIGHT * 2);
             float scale = qMin(scaleX, scaleY);
-            
+
             screenW = static_cast<int>(SCREEN_WIDTH * scale);
             screenH = static_cast<int>(SCREEN_HEIGHT * scale);
-            
+
             int totalH = screenH * 2;
             int offsetX = (targetSize.width() - screenW) / 2;
             int offsetY = (targetSize.height() - totalH) / 2;
-            
+
             rect1 = QRect(offsetX, offsetY, screenW, screenH);
             rect2 = QRect(offsetX, offsetY + screenH, screenW, screenH);
         }
-        
+
         drawScreenWithLabel(painter, rect1, _currentImage, "Bank 5");
         drawScreenWithLabel(painter, rect2, _shadowImage, "Bank 7");
     }
 }
 
-void ScreenViewer::drawScreenWithLabel(QPainter& painter, const QRect& targetRect,
-                                        const QImage& image, const QString& label)
+void ScreenViewer::drawScreenWithLabel(QPainter& painter, const QRect& targetRect, const QImage& image,
+                                       const QString& label)
 {
-    painter.drawImage(targetRect, image);
-    
+    // Calculate scaled dimensions maintaining aspect ratio
+    float scaleX = static_cast<float>(targetRect.width()) / SCREEN_WIDTH;
+    float scaleY = static_cast<float>(targetRect.height()) / SCREEN_HEIGHT;
+    float scale = qMin(scaleX, scaleY);
+
+    int finalWidth = static_cast<int>(SCREEN_WIDTH * scale);
+    int finalHeight = static_cast<int>(SCREEN_HEIGHT * scale);
+
+    // ========================================================================
+    // Two-stage scaling for crisp pixels with smooth continuous resizing:
+    //
+    // Problem: Direct bilinear scaling of low-res pixel art (256x192) causes
+    // blurry results because fractional pixel interpolation smears edges.
+    // Pure nearest-neighbor scaling causes "jumping" at integer boundaries.
+    //
+    // Solution: Upscale first with nearest-neighbor to create crisp pixel blocks,
+    // then downscale with bilinear to target size. The bilinear pass smooths
+    // the scaling while the pre-upscaled pixels preserve their sharp edges.
+    //
+    // Step 1: 256x192 -> 1024x768 (4x) using nearest-neighbor (Qt::FastTransformation)
+    //         This creates clean 4x4 pixel blocks with hard edges
+    // Step 2: 1024x768 -> target size using bilinear (Qt::SmoothTransformation)
+    //         Smooth scaling from high-res source preserves pixel structure
+    // ========================================================================
+    constexpr int UPSCALE_FACTOR = 4;
+    QImage upscaled = image.scaled(SCREEN_WIDTH * UPSCALE_FACTOR, SCREEN_HEIGHT * UPSCALE_FACTOR, Qt::IgnoreAspectRatio,
+                                   Qt::FastTransformation);
+    QImage scaledImage = upscaled.scaled(finalWidth, finalHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    // Center the image
+    int offsetX = targetRect.x() + (targetRect.width() - finalWidth) / 2;
+    int offsetY = targetRect.y() + (targetRect.height() - finalHeight) / 2;
+
+    painter.drawImage(offsetX, offsetY, scaledImage);
+
     QFont indicatorFont("Monospace", 12, QFont::Bold);
     painter.setFont(indicatorFont);
-    
+
     QFontMetrics fm(indicatorFont);
     int textWidth = fm.horizontalAdvance(label) + 12;
     int textHeight = fm.height() + 6;
-    
-    QRect labelRect(targetRect.right() - textWidth - 6, 
-                    targetRect.bottom() - textHeight - 6, 
-                    textWidth, textHeight);
-    
+
+    QRect labelRect(targetRect.right() - textWidth - 6, targetRect.bottom() - textHeight - 6, textWidth, textHeight);
+
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setBrush(QColor(0, 0, 0, 200));
     painter.setPen(Qt::NoPen);
     painter.drawRoundedRect(labelRect, 4, 4);
-    
+
     painter.setPen(Qt::white);
     painter.drawText(labelRect, Qt::AlignCenter, label);
 }
@@ -425,7 +446,7 @@ void ScreenViewer::drawScreenWithLabel(QPainter& painter, const QRect& targetRec
 void ScreenViewer::mousePressEvent(QMouseEvent* event)
 {
     Q_UNUSED(event);
-    
+
     // Toggle screen page on click (single mode only)
     if (_viewMode == ViewMode::Single)
     {

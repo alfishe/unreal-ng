@@ -521,7 +521,7 @@ TEST_F(TRDOSIntegration_test, FDCErrorGeneratesErrorEvent)
     bool foundCrcError = false;
     for (const auto& event : events)
     {
-        if (event.type == TRDOSEventType::ERROR_CRC)
+        if (event.type == TRDOSEventType::ERR_CRC)
         {
             foundCrcError = true;
             break;
@@ -560,7 +560,7 @@ TEST_F(TRDOSIntegration_test, RecordNotFoundGeneratesErrorEvent)
     bool foundRnfError = false;
     for (const auto& event : events)
     {
-        if (event.type == TRDOSEventType::ERROR_RNF)
+        if (event.type == TRDOSEventType::ERR_RNF)
         {
             foundRnfError = true;
             break;

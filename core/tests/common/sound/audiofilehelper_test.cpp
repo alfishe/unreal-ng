@@ -1,21 +1,19 @@
+// MSVC: Must be defined BEFORE any headers that might include <cmath> for M_PI
+#define _USE_MATH_DEFINES
 #include "audiofilehelper_test.h"
+
+#include <common/sound/audiofilehelper.h>
+
 #include <cmath>
 #include <string>
 #include <vector>
-#include <common/sound/audiofilehelper.h>
 
 
 /// region <SetUp / TearDown>
 
-void AudioFileHelper_Test::SetUp()
-{
+void AudioFileHelper_Test::SetUp() {}
 
-}
-
-void AudioFileHelper_Test::TearDown()
-{
-
-}
+void AudioFileHelper_Test::TearDown() {}
 
 /// endregion </SetUp / TearDown>
 
@@ -34,8 +32,8 @@ TEST_F(AudioFileHelper_Test, FlowTestInterleaved)
     for (int i = 0; i < SAMPLE_RATE * durationInSec; i++)
     {
         float sample = sin(((float)i / SAMPLE_RATE) * frequencyInHz * 2.0f * M_PI);
-        samples[i * NUM_CHANNELS] = sample;         // Left channel
-        samples[i * NUM_CHANNELS + 1] = sample;     // Right channel
+        samples[i * NUM_CHANNELS] = sample;      // Left channel
+        samples[i * NUM_CHANNELS + 1] = sample;  // Right channel
     }
 
     AudioFileHelper helper;
@@ -88,18 +86,19 @@ TEST_F(AudioFileHelper_Test, FlowTestMultiblock)
     bool res = helper.openWavFile(filepath);
     EXPECT_EQ(res, true) << "Unable to create WAV file";
 
-    const std::vector<uint16_t> frequencies = { 440, 880, 1200, 1500 };
+    const std::vector<uint16_t> frequencies = {440, 880, 1200, 1500};
 
-    for (auto frequencyInHz : frequencies) {
+    for (auto frequencyInHz : frequencies)
+    {
         // Allocate buffer sufficient to hold 2 channels for required duration and sample rate
         std::vector<float> samples(NUM_CHANNELS * SAMPLE_RATE * durationInSec);
 
         // Generate 440 Hz sinusoidal signal
         for (int i = 0; i < SAMPLE_RATE * durationInSec; i++)
         {
-            float sample = sin(((float) i / SAMPLE_RATE) * frequencyInHz * 2.0f * M_PI);
-            samples[i * NUM_CHANNELS] = sample;         // Left channel
-            samples[i * NUM_CHANNELS + 1] = sample;     // Right channel
+            float sample = sin(((float)i / SAMPLE_RATE) * frequencyInHz * 2.0f * M_PI);
+            samples[i * NUM_CHANNELS] = sample;      // Left channel
+            samples[i * NUM_CHANNELS + 1] = sample;  // Right channel
         }
 
         res = helper.saveFloat32PCMInterleavedSamples(samples);
@@ -124,8 +123,8 @@ TEST_F(AudioFileHelper_Test, SquareTestInterleaved)
     for (int i = 0; i < SAMPLE_RATE * durationInSec; i++)
     {
         float sample = (i % (int)(SAMPLE_RATE / frequencyInHz) < (int)(SAMPLE_RATE / frequencyInHz / 2)) ? 1.0 : -1.0;
-        samples[i * NUM_CHANNELS] = sample;         // Left channel
-        samples[i * NUM_CHANNELS + 1] = sample;     // Right channel
+        samples[i * NUM_CHANNELS] = sample;      // Left channel
+        samples[i * NUM_CHANNELS + 1] = sample;  // Right channel
     }
 
     AudioFileHelper helper;
@@ -138,15 +137,13 @@ TEST_F(AudioFileHelper_Test, SquareTestInterleaved)
     helper.closeWavFile();
 }
 
-
-
-#include <iostream>
 #include <cmath>
 #include <complex>
+#include <iostream>
 
 #define __USE_SQUARE_BRACKETS_FOR_ELEMENT_ACCESS_OPERATOR
-#include <3rdparty/simple-fft/include/simple_fft/fft_settings.h>
 #include <3rdparty/simple-fft/include/simple_fft/fft.h>
+#include <3rdparty/simple-fft/include/simple_fft/fft_settings.h>
 
 typedef std::vector<complex_type> ComplexArray1D;
 
@@ -169,7 +166,7 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySinus)
 
     ComplexArray1D pcmInput;
     ComplexArray1D fftOutput;
-    pcmInput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
+    pcmInput.resize(N);   // Use resize() instead of reserve() to actually allocate elements
     fftOutput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
 
     /// region <Generate input signal>
@@ -189,9 +186,8 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySinus)
     // Find the frequency bin with the highest magnitude
 
     /*
-    ComplexArray1D::iterator result = std::max_element(fftOutput.begin(), fftOutput.end(), [](complex_type a, complex_type b) {
-        bool res = std::abs(a) < std::abs(b);
-        return res;
+    ComplexArray1D::iterator result = std::max_element(fftOutput.begin(), fftOutput.end(), [](complex_type a,
+    complex_type b) { bool res = std::abs(a) < std::abs(b); return res;
     });
 
     int max_bin = std::distance(fftOutput.begin(), result);
@@ -199,7 +195,8 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySinus)
      */
 
     int max_bin = 0;
-    double max_magnitude = -std::numeric_limits<double>::infinity();;
+    double max_magnitude = -std::numeric_limits<double>::infinity();
+    ;
     for (int k = 0; k < N / 2; k++)
     {
         double magnitude = std::abs(fftOutput[k]);
@@ -235,7 +232,7 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySquare)
 
     ComplexArray1D pcmInput;
     ComplexArray1D fftOutput;
-    pcmInput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
+    pcmInput.resize(N);   // Use resize() instead of reserve() to actually allocate elements
     fftOutput.resize(N);  // Use resize() instead of reserve() to actually allocate elements
 
     /// region <Generate input signal>
@@ -255,9 +252,8 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySquare)
     // Find the frequency bin with the highest magnitude
 
     /*
-    ComplexArray1D::iterator result = std::max_element(fftOutput.begin(), fftOutput.end(), [](complex_type a, complex_type b) {
-        bool res = std::abs(a) < std::abs(b);
-        return res;
+    ComplexArray1D::iterator result = std::max_element(fftOutput.begin(), fftOutput.end(), [](complex_type a,
+    complex_type b) { bool res = std::abs(a) < std::abs(b); return res;
     });
 
     int max_bin = std::distance(fftOutput.begin(), result);
@@ -265,7 +261,8 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySquare)
      */
 
     int max_bin = 0;
-    double max_magnitude = -std::numeric_limits<double>::infinity();;
+    double max_magnitude = -std::numeric_limits<double>::infinity();
+    ;
     for (int k = 0; k < N / 2; k++)
     {
         double magnitude = std::abs(fftOutput[k]);
@@ -283,24 +280,23 @@ TEST_F(AudioFileHelper_Test, DetermineBaseFrequencySquare)
     std::cout << "Frequency: " << round(detectedFrequency) << " Hz\n";
 }
 
-
 TEST_F(AudioFileHelper_Test, DetermineBaseFrequency)
 {
     // Sampling rate and number of samples
-    int sampling_rate = 44100;
-    int frequency = 440;
-    int N = 2048;
+    constexpr int sampling_rate = 44100;
+    constexpr int frequency = 440;
+    constexpr int N = 2048;
     double coeff = 2.0 * M_PI * (double)frequency;
 
-    // Input signal
-    double x[N];
+    // Input signal - use std::vector for MSVC compatibility (no VLAs)
+    std::vector<double> x(N);
     for (int n = 0; n < N; n++)
     {
         x[n] = sin(coeff * (double)n / (double)sampling_rate);
     }
 
-    // Perform the FFT
-    std::complex<double> X[N];
+    // Perform the FFT - use std::vector for MSVC compatibility
+    std::vector<std::complex<double>> X(N);
     const std::complex single = std::complex<double>(0, 1);
     const std::complex normalized = single * -2.0 * M_PI;
 

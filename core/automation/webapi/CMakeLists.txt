@@ -5,9 +5,7 @@ project(automation_webapi
     LANGUAGES CXX
 )
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 # Set paths
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -25,6 +23,27 @@ if (NOT OpenSSL_FOUND)
         set(OPENSSL_LIBRARIES "/opt/homebrew/opt/openssl/lib/libssl.dylib;/opt/homebrew/opt/openssl/lib/libcrypto.dylib")
         set(OPENSSL_INCLUDE_DIR "/opt/homebrew/opt/openssl/include")
         message(STATUS "[automation_webapi] Using OpenSSL from Homebrew: ${OPENSSL_ROOT_DIR}")
+    # Fallback: Windows OpenSSL installations
+    elseif (WIN32)
+        # Check common Windows OpenSSL installation paths
+        set(OPENSSL_SEARCH_PATHS
+            "C:/Program Files/OpenSSL-Win64"
+            "C:/OpenSSL-Win64"
+            "$ENV{OPENSSL_ROOT_DIR}"
+        )
+        
+        # For MSVC, also check vcpkg paths
+        if(MSVC AND DEFINED ENV{VCPKG_ROOT})
+            list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
+        endif()
+        
+        foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
+            if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
+                set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
+                message(STATUS "[automation_webapi] Using OpenSSL from: ${OPENSSL_ROOT_DIR}")
+                break()
+            endif()
+        endforeach()
     endif ()
     find_package(OpenSSL REQUIRED)
 endif ()
@@ -50,11 +69,10 @@ if (BUILD_ZLIB)
     set(zlib_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/zlib" CACHE PATH "zlib source directory" FORCE)
     set(zlib_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib CACHE PATH "zlib binary directory" FORCE)
 
-    # Add zlib as a subproject
+    # Add zlib as a subproject (must be included in build to generate libz.a)
     add_subdirectory(
         ${zlib_SOURCE_DIR}
         ${zlib_BINARY_DIR}
-        EXCLUDE_FROM_ALL
     )
 
     # Set the actual library target name
@@ -68,31 +86,43 @@ if (BUILD_ZLIB)
     )
     
     # Set variables for find_package compatibility
+    # Use the target name for linking - CMake will resolve the actual library path
     set(ZLIB_FOUND TRUE CACHE BOOL "ZLIB found (bundled)" FORCE)
-    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${ZLIB_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
+    set(ZLIB_INCLUDE_DIRS ${zlib_BINARY_DIR} ${zlib_SOURCE_DIR} CACHE PATH "ZLIB include directories" FORCE)
     set(ZLIB_LIBRARIES ${ZLIB_TARGET_NAME} CACHE STRING "ZLIB libraries" FORCE)
-    set(ZLIB_LIBRARY_PATH "${CMAKE_CURRENT_BINARY_DIR}/zlib/libz.a" CACHE INTERNAL "Path to zlib library" FORCE)
     set(ZLIB_VERSION_STRING "1.3.1" CACHE STRING "ZLIB version" FORCE)
 
-    # Make sure the library is built before anything that depends on it
-    add_dependencies(${ZLIB_TARGET_NAME} ${ZLIB_TARGET_NAME})
+    # Set include directories for find_package compatibility
     set(ZLIB_INCLUDE_DIRS 
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
         CACHE INTERNAL "ZLIB include directories (bundled)" FORCE
     )
     set(ZLIB_INCLUDE_DIR 
-        ${ZLIB_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib
+        ${zlib_SOURCE_DIR}
+        ${zlib_BINARY_DIR}
         CACHE INTERNAL "ZLIB include directory (bundled)" FORCE
     )
-    set(ZLIB_LIBRARY ${ZLIB_LIBRARY_PATH} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
+    # Use target name instead of file path - CMake will resolve the actual file at link time
+    set(ZLIB_LIBRARY ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB library (bundled)" FORCE)
 
-    # Set output name to just 'z' for compatibility
+    # Set output directory and name for predictable library location
     set_target_properties(${ZLIB_TARGET_NAME} PROPERTIES
         OUTPUT_NAME z
         POSITION_INDEPENDENT_CODE ON
+        ARCHIVE_OUTPUT_DIRECTORY "${zlib_BINARY_DIR}"
     )
+    
+    # Create ZLIB::ZLIB IMPORTED target that Drogon expects from find_package(ZLIB)
+    # Using INTERFACE IMPORTED that links to zlibstatic creates proper build dependency
+    # while also being compatible with Drogon's export (INTERFACE targets don't need to be exported)
+    if(NOT TARGET ZLIB::ZLIB)
+        add_library(ZLIB::ZLIB INTERFACE IMPORTED GLOBAL)
+        set_target_properties(ZLIB::ZLIB PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${ZLIB_TARGET_NAME}"
+            INTERFACE_INCLUDE_DIRECTORIES "${zlib_SOURCE_DIR};${CMAKE_CURRENT_BINARY_DIR}/zlib"
+        )
+    endif()
     
     # Export the target for other subdirectories
     set(ZLIB_TARGET ${ZLIB_TARGET_NAME} CACHE INTERNAL "ZLIB target" FORCE)

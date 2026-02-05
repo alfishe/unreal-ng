@@ -1,12 +1,17 @@
 #pragma once
 
 #if ENABLE_LUA_AUTOMATION
-    #include <lua/src/automation-lua.h>
+#include <lua/src/automation-lua.h>
 #endif
 
 // Conditionally include Python automation if enabled
 #if ENABLE_PYTHON_AUTOMATION
+// Python's object.h uses 'slots' as a member name, which conflicts with Qt's 'slots' macro
+// Save and undefine Qt's slots macro before including Python headers
+#pragma push_macro("slots")
+#undef slots
 #include <python/src/automation-python.h>
+#pragma pop_macro("slots")
 #endif
 
 // Conditionally include WebAPI automation if enabled
@@ -43,7 +48,10 @@ protected:
     /// region <Constructors / destructors>
 public:
     Automation() = default;
-    virtual ~Automation() { stop(); };
+    virtual ~Automation()
+    {
+        stop();
+    };
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
@@ -65,4 +73,3 @@ protected:
     void stopCLI();
     /// endregion </Helper methods>
 };
-
