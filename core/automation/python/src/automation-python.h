@@ -11,6 +11,7 @@ class AutomationPython
 protected:
     std::thread* _thread = nullptr;
     volatile bool _stopThread = false;
+    bool _initFailed = false;  // Set to true if Python initialization fails
     unsigned long _pythonThreadId = 0;
     PyThreadState* _gil_state;
     /// endregion </Fields>

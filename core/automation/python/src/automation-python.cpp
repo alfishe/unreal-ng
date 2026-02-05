@@ -21,11 +21,30 @@ void AutomationPython::start()
 
     if (!Py_IsInitialized())
     {
-        // Initialize Python interpreter
-        py::initialize_interpreter();
+        try
+        {
+            // Initialize Python interpreter
+            py::initialize_interpreter();
 
-        // Release GIL (we'll acquire it when needed in the thread)
-        _gil_state = PyEval_SaveThread();
+            // Release GIL (we'll acquire it when needed in the thread)
+            _gil_state = PyEval_SaveThread();
+        }
+        catch (const std::exception& e)
+        {
+            // Python initialization can fail due to version mismatches between bundled
+            // libpython and system Python, or missing Python installation
+            std::cerr << "Failed to initialize Python interpreter: " << e.what() << std::endl;
+            std::cerr << "Python automation will be disabled for this session." << std::endl;
+            _initFailed = true;
+            return;
+        }
+        catch (...)
+        {
+            std::cerr << "Failed to initialize Python interpreter (unknown error)" << std::endl;
+            std::cerr << "Python automation will be disabled for this session." << std::endl;
+            _initFailed = true;
+            return;
+        }
     }
 
     _stopThread = false;

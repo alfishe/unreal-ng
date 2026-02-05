@@ -375,13 +375,36 @@ set(PACKAGE_VERSION_PATCH "0")
 
 # macOS specific packaging
 if(APPLE)
+    # Find macdeployqt from Qt installation
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+        HINTS "${QT_FOUND_PATH}/bin" "$ENV{HOME}/Qt/6.9.3/macos/bin"
+    )
+    
     # Create a custom target for macOS packaging
+    set(UNREAL_QT_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Staging")
     add_custom_target(package_macos
-        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package..."
+        # 1. Staging Setup
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
-        COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${UNREAL_QT_STAGING_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${UNREAL_QT_STAGING_DIR}"
+        
+        # 2. Copy App Bundle (preserving symlinks)
+        COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app"
+        
+        # 3. Inject Resources before signing
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon512k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+        
+        # 4. Deploy and Sign
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
+        
+        # 5. Create DMG from staging
+        COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${UNREAL_QT_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
+        
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating macOS DMG package in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for UnrealNG in ${CMAKE_BINARY_DIR}/packages"
     )
     
     # Create a macOS application bundle

@@ -325,13 +325,30 @@ set(PACKAGE_VERSION_PATCH "0")
 
 # macOS specific packaging
 if(APPLE)
+    # Find macdeployqt from Qt installation
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+        HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
+    )
+    
     # Create a custom target for macOS packaging
+    set(VIDEOWALL_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/VideoWall-Staging")
     add_custom_target(package_videowall_macos
-        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package for Video Wall..."
+        # 1. Staging Setup
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
-        COMMAND hdiutil create -volname "UnrealNG-VideoWall" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall.dmg"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${VIDEOWALL_STAGING_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${VIDEOWALL_STAGING_DIR}"
+        
+        # 2. Copy App Bundle (preserving symlinks)
+        COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${VIDEOWALL_STAGING_DIR}/Video Wall.app"
+        
+        # 3. Deploy and Sign (LAST step before DMG creation)
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${VIDEOWALL_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
+        
+        # 4. Create DMG from staging
+        COMMAND hdiutil create -volname "UnrealNG-VideoWall" -srcfolder "${VIDEOWALL_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-VideoWall.dmg"
+        
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating macOS DMG package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for Video Wall in ${CMAKE_BINARY_DIR}/packages"
     )
     
     # Create a macOS application bundle
