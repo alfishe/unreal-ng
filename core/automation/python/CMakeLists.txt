@@ -82,6 +82,11 @@ else()
     add_library(${PROJECT_NAME} STATIC ${SOURCES})
     add_library(unrealng::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
+    # Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wno-deprecated-declarations)
+    endif()
+
     # Add include directories for emulator headers
     target_include_directories(${PROJECT_NAME}
         PRIVATE

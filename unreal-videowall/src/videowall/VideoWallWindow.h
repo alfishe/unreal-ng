@@ -111,8 +111,8 @@ private:
     QPointer<EmulatorTile> _audioBoundTile;
 
 #ifdef ENABLE_AUTOMATION
-    // Automation system (WebAPI, CLI, Python, Lua)
-    std::unique_ptr<Automation> _automation;
+    // Automation system (WebAPI, CLI, Python, Lua) - singleton, not owned
+    Automation* _automation = nullptr;
 #endif
 
     // Configuration

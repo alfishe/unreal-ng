@@ -15,14 +15,52 @@
 #include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
 
 // Socket includes for port availability checking
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#endif
 
 // Helper function to check if a port is available
 // CRITICAL: This prevents drogon from calling exit() when port is already in use
 static bool isPortAvailable(int port)
 {
+#ifdef _WIN32
+    // Initialize Winsock if needed
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        std::cerr << "Failed to initialize Winsock for port availability check" << std::endl;
+        return false;
+    }
+
+    SOCKET sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == INVALID_SOCKET)
+    {
+        std::cerr << "Failed to create test socket for port availability check" << std::endl;
+        WSACleanup();
+        return false;
+    }
+
+    // Set SO_REUSEADDR to match drogon's behavior
+    int opt = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+
+    bool available = bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) != SOCKET_ERROR;
+    closesocket(sockfd);
+    WSACleanup();
+
+    return available;
+#else
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0)
     {
@@ -43,6 +81,7 @@ static bool isPortAvailable(int port)
     close(sockfd);
 
     return available;
+#endif
 }
 
 // Helper function to load HTML file from resources

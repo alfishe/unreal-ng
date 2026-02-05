@@ -45,27 +45,87 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 
     // Tags - defines the order of tag groups in Swagger UI
     Json::Value tags(Json::arrayValue);
-    Json::Value tagEmulatorMgmt; tagEmulatorMgmt["name"] = "Emulator Management"; tagEmulatorMgmt["description"] = "Emulator lifecycle and information"; tags.append(tagEmulatorMgmt);
-    Json::Value tagEmulatorCtrl; tagEmulatorCtrl["name"] = "Emulator Control"; tagEmulatorCtrl["description"] = "Control emulator execution state"; tags.append(tagEmulatorCtrl);
-    Json::Value tagSettings; tagSettings["name"] = "Settings Management"; tagSettings["description"] = "Emulator configuration and settings"; tags.append(tagSettings);
-    Json::Value tagFeatures; tagFeatures["name"] = "Feature Management"; tagFeatures["description"] = "Runtime feature control"; tags.append(tagFeatures);
-    Json::Value tagTapeCtrl; tagTapeCtrl["name"] = "Tape Control"; tagTapeCtrl["description"] = "Tape image control and playback"; tags.append(tagTapeCtrl);
-    Json::Value tagDiskCtrl; tagDiskCtrl["name"] = "Disk Control"; tagDiskCtrl["description"] = "Disk image management"; tags.append(tagDiskCtrl);
-    Json::Value tagDiskInsp; tagDiskInsp["name"] = "Disk Inspection"; tagDiskInsp["description"] = "Low-level disk data inspection"; tags.append(tagDiskInsp);
-    Json::Value tagSnapshotCtrl; tagSnapshotCtrl["name"] = "Snapshot Control"; tagSnapshotCtrl["description"] = "Snapshot file loading and status"; tags.append(tagSnapshotCtrl);
-    Json::Value tagCapture; tagCapture["name"] = "Capture"; tagCapture["description"] = "Screen capture and OCR"; tags.append(tagCapture);
-    Json::Value tagBasicCtrl; tagBasicCtrl["name"] = "BASIC Control"; tagBasicCtrl["description"] = "BASIC program manipulation"; tags.append(tagBasicCtrl);
-    Json::Value tagKeyboard; tagKeyboard["name"] = "Keyboard Injection"; tagKeyboard["description"] = "Keyboard input simulation"; tags.append(tagKeyboard);
-    Json::Value tagMemState; tagMemState["name"] = "Memory State"; tagMemState["description"] = "Memory inspection (RAM/ROM)"; tags.append(tagMemState);
-    Json::Value tagScreenState; tagScreenState["name"] = "Screen State"; tagScreenState["description"] = "Screen/video state inspection"; tags.append(tagScreenState);
-    Json::Value tagAudioState; tagAudioState["name"] = "Audio State"; tagAudioState["description"] = "Audio hardware state"; tags.append(tagAudioState);
-    Json::Value tagAnalyzer; tagAnalyzer["name"] = "Analyzer Management"; tagAnalyzer["description"] = "Control analyzer modules"; tags.append(tagAnalyzer);
-    Json::Value tagDebug; tagDebug["name"] = "Debug Commands"; tagDebug["description"] = "Breakpoints, registers, and debugging"; tags.append(tagDebug);
-    Json::Value tagMemProfiler; tagMemProfiler["name"] = "Memory Profiler"; tagMemProfiler["description"] = "Track memory access patterns"; tags.append(tagMemProfiler);
-    Json::Value tagCallTrace; tagCallTrace["name"] = "Call Trace Profiler"; tagCallTrace["description"] = "Track CALL/RET/JP/JR/RST events"; tags.append(tagCallTrace);
-    Json::Value tagOpcodeProfiler; tagOpcodeProfiler["name"] = "Opcode Profiler"; tagOpcodeProfiler["description"] = "Z80 opcode execution profiling"; tags.append(tagOpcodeProfiler);
-    Json::Value tagUnifiedProfiler; tagUnifiedProfiler["name"] = "Unified Profiler"; tagUnifiedProfiler["description"] = "Control all profilers simultaneously"; tags.append(tagUnifiedProfiler);
-    Json::Value tagBatchExec; tagBatchExec["name"] = "Batch Execution"; tagBatchExec["description"] = "Execute multiple commands in parallel across emulator instances"; tags.append(tagBatchExec);
+    Json::Value tagEmulatorMgmt;
+    tagEmulatorMgmt["name"] = "Emulator Management";
+    tagEmulatorMgmt["description"] = "Emulator lifecycle and information";
+    tags.append(tagEmulatorMgmt);
+    Json::Value tagEmulatorCtrl;
+    tagEmulatorCtrl["name"] = "Emulator Control";
+    tagEmulatorCtrl["description"] = "Control emulator execution state";
+    tags.append(tagEmulatorCtrl);
+    Json::Value tagSettings;
+    tagSettings["name"] = "Settings Management";
+    tagSettings["description"] = "Emulator configuration and settings";
+    tags.append(tagSettings);
+    Json::Value tagFeatures;
+    tagFeatures["name"] = "Feature Management";
+    tagFeatures["description"] = "Runtime feature control";
+    tags.append(tagFeatures);
+    Json::Value tagTapeCtrl;
+    tagTapeCtrl["name"] = "Tape Control";
+    tagTapeCtrl["description"] = "Tape image control and playback";
+    tags.append(tagTapeCtrl);
+    Json::Value tagDiskCtrl;
+    tagDiskCtrl["name"] = "Disk Control";
+    tagDiskCtrl["description"] = "Disk image management";
+    tags.append(tagDiskCtrl);
+    Json::Value tagDiskInsp;
+    tagDiskInsp["name"] = "Disk Inspection";
+    tagDiskInsp["description"] = "Low-level disk data inspection";
+    tags.append(tagDiskInsp);
+    Json::Value tagSnapshotCtrl;
+    tagSnapshotCtrl["name"] = "Snapshot Control";
+    tagSnapshotCtrl["description"] = "Snapshot file loading and status";
+    tags.append(tagSnapshotCtrl);
+    Json::Value tagCapture;
+    tagCapture["name"] = "Capture";
+    tagCapture["description"] = "Screen capture and OCR";
+    tags.append(tagCapture);
+    Json::Value tagBasicCtrl;
+    tagBasicCtrl["name"] = "BASIC Control";
+    tagBasicCtrl["description"] = "BASIC program manipulation";
+    tags.append(tagBasicCtrl);
+    Json::Value tagKeyboard;
+    tagKeyboard["name"] = "Keyboard Injection";
+    tagKeyboard["description"] = "Keyboard input simulation";
+    tags.append(tagKeyboard);
+    Json::Value tagMemState;
+    tagMemState["name"] = "Memory State";
+    tagMemState["description"] = "Memory inspection (RAM/ROM)";
+    tags.append(tagMemState);
+    Json::Value tagScreenState;
+    tagScreenState["name"] = "Screen State";
+    tagScreenState["description"] = "Screen/video state inspection";
+    tags.append(tagScreenState);
+    Json::Value tagAudioState;
+    tagAudioState["name"] = "Audio State";
+    tagAudioState["description"] = "Audio hardware state";
+    tags.append(tagAudioState);
+    Json::Value tagAnalyzer;
+    tagAnalyzer["name"] = "Analyzer Management";
+    tagAnalyzer["description"] = "Control analyzer modules";
+    tags.append(tagAnalyzer);
+    Json::Value tagDebug;
+    tagDebug["name"] = "Debug Commands";
+    tagDebug["description"] = "Breakpoints, registers, and debugging";
+    tags.append(tagDebug);
+    Json::Value tagMemProfiler;
+    tagMemProfiler["name"] = "Memory Profiler";
+    tagMemProfiler["description"] = "Track memory access patterns";
+    tags.append(tagMemProfiler);
+    Json::Value tagCallTrace;
+    tagCallTrace["name"] = "Call Trace Profiler";
+    tagCallTrace["description"] = "Track CALL/RET/JP/JR/RST events";
+    tags.append(tagCallTrace);
+    Json::Value tagOpcodeProfiler;
+    tagOpcodeProfiler["name"] = "Opcode Profiler";
+    tagOpcodeProfiler["description"] = "Z80 opcode execution profiling";
+    tags.append(tagOpcodeProfiler);
+    Json::Value tagUnifiedProfiler;
+    tagUnifiedProfiler["name"] = "Unified Profiler";
+    tagUnifiedProfiler["description"] = "Control all profilers simultaneously";
+    tags.append(tagUnifiedProfiler);
+
     spec["tags"] = tags;
 
     // Paths
@@ -274,7 +334,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // POST /api/v1/emulator/{id}/disk/{drive}/create - Create blank disk
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["summary"] = "Create blank disk";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["tags"].append("Disk Control");
-    paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["description"] =
         "Create a blank, unformatted disk and insert it into the specified drive. "
         "The disk is ready for TR-DOS FORMAT command.";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["parameters"][0]["name"] = "id";
@@ -335,7 +395,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/disk"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk"]["get"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk"]["get"]["responses"]["200"]["description"] =
         "List of drives with status, FDC state, and auto-selection info";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec} - Read sector
@@ -344,34 +404,41 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][0]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][0]["schema"]["type"] =
+        "string";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][1]["name"] = "drive";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][1]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][1]["schema"]["type"] =
+        "string";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][2]["name"] = "cyl";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][2]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][2]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][2]["schema"]["type"] =
+        "integer";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][3]["name"] = "side";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][3]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][3]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][3]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][3]["schema"]["type"] =
+        "integer";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["name"] = "sec";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["description"] = "Sector number (1-based)";
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["description"] =
+        "Sector number (1-based)";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["parameters"][4]["schema"]["type"] =
+        "integer";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}"]["get"]["responses"]["200"]["description"] =
         "Sector data with address mark, CRC status, and base64-encoded content";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw - Read raw sector
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["summary"] = "Read raw sector bytes";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["summary"] =
+        "Read raw sector bytes";
     paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["tags"].append("Disk Inspection");
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["description"] =
         "Returns raw sector bytes including gaps, sync, and marks";
-    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["responses"]["200"]["description"] = 
-        "Raw sector bytes as base64";
+    paths["/api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}/raw"]["get"]["responses"]["200"]
+         ["description"] = "Raw sector bytes as base64";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side} - Read track summary
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["summary"] = "Read track summary";
@@ -387,26 +454,28 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][2]["name"] = "cyl";
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][2]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][2]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][2]["schema"]["type"] =
+        "integer";
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][3]["name"] = "side";
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][3]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][3]["required"] = true;
-    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][3]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["parameters"][3]["schema"]["type"] =
+        "integer";
+    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}"]["get"]["responses"]["200"]["description"] =
         "Track overview with sector metadata";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw - Read raw track
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"]["get"]["summary"] = "Read raw track bytes";
     paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"]["get"]["tags"].append("Disk Inspection");
-    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"]["get"]["description"] =
         "Returns complete 6250-byte MFM stream";
-    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"]["get"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/track/{cyl}/{side}/raw"]["get"]["responses"]["200"]["description"] =
         "Raw track bytes as base64";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/image - Full image dump
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["summary"] = "Dump entire disk image";
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["tags"].append("Disk Inspection");
-    paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["description"] =
         "Returns all tracks concatenated as base64. Warning: large response.";
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["parameters"][0]["in"] = "path";
@@ -416,13 +485,13 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/image"]["get"]["responses"]["200"]["description"] =
         "Complete disk image as base64 with geometry metadata";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/sysinfo - TR-DOS system sector
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["summary"] = "Get TR-DOS system info";
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["tags"].append("Disk Inspection");
-    paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["description"] =
         "Parses TR-DOS system sector (T0/S9) with disk type, label, file count, free sectors";
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["parameters"][0]["in"] = "path";
@@ -432,13 +501,13 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/sysinfo"]["get"]["responses"]["200"]["description"] =
         "Parsed TR-DOS system sector";
 
     // GET /api/v1/emulator/{id}/disk/{drive}/catalog - Disk catalog
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["summary"] = "Get disk catalog";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["tags"].append("Disk Inspection");
-    paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["description"] =
         "Parses TR-DOS directory (sectors 1-8) returning file names, types, sizes";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][0]["in"] = "path";
@@ -448,8 +517,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["responses"]["200"]["description"] = 
-        "Disk file listing";
+    paths["/api/v1/emulator/{id}/disk/{drive}/catalog"]["get"]["responses"]["200"]["description"] = "Disk file listing";
 
     // Snapshot control endpoints
     paths["/api/v1/emulator/{id}/snapshot/load"]["post"]["summary"] = "Load snapshot file";
@@ -471,7 +539,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // POST /api/v1/emulator/{id}/snapshot/save - Save snapshot file
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["summary"] = "Save snapshot file";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["tags"].append("Snapshot Control");
-    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["description"] = 
+    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["description"] =
         "Save current emulator state to a snapshot file (.sna format)";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["parameters"][0]["in"] = "path";
@@ -487,10 +555,9 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
          ["properties"]["force"]["description"] = "Set to true to overwrite existing file";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["200"]["description"] =
         "Snapshot saved successfully";
-    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["400"]["description"] =
-        "Failed to save snapshot";
+    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["400"]["description"] = "Failed to save snapshot";
     paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["404"]["description"] = "Emulator not found";
-    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["409"]["description"] = 
+    paths["/api/v1/emulator/{id}/snapshot/save"]["post"]["responses"]["409"]["description"] =
         "File already exists (use force: true to overwrite)";
 
     paths["/api/v1/emulator/{id}/snapshot/info"]["get"]["summary"] = "Get snapshot status";
@@ -505,15 +572,14 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // Capture Commands endpoints
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["summary"] = "OCR text from screen";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["tags"].append("Capture");
-    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["description"] =
         "Extract text from screen using ROM font bitmap matching (OCR). "
         "Returns 24 lines x 32 characters. Uses ZX Spectrum ROM font patterns.";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["description"] =
-        "Screen OCR result";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["description"] = "Screen OCR result";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["rows"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
@@ -526,7 +592,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // Capture screen endpoint
     paths["/api/v1/emulator/{id}/capture/screen"]["get"]["summary"] = "Capture screen as image";
     paths["/api/v1/emulator/{id}/capture/screen"]["get"]["tags"].append("Capture");
-    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/capture/screen"]["get"]["description"] =
         "Capture screen as GIF or PNG image. Returns base64-encoded data.";
     paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/capture/screen"]["get"]["parameters"][0]["in"] = "path";
@@ -560,7 +626,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // BASIC Control endpoints
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["summary"] = "Execute BASIC command";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["tags"].append("BASIC Control");
-    paths["/api/v1/emulator/{id}/basic/run"]["post"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["description"] =
         "Inject a command into BASIC edit buffer AND execute it via simulated ENTER key. "
         "If no command specified, executes RUN. "
         "Automatically handles 128K menu navigation if needed. "
@@ -573,7 +639,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
          ["properties"]["command"]["type"] = "string";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["command"]["description"] = "BASIC command to execute (e.g., 'RUN', 'LIST', 'PRINT 1+1')";
-    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["description"] =
         "Command injected and executed";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["success"]["type"] = "boolean";
@@ -589,13 +655,13 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
          ["properties"]["basic_mode"]["type"] = "string";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["basic_mode"]["description"] = "Detected BASIC mode: '48K', '128K', 'trdos', or 'unknown'";
-    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["400"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["400"]["description"] =
         "Not in BASIC editor, TR-DOS active, or other injection error";
     paths["/api/v1/emulator/{id}/basic/run"]["post"]["responses"]["404"]["description"] = "Emulator not found";
 
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["summary"] = "Inject BASIC program into memory";
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["tags"].append("BASIC Control");
-    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["description"] =
         "Inject a multi-line BASIC program into memory without executing. "
         "Uses loadProgram() to tokenize and write to program area. "
         "Lines should be separated by newlines and include line numbers.";
@@ -608,48 +674,46 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
          ["properties"]["program"]["type"] = "string";
     paths["/api/v1/emulator/{id}/basic/inject"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["program"]["description"] = "BASIC program text (e.g., '10 PRINT \"HELLO\"\\n20 GOTO 10')";
-    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["200"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["200"]["description"] =
         "Program injected successfully";
-    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["400"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/inject"]["post"]["responses"]["400"]["description"] =
         "Missing program parameter or injection failed";
 
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["summary"] = "Extract BASIC program";
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["tags"].append("BASIC Control");
-    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["description"] =
         "Extract the current BASIC program from emulator memory as plain text.";
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/basic/extract"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["responses"]["200"]["description"] = 
-        "BASIC program as text";
+    paths["/api/v1/emulator/{id}/basic/extract"]["get"]["responses"]["200"]["description"] = "BASIC program as text";
 
     paths["/api/v1/emulator/{id}/basic/clear"]["post"]["summary"] = "Clear BASIC program";
     paths["/api/v1/emulator/{id}/basic/clear"]["post"]["tags"].append("BASIC Control");
-    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["description"] =
         "Clear the BASIC program in memory (equivalent to NEW command).";
     paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/basic/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["responses"]["200"]["description"] = 
-        "Program cleared";
+    paths["/api/v1/emulator/{id}/basic/clear"]["post"]["responses"]["200"]["description"] = "Program cleared";
 
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["summary"] = "Get BASIC environment state";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["tags"].append("BASIC Control");
-    paths["/api/v1/emulator/{id}/basic/state"]["get"]["description"] = 
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["description"] =
         "Get the current BASIC environment state including mode (48K/128K), menu vs editor, "
         "TR-DOS state, and readiness for commands.";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["description"] = 
-        "BASIC state information";
+    paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["description"] = "BASIC state information";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["state"]["type"] = "string";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["properties"]["state"]["description"] = "State: 'basic48k', 'basic128k', 'menu128k', 'trdos_active', 'trdos_sos_call', 'unknown'";
+         ["properties"]["state"]["description"] =
+             "State: 'basic48k', 'basic128k', 'menu128k', 'trdos_active', 'trdos_sos_call', 'unknown'";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["in_editor"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/basic/state"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
@@ -667,35 +731,44 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     // POST /api/v1/emulator/{id}/keyboard/tap
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/tap", "post");
     paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["summary"] = "Tap a single key";
-    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["key"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["frames"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["key"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["frames"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["responses"]["200"]["description"] = "Key tapped";
 
     // POST /api/v1/emulator/{id}/keyboard/combo
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/combo", "post");
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["summary"] = "Tap a key combo";
-    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["keys"]["type"] = "array";
-    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["keys"]["items"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["keys"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["keys"]["items"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["responses"]["200"]["description"] = "Combo tapped";
 
     // POST /api/v1/emulator/{id}/keyboard/type
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/type", "post");
     paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["summary"] = "Type text sequence";
-    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["text"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["delay_frames"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["tokenized"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["text"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["delay_frames"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["tokenized"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/keyboard/type"]["post"]["responses"]["200"]["description"] = "Text queued";
 
     // POST /api/v1/emulator/{id}/keyboard/macro
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/macro", "post");
     paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["summary"] = "Execute predefined macro";
-    paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["name"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["name"]["type"] = "string";
     paths["/api/v1/emulator/{id}/keyboard/macro"]["post"]["responses"]["200"]["description"] = "Macro queued";
 
     // POST /api/v1/emulator/{id}/keyboard/release_all
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/release_all", "post");
     paths["/api/v1/emulator/{id}/keyboard/release_all"]["post"]["summary"] = "Release all keys";
-    paths["/api/v1/emulator/{id}/keyboard/release_all"]["post"]["responses"]["200"]["description"] = "All keys released";
+    paths["/api/v1/emulator/{id}/keyboard/release_all"]["post"]["responses"]["200"]["description"] =
+        "All keys released";
 
     // GET /api/v1/emulator/{id}/keyboard/status
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/status", "get");
@@ -972,7 +1045,6 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/state/audio/channels"]["get"]["responses"]["200"]["description"] =
         "Audio channels information";
 
-
     // Analyzer Management endpoints
     paths["/api/v1/emulator/{id}/analyzers"]["get"]["summary"] = "List all analyzers";
     paths["/api/v1/emulator/{id}/analyzers"]["get"]["tags"].append("Analyzer Management");
@@ -1062,14 +1134,16 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["description"] =
         "Analyzer name (e.g., trdos)";
     paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["action"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["action"]["enum"].append("activate");
-    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["action"]["enum"].append("deactivate");
-    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["action"]["description"] = "Session action: activate or deactivate";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["action"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["action"]["enum"]
+             .append("activate");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["action"]["enum"]
+             .append("deactivate");
+    paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["action"]["description"] = "Session action: activate or deactivate";
     paths["/api/v1/emulator/{id}/analyzer/{name}/session"]["post"]["responses"]["200"]["description"] =
         "Session action completed";
 
@@ -1099,7 +1173,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["summary"] = "Get raw breakpoint events";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["tags"].append("Analyzer Management");
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["description"] =
-        "Retrieve raw breakpoint hit events with complete Z80 state. Includes main, alternate, index, and special registers. All values are JSON numbers.";
+        "Retrieve raw breakpoint hit events with complete Z80 state. Includes main, alternate, index, and special "
+        "registers. All values are JSON numbers.";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][0]["required"] = true;
@@ -1113,36 +1188,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["required"] = false;
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["description"] =
         "Maximum number of events to return (default: 100)";
-    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["parameters"][2]["schema"]["type"] =
+        "integer";
     paths["/api/v1/emulator/{id}/analyzer/{name}/raw/breakpoints"]["get"]["responses"]["200"]["description"] =
         "List of raw breakpoint events with full Z80 state (main, alternate, IX, IY, I, R) and 16-byte stack snapshot";
-
-    // Batch Execution endpoints
-    paths["/api/v1/batch/execute"]["post"]["summary"] = "Execute batch commands in parallel";
-    paths["/api/v1/batch/execute"]["post"]["description"] =
-        "Execute multiple commands across emulator instances using a 4-thread pool. ~2-3ms for 48 instances.";
-    paths["/api/v1/batch/execute"]["post"]["tags"].append("Batch Execution");
-    paths["/api/v1/batch/execute"]["post"]["requestBody"]["required"] = true;
-    paths["/api/v1/batch/execute"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
-        "#/components/schemas/BatchExecuteRequest";
-    paths["/api/v1/batch/execute"]["post"]["responses"]["200"]["description"] = "All commands succeeded";
-    paths["/api/v1/batch/execute"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
-        "#/components/schemas/BatchResult";
-    paths["/api/v1/batch/execute"]["post"]["responses"]["207"]["description"] =
-        "Partial success (some commands failed)";
-    paths["/api/v1/batch/execute"]["post"]["responses"]["207"]["content"]["application/json"]["schema"]["$ref"] =
-        "#/components/schemas/BatchResult";
-    paths["/api/v1/batch/execute"]["post"]["responses"]["400"]["description"] =
-        "Invalid request (missing emulator/command, command not batchable)";
-
-    paths["/api/v1/batch/commands"]["get"]["summary"] = "List batchable commands";
-    paths["/api/v1/batch/commands"]["get"]["description"] =
-        "Returns list of command names that can be used in batch execution";
-    paths["/api/v1/batch/commands"]["get"]["tags"].append("Batch Execution");
-    paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["description"] = "List of batchable commands";
-    paths["/api/v1/batch/commands"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
-        "#/components/schemas/BatchableCommandsResponse";
-
 
     // Debug Commands endpoints
     // Stepping
@@ -1152,7 +1201,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/step"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/step"]["post"]["responses"]["200"]["description"] = "Instruction executed, returns new PC";
+    paths["/api/v1/emulator/{id}/step"]["post"]["responses"]["200"]["description"] =
+        "Instruction executed, returns new PC";
 
     paths["/api/v1/emulator/{id}/steps"]["post"]["summary"] = "Execute N instructions";
     paths["/api/v1/emulator/{id}/steps"]["post"]["tags"].append("Debug Commands");
@@ -1160,10 +1210,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/steps"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["count"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["count"]["description"] = "Number of instructions to execute";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["count"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/steps"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["count"]["description"] = "Number of instructions to execute";
     paths["/api/v1/emulator/{id}/steps"]["post"]["responses"]["200"]["description"] = "Instructions executed";
 
     paths["/api/v1/emulator/{id}/stepover"]["post"]["summary"] = "Step over call instruction";
@@ -1208,8 +1258,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["$ref"] = "#/components/schemas/AddBreakpointRequest";
+    paths["/api/v1/emulator/{id}/breakpoints"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/AddBreakpointRequest";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["description"] = "Breakpoint created";
     paths["/api/v1/emulator/{id}/breakpoints"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
          ["$ref"] = "#/components/schemas/AddBreakpointResponse";
@@ -1232,7 +1282,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["parameters"][1]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["responses"]["200"]["description"] = "Breakpoint removed";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}"]["delete"]["responses"]["200"]["description"] =
+        "Breakpoint removed";
 
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["summary"] = "Enable breakpoint";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["tags"].append("Debug Commands");
@@ -1244,7 +1295,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["parameters"][1]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["responses"]["200"]["description"] = "Breakpoint enabled";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/enable"]["put"]["responses"]["200"]["description"] =
+        "Breakpoint enabled";
 
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["summary"] = "Disable breakpoint";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["tags"].append("Debug Commands");
@@ -1256,19 +1308,21 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["parameters"][1]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["responses"]["200"]["description"] = "Breakpoint disabled";
+    paths["/api/v1/emulator/{id}/breakpoints/{bp_id}/disable"]["put"]["responses"]["200"]["description"] =
+        "Breakpoint disabled";
 
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["summary"] = "Get breakpoint status";
-    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["description"] = 
-        "Returns information about the last triggered breakpoint, including type (memory/port), address, and access mode";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["description"] =
+        "Returns information about the last triggered breakpoint, including type (memory/port), address, and access "
+        "mode";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["description"] = "Breakpoint status";
-    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
-        "#/components/schemas/BreakpointStatusResponse";
+    paths["/api/v1/emulator/{id}/breakpoints/status"]["get"]["responses"]["200"]["content"]["application/json"]
+         ["schema"]["$ref"] = "#/components/schemas/BreakpointStatusResponse";
 
     // Memory inspection
     paths["/api/v1/emulator/{id}/registers"]["get"]["summary"] = "Get CPU registers";
@@ -1288,12 +1342,14 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["name"] = "addr";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["required"] = true;
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["description"] =
+        "Start address (hex or decimal)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][1]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["name"] = "len";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["required"] = false;
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] = "Number of bytes to read (default: 16, max: 256)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["description"] =
+        "Number of bytes to read (default: 16, max: 256)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["get"]["responses"]["200"]["description"] = "Memory content";
 
@@ -1307,17 +1363,24 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["parameters"][1]["name"] = "addr";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["parameters"][1]["required"] = true;
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["parameters"][1]["description"] = "Start address (hex or decimal)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["parameters"][1]["description"] =
+        "Start address (hex or decimal)";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["parameters"][1]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["type"] = "array";
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["items"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["description"] = "Byte values (0-255)";
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["hex"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["hex"]["description"] = "Space-separated hex bytes";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["data"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["data"]["items"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["data"]["description"] = "Byte values (0-255)";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["hex"]["description"] = "Space-separated hex bytes";
     paths["/api/v1/emulator/{id}/memory/{addr}"]["put"]["responses"]["200"]["description"] = "Memory written";
 
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["summary"] = "Read from physical page";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["description"] = "Read bytes from physical RAM/ROM/cache/misc page";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["description"] =
+        "Read bytes from physical RAM/ROM/cache/misc page";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][0]["in"] = "path";
@@ -1326,7 +1389,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][1]["name"] = "type";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][1]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][1]["required"] = true;
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][1]["description"] = "Memory type: ram|rom|cache|misc";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][1]["description"] =
+        "Memory type: ram|rom|cache|misc";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][1]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][2]["name"] = "page";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][2]["in"] = "path";
@@ -1336,17 +1400,21 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][3]["name"] = "offset";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][3]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][3]["required"] = true;
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][3]["description"] = "Offset within page (0-16383)";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][3]["description"] =
+        "Offset within page (0-16383)";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][3]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["name"] = "len";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["in"] = "query";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["required"] = false;
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["description"] = "Number of bytes to read (default: 128, max: 16384)";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["description"] =
+        "Number of bytes to read (default: 128, max: 16384)";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["parameters"][4]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["description"] = "Page content";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["get"]["responses"]["200"]["description"] =
+        "Page content";
 
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["summary"] = "Write to physical page";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["description"] = "Write bytes to physical page. ROM write requires force flag.";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["description"] =
+        "Write bytes to physical page. ROM write requires force flag.";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["tags"].append("Debug Commands");
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["parameters"][0]["in"] = "path";
@@ -1364,12 +1432,18 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["parameters"][3]["in"] = "path";
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["parameters"][3]["required"] = true;
     paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["parameters"][3]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["type"] = "array";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["data"]["items"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["hex"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["type"] = "boolean";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["force"]["description"] = "Required for ROM write";
-    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["responses"]["200"]["description"] = "Page written";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["data"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["data"]["items"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["hex"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["force"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["requestBody"]["content"]["application/json"]
+         ["schema"]["properties"]["force"]["description"] = "Required for ROM write";
+    paths["/api/v1/emulator/{id}/memory/{type}/{page}/{offset}"]["put"]["responses"]["200"]["description"] =
+        "Page written";
 
     paths["/api/v1/emulator/{id}/memory/info"]["get"]["summary"] = "Get memory configuration";
     paths["/api/v1/emulator/{id}/memory/info"]["get"]["description"] = "Get page counts and current Z80 bank mappings";
@@ -1398,7 +1472,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["name"] = "limit";
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["description"] = "Max entries to return (default: 50)";
+    paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["description"] =
+        "Max entries to return (default: 50)";
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/calltrace"]["get"]["responses"]["200"]["description"] = "Call trace entries";
 
@@ -1412,12 +1487,14 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["name"] = "address";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["description"] = "Start address (hex or decimal, default: PC)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["description"] =
+        "Start address (hex or decimal, default: PC)";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][1]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["name"] = "count";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["required"] = false;
-    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] =
+        "Number of instructions (default: 10, max: 100)";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] = "Disassembled instructions";
 
@@ -1441,24 +1518,29 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["name"] = "offset";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["in"] = "query";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["required"] = false;
-    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["description"] = "Offset within page (default: 0)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["description"] =
+        "Offset within page (default: 0)";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][3]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["name"] = "count";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["in"] = "query";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["required"] = false;
-    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["description"] = "Number of instructions (default: 10, max: 100)";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["description"] =
+        "Number of instructions (default: 10, max: 100)";
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["parameters"][4]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] = "Disassembled instructions from physical page";
+    paths["/api/v1/emulator/{id}/disasm/page"]["get"]["responses"]["200"]["description"] =
+        "Disassembled instructions from physical page";
 
     // Memory Profiler control endpoints - individual actions
     paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["summary"] = "Start memory profiler";
     paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["tags"].append("Memory Profiler");
-    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["description"] = "Start memory profiler session. Tracks read/write/execute patterns.";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["description"] =
+        "Start memory profiler session. Tracks read/write/execute patterns.";
     paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["responses"]["200"]["description"] = "Profiler started";
+    paths["/api/v1/emulator/{id}/profiler/memory/start"]["post"]["responses"]["200"]["description"] =
+        "Profiler started";
 
     paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["summary"] = "Stop memory profiler";
     paths["/api/v1/emulator/{id}/profiler/memory/stop"]["post"]["tags"].append("Memory Profiler");
@@ -1482,7 +1564,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["responses"]["200"]["description"] = "Profiler resumed";
+    paths["/api/v1/emulator/{id}/profiler/memory/resume"]["post"]["responses"]["200"]["description"] =
+        "Profiler resumed";
 
     paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["summary"] = "Clear memory profiler data";
     paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["tags"].append("Memory Profiler");
@@ -1490,7 +1573,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["responses"]["200"]["description"] = "Profiler data cleared";
+    paths["/api/v1/emulator/{id}/profiler/memory/clear"]["post"]["responses"]["200"]["description"] =
+        "Profiler data cleared";
 
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["summary"] = "Get memory profiler status";
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["tags"].append("Memory Profiler");
@@ -1500,7 +1584,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["responses"]["200"]["description"] = "Memory profiler status";
+    paths["/api/v1/emulator/{id}/profiler/memory/status"]["get"]["responses"]["200"]["description"] =
+        "Memory profiler status";
 
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["summary"] = "Get per-page access summaries";
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["tags"].append("Memory Profiler");
@@ -1513,9 +1598,11 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["name"] = "limit";
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["description"] = "Maximum pages to return (default: all active)";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["description"] =
+        "Maximum pages to return (default: all active)";
     paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["parameters"][1]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["responses"]["200"]["description"] = "Per-page access summaries";
+    paths["/api/v1/emulator/{id}/profiler/memory/pages"]["get"]["responses"]["200"]["description"] =
+        "Per-page access summaries";
 
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "Get address-level access counters";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["tags"].append("Memory Profiler");
@@ -1528,14 +1615,17 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["name"] = "page";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["description"] = "Physical page number (0-based)";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["description"] =
+        "Physical page number (0-based)";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["name"] = "mode";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["required"] = false;
-    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["description"] = "Address mode: z80 or physical (default: physical)";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["description"] =
+        "Address mode: z80 or physical (default: physical)";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][2]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["responses"]["200"]["description"] = "Address-level access counters";
+    paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["responses"]["200"]["description"] =
+        "Address-level access counters";
 
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["summary"] = "Get monitored region statistics";
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["tags"].append("Memory Profiler");
@@ -1545,7 +1635,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["responses"]["200"]["description"] = "Monitored region statistics";
+    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["responses"]["200"]["description"] =
+        "Monitored region statistics";
 
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "Save access data to file";
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["tags"].append("Memory Profiler");
@@ -1563,18 +1654,20 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
          ["properties"]["format"]["type"] = "string";
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["format"]["description"] = "Output format (yaml)";
-    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["responses"]["200"]["description"] = "Data saved successfully";
-
+    paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["responses"]["200"]["description"] =
+        "Data saved successfully";
 
     // Call Trace Profiler control endpoints - individual actions
     paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["summary"] = "Start call trace profiler";
     paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["tags"].append("Call Trace Profiler");
-    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["description"] = "Start call trace profiler session. Tracks CALL/RET/JP/JR/RST events.";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["description"] =
+        "Start call trace profiler session. Tracks CALL/RET/JP/JR/RST events.";
     paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["responses"]["200"]["description"] = "Profiler started";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/start"]["post"]["responses"]["200"]["description"] =
+        "Profiler started";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["summary"] = "Stop call trace profiler";
     paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["tags"].append("Call Trace Profiler");
@@ -1582,7 +1675,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["responses"]["200"]["description"] = "Profiler stopped";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stop"]["post"]["responses"]["200"]["description"] =
+        "Profiler stopped";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["summary"] = "Pause call trace profiler";
     paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["tags"].append("Call Trace Profiler");
@@ -1590,7 +1684,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["responses"]["200"]["description"] = "Profiler paused";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/pause"]["post"]["responses"]["200"]["description"] =
+        "Profiler paused";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["summary"] = "Resume call trace profiler";
     paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["tags"].append("Call Trace Profiler");
@@ -1598,7 +1693,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["responses"]["200"]["description"] = "Profiler resumed";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/resume"]["post"]["responses"]["200"]["description"] =
+        "Profiler resumed";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["summary"] = "Clear call trace profiler data";
     paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["tags"].append("Call Trace Profiler");
@@ -1606,7 +1702,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["responses"]["200"]["description"] = "Profiler data cleared";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/clear"]["post"]["responses"]["200"]["description"] =
+        "Profiler data cleared";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["summary"] = "Get call trace profiler status";
     paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["tags"].append("Call Trace Profiler");
@@ -1616,7 +1713,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["responses"]["200"]["description"] = "Call trace profiler status";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/status"]["get"]["responses"]["200"]["description"] =
+        "Call trace profiler status";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["summary"] = "Get call trace entries";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["tags"].append("Call Trace Profiler");
@@ -1629,9 +1727,11 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["name"] = "count";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["description"] = "Number of entries to return (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["description"] =
+        "Number of entries to return (default: 100)";
     paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["parameters"][1]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["responses"]["200"]["description"] = "Call trace entries";
+    paths["/api/v1/emulator/{id}/profiler/calltrace/entries"]["get"]["responses"]["200"]["description"] =
+        "Call trace entries";
 
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["summary"] = "Get call/return statistics";
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["tags"].append("Call Trace Profiler");
@@ -1641,22 +1741,25 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["responses"]["200"]["description"] = "Call/return statistics";
-
+    paths["/api/v1/emulator/{id}/profiler/calltrace/stats"]["get"]["responses"]["200"]["description"] =
+        "Call/return statistics";
 
     // Opcode Profiler control endpoints - individual actions
     paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["summary"] = "Start opcode profiler";
     paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["tags"].append("Opcode Profiler");
-    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["description"] = "Start opcode profiler session. Enables feature and clears previous data.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["description"] =
+        "Start opcode profiler session. Enables feature and clears previous data.";
     paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["responses"]["200"]["description"] = "Profiler started";
+    paths["/api/v1/emulator/{id}/profiler/opcode/start"]["post"]["responses"]["200"]["description"] =
+        "Profiler started";
 
     paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["summary"] = "Stop opcode profiler";
     paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["tags"].append("Opcode Profiler");
-    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["description"] = "Stop opcode profiler session. Data is preserved.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["description"] =
+        "Stop opcode profiler session. Data is preserved.";
     paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/opcode/stop"]["post"]["parameters"][0]["required"] = true;
@@ -1665,7 +1768,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 
     paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["summary"] = "Pause opcode profiler";
     paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["tags"].append("Opcode Profiler");
-    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["description"] = "Pause profiler session. Data is retained.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["description"] =
+        "Pause profiler session. Data is retained.";
     paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/opcode/pause"]["post"]["parameters"][0]["required"] = true;
@@ -1679,16 +1783,19 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["responses"]["200"]["description"] = "Profiler resumed";
+    paths["/api/v1/emulator/{id}/profiler/opcode/resume"]["post"]["responses"]["200"]["description"] =
+        "Profiler resumed";
 
     paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["summary"] = "Clear opcode profiler data";
     paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["tags"].append("Opcode Profiler");
-    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["description"] = "Clear all profiler data without changing session state.";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["description"] =
+        "Clear all profiler data without changing session state.";
     paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["responses"]["200"]["description"] = "Profiler data cleared";
+    paths["/api/v1/emulator/{id}/profiler/opcode/clear"]["post"]["responses"]["200"]["description"] =
+        "Profiler data cleared";
 
     paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["summary"] = "Get opcode profiler status";
     paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["tags"].append("Opcode Profiler");
@@ -1699,8 +1806,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["description"] = "Profiler status";
-    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["$ref"] = "#/components/schemas/ProfilerStatusResponse";
+    paths["/api/v1/emulator/{id}/profiler/opcode/status"]["get"]["responses"]["200"]["content"]["application/json"]
+         ["schema"]["$ref"] = "#/components/schemas/ProfilerStatusResponse";
 
     paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["summary"] = "Get opcode execution counters";
     paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["tags"].append("Opcode Profiler");
@@ -1713,11 +1820,13 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["name"] = "limit";
     paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["description"] = "Maximum opcodes to return (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["description"] =
+        "Maximum opcodes to return (default: 100)";
     paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["parameters"][1]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["description"] = "Opcode counters";
-    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["$ref"] = "#/components/schemas/ProfilerCountersResponse";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["description"] =
+        "Opcode counters";
+    paths["/api/v1/emulator/{id}/profiler/opcode/counters"]["get"]["responses"]["200"]["content"]["application/json"]
+         ["schema"]["$ref"] = "#/components/schemas/ProfilerCountersResponse";
 
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["summary"] = "Get recent execution trace";
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["tags"].append("Opcode Profiler");
@@ -1730,16 +1839,18 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["name"] = "count";
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["in"] = "query";
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["required"] = false;
-    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["description"] = "Number of trace entries (default: 100)";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["description"] =
+        "Number of trace entries (default: 100)";
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["parameters"][1]["schema"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["description"] = "Execution trace";
-    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-         ["$ref"] = "#/components/schemas/ProfilerTraceResponse";
+    paths["/api/v1/emulator/{id}/profiler/opcode/trace"]["get"]["responses"]["200"]["content"]["application/json"]
+         ["schema"]["$ref"] = "#/components/schemas/ProfilerTraceResponse";
 
     // Unified Profiler Control endpoints - individual actions
     paths["/api/v1/emulator/{id}/profiler/start"]["post"]["summary"] = "Start all profilers";
     paths["/api/v1/emulator/{id}/profiler/start"]["post"]["tags"].append("Unified Profiler");
-    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["description"] = "Start all profiler sessions (opcode, memory, calltrace) simultaneously.";
+    paths["/api/v1/emulator/{id}/profiler/start"]["post"]["description"] =
+        "Start all profiler sessions (opcode, memory, calltrace) simultaneously.";
     paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/start"]["post"]["parameters"][0]["required"] = true;
@@ -1776,7 +1887,8 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["responses"]["200"]["description"] = "All profiler data cleared";
+    paths["/api/v1/emulator/{id}/profiler/clear"]["post"]["responses"]["200"]["description"] =
+        "All profiler data cleared";
 
     paths["/api/v1/emulator/{id}/profiler/status"]["get"]["summary"] = "Get status of all profilers";
     paths["/api/v1/emulator/{id}/profiler/status"]["get"]["tags"].append("Unified Profiler");
@@ -1787,7 +1899,6 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     paths["/api/v1/emulator/{id}/profiler/status"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/profiler/status"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/profiler/status"]["get"]["responses"]["200"]["description"] = "All profiler statuses";
-
 
     spec["paths"] = paths;
 
@@ -1836,14 +1947,15 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["FeatureInfo"]["properties"]["mode"]["type"] = "string";
 
     // Debug Commands schemas
-    
+
     // Breakpoints List Response
     schemas["BreakpointsListResponse"]["type"] = "object";
     schemas["BreakpointsListResponse"]["description"] = "List of breakpoints";
     schemas["BreakpointsListResponse"]["properties"]["count"]["type"] = "integer";
     schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["type"] = "array";
-    schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] = "#/components/schemas/BreakpointInfo";
-    
+    schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] =
+        "#/components/schemas/BreakpointInfo";
+
     // Memory Breakpoint Info
     schemas["MemoryBreakpointInfo"]["type"] = "object";
     schemas["MemoryBreakpointInfo"]["description"] = "Memory breakpoint (execute/read/write)";
@@ -1857,7 +1969,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["MemoryBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["MemoryBreakpointInfo"]["properties"]["group"]["type"] = "string";
-    
+
     // Port Breakpoint Info
     schemas["PortBreakpointInfo"]["type"] = "object";
     schemas["PortBreakpointInfo"]["description"] = "Port breakpoint (in/out)";
@@ -1871,7 +1983,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["PortBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
-    
+
     // Keyboard Breakpoint Info
     schemas["KeyboardBreakpointInfo"]["type"] = "object";
     schemas["KeyboardBreakpointInfo"]["description"] = "Keyboard breakpoint (press/release)";
@@ -1884,7 +1996,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["KeyboardBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
     schemas["KeyboardBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["KeyboardBreakpointInfo"]["properties"]["group"]["type"] = "string";
-    
+
     // Generic BreakpointInfo (oneOf the above)
     schemas["BreakpointInfo"]["oneOf"][0]["$ref"] = "#/components/schemas/MemoryBreakpointInfo";
     schemas["BreakpointInfo"]["oneOf"][1]["$ref"] = "#/components/schemas/PortBreakpointInfo";
@@ -1893,7 +2005,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["memory"] = "#/components/schemas/MemoryBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["port"] = "#/components/schemas/PortBreakpointInfo";
     schemas["BreakpointInfo"]["discriminator"]["mapping"]["keyboard"] = "#/components/schemas/KeyboardBreakpointInfo";
-    
+
     // Breakpoint Status Response (last triggered)
     schemas["BreakpointStatusResponse"]["type"] = "object";
     schemas["BreakpointStatusResponse"]["description"] = "Last triggered breakpoint information";
@@ -1907,7 +2019,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_type"]["enum"].append("keyboard");
     schemas["BreakpointStatusResponse"]["properties"]["last_triggered_address"]["type"] = "integer";
     schemas["BreakpointStatusResponse"]["properties"]["paused_by_breakpoint"]["type"] = "boolean";
-    
+
     // Add Breakpoint Request
     schemas["AddBreakpointRequest"]["type"] = "object";
     schemas["AddBreakpointRequest"]["description"] = "Request to add a breakpoint";
@@ -1921,12 +2033,13 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_in");
     schemas["AddBreakpointRequest"]["properties"]["type"]["enum"].append("port_out");
     schemas["AddBreakpointRequest"]["properties"]["address"]["type"] = "integer";
-    schemas["AddBreakpointRequest"]["properties"]["address"]["description"] = "Z80 address (0-65535) or port number (0-255)";
+    schemas["AddBreakpointRequest"]["properties"]["address"]["description"] =
+        "Z80 address (0-65535) or port number (0-255)";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["group"]["description"] = "Optional group name";
-    
+
     // Add Breakpoint Response
     schemas["AddBreakpointResponse"]["type"] = "object";
     schemas["AddBreakpointResponse"]["description"] = "Response after adding a breakpoint";
@@ -2038,16 +2151,18 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["ProfilerCountersResponse"]["properties"]["limit"]["type"] = "integer";
     schemas["ProfilerCountersResponse"]["properties"]["count"]["type"] = "integer";
     schemas["ProfilerCountersResponse"]["properties"]["counters"]["type"] = "array";
-    schemas["ProfilerCountersResponse"]["properties"]["counters"]["items"]["$ref"] = "#/components/schemas/OpcodeCounter";
+    schemas["ProfilerCountersResponse"]["properties"]["counters"]["items"]["$ref"] =
+        "#/components/schemas/OpcodeCounter";
 
     schemas["OpcodeCounter"]["type"] = "object";
     schemas["OpcodeCounter"]["description"] = "Single opcode counter entry";
     schemas["OpcodeCounter"]["properties"]["prefix"]["type"] = "integer";
-    schemas["OpcodeCounter"]["properties"]["prefix"]["description"] = "Prefix code (0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB)";
+    schemas["OpcodeCounter"]["properties"]["prefix"]["description"] =
+        "Prefix code (0=none, 0xCB, 0xDD, 0xED, 0xFD, 0xDDCB, 0xFDCB)";
     schemas["OpcodeCounter"]["properties"]["prefix_name"]["type"] = "string";
     schemas["OpcodeCounter"]["properties"]["opcode"]["type"] = "integer";
     schemas["OpcodeCounter"]["properties"]["count"]["type"] = "integer";
-    
+
     schemas["ProfilerTraceResponse"]["type"] = "object";
     schemas["ProfilerTraceResponse"]["description"] = "Opcode execution trace";
     schemas["ProfilerTraceResponse"]["properties"]["emulator_id"]["type"] = "string";
@@ -2068,43 +2183,6 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
 
     spec["components"]["schemas"] = schemas;
-
-    // Batch command schemas
-    schemas["BatchCommand"]["type"] = "object";
-    schemas["BatchCommand"]["description"] = "A single command in a batch";
-    schemas["BatchCommand"]["required"].append("emulator");
-    schemas["BatchCommand"]["required"].append("command");
-    schemas["BatchCommand"]["properties"]["emulator"]["type"] = "string";
-    schemas["BatchCommand"]["properties"]["emulator"]["description"] = "Emulator ID, UUID, or index";
-    schemas["BatchCommand"]["properties"]["command"]["type"] = "string";
-    schemas["BatchCommand"]["properties"]["command"]["description"] = "Command name: load-snapshot, reset, pause, resume, feature";
-    schemas["BatchCommand"]["properties"]["arg1"]["type"] = "string";
-    schemas["BatchCommand"]["properties"]["arg1"]["description"] = "First argument (e.g., file path, feature name)";
-    schemas["BatchCommand"]["properties"]["arg2"]["type"] = "string";
-    schemas["BatchCommand"]["properties"]["arg2"]["description"] = "Second argument (e.g., on/off for feature)";
-
-    schemas["BatchExecuteRequest"]["type"] = "object";
-    schemas["BatchExecuteRequest"]["description"] = "Batch execution request";
-    schemas["BatchExecuteRequest"]["required"].append("commands");
-    schemas["BatchExecuteRequest"]["properties"]["commands"]["type"] = "array";
-    schemas["BatchExecuteRequest"]["properties"]["commands"]["items"]["$ref"] = "#/components/schemas/BatchCommand";
-
-    schemas["BatchResult"]["type"] = "object";
-    schemas["BatchResult"]["description"] = "Batch execution result";
-    schemas["BatchResult"]["properties"]["success"]["type"] = "boolean";
-    schemas["BatchResult"]["properties"]["total"]["type"] = "integer";
-    schemas["BatchResult"]["properties"]["succeeded"]["type"] = "integer";
-    schemas["BatchResult"]["properties"]["failed"]["type"] = "integer";
-    schemas["BatchResult"]["properties"]["duration_ms"]["type"] = "number";
-    schemas["BatchResult"]["properties"]["results"]["type"] = "array";
-
-    schemas["BatchableCommandsResponse"]["type"] = "object";
-    schemas["BatchableCommandsResponse"]["description"] = "List of batchable commands";
-    schemas["BatchableCommandsResponse"]["properties"]["commands"]["type"] = "array";
-    schemas["BatchableCommandsResponse"]["properties"]["count"]["type"] = "integer";
-
-    spec["components"]["schemas"] = schemas;
-
 
     auto resp = HttpResponse::newHttpJsonResponse(spec);
     addCorsHeaders(resp);

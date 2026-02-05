@@ -57,6 +57,13 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
 )
 
+# Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
+if (ENABLE_PYTHON_AUTOMATION)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wno-deprecated-declarations)
+    endif()
+endif()
+
 
 # Install the library
 install(TARGETS ${PROJECT_NAME}

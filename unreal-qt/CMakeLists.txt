@@ -295,7 +295,6 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        # unrealng::core # REMOVED - comes through automation
         unrealng::automation # This brings in core as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
