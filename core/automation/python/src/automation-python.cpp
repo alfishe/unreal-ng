@@ -1,17 +1,18 @@
 #include "automation-python.h"
-#include "emulator/python_emulator.h"
 
 #include <chrono>
-#include <thread>
 #include <iostream>
+#include <thread>
+
+#include "emulator/python_emulator.h"
+
 
 // Define embedded Python module for emulator bindings
-PYBIND11_EMBEDDED_MODULE(unreal_emulator, m) {
+PYBIND11_EMBEDDED_MODULE(unreal_emulator, m)
+{
     m.doc() = "Unreal Speccy NG Emulator Python bindings";
     PythonBindings::registerEmulatorBindings(m);
 }
-
-
 
 /// region <Methods>
 void AutomationPython::start()
@@ -74,7 +75,7 @@ void AutomationPython::processPython()
     try
     {
         std::string simplePythonCode = "print('Python tread running')";
-        std::string longRunningPythonCode = 
+        std::string longRunningPythonCode =
             "import time\n"
             "import threading\n"
             "import sys\n"
@@ -102,7 +103,7 @@ void AutomationPython::processPython()
     PyGILState_Release(gstate);
 }
 
-bool AutomationPython::executePython(const std::string &code)
+bool AutomationPython::executePython(const std::string& code)
 {
     bool result = false;
 
@@ -142,11 +143,12 @@ void AutomationPython::interruptPythonExecution()
         PyErr_SetInterrupt();  // Triggers KeyboardInterrupt
 
         // Method 2: Alternative approach
-        Py_AddPendingCall([](void*) -> int {
-            PyErr_SetInterrupt();
-            return 0;
-        }, nullptr);
-
+        Py_AddPendingCall(
+            [](void*) -> int {
+                PyErr_SetInterrupt();
+                return 0;
+            },
+            nullptr);
 
         // Ensure we have a valid thread state
         if (_pythonThreadId != 0)
@@ -171,7 +173,12 @@ void AutomationPython::interruptPythonExecution()
             std::cerr << "Error: Python thread state is null." << std::endl;
         }
 
-        PyThreadState_SetAsyncExc(reinterpret_cast<unsigned long>(PyThreadState_Get()), PyExc_SystemExit);
+        // Note: PyThreadState_SetAsyncExc takes thread_id, not a pointer
+        PyThreadState* currentState = PyThreadState_Get();
+        if (currentState)
+        {
+            PyThreadState_SetAsyncExc(currentState->thread_id, PyExc_SystemExit);
+        }
 
         PyGILState_Release(gstate);
     }
@@ -189,30 +196,31 @@ void AutomationPython::threadFunc(AutomationPython* python)
     pthread_setname_np(threadName);
 #endif
 #ifdef __linux__
-    #include <pthread.h>
-	pthread_setname_np(pthread_self(), threadName);
+#include <pthread.h>
+    pthread_setname_np(pthread_self(), threadName);
 #endif
 #if defined _WIN32 && defined MSVC
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
         GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
     if (setThreadDescription != nullptr)
     {
-	    wchar_t wname[24];
-	    size_t retval;
-        mbstowcs_s(&retval, wname, threadName, sizeof (threadName) / sizeof (threadName[0]));
+        wchar_t wname[24];
+        size_t retval;
+        mbstowcs_s(&retval, wname, threadName, sizeof(threadName) / sizeof(threadName[0]));
         setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
 
 #if defined _WIN32 && defined __GNUC__
     static auto setThreadDescription = reinterpret_cast<HRESULT(WINAPI*)(HANDLE, PCWSTR)>(
-            GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
+        GetProcAddress(GetModuleHandle("kernelbase.dll"), "SetThreadDescription"));
     if (setThreadDescription != nullptr)
     {
         wchar_t wname[24];
         size_t retval;
         mbstate_t conversion;
-        mbsrtowcs_s(&retval, wname, (size_t)(sizeof (wname) / sizeof (wname[0])), &threadName, (size_t)(sizeof (threadName) / sizeof (threadName[0])), &conversion);
+        mbsrtowcs_s(&retval, wname, (size_t)(sizeof(wname) / sizeof(wname[0])), &threadName,
+                    (size_t)(sizeof(threadName) / sizeof(threadName[0])), &conversion);
         setThreadDescription(GetCurrentThread(), wname);
     }
 #endif
