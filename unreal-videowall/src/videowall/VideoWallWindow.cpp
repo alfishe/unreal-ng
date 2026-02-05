@@ -1,8 +1,15 @@
-#include "videowall/VideoWallWindow.h"
+// MSVC: winsock2.h must be included before any header that includes windows.h
+#ifdef _MSC_VER
+#include <windows.h>
+#include <winsock2.h>
+
+#endif
 
 #include <base/featuremanager.h>
 #include <emulatormanager.h>
 #include <platform.h>
+
+#include "videowall/VideoWallWindow.h"
 
 #ifdef ENABLE_AUTOMATION
 #include <automation/automation.h>
@@ -12,6 +19,7 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QScreen>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
@@ -27,11 +35,103 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 {
     _emulatorManager = EmulatorManager::GetInstance();
 
+    setupUI();
+    createDefaultPresets();
+
 #ifdef ENABLE_AUTOMATION
-    // Initialize automation modules (WebAPI, CLI, Python, Lua)
+    // CRITICAL: Create Automation object immediately (not deferred) so it's guaranteed
+    // to exist when destructor runs. This prevents race condition where destructor
+    // tries to stop() an uninitialized or garbage pointer.
     _automation = std::make_unique<Automation>();
-    _automation->start();
-    qDebug() << "Automation modules initialized and started";
+#endif
+
+    // CRITICAL: Defer starting automation until after the Qt event loop is running.
+    // On macOS, starting automation threads before app.exec() causes race conditions with
+    // CoreText font initialization, leading to SIGSEGV in TBaseFont::CopyOpticalSizeAxis().
+    // This single-shot timer fires after the event loop starts, ensuring the application
+    // is fully initialized before we spawn threads or access the menu bar.
+    QTimer::singleShot(0, this, &VideoWallWindow::initializeAfterEventLoopStart);
+
+    // Debug: Log initial window geometry at startup
+    QTimer::singleShot(100, this, [this]() {
+        qDebug() << "=== INITIAL WINDOW GEOMETRY AT STARTUP ===";
+        qDebug() << "  geometry():" << geometry();
+        qDebug() << "  frameGeometry():" << frameGeometry();
+        qDebug() << "  windowState():" << windowState();
+        qDebug() << "  screen():" << window()->screen()->name();
+        qDebug() << "==========================================";
+    });
+
+    // Enable mouse tracking for auto-show menu bar in fullscreen
+    setMouseTracking(true);
+    centralWidget()->setMouseTracking(true);
+    _tileGrid->installEventFilter(this);
+
+    resize(800, 600);
+    setWindowTitle(tr("Unreal Speccy Video Wall"));
+}
+
+VideoWallWindow::~VideoWallWindow()
+{
+    // Destructors must not throw - wrap everything in try-catch
+    try
+    {
+        // CRITICAL: Stop automation FIRST, before any Qt objects are destroyed.
+        // The automation threads may reference Qt objects, so we must join all threads
+        // before the widget destruction begins.
+#ifdef ENABLE_AUTOMATION
+        if (_automation)
+        {
+            _automation->stop();
+            _automation.reset();
+        }
+#endif
+
+        // Clean up sound manager
+        if (_soundManager)
+        {
+            _soundManager->stop();
+            _soundManager->deinit();
+            delete _soundManager;
+            _soundManager = nullptr;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        qCritical() << "Exception in VideoWallWindow destructor:" << e.what();
+    }
+    catch (...)
+    {
+        qCritical() << "Unknown exception in VideoWallWindow destructor";
+    }
+}
+
+void VideoWallWindow::setupUI()
+{
+    _tileGrid = new TileGrid(this);
+    setCentralWidget(_tileGrid);
+
+    // Set black background to hide gaps at screen edges
+    _tileGrid->setAutoFillBackground(true);
+    QPalette pal = _tileGrid->palette();
+    pal.setColor(QPalette::Window, Qt::black);
+    _tileGrid->setPalette(pal);
+}
+
+void VideoWallWindow::initializeAfterEventLoopStart()
+{
+    // This method is called via QTimer::singleShot(0, ...) from the constructor.
+    // At this point, the Qt event loop is running and the window is fully initialized.
+    // This eliminates race conditions with CoreText font access on macOS.
+
+#ifdef ENABLE_AUTOMATION
+    // Start automation modules (WebAPI, CLI, Python, Lua)
+    // The Automation object was created in constructor, we only defer start().
+    if (_automation)
+    {
+        _automation->start();
+        qDebug() << "Automation modules started";
+    }
 #endif  // ENABLE_AUTOMATION
 
     // Initialize sound manager for audio binding to focused tile
@@ -46,46 +146,8 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
         qWarning() << "Failed to initialize sound manager";
     }
 
-    setupUI();
+    // Now safe to create menus - the window is fully initialized
     createMenus();
-    createDefaultPresets();
-
-    // Debug: Log initial window geometry at startup
-    QTimer::singleShot(100, this, [this]() {
-        qDebug() << "=== INITIAL WINDOW GEOMETRY AT STARTUP ===";
-        qDebug() << "  geometry():" << geometry();
-        qDebug() << "  frameGeometry():" << frameGeometry();
-        qDebug() << "  windowState():" << windowState();
-        qDebug() << "  screen():" << window()->screen()->name();
-        qDebug() << "==========================================";
-    });
-
-    resize(800, 600);
-    setWindowTitle(tr("Unreal Speccy Video Wall"));
-}
-
-VideoWallWindow::~VideoWallWindow()
-{
-    // Clean up sound manager
-    if (_soundManager)
-    {
-        _soundManager->stop();
-        _soundManager->deinit();
-        delete _soundManager;
-        _soundManager = nullptr;
-    }
-}
-
-void VideoWallWindow::setupUI()
-{
-    _tileGrid = new TileGrid(this);
-    setCentralWidget(_tileGrid);
-
-    // Set black background to hide gaps at screen edges
-    _tileGrid->setAutoFillBackground(true);
-    QPalette pal = _tileGrid->palette();
-    pal.setColor(QPalette::Window, Qt::black);
-    _tileGrid->setPalette(pal);
 }
 
 void VideoWallWindow::createMenus()
@@ -117,7 +179,7 @@ void VideoWallWindow::createMenus()
     connect(framelessAction, &QAction::triggered, this, &VideoWallWindow::toggleFramelessMode);
 
     QAction* fullscreenAction = viewMenu->addAction(tr("F&ullscreen Mode"));
-    fullscreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+    fullscreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     fullscreenAction->setCheckable(true);
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
@@ -160,10 +222,10 @@ void VideoWallWindow::addEmulatorTile()
         emulator->StartAsync();
 
         EmulatorTile* tile = new EmulatorTile(emulator, this);
-        
+
         // Connect tile click signal for audio binding (only on user click, not Qt auto-focus)
         connect(tile, &EmulatorTile::tileClicked, this, &VideoWallWindow::onTileClicked);
-        
+
         _tileGrid->addTile(tile);
     }
 }
@@ -250,8 +312,14 @@ void VideoWallWindow::keyPressEvent(QKeyEvent* event)
     {
         toggleFramelessMode();
     }
-    // Cmd+Shift+F: Toggle fullscreen mode
-    else if (event->key() == Qt::Key_F && (event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)))
+    // Cmd+F / Ctrl+F: Toggle fullscreen mode
+    else if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier))
+    {
+        toggleFullscreenMode();
+    }
+    // Escape: Exit fullscreen mode
+    // Use _isFullscreen flag (not windowState()) for macOS native fullscreen compatibility
+    else if (event->key() == Qt::Key_Escape && _isFullscreen)
     {
         toggleFullscreenMode();
     }
@@ -266,6 +334,69 @@ void VideoWallWindow::keyReleaseEvent(QKeyEvent* event)
     // Key events routed to focused tile via EmulatorTile::keyReleaseEvent
     // The tile with focus receives events directly from Qt
     QMainWindow::keyReleaseEvent(event);
+}
+
+void VideoWallWindow::mouseMoveEvent(QMouseEvent* event)
+{
+    // In fullscreen mode, show menu when mouse is near top of screen
+    if (_isFullscreen && event->position().y() < MENU_TRIGGER_ZONE_HEIGHT)
+    {
+        menuBar()->show();
+
+        // Reset auto-hide timer
+        if (!_menuAutoHideTimer)
+        {
+            _menuAutoHideTimer = new QTimer(this);
+            _menuAutoHideTimer->setSingleShot(true);
+            connect(_menuAutoHideTimer, &QTimer::timeout, this, [this]() {
+                // Only hide if still in fullscreen and mouse is not over menu
+                if (_isFullscreen && !menuBar()->underMouse())
+                {
+                    menuBar()->hide();
+                }
+            });
+        }
+        _menuAutoHideTimer->stop();  // Reset timer while mouse is at top
+    }
+    else if (_isFullscreen && menuBar()->isVisible() && !menuBar()->underMouse())
+    {
+        // Mouse moved away from top - start auto-hide timer
+        if (_menuAutoHideTimer)
+        {
+            _menuAutoHideTimer->start(MENU_AUTO_HIDE_DELAY_MS);
+        }
+    }
+
+    QMainWindow::mouseMoveEvent(event);
+}
+
+bool VideoWallWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // Catch mouse moves from child widgets (tiles) to trigger menu show/hide
+    if (event->type() == QEvent::MouseMove && _isFullscreen)
+    {
+        QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+        QPoint globalPos = mouseEvent->globalPosition().toPoint();
+        QPoint localPos = mapFromGlobal(globalPos);
+
+        if (localPos.y() < MENU_TRIGGER_ZONE_HEIGHT)
+        {
+            menuBar()->show();
+            if (_menuAutoHideTimer)
+            {
+                _menuAutoHideTimer->stop();
+            }
+        }
+        else if (menuBar()->isVisible() && !menuBar()->underMouse())
+        {
+            if (_menuAutoHideTimer && !_menuAutoHideTimer->isActive())
+            {
+                _menuAutoHideTimer->start(MENU_AUTO_HIDE_DELAY_MS);
+            }
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void VideoWallWindow::toggleFramelessMode()
@@ -425,6 +556,9 @@ void VideoWallWindow::toggleFullscreenWindows()
         // Restore window flags (remove frameless)
         setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
 
+        // Show menu bar again
+        menuBar()->show();
+
         // Show normal first
         showNormal();
 
@@ -459,6 +593,9 @@ void VideoWallWindow::toggleFullscreenWindows()
         setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
         setWindowState(Qt::WindowNoState);
 
+        // Hide menu bar for cleaner fullscreen
+        menuBar()->hide();
+
         QScreen* screen = window()->screen();
         showFullScreen();
 
@@ -478,25 +615,48 @@ void VideoWallWindow::toggleFullscreenLinux()
         _windowMode = WindowMode::Windowed;
         _isFullscreen = false;
 
+        // Tell TileGrid we're exiting fullscreen so it can use size constraints again
+        // But first clear the constraints so window can resize freely
+        _tileGrid->setFullscreenMode(true);  // Keep constraints disabled temporarily
+        _tileGrid->setMinimumSize(0, 0);
+        _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
         // Note: Sound stays disabled - user explicitly disabled it for performance
 
-        // Restore geometry and show
-        if (_savedGeometry.isValid())
-        {
-            setGeometry(_savedGeometry);
-        }
+        // Show the menu bar again
+        menuBar()->show();
+
         showNormal();
 
-        // Restore emulators after window state change
-        QTimer::singleShot(100, this, [this]() {
-            restoreSavedEmulators();
-            qDebug() << "Fullscreen → windowed (restored" << _savedEmulatorIds.size() << "tiles)";
+        // Restore geometry and tiles after window state change is complete
+        QRect savedGeom = _savedGeometry;  // Copy for lambda capture
+        QTimer::singleShot(100, this, [this, savedGeom]() {
+            // Clear size constraints again to allow resize
+            _tileGrid->setMinimumSize(0, 0);
+            _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
+            if (savedGeom.isValid())
+            {
+                qDebug() << "Restoring geometry to:" << savedGeom;
+                // Use resize + move instead of setGeometry for more reliable restoration
+                resize(savedGeom.size());
+                move(savedGeom.topLeft());
+            }
+
+            // Resize grid to fit window - keeps tiles that fit, disposes the rest
+            resizeGridIntelligently(size());
+
+            // Re-enable TileGrid size constraints now that we're done resizing
+            _tileGrid->setFullscreenMode(false);
+
+            qDebug() << "Fullscreen → windowed (" << _tileGrid->tiles().size() << "tiles)";
         });
     }
     else
     {
         // Entering fullscreen
         _savedGeometry = geometry();
+        qDebug() << "Saved geometry before fullscreen:" << _savedGeometry;
         _savedEmulatorIds.clear();
         for (const auto* tile : _tileGrid->tiles())
         {
@@ -506,15 +666,34 @@ void VideoWallWindow::toggleFullscreenLinux()
         _windowMode = WindowMode::Fullscreen;
         _isFullscreen = true;
 
+        // Tell TileGrid we're in fullscreen so it skips setMinimumSize() calls
+        _tileGrid->setFullscreenMode(true);
+
         // Note: Sound already disabled at emulator creation in addEmulatorTile()
 
+        // CRITICAL: Clear size constraints BEFORE entering fullscreen
+        // TileGrid's setMinimumSize() can prevent fullscreen on Linux window managers
+        _tileGrid->setMinimumSize(0, 0);
+        _tileGrid->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+
         QScreen* screen = window()->screen();
+
+        // Hide menu bar for cleaner fullscreen
+        menuBar()->hide();
+
         showFullScreen();
 
-        // Calculate layout after fullscreen transition
-        QTimer::singleShot(100, this, [this, screen]() {
-            calculateAndApplyOptimalLayout(screen->size());
-            qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
+        // Calculate layout after fullscreen transition is complete
+        QTimer::singleShot(200, this, [this, screen]() {
+            if (windowState() & Qt::WindowFullScreen)
+            {
+                calculateAndApplyOptimalLayout(screen->size());
+                qDebug() << "Windowed → fullscreen:" << _tileGrid->tiles().size() << "tiles";
+            }
+            else
+            {
+                qDebug() << "Fullscreen transition failed - not in fullscreen state";
+            }
         });
     }
 }
@@ -618,7 +797,7 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
                     {
                         emulatorId = tile->emulator()->GetUUID();
                     }
-                    
+
                     // CRITICAL: Clear tile's shared_ptr reference FIRST
                     tile->prepareForDeletion();
 
@@ -649,6 +828,15 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
 
 void VideoWallWindow::restoreSavedEmulators()
 {
+    // If there were no saved emulators (went to fullscreen from empty window),
+    // resize the grid to fit the restored window instead of removing all tiles
+    if (_savedEmulatorIds.empty())
+    {
+        resizeGridIntelligently(size());
+        qDebug() << "No saved emulators - resized grid to fit window:" << _tileGrid->tiles().size() << "tiles";
+        return;
+    }
+
     // Build set of saved UUIDs for fast lookup
     std::unordered_set<std::string> savedIds(_savedEmulatorIds.begin(), _savedEmulatorIds.end());
 
@@ -670,8 +858,9 @@ void VideoWallWindow::restoreSavedEmulators()
     for (auto it = tilesToRemove.rbegin(); it != tilesToRemove.rend(); ++it)
     {
         EmulatorTile* tile = *it;
-        if (!tile) continue;
-        
+        if (!tile)
+            continue;
+
         // Get emulator ID before clearing the reference
         std::string uuid;
         if (tile->emulator())

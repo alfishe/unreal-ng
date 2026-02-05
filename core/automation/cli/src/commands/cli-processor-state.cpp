@@ -1,12 +1,15 @@
-#include "cli-processor.h"
+#include <debugger/breakpoints/breakpointmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
 #include <emulator/platform.h>
-#include <debugger/breakpoints/breakpointmanager.h>
 
 #include <algorithm>
+#include <bitset>
 #include <iomanip>
 #include <sstream>
+
+#include "cli-processor.h"
+
 
 /// region <State Inspection Commands>
 
@@ -68,7 +71,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
 
         ss << "  state audio beeper   - Show beeper state" << NEWLINE;
         ss << "  state audio channels - Show all audio sources mixer state" << NEWLINE;
-        
+
         session.SendResponse(ss.str());
         return;
     }
@@ -90,13 +93,13 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             HandleStateMemoryROM(session, context);
             return;
         }
-        
+
         // Check for subcommands
         if (args.size() > 1)
         {
             std::string subcommand = args[1];
             std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
-            
+
             if (subcommand == "ram")
             {
                 HandleStateMemoryRAM(session, context);
@@ -110,11 +113,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             else
             {
                 session.SendResponse(std::string("Error: Unknown subcommand '") + args[1] + "'" + NEWLINE +
-                                    "Available: ram, rom" + NEWLINE);
+                                     "Available: ram, rom" + NEWLINE);
                 return;
             }
         }
-        
+
         // No subcommand - show complete memory state
         HandleStateMemory(session, context);
         return;
@@ -127,7 +130,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
         {
             std::string subcommand = args[1];
             std::transform(subcommand.begin(), subcommand.end(), subcommand.begin(), ::tolower);
-            
+
             if (subcommand == "mode")
             {
                 HandleStateScreenMode(session, context);
@@ -147,11 +150,11 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             else
             {
                 session.SendResponse(std::string("Error: Unknown subcommand '") + args[1] + "'" + NEWLINE +
-                                    "Available: mode, flash, verbose" + NEWLINE);
+                                     "Available: mode, flash, verbose" + NEWLINE);
                 return;
             }
         }
-        
+
         // No subcommand - show brief screen state
         HandleStateScreen(session, context);
         return;
@@ -179,7 +182,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
                 }
 
                 // We have additional arguments after "ay"
-                std::string ayArg0 = args[2]; // First arg after "ay"
+                std::string ayArg0 = args[2];  // First arg after "ay"
 
                 // Check for: state audio ay <chip> reg <register>
                 if (args.size() >= 5 && (args[3] == "reg" || args[3] == "register"))
@@ -223,7 +226,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
             else
             {
                 session.SendResponse(std::string("Error: Unknown audio subcommand '") + args[1] + "'" + NEWLINE +
-                                    "Available: ay, beeper, gs, covox, channels" + NEWLINE);
+                                     "Available: ay, beeper, gs, covox, channels" + NEWLINE);
                 return;
             }
         }
@@ -237,7 +240,7 @@ void CLIProcessor::HandleState(const ClientSession& session, const std::vector<s
     else
     {
         session.SendResponse(std::string("Error: Unknown subsystem '") + subsystem + "'" + NEWLINE +
-                            "Available subsystems: memory, ram, rom, screen, audio" + NEWLINE);
+                             "Available subsystems: memory, ram, rom, screen, audio" + NEWLINE);
         return;
     }
 }
@@ -247,11 +250,11 @@ void CLIProcessor::HandleStateScreen(const ClientSession& session, EmulatorConte
     std::stringstream ss;
     CONFIG& config = context->config;
     EmulatorState& state = context->emulatorState;
-    
+
     ss << "Screen Configuration (Brief)" << NEWLINE;
     ss << "============================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Determine model
     std::string model = "ZX Spectrum 48K";
     if (config.mem_model == MM_SPECTRUM128)
@@ -260,31 +263,30 @@ void CLIProcessor::HandleStateScreen(const ClientSession& session, EmulatorConte
         model = "Pentagon 128K";
     else if (config.mem_model == MM_PLUS3)
         model = "ZX Spectrum +3";
-    
+
     ss << "Model:        " << model << NEWLINE;
     ss << "Video Mode:   Standard (256×192, 2 colors per 8×8 block)" << NEWLINE;
-    
-    bool is128K = (config.mem_model == MM_SPECTRUM128 || 
-                   config.mem_model == MM_PENTAGON || 
-                   config.mem_model == MM_PLUS3);
-    
+
+    bool is128K =
+        (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3);
+
     if (is128K)
     {
         uint8_t port7FFD = state.p7FFD;
         bool shadowScreen = (port7FFD & 0x08) != 0;
-        
-        ss << "Active Screen: Screen " << (shadowScreen ? "1" : "0") 
-           << " (RAM page " << (shadowScreen ? "7" : "5") << ")" << NEWLINE;
+
+        ss << "Active Screen: Screen " << (shadowScreen ? "1" : "0") << " (RAM page " << (shadowScreen ? "7" : "5")
+           << ")" << NEWLINE;
     }
     else
     {
         ss << "Active Screen: Single screen (RAM page 5)" << NEWLINE;
     }
-    
+
     ss << "Border Color: " << (int)(context->pScreen->GetBorderColor()) << NEWLINE;
     ss << NEWLINE;
     ss << "Use 'state screen verbose' for detailed information" << NEWLINE;
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -293,26 +295,25 @@ void CLIProcessor::HandleStateScreenVerbose(const ClientSession& session, Emulat
     std::stringstream ss;
     CONFIG& config = context->config;
     EmulatorState& state = context->emulatorState;
-    
+
     ss << "Screen Configuration (Verbose)" << NEWLINE;
     ss << "==============================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Determine model
-    bool is128K = (config.mem_model == MM_SPECTRUM128 || 
-                   config.mem_model == MM_PENTAGON || 
-                   config.mem_model == MM_PLUS3);
-    
+    bool is128K =
+        (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3);
+
     if (is128K)
     {
         // 128K model - show both screens
         uint8_t port7FFD = state.p7FFD;
         bool shadowScreen = (port7FFD & 0x08) != 0;  // Bit 3
-        
+
         ss << "Model: ZX Spectrum 128K" << NEWLINE;
         ss << "Active Screen: Screen " << (shadowScreen ? "1 (shadow)" : "0 (normal)") << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "Screen 0 (Normal - RAM Page 5):" << NEWLINE;
         ss << "  Physical Location: RAM page 5, offset 0x0000-0x1FFF" << NEWLINE;
         ss << "  Pixel Data:        Page 5 offset 0x0000-0x17FF (6144 bytes)" << NEWLINE;
@@ -321,12 +322,12 @@ void CLIProcessor::HandleStateScreenVerbose(const ClientSession& session, Emulat
         ss << "  ULA Status:        " << (shadowScreen ? "Not displayed" : "CURRENTLY DISPLAYED") << NEWLINE;
         ss << "  Contention:        Active when accessed via 0x4000-0x7FFF" << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "Screen 1 (Shadow - RAM Page 7):" << NEWLINE;
         ss << "  Physical Location: RAM page 7, offset 0x0000-0x1FFF" << NEWLINE;
         ss << "  Pixel Data:        Page 7 offset 0x0000-0x17FF (6144 bytes)" << NEWLINE;
         ss << "  Attributes:        Page 7 offset 0x1800-0x1AFF (768 bytes)" << NEWLINE;
-        
+
         uint8_t ramBank = port7FFD & 0x07;  // Bits 0-2
         if (ramBank == 7)
         {
@@ -337,20 +338,24 @@ void CLIProcessor::HandleStateScreenVerbose(const ClientSession& session, Emulat
             ss << "  Z80 Access:        Not currently mapped (page " << (int)ramBank << " at bank 3)" << NEWLINE;
         }
         ss << "  ULA Status:        " << (shadowScreen ? "CURRENTLY DISPLAYED" : "Not displayed") << NEWLINE;
-        ss << "  Contention:        " << (ramBank == 7 ? "Inactive (not in contended range)" : "N/A (not mapped)") << NEWLINE;
+        ss << "  Contention:        " << (ramBank == 7 ? "Inactive (not in contended range)" : "N/A (not mapped)")
+           << NEWLINE;
         ss << NEWLINE;
-        
-        ss << "Port 0x7FFD:  0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(2) 
-           << (int)port7FFD << std::dec << " (bin: ";
+
+        ss << "Port 0x7FFD:  0x" << std::hex << std::uppercase << std::setfill('0') << std::setw(2) << (int)port7FFD
+           << std::dec << " (bin: ";
         for (int i = 7; i >= 0; i--)
             ss << ((port7FFD >> i) & 1);
         ss << ")" << NEWLINE;
         ss << "  Bits 0-2: " << (int)ramBank << " (RAM page " << (int)ramBank << " mapped to bank 3)" << NEWLINE;
-        ss << "  Bit 3:    " << (shadowScreen ? "1" : "0") << " (ULA displays Screen " << (shadowScreen ? "1" : "0") << ")" << NEWLINE;
-        ss << "  Bit 4:    " << ((port7FFD & 0x10) ? "1" : "0") << " (ROM: " << ((port7FFD & 0x10) ? "48K BASIC" : "128K Editor") << ")" << NEWLINE;
-        ss << "  Bit 5:    " << ((port7FFD & 0x20) ? "1" : "0") << " (Paging " << ((port7FFD & 0x20) ? "LOCKED" : "enabled") << ")" << NEWLINE;
+        ss << "  Bit 3:    " << (shadowScreen ? "1" : "0") << " (ULA displays Screen " << (shadowScreen ? "1" : "0")
+           << ")" << NEWLINE;
+        ss << "  Bit 4:    " << ((port7FFD & 0x10) ? "1" : "0")
+           << " (ROM: " << ((port7FFD & 0x10) ? "48K BASIC" : "128K Editor") << ")" << NEWLINE;
+        ss << "  Bit 5:    " << ((port7FFD & 0x20) ? "1" : "0") << " (Paging "
+           << ((port7FFD & 0x20) ? "LOCKED" : "enabled") << ")" << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "Note: ULA reads screen from physical RAM page, independent of Z80 address mapping." << NEWLINE;
     }
     else
@@ -359,19 +364,19 @@ void CLIProcessor::HandleStateScreenVerbose(const ClientSession& session, Emulat
         ss << "Model: ZX Spectrum 48K" << NEWLINE;
         ss << "Screen: Single screen at 0x4000-0x7FFF" << NEWLINE;
         ss << NEWLINE;
-        
+
         ss << "Physical Location: RAM page 5, offset 0x0000-0x1FFF" << NEWLINE;
         ss << "Pixel Data:        0x4000-0x57FF (6144 bytes)" << NEWLINE;
         ss << "Attributes:        0x5800-0x5AFF (768 bytes)" << NEWLINE;
         ss << "Z80 Access:        0x4000-0x7FFF (always accessible)" << NEWLINE;
         ss << "Contention:        Active during display period" << NEWLINE;
     }
-    
+
     // Display mode (simplified for now)
     ss << NEWLINE;
     ss << "Display Mode: Standard (256×192, 2 colors per 8×8)" << NEWLINE;
     ss << "Border Color: " << (int)(context->pScreen->GetBorderColor()) << NEWLINE;
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -379,11 +384,11 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
 {
     std::stringstream ss;
     CONFIG& config = context->config;
-    
+
     ss << "Video Mode Information" << NEWLINE;
     ss << "======================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Determine model
     std::string model = "ZX Spectrum 48K";
     if (config.mem_model == MM_SPECTRUM128)
@@ -392,7 +397,7 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
         model = "Pentagon 128K";
     else if (config.mem_model == MM_PLUS3)
         model = "ZX Spectrum +3";
-    
+
     ss << "Model: " << model << NEWLINE;
     ss << "Video Mode: Standard" << NEWLINE;
     ss << "============================================" << NEWLINE;
@@ -403,20 +408,19 @@ void CLIProcessor::HandleStateScreenMode(const ClientSession& session, EmulatorC
     ss << "  Pixel Data:    6144 bytes (32 lines × 192 pixels)" << NEWLINE;
     ss << "  Attributes:    768 bytes (32 × 24 blocks)" << NEWLINE;
     ss << "  Total:         6912 bytes per screen" << NEWLINE;
-    
-    if (config.mem_model == MM_SPECTRUM128 || 
-        config.mem_model == MM_PENTAGON || 
-        config.mem_model == MM_PLUS3)
+
+    if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PENTAGON || config.mem_model == MM_PLUS3)
     {
         uint8_t port7FFD = context->emulatorState.p7FFD;
         bool shadowScreen = (port7FFD & 0x08) != 0;
-        ss << "Active Screen:   Screen " << (shadowScreen ? "1" : "0") << " (RAM page " << (shadowScreen ? "7" : "5") << ")" << NEWLINE;
+        ss << "Active Screen:   Screen " << (shadowScreen ? "1" : "0") << " (RAM page " << (shadowScreen ? "7" : "5")
+           << ")" << NEWLINE;
     }
-    
+
     ss << "Compatibility:   48K/128K/+2/+2A/+3 standard" << NEWLINE;
     ss << NEWLINE;
     ss << "Note: Enhanced modes (Timex, Pentagon GigaScreen, etc.) not currently active." << NEWLINE;
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -424,23 +428,23 @@ void CLIProcessor::HandleStateScreenFlash(const ClientSession& session, Emulator
 {
     std::stringstream ss;
     EmulatorState& state = context->emulatorState;
-    
+
     ss << "Screen Flash State" << NEWLINE;
     ss << "==================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Flash toggles every 16 frames (32 frames for full cycle)
     // Frame counter is at 0x5C78 (FRAMES system variable)
     uint8_t flashCounter = (state.frame_counter / 16) & 1;
     uint8_t framesUntilToggle = 16 - (state.frame_counter % 16);
-    
+
     ss << "Flash Phase:         " << (flashCounter ? "Inverted" : "Normal") << NEWLINE;
     ss << "Frames Until Toggle: " << (int)framesUntilToggle << " frames" << NEWLINE;
     ss << "Flash Cycle:         " << (state.frame_counter % 32) << " / 32 frames" << NEWLINE;
     ss << NEWLINE;
     ss << "Note: Flash toggles every 16 frames (0.32 seconds at 50Hz)" << NEWLINE;
     ss << "      Full flash cycle is 32 frames (0.64 seconds)" << NEWLINE;
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -450,11 +454,11 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     CONFIG& config = context->config;
     Memory& memory = *context->pMemory;
     EmulatorState& state = context->emulatorState;
-    
+
     ss << "Memory Configuration" << NEWLINE;
     ss << "====================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Determine model
     std::string model = "ZX Spectrum 48K";
     if (config.mem_model == MM_SPECTRUM128)
@@ -463,14 +467,14 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
         model = "Pentagon 128K";
     else if (config.mem_model == MM_PLUS3)
         model = "ZX Spectrum +3";
-    
+
     ss << "Model: " << model << NEWLINE;
     ss << NEWLINE;
-    
+
     // ROM Configuration
     ss << "ROM Configuration:" << NEWLINE;
     ss << "  Active ROM Page:  " << (int)memory.GetROMPage() << NEWLINE;
-    
+
     // Determine ROM mode
     std::string romMode = "Unknown";
     if (config.mem_model == MM_SPECTRUM48)
@@ -478,33 +482,34 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     else if (config.mem_model == MM_SPECTRUM128)
         romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
     else if (config.mem_model == MM_PENTAGON)
-        romMode = (memory.GetROMPage() == 2) ? "128K Editor" : (memory.GetROMPage() == 3 ? "48K BASIC" : "Service/TR-DOS");
+        romMode =
+            (memory.GetROMPage() == 2) ? "128K Editor" : (memory.GetROMPage() == 3 ? "48K BASIC" : "Service/TR-DOS");
     else if (config.mem_model == MM_PLUS3)
         romMode = (memory.GetROMPage() == 0) ? "128K Editor" : "48K BASIC";
-        
+
     ss << "  ROM Mode:         " << romMode << NEWLINE;
     ss << "  Bank 0 (0x0000-0x3FFF): " << memory.GetCurrentBankName(0) << NEWLINE;
     ss << NEWLINE;
-    
+
     // RAM Configuration
     ss << "RAM Configuration:" << NEWLINE;
     ss << "  Bank 1 (0x4000-0x7FFF): " << memory.GetCurrentBankName(1) << NEWLINE;
     ss << "  Bank 2 (0x8000-0xBFFF): " << memory.GetCurrentBankName(2) << NEWLINE;
     ss << "  Bank 3 (0xC000-0xFFFF): " << memory.GetCurrentBankName(3) << NEWLINE;
     ss << NEWLINE;
-    
+
     // Paging State
     if (config.mem_model != MM_SPECTRUM48)
     {
         ss << "Paging State:" << NEWLINE;
-        ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') 
-           << (int)state.p7FFD << std::dec << NEWLINE;
+        ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.p7FFD << std::dec
+           << NEWLINE;
         ss << "  RAM Bank 3:       " << (int)(state.p7FFD & 0x07) << NEWLINE;
         ss << "  Screen:           " << ((state.p7FFD & 0x08) ? "1 (Shadow)" : "0 (Normal)") << NEWLINE;
         ss << "  ROM Select:       " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
         ss << "  Paging Locked:    " << ((state.p7FFD & 0x20) ? "YES" : "NO") << NEWLINE;
     }
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -514,11 +519,11 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     CONFIG& config = context->config;
     Memory& memory = *context->pMemory;
     EmulatorState& state = context->emulatorState;
-    
+
     ss << "RAM Bank Mapping" << NEWLINE;
     ss << "================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Determine model
     std::string model = "ZX Spectrum 48K";
     if (config.mem_model == MM_SPECTRUM128)
@@ -527,15 +532,15 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
         model = "Pentagon 128K";
     else if (config.mem_model == MM_PLUS3)
         model = "ZX Spectrum +3";
-    
+
     ss << "Model: " << model << NEWLINE;
     ss << NEWLINE;
-    
+
     // Show detailed Z80 address space to RAM page mapping
     ss << "Z80 Address Space → Physical RAM Pages:" << NEWLINE;
     ss << "=========================================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Bank 0 (might be ROM)
     if (memory.IsBank0ROM())
     {
@@ -545,38 +550,39 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
     {
         ss << "Bank 0 (0x0000-0x3FFF): RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
     }
-    
+
     // Bank 1 (always RAM)
-    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (read/write, contended)" << NEWLINE;
+    ss << "Bank 1 (0x4000-0x7FFF): RAM Page " << (int)memory.GetRAMPageForBank1() << " (read/write, contended)"
+       << NEWLINE;
     ss << "                        [Screen 0 location]" << NEWLINE;
-    
+
     // Bank 2 (always RAM)
     ss << "Bank 2 (0x8000-0xBFFF): RAM Page " << (int)memory.GetRAMPageForBank2() << " (read/write)" << NEWLINE;
-    
+
     // Bank 3 (always RAM, pageable on 128K)
     ss << "Bank 3 (0xC000-0xFFFF): RAM Page " << (int)memory.GetRAMPageForBank3() << " (read/write)" << NEWLINE;
-    
+
     if (config.mem_model != MM_SPECTRUM48)
     {
         ss << NEWLINE;
         ss << "Paging Control:" << NEWLINE;
-        ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') 
-           << (int)state.p7FFD << std::dec << " (bin: ";
-        
+        ss << "  Port 0x7FFD:      0x" << std::hex << std::setw(2) << std::setfill('0') << (int)state.p7FFD << std::dec
+           << " (bin: ";
+
         // Show binary
         for (int i = 7; i >= 0; --i)
         {
             ss << ((state.p7FFD >> i) & 1);
         }
         ss << ")" << NEWLINE;
-        
-        ss << "  Bits 0-2 (RAM):   " << (int)(state.p7FFD & 0x07) 
-           << " (RAM page " << (int)(state.p7FFD & 0x07) << " at bank 3)" << NEWLINE;
+
+        ss << "  Bits 0-2 (RAM):   " << (int)(state.p7FFD & 0x07) << " (RAM page " << (int)(state.p7FFD & 0x07)
+           << " at bank 3)" << NEWLINE;
         ss << "  Bit 3 (Screen):   " << ((state.p7FFD & 0x08) ? "1 (Shadow)" : "0 (Normal)") << NEWLINE;
         ss << "  Bit 4 (ROM):      " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
         ss << "  Bit 5 (Lock):     " << ((state.p7FFD & 0x20) ? "1 (Locked)" : "0 (Unlocked)") << NEWLINE;
     }
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -586,11 +592,11 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     CONFIG& config = context->config;
     Memory& memory = *context->pMemory;
     EmulatorState& state = context->emulatorState;
-    
+
     ss << "ROM Configuration" << NEWLINE;
     ss << "=================" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Determine model
     std::string model = "ZX Spectrum 48K";
     int totalROMPages = 1;
@@ -609,13 +615,13 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         model = "ZX Spectrum +3";
         totalROMPages = 4;
     }
-    
+
     ss << "Model:            " << model << NEWLINE;
     ss << "Total ROM Pages:  " << totalROMPages << NEWLINE;
     ss << "Active ROM Page:  " << (int)memory.GetROMPage() << NEWLINE;
     ss << "ROM Size:         " << (totalROMPages * 16) << " KB (" << totalROMPages << " × 16KB pages)" << NEWLINE;
     ss << NEWLINE;
-    
+
     // Show ROM page descriptions based on model
     ss << "Available ROM Pages:" << NEWLINE;
     if (config.mem_model == MM_SPECTRUM48)
@@ -641,7 +647,7 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
         ss << "  Page 2: +3DOS ROM " << ((memory.GetROMPage() == 2) ? "[ACTIVE]" : "") << NEWLINE;
         ss << "  Page 3: 48K BASIC (copy) ROM " << ((memory.GetROMPage() == 3) ? "[ACTIVE]" : "") << NEWLINE;
     }
-    
+
     ss << NEWLINE;
     ss << "Current Mapping:" << NEWLINE;
     ss << "  Bank 0 (0x0000-0x3FFF): ";
@@ -653,13 +659,13 @@ void CLIProcessor::HandleStateMemoryROM(const ClientSession& session, EmulatorCo
     {
         ss << "RAM Page " << (int)memory.GetRAMPageForBank0() << " (read/write)" << NEWLINE;
     }
-    
+
     if (config.mem_model != MM_SPECTRUM48)
     {
         ss << NEWLINE;
         ss << "Port 0x7FFD bit 4 (ROM select): " << ((state.p7FFD & 0x10) ? "1" : "0") << NEWLINE;
     }
-    
+
     session.SendResponse(ss.str());
 }
 
@@ -681,15 +687,16 @@ void CLIProcessor::HandleStateAudio(const ClientSession& session, EmulatorContex
     }
 
     // Check available audio devices
-    bool hasBeeper = true; // Beeper is always available
+    bool hasBeeper = true;  // Beeper is always available
     bool hasAY = soundManager->hasTurboSound();
     int ayCount = hasAY ? soundManager->getAYChipCount() : 0;
-    bool hasGS = false; // General Sound not implemented yet
-    bool hasCovox = false; // Covox not implemented yet
+    bool hasGS = false;     // General Sound not implemented yet
+    bool hasCovox = false;  // Covox not implemented yet
 
     ss << "Available Audio Devices:" << NEWLINE;
     ss << "  Beeper:      " << (hasBeeper ? "Available" : "Not available") << NEWLINE;
-    ss << "  AY Chips:    " << (ayCount > 0 ? std::to_string(ayCount) + (ayCount == 2 ? " (TurboSound)" : "") : "None") << NEWLINE;
+    ss << "  AY Chips:    " << (ayCount > 0 ? std::to_string(ayCount) + (ayCount == 2 ? " (TurboSound)" : "") : "None")
+       << NEWLINE;
     ss << "  General Sound: " << (hasGS ? "Available" : "Not available") << NEWLINE;
     ss << "  Covox DAC:   " << (hasCovox ? "Available" : "Not available") << NEWLINE;
     ss << NEWLINE;
@@ -740,7 +747,8 @@ void CLIProcessor::HandleStateAudioAY(const ClientSession& session, EmulatorCont
     for (int i = 0; i < ayCount; i++)
     {
         SoundChip_AY8910* chip = soundManager->getAYChip(i);
-        if (!chip) continue;
+        if (!chip)
+            continue;
 
         ss << "AY Chip " << i << ":" << NEWLINE;
         ss << "  Type: AY-3-8912" << NEWLINE;
@@ -759,7 +767,8 @@ void CLIProcessor::HandleStateAudioAY(const ClientSession& session, EmulatorCont
 
         ss << "  Active Channels: " << (hasActiveChannels ? "Yes" : "No") << NEWLINE;
         ss << "  Envelope Active: " << (chip->getEnvelopeGenerator().out() > 0 ? "Yes" : "No") << NEWLINE;
-        ss << "  Sound Played: " << "No (tracking not implemented)" << NEWLINE; // TODO: Implement sound played tracking
+        ss << "  Sound Played: " << "No (tracking not implemented)"
+           << NEWLINE;  // TODO: Implement sound played tracking
         ss << NEWLINE;
     }
 
@@ -768,7 +777,8 @@ void CLIProcessor::HandleStateAudioAY(const ClientSession& session, EmulatorCont
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, EmulatorContext* context, const std::string& indexStr)
+void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, EmulatorContext* context,
+                                           const std::string& indexStr)
 {
     std::stringstream ss;
     SoundManager* soundManager = context->pSoundManager;
@@ -815,14 +825,14 @@ void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, Emulato
     const uint8_t* registers = chip->getRegisters();
     for (int reg = 0; reg < 16; reg++)
     {
-        ss << "  R" << std::setw(2) << std::setfill('0') << reg << " (" << SoundChip_AY8910::AYRegisterNames[reg] << "): 0x"
-           << std::hex << std::setw(2) << std::setfill('0') << (int)registers[reg] << std::dec << NEWLINE;
+        ss << "  R" << std::setw(2) << std::setfill('0') << reg << " (" << SoundChip_AY8910::AYRegisterNames[reg]
+           << "): 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)registers[reg] << std::dec << NEWLINE;
     }
     ss << NEWLINE;
 
     // Show channel information
     ss << "Channel Information:" << NEWLINE;
-    const char* channelNames[] = { "A", "B", "C" };
+    const char* channelNames[] = {"A", "B", "C"};
     const auto* toneGens = chip->getToneGenerators();
     for (int ch = 0; ch < 3; ch++)
     {
@@ -835,7 +845,7 @@ void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, Emulato
         ss << "    Period: " << period << " (" << fine << " fine + " << coarse << " coarse)" << NEWLINE;
 
         // Calculate frequency (approximate)
-        double freq = 1750000.0 / (16.0 * (period + 1)); // 1.75MHz AY clock / 16 / period
+        double freq = 1750000.0 / (16.0 * (period + 1));  // 1.75MHz AY clock / 16 / period
         ss << "    Frequency: ~" << (int)freq << " Hz" << NEWLINE;
 
         ss << "    Volume: " << (int)toneGen.volume() << "/15" << NEWLINE;
@@ -884,12 +894,14 @@ void CLIProcessor::HandleStateAudioAYIndex(const ClientSession& session, Emulato
     ss << " (" << ((mixer & 0x80) ? "Input" : "Output") << ")" << NEWLINE;
     ss << NEWLINE;
 
-    ss << "Sound Played Since Reset: No (tracking not implemented)" << NEWLINE; // TODO: Implement sound played tracking
+    ss << "Sound Played Since Reset: No (tracking not implemented)"
+       << NEWLINE;  // TODO: Implement sound played tracking
 
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context, const std::string& chipStr, const std::string& regStr)
+void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, EmulatorContext* context,
+                                              const std::string& chipStr, const std::string& regStr)
 {
     std::stringstream ss;
     SoundManager* soundManager = context->pSoundManager;
@@ -949,18 +961,20 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
     ss << std::string(50, '=') << NEWLINE;
     ss << NEWLINE;
 
-    ss << "Raw Value: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)regValue
-       << " (" << std::dec << (int)regValue << ")" << NEWLINE;
+    ss << "Raw Value: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)regValue << " (" << std::dec
+       << (int)regValue << ")" << NEWLINE;
     ss << "Binary: " << std::bitset<8>(regValue) << NEWLINE;
     ss << NEWLINE;
 
     // Provide specific decoding based on register
     switch (regNum)
     {
-        case 0: case 2: case 4: // Fine period registers
+        case 0:
+        case 2:
+        case 4:  // Fine period registers
         {
             int channel = regNum / 2;
-            const char* channelNames[] = { "A", "B", "C" };
+            const char* channelNames[] = {"A", "B", "C"};
             ss << "Channel " << channelNames[channel] << " Tone Period (Fine):" << NEWLINE;
             ss << "  This is the lower 8 bits of the 12-bit period value" << NEWLINE;
             ss << "  Combined with coarse register R" << (regNum + 1) << " for full period" << NEWLINE;
@@ -972,10 +986,12 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             break;
         }
 
-        case 1: case 3: case 5: // Coarse period registers
+        case 1:
+        case 3:
+        case 5:  // Coarse period registers
         {
             int channel = (regNum - 1) / 2;
-            const char* channelNames[] = { "A", "B", "C" };
+            const char* channelNames[] = {"A", "B", "C"};
             ss << "Channel " << channelNames[channel] << " Tone Period (Coarse):" << NEWLINE;
             ss << "  This is the upper 4 bits of the 12-bit period value" << NEWLINE;
             ss << "  Combined with fine register R" << (regNum - 1) << " for full period" << NEWLINE;
@@ -987,7 +1003,7 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             break;
         }
 
-        case 6: // Noise period
+        case 6:  // Noise period
             ss << "Noise Generator Period:" << NEWLINE;
             ss << "  5-bit value (0-31)" << NEWLINE;
             ss << "  Actual period: " << ((int)regValue & 0x1F) << NEWLINE;
@@ -997,7 +1013,7 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             }
             break;
 
-        case 7: // Mixer control
+        case 7:  // Mixer control
             ss << "Mixer Control:" << NEWLINE;
             ss << "  Bit 0: Channel A Tone - " << ((regValue & 0x01) ? "Disabled" : "Enabled") << NEWLINE;
             ss << "  Bit 1: Channel B Tone - " << ((regValue & 0x02) ? "Disabled" : "Enabled") << NEWLINE;
@@ -1009,10 +1025,12 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             ss << "  Bit 7: Port B Direction - " << ((regValue & 0x80) ? "Input" : "Output") << NEWLINE;
             break;
 
-        case 8: case 9: case 10: // Volume registers
+        case 8:
+        case 9:
+        case 10:  // Volume registers
         {
             int channel = regNum - 8;
-            const char* channelNames[] = { "A", "B", "C" };
+            const char* channelNames[] = {"A", "B", "C"};
             ss << "Channel " << channelNames[channel] << " Volume:" << NEWLINE;
             ss << "  4-bit volume value: " << ((int)regValue & 0x0F) << "/15" << NEWLINE;
             ss << "  Bit 4 (MSB): Envelope mode - " << ((regValue & 0x10) ? "Enabled" : "Disabled") << NEWLINE;
@@ -1023,7 +1041,7 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             break;
         }
 
-        case 11: // Envelope period fine
+        case 11:  // Envelope period fine
             ss << "Envelope Period (Fine):" << NEWLINE;
             ss << "  Lower 8 bits of 16-bit envelope period" << NEWLINE;
             ss << "  Combined with coarse register R12 for full period" << NEWLINE;
@@ -1036,7 +1054,7 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             }
             break;
 
-        case 12: // Envelope period coarse
+        case 12:  // Envelope period coarse
             ss << "Envelope Period (Coarse):" << NEWLINE;
             ss << "  Upper 8 bits of 16-bit envelope period" << NEWLINE;
             ss << "  Combined with fine register R11 for full period" << NEWLINE;
@@ -1049,7 +1067,7 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             }
             break;
 
-        case 13: // Envelope shape
+        case 13:  // Envelope shape
             ss << "Envelope Shape:" << NEWLINE;
             ss << "  4-bit shape value: " << ((int)regValue & 0x0F) << NEWLINE;
             ss << "  Bit 0: Continue" << NEWLINE;
@@ -1059,13 +1077,13 @@ void CLIProcessor::HandleStateAudioAYRegister(const ClientSession& session, Emul
             // TODO: Add shape name interpretation
             break;
 
-        case 14: // I/O Port A
+        case 14:  // I/O Port A
             ss << "I/O Port A:" << NEWLINE;
             ss << "  Direction: " << ((registers[7] & 0x40) ? "Input" : "Output") << NEWLINE;
             ss << "  Value: 0x" << std::hex << (int)regValue << std::dec << NEWLINE;
             break;
 
-        case 15: // I/O Port B
+        case 15:  // I/O Port B
             ss << "I/O Port B:" << NEWLINE;
             ss << "  Direction: " << ((registers[7] & 0x80) ? "Input" : "Output") << NEWLINE;
             ss << "  Value: 0x" << std::hex << (int)regValue << std::dec << NEWLINE;
@@ -1101,7 +1119,8 @@ void CLIProcessor::HandleStateAudioBeeper(const ClientSession& session, Emulator
     ss << "Frequency Range: ~20Hz - ~10kHz" << NEWLINE;
     ss << "Bit Resolution: 1-bit (square wave)" << NEWLINE;
     ss << NEWLINE;
-    ss << "Sound Played Since Reset: No (tracking not implemented)" << NEWLINE; // TODO: Implement sound played tracking
+    ss << "Sound Played Since Reset: No (tracking not implemented)"
+       << NEWLINE;  // TODO: Implement sound played tracking
 
     session.SendResponse(ss.str());
 }
@@ -1173,17 +1192,20 @@ void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, Emulat
         for (int chipIdx = 0; chipIdx < ayCount; chipIdx++)
         {
             SoundChip_AY8910* chip = soundManager->getAYChip(chipIdx);
-            if (!chip) continue;
+            if (!chip)
+                continue;
 
             ss << "  Chip " << chipIdx << " (AY-3-8912):" << NEWLINE;
             const auto* toneGens = chip->getToneGenerators();
-            const char* channelNames[] = { "A", "B", "C" };
+            const char* channelNames[] = {"A", "B", "C"};
             for (int ch = 0; ch < 3; ch++)
             {
                 const auto& toneGen = toneGens[ch];
-                ss << "    Channel " << channelNames[ch] << ": " << (toneGen.toneEnabled() || toneGen.noiseEnabled() ? "ON" : "OFF");
+                ss << "    Channel " << channelNames[ch] << ": "
+                   << (toneGen.toneEnabled() || toneGen.noiseEnabled() ? "ON" : "OFF");
                 ss << " (Vol: " << (int)toneGen.volume() << "/15";
-                if (toneGen.envelopeEnabled()) ss << ", Envelope";
+                if (toneGen.envelopeEnabled())
+                    ss << ", Envelope";
                 ss << ")" << NEWLINE;
             }
         }
@@ -1217,4 +1239,3 @@ void CLIProcessor::HandleStateAudioChannels(const ClientSession& session, Emulat
 /// endregion </Audio State Commands>
 
 /// endregion </State Inspection Commands>
-

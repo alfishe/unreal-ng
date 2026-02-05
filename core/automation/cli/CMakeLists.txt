@@ -49,8 +49,8 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 )
 
 # Make sure the library is built with the same C++ standard
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 set_target_properties(${PROJECT_NAME} PROPERTIES
-    CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
 )
 

@@ -17,6 +17,13 @@
 #include <limits>
 #include "callbacks.h"
 
+// Windows: Include wincrypt.h for certificate store APIs (excluded by
+// WIN32_LEAN_AND_MEAN)
+#ifdef _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#endif
+
 using namespace trantor;
 
 // Force OpenSSL to initialize before main() is called

@@ -8,6 +8,11 @@
 #include <sstream>
 #include <string>
 
+// On Windows, UUID is a typedef for GUID in rpcdce.h
+// We use a namespace to avoid the collision
+namespace unreal
+{
+
 /// @class UUID
 /// @brief Cross-platform strongly-typed UUID implementation
 ///
@@ -192,3 +197,12 @@ private:
         return -1;
     }
 };
+
+} // namespace unreal
+
+// Backward compatibility: bring UUID into global namespace on non-Windows platforms
+// On Windows, users must use unreal::UUID explicitly or add their own using declaration
+// before including Windows headers
+#ifndef _WIN32
+using unreal::UUID;
+#endif

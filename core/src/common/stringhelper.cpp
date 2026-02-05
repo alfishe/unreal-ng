@@ -1,50 +1,51 @@
-#include "stdafx.h"
-
 #include "stringhelper.h"
+
 #include <algorithm>
 #include <cassert>
 
+#include "stdafx.h"
+
+
 uint8_t StringHelper::Hex(uint8_t val)
 {
-	uint8_t result = tolower(val);
-	return (result < 'a') ? result - '0' : result - 'a' + 10;
+    uint8_t result = tolower(val);
+    return (result < 'a') ? result - '0' : result - 'a' + 10;
 }
 
 bool StringHelper::IsHex(uint8_t val)
 {
-	return (isdigit(val) || (tolower(val) >= 'a' && tolower(val) <= 'f'));
+    return (isdigit(val) || (tolower(val) >= 'a' && tolower(val) <= 'f'));
 }
 
 int StringHelper::Compare(std::wstring& wstr1, std::wstring& wstr2)
 {
-	int result = -1;
+    int result = -1;
 
-	size_t len1 = wstr1.length();
-	size_t len2 = wstr2.length();
+    size_t len1 = wstr1.length();
+    size_t len2 = wstr2.length();
 
-	if (len1 == len2)
-	{
-		wchar_t* ptr1 = (wchar_t*)wstr1.c_str();
-		wchar_t* ptr2 = (wchar_t*)wstr2.c_str();
+    if (len1 == len2)
+    {
+        wchar_t* ptr1 = (wchar_t*)wstr1.c_str();
+        wchar_t* ptr2 = (wchar_t*)wstr2.c_str();
 
-		do
-		{
-			if (!(*ptr1 && *ptr2))
-				break;
+        do
+        {
+            if (!(*ptr1 && *ptr2))
+                break;
 
-			if (*ptr1 != *ptr2)
-				break;
-		}
-		while (len1-- && *ptr1++ && *ptr2++);
+            if (*ptr1 != *ptr2)
+                break;
+        } while (len1-- && *ptr1++ && *ptr2++);
 
-		result = *ptr1 - *ptr2;
-	}
-	else
-	{
-		result = (int)(len1 - len2);
-	}
+        result = *ptr1 - *ptr2;
+    }
+    else
+    {
+        result = (int)(len1 - len2);
+    }
 
-	return result;
+    return result;
 }
 
 int StringHelper::Compare(string& str1, string& str2)
@@ -66,8 +67,7 @@ int StringHelper::Compare(string& str1, string& str2)
 
             if (*ptr1 != *ptr2)
                 break;
-        }
-        while (len1-- && *ptr1++ && *ptr2++);
+        } while (len1-- && *ptr1++ && *ptr2++);
 
         result = *ptr1 - *ptr2;
     }
@@ -81,48 +81,51 @@ int StringHelper::Compare(string& str1, string& str2)
 
 int StringHelper::CompareCaseInsensitive(const char* str1, const char* str2, size_t len)
 {
-	int result = -1;
+    int result = -1;
 
-	if (str1 != nullptr && str2 != nullptr && len > 0)
-	{
-		char* ptr1 = (char*)str1;
-		char* ptr2 = (char*)str2;
+    if (str1 != nullptr && str2 != nullptr && len > 0)
+    {
+        char* ptr1 = (char*)str1;
+        char* ptr2 = (char*)str2;
 
-		do
-		{
-			if (!(*ptr1 && *ptr2))
-				break;
+        do
+        {
+            if (!(*ptr1 && *ptr2))
+                break;
 
-			if (toupper(*ptr1) != toupper(*ptr2))
-				break;
-		}
-		while (len-- && *ptr1++ && *ptr2++);
+            if (toupper(*ptr1) != toupper(*ptr2))
+                break;
+        } while (len-- && *ptr1++ && *ptr2++);
 
-		result = *ptr1 - *ptr2;
-	}
+        result = *ptr1 - *ptr2;
+    }
 
-	return result;
+    return result;
 }
 
 std::wstring StringHelper::StringToWideString(const std::string& str)
 {
-	size_t len = str.length();
+    size_t len = str.length();
     std::wstring result = std::wstring(len, 0);
 
     // Generic cross-platform conversion
     std::copy(str.begin(), str.end(), result.begin());
 
-	return result;
+    return result;
 }
 
 std::string StringHelper::WideStringToString(const std::wstring& wstr)
 {
-	string result;
+    string result;
+    result.reserve(wstr.size());
 
-	// Generic cross-platform conversion
-    std::copy(wstr.begin(), wstr.end(), std::back_inserter(result));
+    // Explicit conversion with static_cast to acknowledge potential truncation
+    // Note: This simple conversion only works correctly for ASCII characters.
+    // For full Unicode support, use platform-specific APIs or a library like ICU.
+    std::transform(wstr.begin(), wstr.end(), std::back_inserter(result),
+                   [](wchar_t wc) { return static_cast<char>(wc); });
 
-	return result;
+    return result;
 }
 
 std::string StringHelper::ReplaceAll(std::string& str, const std::string& from, const std::string& to)
@@ -195,16 +198,16 @@ std::wstring StringHelper::ReplaceAll(std::wstring& wstr, std::wstring wfrom, st
 
 std::string_view StringHelper::LTrim(std::string_view str)
 {
-    str.remove_prefix(std::distance(str.cbegin(), std::find_if(str.cbegin(), str.cend(),
-                                                           [](int c) {return !std::isspace(c);})));
+    str.remove_prefix(
+        std::distance(str.cbegin(), std::find_if(str.cbegin(), str.cend(), [](int c) { return !std::isspace(c); })));
 
     return str;
 }
 
 std::string_view StringHelper::RTrim(std::string_view str)
 {
-    str.remove_suffix(std::distance(str.crbegin(), std::find_if(str.crbegin(), str.crend(),
-                                                            [](int c) {return !std::isspace(c);})));
+    str.remove_suffix(
+        std::distance(str.crbegin(), std::find_if(str.crbegin(), str.crend(), [](int c) { return !std::isspace(c); })));
 
     return str;
 }
@@ -270,12 +273,18 @@ std::string StringHelper::FormatWithThousandsDelimiter(int64_t n)
 std::string StringHelper::FormatWithCustomThousandsDelimiter(int64_t n, char delimiter)
 {
     // Create a custom locale with the specified thousands separator
-    struct CustomDelimiterPunct : std::numpunct<char> 
+    struct CustomDelimiterPunct : std::numpunct<char>
     {
         char m_delimiter;
         CustomDelimiterPunct(char delim) : m_delimiter(delim) {}
-        char do_thousands_sep() const override { return m_delimiter; }
-        std::string do_grouping() const override { return "\03"; }
+        char do_thousands_sep() const override
+        {
+            return m_delimiter;
+        }
+        std::string do_grouping() const override
+        {
+            return "\03";
+        }
     };
 
     std::stringstream ss;

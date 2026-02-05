@@ -9,9 +9,8 @@ project(core LANGUAGES CXX)
 # (see FeatureManager). The old compile-time options ENABLE_MEMORY_MAPPING, USE_SHAREDMEM_MAPPING,
 # and USE_FILE_MAPPING have been removed.
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+# C++ standard is set by the root CMakeLists.txt (C++20 for MSVC, C++17 for others)
+# Do not override here to maintain cross-platform compatibility
 
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
