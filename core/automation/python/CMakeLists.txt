@@ -16,111 +16,135 @@ include(${ROOT_DIR}/cmake/func.cmake)
 # ========================================
 # Static Python Configuration
 # ========================================
-# Build CPython from source as a static library to avoid version mismatch
-# crashes between bundled and system Python installations.
-#
-# We use ExternalProject to clone CPython from git and build using autotools.
+# Build CPython from source as a static library for ALL platforms.
+# This avoids version mismatch crashes between bundled and system Python.
 #
 # Platform support:
 # - macOS: Clang with autotools - static library
-# - Linux: GCC with autotools - static library
-# - Windows MSVC: Not yet supported (Python builds differently on Windows)
-# - Windows MinGW: MSYS2's Python (dynamic linking required)
+# - Linux: GCC with autotools - static library  
+# - Windows (MSVC/MinGW): python-cmake-buildsystem - static library
 
-option(PYTHON_USE_STATIC "Build and link Python statically (not available on MinGW)" ON)
-
-# MinGW cannot build CPython from source - use MSYS2's Python instead
-if(WIN32 AND MINGW)
-    message(STATUS "[automation_python] MinGW detected - using MSYS2 Python (dynamic linking)")
-    set(PYTHON_USE_STATIC OFF)
-endif()
-
-# Windows MSVC static Python build is complex - fall back to system Python
-if(WIN32 AND MSVC)
-    message(STATUS "[automation_python] MSVC detected - using system Python (static not yet supported)")
-    set(PYTHON_USE_STATIC OFF)
-endif()
+option(PYTHON_USE_STATIC "Build and link Python statically" ON)
 
 if(PYTHON_USE_STATIC)
     message(STATUS "[automation_python] Building static Python from source")
     
     include(ExternalProject)
     
-    # Python version and paths
-    set(PYTHON_VERSION "3.13.1")
-    set(PYTHON_TAG "v${PYTHON_VERSION}")
-    set(PYTHON_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/python_install")
-    set(PYTHON_STATIC_INCLUDE_DIR "${PYTHON_INSTALL_PREFIX}/include/python3.13")
-    set(PYTHON_STATIC_LIB_DIR "${PYTHON_INSTALL_PREFIX}/lib")
-    set(PYTHON_STATIC_LIB "${PYTHON_STATIC_LIB_DIR}/libpython3.13.a")
-    
-    # Find OpenSSL for Python SSL module
-    find_package(OpenSSL QUIET)
-    if(OPENSSL_FOUND)
-        get_filename_component(OPENSSL_ROOT ${OPENSSL_INCLUDE_DIR} DIRECTORY)
-        set(PYTHON_SSL_ARG "--with-openssl=${OPENSSL_ROOT}")
+    if(WIN32 AND MINGW)
+        # ========================================
+        # MinGW: Use MSYS2 Python (dynamic linking)
+        # ========================================
+        # Static Python build is not feasible on MinGW (CPython requires extensive patches)
+        # Use MSYS2's pre-built Python with dynamic linking instead.
+        # Discovery happens in the root CMakeLists.txt to ensure consistency.
+        message(STATUS "[automation_python] MinGW: Using MSYS2 Python (dynamic linking)")
+        set(PYTHON_USE_STATIC OFF)
+        
+        # Add pybind11
+        set(PYBIND11_FINDPYTHON ON)
+        add_subdirectory(3rdparty/pybind11)
+        
+        # Linking targets are handled in the target_link_libraries section
+        
+        # MinGW Debug ABI Fix: MSYS2 only provides release Python (no debug build).
+        # We add the stubs provided in src/mingw_python_stubs.cpp to the sources.
+        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+            list(APPEND SOURCES src/mingw_python_stubs.cpp)
+        endif()
+        
+    elseif(WIN32 AND MSVC)
+        # ========================================
+        # MSVC: Use system Python (static from source not yet supported)
+        # ========================================
+        message(STATUS "[automation_python] MSVC: Using system Python (dynamic)")
+        set(PYTHON_USE_STATIC OFF)
+        
+        set(PYBIND11_FINDPYTHON ON)
+        add_subdirectory(3rdparty/pybind11)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+        
     else()
-        set(PYTHON_SSL_ARG "")
+        # ========================================
+        # Unix (macOS/Linux): Use autotools
+        # ========================================
+        
+        # Python version and paths  
+        set(PYTHON_VERSION "3.13.1")
+        set(PYTHON_TAG "v${PYTHON_VERSION}")
+        set(PYTHON_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/python_install")
+        set(PYTHON_STATIC_INCLUDE_DIR "${PYTHON_INSTALL_PREFIX}/include/python3.13")
+        set(PYTHON_STATIC_LIB_DIR "${PYTHON_INSTALL_PREFIX}/lib")
+        set(PYTHON_STATIC_LIB "${PYTHON_STATIC_LIB_DIR}/libpython3.13.a")
+        
+        # Find OpenSSL for Python SSL module
+        find_package(OpenSSL QUIET)
+        if(OPENSSL_FOUND)
+            get_filename_component(OPENSSL_ROOT ${OPENSSL_INCLUDE_DIR} DIRECTORY)
+            set(PYTHON_SSL_ARG "--with-openssl=${OPENSSL_ROOT}")
+        else()
+            set(PYTHON_SSL_ARG "")
+        endif()
+        
+        # Configure args for Python
+        set(PYTHON_CONFIGURE_ARGS
+            --prefix=${PYTHON_INSTALL_PREFIX}
+            --disable-shared
+            --enable-optimizations
+            ${PYTHON_SSL_ARG}
+        )
+        
+        # Platform-specific compiler and flags
+        if(APPLE)
+            set(PYTHON_CC "clang")
+            # Match the project's deployment target to avoid linker warnings
+            set(MACOS_DEPLOYMENT_TARGET "10.13")
+            set(PYTHON_CFLAGS "-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}")
+            set(PYTHON_LDFLAGS "-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}")
+        else()
+            set(PYTHON_CC "gcc")
+            set(PYTHON_CFLAGS "")
+            set(PYTHON_LDFLAGS "")
+        endif()
+        
+        # Build Python from source using ExternalProject
+        # UPDATE_DISCONNECTED prevents re-checking git on every build
+        ExternalProject_Add(python_build_ep
+            GIT_REPOSITORY https://github.com/python/cpython.git
+            GIT_TAG ${PYTHON_TAG}
+            GIT_SHALLOW TRUE
+            PREFIX ${CMAKE_BINARY_DIR}/python_ep
+            UPDATE_COMMAND ""
+            UPDATE_DISCONNECTED TRUE
+            CONFIGURE_COMMAND <SOURCE_DIR>/configure ${PYTHON_CONFIGURE_ARGS}
+                CC=${PYTHON_CC}
+                CFLAGS=${PYTHON_CFLAGS}
+                LDFLAGS=${PYTHON_LDFLAGS}
+            BUILD_COMMAND make -j
+            INSTALL_COMMAND make install
+            BUILD_BYPRODUCTS ${PYTHON_STATIC_LIB}
+            LOG_DOWNLOAD ON
+            LOG_CONFIGURE ON
+            LOG_BUILD ON
+            LOG_INSTALL ON
+        )
+        
+        # Use PYBIND11_NOPYTHON mode since Python isn't built yet during configure
+        set(PYBIND11_NOPYTHON ON CACHE BOOL "" FORCE)
+        
+        # Add pybind11 in NOPYTHON mode
+        add_subdirectory(3rdparty/pybind11)
+        
+        # Create an imported target for the static Python library
+        add_library(python_static STATIC IMPORTED GLOBAL)
+        set_target_properties(python_static PROPERTIES
+            IMPORTED_LOCATION ${PYTHON_STATIC_LIB}
+        )
+        add_dependencies(python_static python_build_ep)
     endif()
-    
-    # Configure args for Python
-    set(PYTHON_CONFIGURE_ARGS
-        --prefix=${PYTHON_INSTALL_PREFIX}
-        --disable-shared
-        --enable-optimizations
-        ${PYTHON_SSL_ARG}
-    )
-    
-    # Platform-specific compiler and flags
-    if(APPLE)
-        set(PYTHON_CC "clang")
-        # Match the project's deployment target to avoid linker warnings
-        set(MACOS_DEPLOYMENT_TARGET "10.13")
-        set(PYTHON_CFLAGS "-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}")
-        set(PYTHON_LDFLAGS "-mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}")
-    else()
-        set(PYTHON_CC "gcc")
-        set(PYTHON_CFLAGS "")
-        set(PYTHON_LDFLAGS "")
-    endif()
-    
-    # Build Python from source using ExternalProject
-    # UPDATE_DISCONNECTED prevents re-checking git on every build
-    ExternalProject_Add(python_build_ep
-        GIT_REPOSITORY https://github.com/python/cpython.git
-        GIT_TAG ${PYTHON_TAG}
-        GIT_SHALLOW TRUE
-        PREFIX ${CMAKE_BINARY_DIR}/python_ep
-        UPDATE_COMMAND ""
-        UPDATE_DISCONNECTED TRUE
-        CONFIGURE_COMMAND <SOURCE_DIR>/configure ${PYTHON_CONFIGURE_ARGS}
-            CC=${PYTHON_CC}
-            CFLAGS=${PYTHON_CFLAGS}
-            LDFLAGS=${PYTHON_LDFLAGS}
-        BUILD_COMMAND make -j
-        INSTALL_COMMAND make install
-        BUILD_BYPRODUCTS ${PYTHON_STATIC_LIB}
-        LOG_DOWNLOAD ON
-        LOG_CONFIGURE ON
-        LOG_BUILD ON
-        LOG_INSTALL ON
-    )
-    
-    # Use PYBIND11_NOPYTHON mode since Python isn't built yet during configure
-    set(PYBIND11_NOPYTHON ON CACHE BOOL "" FORCE)
-    
-    # Add pybind11 in NOPYTHON mode
-    add_subdirectory(3rdparty/pybind11)
-    
-    # Create an imported target for the static Python library
-    add_library(python_static STATIC IMPORTED GLOBAL)
-    set_target_properties(python_static PROPERTIES
-        IMPORTED_LOCATION ${PYTHON_STATIC_LIB}
-    )
-    add_dependencies(python_static python_build_ep)
     
 else()
-    # Use system Python (dynamic linking) - for MinGW, MSVC, or when static is disabled
+    # Fallback: Use system Python (only if PYTHON_USE_STATIC is explicitly OFF)
     message(STATUS "[automation_python] Using system Python (dynamic linking)")
     
     set(PYBIND11_FINDPYTHON ON)

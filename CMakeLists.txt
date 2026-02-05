@@ -87,6 +87,35 @@ if (MINGW AND MINGW_STATIC_LINKING)
     message(STATUS "  - OpenSSL: prefer static")
 endif()
 
+# ========================================
+# MinGW Python Configuration (Early Discovery)
+# ========================================
+# We discover Python early for MinGW to ensure all components (including pybind11)
+# use the same MSYS2-provided version and avoid picking up system Python.
+if(MINGW AND ENABLE_PYTHON_AUTOMATION)
+    message(STATUS "[Root] MinGW: Pre-configuring MSYS2 Python")
+    
+    # Force CMake to find MSYS2 Python, not system Python
+    set(Python3_ROOT_DIR "C:/msys64/mingw64" CACHE PATH "MSYS2 Python root" FORCE)
+    set(Python3_FIND_REGISTRY NEVER)
+    set(Python3_FIND_STRATEGY LOCATION)
+    
+    find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+    
+    message(STATUS "[Root] Found MinGW Python: ${Python3_EXECUTABLE} (${Python3_VERSION})")
+    
+    # MinGW Debug ABI Fix: MSYS2 only provides release Python libraries.
+    # In Debug builds (_DEBUG defined), Python headers enable debug reference counting
+    # flags (Py_REF_DEBUG) which requires symbols like _Py_NegativeRefcount that 
+    # are only in debug builds of Python. 
+    # We define Py_NO_ENABLE_SHARED to avoid SOME issues, but a global define
+    # to disable debug refcounting is more reliable for dynamic linking.
+    add_compile_definitions($<$<CONFIG:Debug>:Py_REF_DEBUG_DISABLED>)
+    
+    # We also define the missing symbols as empty stubs in automation_python later
+    # if they are still needed.
+endif()
+
 # MSVC: Always prefer static OpenSSL from vcpkg
 if (MSVC)
     set(OPENSSL_USE_STATIC_LIBS TRUE)
