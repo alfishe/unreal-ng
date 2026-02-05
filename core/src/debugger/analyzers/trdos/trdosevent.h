@@ -35,11 +35,11 @@ enum class TRDOSEventType : uint8_t
     // Data transfer
     SECTOR_TRANSFER,    // Sector data transfer complete
     
-    // Errors
-    ERROR_CRC,          // CRC error
-    ERROR_RNF,          // Record not found
-    ERROR_LOST_DATA,    // Lost data
-    ERROR_WRITE_PROTECT,// Write protected
+    // Errors (prefixed with ERR_ to avoid Windows macro collisions)
+    ERR_CRC,            // CRC error
+    ERR_RNF,            // Record not found
+    ERR_LOST_DATA,      // Lost data
+    ERR_WRITE_PROTECT,  // Write protected
     
     // Special
     LOADER_DETECTED,    // Custom loader detected

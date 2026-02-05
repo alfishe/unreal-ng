@@ -1,37 +1,39 @@
-#include "pch.h"
-
 #include "dumphelper_test.h"
 
-#include "common/dumphelper.h"
 #include <algorithm>
 #include <cstring>
-#include <iostream>
 #include <exception>
+#include <iostream>
+
+#include "common/dumphelper.h"
+#include "pch.h"
+
 
 /// region <SetUp / TearDown>
 
-void DumpHelper_Test::SetUp()
-{
+void DumpHelper_Test::SetUp() {}
 
-}
-
-void DumpHelper_Test::TearDown()
-{
-
-}
+void DumpHelper_Test::TearDown() {}
 
 /// endregion </SetUp / TearDown>
 
 // Helper accessor for DumpHelper::width for testing
-class DumpHelperTestAccessor : public DumpHelper {
+class DumpHelperTestAccessor : public DumpHelper
+{
 public:
-    static void SetWidth(int w) { width = w; }
-    static int GetWidth() { return width; }
+    static void SetWidth(int w)
+    {
+        width = w;
+    }
+    static int GetWidth()
+    {
+        return width;
+    }
 };
 
 TEST_F(DumpHelper_Test, HexDumpBuffer)
 {
-    uint8_t testBuffer[] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0xFF };
+    uint8_t testBuffer[] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0xFF};
 
     std::string result1 = DumpHelper::HexDumpBuffer(testBuffer, 4);
     std::string reference1 = "01 02 04 08";
@@ -48,8 +50,8 @@ TEST_F(DumpHelper_Test, HexDumpBuffer)
 
 TEST_F(DumpHelper_Test, HexDumpBuffer_EmptyBuffer)
 {
-    uint8_t testBuffer[] = {};
-    std::string result = DumpHelper::HexDumpBuffer(testBuffer, 0);
+    // MSVC doesn't allow zero-size arrays, use nullptr instead
+    std::string result = DumpHelper::HexDumpBuffer(nullptr, 0);
     EXPECT_EQ(result, "");
 }
 

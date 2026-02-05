@@ -5,9 +5,7 @@ message(">> core/tests CMakeLists.txt")
 # Project named 'core-tests' on C++
 project(core-tests LANGUAGES CXX)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 # Set output directories to match root CMakeLists.txt
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -98,7 +96,7 @@ if (NOT TARGET ${PROJECT_NAME})
 
     # All standard libraries required
     if (WIN32 AND MSVC)
-        set(common_libraries stdc++ iconv gtest)
+        set(common_libraries gtest)
     endif (WIN32 AND MSVC)
 
     if (WIN32 AND MINGW)

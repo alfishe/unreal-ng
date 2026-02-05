@@ -7,7 +7,9 @@
 
 class TileGrid;
 class EmulatorManager;
+#ifdef ENABLE_AUTOMATION
 class Automation;
+#endif
 class EmulatorTile;
 class AppSoundManager;
 
@@ -70,6 +72,8 @@ public:
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     /// Handle tile click for audio binding (toggle)
@@ -79,10 +83,11 @@ private:
     void setupUI();
     void createMenus();
     void createDefaultPresets();
+    void initializeAfterEventLoopStart();
 
     /// Bind audio device to the specified tile's emulator
     void bindAudioToTile(EmulatorTile* tile);
-    
+
     /// Unbind audio from current tile (mute)
     void unbindAudioFromTile();
 
@@ -105,8 +110,10 @@ private:
     // Using QPointer to auto-nullify when tile is deleted
     QPointer<EmulatorTile> _audioBoundTile;
 
+#ifdef ENABLE_AUTOMATION
     // Automation system (WebAPI, CLI, Python, Lua)
     std::unique_ptr<Automation> _automation;
+#endif
 
     // Configuration
     int _currentPresetIndex = -1;
@@ -126,6 +133,7 @@ private:
 
     // Saved state for restoration when exiting auto-preset modes
     QRect _savedGeometry;
+    Qt::WindowFlags _savedWindowFlags;
     std::vector<std::string> _savedEmulatorIds;
 
     // Async batch creation state
@@ -136,4 +144,9 @@ private:
 
     // Screen HQ toggle state (default: enabled)
     bool _screenHQEnabled = true;
+
+    // Auto-hide menu bar in fullscreen
+    QTimer* _menuAutoHideTimer = nullptr;
+    static constexpr int MENU_AUTO_HIDE_DELAY_MS = 2000;
+    static constexpr int MENU_TRIGGER_ZONE_HEIGHT = 10;  // pixels from top
 };
