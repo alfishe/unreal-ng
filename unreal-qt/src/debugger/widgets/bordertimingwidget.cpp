@@ -98,6 +98,10 @@ void BorderTimingWidget::paintEvent(QPaintEvent* event)
 {
     QWidget::paintEvent(event);
 
+    // Guard against division by zero (when emulator not set or config not loaded)
+    if (_totalFrameTStates == 0)
+        return;
+
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 

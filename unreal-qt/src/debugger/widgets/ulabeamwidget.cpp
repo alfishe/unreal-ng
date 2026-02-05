@@ -58,6 +58,11 @@ void ULABeamWidget::refresh()
     {
         // Get T-states from emulator
         CONFIG& config = _emulator->GetContext()->config;
+
+        // Guard against uninitialized or invalid config
+        if (config.t_line == 0 || config.frame == 0)
+            return;
+
         // Get current T-state counter from Z80
         Z80* cpu = _emulator->GetContext()->pCore->GetZ80();
         if (cpu)
