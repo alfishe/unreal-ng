@@ -4,34 +4,10 @@ cmake_minimum_required(VERSION 3.16)
 message(">> Unreal CMakeLists.txt (Unified Build)")
 
 # ========================================
-# vcpkg auto-discovery (before project())
+# Windows toolchain and vcpkg setup (before project())
 # ========================================
-# Auto-detect vcpkg if available and not already configured
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    # Check common vcpkg locations
-    if(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-        message(STATUS "Auto-detected vcpkg at C:/vcpkg")
-    elseif(EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-        message(STATUS "Auto-detected vcpkg from VCPKG_ROOT environment variable")
-    endif()
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolchainDetection.cmake)
 
-# Auto-detect vcpkg triplet for MSVC on Windows (before project())
-if(CMAKE_TOOLCHAIN_FILE AND WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
-    # Check if x64-windows-static is available
-    get_filename_component(VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
-    get_filename_component(VCPKG_ROOT "${VCPKG_ROOT}" DIRECTORY)
-    get_filename_component(VCPKG_ROOT "${VCPKG_ROOT}" DIRECTORY)
-    if(EXISTS "${VCPKG_ROOT}/installed/x64-windows-static")
-        set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "vcpkg triplet" FORCE)
-        message(STATUS "Auto-detected vcpkg triplet: x64-windows-static")
-    elseif(EXISTS "${VCPKG_ROOT}/installed/x64-windows")
-        set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg triplet" FORCE)
-        message(STATUS "Auto-detected vcpkg triplet: x64-windows")
-    endif()
-endif()
 
 # ========================================
 # Build Options
@@ -48,6 +24,9 @@ option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
 project(unreal)
+
+# Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
+validate_toolchain_dependencies()
 
 # ========================================
 # C++ Standard Configuration (MUST be after project())
@@ -286,43 +265,24 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SUITE_STAGING_DIR}"
             
-            # Copy all three app bundles
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/bin/unreal-qt.app"
-                "${SUITE_STAGING_DIR}/UnrealNG.app"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app"
-                "${SUITE_STAGING_DIR}/Screen Viewer.app"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app"
-                "${SUITE_STAGING_DIR}/Video Wall.app"
+            # Copy all three app bundles using cp -a to PRESERVE symlinks (critical for Qt frameworks)
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${SUITE_STAGING_DIR}/Video Wall.app"
             
-            # Run macdeployqt on each app bundle to copy Qt frameworks and plugins
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app"
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app"
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app"
+            # Copy shared resources into the MAIN bundle BEFORE macdeployqt runs
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
             
-            # Copy shared resources
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy
-                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            # Run macdeployqt on each app bundle with ad-hoc signing as the FINAL step
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
             
-            # Re-sign with ad-hoc signature (required after macdeployqt modifies bundles)
-            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/UnrealNG.app"
-            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/Screen Viewer.app"
-            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/Video Wall.app"
-            
-            # Create combined DMG
-            COMMAND hdiutil create
-                -volname "UnrealNG Suite"
-                -srcfolder "${SUITE_STAGING_DIR}"
-                -ov -format UDZO
-                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
+            # Create combined DMG from the correctly signed staging directory
+            COMMAND hdiutil create -volname "UnrealNG Suite" -srcfolder "${SUITE_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined macOS DMG with all applications"

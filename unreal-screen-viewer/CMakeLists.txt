@@ -208,13 +208,30 @@ set(PACKAGE_VERSION_PATCH "0")
 
 # macOS specific packaging
 if(APPLE)
+    # Find macdeployqt from Qt installation
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+        HINTS "${QT_INSTALL_PATH}/bin" "${QT_FOUND_PATH}/bin"
+    )
+    
     # Create a custom target for macOS packaging
+    set(SCREEN_VIEWER_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/ScreenViewer-Staging")
     add_custom_target(package_screen_viewer_macos
-        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package for Screen Viewer..."
+        # 1. Staging Setup
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
-        COMMAND hdiutil create -volname "UnrealNG-ScreenViewer" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer.dmg"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${SCREEN_VIEWER_STAGING_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SCREEN_VIEWER_STAGING_DIR}"
+        
+        # 2. Copy App Bundle (preserving symlinks)
+        COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SCREEN_VIEWER_STAGING_DIR}/Screen Viewer.app"
+        
+        # 3. Deploy and Sign (LAST step before DMG creation)
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SCREEN_VIEWER_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
+        
+        # 4. Create DMG from staging
+        COMMAND hdiutil create -volname "UnrealNG-ScreenViewer" -srcfolder "${SCREEN_VIEWER_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer.dmg"
+        
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating macOS DMG package for Screen Viewer in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for Screen Viewer in ${CMAKE_BINARY_DIR}/packages"
     )
     
     # Create a macOS application bundle

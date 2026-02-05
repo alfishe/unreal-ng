@@ -1,17 +1,20 @@
 // MSVC: winsock2.h must be included before windows.h to prevent redefinition errors
 #ifdef _WIN32
-    #define NOMINMAX
-    #include <winsock2.h> // winsock2.h include MUST go before windows.h
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+
     #include <windows.h>
+    #include <winsock2.h>  // winsock2.h include MUST go before windows.h
 #endif
 
 #include <common/filehelper.h>
 
 #include <QApplication>
 #include <QDebug>
-#include <QTimer>
-#include <QStandardPaths>
 #include <QDir>
+#include <QStandardPaths>
+#include <QTimer>
 
 #include "videowall/VideoWallWindow.h"
 
@@ -23,10 +26,11 @@ static void clearMacOSSavedState()
 #ifdef Q_OS_MACOS
     // Delete saved state directory for this app
     // This must be called AFTER QApplication exists (QStandardPaths requires it)
-    QString savedStatePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-        + "/Saved Application State/com.unrealng.videowall.savedState";
+    QString savedStatePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
+                             "/Saved Application State/com.unrealng.videowall.savedState";
     QDir savedStateDir(savedStatePath);
-    if (savedStateDir.exists()) {
+    if (savedStateDir.exists())
+    {
         qDebug() << "Clearing macOS saved application state:" << savedStatePath;
         savedStateDir.removeRecursively();
     }
@@ -42,7 +46,7 @@ int main(int argc, char* argv[])
 #endif
 
     QApplication app(argc, argv);
-    
+
     // Clear macOS saved state AFTER QApplication but BEFORE window creation
 #ifdef Q_OS_MACOS
     clearMacOSSavedState();
@@ -76,16 +80,16 @@ int main(int argc, char* argv[])
     // QApplication::exec() starts the event loop, giving Qt and the Cocoa
     // platform integration time to fully initialize fonts before any menu
     // text rendering occurs.
-    
+
     VideoWallWindow* window = nullptr;
-    
+
     QTimer::singleShot(0, [&window]() {
         window = new VideoWallWindow();
         window->show();
     });
 
     int result = app.exec();
-    
+
     delete window;
     return result;
 }
