@@ -95,8 +95,12 @@ void DisassemblerWidget::initializeTable()
     // Configure vertical header
     QHeaderView* vHeader = tableView->verticalHeader();
     vHeader->setVisible(false);  // Hide vertical header
-    vHeader->setDefaultSectionSize(18);
-    vHeader->setMinimumSectionSize(1);
+
+    // Calculate row height based on font metrics to ensure text fits
+    QFontMetrics rowFm(tableView->font());
+    int rowHeight = rowFm.height() + 4;  // Add padding for comfortable spacing
+    vHeader->setDefaultSectionSize(rowHeight);
+    vHeader->setMinimumSectionSize(rowHeight);
 
     // Enable grid for the table
     // tableView->setShowGrid(true);
