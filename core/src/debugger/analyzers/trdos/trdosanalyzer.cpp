@@ -162,17 +162,17 @@ std::string TRDOSEvent::format() const
         case TRDOSEventType::MODULE_SAVE:
             ss << "Module Saved: " << filename;
             break;
-        case TRDOSEventType::ERROR_CRC:
+        case TRDOSEventType::ERR_CRC:
             ss << "*** CRC ERROR ***";
             break;
-        case TRDOSEventType::ERROR_LOST_DATA:
+        case TRDOSEventType::ERR_LOST_DATA:
             ss << "*** DATA LOST ERROR ***";
             break;
-        case TRDOSEventType::ERROR_WRITE_PROTECT:
+        case TRDOSEventType::ERR_WRITE_PROTECT:
             ss << "*** WRITE PROTECT ERROR ***";
             break;
 
-        case TRDOSEventType::ERROR_RNF:
+        case TRDOSEventType::ERR_RNF:
             ss << "*** ERROR: Record Not Found ***";
             break;
         case TRDOSEventType::LOADER_DETECTED:
@@ -197,7 +197,7 @@ TRDOSAnalyzer::TRDOSAnalyzer(EmulatorContext* context)
     , _rawFdcEvents(RAW_BUFFER_SIZE)
     , _rawBreakpointEvents(RAW_BUFFER_SIZE)
 {
-    _uuid = UUID::Generate().toString();
+    _uuid = unreal::UUID::Generate().toString();
 }
 
 TRDOSAnalyzer::~TRDOSAnalyzer()
@@ -564,7 +564,7 @@ void TRDOSAnalyzer::onFDCCommandComplete(uint8_t status, const WD1793& fdc)
     {
         TRDOSEvent errEvent{};
         errEvent.timestamp = now;
-        errEvent.type = TRDOSEventType::ERROR_CRC;
+        errEvent.type = TRDOSEventType::ERR_CRC;
         errEvent.fdcStatus = status;
         emitEvent(std::move(errEvent));
     }
@@ -573,7 +573,7 @@ void TRDOSAnalyzer::onFDCCommandComplete(uint8_t status, const WD1793& fdc)
     {
         TRDOSEvent errEvent{};
         errEvent.timestamp = now;
-        errEvent.type = TRDOSEventType::ERROR_RNF;
+        errEvent.type = TRDOSEventType::ERR_RNF;
         errEvent.fdcStatus = status;
         emitEvent(std::move(errEvent));
     }

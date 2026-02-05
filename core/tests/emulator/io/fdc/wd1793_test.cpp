@@ -865,7 +865,8 @@ TEST_F(WD1793_Test, FSM_DelayRegister)
 
     // Define random numbers range
     std::uniform_int_distribution<size_t> delayDistribution(1, 10'000'000);
-    std::uniform_int_distribution<uint8_t> stateDistribution(WD1793::S_IDLE, WD1793::WDSTATE_MAX - 1);
+    // MSVC: uniform_int_distribution doesn't allow uint8_t, use unsigned int instead
+    std::uniform_int_distribution<unsigned int> stateDistribution(WD1793::S_IDLE, WD1793::WDSTATE_MAX - 1);
     /// endregion </Set up random numbers generator>
 
     /// region <Check delay request was registered correctly>
@@ -900,7 +901,8 @@ TEST_F(WD1793_Test, FSM_DelayCounters)
     std::mt19937 generator(rd());
 
     std::uniform_int_distribution<size_t> delayDistribution(1, 10'000);
-    std::uniform_int_distribution<uint8_t> stateDistribution(WD1793::S_WAIT + 1, WD1793::WDSTATE_MAX - 1);
+    // MSVC: uniform_int_distribution doesn't allow uint8_t, use unsigned int instead
+    std::uniform_int_distribution<unsigned int> stateDistribution(WD1793::S_WAIT + 1, WD1793::WDSTATE_MAX - 1);
 
     /// endregion </Set up random numbers generator>
 
@@ -2040,8 +2042,8 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Sector_Single)
 /// Per WD1793 datasheet: Read Track starts reading after first index pulse and reads all 6250 bytes
 TEST_F(WD1793_Test, FSM_CMD_Read_Track)
 {
-    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds max
-    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;  // Larger steps for efficiency
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;             // 2 seconds max
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;                          // Larger steps for efficiency
     static constexpr size_t const RAW_TRACK_SIZE = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
@@ -2051,7 +2053,7 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
     LoaderTRDCUT loaderTrd(_context, "test.trd");
     bool imageFormatted = loaderTrd.format(&diskImage);
     ASSERT_TRUE(imageFormatted) << "Failed to format TRD disk image";
-    
+
     // Write some non-zero data to track 0 for verification
     DiskImage::Track* refTrack = diskImage.getTrack(0);
     ASSERT_NE(refTrack, nullptr) << "Track 0 should exist";
@@ -2129,7 +2131,8 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
     size_t nonZeroBytes = 0;
     for (size_t i = 0; i < RAW_TRACK_SIZE && i < 256; i++)
     {
-        if (rawTrackData[i] != 0) nonZeroBytes++;
+        if (rawTrackData[i] != 0)
+            nonZeroBytes++;
     }
     EXPECT_GT(nonZeroBytes, 0) << "Track data should not be all zeros";
 }
@@ -2138,8 +2141,8 @@ TEST_F(WD1793_Test, FSM_CMD_Read_Track)
 /// Per WD1793 datasheet: Write Track starts after index pulse and writes until next index pulse
 TEST_F(WD1793_Test, FSM_CMD_Write_Track)
 {
-    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;  // 2 seconds max
-    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;  // Larger steps for efficiency
+    static constexpr size_t const TEST_DURATION_TSTATES = Z80_FREQUENCY * 2;             // 2 seconds max
+    static constexpr size_t const TEST_INCREMENT_TSTATES = 100;                          // Larger steps for efficiency
     static constexpr size_t const RAW_TRACK_SIZE = DiskImage::RawTrack::RAW_TRACK_SIZE;  // 6250 bytes
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
@@ -2259,7 +2262,8 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Track_WriteProtect)
     {
         fdc._time = i * 100;
         fdc.process();
-        if (fdc._state == WD1793::S_IDLE) break;
+        if (fdc._state == WD1793::S_IDLE)
+            break;
     }
 
     // Verify write protect rejection
@@ -2452,7 +2456,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_WriteProtect)
     const uint8_t writeSectorCommand = WD1793CUT::WD_COMMAND_BITS::WD_CMD_BITS_WRITE_SECTOR;
     WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(writeSectorCommand);
     uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, writeSectorCommand);
-    
+
     fdc._commandRegister = writeSectorCommand;
     fdc._lastDecodedCmd = decodedCommand;
     fdc._trackRegister = 0;
@@ -2518,7 +2522,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
     fdc._selectedDrive->setTrack(0);
     fdc._sectorRegister = 1;
     fdc._sideUp = false;
-    
+
     // Track current sector being written
     size_t currentSector = 0;
     size_t byteInSector = 0;
@@ -2538,7 +2542,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_MultiSector)
             {
                 fdc.writeDataRegister(testData[currentSector][byteInSector]);
                 byteInSector++;
-                
+
                 if (byteInSector >= TRD_SECTORS_SIZE_BYTES)
                 {
                     // Move to next sector
@@ -2657,7 +2661,7 @@ TEST_F(WD1793_Test, FSM_CMD_Write_Sector_DeletedDataMark)
     EXPECT_EQ(byteIndex, TRD_SECTORS_SIZE_BYTES) << "All bytes should have been written";
 
     // Verify WDS_RECORDTYPE (bit 5) is set for deleted data mark
-    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_RECORDTYPE) 
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_RECORDTYPE)
         << "WDS_RECORDTYPE should be set for deleted data mark (F8)";
 }
 /// endregion </WRITE_SECTOR>
@@ -2676,13 +2680,13 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
     WD1793CUT fdc(_context);
 
     // De-activate WD1793 reset, Set active drive A, Select MFM / double density mode
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc._drive = 0;
 
     // Start with NO disk inserted (Not-Ready state)
     fdc._selectedDrive->ejectDisk();
-    
+
     // Reset WDC internal time marks
     fdc.resetTime();
 
@@ -2694,7 +2698,7 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
         const uint8_t forceInterruptCommand = 0b1101'0001;  // I0=1: Not-Ready to Ready transition
         WD1793CUT::WD_COMMANDS decodedCommand = WD1793CUT::decodeWD93Command(forceInterruptCommand);
         uint8_t commandValue = WD1793CUT::getWD93CommandValue(decodedCommand, forceInterruptCommand);
-        
+
         EXPECT_EQ(decodedCommand, WD1793::WD_CMD_FORCE_INTERRUPT);
 
         // Send command to FDC
@@ -2705,9 +2709,9 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
     /// endregion
 
     // Verify I0 condition is set
-    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 
-              WD1793::WD_FORCE_INTERRUPT_NOT_READY) << "I0 condition should be set";
-    
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, WD1793::WD_FORCE_INTERRUPT_NOT_READY)
+        << "I0 condition should be set";
+
     // Verify no INTRQ yet (condition not triggered)
     bool INTRQ_before = fdc._beta128status & WD1793::INTRQ;
     EXPECT_FALSE(INTRQ_before) << "INTRQ should not be set before transition";
@@ -2738,9 +2742,9 @@ TEST_F(WD1793_Test, ForceInterrupt_NotReadyToReady)
     // Verify INTRQ is now set
     bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after Not-Ready->Ready transition";
-    
+
     // Verify I0 condition is still set (conditions persist until new command)
-    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 0) 
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_NOT_READY, 0)
         << "I0 condition should persist after triggering (for subsequent transitions)";
 
     // Cleanup
@@ -2759,8 +2763,8 @@ TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
     WD1793CUT fdc(_context);
 
     // De-activate WD1793 reset, Set active drive A
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc._drive = 0;
 
     // Start with disk inserted (Ready state)
@@ -2787,8 +2791,8 @@ TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
     /// endregion
 
     // Verify I1 condition is set
-    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 
-              WD1793::WD_FORCE_INTERRUPT_READY) << "I1 condition should be set";
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, WD1793::WD_FORCE_INTERRUPT_READY)
+        << "I1 condition should be set";
 
     // Set _prevReady to true to ensure we can detect the transition
     fdc._prevReady = true;
@@ -2808,9 +2812,9 @@ TEST_F(WD1793_Test, ForceInterrupt_ReadyToNotReady)
     // Verify INTRQ is now set
     bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after Ready->Not-Ready transition";
-    
+
     // Verify I1 condition is still set (conditions persist until new command)
-    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 0) 
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_READY, 0)
         << "I1 condition should persist after triggering (for subsequent transitions)";
 }
 
@@ -2825,20 +2829,20 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
     WD1793CUT fdc(_context);
 
     // De-activate WD1793 reset, Set active drive A
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc._drive = 0;
 
     // Insert disk and start motor (required for index pulses)
     DiskImage* diskImage = new DiskImage(80, 2);  // 80 cylinders, 2 sides
     fdc._selectedDrive->insertDisk(diskImage);
-    
+
     // Use prolongFDDMotorRotation() which sets proper motor timeout
     fdc.prolongFDDMotorRotation();
 
     // Reset WDC internal time marks - motor timeout is already set
     fdc.resetTime();
-    
+
     // Ensure motor timeout is restored after reset
     fdc.prolongFDDMotorRotation();
 
@@ -2855,8 +2859,8 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
     /// endregion
 
     // Verify I2 condition is set
-    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 
-              WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE) << "I2 condition should be set";
+    EXPECT_EQ(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE)
+        << "I2 condition should be set";
 
     // Clear any existing INTRQ
     fdc.clearIntrq();
@@ -2864,7 +2868,7 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
 
     // Record initial index pulse counter
     size_t initialPulseCount = fdc._indexPulseCounter;
-    
+
     // Verify motor is on
     EXPECT_TRUE(fdc._selectedDrive->getMotor()) << "Motor should be running";
     EXPECT_GT(fdc._motorTimeoutTStates, 0) << "Motor timeout should be set";
@@ -2893,9 +2897,9 @@ TEST_F(WD1793_Test, ForceInterrupt_IndexPulse)
     // Verify INTRQ is now set
     bool INTRQ_after = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ_after) << "INTRQ should be set after index pulse";
-    
+
     // Verify I2 condition is still set (triggers on EVERY index pulse)
-    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0) 
+    EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0)
         << "I2 condition should persist (triggers on every index pulse)";
 
     // Cleanup
@@ -2912,12 +2916,12 @@ TEST_F(WD1793_Test, ForceInterrupt_ImmediateInterrupt)
     WD1793CUT fdc(_context);
 
     // De-activate WD1793 reset
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
 
     // Reset WDC internal time marks
     fdc.resetTime();
-    
+
     // Clear any existing INTRQ
     fdc.clearIntrq();
     EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should be cleared initially";
@@ -2939,10 +2943,10 @@ TEST_F(WD1793_Test, ForceInterrupt_ImmediateInterrupt)
     // Verify INTRQ is immediately set (no need to process)
     bool INTRQ = fdc._beta128status & WD1793::INTRQ;
     EXPECT_TRUE(INTRQ) << "INTRQ should be set immediately for I3=1";
-    
+
     // Verify controller is in idle state
     EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Controller should be in IDLE state";
-    
+
     // Verify BUSY is cleared
     EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
 }
@@ -2956,12 +2960,12 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterrupt)
     WD1793CUT fdc(_context);
 
     // De-activate WD1793 reset
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
 
     // Reset WDC internal time marks
     fdc.resetTime();
-    
+
     // Clear any existing INTRQ
     fdc.clearIntrq();
     EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) << "INTRQ should be cleared initially";
@@ -2984,13 +2988,13 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterrupt)
     // KEY TEST: Verify INTRQ is NOT set for $D0
     bool INTRQ = fdc._beta128status & WD1793::INTRQ;
     EXPECT_FALSE(INTRQ) << "INTRQ should NOT be set for $D0 (terminate without interrupt)";
-    
+
     // Verify controller is in idle state
     EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Controller should be in IDLE state";
-    
+
     // Verify BUSY is cleared
     EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_BUSY) << "BUSY should be cleared";
-    
+
     // Verify no interrupt conditions are set for monitoring
     EXPECT_EQ(fdc._interruptConditions, 0) << "No interrupt conditions should be set for $D0";
 }
@@ -3093,7 +3097,8 @@ TEST_F(WD1793_Test, ForceInterrupt_Terminate)
         }
 
         // Note: Track may be +/- 1 from expected due to discrete simulation timing
-        EXPECT_IN_RANGE(fdc._selectedDrive->getTrack(), TEST_TRACKS / 2 - 1, TEST_TRACKS / 2 + 1);  // Ensure we're around Track 20
+        EXPECT_IN_RANGE(fdc._selectedDrive->getTrack(), TEST_TRACKS / 2 - 1,
+                        TEST_TRACKS / 2 + 1);  // Ensure we're around Track 20
         EXPECT_IN_RANGE(fdc._time, positioningDuration - TEST_INCREMENT_TSTATES,
                         positioningDuration + TEST_INCREMENT_TSTATES);
         /// endregion </Pre-checks>
@@ -3190,7 +3195,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_CatalogStructure)
     // TR-DOS layout on Track 0:
     // Sectors 0-7: Catalog entries (128 files max, 16 bytes each)
     // Sector 8: Disk info sector
-    
+
     // Read sector 8 (disk info) via track/sector model
     // TR-DOS sector numbering starts from 1, but getDataForSector uses 0-15 index
     // Sector 9 in TR-DOS = index 8 (0-based)
@@ -3199,7 +3204,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_CatalogStructure)
 
     // Verify TR-DOS disk info structure at sector 8
     // Offset 0xE1: First free sector number
-    // Offset 0xE2: First free track number  
+    // Offset 0xE2: First free track number
     // Offset 0xE3: Disk type (0x16=40T DS, 0x17=40T SS, 0x18=80T SS, 0x19=80T DS)
     // Offset 0xE4: Number of files (0 for empty)
     // Offset 0xE5-0xE6: Free sectors count (little-endian)
@@ -3215,7 +3220,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_CatalogStructure)
     EXPECT_EQ(firstFreeTrack, 0x01) << "First free track should be 1 (track 0 is system)";
     EXPECT_EQ(diskType, 0x16) << "Disk type should be 0x16 (80T DS) or 0x19";  // May vary by formatter
     EXPECT_EQ(numFiles, 0x00) << "Number of files should be 0 on empty disk";
-    
+
     // 80 tracks * 2 sides * 16 sectors = 2560 total sectors
     // Track 0 uses 16 sectors for system, so 2544 free
     // LoaderTRD may use different calculation - accept range
@@ -3233,8 +3238,7 @@ TEST_F(WD1793_Test, Integration_TRDOS_CatalogStructure)
         for (int entry = 0; entry < 16; entry++)
         {
             uint8_t* entryData = catalogSector + (entry * 16);
-            EXPECT_EQ(entryData[0], 0x00) 
-                << "Catalog entry " << (sectorNum * 16 + entry) << " should be empty (0x00)";
+            EXPECT_EQ(entryData[0], 0x00) << "Catalog entry " << (sectorNum * 16 + entry) << " should be empty (0x00)";
         }
     }
 }
@@ -3296,8 +3300,7 @@ TEST_F(WD1793_Test, Integration_AllTracksPopulated)
         for (uint8_t side = 0; side < 2; side++)
         {
             DiskImage::Track* track = diskImage.getTrackForCylinderAndSide(cylinder, side);
-            ASSERT_NE(track, nullptr) 
-                << "Track not found: cylinder=" << (int)cylinder << " side=" << (int)side;
+            ASSERT_NE(track, nullptr) << "Track not found: cylinder=" << (int)cylinder << " side=" << (int)side;
 
             // Verify track has 16 sectors
             int validSectors = 0;
@@ -3305,18 +3308,16 @@ TEST_F(WD1793_Test, Integration_AllTracksPopulated)
             {
                 // Check sector has valid ID (cylinder and side match)
                 DiskImage::AddressMarkRecord& id = track->sectors[s].address_record;
-                EXPECT_EQ(id.cylinder, cylinder) 
+                EXPECT_EQ(id.cylinder, cylinder)
                     << "Sector cylinder mismatch at C" << (int)cylinder << "S" << (int)side;
-                EXPECT_EQ(id.head, side)
-                    << "Sector side mismatch at C" << (int)cylinder << "S" << (int)side;
+                EXPECT_EQ(id.head, side) << "Sector side mismatch at C" << (int)cylinder << "S" << (int)side;
                 EXPECT_EQ(id.sector_size, 0x01)  // 256 bytes
                     << "Sector size should be 256 bytes (0x01)";
-                
+
                 validSectors++;
             }
-            EXPECT_EQ(validSectors, 16) 
-                << "Track C" << (int)cylinder << "S" << (int)side << " should have 16 sectors";
-            
+            EXPECT_EQ(validSectors, 16) << "Track C" << (int)cylinder << "S" << (int)side << " should have 16 sectors";
+
             tracksChecked++;
         }
     }
@@ -3333,15 +3334,15 @@ TEST_F(WD1793_Test, Integration_AllTracksPopulated)
 TEST_F(WD1793_Test, ForceInterrupt_I2_MultipleIndexPulses)
 {
     static constexpr size_t const TEST_INCREMENT_TSTATES = 100;
-    static constexpr size_t const ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / 5; // 200ms per rotation
+    static constexpr size_t const ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / 5;  // 200ms per rotation
 
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
     WD1793CUT fdc(_context);
 
     // Setup: Insert disk and start motor
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc._drive = 0;
 
     DiskImage* diskImage = new DiskImage(80, 2);
@@ -3364,12 +3365,12 @@ TEST_F(WD1793_Test, ForceInterrupt_I2_MultipleIndexPulses)
     // Clear initial INTRQ
     fdc.clearIntrq();
     size_t initialPulseCount = fdc._indexPulseCounter;
-    
+
     // Run for 3 full disk rotations (~600ms) and count how many times INTRQ is raised
     size_t intrqRaisedCount = 0;
     size_t lastTime = 0;
     bool lastIntrqState = false;
-    
+
     for (size_t clk = 0; clk < 3 * ROTATION_PERIOD_TSTATES + 10000; clk += TEST_INCREMENT_TSTATES)
     {
         fdc._time = clk;
@@ -3389,13 +3390,12 @@ TEST_F(WD1793_Test, ForceInterrupt_I2_MultipleIndexPulses)
     }
 
     size_t totalPulses = fdc._indexPulseCounter - initialPulseCount;
-    
+
     // Should have at least 2-3 index pulses over 3 rotations
     EXPECT_GE(totalPulses, 2) << "Should have at least 2 index pulses in 3 rotations";
-    
+
     // INTRQ should have been raised for each pulse (key test for the fix!)
-    EXPECT_EQ(intrqRaisedCount, totalPulses) 
-        << "INTRQ should be raised on EVERY index pulse, not just the first";
+    EXPECT_EQ(intrqRaisedCount, totalPulses) << "INTRQ should be raised on EVERY index pulse, not just the first";
 
     // I2 condition should still be set (persists)
     EXPECT_NE(fdc._interruptConditions & WD1793::WD_FORCE_INTERRUPT_INDEX_PULSE, 0)
@@ -3428,8 +3428,7 @@ TEST_F(WD1793_Test, ForceInterrupt_ConditionsClearedByNewCommand)
     fdc.cmdRestore(0);
 
     // Verify I2 condition is now cleared by new command start
-    EXPECT_EQ(fdc._interruptConditions, 0) 
-        << "Interrupt conditions should be cleared when a new command is issued";
+    EXPECT_EQ(fdc._interruptConditions, 0) << "Interrupt conditions should be cleared when a new command is issued";
 }
 
 /// Test $D0 (Force Interrupt with no conditions) - negative test
@@ -3454,7 +3453,7 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterruptEvenAfterTransitions)
 
     // Verify no interrupt conditions are monitored
     EXPECT_EQ(fdc._interruptConditions, 0);
-    
+
     // Clear any INTRQ
     fdc.clearIntrq();
     EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ);
@@ -3464,13 +3463,13 @@ TEST_F(WD1793_Test, ForceInterrupt_D0_NoInterruptEvenAfterTransitions)
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._prevReady = false;
     fdc.prolongFDDMotorRotation();
-    
+
     // Process to let transition detection run
     fdc._time = TEST_INCREMENT_TSTATES;
     fdc.process();
 
     // Verify NO interrupt was raised (since we specified $D0)
-    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ) 
+    EXPECT_FALSE(fdc._beta128status & WD1793::INTRQ)
         << "$D0 should NOT generate interrupts even after state transitions";
 
     // Cleanup
@@ -3493,25 +3492,24 @@ TEST_F(WD1793_Test, WriteTrack_F5_Sets_CrcStartPosition)
     // Setup for Write Track
     DiskImage* diskImage = new DiskImage(80, 2);
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
-    
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+
     // Allocate raw track buffer
     fdc._rawDataBuffer = new uint8_t[DiskImage::RawTrack::RAW_TRACK_SIZE];
     fdc._rawDataBufferIndex = 100;  // Simulate we're at byte 100
     fdc._bytesToWrite = 6250;
-    
+
     // Write F5 (sync byte)
     fdc._dataRegister = 0xF5;
     fdc.processWriteTrack();
-    
+
     // Verify _crcStartPosition was set to AFTER the A1 byte (index + 1)
-    EXPECT_EQ(fdc._crcStartPosition, 100 + 1) 
-        << "F5 should set _crcStartPosition to the byte AFTER the A1 sync byte";
-    
+    EXPECT_EQ(fdc._crcStartPosition, 100 + 1) << "F5 should set _crcStartPosition to the byte AFTER the A1 sync byte";
+
     // Verify A1 was written (F5 -> A1)
     EXPECT_EQ(fdc._rawDataBuffer[100], 0xA1) << "F5 should write A1 byte";
-    
+
     // Cleanup
     delete[] fdc._rawDataBuffer;
     fdc._rawDataBuffer = nullptr;
@@ -3531,37 +3529,37 @@ TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_LowFirst)
     DiskImage* diskImage = new DiskImage(80, 2);
     fdc._selectedDrive->insertDisk(diskImage);
     fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
-    
+
     // Allocate raw track buffer
     fdc._rawDataBuffer = new uint8_t[DiskImage::RawTrack::RAW_TRACK_SIZE];
     memset(fdc._rawDataBuffer, 0, DiskImage::RawTrack::RAW_TRACK_SIZE);
-    
+
     // Write known data pattern for CRC calculation
     // After F5: write A1 and set _crcStartPosition
     fdc._rawDataBufferIndex = 0;
     fdc._bytesToWrite = 6250;
-    fdc._drq_served = true;  // Mark DRQ as served to prevent Lost Data error
+    fdc._drq_served = true;    // Mark DRQ as served to prevent Lost Data error
     fdc._dataRegister = 0xF5;  // Sync byte
     fdc.processWriteTrack();
-    
+
     size_t crcStart = fdc._crcStartPosition;  // Should be 1
-    
+
     // Write a known data byte (e.g., FE for ID Address Mark)
     fdc._drq_served = true;  // Mark DRQ as served
     fdc._dataRegister = 0xFE;
     fdc.processWriteTrack();
-    
+
     // Record current index before writing CRC
     size_t indexBeforeCrc = fdc._rawDataBufferIndex;
-    
+
     // Write F7 (generates 2 CRC bytes)
     fdc._drq_served = true;  // Mark DRQ as served
     fdc._dataRegister = 0xF7;
     fdc.processWriteTrack();
-    
+
     // CRC should be 2 bytes after previous position
     EXPECT_EQ(fdc._rawDataBufferIndex, indexBeforeCrc + 2) << "F7 should write 2 CRC bytes";
-    
+
     // Manually calculate expected CRC for verification
     // CRC-CCITT starting with 0xCDB4 over the data from crcStart
     uint16_t expectedCrc = 0xCDB4;
@@ -3573,14 +3571,14 @@ TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_LowFirst)
             expectedCrc = (expectedCrc << 1) ^ ((expectedCrc & 0x8000) ? 0x1021 : 0);
         }
     }
-    
+
     // Key regression test: verify byte order is LOW BYTE FIRST, then HIGH BYTE
     uint8_t lowByte = fdc._rawDataBuffer[indexBeforeCrc];
     uint8_t highByte = fdc._rawDataBuffer[indexBeforeCrc + 1];
-    
+
     EXPECT_EQ(lowByte, expectedCrc & 0xFF) << "First CRC byte should be LOW byte";
     EXPECT_EQ(highByte, (expectedCrc >> 8) & 0xFF) << "Second CRC byte should be HIGH byte";
-    
+
     // Cleanup
     delete[] fdc._rawDataBuffer;
     fdc._rawDataBuffer = nullptr;
@@ -3593,7 +3591,7 @@ TEST_F(WD1793_Test, WriteTrack_F7_CrcByteOrder_LowFirst)
 TEST_F(WD1793_Test, WaitIndex_Uses_TState_Delay)
 {
     static constexpr size_t const ROTATION_PERIOD = Z80_FREQUENCY / 5;  // 200ms = 700,000 T-states
-    
+
     _context->pModuleLogger->SetLoggingLevel(LogError);
 
     WD1793CUT fdc(_context);
@@ -3603,27 +3601,27 @@ TEST_F(WD1793_Test, WaitIndex_Uses_TState_Delay)
     fdc._selectedDrive->insertDisk(diskImage);
     fdc.prolongFDDMotorRotation();
     fdc.wakeUp();
-    
+
     // Set initial time to middle of disk rotation
     fdc._time = ROTATION_PERIOD / 2;  // 350,000 T-states into rotation
-    
+
     // Set state to wait for index
     fdc._state = WD1793::S_WAIT_INDEX;
     fdc._waitIndexPulseCount = SIZE_MAX;  // Reset wait state
-    
+
     // Call processWaitIndex - should calculate delay and set S_WAIT
     fdc.processWaitIndex();
-    
+
     // Verify it switched to S_WAIT (using delay-based approach, not counter polling)
     EXPECT_EQ(fdc._state, WD1793::S_WAIT) << "processWaitIndex should use delay-based wait";
     EXPECT_EQ(fdc._state2, WD1793::S_FETCH_FIFO) << "After delay, should transition to S_FETCH_FIFO";
-    
+
     // Verify delay was calculated to next index pulse
     // At time = ROTATION_PERIOD/2, delay should be approximately ROTATION_PERIOD/2 to reach next index
     size_t expectedDelay = ROTATION_PERIOD - (fdc._time % ROTATION_PERIOD);
     EXPECT_IN_RANGE(fdc._delayTStates, expectedDelay - 100, expectedDelay + 100)
         << "Delay should be calculated to next index pulse";
-    
+
     // Cleanup
     fdc._selectedDrive->ejectDisk();
     delete diskImage;
@@ -3634,7 +3632,7 @@ TEST_F(WD1793_Test, WaitIndex_Uses_TState_Delay)
 /// region <Read Sector CRC and DAM Tests>
 
 /// Test that CRC error during Read Sector sets WDS_CRCERR status bit
-/// Per WD1793 datasheet: "If there is a CRC error at the end of the data field, 
+/// Per WD1793 datasheet: "If there is a CRC error at the end of the data field,
 /// the CRC error status bit is set, and the command is terminated"
 TEST_F(WD1793_Test, ReadSector_CRCError_SetsStatusBit)
 {
@@ -3650,10 +3648,10 @@ TEST_F(WD1793_Test, ReadSector_CRCError_SetsStatusBit)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     track0->formatTrack(0, 0);
     track0->reindexSectors();
-    
+
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
@@ -3723,10 +3721,10 @@ TEST_F(WD1793_Test, ReadSector_DeletedDataMark_SetsStatusBit5)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     track0->formatTrack(0, 0);
     track0->reindexSectors();
-    
+
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
@@ -3795,17 +3793,18 @@ TEST_F(WD1793_Test, ReadSector_NormalDataMark_ClearsStatusBit5)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     track0->formatTrack(0, 0);
     track0->reindexSectors();
-    
+
     // Initialize sector CRCs
     for (int i = 0; i < 16; i++)
     {
         DiskImage::RawSectorBytes* sector = track0->getSector(i);
-        if (sector) sector->recalculateDataCRC();
+        if (sector)
+            sector->recalculateDataCRC();
     }
-    
+
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
@@ -3873,17 +3872,18 @@ TEST_F(WD1793_Test, ReadSector_LostData_When_DRQ_Not_Serviced)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     track0->formatTrack(0, 0);
     track0->reindexSectors();
-    
+
     // Initialize sector CRCs
     for (int i = 0; i < 16; i++)
     {
         DiskImage::RawSectorBytes* sector = track0->getSector(i);
-        if (sector) sector->recalculateDataCRC();
+        if (sector)
+            sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
@@ -3920,7 +3920,7 @@ TEST_F(WD1793_Test, ReadSector_LostData_When_DRQ_Not_Serviced)
     // Per datasheet: Lost Data is set but command completes normally
     bool lostData = fdc._statusRegister & WD1793::WDS_LOSTDATA;
     EXPECT_TRUE(lostData) << "WDS_LOSTDATA should be set when CPU doesn't read bytes in time";
-    
+
     // Command should still complete (not terminate early)
     EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should complete even with Lost Data";
 
@@ -3945,16 +3945,17 @@ TEST_F(WD1793_Test, ReadSector_LostData_CPU_Recovers_MidTransfer)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     track0->formatTrack(0, 0);
     track0->reindexSectors();
-    
+
     for (int i = 0; i < 16; i++)
     {
         DiskImage::RawSectorBytes* sector = track0->getSector(i);
-        if (sector) sector->recalculateDataCRC();
+        if (sector)
+            sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
     fdc.prolongFDDMotorRotation();
@@ -3999,10 +4000,10 @@ TEST_F(WD1793_Test, ReadSector_LostData_CPU_Recovers_MidTransfer)
     // Lost Data should be set (we skipped bytes)
     bool lostData = fdc._statusRegister & WD1793::WDS_LOSTDATA;
     EXPECT_TRUE(lostData) << "WDS_LOSTDATA should be set for skipped bytes";
-    
+
     // But we should have recovered and read remaining bytes
     EXPECT_GE(bytesRead, 100u) << "CPU should be able to read bytes after 'recovering'";
-    
+
     // Command should complete
     EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should complete";
 
@@ -4027,16 +4028,17 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
     DiskImage::Track* track0 = diskImage->getTrackForCylinderAndSide(0, 0);
     track0->formatTrack(0, 0);
     track0->reindexSectors();
-    
+
     for (int i = 0; i < 16; i++)
     {
         DiskImage::RawSectorBytes* sector = track0->getSector(i);
-        if (sector) sector->recalculateDataCRC();
+        if (sector)
+            sector->recalculateDataCRC();
     }
 
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
 
@@ -4066,8 +4068,7 @@ TEST_F(WD1793_Test, ReadSector_EFlag_Adds_15ms_Delay)
 
     // With E-flag, first DRQ should be delayed by at least 15ms
     size_t delayTStates = firstDRQTime - startTime;
-    EXPECT_GE(delayTStates, E_FLAG_DELAY_TSTATES - 1000) 
-        << "E-flag should add ~15ms delay before sector read starts";
+    EXPECT_GE(delayTStates, E_FLAG_DELAY_TSTATES - 1000) << "E-flag should add ~15ms delay before sector read starts";
 
     // Cleanup
     fdc._selectedDrive->ejectDisk();
@@ -4093,8 +4094,8 @@ TEST_F(WD1793_Test, ReadSector_SectorNotFound_SetsStatusBit)
     track0->reindexSectors();
 
     fdc._selectedDrive->insertDisk(diskImage);
-    fdc._beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | 
-                           WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    fdc._beta128Register =
+        WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET | WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
     fdc.prolongFDDMotorRotation();
     fdc.resetTime();
 
@@ -4122,7 +4123,7 @@ TEST_F(WD1793_Test, ReadSector_SectorNotFound_SetsStatusBit)
     // Sector not found should be set
     bool notFound = fdc._statusRegister & WD1793::WDS_NOTFOUND;
     EXPECT_TRUE(notFound) << "WDS_NOTFOUND should be set when sector data doesn't exist";
-    
+
     // Command should terminate
     EXPECT_EQ(fdc._state, WD1793::S_IDLE) << "Command should terminate after sector not found";
 
