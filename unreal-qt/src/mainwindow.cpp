@@ -1369,6 +1369,17 @@ void MainWindow::handleFullScreenShortcutLinux()
             QTimer::singleShot(200, this, [this]() {
                 if (_dockingManager)
                     _dockingManager->setSnappingLocked(false);
+
+                // Restore focus to main window and device screen for keyboard input
+                // This is needed on Linux where showing docked windows can shift focus
+                // (DockingManager uses WA_ShowWithoutActivating but WM may still shift focus)
+                activateWindow();
+                raise();
+                if (deviceScreen)
+                {
+                    deviceScreen->setFocus();
+                    qDebug() << "Focus restored to deviceScreen after exiting fullscreen (Linux)";
+                }
             });
         }
     }
