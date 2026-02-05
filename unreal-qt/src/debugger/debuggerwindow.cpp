@@ -37,6 +37,36 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     // toolBar->setWindowFlags(Qt::Tool);
     toolBar = new QToolBar("Debugger toolbar");
 
+    // Set toolbar stylesheet for consistent disabled state appearance on Linux
+    // Linux themes often don't properly gray out disabled buttons
+#ifdef Q_OS_LINUX
+    toolBar->setStyleSheet(R"(
+        QToolBar {
+            spacing: 2px;
+            padding: 2px;
+        }
+        QToolButton {
+            border: 1px solid #888888;
+            border-radius: 3px;
+            padding: 4px 8px;
+            margin: 1px;
+            background-color: #f0f0f0;
+        }
+        QToolButton:hover {
+            background-color: #e0e0e0;
+            border-color: #666666;
+        }
+        QToolButton:pressed {
+            background-color: #d0d0d0;
+        }
+        QToolButton:disabled {
+            color: #999999;
+            background-color: #e8e8e8;
+            border-color: #cccccc;
+        }
+    )");
+#endif
+
     // Set toolbar size
     QSize toolbarSize = QSize(360, 32);
     toolBar->resize(toolbarSize);

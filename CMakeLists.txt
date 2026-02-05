@@ -4,34 +4,10 @@ cmake_minimum_required(VERSION 3.16)
 message(">> Unreal CMakeLists.txt (Unified Build)")
 
 # ========================================
-# vcpkg auto-discovery (before project())
+# Windows toolchain and vcpkg setup (before project())
 # ========================================
-# Auto-detect vcpkg if available and not already configured
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    # Check common vcpkg locations
-    if(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-        message(STATUS "Auto-detected vcpkg at C:/vcpkg")
-    elseif(EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg toolchain" FORCE)
-        message(STATUS "Auto-detected vcpkg from VCPKG_ROOT environment variable")
-    endif()
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolchainDetection.cmake)
 
-# Auto-detect vcpkg triplet for MSVC on Windows (before project())
-if(CMAKE_TOOLCHAIN_FILE AND WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET)
-    # Check if x64-windows-static is available
-    get_filename_component(VCPKG_ROOT "${CMAKE_TOOLCHAIN_FILE}" DIRECTORY)
-    get_filename_component(VCPKG_ROOT "${VCPKG_ROOT}" DIRECTORY)
-    get_filename_component(VCPKG_ROOT "${VCPKG_ROOT}" DIRECTORY)
-    if(EXISTS "${VCPKG_ROOT}/installed/x64-windows-static")
-        set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "vcpkg triplet" FORCE)
-        message(STATUS "Auto-detected vcpkg triplet: x64-windows-static")
-    elseif(EXISTS "${VCPKG_ROOT}/installed/x64-windows")
-        set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg triplet" FORCE)
-        message(STATUS "Auto-detected vcpkg triplet: x64-windows")
-    endif()
-endif()
 
 # ========================================
 # Build Options
@@ -48,6 +24,9 @@ option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
 project(unreal)
+
+# Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
+validate_toolchain_dependencies()
 
 # ========================================
 # C++ Standard Configuration (MUST be after project())
