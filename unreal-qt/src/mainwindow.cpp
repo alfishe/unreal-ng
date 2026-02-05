@@ -191,34 +191,44 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
 
     // Check if there's already a running emulator instance (started before UI)
-    QTimer::singleShot(100, this, [this]() {
-        auto emulatorIds = _emulatorManager->GetEmulatorIds();
-        if (!emulatorIds.empty() && !_emulator)
-        {
-            // Adopt the first running emulator
-            auto emulator = _emulatorManager->GetEmulator(emulatorIds[0]);
-            if (emulator)
+    {
+        QPointer<MainWindow> guard(this);
+        QTimer::singleShot(100, this, [guard]() {
+            if (!guard)
+                return;
+            auto emulatorIds = guard->_emulatorManager->GetEmulatorIds();
+            if (!emulatorIds.empty() && !guard->_emulator)
             {
-                qDebug() << "MainWindow: Found existing emulator instance, binding to it...";
-                // Trigger the bind via the normal handler
-                SimpleTextPayload payload(emulatorIds[0]);
-                Message msg(0, &payload, false);  // topic id 0, don't cleanup payload (it's on stack)
-                handleEmulatorInstanceCreated(0, &msg);
+                // Adopt the first running emulator
+                auto emulator = guard->_emulatorManager->GetEmulator(emulatorIds[0]);
+                if (emulator)
+                {
+                    qDebug() << "MainWindow: Found existing emulator instance, binding to it...";
+                    // Trigger the bind via the normal handler
+                    SimpleTextPayload payload(emulatorIds[0]);
+                    Message msg(0, &payload, false);  // topic id 0, don't cleanup payload (it's on stack)
+                    guard->handleEmulatorInstanceCreated(0, &msg);
+                }
             }
-        }
-    });
+        });
+    }
 
 #ifdef ENABLE_AUTOMATION
 
     // Delay automation modules start, so the main thread is not blocked, and automation is fully initialized
     // Otherwise race conditions
     // TODO: implement proper waiting until automation is fully initialized
-    QTimer::singleShot(300, this, [this]() {
-        if (_automation)
-        {
-            _automation->start();
-        }
-    });
+    {
+        QPointer<MainWindow> guard(this);
+        QTimer::singleShot(300, this, [guard]() {
+            if (!guard)
+                return;
+            if (guard->_automation)
+            {
+                guard->_automation->start();
+            }
+        });
+    }
 
 #endif
 
