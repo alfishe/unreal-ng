@@ -12,9 +12,7 @@ set(ENABLE_PYTHON_AUTOMATION ON CACHE BOOL "Enable Python automation" FORCE)
 set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 if (CMAKE_VERSION VERSION_LESS "3.7.0")
     set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -79,12 +77,34 @@ if (QT_INSTALL_PATH STREQUAL "")
                 "$ENV{QTDIR}"
             )
         elseif (WIN32)  # Windows
-            set(QT_POSSIBLE_PATHS
-                "C:/Qt/6.9.3/msvc2019_64"
-                "C:/Qt/6.5.3/msvc2019_64"
-                "C:/Qt/6.5.0/msvc2019_64"
-                "$ENV{QTDIR}"
-            )
+            # Auto-detect Qt path based on compiler
+            if(MINGW)
+                message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "C:/Qt/6.5.0/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            elseif(MSVC)
+                message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/msvc2019_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.0/msvc2019_64"
+                    "$ENV{QTDIR}"
+                )
+            else()
+                message(STATUS "Unknown Windows compiler - searching for any Qt build")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            endif()
         endif ()
     endif()
     
@@ -379,6 +399,10 @@ endif()
 
 # Windows specific packaging
 if(WIN32)
+    # Include the shared Windows Qt deployment module
+    include(${ROOT_DIR}/cmake/WinDeployQt.cmake)
+    setup_windows_qt_deployment(${PROJECT_NAME})
+    
     # Create a custom target for Windows packaging that builds without tests
     add_custom_target(package_windows
         COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package..."

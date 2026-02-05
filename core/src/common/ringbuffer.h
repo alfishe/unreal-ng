@@ -1,20 +1,20 @@
 #pragma once
 
-#include <vector>
-#include <shared_mutex>
-#include <mutex>
-#include <cstdint>
 #include <algorithm>
+#include <cstdint>
+#include <mutex>
+#include <shared_mutex>
+#include <vector>
+
 
 /// Thread-safe ring buffer with FIFO eviction.
 /// @tparam T Event type (must have `timestamp` member for filtering)
-template<typename T>
+template <typename T>
 class RingBuffer
 {
 public:
     explicit RingBuffer(size_t capacity)
-        : _buffer(capacity), _capacity(capacity), _head(0), _count(0),
-          _totalProduced(0), _totalEvicted(0)
+        : _buffer(capacity), _capacity(capacity), _head(0), _count(0), _totalProduced(0), _totalEvicted(0)
     {
     }
 
@@ -22,7 +22,7 @@ public:
     void push(T&& event)
     {
         std::unique_lock lock(_mutex);
-        
+
         if (_count == _capacity)
         {
             // Buffer full: evict oldest
@@ -35,12 +35,12 @@ public:
 
         size_t index = (_head + _count - 1) % _capacity;
         _buffer[index] = std::move(event);
-        
+
         if (_count == _capacity)
         {
             _head = (_head + 1) % _capacity;
         }
-        
+
         _totalProduced++;
     }
 
@@ -55,16 +55,16 @@ public:
     std::vector<T> getAll() const
     {
         std::shared_lock lock(_mutex);
-        
+
         std::vector<T> result;
         result.reserve(_count);
-        
+
         for (size_t i = 0; i < _count; i++)
         {
             size_t index = (_head + i) % _capacity;
             result.push_back(_buffer[index]);
         }
-        
+
         return result;
     }
 
@@ -72,9 +72,9 @@ public:
     std::vector<T> getSince(uint64_t timestamp) const
     {
         std::shared_lock lock(_mutex);
-        
+
         std::vector<T> result;
-        
+
         for (size_t i = 0; i < _count; i++)
         {
             size_t index = (_head + i) % _capacity;
@@ -83,7 +83,7 @@ public:
                 result.push_back(_buffer[index]);
             }
         }
-        
+
         return result;
     }
 
@@ -91,18 +91,18 @@ public:
     std::vector<T> getRange(size_t start, size_t count) const
     {
         std::shared_lock lock(_mutex);
-        
+
         std::vector<T> result;
-        size_t actualStart = std::min(start, _count);
-        size_t actualCount = std::min(count, _count - actualStart);
+        size_t actualStart = (std::min)(start, _count);
+        size_t actualCount = (std::min)(count, _count - actualStart);
         result.reserve(actualCount);
-        
+
         for (size_t i = 0; i < actualCount; i++)
         {
             size_t index = (_head + actualStart + i) % _capacity;
             result.push_back(_buffer[index]);
         }
-        
+
         return result;
     }
 
@@ -116,14 +116,17 @@ public:
     }
 
     // Accessors (thread-safe)
-    
+
     size_t size() const
     {
         std::shared_lock lock(_mutex);
         return _count;
     }
 
-    size_t capacity() const { return _capacity; }
+    size_t capacity() const
+    {
+        return _capacity;
+    }
 
     bool isEmpty() const
     {
@@ -152,8 +155,8 @@ public:
 private:
     std::vector<T> _buffer;
     size_t _capacity;
-    size_t _head;       // Index of oldest event
-    size_t _count;      // Current number of events
+    size_t _head;   // Index of oldest event
+    size_t _count;  // Current number of events
 
     uint64_t _totalProduced;
     uint64_t _totalEvicted;

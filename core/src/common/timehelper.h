@@ -51,7 +51,7 @@ public:
     {
         uint64_t result = 0;
     
-    #if defined(WIN32)
+    #if defined(_WIN32)
         LARGE_INTEGER frequency;
         LARGE_INTEGER ticks;
         QueryPerformanceFrequency(&frequency);

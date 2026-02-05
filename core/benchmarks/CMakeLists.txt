@@ -5,9 +5,7 @@ message(">> core/benchmarks CMakeLists.txt")
 
 project (core-benchmarks LANGUAGES CXX)
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard is inherited from root CMakeLists.txt (C++20)
 
 # Default to Release mode
 if (NOT CMAKE_BUILD_TYPE)
@@ -46,6 +44,7 @@ if (WIN32 AND MINGW)
         ${GOOGLEBENCHMARK_DIR}/src/benchmark_name.cc
         ${GOOGLEBENCHMARK_DIR}/src/benchmark_register.cc
         ${GOOGLEBENCHMARK_DIR}/src/benchmark_runner.cc
+        ${GOOGLEBENCHMARK_DIR}/src/check.cc
         ${GOOGLEBENCHMARK_DIR}/src/colorprint.cc
         ${GOOGLEBENCHMARK_DIR}/src/commandlineflags.cc
         ${GOOGLEBENCHMARK_DIR}/src/complexity.cc
@@ -53,8 +52,8 @@ if (WIN32 AND MINGW)
         ${GOOGLEBENCHMARK_DIR}/src/counter.cc
         ${GOOGLEBENCHMARK_DIR}/src/csv_reporter.cc
         ${GOOGLEBENCHMARK_DIR}/src/json_reporter.cc
+        ${GOOGLEBENCHMARK_DIR}/src/perf_counters.cc
         ${GOOGLEBENCHMARK_DIR}/src/reporter.cc
-        ${GOOGLEBENCHMARK_DIR}/src/sleep.cc
         ${GOOGLEBENCHMARK_DIR}/src/statistics.cc
         ${GOOGLEBENCHMARK_DIR}/src/string_util.cc
         ${GOOGLEBENCHMARK_DIR}/src/sysinfo.cc
@@ -95,7 +94,12 @@ else()
 endif()
 
 # Compile benchmarks into executable
-add_executable(${PROJECT_NAME} ${SOURCES})
+if (WIN32 AND MINGW)
+    # For MinGW, compile benchmark sources directly into the executable
+    add_executable(${PROJECT_NAME} ${SOURCES} ${BENCHMARK_FILES})
+else()
+    add_executable(${PROJECT_NAME} ${SOURCES})
+endif()
 
 # Enable benchmark wrappers in code
 target_compile_definitions(${PROJECT_NAME} PRIVATE _CODE_UNDER_BENCHMARK)
@@ -111,7 +115,8 @@ endif (CMAKE_BUILD_TYPE MATCHES Debug)
 
 # All standard libraries required
 if (WIN32 AND MSVC)
-    set(common_libraries stdc++ iconv)
+    # MSVC uses its own runtime, no need for stdc++ or iconv
+    set(common_libraries Shlwapi ws2_32)
 endif (WIN32 AND MSVC)
 
 if (WIN32 AND MINGW)
@@ -131,11 +136,19 @@ if (APPLE)
 endif (APPLE)
 
 # Link with Google Benchmark libraries
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    ${common_libraries}
-    core
-    benchmark::benchmark_main
-)
+if (WIN32 AND MINGW)
+    # MinGW: benchmark sources are compiled directly, no need to link external target
+    target_link_libraries(${PROJECT_NAME} PRIVATE 
+        ${common_libraries}
+        core
+    )
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE 
+        ${common_libraries}
+        core
+        benchmark::benchmark_main
+    )
+endif()
 
 # Define data paths
 set(DATA_PATH "${ROOT_DIR}/data")

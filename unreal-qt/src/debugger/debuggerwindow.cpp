@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QPointer>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
@@ -68,7 +69,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     frameStepAction->setShortcut(QKeySequence(Qt::Key_F9));
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     toolBar->addAction(frameStepAction);
-    
+
     waitInterruptAction = toolBar->addAction("Wait INT");
     resetAction = toolBar->addAction("Reset");
     toolBar->addWidget(spacer);
@@ -233,7 +234,7 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         connect(m_binding, &EmulatorBinding::stateChanged, this, &DebuggerWindow::onBindingStateChanged);
         connect(m_binding, &EmulatorBinding::ready, this, &DebuggerWindow::onBindingReady);
         connect(m_binding, &EmulatorBinding::notReady, this, &DebuggerWindow::onBindingNotReady);
-        
+
         // Connect CPU step complete signal for automation-triggered steps (WebAPI, Python, Lua, CLI)
         // Use updateState() instead of onBindingReady() to ensure setZ80State() is called on widgets
         connect(m_binding, &EmulatorBinding::cpuStepComplete, this, &DebuggerWindow::updateState);
@@ -532,24 +533,33 @@ void DebuggerWindow::dispatchToMainThread(std::function<void()> callback)
 
     if (currentThread == mainThread)
     {
-        callback();
+        // Direct execution - check closing flag
+        if (!_isClosing)
+        {
+            callback();
+        }
     }
     else
     {
+        // Cross-thread dispatch - use QPointer to guard against object destruction
+        QPointer<DebuggerWindow> guard(this);
         QTimer* timer = new QTimer();
         timer->moveToThread(qApp->thread());
         timer->setSingleShot(true);
 
         // This lambda will be called from main thread
         QObject::connect(timer, &QTimer::timeout, [=]() {
-            // Execution will be done in main thread
-            try
+            // Check if DebuggerWindow still exists before executing callback
+            if (guard && !guard->_isClosing)
             {
-                callback();
-            }
-            catch (...)
-            {
-                // Just to prevent main thread from crashing
+                try
+                {
+                    callback();
+                }
+                catch (...)
+                {
+                    // Just to prevent main thread from crashing
+                }
             }
 
             timer->deleteLater();
@@ -833,7 +843,7 @@ void DebuggerWindow::stepOver()
     // and we need to update UI. For actual step-over (call instructions), the UI
     // will also update via breakpoint notification, but updating here is harmless.
     _emulator->StepOver();
-    
+
     // Always update UI - handles both step-in fallback and ensures immediate feedback
     updateState();
 }

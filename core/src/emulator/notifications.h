@@ -4,6 +4,7 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/uuid.h"
+using unreal::UUID;  // Explicitly bring into scope to avoid Windows GUID typedef collision
 
 /// Payload for emulator selection change notifications
 /// Sent when the active/selected emulator instance changes in the CLI or UI
@@ -11,19 +12,19 @@
 class EmulatorSelectionPayload : public MessagePayload
 {
 public:
-    UUID previousEmulatorId;  // Nil UUID if no previous selection
-    UUID newEmulatorId;       // Nil UUID if selection cleared
+    unreal::UUID previousEmulatorId;  // Nil UUID if no previous selection
+    unreal::UUID newEmulatorId;       // Nil UUID if selection cleared
 
     /// Construct from string UUIDs (automatically parsed)
     EmulatorSelectionPayload(const std::string& prevId, const std::string& newId)
         : MessagePayload(),
-          previousEmulatorId(prevId.empty() ? UUID() : UUID(prevId)),
-          newEmulatorId(newId.empty() ? UUID() : UUID(newId))
+          previousEmulatorId(prevId.empty() ? unreal::UUID() : unreal::UUID(prevId)),
+          newEmulatorId(newId.empty() ? unreal::UUID() : unreal::UUID(newId))
     {
     }
 
     /// Construct from UUID objects directly
-    EmulatorSelectionPayload(const UUID& prevId, const UUID& newId)
+    EmulatorSelectionPayload(const unreal::UUID& prevId, const unreal::UUID& newId)
         : MessagePayload(), previousEmulatorId(prevId), newEmulatorId(newId)
     {
     }
@@ -38,11 +39,11 @@ public:
 class EmulatorFramePayload : public MessagePayload
 {
 public:
-    UUID _emulatorId;
+    unreal::UUID _emulatorId;
     uint32_t _frameCounter;
 
 public:
-    EmulatorFramePayload(const UUID& emulatorId, uint32_t counter)
+    EmulatorFramePayload(const unreal::UUID& emulatorId, uint32_t counter)
         : MessagePayload()
         , _emulatorId(emulatorId)
         , _frameCounter(counter)
@@ -52,7 +53,7 @@ public:
     /// Construct from string UUID (automatically parsed)
     EmulatorFramePayload(const std::string& emulatorId, uint32_t counter)
         : MessagePayload()
-        , _emulatorId(emulatorId.empty() ? UUID() : UUID(emulatorId))
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
         , _frameCounter(counter)
     {
     }
@@ -66,12 +67,12 @@ public:
 class FDDDiskPayload : public MessagePayload
 {
 public:
-    UUID _emulatorId;           // UUID of the emulator instance
+    unreal::UUID _emulatorId;           // UUID of the emulator instance
     uint8_t _driveId;           // Drive index (0=A, 1=B, 2=C, 3=D)
     std::string _diskPath;      // Full path to disk image file
 
 public:
-    FDDDiskPayload(const UUID& emulatorId, uint8_t driveId, const std::string& diskPath)
+    FDDDiskPayload(const unreal::UUID& emulatorId, uint8_t driveId, const std::string& diskPath)
         : MessagePayload()
         , _emulatorId(emulatorId)
         , _driveId(driveId)
@@ -82,7 +83,7 @@ public:
     /// Construct from string UUID (automatically parsed)
     FDDDiskPayload(const std::string& emulatorId, uint8_t driveId, const std::string& diskPath)
         : MessagePayload()
-        , _emulatorId(emulatorId.empty() ? UUID() : UUID(emulatorId))
+        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
         , _driveId(driveId)
         , _diskPath(diskPath)
     {

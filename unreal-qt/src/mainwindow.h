@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <QMoveEvent>
 #include <QMutex>
+#include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSettings>

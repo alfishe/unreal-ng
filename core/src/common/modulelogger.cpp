@@ -1,40 +1,19 @@
-#include "stdafx.h"
 #include "modulelogger.h"
 
 #include "common/bithelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
+#include "stdafx.h"
 
 /// region <Constants>
 
-const char* ModuleLogger::LoggerLevelNames[6] =
-{
-    "None",
-    "Trace",
-    "Debug",
-    "Info",
-    "Warning",
-    "Error"
-};
+const char* ModuleLogger::LoggerLevelNames[6] = {"None", "Trace", "Debug", "Info", "Warning", "Error"};
 
 const char* ModuleLogger::ALL = "<All>";
 const char* ModuleLogger::NONE = "<None>";
 
-const char* ModuleLogger::moduleNames[12] =
-{
-    "<Unknown>",
-    "Core",
-    "Z80",
-    "Memory",
-    "I/O",
-    "Disk",
-    "Video",
-    "Sound",
-    "DMA",
-    "Loader",
-    "Debugger",
-    "Disassembler"
-};
+const char* ModuleLogger::moduleNames[12] = {"<Unknown>", "Core",  "Z80", "Memory", "I/O",      "Disk",
+                                             "Video",     "Sound", "DMA", "Loader", "Debugger", "Disassembler"};
 
 /// endregion </Constants>
 
@@ -63,10 +42,12 @@ ModuleLogger::ModuleLogger(EmulatorContext* context)
     // Subscribe for logger settings change notifications
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callbackOnSettingsChange = static_cast<ObserverCallbackMethod>(&ModuleLogger::OnSettingsChangeRequested);
+    ObserverCallbackMethod callbackOnSettingsChange =
+        static_cast<ObserverCallbackMethod>(&ModuleLogger::OnSettingsChangeRequested);
     messageCenter.AddObserver(NC_LOGGER_SETTINGS_MODULES_CHANGE, observerInstance, callbackOnSettingsChange);
 
-    ObserverCallbackMethod moduleSettingsChange = static_cast<ObserverCallbackMethod>(&ModuleLogger::OnModuleSettingsChangeRequested);
+    ObserverCallbackMethod moduleSettingsChange =
+        static_cast<ObserverCallbackMethod>(&ModuleLogger::OnModuleSettingsChangeRequested);
     messageCenter.AddObserver(NC_LOGGER_SETTINGS_SUBMODULES_CHANGE, observerInstance, moduleSettingsChange);
 }
 
@@ -78,10 +59,12 @@ ModuleLogger::~ModuleLogger()
     // Unsubscribe from logger settings change notifications
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     Observer* observerInstance = static_cast<Observer*>(this);
-    ObserverCallbackMethod callbackOnKeyPressed = static_cast<ObserverCallbackMethod>(&ModuleLogger::OnSettingsChangeRequested);
+    ObserverCallbackMethod callbackOnKeyPressed =
+        static_cast<ObserverCallbackMethod>(&ModuleLogger::OnSettingsChangeRequested);
     messageCenter.RemoveObserver(NC_LOGGER_SETTINGS_MODULES_CHANGE, observerInstance, callbackOnKeyPressed);
 
-    ObserverCallbackMethod moduleSettingsChange = static_cast<ObserverCallbackMethod>(&ModuleLogger::OnModuleSettingsChangeRequested);
+    ObserverCallbackMethod moduleSettingsChange =
+        static_cast<ObserverCallbackMethod>(&ModuleLogger::OnModuleSettingsChangeRequested);
     messageCenter.RemoveObserver(NC_LOGGER_SETTINGS_SUBMODULES_CHANGE, observerInstance, moduleSettingsChange);
 }
 
@@ -92,7 +75,7 @@ ModuleLogger::~ModuleLogger()
 void ModuleLogger::SetLoggingSettings(LoggerSettings& settings)
 {
     // Copy new settings to the context
-    memcpy((void *)&_settings, (const void *)&settings, sizeof(LoggerSettings));
+    memcpy((void*)&_settings, (const void*)&settings, sizeof(LoggerSettings));
 }
 
 void ModuleLogger::Mute()
@@ -114,7 +97,7 @@ void ModuleLogger::TurnOffLoggingForAll()
     size_t size = sizeof(_settings.submodules) / sizeof(_settings.submodules[0]);
     for (size_t i = 0; i < size; i++)
     {
-        _settings.submodules[i] = 0x0000; // Disable all submodule bits
+        _settings.submodules[i] = 0x0000;  // Disable all submodule bits
     }
 }
 
@@ -127,7 +110,7 @@ void ModuleLogger::TurnOnLoggingForAll()
     size_t size = sizeof(_settings.submodules) / sizeof(_settings.submodules[0]);
     for (size_t i = 0; i < size; i++)
     {
-        _settings.submodules[i] = 0xFF; // Enable all submodule bits
+        _settings.submodules[i] = 0xFF;  // Enable all submodule bits
     }
 }
 
@@ -136,7 +119,8 @@ void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t 
     /// region <Sanity checks>
     if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
     {
-        std::string message = StringHelper::Format("Module cannot have id > %d. Found %d", PlatformModulesEnum::MODULE_DISASSEMBLER, module);
+        std::string message = StringHelper::Format("Module cannot have id > %d. Found %d",
+                                                   PlatformModulesEnum::MODULE_DISASSEMBLER, module);
         throw std::logic_error(message);
     }
 
@@ -148,7 +132,8 @@ void ModuleLogger::TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t 
 
     if (submodule != 0xFF && BitHelper::CountSetBits(submodule) > 1)
     {
-        std::string message = StringHelper::Format("Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
+        std::string message = StringHelper::Format(
+            "Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
         throw std::logic_error(message);
     }
 
@@ -171,7 +156,8 @@ void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t s
     /// region <Sanity checks>
     if (module > PlatformModulesEnum::MODULE_DISASSEMBLER)
     {
-        std::string message = StringHelper::Format("Module cannot have id > %d. Found %d", PlatformModulesEnum::MODULE_DISASSEMBLER, module);
+        std::string message = StringHelper::Format("Module cannot have id > %d. Found %d",
+                                                   PlatformModulesEnum::MODULE_DISASSEMBLER, module);
         throw std::logic_error(message);
     }
 
@@ -183,7 +169,8 @@ void ModuleLogger::TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t s
 
     if (submodule != 0xFFFF && BitHelper::CountSetBits(submodule) > 1)
     {
-        std::string message = StringHelper::Format("Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
+        std::string message = StringHelper::Format(
+            "Submodule specified incorrectly. Single bit should be provided. Value: %x", submodule);
         throw std::logic_error(message);
     }
 
@@ -243,7 +230,8 @@ void ModuleLogger::EmptyLine()
     Out(linefeed, len);
 }
 
-void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string fmt, ...)
+void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uint16_t submodule, const std::string fmt,
+                              ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -276,34 +264,37 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
         case MODULE_CORE:
             if (submodule > SUBMODULE_CORE_MAINLOOP)
             {
-                std::string error = StringHelper::Format("LogModuleMessage - module Core, invalid submodule %d", submodule);
+                std::string error =
+                    StringHelper::Format("LogModuleMessage - module Core, invalid submodule %d", submodule);
                 throw std::logic_error(error);
             }
             break;
         case MODULE_Z80:
             if (submodule > SUBMODULE_Z80_IO)
             {
-                std::string error = StringHelper::Format("LogModuleMessage - module Z80, invalid submodule %d", submodule);
+                std::string error =
+                    StringHelper::Format("LogModuleMessage - module Z80, invalid submodule %d", submodule);
                 throw std::logic_error(error);
             }
             break;
         case MODULE_MEMORY:
             if (submodule > SUBMODULE_MEM_RAM)
             {
-                std::string error = StringHelper::Format("LogModuleMessage - module Memory, invalid submodule %d", submodule);
+                std::string error =
+                    StringHelper::Format("LogModuleMessage - module Memory, invalid submodule %d", submodule);
                 throw std::logic_error(error);
             }
             break;
         default:
             break;
     }
-#endif // _DEBUG
+#endif  // _DEBUG
 
     /// endregion </Sanity checks>
 
     char buffer[1024];
     size_t time_len = 0;
-    struct tm *tm_info;
+    struct tm* tm_info;
     struct timeval tv;
 
     std::string format = std::string(LoggerLevelNames[level]) + ": " + fmt;
@@ -314,32 +305,55 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
 
     gettimeofday(&tv, NULL);
 
-    #if defined __GNUC__
-        time_t rawtime;
-        time(&rawtime);
-        tm_info = localtime(&rawtime);
-    #elif defined __APPLE__
-        tm_info = localtime(&tv);
-    #endif
+    // Initialize tm_info to nullptr first to satisfy MSVC runtime checks
+    tm_info = nullptr;
 
+#if defined(_WIN32) && defined(_MSC_VER)
+    // MSVC on Windows: Use localtime_s (thread-safe localtime)
+    time_t rawtime = tv.tv_sec;
+    struct tm tm_storage = {};  // Zero-initialize
+    errno_t err = localtime_s(&tm_storage, &rawtime);
+    if (err == 0)
+    {
+        tm_info = &tm_storage;
+    }
+    else
+    {
+        // Fallback: use zeroed struct (will show 00:00:00)
+        tm_info = &tm_storage;
+    }
+#elif defined(__GNUC__) && !defined(_MSC_VER)
+    time_t rawtime;
+    time(&rawtime);
+    tm_info = localtime(&rawtime);
+#elif defined(__APPLE__)
+    tm_info = localtime(&tv);
+#endif
+
+    // If tm_info is still nullptr, create a zeroed fallback
+    static struct tm fallback_tm = {};
     if (tm_info == nullptr)
     {
-        throw std::logic_error("Unable to get localtime");
+        tm_info = &fallback_tm;
     }
 
     time_len += strftime(buffer, sizeof(buffer), "[%H:%M:%S", tm_info);
 
-    #if defined _WIN32 && defined MSVC
-        time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03lld.%03lld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
-    #else
-        time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len,".%03d.%03d]", (int)(tv.tv_usec / 1000), (int)(tv.tv_usec % 1000));
-    #endif
+#if defined _WIN32 && defined _MSC_VER
+    time_len +=
+        snprintf(buffer + time_len, sizeof(buffer) - time_len, ".%03ld.%03ld] ", tv.tv_usec / 1000, tv.tv_usec % 1000);
+#else
+    time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len, ".%03d.%03d]", (int)(tv.tv_usec / 1000),
+                         (int)(tv.tv_usec % 1000));
+#endif
 
     /// endregion </Print timestamp>
 
     /// region <Print module-submodule information>
-    //time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len, "[%s] ", GetModuleSubmoduleHexString(module, submodule).c_str());
-    time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len, "[%s] ", GetModuleSubmoduleBriefString(module, submodule).c_str());
+    // time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len, "[%s] ", GetModuleSubmoduleHexString(module,
+    // submodule).c_str());
+    time_len += snprintf(buffer + time_len, sizeof(buffer) - time_len, "[%s] ",
+                         GetModuleSubmoduleBriefString(module, submodule).c_str());
     /// endregion </Print module-submodule information>
 
     /// region <Print formatted value>
@@ -525,7 +539,7 @@ void ModuleLogger::OnModuleSettingsChangeRequested([[maybe_unused]] int id, Mess
             uint16_t module = value >> 16;
             uint16_t moduleSettings = value & 0x0000FFFF;
 
-            if (module < sizeof(_settings.submodules) / sizeof (_settings.submodules[0]))
+            if (module < sizeof(_settings.submodules) / sizeof(_settings.submodules[0]))
             {
                 _settings.submodules[module] = moduleSettings;
             }
@@ -580,16 +594,18 @@ std::string ModuleLogger::DumpRequestedSettingsChange(uint32_t change)
     uint16_t module = change >> 16;
     uint16_t moduleSettings = change & 0x0000FFFF;
 
-     ss << StringHelper::Format("Module: %s (%d)", moduleNames[module], module) << std::endl;
+    ss << StringHelper::Format("Module: %s (%d)", moduleNames[module], module) << std::endl;
 
-     const char** submoduleNames;
-     size_t submoduleNamesSize = 0;
-     if (GetSubmoduleNameCollection(module, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
-     {
-         ss << StringHelper::Format("Submodules: %s", DumpResolveFlags(moduleSettings, submoduleNames, submoduleNamesSize).c_str());
-     }
+    const char** submoduleNames;
+    size_t submoduleNamesSize = 0;
+    if (GetSubmoduleNameCollection(module, &submoduleNames, &submoduleNamesSize) && submoduleNames &&
+        submoduleNamesSize > 0)
+    {
+        ss << StringHelper::Format("Submodules: %s",
+                                   DumpResolveFlags(moduleSettings, submoduleNames, submoduleNamesSize).c_str());
+    }
 
-     result = ss.str();
+    result = ss.str();
 
     return result;
 }
@@ -677,11 +693,12 @@ std::string ModuleLogger::DumpSettings()
         // Check submodule status
         const char** submoduleNames;
         size_t submoduleNamesSize = 0;
-        if (GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && submoduleNames && submoduleNamesSize > 0)
+        if (GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && submoduleNames &&
+            submoduleNamesSize > 0)
         {
             uint16_t allSubmodulesMask = (1 << submoduleNamesSize) - 1;
             uint16_t enabledSubmodules = _settings.submodules[i];
-            
+
             if (enabledSubmodules != 0)
             {
                 hasEnabledSubmodules = true;
@@ -708,9 +725,9 @@ std::string ModuleLogger::DumpSettings()
         ss << StringHelper::Format("%s: %s", moduleName.c_str(), moduleStatus.c_str()) << std::endl;
 
         // Only show submodule details if module is partial or off but has enabled submodules
-        if ((moduleStatus == "partial" || (moduleStatus == "off" && hasEnabledSubmodules)) && 
-            GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && 
-            submoduleNames && submoduleNamesSize > 0)
+        if ((moduleStatus == "partial" || (moduleStatus == "off" && hasEnabledSubmodules)) &&
+            GetSubmoduleNameCollection(i, &submoduleNames, &submoduleNamesSize) && submoduleNames &&
+            submoduleNamesSize > 0)
         {
             ss << "  Submodules:" << std::endl;
             ss << "" << DumpResolveFlags(_settings.submodules[i], submoduleNames, submoduleNamesSize) << std::endl;
@@ -737,7 +754,7 @@ std::string ModuleLogger::DumpModuleName(uint16_t module)
 std::string ModuleLogger::DumpResolveFlags(uint16_t flags, const char* names[], size_t nameSize)
 {
     std::string result;
-    std::stringstream  ss;
+    std::stringstream ss;
 
     if (flags == 0)
     {

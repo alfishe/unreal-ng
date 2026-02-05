@@ -22,9 +22,13 @@ if (NOT DEFINED ENABLE_CLI_AUTOMATION)
     option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 endif()
 
-# Specify the C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# C++ standard - use parent CMakeLists.txt setting when included from parent
+# (C++20 is now set globally in root CMakeLists.txt for all compilers)
+
+# MSVC: Define WIN32_LEAN_AND_MEAN and NOMINMAX to prevent winsock header conflicts
+if(MSVC)
+    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX)
+endif()
 
 if (CMAKE_VERSION VERSION_LESS "3.7.0")
     set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -74,12 +78,34 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
                 "$ENV{QTDIR}"
             )
         elseif (WIN32)  # Windows
-            set(QT_POSSIBLE_PATHS
-                "C:/Qt/6.9.3/msvc2019_64"
-                "C:/Qt/6.5.3/msvc2019_64"
-                "C:/Qt/6.5.0/msvc2019_64"
-                "$ENV{QTDIR}"
-            )
+            # Auto-detect Qt path based on compiler
+            if(MINGW)
+                message(STATUS "Detected MinGW compiler - searching for MinGW Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "C:/Qt/6.5.0/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            elseif(MSVC)
+                message(STATUS "Detected MSVC compiler - searching for MSVC Qt builds")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/msvc2019_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.0/msvc2019_64"
+                    "$ENV{QTDIR}"
+                )
+            else()
+                message(STATUS "Unknown Windows compiler - searching for any Qt build")
+                set(QT_POSSIBLE_PATHS
+                    "C:/Qt/6.9.3/msvc2022_64"
+                    "C:/Qt/6.9.3/mingw_64"
+                    "C:/Qt/6.5.3/msvc2019_64"
+                    "C:/Qt/6.5.3/mingw_64"
+                    "$ENV{QTDIR}"
+                )
+            endif()
         endif ()
         
         # Try to find Qt6Config.cmake in possible paths
@@ -182,8 +208,10 @@ if (ENABLE_AUTOMATION)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_AUTOMATION)
 
     target_compile_definitions(${PROJECT_NAME} PRIVATE
-        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
         $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
     )
 endif ()
 
@@ -307,6 +335,8 @@ if(APPLE)
     )
     
     # Create a macOS application bundle
+    # Use custom Info.plist that disables state restoration to prevent crash
+    # during the crash recovery dialog (before Qt/Cocoa fully initialize)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Video Wall"
@@ -314,6 +344,7 @@ if(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.videowall"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
     )
     
     # Copy resources to bundle
@@ -329,6 +360,10 @@ endif()
 
 # Windows specific packaging
 if(WIN32)
+    # Include the shared Windows Qt deployment module
+    include(${ROOT_DIR}/cmake/WinDeployQt.cmake)
+    setup_windows_qt_deployment(${PROJECT_NAME})
+    
     # Create a custom target for Windows packaging
     add_custom_target(package_videowall_windows
         COMMAND ${CMAKE_COMMAND} -E echo "Building Windows package for Video Wall..."
