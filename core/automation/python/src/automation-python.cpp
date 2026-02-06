@@ -1,5 +1,4 @@
 #include "automation-python.h"
-#include "emulator/python_emulator.h"
 
 #include <base/featuremanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
@@ -14,8 +13,12 @@
 #include <sstream>
 #include <thread>
 
+#include "emulator/python_emulator.h"
+
+
 // Define embedded Python module for emulator bindings
-PYBIND11_EMBEDDED_MODULE(unreal_emulator, m) {
+PYBIND11_EMBEDDED_MODULE(unreal_emulator, m)
+{
     m.doc() = "Unreal Speccy NG Emulator Python bindings";
     PythonBindings::registerEmulatorBindings(m);
 }
@@ -34,6 +37,8 @@ void AutomationPython::start()
 
 void AutomationPython::stop()
 {
+    bool wasRunning = (_thread != nullptr);
+    
     _stopThread = true;
 
     // Notify the condition variable to wake up the waiting thread
@@ -74,7 +79,11 @@ void AutomationPython::stop()
     // Thread has cleaned up, just clear thread ID
     _pythonThreadId = 0;
 
-    std::cout << "Python interpreter stopped" << std::endl;
+    // Only print if there was actually something running
+    if (wasRunning)
+    {
+        std::cout << "Python interpreter stopped" << std::endl;
+    }
 }
 
 bool AutomationPython::executeCode(const std::string& code, std::string& errorMessage, std::string& capturedOutput)
@@ -98,6 +107,7 @@ bool AutomationPython::executeCode(const std::string& code, std::string& errorMe
                 {
                     // Use a separate execution context to avoid conflicts
                     py::dict locals;
+
 
                     // Set up stdout capture in the local context
                     py::exec(R"(
@@ -456,6 +466,19 @@ void AutomationPython::threadFunc(AutomationPython* python)
         py::dict globals = py::globals();
         registerEmulatorBindings();
         std::cout << "Emulator bindings registered successfully" << std::endl;
+        
+        // Print Python version and platform info
+        py::module_ sys = py::module_::import("sys");
+        std::string version = py::str(sys.attr("version"));
+        std::string platform = py::str(sys.attr("platform"));
+        
+        // Extract just the version number (first line before newline)
+        size_t newlinePos = version.find('\n');
+        if (newlinePos != std::string::npos)
+            version = version.substr(0, newlinePos);
+            
+        std::cout << "Python " << version << " (" << platform << ")" << std::endl;
+        std::cout << "Python automation started (Thread ID: " << python->_pythonThreadId << ")" << std::endl;
     }
     catch (const std::exception& e)
     {
