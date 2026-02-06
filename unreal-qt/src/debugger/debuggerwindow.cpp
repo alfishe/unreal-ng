@@ -104,9 +104,16 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     waitInterruptAction = toolBar->addAction("Wait INT");
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
+    toolBar->addAction(resetAction);
     breakpointsAction = new QAction("Breakpoints", this);
     labelsAction = new QAction("Labels", this);
     visualizationAction = new QAction("Visualization", this);
+    
+    // Add expanding spacer to push management buttons to the right
+    QWidget* toolbarSpacer = new QWidget();
+    toolbarSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    toolBar->addWidget(toolbarSpacer);
+    
     toolBar->addAction(labelsAction);
     breakpointsAction = toolBar->addAction("Breakpoints");
     toolBar->addAction(visualizationAction);
@@ -1190,6 +1197,12 @@ void DebuggerWindow::prepareForShutdown()
             ui->stackWidget->prepareForShutdown();
         }
         // hexView is a 3rd party widget without our shutdown pattern
+    }
+
+    // Propagate to visualization window (separate window, not in UI)
+    if (_visualizationWindow)
+    {
+        _visualizationWindow->prepareForShutdown();
     }
 
     qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";
