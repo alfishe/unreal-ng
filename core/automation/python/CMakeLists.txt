@@ -71,11 +71,18 @@ if(PYTHON_USE_STATIC)
         
         # Python version and paths  
         set(PYTHON_VERSION "3.13.1")
+        # Extract major.minor (e.g., 3.13 from 3.13.1)
+        string(REGEX MATCH "^[0-9]+\\.[0-9]+" PYTHON_VERSION_MAJOR_MINOR ${PYTHON_VERSION})
         set(PYTHON_TAG "v${PYTHON_VERSION}")
         set(PYTHON_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/python_install")
-        set(PYTHON_STATIC_INCLUDE_DIR "${PYTHON_INSTALL_PREFIX}/include/python3.13")
+        set(PYTHON_STATIC_INCLUDE_DIR "${PYTHON_INSTALL_PREFIX}/include/python${PYTHON_VERSION_MAJOR_MINOR}")
         set(PYTHON_STATIC_LIB_DIR "${PYTHON_INSTALL_PREFIX}/lib")
-        set(PYTHON_STATIC_LIB "${PYTHON_STATIC_LIB_DIR}/libpython3.13.a")
+        set(PYTHON_STATIC_LIB "${PYTHON_STATIC_LIB_DIR}/libpython${PYTHON_VERSION_MAJOR_MINOR}.a")
+        
+        message(STATUS "")
+        message(STATUS "Python ${PYTHON_VERSION} will be built from source (static)")
+        message(STATUS "Install prefix: ${PYTHON_INSTALL_PREFIX}")
+        message(STATUS "")
         
         # Find OpenSSL for Python SSL module
         find_package(OpenSSL QUIET)
