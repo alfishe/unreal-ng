@@ -195,6 +195,8 @@ set(COMMON_SOURCES
     src/api/state_audio_api.cpp
     src/api/tape_disk_api.cpp
     src/api/snapshot_api.cpp
+    src/api/interpreter_api.cpp
+    src/api/interpreter_api.h
     src/api/basic_api.cpp
     src/api/analyzers_api.cpp
     src/api/debug_api.cpp
@@ -254,6 +256,11 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     )
 
 else () # Called from upper level CMake => build static library
+    # Find Python3 for pybind11 headers
+    if (ENABLE_PYTHON_AUTOMATION)
+        find_package(Python3 COMPONENTS Development)
+    endif()
+
     # Create the webapi library
     add_library(${PROJECT_NAME} STATIC
         ${COMMON_SOURCES}
@@ -265,11 +272,27 @@ else () # Called from upper level CMake => build static library
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${JSONCPP_INCLUDE_DIRS}
         ${ROOT_DIR}/core/src
+        ${ROOT_DIR}/core/automation  # For automation/automation.h
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/sol2/sol2-3.5.0/include>
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/lua/lua-5.4.7/src>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/src>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/3rdparty/pybind11/include>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${Python3_INCLUDE_DIRS}>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${ROOT_DIR}/core/automation/cli/include>
     )
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
         drogon
         jsoncpp_static
+    )
+
+    # Add conditional compiler definitions for automation modules
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+        $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+        $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+        $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
     )
 
     # Ensure dependencies are built first

@@ -4,6 +4,7 @@
 #include <drogon/WebSocketController.h>
 
 #include <fstream>
+#include <future>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -11,6 +12,77 @@
 #include "emulator_api.h"        // Triggers auto-registration for API handlers
 #include "emulator_websocket.h"  // Triggers auto-registration for WebSocket handlers
 #include "hello_world_api.h"     // Triggers auto-registration for API handlers
+#include "interpreter_api.h"     // Triggers auto-registration for Lua/Python API handlers
+
+// Socket includes for port availability checking
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
+// Helper function to check if a port is available
+// CRITICAL: This prevents drogon from calling exit() when port is already in use
+static bool isPortAvailable(int port)
+{
+#ifdef _WIN32
+    // Initialize Winsock if needed
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        std::cerr << "Failed to initialize Winsock for port availability check" << std::endl;
+        return false;
+    }
+
+    SOCKET sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd == INVALID_SOCKET)
+    {
+        std::cerr << "Failed to create test socket for port availability check" << std::endl;
+        WSACleanup();
+        return false;
+    }
+
+    // Set SO_REUSEADDR to match drogon's behavior
+    int opt = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+
+    bool available = bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) != SOCKET_ERROR;
+    closesocket(sockfd);
+    WSACleanup();
+
+    return available;
+#else
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0)
+    {
+        std::cerr << "Failed to create test socket for port availability check" << std::endl;
+        return false;
+    }
+
+    // Set SO_REUSEADDR to match drogon's behavior
+    int opt = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(port);
+
+    bool available = bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) >= 0;
+    close(sockfd);
+
+    return available;
+#endif
+}
 
 // Helper function to load HTML file from resources
 static std::string loadHtmlFile(const std::string& filename)
@@ -72,14 +144,34 @@ void AutomationWebAPI::stop()
 {
     _stopThread = true;
 
-    if (_thread)
+    if (_thread && _thread->joinable())
     {
         // Stop all internal drogon loops/handlers and quit
         drogon::app().quit();
 
-        _thread->join();
-        _stopThread = false;
+        // Join with a timeout using std::async to avoid blocking indefinitely
+        auto joinFuture = std::async(std::launch::async, [this]() {
+            if (_thread && _thread->joinable())
+            {
+                _thread->join();
+            }
+        });
 
+        // Wait up to 1000ms for the thread to finish
+        // Drogon should stop quickly after quit() is called
+        if (joinFuture.wait_for(std::chrono::milliseconds(1000)) == std::future_status::timeout)
+        {
+            std::cerr << "WARNING: WebAPI thread did not stop within 1000ms, detaching" << std::endl;
+            if (_thread && _thread->joinable())
+            {
+                _thread->detach();
+            }
+        }
+    }
+
+    if (_thread)
+    {
+        _stopThread = false;
         delete _thread;
         _thread = nullptr;
     }
@@ -129,6 +221,30 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
 #endif
     /// endregion </Make thread named for easy reading in debuggers>
 
+    // CRITICAL: Check port availability BEFORE drogon initialization
+    // This prevents drogon from calling exit() on bind failure
+    const int port = 8090;
+    if (!isPortAvailable(port))
+    {
+        std::cerr << std::endl;
+        std::cerr << "========================================" << std::endl;
+        std::cerr << "ERROR: WebAPI cannot start" << std::endl;
+        std::cerr << "========================================" << std::endl;
+        std::cerr << "Port " << port << " is already in use." << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "The application will continue without WebAPI functionality." << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "To use WebAPI, either:" << std::endl;
+        std::cerr << "  - Stop other instances using port " << port << std::endl;
+        std::cerr << "  - Configure a different port (future enhancement)" << std::endl;
+        std::cerr << "========================================" << std::endl;
+        std::cerr << std::endl;
+
+        // Exit thread gracefully - application continues running
+        return;
+    }
+
+    // Log startup info
     LOG_INFO << "Starting server on port 8090.";
     LOG_INFO << "API Documentation: http://localhost:8090/";
     LOG_INFO << "Emulator API: http://localhost:8090/api/v1/emulator";

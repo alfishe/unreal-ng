@@ -1,28 +1,12 @@
 #pragma once
 
-#if ENABLE_LUA_AUTOMATION
-#include <lua/src/automation-lua.h>
-#endif
+#include <iostream>
 
-// Conditionally include Python automation if enabled
-#if ENABLE_PYTHON_AUTOMATION
-// Python's object.h uses 'slots' as a member name, which conflicts with Qt's 'slots' macro
-// Save and undefine Qt's slots macro before including Python headers
-#pragma push_macro("slots")
-#undef slots
-#include <python/src/automation-python.h>
-#pragma pop_macro("slots")
-#endif
-
-// Conditionally include WebAPI automation if enabled
-#if ENABLE_WEBAPI_AUTOMATION
-#include <webapi/src/automation-webapi.h>
-#endif
-
-// Conditionally include CLI automation if enabled
-#if ENABLE_CLI_AUTOMATION
-#include <cli/include/automation-cli.h>
-#endif
+// Forward declarations - no headers needed in this file
+class AutomationLua;
+class AutomationPython;
+class AutomationWebAPI;
+class AutomationCLI;
 
 class Automation
 {
@@ -43,21 +27,53 @@ protected:
 #if ENABLE_CLI_AUTOMATION
     AutomationCLI* _cli = nullptr;
 #endif
+    bool _stopped = false;
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
-public:
+private:
+    // Private constructor for singleton pattern
     Automation() = default;
-    virtual ~Automation()
+    
+    // Delete copy and move constructors/operators
+    Automation(const Automation&) = delete;
+    Automation& operator=(const Automation&) = delete;
+    Automation(Automation&&) = delete;
+    Automation& operator=(Automation&&) = delete;
+
+public:
+    ~Automation()
     {
-        stop();
-    };
+        if (!_stopped)
+        {
+            try {
+                stop();
+            } catch (const std::exception& e) {
+                // Log the exception but don't crash
+                std::cerr << "Exception during Automation shutdown: " << e.what() << std::endl;
+            } catch (...) {
+                // Catch any other exceptions
+                std::cerr << "Unknown exception during Automation shutdown" << std::endl;
+            }
+        }
+    }
     /// endregion </Constructors / destructors>
 
     /// region <Methods>
 public:
     bool start();
     void stop();
+
+    // Meyer's Singleton accessor - returns reference, automatic lifetime
+    static Automation& GetInstance();
+    
+#if ENABLE_PYTHON_AUTOMATION
+    AutomationPython* getPython() { return _python; }
+#endif
+
+#if ENABLE_LUA_AUTOMATION
+    AutomationLua* getLua() { return _lua; }
+#endif
     /// endregion </Methods>
 
     /// region <Helper methods>
