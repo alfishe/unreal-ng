@@ -3163,6 +3163,381 @@ Experimental features for networked emulation and multi-instance orchestration.
 - **[GDB Protocol](./gdb-protocol.md)** - Professional debugging with standard GDB/LLDB clients
 - **[Universal Debug Bridge](./udb-protocol.md)** - High-performance analysis and profiling
 
+---
+
+## 7. Interpreter Control
+
+Commands to remotely control the embedded Python and Lua automation interpreters. These commands allow execution of code, loading of scripts, and introspection of interpreter state via CLI and WebAPI interfaces.
+
+### Design Principles
+
+**Cross-Control Model**:
+- ✅ **CLI can control both** Python and Lua interpreters
+- ✅ **WebAPI can control both** Python and Lua interpreters  
+- ✅ **Python can control Lua** (cross-control allowed)
+- ✅ **Lua can control Python** (cross-control allowed)
+- ❌ **Python cannot control Python** (self-control forbidden)
+- ❌ **Lua cannot control Lua** (self-control forbidden)
+
+**Security Considerations**:
+- File paths validated via `FileHelper::AbsolutePath()`
+- Directory traversal prevention
+- Optional authentication for WebAPI endpoints
+- Emergency stop capability via interrupt signals
+
+### 7.1 Python Interpreter Control
+
+Commands to control the embedded Python interpreter (pybind11-based).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `python exec <code>` | `py exec` | `<code-string>` | Execute Python code string directly. Code is executed in the interpreter's global namespace with access to emulator bindings. Returns execution status and any output/errors. Multi-line code should be quoted. | 🔮 Planned |
+| `python file <path>` | `py file` | `<file-path>` | Load and execute a Python file. Path is validated and resolved via `FileHelper::AbsolutePath()`. File must have `.py` extension. Returns execution status. | 🔮 Planned |
+| `python load <module>` | `py load` | `<module-path>` | Load a Python module into the interpreter namespace. Similar to `import` statement. Module path can be absolute or relative to workspace. | 🔮 Planned |
+| `python stop` | `py stop` | | Interrupt Python execution immediately using `PyErr_SetInterrupt()` and `PyThreadState_SetAsyncExc()`. Sends `KeyboardInterrupt` to running code. Useful for stopping infinite loops or long-running scripts. | 🔮 Planned |
+| `python status` | `py status` | | Display Python interpreter status:<br/>• Interpreter state (initialized/running/idle)<br/>• Thread ID and status<br/>• GIL state<br/>• Last execution result<br/>• Loaded modules count<br/>• Memory usage | 🔮 Planned |
+| `python globals` | `py globals` | | List all variables in Python global namespace with their types and values. Useful for debugging and introspection. Output formatted as table. | 🔮 Planned |
+| `python eval <expr>` | `py eval` | `<expression>` | Evaluate Python expression and return the result. Equivalent to Python's `eval()`. Useful for quick checks and queries without full `exec`. | 🔮 Planned |
+
+**Implementation Details**:
+
+**Code Execution**:
+```cpp
+// AutomationPython::executeCode() is thread-safe
+PyGILState_STATE gstate = PyGILState_Ensure();
+try {
+    py::exec(code, py::globals());
+    result = true;
+} catch (const py::error_already_set& e) {
+    errorMessage = e.what();
+    result = false;
+}
+PyGILState_Release(gstate);
+```
+
+**File Loading**:
+- File path must be absolute or relative to workspace root
+- Validated via `FileHelper::AbsolutePath()` 
+- Prevents directory traversal (e.g., `../../etc/passwd`)
+- File content read and passed to `executeCode()`
+
+**Thread Safety**:
+- Python GIL (Global Interpreter Lock) ensures thread safety
+- All execution goes through `PyGILState_Ensure()` / `PyGILState_Release()`
+- Interrupt capability via `PyThreadState_SetAsyncExc()`
+
+**Available Bindings** (in Python namespace):
+- `emulator` - Access to emulator core functions
+- `unrealng.lua_exec(code)` - Control Lua interpreter (cross-control)
+- `unrealng.lua_load(path)` - Load Lua scripts (cross-control)
+
+### 7.2 Lua Interpreter Control
+
+Commands to control the embedded Lua interpreter (sol2-based).
+
+| Command | Aliases | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `lua exec <code>` | | `<code-string>` | Execute Lua code string directly. Code runs in the interpreter's global environment with access to emulator bindings. Returns execution status and any output/errors. | 🔮 Planned |
+| `lua file <path>` | | `<file-path>` | Load and execute a Lua file using `dofile()`. Path is validated and resolved via `FileHelper::AbsolutePath()`. File should have `.lua` extension. Returns execution status. | 🔮 Planned |
+| `lua load <module>` | | `<module-path>` | Load a Lua module using `require()`. Module path can be absolute or relative. Standard Lua module search paths apply. | 🔮 Planned |
+| `lua stop` | | | Interrupt Lua execution. Sets a flag that cooperative scripts can check. Note: Lua has no async exception mechanism like Python; scripts must cooperatively check for stop signals. | 🔮 Planned |
+| `lua status` | | | Display Lua interpreter status:<br/>• Interpreter state (initialized/running/idle)<br/>• Thread ID and status<br/>• Last execution result<br/>• Loaded modules count<br/>• Memory usage (via `collectgarbage("count")`) | 🔮 Planned |
+| `lua globals` | | | List all variables in Lua global namespace (`_G`) with their types and values. Output formatted as table. | 🔮 Planned |
+| `lua eval <expr>` | | `<expression>` | Evaluate Lua expression and return the result. Expression is wrapped in `return` statement. Useful for quick queries. | 🔮 Planned |
+
+**Implementation Details**:
+
+**Code Execution**:
+```cpp
+// AutomationLua::executeCode() with mutex protection
+std::lock_guard<std::mutex> lock(_luaMutex);
+try {
+    _lua->script(code);
+    result = true;
+} catch (const sol::error& e) {
+    errorMessage = e.what();
+    result = false;
+}
+```
+
+**File Loading**:
+- Same path validation as Python (via `FileHelper::AbsolutePath()`)
+- Uses Lua's `dofile()` for execution
+- Standard error handling with `pcall()`
+
+**Thread Safety**:
+- sol2 state access protected by mutex
+- No GIL equivalent in Lua; manual synchronization required
+- Consider using `std::mutex` in `AutomationLua` class
+
+**Available Bindings** (in Lua namespace):
+- `emulator` - Access to emulator core functions (table/userdata)
+- `python_exec(code)` - Control Python interpreter (cross-control)
+- `python_load(path)` - Load Python scripts (cross-control)
+
+### 7.3 WebAPI Interpreter Endpoints
+
+REST API endpoints for remote interpreter control via HTTP.
+
+**Python Endpoints**:
+
+| Method | Endpoint | Request Body | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/python/exec` | `{"code": "print('hello')"}` | Execute Python code. Returns execution result and output. |
+| `POST` | `/api/v1/python/file` | `{"path": "/path/to/script.py"}` | Load and execute Python file. Path must be absolute. |
+| `GET` | `/api/v1/python/status` | - | Get Python interpreter status (JSON). |
+| `POST` | `/api/v1/python/stop` | - | Interrupt Python execution immediately. |
+| `GET` | `/api/v1/python/globals` | - | List Python global variables (JSON array). |
+
+**Lua Endpoints**:
+
+| Method | Endpoint | Request Body | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/v1/lua/exec` | `{"code": "print('hello')"}` | Execute Lua code. Returns execution result and output. |
+| `POST` | `/api/v1/lua/file` | `{"path": "/path/to/script.lua"}` | Load and execute Lua file. Path must be absolute. |
+| `GET` | `/api/v1/lua/status` | - | Get Lua interpreter status (JSON). |
+| `POST` | `/api/v1/lua/stop` | - | Request Lua execution stop. |  
+| `GET` | `/api/v1/lua/globals` | - | List Lua global variables (JSON array). |
+
+**Response Format**:
+
+Success response:
+```json
+{
+  "success": true,
+  "result": "Code executed successfully",
+  "output": "hello\n",
+  "executionTime": 0.023
+}
+```
+
+Error response:
+```json
+{
+  "success": false,
+  "error": "NameError: name 'undefined_var' is not defined",
+  "line": 1,
+  "type": "NameError"
+}
+```
+
+**CORS Headers**:
+- All endpoints include proper CORS headers
+- Supports preflight OPTIONS requests
+- Configurable allowed origins
+
+### 7.4 Cross-Control Examples
+
+**Python Controlling Lua**:
+
+```python
+# In Python script executed via CLI/WebAPI
+import unrealng
+
+# Execute Lua code from Python
+unrealng.lua_exec("""
+    emulator:pause()
+    print('Paused from Python via Lua')
+""")
+
+# Load Lua utility module
+unrealng.lua_load("utils.lua")
+
+# Call Lua function
+unrealng.lua_exec("utils.reset_state()")
+```
+
+**Lua Controlling Python**:
+
+```lua
+-- In Lua script executed via CLI/WebAPI
+
+-- Execute Python code from Lua
+python_exec([[
+import sys
+print(f"Python version: {sys.version}")
+emulator.reset()
+]])
+
+-- Load Python test framework
+python_load("tests/framework.py")
+
+-- Call Python function
+python_exec("run_test('snapshot_loading')")
+```
+
+**CLI Usage**:
+
+```bash
+# Connect to CLI
+telnet localhost 5555
+
+# Execute Python code
+> python exec "print('Hello from Python')"
+Python code executed successfully
+Hello from Python
+
+# Load and run Python script
+> python file /path/to/automation.py
+Executing: /path/to/automation.py
+Script completed successfully
+
+# Check Python status
+> python status
+Python Interpreter Status
+=========================
+State: Running
+Thread: Active (ID: 123456)
+Interpreter: Initialized (Py_IsInitialized: True)
+GIL State: Released
+Loaded Modules: 47
+Memory Usage: 12.3 MB
+
+# Execute Lua code
+> lua exec "print('Hello from Lua')"
+Lua code executed successfully
+Hello from Lua
+
+# Python→Lua cross-control
+> python exec "unrealng.lua_exec('print(\"Lua called from Python\")')"
+Python code executed successfully
+Lua called from Python
+```
+
+**WebAPI Usage**:
+
+```bash
+# Execute Python code via REST
+curl -X POST http://localhost:8080/api/v1/python/exec \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(\"Hello from WebAPI\")"}'
+
+# Response:
+# {"success": true, "result": "Hello from WebAPI\n", "executionTime": 0.012}
+
+# Load Python file
+curl -X POST http://localhost:8080/api/v1/python/file \
+  -H "Content-Type: application/json" \
+  -d '{"path": "/path/to/test.py"}'
+
+# Get status
+curl http://localhost:8080/api/v1/python/status
+
+# Stop execution
+curl -X POST http://localhost:8080/api/v1/python/stop
+```
+
+### 7.5 Security Considerations
+
+**File Path Validation**:
+- All file paths validated using `FileHelper::AbsolutePath()`
+- Prevents directory traversal attacks (`../`, `../../`)
+- Restricts access to workspace directories only
+- Checks file existence before execution
+- Validates file extensions (`.py` for Python, `.lua` for Lua)
+
+**Code Injection Prevention**:
+- No eval() of unvalidated user input in core (only in isolated interpreters)
+- Interpreter namespaces are sandboxed
+- No automatic privilege escalation
+
+**Authentication** (Optional):
+- WebAPI endpoints can require authentication tokens
+- CLI can require password/key authentication
+- Consider implementing role-based access control (RBAC)
+
+**Resource Limits**:
+- Execution timeout can be configured
+- Memory limits via interpreter settings
+- Emergency stop commands available (`python stop`, `lua stop`)
+
+**Audit Logging**:
+- All interpreter commands logged with timestamp and caller
+- Execution results logged for debugging
+- Failed authentication attempts logged
+
+### 7.6 Error Handling
+
+**Python Errors**:
+```bash
+> python exec "undefined_variable"
+Python execution failed
+Error: NameError: name 'undefined_variable' is not defined
+  File "<string>", line 1, in <module>
+
+> python file /nonexistent/script.py
+Error: File not found: /nonexistent/script.py
+```
+
+**Lua Errors**:
+```bash
+> lua exec "undefined_function()"
+Lua execution failed
+Error: attempt to call a nil value (global 'undefined_function')
+stack traceback:
+	[string "undefined_function()"]:1: in main chunk
+
+> lua file /invalid/path.lua
+Error: Invalid file path: /invalid/path.lua
+```
+
+**WebAPI Errors** (HTTP status codes):
+- `200 OK` - Success
+- `400 Bad Request` - Invalid request body/parameters
+- `404 Not Found` - File not found
+- `500 Internal Server Error` - Execution error
+- `503 Service Unavailable` - Interpreter not initialized
+
+### 7.7 Implementation Architecture
+
+**Class Hierarchy**:
+```
+Automation (Orchestrator)
+├── getPython() → AutomationPython*
+└── getLua() → AutomationLua*
+
+AutomationPython
+├── executeCode(code) → bool
+├── executeFile(path) → bool
+├── getStatus() → InterpreterStatus
+└── [Python→Lua bindings via pybind11]
+
+AutomationLua
+├── executeCode(code) → bool
+├── executeFile(path) → bool
+├── getStatus() → InterpreterStatus
+└── [Lua→Python bindings via sol2]
+
+CLIProcessor
+├── HandlePython(session, args)
+│   ├── executePythonCode()
+│   ├── executePythonFile()
+│   └── showPythonStatus()
+└── HandleLua(session, args)
+    ├── executeLuaCode()
+    ├── executeLuaFile()
+    └── showLuaStatus()
+```
+
+**Modular File Organization**:
+```
+core/automation/
+├── cli/src/handlers/
+│   ├── python-handler.cpp    [NEW] Python CLI command handlers
+│   └── lua-handler.cpp        [NEW] Lua CLI command handlers
+├── webapi/src/api/
+│   ├── interpreter_api.h      [NEW] Interpreter API declarations
+│   └── interpreter_api.cpp    [NEW] Interpreter REST endpoints
+```
+
+**Design Patterns**:
+- **Command Pattern**: CLI commands map to handler methods
+- **Strategy Pattern**: Different execution strategies for Python vs Lua
+- **Facade Pattern**: Automation orchestrator provides unified interface
+- **Observer Pattern**: Execution status can trigger notifications
+
+---
+
 ### Navigation
 - **[Interface Documentation Index](./README.md)** - Overview of all control interfaces
 

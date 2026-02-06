@@ -122,6 +122,29 @@ function(check_cmake_version)
 endfunction()
 
 # ========================================
+# Python Detection with Auto-install Hints
+# ========================================
+function(check_python_dependency)
+    if(WIN32 AND MINGW)
+        # MinGW uses dynamic Python from MSYS2 (static not feasible)
+        if(Python3_FOUND)
+            message(STATUS "[DependencyCheck] MinGW: Found MSYS2 Python ${Python3_VERSION} at ${Python3_EXECUTABLE}")
+        else()
+            message(WARNING "[DependencyCheck] MinGW: MSYS2 Python NOT found!")
+            message(STATUS "[DependencyCheck] Install: pacman -S mingw-w64-x86_64-python")
+        endif()
+    elseif(WIN32 AND MSVC)
+        # MSVC uses system Python
+        message(STATUS "[DependencyCheck] MSVC: Using system Python (dynamic)")
+    else()
+        # Unix builds static Python from source
+        message(STATUS "[DependencyCheck] Python will be built from source (static)")
+        message(STATUS "[DependencyCheck] Using autotools for Unix")
+        message(STATUS "[DependencyCheck] Build requirements: C compiler, make, autotools")
+    endif()
+endfunction()
+
+# ========================================
 # Run All Checks
 # ========================================
 macro(run_dependency_checks)
@@ -133,5 +156,9 @@ macro(run_dependency_checks)
     
     if(ENABLE_WEBAPI_AUTOMATION)
         check_openssl_dependency()
+    endif()
+    
+    if(ENABLE_PYTHON_AUTOMATION)
+        check_python_dependency()
     endif()
 endmacro()

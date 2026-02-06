@@ -6,6 +6,7 @@
 #include <emulator/platform.h>
 #include <json/json.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 

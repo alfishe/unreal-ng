@@ -55,20 +55,27 @@ void registerSignalHandler()
 
 /// endregion </Platform-dependent handlers>
 
-int main()
+int main(int argc, char *argv[])
 {
     // Register signal handler
     registerSignalHandler();
 
+    // Get automation singleton (created on first access)
+    Automation& automation = Automation::GetInstance();
+
+#ifdef ENABLE_AUTOMATION
+    // Start all automation modules
     automation.start();
 
-    Emulator emulator("automation");
-    bool result = emulator.Init();
-
-    if (result)
+    // Keep main execution thread running until explicitly requested to stop (handle Ctrl+C gracefully)
+    // Simplest implementation: infinite loop with a sleep to avoid CPU spinning
+    while (true)
     {
-        emulator.GetContext()->pModuleLogger->SetLoggingLevel(LoggerLevel::LogWarning);
-
-        emulator.Start();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
+
+    // Note: Singleton automatically destroyed on program exit
+#endif
+
+    return 0;
 }

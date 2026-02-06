@@ -11,6 +11,9 @@
 
 #pragma once
 
+// Suppress Python 3.14 deprecation warning for _Py_fopen_obj
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 #include "pybind11.h"
 
 #include <utility>
