@@ -48,7 +48,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     qDebug() << "Loading last directory from settings:" << _lastDirectory;
 
 #ifdef ENABLE_AUTOMATION
-    _automation = std::make_unique<Automation>();
+    _automation = &Automation::GetInstance();
 #endif  // ENABLE_AUTOMATION
 
     // Intercept all keyboard and mouse events
@@ -2323,8 +2323,8 @@ void MainWindow::cleanupAutomation()
     if (_automation)
     {
         _automation->stop();
-        _automation.reset();
         qDebug() << "Automation cleanup complete";
+        // Note: Singleton handles its own lifetime
     }
 #endif
 }

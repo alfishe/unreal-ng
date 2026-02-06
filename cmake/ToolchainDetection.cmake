@@ -148,6 +148,19 @@ if(NOT UNREAL_USING_MINGW AND CMAKE_MAKE_PROGRAM MATCHES "mingw|msys")
     set(UNREAL_USING_MINGW TRUE)
 endif()
 
+# Fresh build detection: check if PATH contains MSYS2/MinGW before MSVC
+# This is critical for fresh builds where CMAKE_C_COMPILER is not yet set
+if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
+    if(DEFINED ENV{PATH})
+        # Convert PATH to lowercase for reliable matching
+        string(TOLOWER "$ENV{PATH}" _path_lower)
+        # Check if MSYS2/MinGW is in PATH (before cl.exe might also be found)
+        if(_path_lower MATCHES "msys64|mingw")
+            set(UNREAL_USING_MINGW TRUE)
+        endif()
+    endif()
+endif()
+
 # Default to MSVC if no detection succeeded (Windows default)
 if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
     set(UNREAL_USING_MSVC TRUE)

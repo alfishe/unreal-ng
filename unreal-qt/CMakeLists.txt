@@ -5,22 +5,12 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'unreal-qt' on C++
 project(unreal-qt LANGUAGES CXX)
 
-# Define automation options (use defaults if not already set by parent CMakeLists.txt)
-if (NOT DEFINED ENABLE_AUTOMATION)
-    option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
-endif()
-if (NOT DEFINED ENABLE_LUA_AUTOMATION)
-    option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
-endif()
-if (NOT DEFINED ENABLE_PYTHON_AUTOMATION)
-    option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
-endif()
-if (NOT DEFINED ENABLE_WEBAPI_AUTOMATION)
-    option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
-endif()
-if (NOT DEFINED ENABLE_CLI_AUTOMATION)
-    option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
-endif()
+# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
+set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
+set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
+set(ENABLE_PYTHON_AUTOMATION ON CACHE BOOL "Enable Python automation" FORCE)
+set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
+set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
 # C++ standard is inherited from root CMakeLists.txt (C++20)
 
@@ -305,7 +295,6 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        # unrealng::core # REMOVED - comes through automation
         unrealng::automation # This brings in core as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
