@@ -16,6 +16,8 @@ option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 
+# NOTE: Python dependency checks are handled by root CMakeLists.txt via DependencyCheck.cmake
+
 # Respect parent's ENABLE_AUTOMATION option
 if (NOT ENABLE_AUTOMATION)
     set(ENABLE_LUA_AUTOMATION OFF)
