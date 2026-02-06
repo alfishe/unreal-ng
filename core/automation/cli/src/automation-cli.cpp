@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <future>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -155,8 +156,27 @@ void AutomationCLI::stop()
         try
         {
             std::cout << "Joining CLI thread..." << std::endl;
-            threadToJoin->join();
-            std::cout << "CLI thread joined successfully" << std::endl;
+
+            // Join with a timeout using std::async to avoid blocking indefinitely
+            auto joinFuture = std::async(std::launch::async, [&threadToJoin]() {
+                if (threadToJoin && threadToJoin->joinable()) {
+                    threadToJoin->join();
+                }
+            });
+            
+            // Wait up to 1000ms for the thread to finish
+            // CLI should stop quickly after server socket is closed
+            if (joinFuture.wait_for(std::chrono::milliseconds(1000)) == std::future_status::timeout)
+            {
+                std::cerr << "WARNING: CLI thread did not stop within 1000ms, detaching" << std::endl;
+                if (threadToJoin && threadToJoin->joinable()) {
+                    threadToJoin->detach();
+                }
+            }
+            else
+            {
+                std::cout << "CLI thread joined successfully" << std::endl;
+            }
         }
         catch (const std::exception& e)
         {
@@ -259,7 +279,11 @@ void AutomationCLI::run()
             {
                 if (errno == EBADF)
                 {
-                    std::cerr << "Select error: Bad file descriptor (socket may be closed)" << std::endl;
+                    // Expected during shutdown when socket is closed - only log if not stopping
+                    if (!_stopThread)
+                    {
+                        std::cerr << "Select error: Bad file descriptor (socket may be closed)" << std::endl;
+                    }
                 }
                 else
                 {

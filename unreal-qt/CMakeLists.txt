@@ -5,22 +5,12 @@ message(">> unreal-qt CMakeLists.txt")
 # Project named 'unreal-qt' on C++
 project(unreal-qt LANGUAGES CXX)
 
-# Define automation options (use defaults if not already set by parent CMakeLists.txt)
-if (NOT DEFINED ENABLE_AUTOMATION)
-    option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI)" ON)
-endif()
-if (NOT DEFINED ENABLE_LUA_AUTOMATION)
-    option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
-endif()
-if (NOT DEFINED ENABLE_PYTHON_AUTOMATION)
-    option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
-endif()
-if (NOT DEFINED ENABLE_WEBAPI_AUTOMATION)
-    option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
-endif()
-if (NOT DEFINED ENABLE_CLI_AUTOMATION)
-    option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
-endif()
+# Define global options with CACHE and FORCE to ensure they propagate to /core/automation projects
+set(ENABLE_AUTOMATION ON CACHE BOOL "Enable automation features (Lua, Python, WebAPI)" FORCE)
+set(ENABLE_LUA_AUTOMATION ON CACHE BOOL "Enable Lua automation" FORCE)
+set(ENABLE_PYTHON_AUTOMATION ON CACHE BOOL "Enable Python automation" FORCE)
+set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
+set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
 # C++ standard is inherited from root CMakeLists.txt (C++20)
 
@@ -305,7 +295,6 @@ if (INCLUDE_AUTOMATION)
         Qt6::Multimedia
         QHexView
 
-        # unrealng::core # REMOVED - comes through automation
         unrealng::automation # This brings in core as PUBLIC dependency
         ${CMAKE_DL_LIBS}
         Threads::Threads
@@ -375,13 +364,36 @@ set(PACKAGE_VERSION_PATCH "0")
 
 # macOS specific packaging
 if(APPLE)
+    # Find macdeployqt from Qt installation
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+        HINTS "${QT_FOUND_PATH}/bin" "$ENV{HOME}/Qt/6.9.3/macos/bin"
+    )
+    
     # Create a custom target for macOS packaging
+    set(UNREAL_QT_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/UnrealNG-Staging")
     add_custom_target(package_macos
-        COMMAND ${CMAKE_COMMAND} -E echo "Building macOS package..."
+        # 1. Staging Setup
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
-        COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${UNREAL_QT_STAGING_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${UNREAL_QT_STAGING_DIR}"
+        
+        # 2. Copy App Bundle (preserving symlinks)
+        COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app"
+        
+        # 3. Inject Resources before signing
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/fonts" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/rom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon512k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+        
+        # 4. Deploy and Sign
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
+        
+        # 5. Create DMG from staging
+        COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${UNREAL_QT_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
+        
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating macOS DMG package in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for UnrealNG in ${CMAKE_BINARY_DIR}/packages"
     )
     
     # Create a macOS application bundle

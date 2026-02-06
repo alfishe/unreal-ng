@@ -9,9 +9,10 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR})
 
 cmake_host_system_information(RESULT Ncpu QUERY NUMBER_OF_PHYSICAL_CORES)
 
-#if(CMAKE_GENERATOR MATCHES "Ninja")
-#  message(WARNING "If difficulty building with Ninja, try GNU Make")
-#endif()
+# Suppress Ninja warning - it's working fine
+# if(CMAKE_GENERATOR MATCHES "Ninja")
+#   message(WARNING "If difficulty building with Ninja, try GNU Make")
+# endif()
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/local" CACHE PATH "default install prefix" FORCE)

@@ -39,10 +39,10 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
     createDefaultPresets();
 
 #ifdef ENABLE_AUTOMATION
-    // CRITICAL: Create Automation object immediately (not deferred) so it's guaranteed
+    // CRITICAL: Get Automation singleton reference immediately (not deferred) so it's guaranteed
     // to exist when destructor runs. This prevents race condition where destructor
     // tries to stop() an uninitialized or garbage pointer.
-    _automation = std::make_unique<Automation>();
+    _automation = &Automation::GetInstance();
 #endif
 
     // CRITICAL: Defer starting automation until after the Qt event loop is running.
@@ -83,7 +83,7 @@ VideoWallWindow::~VideoWallWindow()
         if (_automation)
         {
             _automation->stop();
-            _automation.reset();
+            _automation = nullptr;  // Don't delete - it's a singleton
         }
 #endif
 

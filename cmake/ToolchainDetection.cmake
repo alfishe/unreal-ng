@@ -18,6 +18,81 @@
 #   VCPKG_TARGET_TRIPLET    - Auto-detected for MSVC builds
 # ============================================================================
 
+# ============================================================================
+# PHASE 3: Post-project() Validation Function (must be defined before return)
+# ============================================================================
+# Call validate_toolchain_dependencies() after project() to verify the
+# compiler matches our detection and dependencies are correctly configured.
+# This function is defined first because it must be available on all platforms.
+
+function(validate_toolchain_dependencies)
+    if(NOT WIN32)
+        return()
+    endif()
+    
+    # Now CMAKE_CXX_COMPILER_ID is available
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        # --------------------------------------------------------
+        # FATAL ERROR: vcpkg with MinGW/Clang
+        # --------------------------------------------------------
+        if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
+            message(FATAL_ERROR
+                "\n"
+                "========================================\n"
+                "FATAL: Toolchain Mismatch Detected!\n"
+                "========================================\n"
+                "Compiler: ${CMAKE_CXX_COMPILER_ID} (MinGW/MSYS2)\n"
+                "Toolchain: vcpkg (MSVC-only)\n"
+                "\n"
+                "vcpkg libraries are compiled with MSVC and are\n"
+                "binary-incompatible with MinGW/GCC.\n"
+                "\n"
+                "FIX: Delete build directory and reconfigure.\n"
+                "     Do NOT set CMAKE_TOOLCHAIN_FILE to vcpkg.\n"
+                "========================================\n"
+            )
+        endif()
+        
+        # Verify OpenSSL is from MSYS2, not vcpkg
+        if(OPENSSL_CRYPTO_LIBRARY MATCHES "vcpkg")
+            message(FATAL_ERROR
+                "\n"
+                "========================================\n"
+                "FATAL: OpenSSL from vcpkg with MinGW!\n"
+                "========================================\n"
+                "Found: ${OPENSSL_CRYPTO_LIBRARY}\n"
+                "\n"
+                "FIX: Delete build directory and reconfigure.\n"
+                "     Install MSYS2 OpenSSL:\n"
+                "     pacman -S mingw-w64-x86_64-openssl\n"
+                "========================================\n"
+            )
+        endif()
+        
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        # --------------------------------------------------------
+        # FATAL ERROR: MSYS2 paths with MSVC
+        # --------------------------------------------------------
+        if(OPENSSL_ROOT_DIR MATCHES "msys64|mingw")
+            message(FATAL_ERROR
+                "\n"
+                "========================================\n"
+                "FATAL: MSYS2 OpenSSL with MSVC!\n"
+                "========================================\n"
+                "Found: ${OPENSSL_ROOT_DIR}\n"
+                "\n"
+                "FIX: Delete build directory and reconfigure.\n"
+                "     Install vcpkg OpenSSL:\n"
+                "     vcpkg install openssl:x64-windows-static\n"
+                "========================================\n"
+            )
+        endif()
+    endif()
+    
+    message(STATUS "Toolchain validation: OK")
+endfunction()
+
+# Early return for non-Windows platforms (function already defined above)
 if(NOT WIN32)
     return()
 endif()
@@ -71,6 +146,19 @@ endif()
 # Check make program (Ninja from MSYS2 vs Visual Studio)
 if(NOT UNREAL_USING_MINGW AND CMAKE_MAKE_PROGRAM MATCHES "mingw|msys")
     set(UNREAL_USING_MINGW TRUE)
+endif()
+
+# Fresh build detection: check if PATH contains MSYS2/MinGW before MSVC
+# This is critical for fresh builds where CMAKE_C_COMPILER is not yet set
+if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
+    if(DEFINED ENV{PATH})
+        # Convert PATH to lowercase for reliable matching
+        string(TOLOWER "$ENV{PATH}" _path_lower)
+        # Check if MSYS2/MinGW is in PATH (before cl.exe might also be found)
+        if(_path_lower MATCHES "msys64|mingw")
+            set(UNREAL_USING_MINGW TRUE)
+        endif()
+    endif()
 endif()
 
 # Default to MSVC if no detection succeeded (Windows default)
@@ -178,76 +266,3 @@ elseif(UNREAL_USING_MSVC)
         endif()
     endif()
 endif()
-
-# ============================================================================
-# PHASE 3: Post-project() Validation Function
-# ============================================================================
-# Call validate_toolchain_dependencies() after project() to verify the
-# compiler matches our detection and dependencies are correctly configured.
-
-function(validate_toolchain_dependencies)
-    if(NOT WIN32)
-        return()
-    endif()
-    
-    # Now CMAKE_CXX_COMPILER_ID is available
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-        # --------------------------------------------------------
-        # FATAL ERROR: vcpkg with MinGW/Clang
-        # --------------------------------------------------------
-        if(CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg")
-            message(FATAL_ERROR
-                "\n"
-                "========================================\n"
-                "FATAL: Toolchain Mismatch Detected!\n"
-                "========================================\n"
-                "Compiler: ${CMAKE_CXX_COMPILER_ID} (MinGW/MSYS2)\n"
-                "Toolchain: vcpkg (MSVC-only)\n"
-                "\n"
-                "vcpkg libraries are compiled with MSVC and are\n"
-                "binary-incompatible with MinGW/GCC.\n"
-                "\n"
-                "FIX: Delete build directory and reconfigure.\n"
-                "     Do NOT set CMAKE_TOOLCHAIN_FILE to vcpkg.\n"
-                "========================================\n"
-            )
-        endif()
-        
-        # Verify OpenSSL is from MSYS2, not vcpkg
-        if(OPENSSL_CRYPTO_LIBRARY MATCHES "vcpkg")
-            message(FATAL_ERROR
-                "\n"
-                "========================================\n"
-                "FATAL: OpenSSL from vcpkg with MinGW!\n"
-                "========================================\n"
-                "Found: ${OPENSSL_CRYPTO_LIBRARY}\n"
-                "\n"
-                "FIX: Delete build directory and reconfigure.\n"
-                "     Install MSYS2 OpenSSL:\n"
-                "     pacman -S mingw-w64-x86_64-openssl\n"
-                "========================================\n"
-            )
-        endif()
-        
-    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-        # --------------------------------------------------------
-        # FATAL ERROR: MSYS2 paths with MSVC
-        # --------------------------------------------------------
-        if(OPENSSL_ROOT_DIR MATCHES "msys64|mingw")
-            message(FATAL_ERROR
-                "\n"
-                "========================================\n"
-                "FATAL: MSYS2 OpenSSL with MSVC!\n"
-                "========================================\n"
-                "Found: ${OPENSSL_ROOT_DIR}\n"
-                "\n"
-                "FIX: Delete build directory and reconfigure.\n"
-                "     Install vcpkg OpenSSL:\n"
-                "     vcpkg install openssl:x64-windows-static\n"
-                "========================================\n"
-            )
-        endif()
-    endif()
-    
-    message(STATUS "Toolchain validation: OK")
-endfunction()

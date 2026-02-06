@@ -19,7 +19,7 @@ option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-view
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
 option(ENABLE_LUA_AUTOMATION "Enable Lua automation" ON)
-option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" OFF)
+option(ENABLE_PYTHON_AUTOMATION "Enable Python automation" ON)
 option(ENABLE_WEBAPI_AUTOMATION "Enable WebAPI automation" ON)
 option(ENABLE_CLI_AUTOMATION "Enable CLI automation" ON)
 
@@ -27,6 +27,9 @@ project(unreal)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()
+
+# NOTE: Python dependency checks (including MSYS2 requirements for MinGW)
+# are handled by DependencyCheck.cmake via run_dependency_checks()
 
 # ========================================
 # C++ Standard Configuration (MUST be after project())
@@ -82,6 +85,35 @@ if (MINGW AND MINGW_STATIC_LINKING)
     
     message(STATUS "  - MinGW runtime: static")
     message(STATUS "  - OpenSSL: prefer static")
+endif()
+
+# ========================================
+# MinGW Python Configuration (Early Discovery)
+# ========================================
+# We discover Python early for MinGW to ensure all components (including pybind11)
+# use the same MSYS2-provided version and avoid picking up system Python.
+if(MINGW AND ENABLE_PYTHON_AUTOMATION)
+    message(STATUS "[Root] MinGW: Pre-configuring MSYS2 Python")
+    
+    # Force CMake to find MSYS2 Python, not system Python
+    set(Python3_ROOT_DIR "C:/msys64/mingw64" CACHE PATH "MSYS2 Python root" FORCE)
+    set(Python3_FIND_REGISTRY NEVER)
+    set(Python3_FIND_STRATEGY LOCATION)
+    
+    find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+    
+    message(STATUS "[Root] Found MinGW Python: ${Python3_EXECUTABLE} (${Python3_VERSION})")
+    
+    # MinGW Debug ABI Fix: MSYS2 only provides release Python libraries.
+    # In Debug builds (_DEBUG defined), Python headers enable debug reference counting
+    # flags (Py_REF_DEBUG) which requires symbols like _Py_NegativeRefcount that 
+    # are only in debug builds of Python. 
+    # We define Py_NO_ENABLE_SHARED to avoid SOME issues, but a global define
+    # to disable debug refcounting is more reliable for dynamic linking.
+    add_compile_definitions($<$<CONFIG:Debug>:Py_REF_DEBUG_DISABLED>)
+    
+    # We also define the missing symbols as empty stubs in automation_python later
+    # if they are still needed.
 endif()
 
 # MSVC: Always prefer static OpenSSL from vcpkg
@@ -265,43 +297,24 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E remove_directory "${SUITE_STAGING_DIR}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SUITE_STAGING_DIR}"
             
-            # Copy all three app bundles
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/bin/unreal-qt.app"
-                "${SUITE_STAGING_DIR}/UnrealNG.app"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app"
-                "${SUITE_STAGING_DIR}/Screen Viewer.app"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app"
-                "${SUITE_STAGING_DIR}/Video Wall.app"
+            # Copy all three app bundles using cp -a to PRESERVE symlinks (critical for Qt frameworks)
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${SUITE_STAGING_DIR}/Video Wall.app"
             
-            # Run macdeployqt on each app bundle to copy Qt frameworks and plugins
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app"
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app"
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app"
+            # Copy shared resources into the MAIN bundle BEFORE macdeployqt runs
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
             
-            # Copy shared resources
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
-            COMMAND ${CMAKE_COMMAND} -E copy
-                "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            # Run macdeployqt on each app bundle with ad-hoc signing as the FINAL step
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
             
-            # Re-sign with ad-hoc signature (required after macdeployqt modifies bundles)
-            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/UnrealNG.app"
-            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/Screen Viewer.app"
-            COMMAND codesign --force --deep --sign - "${SUITE_STAGING_DIR}/Video Wall.app"
-            
-            # Create combined DMG
-            COMMAND hdiutil create
-                -volname "UnrealNG Suite"
-                -srcfolder "${SUITE_STAGING_DIR}"
-                -ov -format UDZO
-                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
+            # Create combined DMG from the correctly signed staging directory
+            COMMAND hdiutil create -volname "UnrealNG Suite" -srcfolder "${SUITE_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined macOS DMG with all applications"

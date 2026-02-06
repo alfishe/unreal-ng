@@ -16,6 +16,8 @@ option(ENABLE_PYTHON_AUTOMATION "Enable automation for Python" OFF)
 option(ENABLE_WEBAPI_AUTOMATION "Enable automation for WebAPI" ON)
 option(ENABLE_CLI_AUTOMATION "Enable automation for CLI" ON)
 
+# NOTE: Python dependency checks are handled by root CMakeLists.txt via DependencyCheck.cmake
+
 # Respect parent's ENABLE_AUTOMATION option
 if (NOT ENABLE_AUTOMATION)
     set(ENABLE_LUA_AUTOMATION OFF)
@@ -147,9 +149,10 @@ endif ()
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/
     ${ROOT_DIR}/core/automation
-    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_lua,INCLUDE_DIRECTORIES>>
-    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_python,INCLUDE_DIRECTORIES>>
-    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:$<TARGET_PROPERTY:unrealng::automation_webapi,INCLUDE_DIRECTORIES>>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/lua/src>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/lua/lib/sol2/sol2-3.5.0/include>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/python/src>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/webapi/src>
     $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:${CMAKE_CURRENT_SOURCE_DIR}/cli/include>
 )
 

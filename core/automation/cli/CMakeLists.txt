@@ -20,12 +20,18 @@ set(SOURCES
     src/commands/cli-processor-snapshot.cpp
     src/commands/cli-processor-state.cpp
     src/commands/cli-processor-batch.cpp
+    src/handlers/python-handler.cpp
+    src/handlers/lua-handler.cpp
     src/commands/cli-processor-capture.cpp
     src/commands/cli-processor-profiler.cpp
     src/commands/cli-processor-keyboard.cpp
 )
 
 # Create the library
+# Find Python3 for pybind11 headers
+if (ENABLE_PYTHON_AUTOMATION)
+    find_package(Python3 COMPONENTS Development)
+endif()
 add_library(${PROJECT_NAME} STATIC ${SOURCES})
 
 
@@ -35,7 +41,31 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${ROOT_DIR}/core/src  # For core headers
+    ${ROOT_DIR}/core/automation  # For automation/automation.h
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/src>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/sol2/sol2-3.5.0/include>
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:${ROOT_DIR}/core/automation/lua/lib/lua/lua-5.4.7/src>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/src>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${ROOT_DIR}/core/automation/python/3rdparty/pybind11/include>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:${Python3_INCLUDE_DIRS}>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:${ROOT_DIR}/core/automation/webapi/src>
 )
+
+# Add conditional compiler definitions for automation modules
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    $<$<BOOL:${ENABLE_LUA_AUTOMATION}>:ENABLE_LUA_AUTOMATION>
+    $<$<BOOL:${ENABLE_PYTHON_AUTOMATION}>:ENABLE_PYTHON_AUTOMATION>
+    $<$<BOOL:${ENABLE_WEBAPI_AUTOMATION}>:ENABLE_WEBAPI_AUTOMATION>
+    $<$<BOOL:${ENABLE_CLI_AUTOMATION}>:ENABLE_CLI_AUTOMATION>
+)
+
+# Suppress deprecated-declarations warning for pybind11 (uses deprecated _Py_fopen_obj in Python 3.14)
+if (ENABLE_PYTHON_AUTOMATION)
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wno-deprecated-declarations)
+    endif()
+endif()
+
 
 # Install the library
 install(TARGETS ${PROJECT_NAME}
