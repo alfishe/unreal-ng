@@ -117,6 +117,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     debuggerWindow->reset();
     debuggerWindow->show();
 
+    // Connect debugger screen refresh signal (for speed control stepping)
+    // Handle it the same way as MessageCenter refresh (see line 1459)
+    connect(debuggerWindow, &DebuggerWindow::screenRefreshRequested, this, [this]() {
+        if (deviceScreen)
+        {
+            QMetaObject::invokeMethod(deviceScreen, "refresh", Qt::QueuedConnection);
+        }
+    });
+
     _dockingManager = new DockingManager(this);
     _dockingManager->addDockableWindow(debuggerWindow, Qt::LeftEdge);
     _dockingManager->addDockableWindow(logWindow, Qt::RightEdge);

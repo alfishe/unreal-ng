@@ -4,7 +4,7 @@
 
 The OpenAPI 3.0 specification for the Unreal Speccy Emulator WebAPI is **MANUALLY MAINTAINED** and **NOT auto-generated**.
 
-This means that **every API change** requires **manual updates** to the OpenAPI JSON specification.
+This means that **every API change** requires **manual updates** to the OpenAPI specification.
 
 ## Why Manual Maintenance?
 
@@ -15,138 +15,107 @@ This means that **every API change** requires **manual updates** to the OpenAPI 
 
 ## Current Status
 
-✅ **100% Coverage** - All 52 endpoints documented  
-✅ **Modular Organization** - Endpoints grouped by functional area  
-✅ **Complete Schemas** - 17 response schemas defined  
-✅ **Organized Tags** - 10 feature-based categories
+✅ **100% Coverage** - All 144 registered routes documented  
+✅ **Modular Organization** - 14 domain-specific `.inc` files  
+✅ **Complete Schemas** - 30+ response schemas defined  
+✅ **Organized Tags** - 20 feature-based categories  
+✅ **Automated Verification** - Coverage test script available
 
-**Last Updated:** 2026-01-08  
-**Endpoints Documented:** 52/52  
-**File Size:** 638 lines
+**Last Updated:** 2026-02-07  
+**Registered Routes:** 144 (across `emulator_api.h` and `interpreter_api.h`)  
+**OpenAPI Paths:** 149 (includes 5 planned profiler endpoints)
 
-## Code Organization (Post-Refactoring)
+## Code Organization
 
-The WebAPI codebase has been refactored into modular files organized by functional area:
+### OpenAPI Specification (Modular `.inc` Files)
+
+The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines) that `#include`s domain-specific `.inc` files from `src/openapi/`:
+
+| File | Domain | Content |
+|------|--------|---------|
+| `openapi_interpreter.inc` | Interpreter Control | Python/Lua exec, status, stop |
+| `openapi_lifecycle.inc` | Emulator Management | Create, start, stop, pause, resume, reset |
+| `openapi_tape_disk.inc` | Tape & Disk Control | Load, eject, insert, sector/track inspection |
+| `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
+| `openapi_capture.inc` | Capture | Screen capture, OCR |
+| `openapi_basic.inc` | BASIC Control | Run, inject, extract, clear, state, mode |
+| `openapi_keyboard.inc` | Keyboard Injection | Tap, press, release, combo, macro, type, abort |
+| `openapi_settings.inc` | Settings Management | Get/set emulator settings |
+| `openapi_features.inc` | Feature Management | Get/set runtime features |
+| `openapi_state.inc` | State Inspection | Memory, screen, audio state + memory read/write |
+| `openapi_analyzers.inc` | Analyzer Management | Analyzer control, events, sessions |
+| `openapi_debug.inc` | Debug Commands | Stepping, breakpoints, registers, disassembly |
+| `openapi_profiler.inc` | Profilers | Memory, call trace, opcode, unified profiler |
+| `openapi_schemas.inc` | Component Schemas | Reusable response/request schemas |
+
+### Endpoint Implementation Files (`src/api/`)
+
+| File | Domain |
+|------|--------|
+| `lifecycle_api.cpp` | Emulator lifecycle |
+| `tape_disk_api.cpp` | Tape and disk control |
+| `snapshot_api.cpp` | Snapshot management |
+| `capture_api.cpp` | Screen capture and OCR |
+| `basic_api.cpp` | BASIC program control |
+| `keyboard_api.cpp` | Keyboard injection |
+| `settings_api.cpp` | Settings management |
+| `features_api.cpp` | Feature management |
+| `state_memory_api.cpp` | Memory state inspection |
+| `state_screen_api.cpp` | Screen state inspection |
+| `state_audio_api.cpp` | Audio state inspection |
+| `analyzers_api.cpp` | Analyzer management |
+| `debug_api.cpp` | Debug commands |
+| `profiler_api.cpp` | Profiler commands |
+| `interpreter_api.cpp` | Python/Lua interpreter |
 
 ### Core Files
-- **`src/emulator_api.h`** - Main API interface with region markers
-- **`src/emulator_api.cpp`** - Core infrastructure (265 lines, 90% reduction)
-- **`src/openapi_spec.cpp`** - OpenAPI specification (638 lines)
+- **`src/emulator_api.h`** - Main API interface with `ADD_METHOD_TO` route registrations
+- **`src/emulator_api.cpp`** - Core infrastructure
+- **`src/openapi_spec.cpp`** - OpenAPI skeleton with `#include` directives (~160 lines)
+- **`src/api/interpreter_api.h`** - Interpreter API interface (separate Drogon controller)
 
-### Modular Endpoint Implementations (`src/api/`)
-- **`lifecycle_api.cpp`** - Emulator lifecycle (get, create, delete, start, stop, pause, resume, reset)
-- **`tape_disk_api.cpp`** - Tape and disk control
-- **`snapshot_api.cpp`** - Snapshot management  
-- **`settings_api.cpp`** - Settings management
-- **`state_memory_api.cpp`** - Memory state inspection (RAM, ROM)
-- **`state_screen_api.cpp`** - Screen state inspection
-- **`state_audio_api.cpp`** - Audio state inspection (AY, beeper, GS, Covox)
+## Automated Coverage Verification
+
+Run the verification script to ensure all registered routes are documented:
+
+```bash
+# From project root
+python3 tools/verification/webapi/verify_openapi_coverage.py
+
+# Strict mode (also flags documented-but-unregistered routes as errors)
+python3 tools/verification/webapi/verify_openapi_coverage.py --strict
+```
+
+The script compares:
+- **Source of truth**: `ADD_METHOD_TO` declarations in `emulator_api.h` and `interpreter_api.h`
+- **Documentation**: `paths["/api/v1/..."]` entries in `src/openapi/*.inc` files
+
+Exit code 0 = all routes covered. Exit code 1 = missing documentation.
 
 ## Maintenance Process
 
-### When Adding/Modifying API Endpoints:
+### When Adding a New API Endpoint:
 
-1. **Implement the API endpoint** in the appropriate modular file:
-   - Lifecycle operations → `api/lifecycle_api.cpp`
-   - Tape/disk operations → `api/tape_disk_api.cpp`
-   - Snapshot operations → `api/snapshot_api.cpp`
-   - Settings operations → `api/settings_api.cpp`
-   - Memory state → `api/state_memory_api.cpp`
-   - Screen state → `api/state_screen_api.cpp`
-   - Audio state → `api/state_audio_api.cpp`
-
-2. **Add autodoc comments** above the method:
-   ```cpp
-   /// @brief GET /api/v1/emulator/{id}/endpoint
-   /// @brief Description of what this endpoint does
-   void EmulatorAPI::methodName(...)
-   ```
-
-3. **Update the OpenAPI specification** in `openapi_spec.cpp`:
-   - Add path definition
-   - Specify parameters (path, query, body)
-   - Define responses with status codes
-   - Add to appropriate tag
-
-4. **Register the endpoint** in `emulator_api.h`:
-   - Add to appropriate region (see region markers)
-   - Include implementation file comment
-
-5. **Test with Swagger UI** to verify documentation accuracy
-
-6. **Update HTML documentation** if needed
+1. **Implement** in the appropriate `src/api/*.cpp` file
+2. **Register** the route in `emulator_api.h` (or `interpreter_api.h`) with `ADD_METHOD_TO`
+3. **Document** in the matching `src/openapi/openapi_*.inc` file
+4. **Run** `python3 tools/verification/webapi/verify_openapi_coverage.py` to verify
+5. **Test** with Swagger UI to verify documentation accuracy
 
 ### When Changing Parameters/Responses:
 
-1. **Modify the API endpoint** implementation in modular file
-2. **Update corresponding OpenAPI paths** in `openapi_spec.cpp`
-3. **Verify parameter schemas** match actual implementation
-4. **Update response schemas** if response format changed
-5. **Test with real API calls**
-
-## OpenAPI Structure
-
-The specification in `openapi_spec.cpp` includes:
-
-- **Info section**: API title, description, version
-- **Servers**: Available server URLs (localhost:8090)
-- **Paths**: All 52 API endpoints with methods, parameters, responses
-- **Components**: 17 reusable schemas for requests/responses
-- **Tags**: 10 categories grouping related endpoints
-
-## Current Endpoint Coverage
-
-### Emulator Management (8 endpoints) ✅
-- List, status, models, create, get, delete
-
-### Emulator Control (5 endpoints) ✅
-- Start, stop, pause, resume, reset
-
-### Settings Management (3 endpoints) ✅
-- Get all settings, get specific setting, update setting
-
-### Tape Control (6 endpoints) ✅
-- Load, eject, play, stop, rewind, info
-
-### Disk Control (3 endpoints) ✅
-- Insert, eject, info
-
-### Snapshot Control (2 endpoints) ✅
-- Load, info
-
-### Memory State (3 endpoints) ✅
-- Overview, RAM details, ROM details
-
-### Screen State (3 endpoints) ✅
-- Overview, mode, flash state
-
-### Audio State (12 endpoints) ✅
-- AY chips (with ID): overview, chip details, register details
-- Extended audio (with ID): beeper, GS, Covox, channels
-- Stateless variants: all audio endpoints without ID requirement
-
-### Special Endpoints (7 endpoints) ✅  
-- Root redirect, CORS preflight, OpenAPI spec
-
-## Response Schemas
-
-All response types have proper schemas defined:
-
-- `EmulatorList`, `EmulatorInfo`
-- `SettingsResponse`
-- `MemoryStateResponse`, `RAMStateResponse`, `ROMStateResponse`
-- `ScreenStateResponse`, `ScreenModeResponse`, `FlashStateResponse`
-- `AYChipsResponse`, `AYChipResponse`, `AYRegisterResponse`
-- `BeeperStateResponse`, `GSStateResponse`, `CovoxStateResponse`, `AudioChannelsResponse`
-- `TapeInfoResponse`, `DiskInfoResponse`, `SnapshotInfoResponse`
+1. **Modify** the API endpoint implementation
+2. **Update** corresponding OpenAPI paths in the `.inc` file
+3. **Verify** parameter schemas match actual implementation
+4. **Update** response schemas in `openapi_schemas.inc` if needed
+5. **Test** with real API calls
 
 ## Common Mistakes to Avoid
 
-❌ **Adding new endpoint without updating OpenAPI spec**  
+❌ **Adding new endpoint without updating OpenAPI `.inc` file**  
 ❌ **Changing parameter names/types without updating schemas**  
 ❌ **Modifying response formats without updating response schemas**  
-❌ **Forgetting to update path parameters or query parameters**  
-❌ **Not adding autodoc comments to new methods**  
+❌ **Not running the coverage verification script after changes**  
 ❌ **Missing CORS headers** (always call `addCorsHeaders(resp)` before `callback(resp)`)
 
 ## Testing Documentation Accuracy
@@ -163,72 +132,34 @@ docker run --name unreal-speccy-swagger-ui \
 
 # 3. Test each endpoint in Swagger UI
 # 4. Verify parameters and responses match actual API
-# 5. Check that all 52 endpoints are visible
 ```
-
-## Region Markers in Header
-
-The `emulator_api.h` file uses region markers for code organization:
-
-```cpp
-// region Root and OpenAPI (implementation: emulator_api.cpp)
-// endregion Root and OpenAPI
-
-// region Lifecycle Management (implementation: api/lifecycle_api.cpp)
-// endregion Lifecycle Management
-
-// region Tape/Disk/Snapshot Control (implementation: api/tape_disk_api.cpp and api/snapshot_api.cpp)
-// endregion Tape/Disk/Snapshot Control
-
-// region Settings Management (implementation: api/settings_api.cpp)
-// endregion Settings Management
-
-// region Memory State (implementation: api/state_memory_api.cpp)
-// endregion Memory State
-
-// region Screen State (implementation: api/state_screen_api.cpp)
-// endregion Screen State
-
-// region Audio State (implementation: api/state_audio_api.cpp)
-// endregion Audio State
-```
-
-These enable code folding in IDEs and make navigation easier.
-
-## Future Considerations
-
-- **Auto-generation tooling** could be added in the future
-- **Runtime validation** against OpenAPI spec could be implemented
-- **API versioning** might require separate OpenAPI specs
-- **Automated testing** of OpenAPI spec against actual endpoints
-
-## Files to Update
-
-When making API changes, update these files:
-
-1. **Modular implementation file** (e.g., `src/api/lifecycle_api.cpp`)
-2. **`src/openapi_spec.cpp`** - OpenAPI specification
-3. **`src/emulator_api.h`** - Add method declaration in appropriate region
-4. **`resources/html/index.html`** - HTML documentation (if needed)
-5. **`DEPLOYMENT.md`** - Deployment guide (if new features added)
-6. **This file** (`OPENAPI_MAINTENANCE.md`) - Update endpoint count/coverage
 
 ## Quick Command Reference
 
 ```bash
-# View current line counts
-wc -l src/emulator_api.cpp src/openapi_spec.cpp src/api/*.cpp
+# Run OpenAPI coverage check
+python3 tools/verification/webapi/verify_openapi_coverage.py
 
-# Check OpenAPI endpoint count
+# View line counts of modular .inc files
+wc -l core/automation/webapi/src/openapi/*.inc
+
+# Check OpenAPI endpoint count (requires running server)
 curl -s http://localhost:8090/api/v1/openapi.json | jq '.paths | keys | length'
 
 # List all documented endpoints
 curl -s http://localhost:8090/api/v1/openapi.json | jq '.paths | keys'
 
 # Verify all methods have CORS headers
-grep -r "addCorsHeaders" src/api/*.cpp | wc -l
+grep -r "addCorsHeaders" core/automation/webapi/src/api/*.cpp | wc -l
 ```
 
-## Contact
+## Files to Update
 
-If you're unsure about updating the OpenAPI specification, please consult the development team to ensure API documentation remains accurate and complete.
+When making API changes, update these files:
+
+1. **Modular implementation file** (e.g., `src/api/lifecycle_api.cpp`)
+2. **`src/emulator_api.h`** - Add `ADD_METHOD_TO` declaration in appropriate region
+3. **`src/openapi/openapi_*.inc`** - Add path definition in matching `.inc` file
+4. **`src/openapi/openapi_schemas.inc`** - Add/update response schemas if needed
+5. **Run** `python3 tools/verification/webapi/verify_openapi_coverage.py`
+6. **This file** (`OPENAPI_MAINTENANCE.md`) - Update status section if needed
