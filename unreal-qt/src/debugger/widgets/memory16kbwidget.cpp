@@ -246,20 +246,38 @@ void Memory16KBWidget::updateMemoryImage()
     // Force COW detach before pixel loop
     _memoryImage.bits();
 
-    bool needsOverlay = isZ80Mode && (_showReadOverlay || _showWriteOverlay || _showExecuteOverlay);
+    bool needsOverlay = (_showReadOverlay || _showWriteOverlay || _showExecuteOverlay);
     const uint32_t* readCounters = nullptr;
     const uint32_t* writeCounters = nullptr;
     const uint32_t* execCounters = nullptr;
+    uint32_t counterBaseOffset = 0;  // Base offset into counter arrays
 
     if (needsOverlay)
     {
         MemoryAccessTracker& tracker = memory->GetAccessTracker();
-        if (_showReadOverlay)
-            readCounters = tracker.GetZ80ReadCountersPtr();
-        if (_showWriteOverlay)
-            writeCounters = tracker.GetZ80WriteCountersPtr();
-        if (_showExecuteOverlay)
-            execCounters = tracker.GetZ80ExecuteCountersPtr();
+
+        if (isZ80Mode)
+        {
+            // Z80 mode: counters indexed by Z80 address (0x0000-0xFFFF)
+            counterBaseOffset = baseAddress;
+            if (_showReadOverlay)
+                readCounters = tracker.GetZ80ReadCountersPtr();
+            if (_showWriteOverlay)
+                writeCounters = tracker.GetZ80WriteCountersPtr();
+            if (_showExecuteOverlay)
+                execCounters = tracker.GetZ80ExecuteCountersPtr();
+        }
+        else
+        {
+            // Physical page mode: counters indexed by physPageNumber * BANK_SIZE + offset
+            counterBaseOffset = static_cast<uint32_t>(_physicalPageNumber) * BANK_SIZE;
+            if (_showReadOverlay)
+                readCounters = tracker.GetPhysReadCountersPtr();
+            if (_showWriteOverlay)
+                writeCounters = tracker.GetPhysWriteCountersPtr();
+            if (_showExecuteOverlay)
+                execCounters = tracker.GetPhysExecuteCountersPtr();
+        }
     }
 
     for (int y = 0; y < _currentImageHeight; y++)
@@ -277,7 +295,7 @@ void Memory16KBWidget::updateMemoryImage()
 
                 if (needsOverlay)
                 {
-                    uint16_t addr = baseAddress + offset;
+                    uint32_t addr = counterBaseOffset + offset;
                     uint32_t r = readCounters ? readCounters[addr] : 0;
                     uint32_t w = writeCounters ? writeCounters[addr] : 0;
                     uint32_t e = execCounters ? execCounters[addr] : 0;
@@ -329,18 +347,24 @@ void Memory16KBWidget::updateCounterLabels()
         return;
     }
 
-    // Access counters are only available for Z80 bank mode
-    if (_displayMode != DisplayMode::Z80Bank)
-    {
-        _countersLabel->setText("");
-        return;
-    }
-
     MemoryAccessTracker& tracker = memory->GetAccessTracker();
 
-    uint32_t readCount = tracker.GetZ80BankReadAccessCount(_bankIndex);
-    uint32_t writeCount = tracker.GetZ80BankWriteAccessCount(_bankIndex);
-    uint32_t execCount = tracker.GetZ80BankExecuteAccessCount(_bankIndex);
+    uint32_t readCount = 0;
+    uint32_t writeCount = 0;
+    uint32_t execCount = 0;
+
+    if (_displayMode == DisplayMode::Z80Bank)
+    {
+        readCount = tracker.GetZ80BankReadAccessCount(_bankIndex);
+        writeCount = tracker.GetZ80BankWriteAccessCount(_bankIndex);
+        execCount = tracker.GetZ80BankExecuteAccessCount(_bankIndex);
+    }
+    else
+    {
+        readCount = tracker.GetPageReadAccessCount(_physicalPageNumber);
+        writeCount = tracker.GetPageWriteAccessCount(_physicalPageNumber);
+        execCount = tracker.GetPageExecuteAccessCount(_physicalPageNumber);
+    }
 
     auto formatCount = [](uint32_t count) -> QString {
         if (count >= 1000000)
