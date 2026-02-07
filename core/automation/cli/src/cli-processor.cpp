@@ -89,6 +89,11 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stepin", &CLIProcessor::HandleStepIn},      // Always one instruction
                         {"steps", &CLIProcessor::HandleSteps},        // Execute 1...N instructions
                         {"stepover", &CLIProcessor::HandleStepOver},  // Execute instruction, skip calls
+                        {"run_tstates", &CLIProcessor::HandleRunTStates},        // Run N t-states
+                        {"run_to_scanline", &CLIProcessor::HandleRunToScanline}, // Run to scanline N
+                        {"run_scanlines", &CLIProcessor::HandleRunNScanlines},   // Run N scanlines
+                        {"run_to_pixel", &CLIProcessor::HandleRunToPixel},       // Run to next screen pixel
+                        {"run_to_interrupt", &CLIProcessor::HandleRunToInterrupt}, // Run to interrupt
                         {"memory", &CLIProcessor::HandleMemory},
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},

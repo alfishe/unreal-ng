@@ -1189,6 +1189,7 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
     if (z80.t >= config.frame)
     {
         _core->AdjustFrameCounters();
+        _context->pScreen->ResetPrevTstate();
     }
 }
 
@@ -1227,6 +1228,7 @@ void Emulator::RunFrame(bool skipBreakpoints)
         if (z80.t >= config.frame)
         {
             _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
         }
     }
     
@@ -1266,6 +1268,7 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
             if (z80.t >= config.frame)
             {
                 _core->AdjustFrameCounters();
+                _context->pScreen->ResetPrevTstate();
             }
         }
     }
@@ -1280,14 +1283,304 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
     }
 }
 
-void Emulator::RunUntilInterrupt()
+void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 {
-    throw std::logic_error("Not implemented");
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+
+    unsigned targetT = z80.t + tStates;
+
+    while (z80.t < targetT && !_stopRequested)
+    {
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+
+        // Handle frame boundary
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();  // Prevent DrawPeriod fromTstate > toTstate crash
+            // targetT wraps with frame counter adjustment
+            if (targetT >= config.frame)
+            {
+                targetT -= config.frame;
+            }
+        }
+    }
+
+    // Notify debugger
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-void Emulator::RunUntilCondition()
+void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)
 {
-    throw std::logic_error("Not implemented");
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+
+    unsigned targetT = targetLine * config.t_line;
+
+    // If we've already passed this scanline in the current frame, complete the frame first
+    if (z80.t >= targetT)
+    {
+        while (z80.t < config.frame && !_stopRequested)
+        {
+            z80.Z80Step(skipBreakpoints);
+            z80.OnCPUStep();
+        }
+
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
+        }
+    }
+
+    // Now run to the target scanline
+    while (z80.t < targetT && !_stopRequested)
+    {
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
+        }
+    }
+
+    // Notify debugger
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    messageCenter.Post(NC_SCANLINE_BOUNDARY);
+}
+
+void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
+{
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+
+    // Calculate total t-states to advance: N scanlines × t-states per scanline
+    unsigned totalTStates = count * config.t_line;
+
+    // Simple stepping loop with frame boundary handling
+    unsigned elapsed = 0;
+    while (elapsed < totalTStates && !_stopRequested)
+    {
+        unsigned prevT = z80.t;
+
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+
+        // Track elapsed t-states (handle frame wrap)
+        if (z80.t >= prevT)
+        {
+            elapsed += z80.t - prevT;
+        }
+        else
+        {
+            // Frame wrapped - z80.t was reset by AdjustFrameCounters
+            elapsed += z80.t;
+        }
+
+        // Handle frame boundary
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
+        }
+    }
+
+    // Notify debugger
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    messageCenter.Post(NC_SCANLINE_BOUNDARY);
+}
+
+void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
+{
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+
+    // Use the screen's precomputed raster state for the exact first paper pixel position
+    // This accounts for VSync, VBlank, top border, HSync, HBlank, and left border timing
+    unsigned paperStartT = _context->pScreen->GetPaperStartTstate();
+
+    if (z80.t < paperStartT)
+    {
+        // Before paper in current frame — run to paper start
+        while (z80.t < paperStartT && !_stopRequested)
+        {
+            z80.Z80Step(skipBreakpoints);
+            z80.OnCPUStep();
+
+            if (z80.t >= config.frame)
+            {
+                _core->AdjustFrameCounters();
+                _context->pScreen->ResetPrevTstate();
+            }
+        }
+    }
+    else
+    {
+        // After paper start or in paper area — complete frame and run to paper start of next frame
+        while (z80.t < config.frame && !_stopRequested)
+        {
+            z80.Z80Step(skipBreakpoints);
+            z80.OnCPUStep();
+        }
+
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
+        }
+
+        // Now run to paper start in the new frame
+        while (z80.t < paperStartT && !_stopRequested)
+        {
+            z80.Z80Step(skipBreakpoints);
+            z80.OnCPUStep();
+
+            if (z80.t >= config.frame)
+            {
+                _core->AdjustFrameCounters();
+                _context->pScreen->ResetPrevTstate();
+            }
+        }
+    }
+
+    // Notify debugger
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+}
+
+void Emulator::RunUntilInterrupt(bool skipBreakpoints)
+{
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+
+    // Safety limit: max 2 frames worth of t-states to prevent infinite loops
+    // (e.g., if interrupts are disabled and never re-enabled)
+    unsigned safetyLimit = config.frame * 2;
+    unsigned elapsed = 0;
+
+    while (!_stopRequested)
+    {
+        uint8_t prevIff1 = z80.iff1;
+        unsigned prevT = z80.t;
+
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+
+        // Track elapsed t-states (handling frame wrap)
+        unsigned stepT = z80.t >= prevT ? (z80.t - prevT) : z80.t;
+        elapsed += stepT;
+
+        // Handle frame boundary
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
+        }
+
+        // Interrupt accepted: iff1 transitioned from 1 to 0
+        if (prevIff1 && !z80.iff1)
+        {
+            break;
+        }
+
+        // Safety: don't run more than 2 frames
+        if (elapsed >= safetyLimit)
+        {
+            MLOGWARNING("Emulator::RunUntilInterrupt - Safety limit reached (%u t-states), no interrupt accepted", elapsed);
+            break;
+        }
+    }
+
+    // Notify debugger
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
+}
+
+void Emulator::RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates)
+{
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+
+    unsigned elapsed = 0;
+
+    while (!_stopRequested)
+    {
+        unsigned prevT = z80.t;
+
+        z80.Z80Step(true);  // Skip breakpoints for condition-based execution
+        z80.OnCPUStep();
+
+        // Track elapsed t-states
+        unsigned stepT = z80.t >= prevT ? (z80.t - prevT) : z80.t;
+        elapsed += stepT;
+
+        // Handle frame boundary
+        if (z80.t >= config.frame)
+        {
+            _core->AdjustFrameCounters();
+            _context->pScreen->ResetPrevTstate();
+        }
+
+        // Check predicate
+        if (predicate(z80))
+        {
+            break;
+        }
+
+        // Enforce safety limit if specified
+        if (maxTStates > 0 && elapsed >= maxTStates)
+        {
+            MLOGWARNING("Emulator::RunUntilCondition - Safety limit reached (%u t-states)", elapsed);
+            break;
+        }
+    }
+
+    // Notify debugger
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
 void Emulator::StepOver()

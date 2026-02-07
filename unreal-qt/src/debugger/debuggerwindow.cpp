@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QDialog>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QPointer>
 #include <QTableWidget>
@@ -102,6 +103,21 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     toolBar->addAction(frameStepAction);
 
     waitInterruptAction = toolBar->addAction("Wait INT");
+
+    // Atomic stepping dropdown button
+    atomicStepMenu = new QMenu("Advanced Step", this);
+    runTStatesAction = atomicStepMenu->addAction("Run T-States...");
+    runToScanlineAction = atomicStepMenu->addAction("Run to Scanline...");
+    runNScanlinesAction = atomicStepMenu->addAction("Run N Scanlines...");
+    runToPixelAction = atomicStepMenu->addAction("Run to Screen Pixel");
+    runToInterruptAction = atomicStepMenu->addAction("Run to Interrupt");
+
+    atomicStepButton = new QToolButton(this);
+    atomicStepButton->setText("Adv Step \u25BE");
+    atomicStepButton->setMenu(atomicStepMenu);
+    atomicStepButton->setPopupMode(QToolButton::InstantPopup);
+    toolBar->addWidget(atomicStepButton);
+
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
     toolBar->addAction(resetAction);
@@ -122,6 +138,11 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
     connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
+    connect(runTStatesAction, &QAction::triggered, this, &DebuggerWindow::runTStates);
+    connect(runToScanlineAction, &QAction::triggered, this, &DebuggerWindow::runToScanline);
+    connect(runNScanlinesAction, &QAction::triggered, this, &DebuggerWindow::runNScanlines);
+    connect(runToPixelAction, &QAction::triggered, this, &DebuggerWindow::runToPixel);
+    connect(runToInterruptAction, &QAction::triggered, this, &DebuggerWindow::runToInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
@@ -1030,6 +1051,63 @@ void DebuggerWindow::waitInterrupt()
     {
         continueExecution();
     }
+}
+
+void DebuggerWindow::runTStates()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    int tstates = QInputDialog::getInt(this, "Run T-States", "Number of T-states to execute:", 100, 1, 10000000, 1, &ok);
+    if (!ok) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunTStates(static_cast<unsigned>(tstates));
+    updateState();
+}
+
+void DebuggerWindow::runToScanline()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    int scanline = QInputDialog::getInt(this, "Run to Scanline", "Target scanline number:", 0, 0, 319, 1, &ok);
+    if (!ok) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunUntilScanline(static_cast<unsigned>(scanline));
+    updateState();
+}
+
+void DebuggerWindow::runNScanlines()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    int count = QInputDialog::getInt(this, "Run N Scanlines", "Number of scanlines to run:", 1, 1, 1000, 1, &ok);
+    if (!ok) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunNScanlines(static_cast<unsigned>(count));
+    updateState();
+}
+
+void DebuggerWindow::runToPixel()
+{
+    if (!_emulator) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunUntilNextScreenPixel();
+    updateState();
+}
+
+void DebuggerWindow::runToInterrupt()
+{
+    if (!_emulator) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunUntilInterrupt();
+    updateState();
 }
 
 void DebuggerWindow::resetEmulator()

@@ -186,6 +186,242 @@ void EmulatorAPI::stepOver(const HttpRequestPtr& req, std::function<void(const H
     }
 }
 
+/// @brief POST /api/v1/emulator/{id}/run_tstates
+/// @brief Run for N t-states
+/// @brief Request body: {"tstates": N}
+void EmulatorAPI::runTStates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        auto json = req->getJsonObject();
+        unsigned tstates = json && json->isMember("tstates") ? (*json)["tstates"].asUInt() : 1;
+        if (tstates < 1) tstates = 1;
+        if (tstates > 10000000) tstates = 10000000; // Safety limit
+        
+        emulator->RunTStates(tstates);
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran " + std::to_string(tstates) + " t-states";
+        ret["tstates"] = tstates;
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunTStates failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/run_to_scanline
+/// @brief Run until target scanline
+/// @brief Request body: {"scanline": N}
+void EmulatorAPI::runToScanline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("scanline"))
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "Request body must contain 'scanline' field";
+            
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        
+        unsigned scanline = (*json)["scanline"].asUInt();
+        emulator->RunUntilScanline(scanline);
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran to scanline " + std::to_string(scanline);
+        ret["scanline"] = scanline;
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunToScanline failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/run_scanlines
+/// @brief Run N scanlines from current position
+/// @brief Request body: {"count": N}
+void EmulatorAPI::runNScanlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        auto json = req->getJsonObject();
+        unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
+        if (count < 1) count = 1;
+        if (count > 1000) count = 1000; // Safety limit
+        
+        emulator->RunNScanlines(count);
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran " + std::to_string(count) + " scanlines";
+        ret["count"] = count;
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunNScanlines failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/run_to_pixel
+/// @brief Run until next screen pixel (skip vblank/borders)
+void EmulatorAPI::runToPixel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                             const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        emulator->RunUntilNextScreenPixel();
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran to next screen pixel";
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunToPixel failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/run_to_interrupt
+/// @brief Run until Z80 accepts maskable interrupt
+void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        emulator->RunUntilInterrupt();
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran to interrupt";
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunToInterrupt failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
 // endregion Stepping Commands
 
 // region Debug Mode

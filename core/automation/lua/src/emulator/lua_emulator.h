@@ -429,6 +429,39 @@ public:
             _emulator->StepOver();
         });
 
+        // Atomic stepping methods
+        lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunTStates(count, skipBP.value_or(true));
+        });
+
+        lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunUntilScanline(scanline, skipBP.value_or(true));
+        });
+
+        lua.set_function("run_scanlines", [this](unsigned count, sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunNScanlines(count, skipBP.value_or(true));
+        });
+
+        lua.set_function("run_to_pixel", [this](sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunUntilNextScreenPixel(skipBP.value_or(true));
+        });
+
+        lua.set_function("run_to_interrupt", [this](sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunUntilInterrupt(skipBP.value_or(true));
+        });
+
+        lua.set_function("run_until_condition", [this](sol::function predicate, sol::optional<unsigned> maxTStates) {
+            if (!_emulator) return;
+            _emulator->RunUntilCondition([&predicate](const Z80State& state) -> bool {
+                return predicate(state.pc, state.af, state.bc, state.de, state.hl).get<bool>();
+            }, maxTStates.value_or(0));
+        });
+
         // Tape operations
         lua.set_function("tape_load", [this](const std::string& path) -> bool {
             if (!_emulator) return false;

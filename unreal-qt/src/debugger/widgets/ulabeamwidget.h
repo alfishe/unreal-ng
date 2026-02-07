@@ -32,19 +32,21 @@ private:
     QLabel* _titleLabel = nullptr;
     QImage _screenImage;
 
-    // Screen dimensions (for ZX Spectrum)
-    static constexpr int SCREEN_WIDTH = 256;
-    static constexpr int SCREEN_HEIGHT = 192;
-    static constexpr int BORDER_WIDTH = 48;
-    static constexpr int BORDER_HEIGHT = 48;
+    // Current beam position (in full raster coordinates: pixels × lines)
+    int _beamX = 0;   // Pixel position within line (0..pixelsPerLine-1)
+    int _beamY = 0;   // Raster line (0..totalLines-1)
 
-    // Current beam position
-    int _beamX = 0;
-    int _beamY = 0;
-
-    // Scale factor for drawing
-    float _scaleX = 1.0f;
-    float _scaleY = 1.0f;
+    // Raster geometry (set from RasterDescriptor)
+    int _totalPixelsPerLine = 448;    // Full line width in pixels
+    int _totalLines = 320;            // Total raster lines (VSync + VBlank + visible)
+    int _visibleWidth = 352;          // fullFrameWidth (visible portion)
+    int _visibleHeight = 288;         // fullFrameHeight (visible portion)
+    int _visibleOffsetX = 0;          // HSync+HBlank pixels (visible starts after these)
+    int _visibleOffsetY = 0;          // VSync+VBlank lines (visible starts after these)
+    int _paperOffsetX = 48;           // screenOffsetLeft within visible area
+    int _paperOffsetY = 48;           // screenOffsetTop within visible area
+    int _paperWidth = 256;            // screenWidth
+    int _paperHeight = 192;           // screenHeight
 
     uint32_t _currentTstate = 0;
     int _currentLine = 0;

@@ -10,7 +10,9 @@
 
 #include <QAction>
 #include <QDebug>
+#include <QMenu>
 #include <QToolBar>
+#include <QToolButton>
 #include <QWidget>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -82,6 +84,13 @@ private slots:
     void stepOut();
     void frameStep();
     void waitInterrupt();
+
+    // Atomic stepping actions
+    void runTStates();
+    void runToScanline();
+    void runNScanlines();
+    void runToPixel();
+    void runToInterrupt();
     void resetEmulator();
     void showBreakpointManager();
     void showLabelManager();
@@ -139,6 +148,15 @@ private:
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;
+
+    // Atomic stepping dropdown
+    QMenu* atomicStepMenu = nullptr;
+    QToolButton* atomicStepButton = nullptr;
+    QAction* runTStatesAction = nullptr;
+    QAction* runToScanlineAction = nullptr;
+    QAction* runNScanlinesAction = nullptr;
+    QAction* runToPixelAction = nullptr;
+    QAction* runToInterruptAction = nullptr;
     
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;

@@ -398,7 +398,24 @@ static void registerEmulatorBindings()
                  return s ? s->af : 0;
              })
         .def("read_memory", [](Emulator& emu, uint16_t addr) { return emu.GetMemory()->DirectReadFromZ80Memory(addr); })
-        .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, py::return_value_policy::reference);
+        .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, py::return_value_policy::reference)
+        // Atomic stepping methods
+        .def("run_tstates", [](Emulator& emu, unsigned tstates, bool skipBP) { emu.RunTStates(tstates, skipBP); },
+             py::arg("tstates"), py::arg("skip_breakpoints") = true)
+        .def("run_to_scanline", [](Emulator& emu, unsigned scanline, bool skipBP) { emu.RunUntilScanline(scanline, skipBP); },
+             py::arg("scanline"), py::arg("skip_breakpoints") = true)
+        .def("run_scanlines", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNScanlines(count, skipBP); },
+             py::arg("count"), py::arg("skip_breakpoints") = true)
+        .def("run_to_pixel", [](Emulator& emu, bool skipBP) { emu.RunUntilNextScreenPixel(skipBP); },
+             py::arg("skip_breakpoints") = true)
+        .def("run_to_interrupt", [](Emulator& emu, bool skipBP) { emu.RunUntilInterrupt(skipBP); },
+             py::arg("skip_breakpoints") = true)
+        .def("run_until_condition", [](Emulator& emu, py::function predicate, unsigned maxTStates) {
+                 emu.RunUntilCondition([&predicate](const Z80State& state) -> bool {
+                     return predicate(state.pc, state.af, state.bc, state.de, state.hl).cast<bool>();
+                 }, maxTStates);
+             },
+             py::arg("predicate"), py::arg("max_tstates") = 0);
 
     // Register BreakpointManager
     py::class_<BreakpointManager>(main, "BreakpointManager")

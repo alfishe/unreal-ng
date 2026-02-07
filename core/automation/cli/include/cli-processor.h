@@ -86,6 +86,11 @@ private:
     void HandleStepIn(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSteps(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunTStates(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunToScanline(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunNScanlines(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunToPixel(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunToInterrupt(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 

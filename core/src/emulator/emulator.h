@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <random>
 #include <string>
@@ -170,9 +171,15 @@ public:
     void RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
     void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
-    void RunUntilInterrupt();
-    void RunUntilCondition(/* some condition descriptor */);  // TODO: revise design
-    void StepOver();                                          // Execute instruction, skip calls and subroutines
+    void StepOver();                                              // Execute instruction, skip calls and subroutines
+
+    // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
+    void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
+    void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
+    void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position
+    void RunUntilNextScreenPixel(bool skipBreakpoints = true);                // Skip vblank/borders to first paper pixel
+    void RunUntilInterrupt(bool skipBreakpoints = true);                      // Run until Z80 accepts maskable interrupt (iff1 1→0)
+    void RunUntilCondition(std::function<bool(const Z80State&)> predicate, unsigned maxTStates = 0);
 
     // Actions
     bool LoadROM(std::string path);
