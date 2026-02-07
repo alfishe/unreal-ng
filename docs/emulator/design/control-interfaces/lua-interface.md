@@ -111,6 +111,8 @@ emu:pause()
 emu:resume()
 pc = emu:step()          -- Returns PC after step
 pc = emu:steps(count)    -- Returns PC after N steps
+emu:run_frame()          -- Run exactly one video frame
+emu:run_frames(count)    -- Run exactly N video frames
 
 -- Properties
 id = emu:get_id()

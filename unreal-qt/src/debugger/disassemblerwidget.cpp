@@ -507,7 +507,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     Emulator* emulator = getEmulator();
     if (!emulator)
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - No emulator available";
+
         m_stateIndicator->setText("DETACHED");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
@@ -521,7 +521,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     // Update the state indicator
     if (isPaused)
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting ACTIVE state";
+
         m_stateIndicator->setText("ACTIVE");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #0f0; font-weight: bold; border: 1px solid #555; }");
@@ -529,7 +529,7 @@ void DisassemblerWidget::updateDebuggerStateIndicator()
     }
     else
     {
-        qDebug() << "DisassemblerWidget::updateDebuggerStateIndicator - Setting DETACHED state";
+
         m_stateIndicator->setText("DETACHED");
         m_stateIndicator->setStyleSheet(
             "QLabel { background-color: #333; color: #777; font-weight: bold; border: 1px solid #555; }");
@@ -734,7 +734,7 @@ void DisassemblerWidget::returnToCurrentPC()
 
 void DisassemblerWidget::reset()
 {
-    qDebug() << "DisassemblerWidget::reset() called";
+
     m_disassemblyTextEdit->setPlainText("<Disassembly goes here>");
     m_currentPC = 0;
     m_displayAddress = 0;
@@ -825,7 +825,7 @@ void DisassemblerWidget::refresh()
         return;
     }
 
-    qDebug() << "DisassemblerWidget::refresh() called";
+
 
     // Update the disassembly view with current PC
     if (getEmulator() && getZ80Registers())

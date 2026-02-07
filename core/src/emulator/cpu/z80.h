@@ -378,8 +378,8 @@ public:
 public:
     void RequestMaskedInterrupt();
     void RequestNonMaskedInterrupt();
-    inline void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
-                                  unsigned int_start, unsigned int_end);
+    void ProcessInterrupts(bool int_occured,  // Take care about incoming interrupts
+                           unsigned int_start, unsigned int_end);
 
     // Event handlers
 public:

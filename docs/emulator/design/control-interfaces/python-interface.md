@@ -101,6 +101,12 @@ class Emulator:
     def steps(self, count: int) -> int:
         """Execute N instructions, return final PC"""
         
+    def run_frame(self):
+        """Run exactly one video frame (config.frame t-states)"""
+        
+    def run_frames(self, count: int):
+        """Run exactly N video frames"""
+        
     def get_id(self) -> str:
         """Get emulator UUID"""
         
