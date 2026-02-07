@@ -17,6 +17,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labeleditor.h"
+#include "debugger/speedcontrolwidget.h"
 #include "debugvisualizationwindow.h"
 #include "emulator/emulator.h"
 #include "ui_debuggerwindow.h"
@@ -166,6 +167,20 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
 
+    // Speed control widget — inserted below toolbar, with spacer to avoid full-width stretch
+    m_speedControl = new SpeedControlWidget(this);
+    m_speedControl->setEmulator(_emulator);
+    m_speedControl->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto* speedRow = new QHBoxLayout();
+    speedRow->setContentsMargins(0, 0, 0, 0);
+    speedRow->addWidget(m_speedControl, 1);  // 50% — equal stretch with spacer
+    speedRow->addStretch(1);                 // 50% — remaining space
+    ui->verticalLayout_2->insertLayout(1, speedRow);
+    connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
+        updateState();
+        emit screenRefreshRequested();
+    });
+
     // Set hex memory viewer to readonly mode
     ui->hexView->setReadOnly(true);
 
@@ -223,6 +238,10 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
              << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
 
     _emulator = emulator;
+
+    // Propagate to speed control widget
+    if (m_speedControl)
+        m_speedControl->setEmulator(_emulator);
 
     if (_emulator)
     {
@@ -309,6 +328,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         {
             _emulator = m_binding->emulator();
             _emulatorState = m_binding->state();
+
+            // Propagate to speed control widget
+            if (m_speedControl)
+                m_speedControl->setEmulator(_emulator);
             if (m_binding->isReady())
             {
                 onBindingReady();
@@ -318,6 +341,11 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
     else
     {
         _emulator = nullptr;
+
+        // Propagate to speed control widget
+        if (m_speedControl)
+            m_speedControl->setEmulator(nullptr);
+
         reset();
     }
 }
@@ -329,6 +357,10 @@ void DebuggerWindow::onBindingBound()
     {
         _emulator = m_binding->emulator();
         _emulatorState = m_binding->state();
+
+        // Propagate to speed control widget
+        if (m_speedControl)
+            m_speedControl->setEmulator(_emulator);
         // Delegate to state handler - toolbar enabled based on actual state
         onBindingStateChanged(_emulatorState);
     }
@@ -338,6 +370,11 @@ void DebuggerWindow::onBindingUnbound()
 {
     qDebug() << "DebuggerWindow::onBindingUnbound()";
     _emulator = nullptr;
+
+    // Propagate to speed control widget
+    if (m_speedControl)
+        m_speedControl->setEmulator(nullptr);
+
     reset();
     emit notReadyForChildren();
 }
@@ -444,8 +481,7 @@ void DebuggerWindow::updateState()
         return;
     }
 
-    qDebug() << "DebuggerWindow::updateState() called - emulator state:"
-             << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
+
     if (_emulator)
     {
         Z80State* state = _emulator->GetZ80State();
@@ -553,8 +589,7 @@ void DebuggerWindow::saveState()
 void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset,
                                           bool canManageBreakpoints, bool canManageLabels)
 {
-    qDebug() << "DebuggerWindow::updateToolbarActions(" << canContinue << "," << canPause << "," << canStep << ","
-             << canReset << "," << canManageBreakpoints << "," << canManageLabels << ")";
+
 
     // Defensive checks - ensure all actions exist before accessing them
     if (!continueAction || !pauseAction || !resetAction || !stepInAction || !stepOverAction || !stepOutAction ||
@@ -580,7 +615,7 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     breakpointsAction->setEnabled(canManageBreakpoints);
     labelsAction->setEnabled(canManageLabels);
 
-    qDebug() << "DebuggerWindow::updateToolbarActions - completed successfully";
+
 }
 
 /// endregion </Helper methods>
@@ -675,6 +710,10 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
+
+                // Propagate to speed control widget
+                if (m_speedControl)
+                    m_speedControl->setEmulator(nullptr);
 
                 // Don't call reset() here since emulator is now null
                 // Just clear the UI manually without trying to read emulator state
@@ -812,6 +851,10 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
     // Update the UI in the main thread
     dispatchToMainThread([this]() {
+        // Stop speed control auto-run on breakpoint hit
+        if (m_speedControl)
+            m_speedControl->stop();
+
         // When a breakpoint is hit:
         // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
         updateToolbarActions(true, false, true, true, true, true);
@@ -843,6 +886,10 @@ void DebuggerWindow::continueExecution()
     qDebug() << "DebuggerWindow::continueExecution()";
 
     _breakpointTriggered = false;
+
+    // Stop speed control auto-run when user manually continues
+    if (m_speedControl)
+        m_speedControl->stop();
 
     if (_emulator && _emulator->IsPaused())
     {
@@ -881,6 +928,10 @@ void DebuggerWindow::stepIn()
     qDebug() << "DebuggerWindow::stepIn()";
 
     _breakpointTriggered = false;
+
+    // Stop speed control auto-run when user manually steps
+    if (m_speedControl)
+        m_speedControl->stop();
 
     if (_emulator)
     {

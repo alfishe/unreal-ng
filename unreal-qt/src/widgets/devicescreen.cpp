@@ -60,7 +60,7 @@ void DeviceScreen::refresh()
         return;
     }
 
-    update();
+    update();  // Schedule paint event - Qt will read fresh buffer data in paintEvent
 }
 
 void DeviceScreen::handleExternalKeyPress(QKeyEvent* event)

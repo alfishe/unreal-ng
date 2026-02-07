@@ -27,6 +27,7 @@ class DebuggerWindow;
 QT_END_NAMESPACE
 
 class Emulator;
+class SpeedControlWidget;
 
 class DebuggerWindow : public QWidget, public Observer
 {
@@ -108,6 +109,11 @@ signals:
     void readyForChildren();
     void notReadyForChildren();
 
+    /// @brief Emitted when screen framebuffer needs to be repainted
+    /// (e.g., after speed control stepping). MainWindow connects this
+    /// to DeviceScreen::refresh().
+    void screenRefreshRequested();
+
 protected:
     // Constants for breakpoint management
     static constexpr const char* TEMP_BREAKPOINT_GROUP = "TemporaryBreakpoints";  // Group for all temporary breakpoints
@@ -160,6 +166,9 @@ private:
     
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
+
+    // Speed control widget
+    SpeedControlWidget* m_speedControl = nullptr;
 };
 
 #endif  // DEBUGGERWINDOW_H
