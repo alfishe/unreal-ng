@@ -6,6 +6,8 @@
 #include <QResizeEvent>
 #include <QVBoxLayout>
 
+#include "emulator/video/screen.h"
+
 ULABeamWidget::ULABeamWidget(QWidget* parent) : QWidget(parent)
 {
     createUI();
@@ -49,38 +51,24 @@ void ULABeamWidget::refresh()
     if (!_emulator)
         return;
 
-    // In a real implementation, we would get the actual beam position from the emulator
-    // For now, we'll just update the widget
+    CONFIG& config = _emulator->GetContext()->config;
+    if (config.t_line == 0 || config.frame == 0)
+        return;
 
-    // Calculate beam position based on current T-states
-    // This is a simplified example - actual implementation would use emulator data
-    if (_emulator->IsPaused())
+    Z80* cpu = _emulator->GetContext()->pCore->GetZ80();
+    if (cpu)
     {
-        // Get T-states from emulator
-        CONFIG& config = _emulator->GetContext()->config;
+        _currentTstate = cpu->t;
+        int tStatesPerLine = config.t_line;
+        _currentLine = (_currentTstate % config.frame) / tStatesPerLine;
+        _linePosition = _currentTstate % tStatesPerLine;
 
-        // Guard against uninitialized or invalid config
-        if (config.t_line == 0 || config.frame == 0)
-            return;
-
-        // Get current T-state counter from Z80
-        Z80* cpu = _emulator->GetContext()->pCore->GetZ80();
-        if (cpu)
-        {
-            uint32_t tStates = cpu->t;
-
-            // Calculate beam position based on T-states
-            // This is a simplified calculation - actual would depend on specific ULA timing
-            int tStatesPerLine = config.t_line;
-            int currentLine = (tStates % config.frame) / tStatesPerLine;
-            int currentPos = tStates % tStatesPerLine;
-
-            _beamY = currentLine;
-            _beamX = currentPos / 4;  // Divide by 4 to convert T-states to pixels (ULA draws 2 pixel per t-state)
-        }
+        _beamY = _currentLine;
+        _beamX = _linePosition / 4;
     }
 
-    update();  // Trigger a repaint
+    updateScreenImage();
+    update();
 }
 
 void ULABeamWidget::paintEvent(QPaintEvent* event)
@@ -90,9 +78,8 @@ void ULABeamWidget::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // Calculate scale factors
-    int totalWidth = width() - 20;    // Leave some margin
-    int totalHeight = height() - 40;  // Leave margin for title
+    int totalWidth = width() - 20;
+    int totalHeight = height() - 60;
 
     int fullWidth = SCREEN_WIDTH + 2 * BORDER_WIDTH;
     int fullHeight = SCREEN_HEIGHT + 2 * BORDER_HEIGHT;
@@ -100,42 +87,49 @@ void ULABeamWidget::paintEvent(QPaintEvent* event)
     _scaleX = static_cast<float>(totalWidth) / fullWidth;
     _scaleY = static_cast<float>(totalHeight) / fullHeight;
 
-    // Use the smaller scale to maintain aspect ratio
     float scale = qMin(_scaleX, _scaleY);
 
-    // Calculate centered position
     int screenX = (width() - fullWidth * scale) / 2;
     int screenY = 30 + (totalHeight - fullHeight * scale) / 2;
 
-    // Draw border
-    painter.setPen(Qt::black);
-    painter.setBrush(QColor(0, 0, 0, 32));  // Semi-transparent black
-    painter.drawRect(screenX, screenY, fullWidth * scale, fullHeight * scale);
+    if (!_screenImage.isNull())
+    {
+        QRect destRect(screenX, screenY, fullWidth * scale, fullHeight * scale);
+        painter.drawImage(destRect, _screenImage);
+    }
+    else
+    {
+        painter.setPen(Qt::black);
+        painter.setBrush(QColor(160, 160, 160));
+        painter.drawRect(screenX, screenY, fullWidth * scale, fullHeight * scale);
+    }
 
-    // Draw screen area
-    painter.setBrush(QColor(0, 0, 0, 64));  // Darker for screen area
+    painter.setPen(QPen(Qt::darkGray, 1));
+    painter.setBrush(Qt::NoBrush);
     painter.drawRect(screenX + BORDER_WIDTH * scale, screenY + BORDER_HEIGHT * scale, SCREEN_WIDTH * scale,
                      SCREEN_HEIGHT * scale);
 
-    // Draw beam position if within visible area
     if (_beamX >= 0 && _beamX < fullWidth && _beamY >= 0 && _beamY < fullHeight)
     {
         int beamScreenX = screenX + _beamX * scale;
         int beamScreenY = screenY + _beamY * scale;
 
-        // Draw a small circle for the beam
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(Qt::red);
-        painter.drawEllipse(beamScreenX - 3, beamScreenY - 3, 6, 6);
-
-        // Draw beam lines
         painter.setPen(QPen(QColor(255, 0, 0, 128), 1, Qt::DashLine));
         painter.drawLine(screenX, beamScreenY, screenX + fullWidth * scale, beamScreenY);
         painter.drawLine(beamScreenX, screenY, beamScreenX, screenY + fullHeight * scale);
 
-        // Show coordinates
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::red);
+        painter.drawEllipse(beamScreenX - 3, beamScreenY - 3, 6, 6);
+
         painter.setPen(Qt::white);
-        painter.drawText(5, height() - 5, QString("Beam: X=%1, Y=%2").arg(_beamX).arg(_beamY));
+        QString infoText = QString("T-state: %1 | Line: %2 | Pos: %3 | Beam: (%4, %5)")
+                               .arg(_currentTstate)
+                               .arg(_currentLine)
+                               .arg(_linePosition)
+                               .arg(_beamX)
+                               .arg(_beamY);
+        painter.drawText(5, height() - 5, infoText);
     }
 }
 
@@ -143,4 +137,36 @@ void ULABeamWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     refresh();
+}
+
+void ULABeamWidget::updateScreenImage()
+{
+    if (!_emulator)
+        return;
+
+    FramebufferDescriptor fb = _emulator->GetFramebuffer();
+    if (!fb.memoryBuffer || fb.width == 0 || fb.height == 0)
+        return;
+
+    int fullWidth = SCREEN_WIDTH + 2 * BORDER_WIDTH;
+    int fullHeight = SCREEN_HEIGHT + 2 * BORDER_HEIGHT;
+
+    if (_screenImage.width() != fullWidth || _screenImage.height() != fullHeight)
+        _screenImage = QImage(fullWidth, fullHeight, QImage::Format_RGB32);
+
+    uint32_t* src = reinterpret_cast<uint32_t*>(fb.memoryBuffer);
+    for (int y = 0; y < fullHeight && y < fb.height; y++)
+    {
+        QRgb* destLine = reinterpret_cast<QRgb*>(_screenImage.scanLine(y));
+        for (int x = 0; x < fullWidth && x < fb.width; x++)
+        {
+            uint32_t pixel = src[y * fb.width + x];
+            int r = (pixel >> 16) & 0xFF;
+            int g = (pixel >> 8) & 0xFF;
+            int b = pixel & 0xFF;
+            int gray = (r + g + b) / 3;
+            int faded = 128 + gray / 4;
+            destLine[x] = qRgb(faded, faded, faded);
+        }
+    }
 }

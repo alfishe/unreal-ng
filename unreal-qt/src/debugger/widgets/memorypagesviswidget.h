@@ -20,10 +20,16 @@ public:
     void reset();
     void refresh();
 
+signals:
+    /// @brief Emitted when a page label is clicked.
+    /// @param pageNumber The physical RAM page number clicked
+    /// @param viewerSlot 0 for left-click (top free viewer), 1 for right-click (bottom free viewer)
+    void pageClickedForFreeViewer(int pageNumber, int viewerSlot);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void createUI();

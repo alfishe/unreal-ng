@@ -9,7 +9,8 @@
 MemoryPagesVisWidget::MemoryPagesVisWidget(QWidget* parent) : QWidget(parent)
 {
     createUI();
-    setMinimumSize(200, 300);
+    setMinimumSize(120, 200);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
 MemoryPagesVisWidget::~MemoryPagesVisWidget()
@@ -79,19 +80,22 @@ void MemoryPagesVisWidget::reset()
     _accessedPages.fill(false);
 
     // Create page labels
-    const int COLS = 4;
+    const int COLS = 2;  // Changed to 2 columns for narrower side panel
     for (int i = 0; i < _maxPages; i++)
     {
         QLabel* label = new QLabel(QString::number(i), this);
         label->setAlignment(Qt::AlignCenter);
         label->setFrameStyle(QFrame::Panel | QFrame::Raised);
-        label->setLineWidth(2);
-        label->setMinimumSize(40, 30);
+        label->setLineWidth(1);
+        label->setMinimumSize(28, 20);
+        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        label->setStyleSheet("font-size: 9px;");
 
         int row = (i / COLS) + 1;  // +1 because title is in row 0
         int col = i % COLS;
 
         _layout->addWidget(label, row, col);
+        label->installEventFilter(this);  // Catch mouse clicks on labels
         _pageLabels.append(label);
     }
 
@@ -194,10 +198,26 @@ void MemoryPagesVisWidget::resizeEvent(QResizeEvent* event)
     refresh();
 }
 
-void MemoryPagesVisWidget::mousePressEvent(QMouseEvent* event)
+bool MemoryPagesVisWidget::eventFilter(QObject* watched, QEvent* event)
 {
-    QWidget::mousePressEvent(event);
+    if (event->type() == QEvent::MouseButtonPress)
+    {
+        QLabel* clickedLabel = qobject_cast<QLabel*>(watched);
+        if (clickedLabel)
+        {
+            QMouseEvent* mouseEvent = static_cast<QMouseEvent*>(event);
+            for (int i = 0; i < _pageLabels.size(); i++)
+            {
+                if (_pageLabels[i] == clickedLabel)
+                {
+                    // Left-click = top free viewer (slot 0), Right-click = bottom free viewer (slot 1)
+                    int viewerSlot = (mouseEvent->button() == Qt::RightButton) ? 1 : 0;
+                    emit pageClickedForFreeViewer(i, viewerSlot);
+                    return true;
+                }
+            }
+        }
+    }
 
-    // Handle clicking on a page label to show it in memory view
-    // This would be implemented in a full version
+    return QWidget::eventFilter(watched, event);
 }

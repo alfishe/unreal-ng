@@ -1,201 +1,232 @@
 #include "memorywidget.h"
 
-#include <QPainter>
-#include <QPaintEvent>
-#include <QResizeEvent>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QDebug>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QVBoxLayout>
 
-MemoryWidget::MemoryWidget(QWidget *parent)
-    : QWidget(parent)
+#include "memory16kbwidget.h"
+
+MemoryWidget::MemoryWidget(QWidget* parent) : QWidget(parent)
 {
-    // Initialize memory images
-    for (int i = 0; i < 4; i++) {
-        _memoryImage[i] = QImage(256, 64, QImage::Format_ARGB32);
-        _memoryImage[i].fill(Qt::black);
-        
-        // Allocate memory for access tracking (16KB per bank)
-        _readAccess[i] = new uint8_t[16384]();    // Zero-initialized
-        _writeAccess[i] = new uint8_t[16384]();   // Zero-initialized
-        _executeAccess[i] = new uint8_t[16384](); // Zero-initialized
-    }
-    
     createUI();
-    setMinimumSize(512, 300);
+    setMinimumSize(900, 350);
 }
 
-MemoryWidget::~MemoryWidget()
-{
-    // Free memory for access tracking
-    for (int i = 0; i < 4; i++) {
-        delete[] _readAccess[i];
-        delete[] _writeAccess[i];
-        delete[] _executeAccess[i];
-    }
-}
+MemoryWidget::~MemoryWidget() {}
 
 void MemoryWidget::createUI()
 {
-    _layout = new QGridLayout(this);
-    
-    // Create bank labels
-    for (int i = 0; i < 4; i++) {
-        _bankLabels[i] = new QLabel(QString("Bank %1 (0x%2)").arg(i).arg(i * 0x4000, 4, 16, QChar('0')), this);
-        _layout->addWidget(_bankLabels[i], i, 0);
-        
-        _imageLabels[i] = new QLabel(this);
-        _imageLabels[i]->setScaledContents(true);
-        _layout->addWidget(_imageLabels[i], i, 1);
+    QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(4, 4, 4, 4);
+    mainLayout->setSpacing(4);
+
+    _layout = new QGridLayout();
+    _layout->setSpacing(4);
+
+    // Equal column and row stretch for uniform 2x3 grid
+    _layout->setColumnStretch(0, 1);
+    _layout->setColumnStretch(1, 1);
+    _layout->setColumnStretch(2, 1);
+    _layout->setRowStretch(0, 1);
+    _layout->setRowStretch(1, 1);
+
+    // Columns 0-1: Z80 hard-mapped banks (2x2 grid)
+    for (int i = 0; i < 4; i++)
+    {
+        _bankWidgets[i] = new Memory16KBWidget(i, this);
+        _layout->addWidget(_bankWidgets[i], i / 2, i % 2);
     }
-    
-    // Create layer controls
+
+    // Column 2: Freely selectable memory pages (2 rows)
+    for (int i = 0; i < 2; i++)
+    {
+        _freeWidgets[i] = new Memory16KBWidget(0, this);
+        _freeWidgets[i]->setPhysicalPage(i);
+        _layout->addWidget(_freeWidgets[i], i, 2);
+    }
+
+    mainLayout->addLayout(_layout, 1);
+
     QHBoxLayout* controlLayout = new QHBoxLayout();
-    _readLayerCheckbox = new QCheckBox("Show Read Access", this);
-    _writeLayerCheckbox = new QCheckBox("Show Write Access", this);
-    _executeLayerCheckbox = new QCheckBox("Show Execute Access", this);
-    
+    _readLayerCheckbox = new QCheckBox("Read", this);
+    _writeLayerCheckbox = new QCheckBox("Write", this);
+    _executeLayerCheckbox = new QCheckBox("Execute", this);
+    _hideValuesCheckbox = new QCheckBox("Hide Values", this);
+
     connect(_readLayerCheckbox, &QCheckBox::toggled, this, &MemoryWidget::toggleReadLayer);
     connect(_writeLayerCheckbox, &QCheckBox::toggled, this, &MemoryWidget::toggleWriteLayer);
     connect(_executeLayerCheckbox, &QCheckBox::toggled, this, &MemoryWidget::toggleExecuteLayer);
-    
+    connect(_hideValuesCheckbox, &QCheckBox::toggled, this, &MemoryWidget::toggleHideValues);
+
     controlLayout->addWidget(_readLayerCheckbox);
     controlLayout->addWidget(_writeLayerCheckbox);
     controlLayout->addWidget(_executeLayerCheckbox);
+    controlLayout->addWidget(_hideValuesCheckbox);
     controlLayout->addStretch();
-    
-    _layout->addLayout(controlLayout, 4, 0, 1, 2);
-    
-    setLayout(_layout);
+
+    // Color legend
+    auto createSwatch = [](QColor color, QWidget* parent) -> QLabel* {
+        QLabel* swatch = new QLabel(parent);
+        swatch->setFixedSize(12, 12);
+        swatch->setStyleSheet(QString("background-color: %1; border: 1px solid #666;").arg(color.name()));
+        return swatch;
+    };
+
+    QHBoxLayout* legendLayout = new QHBoxLayout();
+    legendLayout->setSpacing(6);
+
+    // Group 1: Memory Values (using QGroupBox like Profiler Features)
+    QGroupBox* valuesGroup = new QGroupBox("Values", this);
+    QHBoxLayout* valuesLayout = new QHBoxLayout(valuesGroup);
+    valuesLayout->setContentsMargins(6, 2, 6, 2);
+    valuesLayout->setSpacing(6);
+    valuesLayout->addWidget(createSwatch(QColor(0, 0, 0), valuesGroup));       // Black for 0x00
+    valuesLayout->addWidget(new QLabel("0x00", valuesGroup));
+    valuesLayout->addSpacing(4);
+    valuesLayout->addWidget(createSwatch(QColor(255, 255, 255), valuesGroup)); // White for 0xFF
+    valuesLayout->addWidget(new QLabel("0xFF", valuesGroup));
+    valuesLayout->addSpacing(4);
+    valuesLayout->addWidget(createSwatch(QColor(140, 140, 140), valuesGroup)); // Gray for other
+    valuesLayout->addWidget(new QLabel("other", valuesGroup));
+    legendLayout->addWidget(valuesGroup);
+
+    // Group 2: Access Counters (R/W/X overlays)
+    QGroupBox* accessGroup = new QGroupBox("Access", this);
+    QHBoxLayout* accessLayout = new QHBoxLayout(accessGroup);
+    accessLayout->setContentsMargins(6, 2, 6, 2);
+    accessLayout->setSpacing(6);
+    accessLayout->addWidget(createSwatch(QColor(80, 80, 255), accessGroup));   // Blue for Read
+    accessLayout->addWidget(new QLabel("R", accessGroup));
+    accessLayout->addSpacing(4);
+    accessLayout->addWidget(createSwatch(QColor(255, 80, 80), accessGroup));   // Red for Write
+    accessLayout->addWidget(new QLabel("W", accessGroup));
+    accessLayout->addSpacing(4);
+    accessLayout->addWidget(createSwatch(QColor(80, 255, 80), accessGroup));   // Green for Execute
+    accessLayout->addWidget(new QLabel("X", accessGroup));
+    legendLayout->addWidget(accessGroup);
+
+    controlLayout->addLayout(legendLayout);
+
+    mainLayout->addLayout(controlLayout);
+
+    setLayout(mainLayout);
 }
 
 void MemoryWidget::setEmulator(Emulator* emulator)
 {
     _emulator = emulator;
+
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->setEmulator(_emulator);
+    }
+
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->setEmulator(_emulator);
+    }
+
     reset();
 }
 
 void MemoryWidget::reset()
 {
-    // Clear access tracking
-    for (int i = 0; i < 4; i++) {
-        memset(_readAccess[i], 0, 16384);
-        memset(_writeAccess[i], 0, 16384);
-        memset(_executeAccess[i], 0, 16384);
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->reset();
     }
-    
-    refresh();
+
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->reset();
+    }
 }
 
 void MemoryWidget::refresh()
 {
-    if (!_emulator)
-        return;
-    
-    updateMemoryImage();
-    update();
-}
-
-void MemoryWidget::updateMemoryImage()
-{
-    if (!_emulator)
-        return;
-    
-    Memory* memory = _emulator->GetMemory();
-    if (!memory)
-        return;
-    
-    // For each bank (0-3)
-    for (int bank = 0; bank < 4; bank++) {
-        // Get the memory page connected to this bank
-        uint8_t* pageAddress = memory->MapZ80AddressToPhysicalAddress(bank * 0x4000);
-        
-        if (!pageAddress) {
-            _memoryImage[bank].fill(Qt::black);
-            continue;
-        }
-        
-        // Update bank label with actual page number
-        int pageNumber = memory->GetPhysicalOffsetForZ80Bank(bank) / 0x4000;
-        _bankLabels[bank]->setText(QString("Bank %1 (0x%2) - Page %3")
-                                  .arg(bank)
-                                  .arg(bank * 0x4000, 4, 16, QChar('0'))
-                                  .arg(pageNumber));
-        
-        // Fill the image with memory data
-        for (int y = 0; y < 64; y++) {
-            for (int x = 0; x < 256; x++) {
-                int offset = y * 256 + x;
-                if (offset < 16384) {
-                    uint8_t value = pageAddress[offset];
-                    
-                    // Get base color for the byte value
-                    QColor color = getColorForByte(value);
-                    
-                    // Apply access layers if enabled
-                    if (_showReadLayer && _readAccess[bank][offset]) {
-                        color = color.lighter(120);  // Make it lighter to indicate read
-                    }
-                    
-                    if (_showWriteLayer && _writeAccess[bank][offset]) {
-                        color = QColor(color.red(), color.green() * 0.8, color.blue() * 0.8);  // Reddish tint for writes
-                    }
-                    
-                    if (_showExecuteLayer && _executeAccess[bank][offset]) {
-                        color = QColor(color.red() * 0.8, color.green(), color.blue() * 0.8);  // Greenish tint for execution
-                    }
-                    
-                    _memoryImage[bank].setPixelColor(x, y, color);
-                }
-            }
-        }
-        
-        // Update the image label
-        _imageLabels[bank]->setPixmap(QPixmap::fromImage(_memoryImage[bank]));
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->refresh();
     }
-}
 
-QColor MemoryWidget::getColorForByte(uint8_t value)
-{
-    // Special colors for 0x00 and 0xFF
-    if (value == 0x00)
-        return QColor(0, 0, 128);  // Dark blue for 0x00
-    
-    if (value == 0xFF)
-        return QColor(128, 0, 0);  // Dark red for 0xFF
-    
-    // Shades of gray for other values, scaled proportionally
-    int gray = 80 + (value * 120) / 255;  // Scale to range 80-200
-    return QColor(gray, gray, gray);
-}
-
-void MemoryWidget::paintEvent(QPaintEvent* event)
-{
-    QWidget::paintEvent(event);
-    
-    // Additional custom painting if needed
-}
-
-void MemoryWidget::resizeEvent(QResizeEvent* event)
-{
-    QWidget::resizeEvent(event);
-    refresh();
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->refresh();
+    }
 }
 
 void MemoryWidget::toggleReadLayer(bool checked)
 {
     _showReadLayer = checked;
-    refresh();
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->setShowReadOverlay(checked);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->setShowReadOverlay(checked);
+    }
 }
 
 void MemoryWidget::toggleWriteLayer(bool checked)
 {
     _showWriteLayer = checked;
-    refresh();
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->setShowWriteOverlay(checked);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->setShowWriteOverlay(checked);
+    }
 }
 
 void MemoryWidget::toggleExecuteLayer(bool checked)
 {
     _showExecuteLayer = checked;
-    refresh();
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->setShowExecuteOverlay(checked);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->setShowExecuteOverlay(checked);
+    }
+}
+
+void MemoryWidget::toggleHideValues(bool checked)
+{
+    _hideValues = checked;
+    for (int i = 0; i < 4; i++)
+    {
+        if (_bankWidgets[i])
+            _bankWidgets[i]->setHideValues(checked);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        if (_freeWidgets[i])
+            _freeWidgets[i]->setHideValues(checked);
+    }
+}
+
+void MemoryWidget::setFreePageNumber(int viewerSlot, int pageNumber)
+{
+    if (viewerSlot >= 0 && viewerSlot < 2 && _freeWidgets[viewerSlot])
+    {
+        _freeWidgets[viewerSlot]->setPhysicalPage(pageNumber);
+    }
 }

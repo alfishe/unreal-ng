@@ -1,10 +1,12 @@
 #pragma once
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -134,7 +136,11 @@ private:
     ProfilerSessionState _calltraceSessionState = ProfilerSessionState::Stopped;
 
     // Lazy allocation flag - counters only allocated when tracking is enabled
-    bool _isAllocated = false;
+    // Atomic for thread-safe reads from emulator thread
+    std::atomic<bool> _isAllocated{false};
+
+    // Mutex to protect allocation/deallocation from concurrent access
+    mutable std::mutex _allocationMutex;
 
     // Tracking mode
     TrackingMode _currentMode = TrackingMode::Z80AddressSpace;
@@ -213,22 +219,22 @@ public:
     /// region <Session Control - Memory Tracking>
     /// @brief Start a memory tracking session (clears previous data)
     void StartMemorySession();
-    
+
     /// @brief Pause memory tracking session (retains data)
     void PauseMemorySession();
-    
+
     /// @brief Resume a paused memory tracking session
     void ResumeMemorySession();
-    
+
     /// @brief Stop memory tracking session (retains data until cleared)
     void StopMemorySession();
-    
+
     /// @brief Clear all memory tracking data
     void ClearMemoryData();
-    
+
     /// @brief Get current memory tracking session state
     ProfilerSessionState GetMemorySessionState() const;
-    
+
     /// @brief Check if memory tracking is actively capturing
     bool IsMemoryCapturing() const;
     /// endregion </Session Control - Memory Tracking>
@@ -236,22 +242,22 @@ public:
     /// region <Session Control - Call Trace>
     /// @brief Start a call trace session (clears previous data)
     void StartCalltraceSession();
-    
+
     /// @brief Pause call trace session (retains data)
     void PauseCalltraceSession();
-    
+
     /// @brief Resume a paused call trace session
     void ResumeCalltraceSession();
-    
+
     /// @brief Stop call trace session (retains data until cleared)
     void StopCalltraceSession();
-    
+
     /// @brief Clear all call trace data
     void ClearCalltraceData();
-    
+
     /// @brief Get current call trace session state
     ProfilerSessionState GetCalltraceSessionState() const;
-    
+
     /// @brief Check if call trace is actively capturing
     bool IsCalltraceCapturing() const;
     /// endregion </Session Control - Call Trace>
@@ -335,6 +341,29 @@ public:
 
     // Get execute access count for a Z80 bank
     uint32_t GetZ80BankExecuteAccessCount(uint8_t bank) const;
+
+    // Get read access count for a specific Z80 address
+    uint32_t GetZ80AddressReadCount(uint16_t address) const;
+
+    // Get write access count for a specific Z80 address
+    uint32_t GetZ80AddressWriteCount(uint16_t address) const;
+
+    // Get execute access count for a specific Z80 address
+    uint32_t GetZ80AddressExecuteCount(uint16_t address) const;
+
+    // Get direct pointer access to Z80 counter arrays (for bulk rendering)
+    const uint32_t* GetZ80ReadCountersPtr() const
+    {
+        return _z80ReadCounters.empty() ? nullptr : _z80ReadCounters.data();
+    }
+    const uint32_t* GetZ80WriteCountersPtr() const
+    {
+        return _z80WriteCounters.empty() ? nullptr : _z80WriteCounters.data();
+    }
+    const uint32_t* GetZ80ExecuteCountersPtr() const
+    {
+        return _z80ExecuteCounters.empty() ? nullptr : _z80ExecuteCounters.data();
+    }
 
     // Get total access count for a physical memory page
     uint32_t GetPageTotalAccessCount(uint16_t page) const;

@@ -35,7 +35,7 @@ void MemoryAccessTracker::Initialize(TrackingMode mode)
 void MemoryAccessTracker::ResetCounters()
 {
     // Skip if counters haven't been allocated yet (lazy allocation)
-    if (!_isAllocated)
+    if (!_isAllocated.load(std::memory_order_acquire))
     {
         return;
     }
@@ -107,18 +107,31 @@ void MemoryAccessTracker::UpdateFeatureCache()
     {
         bool debugMode = fm->isEnabled(Features::kDebugMode);
         bool wasTrackingEnabled = _feature_memorytracking_enabled;
+        bool wasCalltraceEnabled = _feature_calltrace_enabled;
         _feature_memorytracking_enabled = debugMode && fm->isEnabled(Features::kMemoryTracking);
         _feature_calltrace_enabled = debugMode && fm->isEnabled(Features::kCallTrace);
 
+        LOGINFO("MemoryAccessTracker::UpdateFeatureCache - memoryTracking: %s (was %s), callTrace: %s (was %s)",
+                _feature_memorytracking_enabled ? "ON" : "OFF", wasTrackingEnabled ? "ON" : "OFF",
+                _feature_calltrace_enabled ? "ON" : "OFF", wasCalltraceEnabled ? "ON" : "OFF");
+
         // Lazy allocation: allocate counters only when tracking is first enabled
-        if (_feature_memorytracking_enabled && !_isAllocated)
+        if (_feature_memorytracking_enabled && !_isAllocated.load(std::memory_order_acquire))
         {
-            AllocateCounters();
+            std::lock_guard<std::mutex> lock(_allocationMutex);
+            if (!_isAllocated.load(std::memory_order_relaxed))
+            {
+                AllocateCounters();
+            }
         }
         // Deallocation: free counters when tracking is disabled to reclaim memory
-        else if (!_feature_memorytracking_enabled && wasTrackingEnabled && _isAllocated)
+        else if (!_feature_memorytracking_enabled && wasTrackingEnabled && _isAllocated.load(std::memory_order_acquire))
         {
-            DeallocateCounters();
+            std::lock_guard<std::mutex> lock(_allocationMutex);
+            if (_isAllocated.load(std::memory_order_relaxed))
+            {
+                DeallocateCounters();
+            }
         }
 
         // Create call trace buffer if needed
@@ -142,7 +155,7 @@ void MemoryAccessTracker::UpdateFeatureCache()
 // Allocate counter vectors (lazy allocation - only called when tracking is enabled)
 void MemoryAccessTracker::AllocateCounters()
 {
-    if (_isAllocated)
+    if (_isAllocated.load(std::memory_order_relaxed))
     {
         return;  // Already allocated
     }
@@ -167,13 +180,13 @@ void MemoryAccessTracker::AllocateCounters()
     _pageWriteMarks.resize(MAX_PAGES / 8, 0);
     _pageExecuteMarks.resize(MAX_PAGES / 8, 0);
 
-    _isAllocated = true;
+    _isAllocated.store(true, std::memory_order_release);
 }
 
 // Deallocate counter vectors (called when tracking is disabled to free memory)
 void MemoryAccessTracker::DeallocateCounters()
 {
-    if (!_isAllocated)
+    if (!_isAllocated.load(std::memory_order_relaxed))
     {
         return;  // Not allocated
     }
@@ -201,7 +214,7 @@ void MemoryAccessTracker::DeallocateCounters()
     _z80BankWriteMarks = 0;
     _z80BankExecuteMarks = 0;
 
-    _isAllocated = false;
+    _isAllocated.store(false, std::memory_order_release);
 }
 
 // Add a monitored memory region with the specified options
@@ -624,8 +637,7 @@ void MemoryAccessTracker::TrackMemoryExecute(uint16_t address, uint16_t callerAd
 // Track port read access
 void MemoryAccessTracker::TrackPortRead(uint16_t port, uint8_t value, uint16_t callerAddress)
 {
-    // Update feature cache and check if memory tracking is disabled
-    UpdateFeatureCache();
+    // THREAD SAFETY: Don't call UpdateFeatureCache() here - causes race with UI thread
     if (!_feature_memorytracking_enabled)
     {
         return;
@@ -953,6 +965,27 @@ uint32_t MemoryAccessTracker::GetZ80BankExecuteAccessCount(uint8_t bank) const
     }
 
     return result;
+}
+
+uint32_t MemoryAccessTracker::GetZ80AddressReadCount(uint16_t address) const
+{
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ReadCounters.empty())
+        return 0;
+    return _z80ReadCounters[address];
+}
+
+uint32_t MemoryAccessTracker::GetZ80AddressWriteCount(uint16_t address) const
+{
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80WriteCounters.empty())
+        return 0;
+    return _z80WriteCounters[address];
+}
+
+uint32_t MemoryAccessTracker::GetZ80AddressExecuteCount(uint16_t address) const
+{
+    if (!_isAllocated.load(std::memory_order_acquire) || _z80ExecuteCounters.empty())
+        return 0;
+    return _z80ExecuteCounters[address];
 }
 
 // Get total access count for a physical memory page
@@ -1604,16 +1637,20 @@ void MemoryAccessTracker::StartMemorySession()
         // Can't start session if feature is disabled
         return;
     }
-    
+
     // Ensure counters are allocated
-    if (!_isAllocated)
+    if (!_isAllocated.load(std::memory_order_acquire))
     {
-        AllocateCounters();
+        std::lock_guard<std::mutex> lock(_allocationMutex);
+        if (!_isAllocated.load(std::memory_order_relaxed))
+        {
+            AllocateCounters();
+        }
     }
-    
+
     // Clear previous data on start
     ResetCounters();
-    
+
     // Set state to capturing
     _memorySessionState = ProfilerSessionState::Capturing;
 }
@@ -1636,8 +1673,7 @@ void MemoryAccessTracker::ResumeMemorySession()
 
 void MemoryAccessTracker::StopMemorySession()
 {
-    if (_memorySessionState == ProfilerSessionState::Capturing ||
-        _memorySessionState == ProfilerSessionState::Paused)
+    if (_memorySessionState == ProfilerSessionState::Capturing || _memorySessionState == ProfilerSessionState::Paused)
     {
         _memorySessionState = ProfilerSessionState::Stopped;
         // Data is retained until ClearMemoryData() is called
@@ -1657,8 +1693,7 @@ ProfilerSessionState MemoryAccessTracker::GetMemorySessionState() const
 
 bool MemoryAccessTracker::IsMemoryCapturing() const
 {
-    return _feature_memorytracking_enabled && 
-           _memorySessionState == ProfilerSessionState::Capturing;
+    return _feature_memorytracking_enabled && _memorySessionState == ProfilerSessionState::Capturing;
 }
 
 // ============================================================================
@@ -1672,16 +1707,16 @@ void MemoryAccessTracker::StartCalltraceSession()
     {
         return;
     }
-    
+
     // Ensure call trace buffer exists
     if (!_callTraceBuffer)
     {
         _callTraceBuffer = std::make_unique<CallTraceBuffer>();
     }
-    
+
     // Clear previous data on start
     _callTraceBuffer->Reset();
-    
+
     // Set state to capturing
     _calltraceSessionState = ProfilerSessionState::Capturing;
 }
@@ -1728,6 +1763,5 @@ ProfilerSessionState MemoryAccessTracker::GetCalltraceSessionState() const
 
 bool MemoryAccessTracker::IsCalltraceCapturing() const
 {
-    return _feature_calltrace_enabled && 
-           _calltraceSessionState == ProfilerSessionState::Capturing;
+    return _feature_calltrace_enabled && _calltraceSessionState == ProfilerSessionState::Capturing;
 }

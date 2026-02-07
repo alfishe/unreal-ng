@@ -107,7 +107,7 @@ void BorderTimingWidget::paintEvent(QPaintEvent* event)
 
     // Calculate dimensions
     int graphWidth = width() - 20;    // Leave some margin
-    int graphHeight = height() - 60;  // Leave margin for title and labels
+    int graphHeight = height() - 80;  // Leave margin for title and bottom labels
     int graphX = 10;
     int graphY = 40;
 
