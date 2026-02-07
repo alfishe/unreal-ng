@@ -51,10 +51,11 @@ DebugVisualizationWindow::DebugVisualizationWindow(Emulator* emulator, QWidget* 
     layout->setRowStretch(0, 3);
     layout->setRowStretch(1, 2);
 
-    // Set up update timer (for UI refresh)
-    _updateTimer = new QTimer(this);
-    connect(_updateTimer, &QTimer::timeout, this, &DebugVisualizationWindow::updateWidgets);
-    _updateTimer->start(20);
+
+    // Throttled refresh timer — coalesces frame notifications to ~30Hz
+    _refreshTimer = new QTimer(this);
+    connect(_refreshTimer, &QTimer::timeout, this, &DebugVisualizationWindow::onRefreshTimer);
+    _refreshTimer->start(33);  // ~30 FPS max
 
     // Connect signal for main thread execution
     connect(this, &DebugVisualizationWindow::executeInMainThread, this, &DebugVisualizationWindow::updateWidgets);
@@ -95,7 +96,7 @@ DebugVisualizationWindow::DebugVisualizationWindow(Emulator* emulator, QWidget* 
         _cpuStepObserver = [this](int id, Message* message) { this->handleCPUStepMessage(id, message); };
 
         _frameRefreshObserver = [this](int id, Message* message) {
-            QMetaObject::invokeMethod(this, "updateWidgets", Qt::QueuedConnection);
+            _frameDirty.store(true, std::memory_order_relaxed);
         };
 
         // Register the observers
@@ -162,7 +163,7 @@ void DebugVisualizationWindow::setEmulator(Emulator* emulator)
         _cpuStepObserver = [this](int id, Message* message) { this->handleCPUStepMessage(id, message); };
 
         _frameRefreshObserver = [this](int id, Message* message) {
-            QMetaObject::invokeMethod(this, "updateWidgets", Qt::QueuedConnection);
+            _frameDirty.store(true, std::memory_order_relaxed);
         };
 
         // Register the observers
@@ -244,6 +245,15 @@ void DebugVisualizationWindow::handleCPUStepMessage(int id, Message* message)
 {
     // Update on CPU step (when in debug mode)
     updateState();
+}
+
+void DebugVisualizationWindow::onRefreshTimer()
+{
+    // Only refresh if a frame actually completed since last check
+    if (_frameDirty.exchange(false, std::memory_order_relaxed))
+    {
+        updateWidgets();
+    }
 }
 
 void DebugVisualizationWindow::updateWidgets()

@@ -7,6 +7,7 @@
 #include <QPushButton>
 #include <QTimer>
 #include <QWidget>
+#include <atomic>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/emulator.h"
@@ -49,6 +50,7 @@ private slots:
     void handleEmulatorStateChanged(int id, Message* message);
     void handleCPUStepMessage(int id, Message* message);
     void updateWidgets();
+    void onRefreshTimer();
 
     void onMemoryTrackingToggled(bool checked);
     void onCallTraceToggled(bool checked);
@@ -70,7 +72,6 @@ private:
     BorderTimingWidget* _borderTimingWidget = nullptr;
     FloppyDiskWidget* _floppyDiskWidget = nullptr;
 
-    QTimer* _updateTimer = nullptr;
 
     // Store lambda functions for MessageCenter observers
     std::function<void(int, Message*)> _stateChangeObserver;
@@ -82,6 +83,10 @@ private:
 
     // Flag to block refreshes during shutdown
     bool _isShuttingDown = false;
+
+    // Coalescing refresh: frame notifications set dirty, timer polls at ~30Hz
+    QTimer* _refreshTimer = nullptr;
+    std::atomic<bool> _frameDirty{false};
 };
 
 #endif  // DEBUGVISUALIZATIONWINDOW_H

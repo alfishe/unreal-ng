@@ -74,6 +74,7 @@ private:
     int _currentImageWidth = IMAGE_WIDTH;
     int _currentImageHeight = IMAGE_HEIGHT;
 
+    QString _lastTitle;  // Cache to skip redundant setText calls
     static constexpr int IMAGE_WIDTH = 256;
     static constexpr int IMAGE_HEIGHT = 64;
     static constexpr int BANK_SIZE = 16384;

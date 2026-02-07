@@ -195,10 +195,12 @@ void Memory16KBWidget::updateMemoryImage()
     if (!pageAddress)
     {
         _memoryImage.fill(Qt::black);
+        QString title;
         if (isZ80Mode)
-            _titleLabel->setText(QString("Bank %1 (0x%2) - N/A").arg(_bankIndex).arg(baseAddress, 4, 16, QChar('0')));
+            title = QString("Bank %1 (0x%2) - N/A").arg(_bankIndex).arg(baseAddress, 4, 16, QChar('0'));
         else
-            _titleLabel->setText(QString("RAM %1 - N/A").arg(_physicalPageNumber));
+            title = QString("RAM %1 - N/A").arg(_physicalPageNumber);
+        if (title != _lastTitle) { _titleLabel->setText(title); _lastTitle = title; }
         _imageLabel->setPixmap(QPixmap::fromImage(_memoryImage));
         return;
     }
@@ -232,12 +234,13 @@ void Memory16KBWidget::updateMemoryImage()
             pageInfo = QString("RAM %1").arg(pageNumber);
         }
 
-        _titleLabel->setText(
-            QString("Bank %1 (0x%2) - %3").arg(_bankIndex).arg(baseAddress, 4, 16, QChar('0')).arg(pageInfo));
+        QString title = QString("Bank %1 (0x%2) - %3").arg(_bankIndex).arg(baseAddress, 4, 16, QChar('0')).arg(pageInfo);
+        if (title != _lastTitle) { _titleLabel->setText(title); _lastTitle = title; }
     }
     else
     {
-        _titleLabel->setText(QString("RAM %1").arg(_physicalPageNumber));
+        QString title = QString("RAM %1").arg(_physicalPageNumber);
+        if (title != _lastTitle) { _titleLabel->setText(title); _lastTitle = title; }
     }
 
     // Force COW detach before pixel loop

@@ -5,6 +5,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QVBoxLayout>
 
 MemoryPagesVisWidget::MemoryPagesVisWidget(QWidget* parent) : QWidget(parent)
 {
@@ -20,13 +21,29 @@ MemoryPagesVisWidget::~MemoryPagesVisWidget()
 
 void MemoryPagesVisWidget::createUI()
 {
-    _layout = new QGridLayout(this);
+    QVBoxLayout* mainLayout = new QVBoxLayout(this);
+    mainLayout->setContentsMargins(2, 2, 2, 2);
+    mainLayout->setSpacing(2);
 
     _titleLabel = new QLabel("Memory Pages", this);
     _titleLabel->setAlignment(Qt::AlignCenter);
-    _layout->addWidget(_titleLabel, 0, 0, 1, 4);
+    mainLayout->addWidget(_titleLabel);
 
-    setLayout(_layout);
+    // Scrollable area for page grid
+    _scrollArea = new QScrollArea(this);
+    _scrollArea->setWidgetResizable(true);
+    _scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    _scrollArea->setFrameShape(QFrame::NoFrame);
+
+    _gridWidget = new QWidget();
+    _gridLayout = new QGridLayout(_gridWidget);
+    _gridLayout->setContentsMargins(0, 0, 0, 0);
+    _gridLayout->setSpacing(2);
+
+    _scrollArea->setWidget(_gridWidget);
+    mainLayout->addWidget(_scrollArea, 1);
+
+    setLayout(mainLayout);
 }
 
 void MemoryPagesVisWidget::setEmulator(Emulator* emulator)
@@ -69,34 +86,43 @@ void MemoryPagesVisWidget::reset()
     {
         if (label)
         {
-            _layout->removeWidget(label);
+            _gridLayout->removeWidget(label);
             delete label;
         }
     }
     _pageLabels.clear();
+    _lastLabelTexts.clear();
+    _lastLabelColors.clear();
 
     // Reset accessed pages tracking
     _accessedPages.resize(_maxPages);
     _accessedPages.fill(false);
 
+    // Set up font once (replaces per-frame setStyleSheet)
+    QFont labelFont;
+    labelFont.setPixelSize(10);
+
     // Create page labels
-    const int COLS = 2;  // Changed to 2 columns for narrower side panel
+    const int COLS = 2;  // 2 columns for narrower side panel
     for (int i = 0; i < _maxPages; i++)
     {
-        QLabel* label = new QLabel(QString::number(i), this);
+        QLabel* label = new QLabel(QString::number(i), _gridWidget);
         label->setAlignment(Qt::AlignCenter);
         label->setFrameStyle(QFrame::Panel | QFrame::Raised);
         label->setLineWidth(1);
-        label->setMinimumSize(28, 20);
-        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        label->setStyleSheet("font-size: 9px;");
+        label->setMinimumHeight(24);
+        label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        label->setFont(labelFont);
+        label->setAutoFillBackground(true);  // Required for QPalette background
 
-        int row = (i / COLS) + 1;  // +1 because title is in row 0
+        int row = i / COLS;
         int col = i % COLS;
 
-        _layout->addWidget(label, row, col);
+        _gridLayout->addWidget(label, row, col);
         label->installEventFilter(this);  // Catch mouse clicks on labels
         _pageLabels.append(label);
+        _lastLabelTexts.append(QString());
+        _lastLabelColors.append(0);
     }
 
     refresh();
@@ -127,18 +153,16 @@ void MemoryPagesVisWidget::updatePageDisplay()
     uint8_t currentPages[4] = {0};
     for (int bank = 0; bank < 4; bank++)
     {
-        // Get the page number for this bank
         int pageNumber = memory->GetPhysicalOffsetForZ80Bank(bank) / 0x4000;
         currentPages[bank] = pageNumber;
 
-        // Mark this page as accessed
         if (pageNumber < _maxPages)
         {
             _accessedPages[pageNumber] = true;
         }
     }
 
-    // Update all page labels
+    // Update labels — only touch widgets whose text or color actually changed
     for (int i = 0; i < _maxPages && i < _pageLabels.size(); i++)
     {
         QLabel* label = _pageLabels[i];
@@ -156,19 +180,43 @@ void MemoryPagesVisWidget::updatePageDisplay()
             }
         }
 
-        // Set the label text and style
+        // Compute desired text and color
+        QString newText;
+        QColor newColor;
+        QColor newTextColor(Qt::black);  // default text color
+
         if (isMapped)
         {
-            label->setText(QString("%1\nBank %2").arg(i).arg(mappedBank));
-            label->setStyleSheet("background-color: #8080FF; color: white;");
+            newText = QString("%1\nBank %2").arg(i).arg(mappedBank);
+            newColor = QColor(0x80, 0x80, 0xFF);
+            newTextColor = Qt::white;
         }
         else
         {
-            label->setText(QString::number(i));
+            newText = QString::number(i);
+            newColor = getColorForPage(i, _accessedPages[i]);
+        }
 
-            // Different color for accessed vs. never accessed pages
-            QColor color = getColorForPage(i, _accessedPages[i]);
-            label->setStyleSheet(QString("background-color: %1;").arg(color.name()));
+        QRgb newColorRgb = newColor.rgb();
+
+        // Dirty-check: skip if nothing changed
+        if (newText == _lastLabelTexts[i] && newColorRgb == _lastLabelColors[i])
+            continue;
+
+        // Apply changes
+        if (newText != _lastLabelTexts[i])
+        {
+            label->setText(newText);
+            _lastLabelTexts[i] = newText;
+        }
+
+        if (newColorRgb != _lastLabelColors[i])
+        {
+            QPalette pal = label->palette();
+            pal.setColor(QPalette::Window, newColor);
+            pal.setColor(QPalette::WindowText, newTextColor);
+            label->setPalette(pal);
+            _lastLabelColors[i] = newColorRgb;
         }
     }
 }
@@ -188,8 +236,6 @@ QColor MemoryPagesVisWidget::getColorForPage(int pageIndex, bool isAccessed)
 void MemoryPagesVisWidget::paintEvent(QPaintEvent* event)
 {
     QWidget::paintEvent(event);
-
-    // Additional custom painting if needed
 }
 
 void MemoryPagesVisWidget::resizeEvent(QResizeEvent* event)
