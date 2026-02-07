@@ -78,7 +78,7 @@ Z80::Z80(EmulatorContext* context) : Z80State{}
     direct_registers[6] =
         &_trashRegister;  // Redirect DDCB operation writes with no destination registers to unused register variable
     direct_registers[7] = &a;
-    
+
     // Create opcode profiler
     _opcodeProfiler = new OpcodeProfiler(context);
 }
@@ -96,7 +96,7 @@ Z80::~Z80()
         delete DbgMemIf;
         DbgMemIf = nullptr;
     }
-    
+
     if (_opcodeProfiler)
     {
         delete _opcodeProfiler;
@@ -146,7 +146,7 @@ void Z80::Z80Step(bool skipBreakpoints)
     [[maybe_unused]] Emulator& emulator = *_context->pEmulator;
 
     /// region  <Ports logic>
-    
+
     // ROM paging MUST happen BEFORE breakpoint dispatch so that page-specific breakpoints
     // (e.g., TR-DOS ROM at $1EDD) can match the correct memory page.
     // Previously this was after breakpoint dispatch, causing page-specific breakpoints to fail.
@@ -167,7 +167,7 @@ void Z80::Z80Step(bool skipBreakpoints)
         // Apply ROM page changes
         memory.UpdateZ80Banks();
     }
-    
+
     /// endregion  </Ports logic>
 
     // Let debugger process step event
@@ -178,11 +178,11 @@ void Z80::Z80Step(bool skipBreakpoints)
         if (breakpointID != BRK_INVALID)
         {
             AnalyzerManager* analyzerMgr = _context->pDebugManager->GetAnalyzerManager();
-            
+
             // Get current memory page information for page-specific breakpoint matching
             Memory& mem = *_context->pMemory;
             MemoryPageDescriptor pageInfo = mem.MapZ80AddressToPhysicalPage(pc);
-            
+
             // Check if this is an analyzer-owned breakpoint (should not pause)
             // Must check both address-only AND page-specific ownership
             bool isAnalyzerBreakpoint = false;
@@ -190,21 +190,21 @@ void Z80::Z80Step(bool skipBreakpoints)
             {
                 // First check page-specific match (for breakpoints like TR-DOS ROM)
                 isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc, pageInfo.page, pageInfo.mode);
-                
+
                 // Fall back to address-only match (for non-page-specific breakpoints)
                 if (!isAnalyzerBreakpoint)
                 {
                     isAnalyzerBreakpoint = analyzerMgr->ownsBreakpointAtAddress(pc);
                 }
             }
-            
+
             // Always dispatch breakpoint hit to analyzer manager for notification
             // Note: No MessageCenter notification is sent for analyzer breakpoints
             if (analyzerMgr)
             {
                 analyzerMgr->dispatchBreakpointHit(pc, breakpointID, this);
             }
-            
+
             // Only pause for debugger breakpoints (not analyzer-owned)
             if (!isAnalyzerBreakpoint)
             {
@@ -289,19 +289,11 @@ void Z80::Z80Step(bool skipBreakpoints)
 
         // 2. Emulate fetched Z80 opcode
         (normal_opcode[opcode])(&cpu);
-        
+
         // 2a. Opcode profiling hook (after opcode execution)
         if (_feature_opcodeprofiler_enabled && _opcodeProfiler)
         {
-            _opcodeProfiler->LogExecution(
-                m1_pc,
-                prefix,
-                opcode,
-                f,
-                a,
-                _context->emulatorState.frame_counter,
-                t
-            );
+            _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
         }
 
         // 3. Update Q register based on whether flags were modified

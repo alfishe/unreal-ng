@@ -6,10 +6,16 @@
 #include <iostream>
 
 #include "3rdparty/simpleini/simpleini.h"
+#include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/recording/recordingmanager.h"
 #include "emulator/video/screen.h"
+
+/// region <Logging>
+const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_CORE;
+constexpr uint16_t _SUBMODULE = PlatformCoreSubmodulesEnum::SUBMODULE_CORE_FEATURES;
+/// endregion </Logging>
 
 FeatureManager::FeatureManager(EmulatorContext* context) : _context(context)
 {
@@ -57,8 +63,22 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
     auto* feature = findFeature(idOrAlias);
     if (feature)
     {
-        bool valueChanged = (feature->enabled != enabled);
+        bool wasEnabled = feature->enabled;
+        bool valueChanged = (wasEnabled != enabled);
         feature->enabled = enabled;
+
+        // Log the feature state change
+        if (_context && _context->pModuleLogger)
+        {
+            if (valueChanged)
+            {
+                _context->pModuleLogger->Info(_MODULE, _SUBMODULE,
+                    "Feature '%s' changed: %s -> %s",
+                    feature->id.c_str(),
+                    wasEnabled ? "ON" : "OFF",
+                    enabled ? "ON" : "OFF");
+            }
+        }
 
         // Auto-enable master debugmode when enabling any debug subfeature
         // This ensures breakpoints/calltrace/memorytracking work as expected
@@ -72,6 +92,15 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
                 {
                     master->enabled = true;
                     valueChanged = true;
+
+                    // Log the auto-enabled master feature
+                    if (_context && _context->pModuleLogger)
+                    {
+                        _context->pModuleLogger->Info(_MODULE, _SUBMODULE,
+                            "Feature '%s' auto-enabled (required by '%s')",
+                            Features::kDebugMode,
+                            feature->id.c_str());
+                    }
                 }
             }
         }
@@ -91,7 +120,12 @@ bool FeatureManager::setFeature(const std::string& idOrAlias, bool enabled)
     }
     else
     {
-        // Feature not found
+        // Feature not found - log warning
+        if (_context && _context->pModuleLogger)
+        {
+            _context->pModuleLogger->Warning(_MODULE, _SUBMODULE,
+                "Feature '%s' not found", idOrAlias.c_str());
+        }
         return false;
     }
 }
@@ -315,8 +349,19 @@ void FeatureManager::onFeatureChanged()
         _context->pCore->GetMemory()->UpdateFeatureCache();
 
         // Synchronize master switch with feature changes
-        _context->pCore->GetZ80()->isDebugMode = _features[Features::kDebugMode].enabled;
-        
+        bool debugEnabled = _features[Features::kDebugMode].enabled;
+        _context->pCore->GetZ80()->isDebugMode = debugEnabled;
+
+        // Switch memory interface based on debug mode
+        if (debugEnabled)
+        {
+            _context->pCore->UseDebugMemoryInterface();
+        }
+        else
+        {
+            _context->pCore->UseFastMemoryInterface();
+        }
+
         // Update Z80 feature cache (opcode profiler etc.)
         _context->pCore->GetZ80()->UpdateFeatureCache();
     }
