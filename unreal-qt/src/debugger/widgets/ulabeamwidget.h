@@ -35,6 +35,7 @@ private:
     // Current beam position (in full raster coordinates: pixels × lines)
     int _beamX = 0;   // Pixel position within line (0..pixelsPerLine-1)
     int _beamY = 0;   // Raster line (0..totalLines-1)
+    uint64_t _frameCounter = 0;  // Current frame number
 
     // Raster geometry (set from RasterDescriptor)
     int _totalPixelsPerLine = 448;    // Full line width in pixels

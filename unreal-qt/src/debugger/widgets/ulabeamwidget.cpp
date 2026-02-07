@@ -82,6 +82,9 @@ void ULABeamWidget::refresh()
         // Beam in absolute raster coordinates
         _beamX = _linePosition * 2;   // 2 pixels per t-state
         _beamY = _currentLine;         // Absolute raster line
+
+        // Frame counter
+        _frameCounter = _emulator->GetContext()->emulatorState.frame_counter;
     }
 
     updateScreenImage();
@@ -240,7 +243,8 @@ void ULABeamWidget::paintEvent(QPaintEvent* event)
     else if (inPaper)
         region = " [Paper]";
 
-    QString infoText = QString("T-state: %1 | Line: %2 | Pos: %3 | Pixel: (%4, %5)%6")
+    QString infoText = QString("Frame: %1 | T-state: %2 | Line: %3 | Pos: %4 | Pixel: (%5, %6)%7")
+                           .arg(_frameCounter)
                            .arg(_currentTstate)
                            .arg(_currentLine)
                            .arg(_linePosition)

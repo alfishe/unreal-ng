@@ -101,6 +101,10 @@ protected:
     AutoResetEvent _stepOverSyncEvent;
     uint16_t _pendingStepOverBpId = 0;                  // Track active step-over breakpoint for cleanup
     std::vector<uint16_t> _stepOverDeactivatedBps;      // Breakpoints deactivated during step-over
+
+    // Frame step target (persistent to prevent cumulative drift)
+    unsigned _frameStepTargetPos = 0;                   // Target t-state position within frame
+    bool _hasFrameStepTarget = false;                   // Whether target has been set
     /// endregion </Fields>
 
     /// region <Constructors / destructors>
@@ -172,6 +176,9 @@ public:
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
     void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames
     void StepOver();                                              // Execute instruction, skip calls and subroutines
+
+    // Cancel any pending step-over breakpoint (cleanup before starting a new step command)
+    void CancelPendingStepOver();
 
     // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
     void RunTStates(unsigned tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)

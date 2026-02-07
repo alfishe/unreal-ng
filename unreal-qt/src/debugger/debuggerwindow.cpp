@@ -137,7 +137,7 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
-    connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
+    connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::runToInterrupt);
     connect(runTStatesAction, &QAction::triggered, this, &DebuggerWindow::runTStates);
     connect(runToScanlineAction, &QAction::triggered, this, &DebuggerWindow::runToScanline);
     connect(runNScanlinesAction, &QAction::triggered, this, &DebuggerWindow::runNScanlines);
