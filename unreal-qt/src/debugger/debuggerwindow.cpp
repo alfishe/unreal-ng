@@ -1203,6 +1203,9 @@ void DebuggerWindow::prepareForShutdown()
     if (_visualizationWindow)
     {
         _visualizationWindow->prepareForShutdown();
+        _visualizationWindow->close();
+        delete _visualizationWindow;
+        _visualizationWindow = nullptr;
     }
 
     qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";

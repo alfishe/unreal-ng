@@ -278,6 +278,36 @@ void DebugVisualizationWindow::prepareForShutdown()
 {
     qDebug() << "DebugVisualizationWindow::prepareForShutdown()";
     _isShuttingDown = true;
+
+    // Stop the refresh timer to prevent further callbacks
+    if (_refreshTimer)
+    {
+        _refreshTimer->stop();
+    }
+
+    // Remove MessageCenter observers to prevent cross-thread dispatches during destruction
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+
+    if (_stateChangeObserver)
+    {
+        messageCenter.RemoveObserver(NC_EMULATOR_STATE_CHANGE, _stateChangeObserver);
+        _stateChangeObserver = nullptr;
+    }
+
+    if (_cpuStepObserver)
+    {
+        messageCenter.RemoveObserver(NC_EXECUTION_CPU_STEP, _cpuStepObserver);
+        _cpuStepObserver = nullptr;
+    }
+
+    if (_frameRefreshObserver)
+    {
+        messageCenter.RemoveObserver(NC_VIDEO_FRAME_REFRESH, _frameRefreshObserver);
+        _frameRefreshObserver = nullptr;
+    }
+
+    // Null out emulator reference to prevent any stale access
+    _emulator = nullptr;
 }
 
 void DebugVisualizationWindow::syncFeatureCheckboxes()
