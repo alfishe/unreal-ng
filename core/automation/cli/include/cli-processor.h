@@ -91,6 +91,9 @@ private:
     void HandleRunNScanlines(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunToPixel(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunToInterrupt(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunFrame(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunFrames(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMemory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRegisters(const ClientSession& session, const std::vector<std::string>& args);
 

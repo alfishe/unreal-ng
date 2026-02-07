@@ -429,6 +429,17 @@ public:
             _emulator->StepOver();
         });
 
+        // Frame stepping methods
+        lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunFrame(skipBP.value_or(true));
+        });
+
+        lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
+            if (!_emulator) return;
+            _emulator->RunNFrames(count, skipBP.value_or(true));
+        });
+
         // Atomic stepping methods
         lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
             if (!_emulator) return;

@@ -94,6 +94,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"run_scanlines", &CLIProcessor::HandleRunNScanlines},   // Run N scanlines
                         {"run_to_pixel", &CLIProcessor::HandleRunToPixel},       // Run to next screen pixel
                         {"run_to_interrupt", &CLIProcessor::HandleRunToInterrupt}, // Run to interrupt
+                        {"run_frame", &CLIProcessor::HandleRunFrame},               // Run one frame
+                        {"run_frames", &CLIProcessor::HandleRunFrames},             // Run N frames
+                        {"run_ncycles", &CLIProcessor::HandleRunNCycles},           // Run N CPU cycles
                         {"memory", &CLIProcessor::HandleMemory},
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},

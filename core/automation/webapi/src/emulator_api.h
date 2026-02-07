@@ -200,6 +200,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::runNScanlines, "/api/v1/emulator/{id}/run_scanlines", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runToPixel, "/api/v1/emulator/{id}/run_to_pixel", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::runToInterrupt, "/api/v1/emulator/{id}/run_to_interrupt", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::runFrame, "/api/v1/emulator/{id}/run_frame", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::runFrames, "/api/v1/emulator/{id}/run_frames", drogon::Post);
 
     // Debug mode
     ADD_METHOD_TO(EmulatorAPI::getDebugMode, "/api/v1/emulator/{id}/debugmode", drogon::Get);
@@ -607,6 +609,10 @@ public:
                     const std::string& id) const;
     void runToInterrupt(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
+    void runFrame(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id) const;
+    void runFrames(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                   const std::string& id) const;
 
     // Debug mode
     void getDebugMode(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,

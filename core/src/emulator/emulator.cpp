@@ -1172,6 +1172,10 @@ bool Emulator::LoadDisk(const std::string& path)
 
 void Emulator::CancelPendingStepOver()
 {
+    // Only relevant in debug mode — skip entirely during normal emulation
+    if (!_featureManager || !_featureManager->isEnabled(Features::kDebugMode))
+        return;
+
     if (_pendingStepOverBpId != 0 && _breakpointManager)
     {
         MLOGDEBUG("Emulator::CancelPendingStepOver - Removing orphaned step-over breakpoint ID %d", _pendingStepOverBpId);

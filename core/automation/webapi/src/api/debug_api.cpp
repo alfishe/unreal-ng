@@ -422,6 +422,95 @@ void EmulatorAPI::runToInterrupt(const HttpRequestPtr& req, std::function<void(c
     }
 }
 
+/// @brief POST /api/v1/emulator/{id}/run_frame
+/// @brief Run one complete video frame
+void EmulatorAPI::runFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                           const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        emulator->RunFrame();
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran one frame";
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunFrame failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
+/// @brief POST /api/v1/emulator/{id}/run_frames
+/// @brief Run N complete video frames
+/// @brief Request body: {"count": N}
+void EmulatorAPI::runFrames(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    
+    try
+    {
+        auto json = req->getJsonObject();
+        unsigned count = json && json->isMember("count") ? (*json)["count"].asUInt() : 1;
+        if (count < 1) count = 1;
+        if (count > 10000) count = 10000; // Safety limit
+        
+        emulator->RunNFrames(count);
+        
+        Z80State* z80 = emulator->GetZ80State();
+        
+        Json::Value ret;
+        ret["status"] = "success";
+        ret["message"] = "Ran " + std::to_string(count) + " frames";
+        ret["count"] = count;
+        if (z80)
+        {
+            ret["pc"] = z80->pc;
+            ret["sp"] = z80->sp;
+        }
+        ret["state"] = stateToString(emulator->GetState());
+        
+        auto resp = HttpResponse::newHttpJsonResponse(ret);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+    catch (const std::exception& e)
+    {
+        Json::Value error;
+        error["error"] = "RunFrames failed";
+        error["message"] = e.what();
+        
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k500InternalServerError);
+        addCorsHeaders(resp);
+        callback(resp);
+    }
+}
+
 // endregion Stepping Commands
 
 // region Debug Mode

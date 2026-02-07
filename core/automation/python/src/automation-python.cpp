@@ -399,6 +399,11 @@ static void registerEmulatorBindings()
              })
         .def("read_memory", [](Emulator& emu, uint16_t addr) { return emu.GetMemory()->DirectReadFromZ80Memory(addr); })
         .def("get_breakpoint_manager", &Emulator::GetBreakpointManager, py::return_value_policy::reference)
+        // Frame stepping methods
+        .def("run_frame", [](Emulator& emu, bool skipBP) { emu.RunFrame(skipBP); },
+             py::arg("skip_breakpoints") = true)
+        .def("run_frames", [](Emulator& emu, unsigned count, bool skipBP) { emu.RunNFrames(count, skipBP); },
+             py::arg("count"), py::arg("skip_breakpoints") = true)
         // Atomic stepping methods
         .def("run_tstates", [](Emulator& emu, unsigned tstates, bool skipBP) { emu.RunTStates(tstates, skipBP); },
              py::arg("tstates"), py::arg("skip_breakpoints") = true)

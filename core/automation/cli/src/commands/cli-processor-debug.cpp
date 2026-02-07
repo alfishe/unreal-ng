@@ -772,6 +772,137 @@ void CLIProcessor::HandleRunToInterrupt(const ClientSession& session, const std:
     session.SendResponse(ss.str());
 }
 
+// Run one complete video frame
+void CLIProcessor::HandleRunFrame(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    emulator->RunFrame();
+
+    Z80State* z80 = emulator->GetZ80State();
+    std::stringstream ss;
+    ss << "Ran one frame" << NEWLINE;
+    if (z80)
+    {
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "PC: $" << std::setw(4) << z80->pc << "  SP: $" << std::setw(4) << z80->sp << NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+
+// Run N complete video frames
+void CLIProcessor::HandleRunFrames(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    if (args.empty())
+    {
+        session.SendResponse("Usage: run_frames <count> - Run N video frames");
+        return;
+    }
+
+    unsigned count = 0;
+    try
+    {
+        count = static_cast<unsigned>(std::stoul(args[0]));
+        if (count < 1 || count > 10000)
+        {
+            session.SendResponse("Error: Frame count must be between 1 and 10000");
+            return;
+        }
+    }
+    catch (...)
+    {
+        session.SendResponse("Error: Invalid count. Must be a number between 1 and 10000");
+        return;
+    }
+
+    emulator->RunNFrames(count);
+
+    Z80State* z80 = emulator->GetZ80State();
+    std::stringstream ss;
+    ss << "Ran " << count << " frames" << NEWLINE;
+    if (z80)
+    {
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "PC: $" << std::setw(4) << z80->pc << "  SP: $" << std::setw(4) << z80->sp << NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+
+// Run N CPU cycles (instructions)
+void CLIProcessor::HandleRunNCycles(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select <id>' or 'status' to see available emulators.");
+        return;
+    }
+
+    if (!emulator->IsPaused())
+    {
+        session.SendResponse("Emulator must be paused before stepping. Use 'pause' command first.");
+        return;
+    }
+
+    if (args.empty())
+    {
+        session.SendResponse("Usage: run_ncycles <count> - Run N CPU cycles (instructions)");
+        return;
+    }
+
+    unsigned count = 0;
+    try
+    {
+        count = static_cast<unsigned>(std::stoul(args[0]));
+        if (count < 1 || count > 100000)
+        {
+            session.SendResponse("Error: Cycle count must be between 1 and 100000");
+            return;
+        }
+    }
+    catch (...)
+    {
+        session.SendResponse("Error: Invalid count. Must be a number between 1 and 100000");
+        return;
+    }
+
+    emulator->RunNCPUCycles(count, false);
+
+    Z80State* z80 = emulator->GetZ80State();
+    std::stringstream ss;
+    ss << "Ran " << count << " CPU cycles" << NEWLINE;
+    if (z80)
+    {
+        ss << std::hex << std::uppercase << std::setfill('0');
+        ss << "PC: $" << std::setw(4) << z80->pc << "  SP: $" << std::setw(4) << z80->sp << NEWLINE;
+    }
+    session.SendResponse(ss.str());
+}
+
 // HandleDisasm - disassemble Z80 code at address or PC
 void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<std::string>& args)
 {
