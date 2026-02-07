@@ -54,6 +54,7 @@ Memory16KBWidget::Memory16KBWidget(int bankIndex, QWidget* parent) : QWidget(par
     _imageLabel->setMinimumSize(IMAGE_WIDTH, IMAGE_HEIGHT);
     _imageLabel->setMouseTracking(true);
     _imageLabel->installEventFilter(this);
+    _imageLabel->setAlignment(Qt::AlignCenter);
     _imageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     layout->addWidget(_imageLabel, 1);
 
