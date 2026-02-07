@@ -1002,7 +1002,7 @@ uint32_t MemoryAccessTracker::GetPageTotalAccessCount(uint16_t page) const
 // Get read access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageReadAccessCount(uint16_t page) const
 {
-    if (page >= MAX_PAGES)
+    if (page >= MAX_PAGES || page >= _pageReadCounters.size())
     {
         return 0;
     }
@@ -1013,7 +1013,7 @@ uint32_t MemoryAccessTracker::GetPageReadAccessCount(uint16_t page) const
 // Get write access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageWriteAccessCount(uint16_t page) const
 {
-    if (page >= MAX_PAGES)
+    if (page >= MAX_PAGES || page >= _pageWriteCounters.size())
     {
         return 0;
     }
@@ -1024,7 +1024,7 @@ uint32_t MemoryAccessTracker::GetPageWriteAccessCount(uint16_t page) const
 // Get execute access count for a physical memory page
 uint32_t MemoryAccessTracker::GetPageExecuteAccessCount(uint16_t page) const
 {
-    if (page >= MAX_PAGES)
+    if (page >= MAX_PAGES || page >= _pageExecuteCounters.size())
     {
         return 0;
     }

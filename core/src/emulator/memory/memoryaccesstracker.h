@@ -365,6 +365,20 @@ public:
         return _z80ExecuteCounters.empty() ? nullptr : _z80ExecuteCounters.data();
     }
 
+    // Get direct pointer access to physical counter arrays (for bulk rendering)
+    const uint32_t* GetPhysReadCountersPtr() const
+    {
+        return _physReadCounters.empty() ? nullptr : _physReadCounters.data();
+    }
+    const uint32_t* GetPhysWriteCountersPtr() const
+    {
+        return _physWriteCounters.empty() ? nullptr : _physWriteCounters.data();
+    }
+    const uint32_t* GetPhysExecuteCountersPtr() const
+    {
+        return _physExecuteCounters.empty() ? nullptr : _physExecuteCounters.data();
+    }
+
     // Get total access count for a physical memory page
     uint32_t GetPageTotalAccessCount(uint16_t page) const;
 
