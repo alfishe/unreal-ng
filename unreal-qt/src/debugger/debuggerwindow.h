@@ -85,6 +85,7 @@ private slots:
     void resetEmulator();
     void showBreakpointManager();
     void showLabelManager();
+    void showVisualizationWindow();
 
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
@@ -139,6 +140,10 @@ private:
     QAction* resetAction;
     QAction* breakpointsAction;
     QAction* labelsAction;
+    QAction* visualizationAction;
+    
+    // Visualization window
+    class DebugVisualizationWindow* _visualizationWindow = nullptr;
 };
 
 #endif  // DEBUGGERWINDOW_H

@@ -40,7 +40,7 @@ ROM::ROM(EmulatorContext* context)
 
 	// Pentagon-specific
     _signatures.insert({ "7b88abff5964f0cf38481ac51bf035be2c01b8827569876b3d15eb3ac340fef3", "Pentagon 128k ROM"} );                                // 32Kb
-	_signatures.insert({ "633343620691a592c706d18c927fd539b7069a5d0fb7011bcd3bfc94be418681", "Pentagon 128k ROM 0 (128k with TR-DOS in menu)"} );   // 16Kb
+	_signatures.insert({ "633343620691a592c706d18c927fd539b7069a5d0fb7011bcd3bfc94be418681", "128k with TR-DOS in menu"} );                         // 16Kb
     _signatures.insert({ "110020ff7a4e350999777261000442426838cc391be93ba3146abc9477dcc05f", "Pentagon 48k ROM 3 (48k for 128k)"});                 // 16Kb
     // "128k ROM 1 (48k BASIC)" for Pentagon 128K is the same as for original ZX-Spectrum 128k
 

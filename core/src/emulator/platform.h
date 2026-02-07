@@ -85,6 +85,7 @@ enum PlatformCoreSubmodulesEnum : uint16_t
     SUBMODULE_CORE_FILES        = 0x0004,
     SUBMODULE_CORE_COUNTERS     = 0x0008,
     SUBMODULE_CORE_MAINLOOP     = 0x0010,
+    SUBMODULE_CORE_FEATURES     = 0x0020,
 
     SUBMODULE_CORE_ALL          = 0xFFFF
 };
