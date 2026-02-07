@@ -10,7 +10,9 @@
 
 #include <QAction>
 #include <QDebug>
+#include <QMenu>
 #include <QToolBar>
+#include <QToolButton>
 #include <QWidget>
 
 #include "3rdparty/message-center/messagecenter.h"
@@ -25,6 +27,7 @@ class DebuggerWindow;
 QT_END_NAMESPACE
 
 class Emulator;
+class SpeedControlWidget;
 
 class DebuggerWindow : public QWidget, public Observer
 {
@@ -82,6 +85,13 @@ private slots:
     void stepOut();
     void frameStep();
     void waitInterrupt();
+
+    // Atomic stepping actions
+    void runTStates();
+    void runToScanline();
+    void runNScanlines();
+    void runToPixel();
+    void runToInterrupt();
     void resetEmulator();
     void showBreakpointManager();
     void showLabelManager();
@@ -98,6 +108,11 @@ signals:
     void stateChangedForChildren(EmulatorStateEnum state);
     void readyForChildren();
     void notReadyForChildren();
+
+    /// @brief Emitted when screen framebuffer needs to be repainted
+    /// (e.g., after speed control stepping). MainWindow connects this
+    /// to DeviceScreen::refresh().
+    void screenRefreshRequested();
 
 protected:
     // Constants for breakpoint management
@@ -139,9 +154,21 @@ private:
     QAction* breakpointsAction;
     QAction* labelsAction;
     QAction* visualizationAction;
+
+    // Atomic stepping dropdown
+    QMenu* atomicStepMenu = nullptr;
+    QToolButton* atomicStepButton = nullptr;
+    QAction* runTStatesAction = nullptr;
+    QAction* runToScanlineAction = nullptr;
+    QAction* runNScanlinesAction = nullptr;
+    QAction* runToPixelAction = nullptr;
+    QAction* runToInterruptAction = nullptr;
     
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
+
+    // Speed control widget
+    SpeedControlWidget* m_speedControl = nullptr;
 };
 
 #endif  // DEBUGGERWINDOW_H

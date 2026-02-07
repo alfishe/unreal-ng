@@ -397,6 +397,20 @@ public:
     virtual void UpdateScreen() = 0;
     virtual void DrawPeriod(uint32_t fromTstate, uint32_t toTstate);
     virtual void Draw(uint32_t tstate);
+
+    /// @brief Reset the previous t-state tracker used by DrawPeriod
+    /// Must be called after AdjustFrameCounters() wraps z80.t to prevent
+    /// DrawPeriod from seeing fromTstate > toTstate across the frame boundary
+    void ResetPrevTstate() { _prevTstate = 0; }
+
+    /// @brief Get the t-state at which the first paper pixel starts in a frame
+    /// Uses the same coordinate mapping as TransformTstateToZXCoords:
+    /// pixelX = (tstate % tstatesPerLine) * pixelsPerTState >= screenOffsetLeft
+    uint32_t GetPaperStartTstate() const
+    {
+        const RasterDescriptor& rd = rasterDescriptors[_mode];
+        return _rasterState.screenAreaStart + rd.screenOffsetLeft / _rasterState.pixelsPerTState;
+    }
     virtual void RenderOnlyMainScreen();
 
     /// @brief Render entire screen at frame end when ScreenHQ=OFF (batch rendering mode)

@@ -215,9 +215,16 @@ Content-Type: application/json
 
 ### Execution Control
 ```
-POST /api/v1/emulator/{id}/step      Execute single instruction
-POST /api/v1/emulator/{id}/steps     Execute N instructions (body: {"count": N})
-POST /api/v1/emulator/{id}/stepover  Step over CALL instructions
+POST /api/v1/emulator/{id}/step              Execute single instruction
+POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
+POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
+POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
+POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
+POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
+POST /api/v1/emulator/{id}/run_to_pixel      Run until next screen pixel boundary
+POST /api/v1/emulator/{id}/run_to_interrupt  Run until Z80 accepts INT
+POST /api/v1/emulator/{id}/run_frame         Run exactly one video frame
+POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N})
 ```
 
 ### Debug Mode

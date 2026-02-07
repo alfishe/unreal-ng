@@ -364,6 +364,14 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `step` | `stepin` | | Execute exactly one CPU instruction and return. The emulator pauses automatically after execution. Returns the new PC value and disassembled instruction that was executed. Used for line-by-line debugging. |
 | `steps <N>` | | `<count>` | Execute exactly `<N>` CPU instructions, then pause. Equivalent to calling `step` N times but more efficient. Returns execution summary including final PC. Useful for stepping through loops. |
 | `stepover` | | | Execute one instruction, treating subroutine calls (`CALL`, `RST`) as atomic operations. If the instruction is a call, execution continues until the corresponding `RET`, then pauses. If not a call instruction, behaves like `step`. Essential for stepping over function calls without diving into them. |
+| `run_tstates <N>` | | `<count>` | Run the CPU for exactly `<N>` t-states (1 t-state = 1 ULA clock tick / 2 pixels). Useful for precise timing analysis and ULA-level debugging. |
+| `run_to_scanline <N>` | | `<scanline>` | Run until the ULA beam reaches scanline `<N>`. For models with 312 scanlines (PAL), valid range is 0–311. |
+| `run_scanlines <N>` | | `<count>` | Run forward by `<N>` scanlines from the current beam position. |
+| `run_to_pixel` | | | Run until the next visible screen pixel boundary. Steps one pixel at a time through the display area. |
+| `run_to_interrupt` | | | Run until the Z80 accepts a maskable interrupt (INT). Useful for stepping to the next frame boundary when interrupts are enabled. |
+| `run_frame` | | | Run exactly one complete video frame worth of t-states. The beam stops at approximately the same position in the next frame, providing consistent "one frame forward" behavior. |
+| `run_frames <N>` | | `<count>` | Run exactly `<N>` complete video frames. Equivalent to calling `run_frame` N times but more efficient. Max: 10,000. |
+| `run_ncycles <N>` | | `<count>` | Run exactly `<N>` CPU cycles (instructions). Each cycle executes one complete Z80 instruction. Max: 100,000. |
 
 **Implementation Details**:
 
@@ -396,6 +404,18 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 - Resets all peripherals: tape, disk, keyboard, sound
 - Clears interrupt state
 - Does NOT clear breakpoints or watchpoints
+
+**Atomic Stepping Commands** (`run_tstates`, `run_to_scanline`, `run_scanlines`, `run_to_pixel`, `run_to_interrupt`):
+- All require the emulator to be paused first
+- All cancel any pending step-over breakpoints before executing
+- All reset the frame-step target position to prevent drift
+- Breakpoint checking can be skipped for non-interactive use (scripting APIs)
+
+**Frame Stepping** (`run_frame`, `run_frames`):
+- Executes exactly `config.frame` t-states per frame (model-dependent)
+- Maintains beam position consistency across multiple frame steps
+- Uses a persistent target position to prevent cumulative drift
+- Resets target when other stepping commands are used
 
 **Performance Notes**:
 - `step` commands disable real-time rendering for precision

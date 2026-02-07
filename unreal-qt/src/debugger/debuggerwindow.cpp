@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QDialog>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QPointer>
 #include <QTableWidget>
@@ -16,6 +17,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labeleditor.h"
+#include "debugger/speedcontrolwidget.h"
 #include "debugvisualizationwindow.h"
 #include "emulator/emulator.h"
 #include "ui_debuggerwindow.h"
@@ -102,6 +104,21 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     toolBar->addAction(frameStepAction);
 
     waitInterruptAction = toolBar->addAction("Wait INT");
+
+    // Atomic stepping dropdown button
+    atomicStepMenu = new QMenu("Advanced Step", this);
+    runTStatesAction = atomicStepMenu->addAction("Run T-States...");
+    runToScanlineAction = atomicStepMenu->addAction("Run to Scanline...");
+    runNScanlinesAction = atomicStepMenu->addAction("Run N Scanlines...");
+    runToPixelAction = atomicStepMenu->addAction("Run to Screen Pixel");
+    runToInterruptAction = atomicStepMenu->addAction("Run to Interrupt");
+
+    atomicStepButton = new QToolButton(this);
+    atomicStepButton->setText("Adv Step \u25BE");
+    atomicStepButton->setMenu(atomicStepMenu);
+    atomicStepButton->setPopupMode(QToolButton::InstantPopup);
+    toolBar->addWidget(atomicStepButton);
+
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
     toolBar->addAction(resetAction);
@@ -121,7 +138,12 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(continueAction, &QAction::triggered, this, &DebuggerWindow::continueExecution);
     connect(pauseAction, &QAction::triggered, this, &DebuggerWindow::pauseExecution);
     connect(frameStepAction, &QAction::triggered, this, &DebuggerWindow::frameStep);
-    connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::waitInterrupt);
+    connect(waitInterruptAction, &QAction::triggered, this, &DebuggerWindow::runToInterrupt);
+    connect(runTStatesAction, &QAction::triggered, this, &DebuggerWindow::runTStates);
+    connect(runToScanlineAction, &QAction::triggered, this, &DebuggerWindow::runToScanline);
+    connect(runNScanlinesAction, &QAction::triggered, this, &DebuggerWindow::runNScanlines);
+    connect(runToPixelAction, &QAction::triggered, this, &DebuggerWindow::runToPixel);
+    connect(runToInterruptAction, &QAction::triggered, this, &DebuggerWindow::runToInterrupt);
     connect(resetAction, &QAction::triggered, this, &DebuggerWindow::resetEmulator);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
     connect(breakpointsAction, &QAction::triggered, this, &DebuggerWindow::showBreakpointManager);
@@ -144,6 +166,20 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
 
     // Inject toolbar on top of other widget lines
     ui->verticalLayout_2->insertWidget(0, toolBar);
+
+    // Speed control widget — inserted below toolbar, with spacer to avoid full-width stretch
+    m_speedControl = new SpeedControlWidget(this);
+    m_speedControl->setEmulator(_emulator);
+    m_speedControl->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    auto* speedRow = new QHBoxLayout();
+    speedRow->setContentsMargins(0, 0, 0, 0);
+    speedRow->addWidget(m_speedControl, 1);  // 50% — equal stretch with spacer
+    speedRow->addStretch(1);                 // 50% — remaining space
+    ui->verticalLayout_2->insertLayout(1, speedRow);
+    connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
+        updateState();
+        emit screenRefreshRequested();
+    });
 
     // Set hex memory viewer to readonly mode
     ui->hexView->setReadOnly(true);
@@ -202,6 +238,10 @@ void DebuggerWindow::setEmulator(Emulator* emulator)
              << (emulator ? QString::fromStdString(emulator->GetId()) : "nullptr");
 
     _emulator = emulator;
+
+    // Propagate to speed control widget
+    if (m_speedControl)
+        m_speedControl->setEmulator(_emulator);
 
     if (_emulator)
     {
@@ -288,6 +328,10 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
         {
             _emulator = m_binding->emulator();
             _emulatorState = m_binding->state();
+
+            // Propagate to speed control widget
+            if (m_speedControl)
+                m_speedControl->setEmulator(_emulator);
             if (m_binding->isReady())
             {
                 onBindingReady();
@@ -297,6 +341,11 @@ void DebuggerWindow::setBinding(EmulatorBinding* binding)
     else
     {
         _emulator = nullptr;
+
+        // Propagate to speed control widget
+        if (m_speedControl)
+            m_speedControl->setEmulator(nullptr);
+
         reset();
     }
 }
@@ -308,6 +357,10 @@ void DebuggerWindow::onBindingBound()
     {
         _emulator = m_binding->emulator();
         _emulatorState = m_binding->state();
+
+        // Propagate to speed control widget
+        if (m_speedControl)
+            m_speedControl->setEmulator(_emulator);
         // Delegate to state handler - toolbar enabled based on actual state
         onBindingStateChanged(_emulatorState);
     }
@@ -317,6 +370,11 @@ void DebuggerWindow::onBindingUnbound()
 {
     qDebug() << "DebuggerWindow::onBindingUnbound()";
     _emulator = nullptr;
+
+    // Propagate to speed control widget
+    if (m_speedControl)
+        m_speedControl->setEmulator(nullptr);
+
     reset();
     emit notReadyForChildren();
 }
@@ -423,8 +481,7 @@ void DebuggerWindow::updateState()
         return;
     }
 
-    qDebug() << "DebuggerWindow::updateState() called - emulator state:"
-             << (_emulator ? getEmulatorStateName(_emulator->GetState()) : "No emulator");
+
     if (_emulator)
     {
         Z80State* state = _emulator->GetZ80State();
@@ -532,8 +589,7 @@ void DebuggerWindow::saveState()
 void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset,
                                           bool canManageBreakpoints, bool canManageLabels)
 {
-    qDebug() << "DebuggerWindow::updateToolbarActions(" << canContinue << "," << canPause << "," << canStep << ","
-             << canReset << "," << canManageBreakpoints << "," << canManageLabels << ")";
+
 
     // Defensive checks - ensure all actions exist before accessing them
     if (!continueAction || !pauseAction || !resetAction || !stepInAction || !stepOverAction || !stepOutAction ||
@@ -559,7 +615,7 @@ void DebuggerWindow::updateToolbarActions(bool canContinue, bool canPause, bool 
     breakpointsAction->setEnabled(canManageBreakpoints);
     labelsAction->setEnabled(canManageLabels);
 
-    qDebug() << "DebuggerWindow::updateToolbarActions - completed successfully";
+
 }
 
 /// endregion </Helper methods>
@@ -654,6 +710,10 @@ void DebuggerWindow::handleEmulatorStateChanged(int id, Message* message)
                 // Emulator already stopped working.
                 // Time to disable all rendering activities and set controls to initial inactive state
                 _emulator = nullptr;
+
+                // Propagate to speed control widget
+                if (m_speedControl)
+                    m_speedControl->setEmulator(nullptr);
 
                 // Don't call reset() here since emulator is now null
                 // Just clear the UI manually without trying to read emulator state
@@ -791,6 +851,10 @@ void DebuggerWindow::handleMessageBreakpointTriggered(int id, Message* message)
 
     // Update the UI in the main thread
     dispatchToMainThread([this]() {
+        // Stop speed control auto-run on breakpoint hit
+        if (m_speedControl)
+            m_speedControl->stop();
+
         // When a breakpoint is hit:
         // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
         updateToolbarActions(true, false, true, true, true, true);
@@ -822,6 +886,10 @@ void DebuggerWindow::continueExecution()
     qDebug() << "DebuggerWindow::continueExecution()";
 
     _breakpointTriggered = false;
+
+    // Stop speed control auto-run when user manually continues
+    if (m_speedControl)
+        m_speedControl->stop();
 
     if (_emulator && _emulator->IsPaused())
     {
@@ -860,6 +928,10 @@ void DebuggerWindow::stepIn()
     qDebug() << "DebuggerWindow::stepIn()";
 
     _breakpointTriggered = false;
+
+    // Stop speed control auto-run when user manually steps
+    if (m_speedControl)
+        m_speedControl->stop();
 
     if (_emulator)
     {
@@ -1030,6 +1102,63 @@ void DebuggerWindow::waitInterrupt()
     {
         continueExecution();
     }
+}
+
+void DebuggerWindow::runTStates()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    int tstates = QInputDialog::getInt(this, "Run T-States", "Number of T-states to execute:", 100, 1, 10000000, 1, &ok);
+    if (!ok) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunTStates(static_cast<unsigned>(tstates));
+    updateState();
+}
+
+void DebuggerWindow::runToScanline()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    int scanline = QInputDialog::getInt(this, "Run to Scanline", "Target scanline number:", 0, 0, 319, 1, &ok);
+    if (!ok) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunUntilScanline(static_cast<unsigned>(scanline));
+    updateState();
+}
+
+void DebuggerWindow::runNScanlines()
+{
+    if (!_emulator) return;
+
+    bool ok;
+    int count = QInputDialog::getInt(this, "Run N Scanlines", "Number of scanlines to run:", 1, 1, 1000, 1, &ok);
+    if (!ok) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunNScanlines(static_cast<unsigned>(count));
+    updateState();
+}
+
+void DebuggerWindow::runToPixel()
+{
+    if (!_emulator) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunUntilNextScreenPixel();
+    updateState();
+}
+
+void DebuggerWindow::runToInterrupt()
+{
+    if (!_emulator) return;
+
+    _breakpointTriggered = false;
+    _emulator->RunUntilInterrupt();
+    updateState();
 }
 
 void DebuggerWindow::resetEmulator()
@@ -1203,6 +1332,9 @@ void DebuggerWindow::prepareForShutdown()
     if (_visualizationWindow)
     {
         _visualizationWindow->prepareForShutdown();
+        _visualizationWindow->close();
+        delete _visualizationWindow;
+        _visualizationWindow = nullptr;
     }
 
     qDebug() << "DebuggerWindow::prepareForShutdown() - All child widgets notified";
