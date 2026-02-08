@@ -5,7 +5,6 @@
 #include <optional>
 
 #include "common/stringhelper.h"
-#include "debugger/debugmanager.h"
 
 // @file calltrace.cpp
 // @brief Implements the CallTraceBuffer for Z80 control flow event tracing.
@@ -77,20 +76,7 @@ std::optional<size_t> CallTraceBuffer::findInHotBuffer(const Z80ControlFlowEvent
 /// @brief Helper to create EventKey from Z80ControlFlowEvent
 static EventKey MakeEventKey(const Z80ControlFlowEvent& ev)
 {
-    EventKey key{};
-    key.m1_pc = ev.m1_pc;
-    key.target_addr = ev.target_addr;
-    key.type = ev.type;
-    key.banks = ev.banks;
-
-    key.opcode_len = ev.opcode_bytes.size();
-    if (key.opcode_len > 0)
-    {
-        memcpy(&key.opcode_bytes_packed, ev.opcode_bytes.data(),
-               std::min<size_t>(key.opcode_len, sizeof(key.opcode_bytes_packed)));
-    }
-
-    return key;
+    return EventKey::FromEvent(ev);
 }
 
 /// @brief Add or update an event in the cold buffer (with loop compression).
@@ -357,10 +343,10 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
         
         out << StringHelper::Format("    sp: 0x%04X", ev.sp) << std::endl;
         out << "    opcodes: [";
-        for (size_t j = 0; j < ev.opcode_bytes.size(); ++j)
+        for (size_t j = 0; j < ev.opcode_len; ++j)
         {
             out << StringHelper::Format("0x%02X", (int)ev.opcode_bytes[j]);
-            if (j + 1 < ev.opcode_bytes.size())
+            if (j + 1 < ev.opcode_len)
                 out << ", ";
         }
         out << "]" << std::endl;
@@ -400,10 +386,10 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
         out << StringHelper::Format("    sp: 0x%04X", ev.sp) << std::endl;
 
         out << "    opcodes: [";
-        for (size_t j = 0; j < ev.opcode_bytes.size(); ++j)
+        for (size_t j = 0; j < ev.opcode_len; ++j)
         {
             out << StringHelper::Format("0x%02X", (int)ev.opcode_bytes[j]);
-            if (j + 1 < ev.opcode_bytes.size())
+            if (j + 1 < ev.opcode_len)
                 out << ", ";
         }
         out << "]" << std::endl;
@@ -431,115 +417,9 @@ bool CallTraceBuffer::SaveToFile(const std::string& filename) const
     return true;
 }
 
-/// @brief Fast check to determine if an instruction might be a control flow instruction
-/// @param buffer Instruction bytes
-/// @return true if the instruction could be a control flow instruction
-static bool IsPotentialControlFlowInstruction(const std::vector<uint8_t>& buffer)
-{
-    if (buffer.empty())
-        return false;
-    
-    uint8_t opcode = buffer[0];
-    
-    // Check for DD/FD prefixes first
-    if (opcode == 0xDD || opcode == 0xFD)
-    {
-        if (buffer.size() < 2)
-            return false;
-        
-        uint8_t second_byte = buffer[1];
-        
-        // DD/FD prefixed control flow instructions
-        switch (second_byte)
-        {
-            // JP instructions
-            case 0xC2: case 0xC3: case 0xCA: case 0xCB: case 0xD2: case 0xD3: case 0xDA: case 0xDB:
-            case 0xE2: case 0xE3: case 0xEA: case 0xEB: case 0xF2: case 0xF3: case 0xFA: case 0xFB:
-            
-            // JR instructions  
-            case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:
-            
-            // CALL instructions
-            case 0xC4: case 0xC5: case 0xCC: case 0xCD: case 0xD4: case 0xD5: case 0xDC: case 0xDD:
-            case 0xE4: case 0xE5: case 0xEC: case 0xED: case 0xF4: case 0xF5: case 0xFC: case 0xFD:
-            
-            // RET instructions
-            case 0xC0: case 0xC8: case 0xC9: case 0xD0: case 0xD8: case 0xE0: case 0xE8: case 0xF0: case 0xF8:
-            
-            // RST instructions
-            case 0xC7: case 0xCF: case 0xD7: case 0xDF: case 0xE7: case 0xEF: case 0xF7: case 0xFF:
-            
-            // DJNZ
-            case 0x10:
-            
-            // JP (IX) / JP (IY)
-            case 0xE9:
-                return true;
-                
-            default:
-                return false;
-        }
-    }
-    
-    // Check for ED prefix
-    if (opcode == 0xED)
-    {
-        if (buffer.size() < 2)
-            return false;
-        
-        uint8_t second_byte = buffer[1];
-        
-        // ED prefixed control flow instructions
-        switch (second_byte)
-        {
-            // RETI, RETN and undocumented RETN variants
-            case 0x4D: case 0x45: case 0x55: case 0x5D: case 0x65: case 0x6D: case 0x75: case 0x7D:
-            
-            // Block transfer instructions that can loop (LDIR, LDDR, CPIR, CPDR, INIR, INDR, OTIR, OTDR)
-            // Disable for now since they do not change PC / use stack
-            // case 0xB0: case 0xB8: case 0xB1: case 0xB9: case 0xB2: case 0xBA: case 0xB3: case 0xBB:
-            //    return true;
-                
-            default:
-                return false;
-        }
-    }
-    
-    // Non-prefixed control flow instructions
-    switch (opcode)
-    {
-        // JP instructions
-        case 0xC2: case 0xC3: case 0xCA: case 0xCB: case 0xD2: case 0xD3: case 0xDA: case 0xDB:
-        case 0xE2: case 0xE3: case 0xEA: case 0xEB: case 0xF2: case 0xF3: case 0xFA: case 0xFB:
-        
-        // JP (HL)
-        case 0xE9:
-        
-        // JR instructions  
-        case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:
-        
-        // CALL instructions
-        case 0xC4: case 0xC5: case 0xCC: case 0xCD: case 0xD4: case 0xD5: case 0xDC: case 0xDD:
-        case 0xE4: case 0xE5: case 0xEC: case 0xED: case 0xF4: case 0xF5: case 0xFC: case 0xFD:
-        
-        // RET instructions
-        case 0xC0: case 0xC8: case 0xC9: case 0xD0: case 0xD8: case 0xE0: case 0xE8: case 0xF0: case 0xF8:
-        
-        // RST instructions
-        case 0xC7: case 0xCF: case 0xD7: case 0xDF: case 0xE7: case 0xEF: case 0xF7: case 0xFF:
-        
-        // DJNZ
-        case 0x10:
-            return true;
-            
-        default:
-            return false;
-    }
-}
-
 /// @brief Disassembles and logs a control flow event if the instruction at the given address is a taken control flow
-/// instruction.
-/// @param context EmulatorContext for access to CPU, disassembler, etc.
+/// instruction. Uses the lightweight Z80ControlFlowDecoder instead of the full disassembler for performance.
+/// @param context EmulatorContext for access to CPU registers.
 /// @param memory Pointer to Memory for reading bytes and bank info.
 /// @param address The Z80 address of the instruction to check.
 /// @param current_frame The current emulation frame.
@@ -553,100 +433,62 @@ bool CallTraceBuffer::LogIfControlFlow(EmulatorContext* context, Memory* memory,
     if (!context->pCore || !context->pCore->GetZ80())
         return false;
     Z80* z80 = context->pCore->GetZ80();
-    Z80Registers* regs = static_cast<Z80Registers*>(z80);
 
-    Z80Disassembler* disasm = nullptr;
-    if (context->pDebugManager)
-    {
-        disasm = context->pDebugManager->GetDisassembler().get();
-    }
-
-    if (!z80 || !disasm || !memory)
+    // Read first byte for fast pre-filter
+    uint8_t byte0 = memory->DirectReadFromZ80Memory(address);
+    if (!Z80ControlFlowDecoder::IsControlFlowOpcode(byte0))
         return false;
 
-    // Read instruction bytes from memory at the given address
-    static thread_local std::vector<uint8_t> buffer_bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
-    for (size_t i = 0; i < Z80Disassembler::MAX_INSTRUCTION_LENGTH; ++i)
-        buffer_bytes[i] = memory->DirectReadFromZ80Memory(address + i);
+    // Use same-PC cache: if we decoded this exact PC before, reuse the result.
+    // Only the taken/not-taken status can change (flags may differ), so we still
+    // need to re-evaluate for conditional branches. But for unconditional ones
+    // (RST, JP nn, CALL nn, RET, RETI) the result is fully reusable.
+    Z80ControlFlowResult cfResult;
+    bool decoded = false;
 
-    // Fast-path check: if this doesn't look like a control flow instruction, skip expensive disassembly
-    if (!IsPotentialControlFlowInstruction(buffer_bytes))
-        return false;
+    if (address == _lastDecodedPC)
+    {
+        // Re-evaluate: for conditional instructions, flags may have changed.
+        // For unconditional ones, we can reuse everything.
+        cfResult = _lastDecodeResult;
+        // Re-evaluate condition for conditional branches using current flags
+        // The decoder handles this properly, so just re-decode (it's still cheap)
+        uint8_t buffer_bytes[4];
+        for (int i = 0; i < 4; ++i)
+            buffer_bytes[i] = memory->DirectReadFromZ80Memory(address + i);
 
-    // Disassemble the instruction
-    DecodedInstruction decoded;
-    disasm->disassembleSingleCommandWithRuntime(buffer_bytes, address, nullptr, regs, memory, &decoded);
-
-    // Prepare variables for event details
-    uint16_t target = 0;
-    Z80CFType type;
-    std::array<Z80BankInfo, 4> banks;
-    uint16_t sp = 0;
-    std::array<uint16_t, 3> stack_top = {0, 0, 0};
-
-    // Determine if the instruction is a taken control flow instruction
-    bool taken = false;
-    if (!decoded.isValid ||
-        !(decoded.hasJump || decoded.hasRelativeJump || decoded.hasReturn || decoded.isRst || decoded.isDjnz))
-        return false;
-
-    // Identify the control flow type and target address
-    if (decoded.isRst)
-    {
-        taken = true;
-        target = decoded.jumpAddr;
-        type = Z80CFType::RST;
-    }
-    else if (decoded.isDjnz)
-    {
-        taken = ((z80->b - 1) != 0);
-        target = decoded.relJumpAddr;
-        type = Z80CFType::DJNZ;
-    }
-    else if (decoded.hasReturn)
-    {
-        taken = true;
-        target = decoded.returnAddr;
-        type = decoded.opcode.mnem && strstr(decoded.opcode.mnem, "reti") ? Z80CFType::RETI : Z80CFType::RET;
-    }
-    else if (decoded.hasJump && !decoded.hasRelativeJump)
-    {
-        if (decoded.hasCondition)
-        {
-            // Use annotation to determine if the jump is taken
-            std::string ann = disasm->getCommandAnnotation(decoded, regs);
-            taken = (ann.find("jump") != std::string::npos || ann.find("Calling") != std::string::npos);
-        }
-        else
-        {
-            taken = true;
-        }
-        target = decoded.jumpAddr;
-        type = (decoded.opcode.mnem && strstr(decoded.opcode.mnem, "call")) ? Z80CFType::CALL : Z80CFType::JP;
-    }
-    else if (decoded.hasRelativeJump)
-    {
-        if (decoded.hasCondition)
-        {
-            // Use annotation to determine if the relative jump is taken
-            std::string ann = disasm->getCommandAnnotation(decoded, regs);
-            taken = (ann.find("jump") != std::string::npos || ann.find("Looping") != std::string::npos);
-        }
-        else
-        {
-            taken = true;
-        }
-        target = decoded.relJumpAddr;
-        type = Z80CFType::JR;
+        decoded = Z80ControlFlowDecoder::Decode(
+            buffer_bytes, address, z80->f, z80->b, z80->sp,
+            z80->hl, z80->ix, z80->iy, memory, cfResult);
     }
     else
     {
-        taken = false;
+        // Read instruction bytes (max 4 for Z80)
+        uint8_t buffer_bytes[4];
+        for (int i = 0; i < 4; ++i)
+            buffer_bytes[i] = memory->DirectReadFromZ80Memory(address + i);
+
+        decoded = Z80ControlFlowDecoder::Decode(
+            buffer_bytes, address, z80->f, z80->b, z80->sp,
+            z80->hl, z80->ix, z80->iy, memory, cfResult);
+
+        if (decoded)
+        {
+            _lastDecodedPC = address;
+            _lastDecodeResult = cfResult;
+        }
     }
-    if (!taken)
+
+    if (!decoded || !cfResult.taken)
         return false;
 
+    // Read the instruction bytes for storage
+    uint8_t instr_bytes[4];
+    for (int i = 0; i < 4; ++i)
+        instr_bytes[i] = memory->DirectReadFromZ80Memory(address + i);
+
     // Gather current bank mapping for all 4 Z80 banks
+    std::array<Z80BankInfo, 4> banks;
     for (int i = 0; i < 4; ++i)
     {
         Z80BankInfo bi;
@@ -654,10 +496,12 @@ bool CallTraceBuffer::LogIfControlFlow(EmulatorContext* context, Memory* memory,
         bi.page_num = bi.is_rom ? memory->GetROMPageForBank(i) : memory->GetRAMPageForBank(i);
         banks[i] = bi;
     }
-    sp = z80->sp;
+
+    uint16_t sp = z80->sp;
 
     // If this is a return instruction, extract the top 3 values from the stack
-    if (type == Z80CFType::RET || type == Z80CFType::RETI)
+    std::array<uint16_t, 3> stack_top = {0, 0, 0};
+    if (cfResult.type == Z80CFType::RET || cfResult.type == Z80CFType::RETI)
     {
         uint16_t stackptr = z80->sp;
         for (int i = 0; i < 3; ++i)
@@ -667,18 +511,16 @@ bool CallTraceBuffer::LogIfControlFlow(EmulatorContext* context, Memory* memory,
             stack_top[i] = (hi << 8) | lo;
         }
     }
-    else
-    {
-        stack_top = {0, 0, 0};
-    }
 
     // Create and populate the control flow event
     Z80ControlFlowEvent ev;
     ev.m1_pc = address;
-    ev.target_addr = target;
-    ev.opcode_bytes = decoded.instructionBytes;
+    ev.target_addr = cfResult.target_addr;
+    ev.opcode_len = cfResult.instruction_len;
+    for (uint8_t i = 0; i < cfResult.instruction_len && i < 4; ++i)
+        ev.opcode_bytes[i] = instr_bytes[i];
     ev.flags = z80->f;
-    ev.type = type;
+    ev.type = cfResult.type;
     ev.banks = banks;
     ev.sp = sp;
     ev.stack_top = stack_top;

@@ -1,7 +1,7 @@
 #pragma once
 #include "stdafx.h"
 
-#include "debugger/disassembler/z80disasm.h"
+#include "debugger/disassembler/z80cfdecoder.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -66,7 +66,8 @@ struct Z80ControlFlowEvent
 {
     uint16_t m1_pc;                     // Address of the instruction being executed (PC at M1 cycle)
     uint16_t target_addr;               // The resolved jump/call/return address (where control will go)
-    std::vector<uint8_t> opcode_bytes;  // Full instruction bytes (including prefixes and operands)
+    std::array<uint8_t, 4> opcode_bytes = {};  // Full instruction bytes (fixed-size, max 4 bytes for Z80)
+    uint8_t opcode_len = 0;             // Number of valid bytes in opcode_bytes (1-4)
     uint8_t flags;                      // Z80 F register (flags) at the time of execution
     Z80CFType type;                     // Type of control flow instruction (JP, JR, CALL, RST, RET, RETI, DJNZ)
     std::array<Z80BankInfo, 4> banks;   // Mapping for all 4 Z80 banks (0-3): ROM/RAM and page number
@@ -80,7 +81,7 @@ struct Z80ControlFlowEvent
     bool operator==(const Z80ControlFlowEvent& rhs) const
     {
         return m1_pc == rhs.m1_pc && target_addr == rhs.target_addr && type == rhs.type && sp == rhs.sp &&
-               opcode_bytes == rhs.opcode_bytes && banks == rhs.banks;
+               opcode_len == rhs.opcode_len && opcode_bytes == rhs.opcode_bytes && banks == rhs.banks;
     }
 };
 
@@ -109,6 +110,23 @@ struct EventKey
     {
         return m1_pc == rhs.m1_pc && target_addr == rhs.target_addr && opcode_len == rhs.opcode_len &&
                opcode_bytes_packed == rhs.opcode_bytes_packed && type == rhs.type && banks == rhs.banks;
+    }
+
+    /// @brief Construct an EventKey from a Z80ControlFlowEvent (using fixed-size array)
+    static EventKey FromEvent(const Z80ControlFlowEvent& ev)
+    {
+        EventKey key{};
+        key.m1_pc = ev.m1_pc;
+        key.target_addr = ev.target_addr;
+        key.type = ev.type;
+        key.banks = ev.banks;
+        key.opcode_len = ev.opcode_len;
+        if (key.opcode_len > 0)
+        {
+            memcpy(&key.opcode_bytes_packed, ev.opcode_bytes.data(),
+                   std::min<size_t>(key.opcode_len, sizeof(key.opcode_bytes_packed)));
+        }
+        return key;
     }
 };
 
@@ -182,6 +200,10 @@ private:
     static constexpr size_t kColdMapLimit = 100;
     std::unordered_map<EventKey, std::pair<size_t, std::list<EventKey>::iterator>> _coldMap;
     std::list<EventKey> _coldLRU;
+
+    // Same-PC cache: avoids re-decoding the identical instruction in tight loops
+    uint16_t _lastDecodedPC = 0xFFFF;         ///< PC of the last decoded instruction (0xFFFF = invalid)
+    Z80ControlFlowResult _lastDecodeResult;   ///< Cached decode result for _lastDecodedPC
 
     static const char* Z80CFTypeToString(Z80CFType type)
     {
