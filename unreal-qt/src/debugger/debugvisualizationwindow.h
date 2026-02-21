@@ -56,6 +56,7 @@ private slots:
     void onCallTraceToggled(bool checked);
     void onOpcodeProfilerToggled(bool checked);
     void onResetCountersClicked();
+    void onDumpVizDataClicked();
 
 signals:
     void executeInMainThread();
