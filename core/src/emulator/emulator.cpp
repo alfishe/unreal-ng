@@ -748,6 +748,7 @@ void Emulator::Resume(bool broadcast)
 
     _stopRequested = false;
     _isPaused = false;
+    ResetLineStepAnchor();  // Full-speed run invalidates line-step anchor
     // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
 
     // Note: Don't unconditionally set _isRunning = true here.
@@ -1196,6 +1197,7 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
     if (IsRunning() && !IsPaused())
@@ -1243,6 +1245,7 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
     if (IsRunning() && !IsPaused())
@@ -1292,6 +1295,7 @@ void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 void Emulator::RunFrame(bool skipBreakpoints)
 {
     CancelPendingStepOver();
+    ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
     if (IsRunning() && !IsPaused())
@@ -1458,6 +1462,7 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 {
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
     if (IsRunning() && !IsPaused())
@@ -1593,17 +1598,39 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
     bool int_occurred = false;
     if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
 
-    // Anti-drift strategy: calculate absolute target t-state position
-    // Remember current position within scanline and advance by exactly N scanlines
-    unsigned posInScanline = z80.t % config.t_line;
-    unsigned targetT = z80.t + (count * config.t_line);
+    const unsigned t_line = config.t_line;
 
-    // Adjust target so we stop at the same position within the target scanline
-    unsigned targetPosInScanline = targetT % config.t_line;
-    if (targetPosInScanline > posInScanline)
+    // Anti-drift strategy: persistent anchor offset within scanline.
+    // On the first line-step, capture our horizontal position within the scanline.
+    // All subsequent steps target the same offset, so even though Z80 opcodes
+    // overshoot by 0–19 t-states, the TARGET never drifts — only the single-step
+    // landing jitters by at most one opcode width.
+    if (_lineStepAnchorOffset < 0)
     {
-        targetT -= (targetPosInScanline - posInScanline);
+        _lineStepAnchorOffset = static_cast<int>(z80.t % t_line);
     }
+
+    const unsigned anchor = static_cast<unsigned>(_lineStepAnchorOffset);
+
+    // Calculate the ideal target (where we'd land with infinite resolution)
+    unsigned idealT = z80.t + count * t_line;
+
+    // Find the two anchor-aligned positions that bracket idealT
+    unsigned anchorBefore = (idealT / t_line) * t_line + anchor;
+    if (anchorBefore > idealT)
+        anchorBefore -= t_line;
+    unsigned anchorAfter = anchorBefore + t_line;
+
+    // Pick whichever anchor point is closest to the ideal target
+    unsigned targetT;
+    if (idealT - anchorBefore <= anchorAfter - idealT)
+        targetT = anchorBefore;
+    else
+        targetT = anchorAfter;
+
+    // Safety: target must advance past current position
+    if (targetT <= z80.t)
+        targetT += t_line;
 
     while (z80.t < targetT && !_stopRequested)
     {
@@ -1629,6 +1656,11 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
     messageCenter.Post(NC_SCANLINE_BOUNDARY);
+}
+
+void Emulator::ResetLineStepAnchor()
+{
+    _lineStepAnchorOffset = -1;
 }
 
 void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)
