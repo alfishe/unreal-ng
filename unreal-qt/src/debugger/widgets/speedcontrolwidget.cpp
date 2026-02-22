@@ -25,15 +25,10 @@ static const std::vector<PresetConfig>& getPresets()
         { "5 fps",        StepType::Frame,      200,    0,    0,    0,   1,  0,  1 },
         { "1 fps",        StepType::Frame,     1000,    0,    0,    0,   1,  0,  1 },
         { "1 frame",      StepType::Frame,        0,   10, 5000,   10,   1,  0,  1 },
-        { "1/2 frame",    StepType::TStates,      0,   10, 5000,   10,   1,  0,  2 },
         { "100 lines",    StepType::TStates,      0,   10, 5000,   10,   0,100,  1 },
         { "10 lines",     StepType::TStates,      0,    1, 5000,    1,   0, 10,  1 },
         { "1 line",       StepType::TStates,      0,    1, 5000,    1,   0,  1,  1 },
-        { "1/2 line",     StepType::TStates,      0,    1, 5000,    1,   0,  1,  2 },
-        { "1/4 line",     StepType::TStates,      0,    1, 5000,    1,   0,  1,  4 },
-        { "1/8 line",     StepType::TStates,      0,    1, 5000,    1,   0,  1,  8 },
-        { "1/16 line",    StepType::TStates,      0,    1, 5000,    1,   0,  1, 16 },
-        { "1 T",          StepType::TStates,      0,    1, 5000,    1,   0,  0,  1 },  // special: 1 T-state
+        { "1 Op",         StepType::Opcodes,      0,    1, 5000,    1,   0,  1,  1 },  // 1 Opcode (lineNum=cycles)
     };
 
     return presets;
@@ -297,13 +292,21 @@ void SpeedControlWidget::executeStep()
             _emulator->RunFrame(true);  // skipBreakpoints = true
             break;
 
-        case StepType::TStates:
-        {
-            unsigned tstates = getTStatesForPreset(pos);
-            if (tstates > 0)
-                _emulator->RunTStates(tstates, true);  // skipBreakpoints = true
+        case StepType::Opcodes:
+            {
+                uint cycles = cfg.lineNum;
+                if (cycles > 0)
+                    _emulator->RunNCPUCycles(cycles, true);
+            }
             break;
-        }
+
+        case StepType::TStates:
+            {
+                unsigned tstates = getTStatesForPreset(pos);
+                if (tstates > 0)
+                    _emulator->RunTStates(tstates, true);  // skipBreakpoints = true
+            }
+            break;
     }
 }
 
@@ -322,14 +325,21 @@ bool SpeedControlWidget::isRunning() const
 
 void SpeedControlWidget::stop()
 {
-    if (_timer->isActive())
+    bool wasRunning = _timer->isActive();
+
+    if (wasRunning)
     {
         qDebug() << "SpeedControlWidget: Playback stopped";
         _timer->stop();
-        _playPauseButton->setChecked(false);
-        _playPauseButton->setText("\u25B6");  // ▶
-        emit runningChanged(false);
     }
+
+    // Always reset play/pause button to "play" state (▶)
+    // This handles both timer-driven and FullSpeed modes
+    _playPauseButton->setChecked(false);
+    _playPauseButton->setText("\u25B6");  // ▶
+
+    if (wasRunning)
+        emit runningChanged(false);
 }
 
 const std::vector<PresetConfig>& SpeedControlWidget::presets()
@@ -441,7 +451,10 @@ void SpeedControlWidget::onPlayPauseClicked()
         {
             // Full speed — just resume
             if (_emulator && _emulator->IsPaused())
+            {
                 _emulator->Resume();
+                emit runningChanged(true);
+            }
             return;
         }
 
@@ -507,17 +520,29 @@ void SpeedControlWidget::updateLabel()
     const PresetConfig& cfg = presets[pos];
     QString text = cfg.label;
 
-    // Append computed T-state count for sub-frame presets
-    if (_emulator && cfg.stepType == StepType::TStates)
+    if (_emulator)
     {
-        unsigned tstates = getTStatesForPreset(pos);
-        text += QString(" (%1T)").arg(tstates);
-    }
-    else if (_emulator && cfg.stepType == StepType::Frame)
-    {
-        auto* ctx = _emulator->GetContext();
-        unsigned F = ctx->config.frame;
-        text += QString(" (%1T)").arg(F);
+        switch (cfg.stepType)
+        {
+            case StepType::FullSpeed:
+                break;
+            case StepType::Opcodes:
+                text += QString(" (4..23T)");
+                break;
+            case StepType::TStates:
+                {
+                    unsigned tstates = getTStatesForPreset(pos);
+                    text += QString(" (%1T)").arg(tstates);
+                }
+                break;
+            case StepType::Frame:
+                {
+                    auto* ctx = _emulator->GetContext();
+                    unsigned F = ctx->config.frame;
+                    text += QString(" (%1T)").arg(F);
+                }
+                break;
+        }
     }
 
     _label->setText(text);

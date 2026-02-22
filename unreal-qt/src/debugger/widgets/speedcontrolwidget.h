@@ -19,6 +19,7 @@ enum class StepType
 {
     FullSpeed,   // Resume normal execution
     Frame,       // Call RunFrame()
+    Opcodes,     // Call RunOpcodes(N)
     TStates      // Call RunTStates(N)
 };
 

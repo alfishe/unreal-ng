@@ -774,17 +774,17 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
         }
         else
         {
-            std::string error = StringHelper::Format("Incorrect fromTstate: %d and/or toTstate: %d. Tolerance: %d",
-                                                     fromTstate, toTstate, MAX_FRAME_DURATION_TOLERANCE);
-            throw std::logic_error(error);
+            MLOGERROR("Screen::DrawPeriod - Incorrect fromTstate: %d and/or toTstate: %d. Tolerance: %d. Skipping period.",
+                      fromTstate, toTstate, MAX_FRAME_DURATION_TOLERANCE);
+            return;
         }
     }
 
     if (fromTstate >= maxFrameDuration || toTstate >= maxFrameDuration)
     {
-        std::string error = StringHelper::Format("Incorrect fromTstate: %d and/or toTstate: %d. MAX_FRAME_DURATION: %d",
-                                                 fromTstate, toTstate, maxFrameDuration);
-        throw std::logic_error(error);
+        MLOGERROR("Screen::DrawPeriod - Incorrect fromTstate: %d and/or toTstate: %d. MAX_FRAME_DURATION: %d. Skipping period.",
+                  fromTstate, toTstate, maxFrameDuration);
+        return;
     }
 
     // Do not capture previously handled t-state (at the end of previous period. i.e. (from: to]

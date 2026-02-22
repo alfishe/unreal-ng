@@ -1,7 +1,7 @@
 #include "stackwidget.h"
 
+#include "debugger/debuggerwindow.h"
 #include "common/stringhelper.h"
-#include "debuggerwindow.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
