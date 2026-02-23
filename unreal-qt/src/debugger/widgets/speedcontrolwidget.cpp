@@ -25,9 +25,9 @@ static const std::vector<PresetConfig>& getPresets()
         { "5 fps",        StepType::Frame,      200,    0,    0,    0,   1,  0,  1 },
         { "1 fps",        StepType::Frame,     1000,    0,    0,    0,   1,  0,  1 },
         { "1 frame",      StepType::Frame,        0,   10, 5000,   10,   1,  0,  1 },
-        { "100 lines",    StepType::TStates,      0,   10, 5000,   10,   0,100,  1 },
-        { "10 lines",     StepType::TStates,      0,    1, 5000,    1,   0, 10,  1 },
-        { "1 line",       StepType::TStates,      0,    1, 5000,    1,   0,  1,  1 },
+        { "100 lines",    StepType::Scanlines,    0,   10, 5000,   10,   0,100,  1 },
+        { "10 lines",     StepType::Scanlines,    0,    1, 5000,    1,   0, 10,  1 },
+        { "1 line",       StepType::Scanlines,    0,    1, 5000,    1,   0,  1,  1 },
         { "1 Op",         StepType::Opcodes,      0,    1, 5000,    1,   0,  1,  1 },  // 1 Opcode (lineNum=cycles)
     };
 
@@ -307,6 +307,17 @@ void SpeedControlWidget::executeStep()
                     _emulator->RunTStates(tstates, true);  // skipBreakpoints = true
             }
             break;
+
+        case StepType::Scanlines:
+            {
+                // Drift-free line stepping: use RunNScanlines which maintains
+                // a persistent anchor offset preventing horizontal drift.
+                const PresetConfig& lineCfg = presets[pos];
+                unsigned lineCount = static_cast<unsigned>(lineCfg.lineNum);
+                if (lineCount > 0)
+                    _emulator->RunNScanlines(lineCount, true);  // skipBreakpoints = true
+            }
+            break;
     }
 }
 
@@ -533,6 +544,13 @@ void SpeedControlWidget::updateLabel()
                 {
                     unsigned tstates = getTStatesForPreset(pos);
                     text += QString(" (%1T)").arg(tstates);
+                }
+                break;
+            case StepType::Scanlines:
+                {
+                    auto* ctx = _emulator->GetContext();
+                    unsigned L = ctx->config.t_line;
+                    text += QString(" (%1T)").arg(L * cfg.lineNum);
                 }
                 break;
             case StepType::Frame:
