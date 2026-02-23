@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/">
+    <file>checkmark_white.svg</file>
+    <file>checkmark_black.svg</file>
+    <file>eye_dark.svg</file>
+    <file>eye_light.svg</file>
+  </qresource>
+</RCC>
