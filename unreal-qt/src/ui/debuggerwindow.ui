@@ -169,7 +169,7 @@
   <customwidget>
    <class>RegistersWidget</class>
    <extends>QWidget</extends>
-   <header>debugger/registerswidget.h</header>
+   <header>debugger/widgets/registerswidget.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>
@@ -181,13 +181,13 @@
   <customwidget>
    <class>MemoryPagesWidget</class>
    <extends>QWidget</extends>
-   <header>debugger/memorypageswidget.h</header>
+   <header>debugger/widgets/memorypageswidget.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>
    <class>StackWidget</class>
    <extends>QWidget</extends>
-   <header>debugger/stackwidget.h</header>
+   <header>debugger/widgets/stackwidget.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>
