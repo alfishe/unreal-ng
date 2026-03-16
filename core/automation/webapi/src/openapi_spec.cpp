@@ -130,6 +130,10 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
     tagInterpreter["name"] = "Interpreter Control";
     tagInterpreter["description"] = "Python and Lua interpreter management";
     tags.append(tagInterpreter);
+    Json::Value tagLogging;
+    tagLogging["name"] = "Logging Control";
+    tagLogging["description"] = "Module logger configuration and level management";
+    tags.append(tagLogging);
 
     spec["tags"] = tags;
 
@@ -149,6 +153,7 @@ void EmulatorAPI::getOpenAPISpec(const HttpRequestPtr& req,
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_debug.inc"
 #include "openapi/openapi_profiler.inc"
+#include "openapi/openapi_logging.inc"
 
     spec["paths"] = paths;
 

@@ -145,20 +145,20 @@ void WebAPIClient::onEnableSharedMemoryReply()
         return;
     }
 
-    // Construct shared memory name from emulator ID
-    // The emulator uses the last 12 characters of the UUID for the SHM name
-    // Format: /zxspectrum_memory-{short_id} (POSIX) or Local\\zxspectrum_memory-{short_id} (Windows)
+    // Construct monitoring shared memory name from emulator ID
+    // The MonitoringManager uses the last 12 characters of the UUID for the SHM name
+    // Format: /unreal_monitor_{short_id} (POSIX) or Local\\unreal_monitor_{short_id} (Windows)
     QString shortId = emulatorId.right(12).remove('-');
     
 #ifdef _WIN32
-    QString shmName = QString("Local\\zxspectrum_memory-%1").arg(shortId);
+    QString shmName = QString("Local\\unreal_monitor_%1").arg(shortId);
 #else
-    QString shmName = QString("/zxspectrum_memory-%1").arg(shortId);
+    QString shmName = QString("/unreal_monitor_%1").arg(shortId);
 #endif
     
-    // Size: MAX_PAGES * PAGE_SIZE = 323 * 16384 = 5,291,008 bytes
-    // MAX_PAGES = 256 (RAM) + 2 (cache) + 1 (misc) + 64 (ROM) = 323
-    qint64 shmSize = 323 * 16384;  
+    // Size is determined by MonitoringManager (manifest header describes the layout)
+    // Pass 0 — ScreenViewer will read the actual size from the SHM region
+    qint64 shmSize = 0;
 
     qDebug() << "WebAPIClient: Shared memory enabled for" << emulatorId << "at" << shmName;
     emit sharedMemoryEnabled(emulatorId, shmName, shmSize);

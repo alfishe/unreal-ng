@@ -78,6 +78,7 @@ public:
     }
     SoundChip_AY8910* getAYChip(int index) const;
     int getAYChipCount() const;
+    bool wasTurboSoundChip1Selected() const;
     bool isMuted() const
     {
         return _mute;

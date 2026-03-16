@@ -30,6 +30,7 @@ constexpr const char* const kRecording = "recording";
 constexpr const char* const kSharedMemory = "sharedmemory";
 constexpr const char* const kOpcodeProfiler = "opcodeprofiler";
 
+
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
 constexpr const char* const kMemoryTrackingAlias = "memtrack";
@@ -41,6 +42,7 @@ constexpr const char* const kScreenHQAlias = "vhq";
 constexpr const char* const kRecordingAlias = "rec";
 constexpr const char* const kSharedMemoryAlias = "shm";
 constexpr const char* const kOpcodeProfilerAlias = "op";
+
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -57,6 +59,7 @@ constexpr const char* const kSharedMemoryDesc =
     "Export emulator memory via shared memory for external tool access. Disable for benchmarking/headless usage.";
 constexpr const char* const kOpcodeProfilerDesc =
     "Track Z80 opcode execution stats and trace for debugging and crash forensics.";
+
 
 // Categories
 constexpr const char* const kCategoryDebug = "debug";

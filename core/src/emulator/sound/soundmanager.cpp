@@ -160,6 +160,14 @@ int SoundManager::getAYChipCount() const
     return _turboSound->getChipCount();
 }
 
+bool SoundManager::wasTurboSoundChip1Selected() const
+{
+    if (!_turboSound)
+        return false;
+
+    return _turboSound->wasChip1Selected();
+}
+
 /// endregion </Methods>
 
 /// region <Emulation events>

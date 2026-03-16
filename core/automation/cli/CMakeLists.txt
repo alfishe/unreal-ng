@@ -24,6 +24,7 @@ set(SOURCES
     src/commands/cli-processor-capture.cpp
     src/commands/cli-processor-profiler.cpp
     src/commands/cli-processor-keyboard.cpp
+    src/commands/cli-processor-logging.cpp
 )
 
 # Create the library

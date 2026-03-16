@@ -2140,6 +2140,91 @@ Commands to configure emulator instance behavior and performance characteristics
 
 ---
 
+### 8. Logging Control
+
+Commands to configure the module logger for the selected emulator instance. The logger supports per-module enable/disable, per-module log level overrides, and submodule bitmask filtering. All module and level names are served from `ModuleLogger` (single source of truth).
+
+#### 8.1 Logging Command Summary
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `logging` | | Display full logger state: global level, per-module enable, level, submodule mask | ✅ Implemented |
+| `logging level <level>` | `trace\|debug\|info\|warning\|error\|none` | Set global log level | ✅ Implemented |
+| `logging module <name>` | `<module-name>` | Show state for a single module (enabled, level, mask) | ✅ Implemented |
+| `logging module <name> <on\|off>` | `<module-name> on\|off` | Enable or disable a specific module | ✅ Implemented |
+| `logging module <name> level <level>` | `<module-name> <level\|inherit>` | Set per-module level override. Use `inherit` to follow global level. | ✅ Implemented |
+| `logging module <name> mask <value>` | `<module-name> <0x0000–0xFFFF>` | Set submodule bitmask (bit per submodule, 0xFFFF = all) | ✅ Implemented |
+| `logging modules` | | List all available module names (API-style lowercase) | ✅ Implemented |
+| `logging levels` | | List all available level names (API-style lowercase) | ✅ Implemented |
+
+#### 8.2 Module Names
+
+Module names are lowercase identifiers derived from `ModuleLogger::GetModuleApiName()`:
+
+| ID | API Name | Display Name | Submodules |
+| :--- | :--- | :--- | :--- |
+| 1 | `core` | Core | Generic, Config, Files, Mainloop |
+| 2 | `z80` | Z80 | Generic, M1, Calls, Jumps, Interrupts, Bit, Arithmetics, Stack, Registers, I/O |
+| 3 | `memory` | Memory | Generic, ROM, RAM |
+| 4 | `io` | I/O | Generic, In, Out, Keyboard, Tape, Kempston joystick, Kempston mouse |
+| 5 | `disk` | Disk | Generic, Floppy, HDD |
+| 6 | `video` | Video | Generic, ULA, ULA+, Misc., ZX-Next, Profi, ATM, TSConf |
+| 7 | `sound` | Sound | Generic, Beeper, AY, TurboSound, GS, SAA, Covox, PWM |
+| 8 | `dma` | DMA | Generic, Z80DMA, TSConf |
+| 9 | `loader` | Loader | Generic, SNA, Z80, TAP, TZX, SCL, TRD, FDI |
+| 10 | `debug` | Debugger | — |
+| 11 | `disassembler` | Disassembler | — |
+| 12 | `recording` | Recording | Manager, Encoder |
+
+#### 8.3 Log Level Names
+
+Level names (lowest to highest priority): `trace`, `debug`, `info`, `warning`, `error`, `none`.
+
+The special level `inherit` (or numeric `0`) clears a per-module override so the module uses the global level.
+
+#### 8.4 Implementation Details
+
+**Data Source**:
+- Module/level dictionaries centralized in `ModuleLogger` class (`modulelogger.h`)
+- Public getter API: `GetModuleName(id)`, `GetModuleApiName(id)`, `GetLevelName(id)`, `GetLevelApiName(id)`
+- Reverse lookups: `ModuleNameToId(name)`, `LevelNameToId(name)`
+- Constants: `GetModuleCount()`, `GetLevelCount()`
+
+**Logger State**:
+- `LoggerSettings` struct holds: module enable bitmask (`.modules`), submodule masks (`.submodules[MODULE_COUNT]`), per-module levels (`.moduleLevels[MODULE_COUNT]`)
+- Global level via `ModuleLogger::GetLevel()` / `SetLoggingLevel()`
+- Per-module level via `GetModuleLogLevel()` / `SetModuleLogLevel()`
+- Module enable/mask via `SetModuleState(module, enabled, mask)`
+
+**Example Usage**:
+
+```bash
+# Show full logging state
+> logging
+
+# Set global level to debug
+> logging level debug
+
+# Enable only Z80 module at trace level
+> logging module z80 on
+> logging module z80 level trace
+
+# Disable all video submodules except ULA
+> logging module video mask 0x0003
+
+# List available modules and levels
+> logging modules
+> logging levels
+```
+
+**Interface Implementations**:
+- CLI: `CLIProcessor::HandleLogging()`
+- WebAPI: `GET/PUT /api/v1/emulator/{id}/logging/...`
+- Python: `emu.logging_state()`, `emu.logging_set_level()`, `emu.logging_set_module()`, etc.
+- Lua: `logging_state()`, `logging_set_level()`, `logging_set_module()`, etc.
+
+---
+
 ## Future Capabilities
 
 The following commands and interfaces are planned for future implementation. This section documents the roadmap for expanding the ECI to support more advanced debugging, analysis, and automation workflows.

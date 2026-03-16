@@ -145,6 +145,7 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_BINARY_DIR}"  # For Qt-generated headers when built from root
+    "${ROOT_DIR}/core/src"         # For monitoring manifest.h (shared memory layout)
 )
 
 # Debug configuration

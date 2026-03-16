@@ -18,6 +18,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "emulator/monitoring/monitoringmanager.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "loaders/snapshot/loader_sna.h"
 
@@ -221,6 +222,13 @@ bool Emulator::Init()
         }
     }
 
+    // Create monitoring manager (feature-gated, initialized later if enabled)
+    if (result)
+    {
+        _context->pMonitoringManager = new MonitoringManager(_context);
+        MLOGDEBUG("Emulator::Init - monitoring manager created");
+    }
+
     /// region <Sanity checks>
 
     if (!_context)
@@ -320,6 +328,21 @@ bool Emulator::Init()
             _context->pSoundManager->UpdateFeatureCache();
         }
 
+        // Initialize monitoring if sharedmemory feature is enabled (single IPC mechanism)
+        if (_context->pMonitoringManager && _featureManager &&
+            _featureManager->isEnabled(Features::kSharedMemory))
+        {
+            if (_context->pMonitoringManager->initialize())
+            {
+                MLOGINFO("Emulator::Init - monitoring manager initialized (SHM: %s)",
+                         _context->pMonitoringManager->shmName().c_str());
+            }
+            else
+            {
+                MLOGWARNING("Emulator::Init - monitoring manager initialization failed");
+            }
+        }
+
         // Ensure all logger messages displayed
         _context->pModuleLogger->Flush();
 
@@ -377,6 +400,14 @@ void Emulator::ReleaseNoGuard()
         
         _pendingStepOverBpId = 0;
         _stepOverDeactivatedBps.clear();
+    }
+
+    // Shutdown and release monitoring manager
+    if (_context->pMonitoringManager)
+    {
+        _context->pMonitoringManager->shutdown();
+        delete _context->pMonitoringManager;
+        _context->pMonitoringManager = nullptr;
     }
 
     // Release debug manager (and related components)

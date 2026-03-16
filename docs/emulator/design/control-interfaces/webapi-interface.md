@@ -784,6 +784,41 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/macro \
 | `delay_frames` | number | No | 2 | Frames between characters |
 | `tokenized` | boolean | No | false | Enable K-mode token for first char |
 
+## Logging Control
+
+Control the module logger for a specific emulator instance.
+
+**See**: [command-interface.md § 8](./command-interface.md) for full command reference.
+
+### Get Logger State
+```
+GET /api/v1/emulator/{id}/logging
+```
+
+Returns: global level, per-module enable/level/mask for all 12 modules.
+
+### Set Global Level
+```
+PUT /api/v1/emulator/{id}/logging/level
+Content-Type: application/json
+
+{"level": "debug"}
+```
+
+Valid levels: `trace`, `debug`, `info`, `warning`, `error`, `none`.
+
+### Set Module State
+```
+PUT /api/v1/emulator/{id}/logging/module/{name}
+Content-Type: application/json
+
+{"enabled": true, "level": "trace", "submodule_mask": "0xFFFF"}
+```
+
+All fields optional; only provided fields are updated.
+
+**Implementation**: `logging_api.cpp` – registered as `LoggingApiController`.
+
 ## Planned Endpoints (Not Yet Implemented)
 
 ### Disassembly

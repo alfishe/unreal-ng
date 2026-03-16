@@ -561,9 +561,6 @@ void Core::CPUFrameCycle()
     MLOGINFO("tState counter after the frame: %d", t);
 
     AdjustFrameCounters();
-
-    // Sync memory content to disk (if shared memory mapping is enabled)
-    _memory->SyncToDisk();
 }
 
 /// Perform corrections after each frame rendered

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <cmath>
 #include "common/sound/filters/filter_dc.h"
@@ -333,6 +334,10 @@ protected:
     // Current AY tick
     size_t _tick;
 
+    // Per-register activity tracking for monitoring
+    uint8_t _regWriteCounts[16] = {};
+    uint16_t _regReadMask = 0;
+
     // Raw 3-channel samples
     double _left[3];
     double _right[3];
@@ -405,6 +410,11 @@ public:
     const NoiseGenerator& getNoiseGenerator() const { return _noiseGenerator; }
     const EnvelopeGenerator& getEnvelopeGenerator() const { return _envelopeGenerator; }
     uint8_t getCurrentRegister() const { return _currentRegister; }
+
+    // Activity counters for monitoring (per-frame)
+    const uint8_t* getRegWriteCounts() const { return _regWriteCounts; }
+    uint16_t getRegReadMask() const { return _regReadMask; }
+    void resetActivityCounters() { std::memset(_regWriteCounts, 0, 16); _regReadMask = 0; }
     /// endregion </Debug access methods>
 
     /// region <PortDevice interface methods>

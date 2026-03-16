@@ -9,6 +9,10 @@ void SoundChip_TurboSound::handleFrameStart()
     _ayPLL = 0.0;
     _ayBufferIndex = 0;
 
+    // Reset per-frame activity counters for monitoring
+    _chip0->resetActivityCounters();
+    _chip1->resetActivityCounters();
+
     // Initialize render buffers
     memset(_ayBuffer, 0x00, _ayAudioDescriptor.memoryBufferSizeInBytes);
 }
@@ -135,6 +139,7 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
                         break;
                     case 0xFE:
                         _currentChip = _chip1;
+                        _chip1Selected = true;
                         break;
                     default:
                         break;

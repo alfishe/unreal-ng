@@ -818,6 +818,37 @@ emu:load_snapshot("save.z80")
 -- Scripts automatically resumed
 ```
 
+### Logging Control
+
+> **Status**: ✅ Implemented (2026-03)
+
+Query and configure the module logger at runtime. See [command-interface.md § 8](./command-interface.md) for full reference.
+
+```lua
+-- Get full logger state (global level, all modules)
+local state = logging_state()
+-- state.global_level = "debug"
+-- state.modules[1].name = "core"
+-- state.modules[1].enabled = true
+-- state.modules[1].level = "inherit"
+-- state.modules[1].submodule_mask = 0xFFFF
+
+-- Set global log level
+logging_set_level("debug")
+
+-- Enable/disable a module
+logging_set_module("z80", true)    -- enable
+logging_set_module("video", false) -- disable
+
+-- Set per-module level override
+logging_set_module_level("z80", "trace")
+logging_set_module_level("z80", "inherit") -- clear override
+
+-- List available module and level names
+local modules = logging_modules()  -- → {"core", "z80", "memory", ...}
+local levels = logging_levels()    -- → {"trace", "debug", "info", ...}
+```
+
 ## See Also
 
 ### Interface Documentation

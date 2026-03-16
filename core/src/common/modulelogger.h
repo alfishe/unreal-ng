@@ -1,7 +1,9 @@
 #pragma once
 #include <cstring>
+#include <vector>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/ilogsink.h"
 #include "common/logger.h"
 #include "emulator/platform.h"
 #include "stdafx.h"
@@ -11,37 +13,57 @@
 
 // Write all Debug / Info logs if not under unit testing / benchmarking
 // Short-circuit evaluation: arguments only evaluated when logging is enabled at that level
-#define MLOGDEBUG(format, ...)                                          \
-    do                                                                  \
-    {                                                                   \
-        if (_logger->GetLevel() <= LoggerLevel::LogDebug)               \
-            _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+#define MLOGDEBUG(format, ...)                                                                      \
+    do                                                                                                \
+    {                                                                                                 \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, _SUBMODULE, LoggerLevel::LogDebug), 0))       \
+            _logger->Debug(_MODULE, _SUBMODULE, format, ##__VA_ARGS__);                                \
     } while (0)
-#define MLOGINFO(format, ...)                                          \
-    do                                                                 \
-    {                                                                  \
-        if (_logger->GetLevel() <= LoggerLevel::LogInfo)               \
-            _logger->Info(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+#define MLOGINFO(format, ...)                                                                         \
+    do                                                                                                \
+    {                                                                                                 \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, _SUBMODULE, LoggerLevel::LogInfo), 0))        \
+            _logger->Info(_MODULE, _SUBMODULE, format, ##__VA_ARGS__);                                 \
     } while (0)
-#define MLOGWARNING(format, ...)                                          \
-    do                                                                    \
-    {                                                                     \
-        if (_logger->GetLevel() <= LoggerLevel::LogWarning)               \
-            _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+#define MLOGWARNING(format, ...)                                                                      \
+    do                                                                                                \
+    {                                                                                                 \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, _SUBMODULE, LoggerLevel::LogWarning), 0))     \
+            _logger->Warning(_MODULE, _SUBMODULE, format, ##__VA_ARGS__);                              \
     } while (0)
-#define MLOGERROR(format, ...)                                          \
-    do                                                                  \
-    {                                                                   \
-        if (_logger->GetLevel() <= LoggerLevel::LogError)               \
-            _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__); \
+#define MLOGERROR(format, ...)                                                                        \
+    do                                                                                                \
+    {                                                                                                 \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, _SUBMODULE, LoggerLevel::LogError), 0))       \
+            _logger->Error(_MODULE, _SUBMODULE, format, ##__VA_ARGS__);                                \
     } while (0)
 #define MLOGEMPTY(...) _logger->EmptyLine(##__VA_ARGS__)
 
 // Macros with custom submodule
-#define MLOGDEBUG_SUBMODULE(submodule, format, ...) _logger->Debug(_MODULE, submodule, format, ##__VA_ARGS__)
-#define MLOGINFO_SUBMODULE(submodule, format, ...) _logger->Info(_MODULE, submodule, format, ##__VA_ARGS__)
-#define MLOGWARNING_SUBMODULE(submodule, format, ...) _logger->Warning(_MODULE, submodule, format, ##__VA_ARGS__)
-#define MLOGERROR_SUBMODULE(submodule, format, ...) _logger->Error(_MODULE, submodule, format, ##__VA_ARGS__)
+#define MLOGDEBUG_SUBMODULE(submodule, format, ...)                                                    \
+    do                                                                                                 \
+    {                                                                                                  \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, submodule, LoggerLevel::LogDebug), 0))         \
+            _logger->Debug(_MODULE, submodule, format, ##__VA_ARGS__);                                  \
+    } while (0)
+#define MLOGINFO_SUBMODULE(submodule, format, ...)                                                     \
+    do                                                                                                 \
+    {                                                                                                  \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, submodule, LoggerLevel::LogInfo), 0))          \
+            _logger->Info(_MODULE, submodule, format, ##__VA_ARGS__);                                   \
+    } while (0)
+#define MLOGWARNING_SUBMODULE(submodule, format, ...)                                                  \
+    do                                                                                                 \
+    {                                                                                                  \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, submodule, LoggerLevel::LogWarning), 0))       \
+            _logger->Warning(_MODULE, submodule, format, ##__VA_ARGS__);                                \
+    } while (0)
+#define MLOGERROR_SUBMODULE(submodule, format, ...)                                                    \
+    do                                                                                                 \
+    {                                                                                                  \
+        if (__builtin_expect(_logger->FastCheck(_MODULE, submodule, LoggerLevel::LogError), 0))         \
+            _logger->Error(_MODULE, submodule, format, ##__VA_ARGS__);                                  \
+    } while (0)
 #define MLOGEMPTY_SUBMODULE(submodule, ...) _logger->EmptyLine(submodule, ##__VA_ARGS__)
 
 // Backwards compatibility macros
@@ -138,8 +160,9 @@ struct LoggerSettings
     {
         // Indexed access array
         // Allow all modules logging by default
-        uint16_t submodules[12] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
-                                   0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+        uint16_t submodules[MODULE_COUNT] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+                                                   0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+                                                   0xFFFF};
 
         struct
         {
@@ -153,10 +176,14 @@ struct LoggerSettings
             uint16_t videoSubmodules;         // Video submodules on/off flags
             uint16_t dmaSubmodules;           // DMA submodules on/off flags
             uint16_t loaderSubmodules;        // Loader submodules on/off flags
-            uint16_t debuggerSubmodules;      // Memory submodules on/off flags
+            uint16_t debuggerSubmodules;      // Debugger submodules on/off flags
             uint16_t disassemblerSubmodules;  // Disassembler submodules on/off flags
+            uint16_t recordingSubmodules;     // Recording submodules on/off flags
         };
     };
+
+    // Per-module log level override. 0 = inherit global level.
+    uint8_t moduleLevels[MODULE_COUNT] = {0,0,0,0,0,0,0,0,0,0,0,0,0};
 };
 
 class LoggerSettingsModulePayload : public MessagePayload
@@ -191,14 +218,45 @@ class EmulatorContext;
 
 class ModuleLogger : public Observer
 {
+public:
+    /// region <Dictionaries> — single source of truth for module/level names
+
+    /// Display name for a module (e.g. "Core", "Z80"). Returns nullptr for invalid IDs.
+    static const char* GetModuleName(int moduleId);
+
+    /// API-style lowercase name (e.g. "core", "z80"). Returns nullptr for invalid/unknown IDs.
+    static const char* GetModuleApiName(int moduleId);
+
+    /// Display name for a log level (e.g. "Trace", "Debug"). Returns nullptr for invalid IDs.
+    static const char* GetLevelName(int levelId);
+
+    /// API-style lowercase level name (e.g. "trace", "debug"). Returns nullptr for invalid IDs.
+    static const char* GetLevelApiName(int levelId);
+
+    /// Resolve lowercase API module name to PlatformModulesEnum ID. Returns -1 if not found.
+    static int ModuleNameToId(const char* name);
+
+    /// Resolve lowercase API level name to LoggerLevel ID. Returns -1 if not found.
+    static int LevelNameToId(const char* name);
+
+    /// Number of addressable modules (MODULE_COUNT from platform.h).
+    static constexpr int GetModuleCount() { return MODULE_COUNT; }
+
+    /// Number of log levels (Unknown through None).
+    static constexpr int GetLevelCount() { return 7; }
+
+    /// endregion </Dictionaries>
+
+private:
     /// region <Constants>
 
-    static const char* LoggerLevelNames[6];
+    static const char* _moduleNames[MODULE_COUNT];
+    static const char* _moduleApiNames[MODULE_COUNT];
+    static const char* _levelNames[7];
+    static const char* _levelApiNames[7];
 
     static const char* ALL;
     static const char* NONE;
-
-    static const char* moduleNames[12];
 
     const char* submoduleCoreNames[4] = {"Generic", "Config", "Files", "Mainloop"};
 
@@ -246,6 +304,8 @@ protected:
     ModuleLoggerObserver* _observerInstance = nullptr;               // Observer class instance
     ModuleObserverObserverCallbackMethod _callbackMethod = nullptr;  // Class method
 
+    std::vector<ILogSink*> _sinks;  // Non-owning. Lifecycle managed by registering subsystem.
+
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -265,14 +325,62 @@ public:
     void TurnOffLoggingForModule(PlatformModulesEnum module, uint16_t submodule);
     void TurnOnLoggingForModule(PlatformModulesEnum module, uint16_t submodule);
     void SetLoggingLevel(LoggerLevel level);
+    void SetModuleLogLevel(PlatformModulesEnum module, LoggerLevel level);
+
+    /// Directly set module enable state and submodule mask (no OR/AND — exact assignment).
+    /// Used by WebAPI to set the precise desired state.
+    void SetModuleState(PlatformModulesEnum module, bool enabled, uint16_t submoduleMask)
+    {
+        if (module > MODULE_RECORDING) return;
+        if (enabled)
+            _settings.modules |= (1u << module);
+        else
+            _settings.modules &= ~(1u << module);
+        _settings.submodules[module] = submoduleMask;
+    }
+
     LoggerLevel GetLevel() const
     {
         return _level;
+    }
+    LoggerLevel GetModuleLogLevel(PlatformModulesEnum module) const
+    {
+        if (module > MODULE_RECORDING) return _level;
+        uint8_t ml = _settings.moduleLevels[module];
+        return (ml == 0) ? _level : static_cast<LoggerLevel>(ml);
+    }
+    const LoggerSettings& GetSettings() const { return _settings; }
+
+    /// Zero-cost gate: single inline check, branch-predicted not-taken.
+    /// Returns true only if logging is enabled for this module+submodule+level.
+    /// No function calls, no exceptions, no allocations — just bitmask ops.
+    inline bool FastCheck(PlatformModulesEnum module, uint16_t submodule,
+                          LoggerLevel level) const
+    {
+        if (_mute || _shutdown) return false;
+        // Per-module level: use moduleLevels[module] if set, else global _level
+        LoggerLevel effectiveLevel = _settings.moduleLevels[module]
+            ? static_cast<LoggerLevel>(_settings.moduleLevels[module])
+            : _level;
+        if (level < effectiveLevel) return false;
+        if (module > MODULE_RECORDING) return false;
+        if (!(_settings.modules & (1u << module))) return false;
+        return (_settings.submodules[module] & submodule) != 0;
     }
 
     void SetLoggerOut(ModuleLoggerOutCallback callback);
     void SetLoggerOut(ModuleLoggerObserver* instance, ModuleObserverObserverCallbackMethod callback);
     void ResetLoggerOut();
+
+    /// IPC sink management — sinks receive formatted messages.
+    /// Lifecycle of sinks is managed by the registering subsystem (e.g., MonitoringManager).
+    void AddSink(ILogSink* sink);
+    void RemoveSink(ILogSink* sink);
+
+    /// Serialize current settings into a compact binary blob for IPC.
+    /// Layout: { uint32_t modules(4), uint16_t submodules[12](24), uint8_t globalLevel(1), uint8_t moduleLevels[12](12) } = 41 bytes
+    /// Returns bytes written (41 on success, 0 if buffer too small).
+    size_t SerializeSettings(char* buf, size_t bufSize) const;
 
     /// endregion </Configuration methods>
 

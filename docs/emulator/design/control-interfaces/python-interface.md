@@ -456,6 +456,39 @@ status = emu.profilers_status_all()
 # }
 ```
 
+### Logging Control
+
+> **Status**: ✅ Implemented (2026-03)
+
+Query and configure the module logger at runtime. See [command-interface.md § 8](./command-interface.md) for full reference.
+
+```python
+# Get full logger state (global level, all modules)
+state = emu.logging_state()
+# Returns: {
+#     'global_level': 'debug',
+#     'modules': [
+#         {'name': 'core', 'enabled': True, 'level': 'inherit', 'submodule_mask': '0xFFFF'},
+#         ...
+#     ]
+# }
+
+# Set global log level
+emu.logging_set_level("debug")
+
+# Enable/disable a module
+emu.logging_set_module("z80", enabled=True)
+emu.logging_set_module("video", enabled=False)
+
+# Set per-module level override
+emu.logging_set_module_level("z80", "trace")
+emu.logging_set_module_level("z80", "inherit")  # clear override
+
+# List available module and level names
+modules = emu.logging_modules()  # → ["core", "z80", "memory", ...]
+levels = emu.logging_levels()    # → ["trace", "debug", "info", ...]
+```
+
 ### Enumerations
 
 ```python

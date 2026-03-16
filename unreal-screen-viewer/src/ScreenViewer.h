@@ -4,6 +4,8 @@
 #include <QTimer>
 #include <QImage>
 
+#include "emulator/monitoring/manifest.h"
+
 /**
  * @brief Widget for displaying ZX Spectrum screen from shared memory
  * 
@@ -109,6 +111,10 @@ private:
     QString _shmName;
     QString _emulatorId;
     bool _isAttached = false;
+
+    // Monitoring manifest state
+    uint32_t _memoryPagesOffset = 0;   // Byte offset to MEMORY_PAGES section data start
+    uint32_t _memoryPagesLength = 0;   // Total section length (header + page data)
 
     // Display state
     ScreenPage _currentPage = ScreenPage::Main;

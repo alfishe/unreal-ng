@@ -9,6 +9,7 @@
 #else
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -54,7 +55,7 @@ ScreenViewer::~ScreenViewer()
     detachFromSharedMemory();
 }
 
-void ScreenViewer::attachToSharedMemory(const QString& emulatorId, const QString& shmName, qint64 shmSize)
+void ScreenViewer::attachToSharedMemory(const QString& emulatorId, const QString& shmName, qint64 /*shmSize*/)
 {
     // Detach from previous if any
     if (_isAttached)
@@ -64,30 +65,15 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId, const QString
 
     _emulatorId = emulatorId;
     _shmName = shmName;
-    _shmSize = shmSize;
 
-    qDebug() << "ScreenViewer: Attaching to shared memory:" << shmName << "size:" << shmSize;
+    qDebug() << "ScreenViewer: Attaching to monitoring SHM:" << shmName;
 
 #ifdef _WIN32
-    // Windows: Open named file mapping
-    std::wstring wname = shmName.toStdWString();
-    HANDLE hMapFile = OpenFileMappingW(FILE_MAP_READ, FALSE, wname.c_str());
-    if (hMapFile == NULL)
-    {
-        qDebug() << "ScreenViewer: Failed to open shared memory (Windows):" << GetLastError();
-        return;
-    }
-
-    _shmData = MapViewOfFile(hMapFile, FILE_MAP_READ, 0, 0, shmSize);
-    CloseHandle(hMapFile);  // Can close handle after mapping
-
-    if (_shmData == NULL)
-    {
-        qDebug() << "ScreenViewer: Failed to map shared memory (Windows):" << GetLastError();
-        return;
-    }
+    // TODO: Windows implementation needs manifest-aware update
+    qDebug() << "ScreenViewer: Windows manifest-aware SHM not yet implemented";
+    return;
 #else
-    // POSIX: Open shared memory
+    // POSIX: Open shared memory and discover size via fstat
     QByteArray nameBytes = shmName.toUtf8();
     _shmFd = shm_open(nameBytes.constData(), O_RDONLY, 0);
     if (_shmFd < 0)
@@ -96,8 +82,19 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId, const QString
         return;
     }
 
-    _shmData = mmap(nullptr, shmSize, PROT_READ, MAP_SHARED, _shmFd, 0);
-    ::close(_shmFd);  // fd can be closed after mmap
+    // Get actual SHM size from the OS
+    struct stat st;
+    if (fstat(_shmFd, &st) < 0)
+    {
+        qDebug() << "ScreenViewer: Failed to fstat shared memory:" << strerror(errno);
+        ::close(_shmFd);
+        _shmFd = -1;
+        return;
+    }
+    _shmSize = st.st_size;
+
+    _shmData = mmap(nullptr, _shmSize, PROT_READ, MAP_SHARED, _shmFd, 0);
+    ::close(_shmFd);
     _shmFd = -1;
 
     if (_shmData == MAP_FAILED)
@@ -108,8 +105,43 @@ void ScreenViewer::attachToSharedMemory(const QString& emulatorId, const QString
     }
 #endif
 
+    // Parse monitoring manifest to find MEMORY_PAGES section
+    using namespace monitoring;
+    auto* header = static_cast<const ManifestHeader*>(_shmData);
+    if (header->magic != MANIFEST_MAGIC)
+    {
+        qDebug() << "ScreenViewer: Invalid manifest magic";
+        munmap(_shmData, _shmSize);
+        _shmData = nullptr;
+        return;
+    }
+
+    // Find the MEMORY_PAGES section
+    bool found = false;
+    for (uint16_t i = 0; i < header->section_count; ++i)
+    {
+        const auto* desc = getDescriptor(_shmData, header, i);
+        if (desc && desc->type == SectionType::MEMORY_PAGES && !(desc->flags & SECTION_REMOVED))
+        {
+            _memoryPagesOffset = desc->offset;
+            _memoryPagesLength = desc->length;
+            found = true;
+            qDebug() << "ScreenViewer: Found MEMORY_PAGES section at offset" << _memoryPagesOffset
+                     << "length" << _memoryPagesLength;
+            break;
+        }
+    }
+
+    if (!found)
+    {
+        qDebug() << "ScreenViewer: MEMORY_PAGES section not found in manifest";
+        munmap(_shmData, _shmSize);
+        _shmData = nullptr;
+        return;
+    }
+
     _isAttached = true;
-    qDebug() << "ScreenViewer: Successfully attached to shared memory";
+    qDebug() << "ScreenViewer: Successfully attached to monitoring SHM";
 
     // Do an initial refresh immediately
     refreshScreen();
@@ -235,19 +267,32 @@ void ScreenViewer::refreshScreen()
 
 const uint8_t* ScreenViewer::getScreenData(ScreenPage page) const
 {
-    if (_shmData == nullptr)
+    if (_shmData == nullptr || _memoryPagesOffset == 0)
         return nullptr;
 
-    // Calculate offset to the requested RAM page
-    size_t pageOffset = static_cast<size_t>(page) * PAGE_SIZE;
+    // MEMORY_PAGES section layout:
+    //   MemoryPagesSectionHeader (32 bytes)
+    //   page_data[page_count * page_size]  (323 pages × 16KB)
+    //
+    // RAM pages are at the start of page_data (pages 0-255).
+    // Page 5 = main screen, Page 7 = shadow screen.
+    auto* shmBase = static_cast<const uint8_t*>(_shmData);
+    auto* sectionHeader = reinterpret_cast<const monitoring::MemoryPagesSectionHeader*>(
+        shmBase + _memoryPagesOffset);
 
-    // Bounds check
-    if (pageOffset + SCREEN_TOTAL_SIZE > static_cast<size_t>(_shmSize))
-    {
+    uint16_t pageIndex = static_cast<uint16_t>(page);
+    if (pageIndex >= sectionHeader->page_count)
         return nullptr;
-    }
 
-    return static_cast<const uint8_t*>(_shmData) + pageOffset;
+    // Page data starts right after the header
+    const uint8_t* pageData = shmBase + _memoryPagesOffset + sizeof(monitoring::MemoryPagesSectionHeader);
+    size_t pageOffset = static_cast<size_t>(pageIndex) * PAGE_SIZE;
+
+    // Bounds check against section length
+    if (sizeof(monitoring::MemoryPagesSectionHeader) + pageOffset + SCREEN_TOTAL_SIZE > _memoryPagesLength)
+        return nullptr;
+
+    return pageData + pageOffset;
 }
 
 QImage ScreenViewer::renderScreen(const uint8_t* ramData)

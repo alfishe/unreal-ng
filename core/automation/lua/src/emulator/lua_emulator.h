@@ -14,6 +14,7 @@
 #include <debugger/debugmanager.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/disassembler/z80disasm.h>
+#include <common/modulelogger.h>
 
 class LuaEmulator
 {
@@ -891,6 +892,94 @@ public:
             DiskImage* disk = fdd->getDiskImage();
             if (!disk) return "";
             return disk->DumpSectorHex(trackNo, sector);
+        });
+
+        // Logging control
+        lua.set_function("logging_state", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table state = lua_view.create_table();
+            if (!_emulator) return state;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pModuleLogger) return state;
+            ModuleLogger* logger = ctx->pModuleLogger;
+            const LoggerSettings& settings = logger->GetSettings();
+
+            state["global_level"] = ModuleLogger::GetLevelApiName(static_cast<int>(logger->GetLevel()));
+            sol::table modules = lua_view.create_table();
+            for (int m = 1; m < MODULE_COUNT; m++) {
+                const char* name = ModuleLogger::GetModuleApiName(m);
+                if (!name) continue;
+                sol::table mod = lua_view.create_table();
+                mod["name"] = name;
+                mod["enabled"] = (settings.modules & (1u << m)) != 0;
+                uint8_t rawLvl = settings.moduleLevels[m];
+                mod["level"] = (rawLvl == 0) ? "inherit" : ModuleLogger::GetLevelApiName(rawLvl);
+                mod["submodule_mask"] = settings.submodules[m];
+                modules[m] = mod;
+            }
+            state["modules"] = modules;
+            return state;
+        });
+
+        lua.set_function("logging_set_level", [this](const std::string& level) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pModuleLogger) return false;
+            int id = ModuleLogger::LevelNameToId(level.c_str());
+            if (id < 0) return false;
+            ctx->pModuleLogger->SetLoggingLevel(static_cast<LoggerLevel>(id));
+            return true;
+        });
+
+        lua.set_function("logging_set_module", [this](const std::string& name, bool enabled) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pModuleLogger) return false;
+            int id = ModuleLogger::ModuleNameToId(name.c_str());
+            if (id < 0) return false;
+            auto module = static_cast<PlatformModulesEnum>(id);
+            uint16_t mask = ctx->pModuleLogger->GetSettings().submodules[id];
+            ctx->pModuleLogger->SetModuleState(module, enabled, mask);
+            return true;
+        });
+
+        lua.set_function("logging_set_module_level", [this](const std::string& name, const std::string& level) -> bool {
+            if (!_emulator) return false;
+            auto* ctx = _emulator->GetContext();
+            if (!ctx || !ctx->pModuleLogger) return false;
+            int modId = ModuleLogger::ModuleNameToId(name.c_str());
+            if (modId < 0) return false;
+            auto module = static_cast<PlatformModulesEnum>(modId);
+            if (level == "inherit" || level == "0") {
+                ctx->pModuleLogger->SetModuleLogLevel(module, static_cast<LoggerLevel>(0));
+                return true;
+            }
+            int lvlId = ModuleLogger::LevelNameToId(level.c_str());
+            if (lvlId < 0) return false;
+            ctx->pModuleLogger->SetModuleLogLevel(module, static_cast<LoggerLevel>(lvlId));
+            return true;
+        });
+
+        lua.set_function("logging_modules", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            int idx = 1;
+            for (int m = 1; m < MODULE_COUNT; m++) {
+                const char* name = ModuleLogger::GetModuleApiName(m);
+                if (name) result[idx++] = name;
+            }
+            return result;
+        });
+
+        lua.set_function("logging_levels", [this]() -> sol::table {
+            sol::state_view lua_view(*_lua);
+            sol::table result = lua_view.create_table();
+            int idx = 1;
+            for (int i = 0; i < ModuleLogger::GetLevelCount(); i++) {
+                const char* name = ModuleLogger::GetLevelApiName(i);
+                if (name) result[idx++] = name;
+            }
+            return result;
         });
 
         // Set the emulator instance in the Lua environment

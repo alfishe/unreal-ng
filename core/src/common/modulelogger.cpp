@@ -1,5 +1,6 @@
 #include "modulelogger.h"
 
+#include <algorithm>
 #include "common/bithelper.h"
 #include "common/stringhelper.h"
 #include "emulator/emulatorcontext.h"
@@ -7,13 +8,65 @@
 
 /// region <Constants>
 
-const char* ModuleLogger::LoggerLevelNames[6] = {"None", "Trace", "Debug", "Info", "Warning", "Error"};
+const char* ModuleLogger::_levelNames[7] = {"Unknown", "Trace", "Debug", "Info", "Warning", "Error", "None"};
+const char* ModuleLogger::_levelApiNames[7] = {"unknown", "trace", "debug", "info", "warning", "error", "none"};
 
 const char* ModuleLogger::ALL = "<All>";
 const char* ModuleLogger::NONE = "<None>";
 
-const char* ModuleLogger::moduleNames[12] = {"<Unknown>", "Core",  "Z80", "Memory", "I/O",      "Disk",
-                                             "Video",     "Sound", "DMA", "Loader", "Debugger", "Disassembler"};
+const char* ModuleLogger::_moduleNames[MODULE_COUNT] =
+{
+    "<Unknown>", "Core",  "Z80",   "Memory", "I/O",        "Disk",
+    "Video",     "Sound", "DMA",   "Loader", "Debugger",   "Disassembler", "Recording"
+};
+
+const char* ModuleLogger::_moduleApiNames[MODULE_COUNT] =
+{
+    nullptr,     "core",  "z80",   "memory", "io",         "disk",
+    "video",     "sound", "dma",   "loader", "debug",      "disassembler", "recording"
+};
+
+const char* ModuleLogger::GetModuleName(int moduleId)
+{
+    return (moduleId >= 0 && moduleId < MODULE_COUNT) ? _moduleNames[moduleId] : nullptr;
+}
+
+const char* ModuleLogger::GetModuleApiName(int moduleId)
+{
+    return (moduleId >= 0 && moduleId < MODULE_COUNT) ? _moduleApiNames[moduleId] : nullptr;
+}
+
+const char* ModuleLogger::GetLevelName(int levelId)
+{
+    return (levelId >= 0 && levelId < 7) ? _levelNames[levelId] : nullptr;
+}
+
+const char* ModuleLogger::GetLevelApiName(int levelId)
+{
+    return (levelId >= 0 && levelId < 7) ? _levelApiNames[levelId] : nullptr;
+}
+
+int ModuleLogger::ModuleNameToId(const char* name)
+{
+    if (!name) return -1;
+    for (int i = 1; i < MODULE_COUNT; i++)
+    {
+        if (_moduleApiNames[i] && strcmp(name, _moduleApiNames[i]) == 0)
+            return i;
+    }
+    return -1;
+}
+
+int ModuleLogger::LevelNameToId(const char* name)
+{
+    if (!name) return -1;
+    for (int i = 0; i < 7; i++)
+    {
+        if (strcmp(name, _levelApiNames[i]) == 0)
+            return i;
+    }
+    return -1;
+}
 
 /// endregion </Constants>
 
@@ -218,6 +271,19 @@ void ModuleLogger::ResetLoggerOut()
     _callbackMethod = nullptr;
 }
 
+void ModuleLogger::AddSink(ILogSink* sink)
+{
+    if (sink)
+        _sinks.push_back(sink);
+}
+
+void ModuleLogger::RemoveSink(ILogSink* sink)
+{
+    _sinks.erase(
+        std::remove(_sinks.begin(), _sinks.end(), sink),
+        _sinks.end());
+}
+
 /// endregion </Configuration methods>
 
 /// region <Methods>
@@ -297,7 +363,7 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
     struct tm* tm_info;
     struct timeval tv;
 
-    std::string format = std::string(LoggerLevelNames[level]) + ": " + fmt;
+    std::string format = std::string(_levelNames[level]) + ": " + fmt;
     va_list args;
     va_start(args, fmt);
 
@@ -362,6 +428,17 @@ void ModuleLogger::LogMessage(LoggerLevel level, PlatformModulesEnum module, uin
 
     OutLine(buffer, time_len + msg_len);
 
+    // Dispatch to IPC sinks (payload only, sinks add their own timestamps)
+    if (!_sinks.empty() && msg_len > 0)
+    {
+        for (auto* sink : _sinks)
+        {
+            sink->write(static_cast<uint8_t>(module), submodule,
+                        static_cast<uint8_t>(level),
+                        buffer + time_len, static_cast<uint32_t>(msg_len));
+        }
+    }
+
     /// endregion </Print formatted value>
 
     va_end(args);
@@ -415,56 +492,43 @@ void ModuleLogger::Flush()
 
 bool ModuleLogger::IsLoggingEnabled(PlatformModulesEnum module, uint16_t submodule)
 {
-    try
-    {
-        bool result = false;
-
-        // Skip all checks if muted or shutting down
-        if (_mute || _shutdown)
-            return result;
-
-        uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
-
-        // Check if logging for the whole module allowed
-        if (BitHelper::IsBitSet(_settings.modules, moduleBitNumber))
-        {
-            uint8_t submoduleBitNumber = BitHelper::GetFirstSetBitPosition(submodule);
-
-            // Check settings on submodule level
-            if (BitHelper::IsBitSet(_settings.submodules[module], submoduleBitNumber))
-            {
-                result = true;
-            }
-        }
-
-        return result;
-    }
-    catch (...)
-    {
-        // If anything goes wrong (corrupted object, invalid memory access, etc.),
-        // assume logging is disabled to prevent crashes
+    // Skip all checks if muted or shutting down
+    if (_mute || _shutdown)
         return false;
+
+    // Bounds guard (replaces try/catch for zero icache overhead)
+    if (module > MODULE_DISASSEMBLER)
+        return false;
+
+    uint8_t moduleBitNumber = BitHelper::GetFirstSetBitPosition(static_cast<uint8_t>(module));
+
+    // Check if logging for the whole module allowed
+    if (BitHelper::IsBitSet(_settings.modules, moduleBitNumber))
+    {
+        uint8_t submoduleBitNumber = BitHelper::GetFirstSetBitPosition(submodule);
+
+        // Check settings on submodule level
+        if (BitHelper::IsBitSet(_settings.submodules[module], submoduleBitNumber))
+        {
+            return true;
+        }
     }
+
+    return false;
 }
 
 bool ModuleLogger::IsLoggingEnabledForLogLevel(PlatformModulesEnum module, uint16_t submodule, LoggerLevel level)
 {
-    try
-    {
-        // Check of logging for the module / submodule allowed at all
-        bool result = IsLoggingEnabled(module, submodule);
+    // Check if logging for the module / submodule allowed at all
+    bool result = IsLoggingEnabled(module, submodule);
 
-        // Check if logger level is appropriate
-        result &= level >= _level;
+    // Per-module level: use moduleLevels[module] if set, else global _level
+    LoggerLevel effectiveLevel = _settings.moduleLevels[module]
+        ? static_cast<LoggerLevel>(_settings.moduleLevels[module])
+        : _level;
+    result &= level >= effectiveLevel;
 
-        return result;
-    }
-    catch (...)
-    {
-        // If anything goes wrong (corrupted object, invalid memory access, etc.),
-        // assume logging is disabled to prevent crashes
-        return false;
-    }
+    return result;
 }
 
 const char* ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t submodule)
@@ -493,7 +557,7 @@ const char* ModuleLogger::GetSubmoduleName(PlatformModulesEnum module, uint16_t 
 
 std::string ModuleLogger::GetModuleSubmoduleBriefString(PlatformModulesEnum module, uint16_t submodule)
 {
-    const char* moduleName = moduleNames[module];
+    const char* moduleName = _moduleNames[module];
     const char* submoduleName = GetSubmoduleName(module, submodule);
 
     std::string result = StringHelper::Format("%s_%s", moduleName, submoduleName);
@@ -567,7 +631,7 @@ std::string ModuleLogger::DumpModules(uint32_t moduleFlags)
     else
     {
         bool isFirstModule = true;
-        for (unsigned i = 0; i < sizeof(moduleNames) / sizeof(moduleNames[0]); i++)
+        for (unsigned i = 0; i < sizeof(_moduleNames) / sizeof(_moduleNames[0]); i++)
         {
             if (moduleFlags & (1 << i))
             {
@@ -594,7 +658,7 @@ std::string ModuleLogger::DumpRequestedSettingsChange(uint32_t change)
     uint16_t module = change >> 16;
     uint16_t moduleSettings = change & 0x0000FFFF;
 
-    ss << StringHelper::Format("Module: %s (%d)", moduleNames[module], module) << std::endl;
+    ss << StringHelper::Format("Module: %s (%d)", _moduleNames[module], module) << std::endl;
 
     const char** submoduleNames;
     size_t submoduleNamesSize = 0;
@@ -614,7 +678,7 @@ bool ModuleLogger::GetSubmoduleNameCollection(uint16_t module, const char*** sub
 {
     bool result = true;
 
-    if (module > sizeof(moduleNames) / sizeof(moduleNames[0]))
+    if (module > sizeof(_moduleNames) / sizeof(_moduleNames[0]))
     {
         result = false;
 
@@ -675,6 +739,35 @@ bool ModuleLogger::GetSubmoduleNameCollection(uint16_t module, const char*** sub
     return result;
 }
 
+size_t ModuleLogger::SerializeSettings(char* buf, size_t bufSize) const
+{
+    // Layout: uint32_t modules (4) + uint16_t submodules[12] (24) + uint8_t level (1) + uint8_t moduleLevels[12] (12) = 41 bytes
+    constexpr size_t kBlobSize = sizeof(uint32_t) + sizeof(uint16_t) * 12 + sizeof(uint8_t) + 12;
+    if (bufSize < kBlobSize)
+        return 0;
+
+    size_t offset = 0;
+    std::memcpy(buf + offset, &_settings.modules, sizeof(uint32_t));
+    offset += sizeof(uint32_t);
+    std::memcpy(buf + offset, _settings.submodules, sizeof(uint16_t) * 12);
+    offset += sizeof(uint16_t) * 12;
+    uint8_t lvl = static_cast<uint8_t>(_level);
+    std::memcpy(buf + offset, &lvl, sizeof(uint8_t));
+    offset += sizeof(uint8_t);
+    std::memcpy(buf + offset, _settings.moduleLevels, 12);
+    offset += 12;
+
+    return offset;
+}
+
+void ModuleLogger::SetModuleLogLevel(PlatformModulesEnum module, LoggerLevel level)
+{
+    if (module > MODULE_DISASSEMBLER)
+        return;
+
+    _settings.moduleLevels[module] = static_cast<uint8_t>(level);
+}
+
 std::string ModuleLogger::DumpSettings()
 {
     std::string result;
@@ -682,7 +775,7 @@ std::string ModuleLogger::DumpSettings()
 
     ss << "Module logger settings dump:" << std::endl;
 
-    size_t moduleCount = sizeof(moduleNames) / sizeof(moduleNames[0]);
+    size_t moduleCount = sizeof(_moduleNames) / sizeof(_moduleNames[0]);
     for (size_t i = 1; i < moduleCount; ++i)
     {
         std::string moduleName = DumpModuleName(i);
@@ -741,11 +834,11 @@ std::string ModuleLogger::DumpSettings()
 
 std::string ModuleLogger::DumpModuleName(uint16_t module)
 {
-    std::string result = moduleNames[0];
+    std::string result = _moduleNames[0];
 
-    if (module < sizeof(moduleNames) / sizeof(moduleNames[0]))
+    if (module < sizeof(_moduleNames) / sizeof(_moduleNames[0]))
     {
-        result = moduleNames[module];
+        result = _moduleNames[module];
     }
 
     return result;

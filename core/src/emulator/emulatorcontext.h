@@ -21,6 +21,7 @@ class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
+class MonitoringManager;
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -90,6 +91,9 @@ public:
 
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;
+
+    // Real-time monitoring via shared memory (for external observer tools)
+    MonitoringManager* pMonitoringManager = nullptr;
     /// endregion </Child object references>
 
     /// region <Parent object references>

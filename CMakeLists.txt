@@ -14,7 +14,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ToolchainDetection.cmake)
 # ========================================
 option(TESTS "Enable tests" ON)
 option(BENCHMARKS "Enable benchmarks" ON)
-option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer)" ON)
+option(BUILD_QT_APPS "Build Qt-based applications (unreal-qt, unreal-screen-viewer, unreal-log-viewer)" ON)
 
 # Automation options (enabled by default for full builds)
 option(ENABLE_AUTOMATION "Enable automation features (Lua, Python, WebAPI, CLI)" ON)
@@ -234,10 +234,26 @@ if (BUILD_QT_APPS)
     
     message(STATUS ">>> Building unreal-screen-viewer")
     add_subdirectory(unreal-screen-viewer)
-    
+
+    message(STATUS ">>> Building unreal-log-viewer")
+    add_subdirectory(unreal-log-viewer)
+
     message(STATUS ">>> Building unreal-videowall")
     add_subdirectory(unreal-videowall)
 endif ()
+
+# ========================================
+# Monitoring Tools
+# ========================================
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/monitor-probe/CMakeLists.txt")
+    message(STATUS ">>> Building monitor-probe")
+    add_subdirectory(tools/monitor-probe)
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/log-viewer/CMakeLists.txt")
+    message(STATUS ">>> Building log-viewer")
+    add_subdirectory(tools/log-viewer)
+endif()
 
 # ========================================
 # Unit Tests
@@ -300,6 +316,7 @@ if (BUILD_QT_APPS)
             # Copy all three app bundles using cp -a to PRESERVE symlinks (critical for Qt frameworks)
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-qt.app" "${SUITE_STAGING_DIR}/UnrealNG.app"
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-log-viewer.app" "${SUITE_STAGING_DIR}/Log Viewer.app"
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${SUITE_STAGING_DIR}/Video Wall.app"
             
             # Copy shared resources into the MAIN bundle BEFORE macdeployqt runs
@@ -311,12 +328,13 @@ if (BUILD_QT_APPS)
             # Run macdeployqt on each app bundle with ad-hoc signing as the FINAL step
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Log Viewer.app" -always-overwrite -codesign=-
             COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
             
             # Create combined DMG from the correctly signed staging directory
             COMMAND hdiutil create -volname "UnrealNG Suite" -srcfolder "${SUITE_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
             
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            DEPENDS unreal-qt unreal-screen-viewer unreal-log-viewer unreal-videowall
             COMMENT "Creating combined macOS DMG with all applications"
         )
     endif()
@@ -344,12 +362,16 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.exe"
                 "${SUITE_STAGING_DIR}/"
             COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-log-viewer.exe"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall.exe"
                 "${SUITE_STAGING_DIR}/"
             
             # Run windeployqt on each executable to copy Qt DLLs and plugins
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-qt.exe" --no-translations
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-screen-viewer.exe" --no-translations
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-log-viewer.exe" --no-translations
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-videowall.exe" --no-translations
             
             # Copy shared resources (only once)
@@ -367,7 +389,7 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
                 "--format=zip" "--" "${SUITE_STAGING_DIR}"
             
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            DEPENDS unreal-qt unreal-screen-viewer unreal-log-viewer unreal-videowall
             COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
         
@@ -419,6 +441,9 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer"
                 "${SUITE_STAGING_DIR}/"
             COMMAND ${CMAKE_COMMAND} -E copy
+                "${CMAKE_BINARY_DIR}/bin/unreal-log-viewer"
+                "${SUITE_STAGING_DIR}/"
+            COMMAND ${CMAKE_COMMAND} -E copy
                 "${CMAKE_BINARY_DIR}/bin/unreal-videowall"
                 "${SUITE_STAGING_DIR}/"
             
@@ -437,7 +462,7 @@ if (BUILD_QT_APPS)
                 "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Linux.tar.gz"
                 "--" "${SUITE_STAGING_DIR}"
             
-            DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
+            DEPENDS unreal-qt unreal-screen-viewer unreal-log-viewer unreal-videowall
             COMMENT "Creating combined Linux tarball with all applications"
         )
     endif()

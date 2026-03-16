@@ -110,6 +110,7 @@ The CLI supports command aliases for convenience:
 - `m` → `memory`
 - `bp` → `breakpoint`
 - `u` → `disasm` (disassemble)
+- `logging` → logging control (global/per-module level, enable, mask)
 - `quit` → `exit`
 
 **Error Messages**:

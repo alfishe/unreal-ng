@@ -275,3 +275,38 @@
     schemas["TraceEntry"]["properties"]["frame"]["type"] = "integer";
     schemas["TraceEntry"]["properties"]["tstate"]["type"] = "integer";
 
+    // Logging Control schemas
+    schemas["LoggerStateResponse"]["type"] = "object";
+    schemas["LoggerStateResponse"]["description"] = "Full logger state including global level and per-module settings";
+    schemas["LoggerStateResponse"]["properties"]["emulator_id"]["type"] = "string";
+    schemas["LoggerStateResponse"]["properties"]["global_level"]["type"] = "string";
+    schemas["LoggerStateResponse"]["properties"]["global_level"]["description"] = "Global log level name";
+    schemas["LoggerStateResponse"]["properties"]["global_level_id"]["type"] = "integer";
+    schemas["LoggerStateResponse"]["properties"]["modules"]["type"] = "array";
+    schemas["LoggerStateResponse"]["properties"]["modules"]["items"]["$ref"] = "#/components/schemas/LoggerModuleState";
+
+    schemas["LoggerModuleState"]["type"] = "object";
+    schemas["LoggerModuleState"]["description"] = "Per-module logger state";
+    schemas["LoggerModuleState"]["properties"]["id"]["type"] = "integer";
+    schemas["LoggerModuleState"]["properties"]["name"]["type"] = "string";
+    schemas["LoggerModuleState"]["properties"]["name"]["description"] = "API name (lowercase)";
+    schemas["LoggerModuleState"]["properties"]["enabled"]["type"] = "boolean";
+    schemas["LoggerModuleState"]["properties"]["level"]["type"] = "string";
+    schemas["LoggerModuleState"]["properties"]["level"]["description"] = "Per-module level (inherit = follows global)";
+    schemas["LoggerModuleState"]["properties"]["level_id"]["type"] = "integer";
+    schemas["LoggerModuleState"]["properties"]["submodule_mask"]["type"] = "string";
+    schemas["LoggerModuleState"]["properties"]["submodule_mask"]["description"] = "Hex bitmask for submodule filtering";
+
+    schemas["SetLevelRequest"]["type"] = "object";
+    schemas["SetLevelRequest"]["description"] = "Request to set global or per-module log level";
+    schemas["SetLevelRequest"]["required"].append("level");
+    schemas["SetLevelRequest"]["properties"]["level"]["type"] = "string";
+    schemas["SetLevelRequest"]["properties"]["level"]["description"] = "Level name: trace, debug, info, warning, error, none, or inherit";
+
+    schemas["SetModuleStateRequest"]["type"] = "object";
+    schemas["SetModuleStateRequest"]["description"] = "Request to update module state";
+    schemas["SetModuleStateRequest"]["properties"]["enabled"]["type"] = "boolean";
+    schemas["SetModuleStateRequest"]["properties"]["level"]["type"] = "string";
+    schemas["SetModuleStateRequest"]["properties"]["level"]["description"] = "Per-module level override (inherit to clear)";
+    schemas["SetModuleStateRequest"]["properties"]["submodule_mask"]["type"] = "string";
+    schemas["SetModuleStateRequest"]["properties"]["submodule_mask"]["description"] = "Hex bitmask (e.g. 0xFFFF)";

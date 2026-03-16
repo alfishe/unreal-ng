@@ -75,8 +75,12 @@ enum PlatformModulesEnum : uint8_t
     MODULE_DISASSEMBLER         = 11,
     MODULE_RECORDING            = 12,
 
+    MODULE_COUNT                = 13,  // Total addressable modules (array sizing)
     MODULE_ALL                  = 0xFF
 };
+
+/// Max submodules per module (bitmask width) — single source of truth.
+static constexpr int SUBMODULE_MAX_COUNT = 16;
 
 enum PlatformCoreSubmodulesEnum : uint16_t
 {

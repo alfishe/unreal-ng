@@ -487,6 +487,7 @@ uint8_t SoundChip_AY8910::readRegister(uint8_t regAddr)
     if (regAddr <= 0x0F)
     {
         result = _registers[regAddr];
+        _regReadMask |= (1 << regAddr);
     }
 
     return result;
@@ -500,6 +501,10 @@ void SoundChip_AY8910::writeRegister(uint8_t regAddr, uint8_t value)
     {
         return;
     }
+
+    // Track write for monitoring
+    if (_regWriteCounts[regAddr] < 255)
+        _regWriteCounts[regAddr]++;
 
     // XOR value with previous state => all non-zeroed bits indicate the change
     //uint8_t changedBits = _registers[regAddr] ^ value;
@@ -601,6 +606,7 @@ uint8_t SoundChip_AY8910::portDeviceInMethod([[maybe_unused]] uint16_t port)
     if (_currentRegister < 0x10)
     {
         result = _registers[_currentRegister];
+        _regReadMask |= (1 << _currentRegister);
     }
 
     return result;

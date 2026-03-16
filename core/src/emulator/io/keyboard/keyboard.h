@@ -330,6 +330,13 @@ public:
     void OnKey(ZXKeysEnum key, bool isPressed, bool shift, bool ctrl, bool alt);        // Translate host keyboard event to ZX-Spectrum
     /// endregion </Handle keyboard events>
 
+    /// region <Monitoring accessors>
+public:
+    /// Get the raw keyboard matrix state (8 half-rows).
+    /// Used by MonitoringManager to snapshot input state for external observers.
+    const uint8_t* getKeyboardMatrix() const { return _keyboardMatrixState; }
+    /// endregion </Monitoring accessors>
+
     /// region <Handle MessageCenter keyboard events>
 public:
     void OnKeyPressed(int id, Message* message);

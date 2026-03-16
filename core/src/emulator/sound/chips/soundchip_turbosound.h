@@ -29,6 +29,9 @@ protected:
 
     // HQ DSP flag (FIR filters + oversampling)
     bool _hqEnabled = true;
+
+    // TurboSound chip1 selection tracking (monitoring only)
+    bool _chip1Selected = false;
     /// endregion </AY emulation>
 
     /// endregion </Fields>
@@ -57,6 +60,15 @@ public:
         MLOGWARNING("Invalid chip index: %d", index);
         return nullptr;
     }
+
+    int getActiveChipIndex() const
+    {
+        if (_currentChip == _chip1)
+            return 1;
+        return 0;
+    }
+
+    bool wasChip1Selected() const { return _chip1Selected; }
 
     int getChipCount() const
     {
@@ -105,6 +117,7 @@ public:
 
         // Set Chip0 active by default
         _currentChip = _chip0;
+        _chip1Selected = false;
 
         // Reset internal state
         _lastTStates = 0;

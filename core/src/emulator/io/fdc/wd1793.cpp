@@ -3,6 +3,7 @@
 #include <sstream>
 
 #include "common/dumphelper.h"
+#include "common/emulog.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
@@ -11,6 +12,14 @@
 #include "emulator/notifications.h"
 #include "wd1793_collector.h"
 #include "iwd1793observer.h"
+
+/// region <EMU_LOG categories>
+EMU_LOG_DEFINE_CATEGORY(log_fdc,     "fdc");
+EMU_LOG_DEFINE_CATEGORY(log_fdc_cmd, "fdc.command");
+EMU_LOG_DEFINE_CATEGORY(log_fdc_rd,  "fdc.read");
+EMU_LOG_DEFINE_CATEGORY(log_fdc_wr,  "fdc.write");
+EMU_LOG_DEFINE_CATEGORY(log_fdc_sk,  "fdc.seek");
+/// endregion </EMU_LOG categories>
 
 /// region <Constructors / destructors>
 
@@ -1016,6 +1025,7 @@ void WD1793::cmdRestore(uint8_t value)
     std::string message =
         StringHelper::Format("Command Restore: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_cmd, "RESTORE val=0x%02X", value);
 
     startType1Command();
 
@@ -1052,6 +1062,7 @@ void WD1793::cmdSeek(uint8_t value)
         StringHelper::Format("Command Seek: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     message += StringHelper::Format(" From trk: %d, to trk: %d", _trackRegister, _dataRegister);
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_sk, "SEEK from T%d to T%d", _trackRegister, _dataRegister);
 
     startType1Command();
 
@@ -1077,6 +1088,7 @@ void WD1793::cmdStep(uint8_t value)
     std::string message =
         StringHelper::Format("Command Step: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_sk, "STEP val=0x%02X dir=%s", value, _stepDirectionIn ? "in" : "out");
 
     startType1Command();
 
@@ -1090,6 +1102,7 @@ void WD1793::cmdStepIn(uint8_t value)
     std::string message =
         StringHelper::Format("Command Step In: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_sk, "STEP_IN val=0x%02X", value);
 
     startType1Command();
 
@@ -1106,6 +1119,7 @@ void WD1793::cmdStepOut(uint8_t value)
     std::string message =
         StringHelper::Format("Command Step Out: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_sk, "STEP_OUT val=0x%02X", value);
 
     startType1Command();
 
@@ -1145,6 +1159,8 @@ void WD1793::cmdReadSector(uint8_t value)
     std::string message =
         StringHelper::Format("Command Read Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_cmd, "READ_SECTOR T%d/H%d/S%d multi=%d",
+                 _trackRegister, _sideUp, _sectorRegister, (value & 0x10) ? 1 : 0);
 
     startType2Command();
 
@@ -1220,6 +1236,8 @@ void WD1793::cmdWriteSector(uint8_t value)
     std::string message =
         StringHelper::Format("Command Write Sector: %d | %s", value, StringHelper::FormatBinary(value).c_str());
     MLOGINFO(message.c_str());
+    EMU_LOG_INFO(log_fdc_cmd, "WRITE_SECTOR T%d/H%d/S%d multi=%d",
+                 _trackRegister, _sideUp, _sectorRegister, (value & 0x10) ? 1 : 0);
 
     startType2Command();
 
@@ -2103,6 +2121,7 @@ void WD1793::processReadByte()
     // Read the next byte from the raw data buffer
     _dataRegister = *(_rawDataBuffer++);
     _bytesToRead--;
+    EMU_LOG_TRACE(log_fdc_rd, "RD byte=0x%02X remain=%u", _dataRegister, _bytesToRead);
 
     // Byte is ready to be consumed by the host
     raiseDrq();
@@ -2183,6 +2202,7 @@ void WD1793::processWriteByte()
         // Put the next byte to write from the Data Register
         *(_rawDataBuffer++) = _dataRegister;
         _bytesToWrite--;
+        EMU_LOG_TRACE(log_fdc_wr, "WR byte=0x%02X remain=%u", _dataRegister, _bytesToWrite);
 
         if (_bytesToWrite > 0)
         {

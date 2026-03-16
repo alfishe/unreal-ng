@@ -11,6 +11,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator.h"
+#include "emulator/monitoring/monitoringmanager.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "stdafx.h"
@@ -347,18 +348,16 @@ void MainLoop::OnFrameEnd()
         }
     }
 
-    // Sync shared memory if enabled (for external viewers like screen-viewer, debuggers, memory dumpers, etc.)
-    // This ensures the memory-mapped region is visible to other processes
-    // Only sync when shared memory feature is actually enabled to avoid overhead
-    if (_context->pMemory && _context->pMemory->IsSharedMemoryEnabled())
+    // Real-time monitoring: snapshot state, signal observers, poll control commands
+    if (_context->pMonitoringManager && _context->pMonitoringManager->isEnabled())
     {
         try
         {
-            _context->pMemory->SyncToDisk();
+            _context->pMonitoringManager->onFrameEnd();
         }
         catch (const std::exception& e)
         {
-            MLOGERROR("Memory::SyncToDisk failed: %s", e.what());
+            MLOGERROR("MonitoringManager::onFrameEnd failed: %s", e.what());
         }
     }
 

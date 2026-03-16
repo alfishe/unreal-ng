@@ -4,6 +4,7 @@
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatormanager.h>
+#include <common/modulelogger.h>
 #include <pybind11/functional.h>
 #include <pybind11/stl.h>
 
@@ -420,7 +421,80 @@ static void registerEmulatorBindings()
                      return predicate(state.pc, state.af, state.bc, state.de, state.hl).cast<bool>();
                  }, maxTStates);
              },
-             py::arg("predicate"), py::arg("max_tstates") = 0);
+             py::arg("predicate"), py::arg("max_tstates") = 0)
+        // Logging control
+        .def("logging_state", [](Emulator& emu) -> py::dict {
+            py::dict result;
+            auto* ctx = emu.GetContext();
+            if (!ctx || !ctx->pModuleLogger) return result;
+            ModuleLogger* logger = ctx->pModuleLogger;
+            const LoggerSettings& settings = logger->GetSettings();
+
+            result["global_level"] = ModuleLogger::GetLevelApiName(static_cast<int>(logger->GetLevel()));
+            py::list modules;
+            for (int m = 1; m < MODULE_COUNT; m++) {
+                const char* name = ModuleLogger::GetModuleApiName(m);
+                if (!name) continue;
+                py::dict mod;
+                mod["name"] = name;
+                mod["enabled"] = (settings.modules & (1u << m)) != 0;
+                uint8_t rawLvl = settings.moduleLevels[m];
+                mod["level"] = (rawLvl == 0) ? "inherit" : ModuleLogger::GetLevelApiName(rawLvl);
+                char maskBuf[8];
+                snprintf(maskBuf, sizeof(maskBuf), "0x%04X", settings.submodules[m]);
+                mod["submodule_mask"] = maskBuf;
+                modules.append(mod);
+            }
+            result["modules"] = modules;
+            return result;
+        })
+        .def("logging_set_level", [](Emulator& emu, const std::string& level) -> bool {
+            auto* ctx = emu.GetContext();
+            if (!ctx || !ctx->pModuleLogger) return false;
+            int id = ModuleLogger::LevelNameToId(level.c_str());
+            if (id < 0) return false;
+            ctx->pModuleLogger->SetLoggingLevel(static_cast<LoggerLevel>(id));
+            return true;
+        }, py::arg("level"))
+        .def("logging_set_module", [](Emulator& emu, const std::string& name, bool enabled) -> bool {
+            auto* ctx = emu.GetContext();
+            if (!ctx || !ctx->pModuleLogger) return false;
+            int id = ModuleLogger::ModuleNameToId(name.c_str());
+            if (id < 0) return false;
+            uint16_t mask = ctx->pModuleLogger->GetSettings().submodules[id];
+            ctx->pModuleLogger->SetModuleState(static_cast<PlatformModulesEnum>(id), enabled, mask);
+            return true;
+        }, py::arg("name"), py::arg("enabled"))
+        .def("logging_set_module_level", [](Emulator& emu, const std::string& name, const std::string& level) -> bool {
+            auto* ctx = emu.GetContext();
+            if (!ctx || !ctx->pModuleLogger) return false;
+            int modId = ModuleLogger::ModuleNameToId(name.c_str());
+            if (modId < 0) return false;
+            if (level == "inherit" || level == "0") {
+                ctx->pModuleLogger->SetModuleLogLevel(static_cast<PlatformModulesEnum>(modId), static_cast<LoggerLevel>(0));
+                return true;
+            }
+            int lvlId = ModuleLogger::LevelNameToId(level.c_str());
+            if (lvlId < 0) return false;
+            ctx->pModuleLogger->SetModuleLogLevel(static_cast<PlatformModulesEnum>(modId), static_cast<LoggerLevel>(lvlId));
+            return true;
+        }, py::arg("name"), py::arg("level"))
+        .def("logging_modules", [](Emulator& emu) -> py::list {
+            py::list result;
+            for (int m = 1; m < MODULE_COUNT; m++) {
+                const char* name = ModuleLogger::GetModuleApiName(m);
+                if (name) result.append(name);
+            }
+            return result;
+        })
+        .def("logging_levels", [](Emulator& emu) -> py::list {
+            py::list result;
+            for (int i = 0; i < ModuleLogger::GetLevelCount(); i++) {
+                const char* name = ModuleLogger::GetLevelApiName(i);
+                if (name) result.append(name);
+            }
+            return result;
+        });
 
     // Register BreakpointManager
     py::class_<BreakpointManager>(main, "BreakpointManager")

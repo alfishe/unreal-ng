@@ -139,6 +139,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"settings", &CLIProcessor::HandleSetting},
                         {"set", &CLIProcessor::HandleSetting},
 
+                        // Logging commands
+                        {"logging", &CLIProcessor::HandleLogging},
+
                         // State inspection commands
                         {"state", &CLIProcessor::HandleState},
 
@@ -556,6 +559,14 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "    Available settings:" << NEWLINE;
     oss << "      fast_tape on|off         - Enable/disable fast tape loading" << NEWLINE;
     oss << "      fast_disk on|off         - Enable/disable fast disk I/O" << NEWLINE;
+    oss << NEWLINE;
+    oss << "Logging Control:" << NEWLINE;
+    oss << "  logging                      - Show full logger state" << NEWLINE;
+    oss << "  logging level <level>        - Set global log level" << NEWLINE;
+    oss << "  logging module <name>        - Show module state" << NEWLINE;
+    oss << "  logging module <name> on|off - Enable/disable module" << NEWLINE;
+    oss << "  logging modules              - List available modules" << NEWLINE;
+    oss << "  logging levels               - List available levels" << NEWLINE;
     oss << NEWLINE;
     oss << "Memory Access Tracking:" << NEWLINE;
     oss << "  memcounters [all|reset] - Show memory access counters" << NEWLINE;

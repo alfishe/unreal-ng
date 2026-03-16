@@ -171,6 +171,9 @@ private:
     // Settings command handlers
     void HandleSetting(const ClientSession& session, const std::vector<std::string>& args);
 
+    // Logging control command handlers
+    void HandleLogging(const ClientSession& session, const std::vector<std::string>& args);
+
     // State inspection command handlers
     void HandleState(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStateMemory(const ClientSession& session, EmulatorContext* context);

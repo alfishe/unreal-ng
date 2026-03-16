@@ -9,6 +9,7 @@
 #include "common/modulelogger.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/monitoring/monitoringmanager.h"
 #include "emulator/recording/recordingmanager.h"
 #include "emulator/video/screen.h"
 
@@ -265,6 +266,7 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryAnalysis});
 
+
     _dirty = false;
 }
 
@@ -382,6 +384,20 @@ void FeatureManager::onFeatureChanged()
     if (_context && _context->pScreen)
     {
         _context->pScreen->UpdateFeatureCache();
+    }
+
+    // Handle monitoring subsystem toggle: driven by sharedmemory feature (single IPC mechanism)
+    if (_context && _context->pMonitoringManager)
+    {
+        bool shmEnabled = isEnabled(Features::kSharedMemory);
+        if (shmEnabled && !_context->pMonitoringManager->isEnabled())
+        {
+            _context->pMonitoringManager->initialize();
+        }
+        else if (!shmEnabled && _context->pMonitoringManager->isEnabled())
+        {
+            _context->pMonitoringManager->shutdown();
+        }
     }
 
     if (_dirty)

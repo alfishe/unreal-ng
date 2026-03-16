@@ -287,6 +287,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::keyStatus, "/api/v1/emulator/{id}/keyboard/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::keyList, "/api/v1/emulator/{id}/keyboard/keys", drogon::Get);
     // endregion Keyboard Injection
+
+    // region Logging Control (implementation: api/logging_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::getLogging, "/api/v1/emulator/{id}/logging", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::setLoggingLevel, "/api/v1/emulator/{id}/logging/level", drogon::Put, drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::setLoggingModule, "/api/v1/emulator/{id}/logging/module/{name}", drogon::Put, drogon::Post);
+    // endregion Logging Control
     METHOD_LIST_END
 
     // region Root and OpenAPI Methods (implementation: emulator_api.cpp)
@@ -780,6 +786,18 @@ public:
     void keyList(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                  const std::string& id) const;
     // endregion Keyboard Injection Methods
+
+    // region Logging Control Methods (implementation: api/logging_api.cpp)
+    void getLogging(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+
+    void setLoggingLevel(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    void setLoggingModule(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                          const std::string& name) const;
+    // endregion Logging Control Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
 private:
