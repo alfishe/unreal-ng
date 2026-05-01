@@ -609,6 +609,13 @@ void VideoWallWindow::toggleFullscreenWindows()
             setGeometry(_savedGeometry);
         }
 
+        // Stop any in-progress async batch creation before restoring saved state
+        if (_batchTimer && _batchTimer->isActive())
+        {
+            _batchTimer->stop();
+            _pendingEmulators = 0;
+        }
+
         // Restore emulators after window state change
         QTimer::singleShot(100, this, [this]() {
             restoreSavedEmulators();
@@ -823,6 +830,23 @@ void VideoWallWindow::resizeGridIntelligently(QSize screenSize)
         qDebug() << "Removing" << tilesToRemove << "excess tiles";
 
         auto tiles = _tileGrid->tiles();  // Get copy of vector
+
+        // Pre-stop all excess emulator threads before releasing any.
+        // On Windows, Release() of one emulator while another's thread is still
+        // running can cause an access violation inside the running thread.
+        for (int i = 0; i < tilesToRemove; i++)
+        {
+            int idx = static_cast<int>(tiles.size()) - 1 - i;
+            if (idx >= 0)
+            {
+                EmulatorTile* tile = tiles[idx];
+                if (tile && tile->emulator())
+                {
+                    _emulatorManager->StopEmulator(tile->emulator()->GetUUID());
+                }
+            }
+        }
+
         for (int i = 0; i < tilesToRemove; i++)
         {
             // Remove from the end (newest tiles first)
@@ -888,10 +912,23 @@ void VideoWallWindow::restoreSavedEmulators()
     std::vector<EmulatorTile*> tilesToRemove;
     for (auto* tile : currentTiles)
     {
+        if (!tile || !tile->emulator())
+            continue;
         std::string uuid = tile->emulator()->GetUUID();
         if (savedIds.find(uuid) == savedIds.end())
         {
             tilesToRemove.push_back(tile);
+        }
+    }
+
+    // Pre-stop all excess emulator threads before releasing any.
+    // On Windows, Release() of one emulator while another's thread is still
+    // running can cause an access violation inside the running thread.
+    for (EmulatorTile* tile : tilesToRemove)
+    {
+        if (tile && tile->emulator())
+        {
+            _emulatorManager->StopEmulator(tile->emulator()->GetUUID());
         }
     }
 
