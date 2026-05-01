@@ -163,8 +163,7 @@ void VideoWallWindow::createMenus()
     // Emulator menu
     QMenu* emulatorMenu = menuBar()->addMenu(tr("&Emulator"));
 
-    QAction* addTileAction = emulatorMenu->addAction(tr("&Add Tile"));
-    addTileAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+    QAction* addTileAction = emulatorMenu->addAction(tr("&Add Tile\tCtrl+N"));
     connect(addTileAction, &QAction::triggered, this, &VideoWallWindow::addEmulatorTile);
 
     QAction* clearAllAction = emulatorMenu->addAction(tr("&Clear All"));
@@ -223,21 +222,24 @@ void VideoWallWindow::setupShortcutsWindows()
 
 void VideoWallWindow::setupShortcutsMacOS()
 {
-    // macOS: menu bar is system-level and always active; standard QAction shortcuts work.
-    // Only Escape (not in any menu) needs a dedicated shortcut.
-    auto* escShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    escShortcut->setContext(Qt::WindowShortcut);
-    connect(escShortcut, &QShortcut::activated,
+    // macOS: Qt::CTRL maps to the Command (⌘) key, so Ctrl+X below becomes Cmd+X.
+    // Qt::WindowShortcut is sufficient — macOS keeps the window active even in fullscreen.
+    auto makeShortcut = [this](QKeySequence key) {
+        auto* s = new QShortcut(key, this);
+        s->setContext(Qt::WindowShortcut);
+        return s;
+    };
+
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
+            this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
+            this, &VideoWallWindow::removeLastTile);
+    connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
+            this, &VideoWallWindow::toggleFramelessMode);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_F)), &QShortcut::activated,
+            this, &VideoWallWindow::toggleFullscreenMode);
+    connect(makeShortcut(QKeySequence(Qt::Key_Escape)), &QShortcut::activated,
             this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
-
-    // Ctrl+N / Ctrl+Backspace are not in menus either
-    auto* addShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_N), this);
-    addShortcut->setContext(Qt::WindowShortcut);
-    connect(addShortcut, &QShortcut::activated, this, &VideoWallWindow::addEmulatorTile);
-
-    auto* removeShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace), this);
-    removeShortcut->setContext(Qt::WindowShortcut);
-    connect(removeShortcut, &QShortcut::activated, this, &VideoWallWindow::removeLastTile);
 }
 
 void VideoWallWindow::setupShortcutsLinux()
