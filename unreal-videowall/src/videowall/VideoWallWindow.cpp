@@ -21,6 +21,7 @@
 #include <QMenuBar>
 #include <QMouseEvent>
 #include <QScreen>
+#include <QShortcut>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrent>
 #include <future>
@@ -172,14 +173,12 @@ void VideoWallWindow::createMenus()
     // View menu
     QMenu* viewMenu = menuBar()->addMenu(tr("&View"));
 
-    QAction* framelessAction = viewMenu->addAction(tr("&Frameless Mode"));
-    framelessAction->setShortcut(QKeySequence(Qt::Key_F10));
+    QAction* framelessAction = viewMenu->addAction(tr("&Frameless Mode\tF10"));
     framelessAction->setCheckable(true);
     framelessAction->setChecked(false);
     connect(framelessAction, &QAction::triggered, this, &VideoWallWindow::toggleFramelessMode);
 
-    QAction* fullscreenAction = viewMenu->addAction(tr("F&ullscreen Mode"));
-    fullscreenAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
+    QAction* fullscreenAction = viewMenu->addAction(tr("F&ullscreen Mode\tCtrl+F"));
     fullscreenAction->setCheckable(true);
     fullscreenAction->setChecked(false);
     connect(fullscreenAction, &QAction::triggered, this, &VideoWallWindow::toggleFullscreenMode);
@@ -189,6 +188,77 @@ void VideoWallWindow::createMenus()
     QAction* screenHQAction = viewMenu->addAction(tr("Toggle Screen &HQ"));
     screenHQAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
     connect(screenHQAction, &QAction::triggered, this, &VideoWallWindow::toggleScreenHQForAllTiles);
+
+    // Platform-specific shortcut installation
+#ifdef Q_OS_WIN
+    setupShortcutsWindows();
+#elif defined(Q_OS_MAC)
+    setupShortcutsMacOS();
+#else
+    setupShortcutsLinux();
+#endif
+}
+
+void VideoWallWindow::setupShortcutsWindows()
+{
+    // Windows hides the menu bar in fullscreen, so QAction shortcuts stop firing.
+    // Use Qt::ApplicationShortcut to guarantee delivery regardless of focus or menu visibility.
+    auto makeShortcut = [this](QKeySequence key) {
+        auto* s = new QShortcut(key, this);
+        s->setContext(Qt::ApplicationShortcut);
+        return s;
+    };
+
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
+            this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
+            this, &VideoWallWindow::removeLastTile);
+    connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
+            this, &VideoWallWindow::toggleFramelessMode);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_F)), &QShortcut::activated,
+            this, &VideoWallWindow::toggleFullscreenMode);
+    connect(makeShortcut(QKeySequence(Qt::Key_Escape)), &QShortcut::activated,
+            this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
+}
+
+void VideoWallWindow::setupShortcutsMacOS()
+{
+    // macOS: menu bar is system-level and always active; standard QAction shortcuts work.
+    // Only Escape (not in any menu) needs a dedicated shortcut.
+    auto* escShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    escShortcut->setContext(Qt::WindowShortcut);
+    connect(escShortcut, &QShortcut::activated,
+            this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
+
+    // Ctrl+N / Ctrl+Backspace are not in menus either
+    auto* addShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_N), this);
+    addShortcut->setContext(Qt::WindowShortcut);
+    connect(addShortcut, &QShortcut::activated, this, &VideoWallWindow::addEmulatorTile);
+
+    auto* removeShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace), this);
+    removeShortcut->setContext(Qt::WindowShortcut);
+    connect(removeShortcut, &QShortcut::activated, this, &VideoWallWindow::removeLastTile);
+}
+
+void VideoWallWindow::setupShortcutsLinux()
+{
+    // Linux: menu bar is hidden in fullscreen; use ApplicationShortcut for window-mode keys.
+    auto makeShortcut = [this](QKeySequence key) {
+        auto* s = new QShortcut(key, this);
+        s->setContext(Qt::ApplicationShortcut);
+        return s;
+    };
+
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_N)), &QShortcut::activated,
+            this, &VideoWallWindow::addEmulatorTile);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace)), &QShortcut::activated,
+            this, &VideoWallWindow::removeLastTile);
+    connect(makeShortcut(QKeySequence(Qt::Key_F10)), &QShortcut::activated,
+            this, &VideoWallWindow::toggleFramelessMode);
+    connect(makeShortcut(QKeySequence(Qt::CTRL | Qt::Key_F)), &QShortcut::activated,
+            this, &VideoWallWindow::toggleFullscreenMode);
+    connect(makeShortcut(QKeySequence(Qt::Key_Escape)), &QShortcut::activated,
+            this, [this]() { if (_isFullscreen) toggleFullscreenMode(); });
 }
 
 void VideoWallWindow::createDefaultPresets()
@@ -297,36 +367,7 @@ void VideoWallWindow::savePreset(const QString& presetName)
 
 void VideoWallWindow::keyPressEvent(QKeyEvent* event)
 {
-    // Cmd+N: Add new emulator tile
-    if (event->key() == Qt::Key_N && event->modifiers() & Qt::ControlModifier)
-    {
-        addEmulatorTile();
-    }
-    // Cmd+Backspace: Remove last tile
-    else if (event->key() == Qt::Key_Backspace && event->modifiers() & Qt::ControlModifier)
-    {
-        removeLastTile();
-    }
-    // F10: Toggle frameless mode
-    else if (event->key() == Qt::Key_F10)
-    {
-        toggleFramelessMode();
-    }
-    // Cmd+F / Ctrl+F: Toggle fullscreen mode
-    else if (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier))
-    {
-        toggleFullscreenMode();
-    }
-    // Escape: Exit fullscreen mode
-    // Use _isFullscreen flag (not windowState()) for macOS native fullscreen compatibility
-    else if (event->key() == Qt::Key_Escape && _isFullscreen)
-    {
-        toggleFullscreenMode();
-    }
-    else
-    {
-        QMainWindow::keyPressEvent(event);
-    }
+    QMainWindow::keyPressEvent(event);
 }
 
 void VideoWallWindow::keyReleaseEvent(QKeyEvent* event)

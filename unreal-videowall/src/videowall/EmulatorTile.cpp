@@ -262,17 +262,6 @@ void EmulatorTile::mousePressEvent(QMouseEvent* event)
 
 void EmulatorTile::keyPressEvent(QKeyEvent* event)
 {
-    // Let application shortcuts propagate to window
-    bool isFullscreenShortcut = (event->key() == Qt::Key_F && (event->modifiers() & Qt::ControlModifier));
-    bool isFramelessShortcut = (event->key() == Qt::Key_F10);
-    bool isEscapeKey = (event->key() == Qt::Key_Escape);
-
-    if (isFullscreenShortcut || isFramelessShortcut || isEscapeKey)
-    {
-        QWidget::keyPressEvent(event);  // Propagate to parent
-        return;
-    }
-
     event->accept();
 
     // Don't react on auto-repeat
