@@ -118,23 +118,7 @@ jobs:
   build-windows-mingw:
     runs-on: windows-latest
 
-    defaults:
-      run:
-        shell: msys2 {0}
-
     steps:
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-python
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -150,19 +134,43 @@ jobs:
           modules: 'qtmultimedia qt5compat'
           cache: true
 
-      - name: Configure CMake
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-python
+
+      - name: Verify Qt installation
+        shell: pwsh
         run: |
+          Write-Host "QT_ROOT_DIR: $env:QT_ROOT_DIR"
+          Get-ChildItem "$env:QT_ROOT_DIR\lib\cmake" -Directory | Select-Object Name
+
+      - name: Configure CMake
+        shell: msys2 {0}
+        run: |
+          # Convert Windows path to MSYS2 path format
+          QT_PATH=$(cygpath -u "${{ env.QT_ROOT_DIR }}")
+          echo "Using Qt at: $QT_PATH"
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
-            -DQT_INSTALL_PATH="${QT_ROOT_DIR}"
+            -DQT_INSTALL_PATH="$QT_PATH"
 
       - name: Build
+        shell: msys2 {0}
         run: cmake --build build --parallel
 
       - name: Package
+        shell: msys2 {0}
         run: |
           cmake --build build --target package_suite_windows
           cmake --build build --target package_mingw_runtime
