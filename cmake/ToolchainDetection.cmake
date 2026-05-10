@@ -148,6 +148,14 @@ if(NOT UNREAL_USING_MINGW AND CMAKE_MAKE_PROGRAM MATCHES "mingw|msys")
     set(UNREAL_USING_MINGW TRUE)
 endif()
 
+# Check CMake generator - Visual Studio / MSBuild generators imply MSVC
+# This is critical for CI builds where MSYS2 is in PATH but the generator is VS
+if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        set(UNREAL_USING_MSVC TRUE)
+    endif()
+endif()
+
 # Fresh build detection: check if PATH contains MSYS2/MinGW before MSVC
 # This is critical for fresh builds where CMAKE_C_COMPILER is not yet set
 if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)

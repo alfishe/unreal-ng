@@ -66,7 +66,7 @@ jobs:
   # Windows MSVC Build
   # ========================================
   build-windows-msvc:
-    runs-on: windows-latest
+    runs-on: windows-2022  # Pin to VS 2022 (windows-latest has VS 2025)
 
     steps:
       - name: Checkout
@@ -179,9 +179,12 @@ jobs:
           retention-days: 7
 
   # ========================================
-  # macOS Build (Universal Binary)
+  # macOS Build (Intel x64) - DISABLED
+  # No macOS Intel runners available on GitHub Actions.
+  # Re-enable by removing `if: false` and adding back to release `needs`.
   # ========================================
   build-macos:
+    if: false
     runs-on: macos-13  # Last Intel runner
 
     steps:
@@ -274,7 +277,7 @@ jobs:
   # Create GitHub Release
   # ========================================
   release:
-    needs: [build-linux, build-windows-msvc, build-windows-mingw, build-macos, build-macos-arm64]
+    needs: [build-linux, build-windows-msvc, build-windows-mingw, build-macos-arm64]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
 
@@ -293,7 +296,6 @@ jobs:
           cp artifacts/UnrealNG-Suite-Linux/UnrealNG-Suite-Linux.tar.gz release/
           cp artifacts/UnrealNG-Suite-Windows-MSVC/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-MSVC.zip
           cp artifacts/UnrealNG-Suite-Windows-MinGW/UnrealNG-Suite-Windows-MinGW.zip release/
-          cp artifacts/UnrealNG-Suite-macOS/UnrealNG-Suite.dmg release/UnrealNG-Suite-macOS-x64.dmg
           cp artifacts/UnrealNG-Suite-macOS-ARM64/UnrealNG-Suite-macOS-ARM64.dmg release/
           ls -la release/
 
@@ -324,7 +326,6 @@ jobs:
             release/UnrealNG-Suite-Linux.tar.gz
             release/UnrealNG-Suite-Windows-MSVC.zip
             release/UnrealNG-Suite-Windows-MinGW.zip
-            release/UnrealNG-Suite-macOS-x64.dmg
             release/UnrealNG-Suite-macOS-ARM64.dmg
             release/SHA256SUMS.txt
           body: |
@@ -342,7 +343,6 @@ jobs:
             | Linux (x64) | `UnrealNG-Suite-Linux.tar.gz` |
             | Windows MSVC (x64) | `UnrealNG-Suite-Windows-MSVC.zip` |
             | Windows MinGW (x64) | `UnrealNG-Suite-Windows-MinGW.zip` |
-            | macOS Intel (x64) | `UnrealNG-Suite-macOS-x64.dmg` |
             | macOS Apple Silicon (ARM64) | `UnrealNG-Suite-macOS-ARM64.dmg` |
 
             ### Included Resources
