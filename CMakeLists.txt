@@ -396,9 +396,16 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libssl-3-x64.dll"
                     "${SUITE_STAGING_DIR}/"
+                
+                # Re-create ZIP with MinGW runtime DLLs included
+                COMMAND ${CMAKE_COMMAND} -E remove
+                    "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
+                COMMAND ${CMAKE_COMMAND} -E tar "cf"
+                    "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
+                    "--format=zip" "--" "${SUITE_STAGING_DIR}"
                     
                 DEPENDS package_suite_windows
-                COMMENT "Copying MinGW/MSYS2 runtime DLLs for packaging"
+                COMMENT "Copying MinGW/MSYS2 runtime DLLs and re-packaging ZIP"
             )
         endif()
     endif()

@@ -1,0 +1,356 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: false
+        default: 'dev'
+
+# Prevent duplicate release builds for the same tag
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUILD_TYPE: Release
+  QT_VERSION: '6.9.3'
+
+jobs:
+  # ========================================
+  # Linux Build (using Docker container)
+  # ========================================
+  build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_linux
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-Linux
+          path: build/packages/UnrealNG-Suite-Linux.tar.gz
+          retention-days: 7
+
+  # ========================================
+  # Windows MSVC Build
+  # ========================================
+  build-windows-msvc:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DBUILD_QT_APPS=ON `
+            -DTESTS=OFF `
+            -DBENCHMARKS=OFF `
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Package
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --target package_suite_windows
+
+      - name: Upload Windows MSVC artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-Windows-MSVC
+          path: build/packages/UnrealNG-Suite-Windows.zip
+          retention-days: 7
+
+  # ========================================
+  # Windows MinGW Build
+  # ========================================
+  build-windows-mingw:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-python
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DQT_INSTALL_PATH="${QT_ROOT_DIR}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: |
+          cmake --build build --target package_suite_windows
+          cmake --build build --target package_mingw_runtime
+
+      - name: Rename artifact
+        shell: pwsh
+        run: |
+          Move-Item -Path "build/packages/UnrealNG-Suite-Windows.zip" -Destination "build/packages/UnrealNG-Suite-Windows-MinGW.zip" -Force
+
+      - name: Upload Windows MinGW artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-Windows-MinGW
+          path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
+          retention-days: 7
+
+  # ========================================
+  # macOS Build (Universal Binary)
+  # ========================================
+  build-macos:
+    runs-on: macos-13  # Last Intel runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DQT_INSTALL_PATH="${QT_ROOT_DIR}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_macos
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-macOS
+          path: build/packages/UnrealNG-Suite.dmg
+          retention-days: 7
+
+  # ========================================
+  # macOS ARM64 Build (Apple Silicon)
+  # ========================================
+  build-macos-arm64:
+    runs-on: macos-14  # M1/M2 runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DQT_INSTALL_PATH="${QT_ROOT_DIR}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_macos
+
+      - name: Rename artifact
+        run: mv build/packages/UnrealNG-Suite.dmg build/packages/UnrealNG-Suite-macOS-ARM64.dmg
+
+      - name: Upload macOS ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-macOS-ARM64
+          path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
+          retention-days: 7
+
+  # ========================================
+  # Create GitHub Release
+  # ========================================
+  release:
+    needs: [build-linux, build-windows-msvc, build-windows-mingw, build-macos, build-macos-arm64]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/UnrealNG-Suite-Linux/UnrealNG-Suite-Linux.tar.gz release/
+          cp artifacts/UnrealNG-Suite-Windows-MSVC/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-MSVC.zip
+          cp artifacts/UnrealNG-Suite-Windows-MinGW/UnrealNG-Suite-Windows-MinGW.zip release/
+          cp artifacts/UnrealNG-Suite-macOS/UnrealNG-Suite.dmg release/UnrealNG-Suite-macOS-x64.dmg
+          cp artifacts/UnrealNG-Suite-macOS-ARM64/UnrealNG-Suite-macOS-ARM64.dmg release/
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: UnrealNG ${{ steps.version.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' }}
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'test') || contains(steps.version.outputs.version, 'dev') }}
+          generate_release_notes: true
+          files: |
+            release/UnrealNG-Suite-Linux.tar.gz
+            release/UnrealNG-Suite-Windows-MSVC.zip
+            release/UnrealNG-Suite-Windows-MinGW.zip
+            release/UnrealNG-Suite-macOS-x64.dmg
+            release/UnrealNG-Suite-macOS-ARM64.dmg
+            release/SHA256SUMS.txt
+          body: |
+            ## UnrealNG Suite ${{ steps.version.outputs.version }}
+
+            This release includes:
+            - **UnrealNG** - Main ZX Spectrum emulator
+            - **Screen Viewer** - Display viewer utility
+            - **Video Wall** - Multi-screen display application
+
+            ### Downloads
+
+            | Platform | File |
+            |----------|------|
+            | Linux (x64) | `UnrealNG-Suite-Linux.tar.gz` |
+            | Windows MSVC (x64) | `UnrealNG-Suite-Windows-MSVC.zip` |
+            | Windows MinGW (x64) | `UnrealNG-Suite-Windows-MinGW.zip` |
+            | macOS Intel (x64) | `UnrealNG-Suite-macOS-x64.dmg` |
+            | macOS Apple Silicon (ARM64) | `UnrealNG-Suite-macOS-ARM64.dmg` |
+
+            ### Included Resources
+            - ROM files for various ZX Spectrum models
+            - Default configuration (Pentagon 512K)
+            - Console fonts
+
+            ### Verify Downloads
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
