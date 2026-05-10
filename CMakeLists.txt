@@ -393,11 +393,12 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
             
-            # Create ZIP archive
-            COMMAND ${CMAKE_COMMAND} -E tar "cf"
-                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
-                "--format=zip" "--" "${SUITE_STAGING_DIR}"
-            
+            # Create ZIP archive (change to parent dir to avoid nested paths)
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Suite-Windows.zip"
+                "--format=zip" "--" "UnrealNG-Suite"
+
             DEPENDS unreal-qt unreal-screen-viewer unreal-videowall
             COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
@@ -419,7 +420,7 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libwinpthread-1.dll"
                     "${SUITE_STAGING_DIR}/"
-                    
+
                 # Copy OpenSSL DLLs (required for WebAPI/network features)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libcrypto-3-x64.dll"
@@ -427,13 +428,31 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libssl-3-x64.dll"
                     "${SUITE_STAGING_DIR}/"
+
+                # Copy Python DLLs (required for Python automation)
+                # MSYS2 uses libpython naming, copy both styles for compatibility
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libpython3.dll"
+                    "${SUITE_STAGING_DIR}/"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libpython3.12.dll"
+                    "${SUITE_STAGING_DIR}/"
+                # Create Windows-style name (python312.dll) as copy of MSYS2 DLL
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libpython3.12.dll"
+                    "${SUITE_STAGING_DIR}/python312.dll"
+                # Also copy libffi (Python dependency)
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${MINGW_BIN_DIR}/libffi-8.dll"
+                    "${SUITE_STAGING_DIR}/"
                 
                 # Re-create ZIP with MinGW runtime DLLs included
                 COMMAND ${CMAKE_COMMAND} -E remove
                     "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
-                COMMAND ${CMAKE_COMMAND} -E tar "cf"
-                    "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
-                    "--format=zip" "--" "${SUITE_STAGING_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                    ${CMAKE_COMMAND} -E tar "cf"
+                    "UnrealNG-Suite-Windows.zip"
+                    "--format=zip" "--" "UnrealNG-Suite"
                     
                 DEPENDS package_suite_windows
                 COMMENT "Copying MinGW/MSYS2 runtime DLLs and re-packaging ZIP"
