@@ -102,6 +102,7 @@ jobs:
             -DBUILD_QT_APPS=ON `
             -DTESTS=OFF `
             -DBENCHMARKS=OFF `
+            -DENABLE_PYTHON_AUTOMATION=OFF `
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
@@ -168,6 +169,7 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
             -DQT_INSTALL_PATH="$QT_PATH"
 
       - name: Build
