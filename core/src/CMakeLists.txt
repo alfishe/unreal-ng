@@ -86,8 +86,12 @@ if (UNIX AND NOT APPLE)
     set(common_libraries -static-libstdc++)
 endif (UNIX AND NOT APPLE)
 
-if (WIN32)
+if (WIN32 AND MINGW)
     set(common_libraries -static-libstdc++ Shlwapi ws2_32)
+endif()
+
+if (WIN32 AND MSVC)
+    set(common_libraries Shlwapi ws2_32)
 endif()
 
 # Link all components into target binary
