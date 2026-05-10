@@ -205,7 +205,7 @@ add_subdirectory("3rdparty/QHexView-5.0")
 if (NOT TARGET unrealng::core)
     add_subdirectory("${ROOT_DIR}/core/src" core)
 endif()
-if (NOT TARGET core-tests)
+if (TESTS AND NOT TARGET core-tests)
     add_subdirectory("${ROOT_DIR}/core/tests" tests)
 endif()
 
@@ -386,14 +386,17 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon512k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
         
-        # 4. Deploy and Sign
-        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
+        # 4. Deploy Qt frameworks
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite
         
-        # 5. Create DMG from staging
+        # 5. Sign with hardened runtime and entitlements
+        COMMAND codesign --force --deep --options runtime --entitlements "${ROOT_DIR}/install/macos/entitlements.plist" --sign - "${UNREAL_QT_STAGING_DIR}/UnrealNG.app"
+        
+        # 6. Create DMG from staging
         COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${UNREAL_QT_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
         
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating individual macOS DMG package for UnrealNG in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for UnrealNG (signed with entitlements)"
     )
     
     # Create a macOS application bundle
