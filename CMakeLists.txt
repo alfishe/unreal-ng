@@ -418,8 +418,7 @@ if (BUILD_QT_APPS)
             get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
             message(STATUS "MinGW bin directory for packaging: ${MINGW_BIN_DIR}")
 
-            # Build command list - Python DLLs only when Python automation is enabled
-            set(MINGW_RUNTIME_COMMANDS
+            add_custom_target(package_mingw_runtime
                 # Copy MinGW runtime DLLs
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
@@ -437,27 +436,6 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libssl-3-x64.dll"
                     "${SUITE_STAGING_DIR}/"
-            )
-
-            if(ENABLE_PYTHON_AUTOMATION)
-                list(APPEND MINGW_RUNTIME_COMMANDS
-                    # Copy Python DLLs (required for Python automation)
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${PYTHON3_BIN_DIR}/libpython3.dll"
-                        "${SUITE_STAGING_DIR}/"
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
-                        "${SUITE_STAGING_DIR}/"
-                    # Create Windows-style name (pythonXYZ.dll) as copy
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
-                        "${SUITE_STAGING_DIR}/python${PYTHON3_VERSION_NODOT}.dll"
-                )
-            endif()
-
-            add_custom_target(package_mingw_runtime
-                ${MINGW_RUNTIME_COMMANDS}
-
                 # Re-create ZIP with MinGW runtime DLLs included
                 COMMAND ${CMAKE_COMMAND} -E remove
                     "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
@@ -469,6 +447,23 @@ if (BUILD_QT_APPS)
                 DEPENDS package_suite_windows
                 COMMENT "Copying MinGW/MSYS2 runtime DLLs and re-packaging ZIP"
             )
+
+            # Add Python DLLs copying only when Python automation is enabled
+            if(ENABLE_PYTHON_AUTOMATION)
+                add_custom_target(package_mingw_python
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython3.dll"
+                        "${SUITE_STAGING_DIR}/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
+                        "${SUITE_STAGING_DIR}/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
+                        "${SUITE_STAGING_DIR}/python${PYTHON3_VERSION_NODOT}.dll"
+                    DEPENDS package_mingw_runtime
+                    COMMENT "Copying Python DLLs for MinGW package"
+                )
+            endif()
         endif()
     endif()
     
