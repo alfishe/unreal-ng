@@ -219,7 +219,7 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
-            -DQT_INSTALL_PATH="${QT_ROOT_DIR}"
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
@@ -264,7 +264,7 @@ jobs:
             -DBUILD_QT_APPS=ON \
             -DTESTS=OFF \
             -DBENCHMARKS=OFF \
-            -DQT_INSTALL_PATH="${QT_ROOT_DIR}"
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
 
       - name: Build
         run: cmake --build build --parallel
