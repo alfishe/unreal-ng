@@ -156,15 +156,31 @@ if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
     endif()
 endif()
 
-# Fresh build detection: check if PATH contains MSYS2/MinGW before MSVC
-# This is critical for fresh builds where CMAKE_C_COMPILER is not yet set
+# Check Visual Studio environment variables set by vcvars64.bat / CLion MSVC toolchain
+# CLion activates the VS developer environment before invoking CMake for MSVC profiles.
+# These env vars are present when running inside a VS developer shell.
+if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
+    if(DEFINED ENV{VSINSTALLDIR} OR DEFINED ENV{VCToolsInstallDir} OR DEFINED ENV{VSCMD_ARG_TGT_ARCH})
+        set(UNREAL_USING_MSVC TRUE)
+    endif()
+endif()
+
+# Last resort: PATH-based detection. Only treat MSYS2-in-PATH as MinGW if cl.exe
+# is NOT also reachable — avoids misdetection when both toolchains are installed.
 if(NOT UNREAL_USING_MINGW AND NOT UNREAL_USING_MSVC)
     if(DEFINED ENV{PATH})
-        # Convert PATH to lowercase for reliable matching
         string(TOLOWER "$ENV{PATH}" _path_lower)
-        # Check if MSYS2/MinGW is in PATH (before cl.exe might also be found)
         if(_path_lower MATCHES "msys64|mingw")
-            set(UNREAL_USING_MINGW TRUE)
+            # MSYS2 is in PATH — but also check whether cl.exe (MSVC) is reachable.
+            # find_program respects PATH order, so if cl.exe comes first we prefer MSVC.
+            find_program(_CL_EXE_FOUND cl NO_CACHE)
+            if(_CL_EXE_FOUND AND NOT _CL_EXE_FOUND MATCHES "msys64|mingw")
+                # cl.exe found outside MSYS2 — this is an MSVC build with MSYS2 also in PATH
+                set(UNREAL_USING_MSVC TRUE)
+            else()
+                set(UNREAL_USING_MINGW TRUE)
+            endif()
+            unset(_CL_EXE_FOUND)
         endif()
     endif()
 endif()

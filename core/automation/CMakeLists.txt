@@ -42,7 +42,10 @@ endif ()
 
 if (ENABLE_WEBAPI_AUTOMATION)
     add_subdirectory(webapi)
-    set(AUTOMATION_WEBAPI_TARGET automation_webapi)
+    # webapi/CMakeLists.txt may set ENABLE_WEBAPI_AUTOMATION=OFF (e.g. missing OpenSSL)
+    if (ENABLE_WEBAPI_AUTOMATION)
+        set(AUTOMATION_WEBAPI_TARGET automation_webapi)
+    endif ()
 endif ()
 
 if (ENABLE_CLI_AUTOMATION)

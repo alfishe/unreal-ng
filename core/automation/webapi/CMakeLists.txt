@@ -34,12 +34,12 @@ if (NOT OpenSSL_FOUND)
             "C:/OpenSSL-Win64"
             "$ENV{OPENSSL_ROOT_DIR}"
         )
-        
+
         # For MSVC, also check vcpkg paths
         if(MSVC AND DEFINED ENV{VCPKG_ROOT})
             list(APPEND OPENSSL_SEARCH_PATHS "$ENV{VCPKG_ROOT}/installed/x64-windows")
         endif()
-        
+
         foreach(OPENSSL_PATH ${OPENSSL_SEARCH_PATHS})
             if(EXISTS "${OPENSSL_PATH}/include/openssl/ssl.h")
                 set(OPENSSL_ROOT_DIR "${OPENSSL_PATH}")
@@ -48,7 +48,29 @@ if (NOT OpenSSL_FOUND)
             endif()
         endforeach()
     endif ()
-    find_package(OpenSSL REQUIRED)
+    find_package(OpenSSL QUIET)
+endif ()
+
+if (NOT OpenSSL_FOUND)
+    if(WIN32 AND MSVC)
+        message(WARNING
+            "[automation_webapi] OpenSSL not found for MSVC — WebAPI automation disabled.\n"
+            "  To enable, install vcpkg and OpenSSL:\n"
+            "    git clone https://github.com/microsoft/vcpkg C:/vcpkg\n"
+            "    C:\\vcpkg\\bootstrap-vcpkg.bat\n"
+            "    vcpkg install openssl:x64-windows-static\n"
+            "    vcpkg integrate install\n"
+            "  Then reconfigure with:\n"
+            "    -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake\n"
+            "    -DVCPKG_TARGET_TRIPLET=x64-windows-static"
+        )
+    else()
+        message(WARNING "[automation_webapi] OpenSSL not found — WebAPI automation disabled.")
+    endif()
+    # Propagate the disabled state so the parent doesn't try to link against
+    # a target that was never created.
+    set(ENABLE_WEBAPI_AUTOMATION OFF PARENT_SCOPE)
+    return()
 endif ()
 
 # Find or build zlib for Drogon
