@@ -11,19 +11,44 @@
 static const int WATCHED_SIGNALS[] = { SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE };
 static const int WATCHED_SIGNALS_COUNT = sizeof(WATCHED_SIGNALS) / sizeof(WATCHED_SIGNALS[0]);
 
+static const char* signalName(int sig)
+{
+    switch (sig)
+    {
+        case SIGSEGV: return "SIGSEGV (segmentation fault)";
+        case SIGBUS:  return "SIGBUS  (bus error)";
+        case SIGABRT: return "SIGABRT (abort)";
+        case SIGILL:  return "SIGILL  (illegal instruction)";
+        case SIGFPE:  return "SIGFPE  (floating-point exception)";
+        default:      return "unknown signal";
+    }
+}
+
+// All output goes through write() — async-signal-safe, bypasses all loggers.
+static void writeErr(const char* msg)
+{
+    write(STDERR_FILENO, msg, __builtin_strlen(msg));
+}
+
 static void posixSignalHandler(int sig)
 {
-    // Collect backtrace — not fully async-signal-safe, but acceptable for crash reporting
     void* frames[64];
     int frameCount = backtrace(frames, 64);
 
-    // Write to stderr first (always available)
-    char header[128];
-    snprintf(header, sizeof(header), "\n*** Crash: signal %d ***\n", sig);
-    write(STDERR_FILENO, header, __builtin_strlen(header));
+    // Header
+    char line[256];
+    writeErr("\n*** UNHANDLED SIGNAL ***\n");
+
+    snprintf(line, sizeof(line), "  Signal : %d  %s\n", sig, signalName(sig));
+    writeErr(line);
+
+    snprintf(line, sizeof(line), "  PID    : %d\n", getpid());
+    writeErr(line);
+
+    writeErr("  Stack  :\n");
     backtrace_symbols_fd(frames, frameCount, STDERR_FILENO);
 
-    // Also write to a log file in /tmp
+    // Write identical content to a log file in /tmp
     time_t now = time(nullptr);
     char logPath[256];
     snprintf(logPath, sizeof(logPath), "/tmp/unreal_crash_%ld_%d.log", (long)now, getpid());
@@ -31,18 +56,26 @@ static void posixSignalHandler(int sig)
     FILE* f = fopen(logPath, "w");
     if (f)
     {
-        fprintf(f, "Signal: %d\n", sig);
+        fprintf(f, "*** UNHANDLED SIGNAL ***\n");
+        fprintf(f, "  Signal : %d  %s\n", sig, signalName(sig));
+        fprintf(f, "  PID    : %d\n", getpid());
+        fprintf(f, "  Stack  :\n");
         char** syms = backtrace_symbols(frames, frameCount);
         if (syms)
         {
             for (int i = 0; i < frameCount; i++)
-                fprintf(f, "%s\n", syms[i]);
+                fprintf(f, "    %s\n", syms[i]);
             free(syms);
         }
         fclose(f);
+
+        snprintf(line, sizeof(line), "  Log    : %s\n", logPath);
+        writeErr(line);
     }
 
-    // Re-raise so the OS generates a core dump and reports the real signal
+    writeErr("************************\n\n");
+
+    // Re-raise so the OS generates a core dump with the real signal
     signal(sig, SIG_DFL);
     raise(sig);
 }
