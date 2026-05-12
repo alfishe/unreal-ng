@@ -5,7 +5,10 @@ project(automation_webapi
     LANGUAGES CXX
 )
 
-# C++ standard is inherited from root CMakeLists.txt (C++20)
+# Explicitly set C++20 standard (required by Drogon and project)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Set paths
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)

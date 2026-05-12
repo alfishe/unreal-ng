@@ -133,6 +133,10 @@ set(SOURCES
     src/EmulatorList.cpp
     src/ScreenViewer.cpp
     src/ModeToolbar.cpp
+    src/crashhandler/crashhandler.cpp
+    $<$<PLATFORM_ID:Windows>:src/crashhandler/crashhandler_windows.cpp>
+    $<$<PLATFORM_ID:Darwin>:src/crashhandler/crashhandler_macos.cpp>
+    $<$<PLATFORM_ID:Linux>:src/crashhandler/crashhandler_linux.cpp>
 )
 
 # Put binary to /bin subfolder
@@ -174,6 +178,7 @@ elseif (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Widgets
         Qt6::Network
+        dbghelp
     )
 endif ()
 

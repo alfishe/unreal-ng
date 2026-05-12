@@ -11,6 +11,7 @@
 #include <common/filehelper.h>
 
 #include <QApplication>
+#include "crashhandler/crashhandler.h"
 #include <QDebug>
 #include <QDir>
 #include <QStandardPaths>
@@ -39,6 +40,9 @@ static void clearMacOSSavedState()
 
 int main(int argc, char* argv[])
 {
+    auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
+    crashHandler->install();
+
     // Disable macOS state restoration via Qt before creating QApplication
     // Or use 'defaults write com.unrealng.videowall NSQuitAlwaysKeepsWindows -bool false' in Terminal
 #if defined(__APPLE__)

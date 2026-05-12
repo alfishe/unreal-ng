@@ -12,7 +12,10 @@ set(ENABLE_PYTHON_AUTOMATION ON CACHE BOOL "Enable Python automation" FORCE)
 set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
-# C++ standard is inherited from root CMakeLists.txt (C++20)
+# Set C++ standard (C++20 required)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_VERSION VERSION_LESS "3.7.0")
     set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -300,9 +303,9 @@ if (INCLUDE_AUTOMATION)
         Threads::Threads
     )
     
-    # Link Winsock on Windows for automation
+    # Link Winsock and crash handler deps on Windows
     if (WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
     # Link without automation

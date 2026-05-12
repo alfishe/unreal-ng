@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 project(automation LANGUAGES CXX)
 
-# C++ standard is inherited from root CMakeLists.txt (C++20)
+# Explicitly set C++20 standard
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 message(">> <${PROJECT_NAME}>")
 
