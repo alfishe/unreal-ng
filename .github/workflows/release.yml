@@ -87,6 +87,7 @@ jobs:
           name: UnrealNG-Suite-Linux
           path: build/packages/UnrealNG-Suite-Linux.tar.gz
           retention-days: 7
+          compression-level: 0  # Already compressed, skip double-compression
 
   # ========================================
   # Windows MSVC Build
@@ -142,6 +143,7 @@ jobs:
           name: UnrealNG-Suite-Windows-MSVC
           path: build/packages/UnrealNG-Suite-Windows.zip
           retention-days: 7
+          compression-level: 0  # Already compressed, skip double-compression
 
   # ========================================
   # Windows MinGW Build
@@ -219,6 +221,7 @@ jobs:
           name: UnrealNG-Suite-Windows-MinGW
           path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
           retention-days: 7
+          compression-level: 0  # Already compressed, skip double-compression
 
   # ========================================
   # macOS Build (Intel x64) - DISABLED
@@ -266,6 +269,7 @@ jobs:
           name: UnrealNG-Suite-macOS
           path: build/packages/UnrealNG-Suite.dmg
           retention-days: 7
+          compression-level: 0  # DMG is already compressed
 
   # ========================================
   # macOS ARM64 Build (Apple Silicon)
@@ -314,6 +318,7 @@ jobs:
           name: UnrealNG-Suite-macOS-ARM64
           path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
           retention-days: 7
+          compression-level: 0  # DMG is already compressed
 
   # ========================================
   # Create GitHub Release
