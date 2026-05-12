@@ -65,9 +65,9 @@ if(PYTHON_USE_STATIC)
         message(STATUS "[automation_python] Found Python: ${Python3_EXECUTABLE} (${Python3_VERSION})")
         message(STATUS "[automation_python] Python library: ${Python3_LIBRARIES}")
 
-        # Tell pybind11 to use the Python we found
+        # Tell pybind11 to use FindPython (modern, avoids deprecated FindPythonLibsNew / CMP0148)
+        set(PYBIND11_FINDPYTHON ON)
         set(PYBIND11_PYTHON_VERSION ${Python3_VERSION})
-        set(PYTHON_EXECUTABLE ${Python3_EXECUTABLE})
         add_subdirectory(3rdparty/pybind11)
         
     else()
