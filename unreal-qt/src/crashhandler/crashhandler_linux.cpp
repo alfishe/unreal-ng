@@ -36,7 +36,11 @@ static void posixSignalHandler(int sig)
     void* frames[64];
     int frameCount = backtrace(frames, 64);
 
-    char line[256];
+    // Path: "/tmp/unreal_crash_<timestamp>_<pid>.log" - 64 bytes is plenty
+    constexpr size_t kLogPathSize = 64;
+    constexpr size_t kLineSize = kLogPathSize + 32;  // Room for formatting prefix
+
+    char line[kLineSize];
     writeErr("\n*** UNHANDLED SIGNAL ***\n");
 
     snprintf(line, sizeof(line), "  Signal : %d  %s\n", sig, signalName(sig));
@@ -50,7 +54,7 @@ static void posixSignalHandler(int sig)
 
     // Write identical content to a log file in /tmp
     time_t now = time(nullptr);
-    char logPath[256];
+    char logPath[kLogPathSize];
     snprintf(logPath, sizeof(logPath), "/tmp/unreal_crash_%ld_%d.log", (long)now, getpid());
 
     FILE* f = fopen(logPath, "w");
