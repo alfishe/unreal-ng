@@ -15,7 +15,9 @@
 
 #ifdef _WIN32
     #undef _HAS_STD_BYTE
-	#define NOMINMAX					// No min/max macroses defined in <windows.h> - they're conflicting with STL std::min / std::max
+	#ifndef NOMINMAX
+		#define NOMINMAX				// No min/max macroses defined in <windows.h> - they're conflicting with STL std::min / std::max
+	#endif
 
 	#if _MSC_VER >= 1300
 		#define CACHE_ALIGNED __declspec(align(CACHE_LINE))

@@ -94,15 +94,24 @@ endif()
 # use the same MSYS2-provided version and avoid picking up system Python.
 if(MINGW AND ENABLE_PYTHON_AUTOMATION)
     message(STATUS "[Root] MinGW: Pre-configuring MSYS2 Python")
-    
-    # Force CMake to find MSYS2 Python, not system Python
-    set(Python3_ROOT_DIR "C:/msys64/mingw64" CACHE PATH "MSYS2 Python root" FORCE)
+
+    # Don't search Windows registry, let CMake find MSYS2 Python from PATH
     set(Python3_FIND_REGISTRY NEVER)
     set(Python3_FIND_STRATEGY LOCATION)
-    
+
     find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
-    
+
+    # Get the bin directory from the Python executable path
+    get_filename_component(PYTHON3_BIN_DIR "${Python3_EXECUTABLE}" DIRECTORY)
+    set(PYTHON3_BIN_DIR "${PYTHON3_BIN_DIR}" CACHE PATH "Python bin directory" FORCE)
+
+    # Extract version for DLL naming (e.g., 3.12 -> 312)
+    string(REPLACE "." "" PYTHON3_VERSION_NODOT "${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}")
+    set(PYTHON3_VERSION_NODOT "${PYTHON3_VERSION_NODOT}" CACHE STRING "Python version without dots" FORCE)
+
     message(STATUS "[Root] Found MinGW Python: ${Python3_EXECUTABLE} (${Python3_VERSION})")
+    message(STATUS "[Root] Python bin dir: ${PYTHON3_BIN_DIR}")
+    message(STATUS "[Root] Python version for DLL: ${PYTHON3_VERSION_NODOT}")
     
     # MinGW Debug ABI Fix: MSYS2 only provides release Python libraries.
     # In Debug builds (_DEBUG defined), Python headers enable debug reference counting
@@ -137,6 +146,14 @@ run_dependency_checks()
 if (BUILD_QT_APPS)
     set(QT_FOUND_PATH "")
     
+    if (NOT DEFINED QT_INSTALL_PATH OR QT_INSTALL_PATH STREQUAL "")
+        # Check environment variable first (set by Docker container)
+        if(DEFINED ENV{QT_INSTALL_PATH} AND NOT "$ENV{QT_INSTALL_PATH}" STREQUAL "")
+            set(QT_INSTALL_PATH "$ENV{QT_INSTALL_PATH}" CACHE PATH "Qt install path from environment")
+            message(STATUS "QT_INSTALL_PATH from environment: $ENV{QT_INSTALL_PATH}")
+        endif()
+    endif()
+
     if (NOT DEFINED QT_INSTALL_PATH OR QT_INSTALL_PATH STREQUAL "")
         if (APPLE)
             set(QT_POSSIBLE_PATHS
@@ -319,23 +336,44 @@ if (BUILD_QT_APPS)
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-log-viewer.app" "${SUITE_STAGING_DIR}/Log Viewer.app"
             COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-videowall.app" "${SUITE_STAGING_DIR}/Video Wall.app"
             
-            # Copy shared resources into the MAIN bundle BEFORE macdeployqt runs
+            # Copy shared resources into ALL app bundles
+            # (unreal-qt POST_BUILD already copies to bin/unreal-qt.app, but cp -a may miss if POST_BUILD ran before copy)
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/fonts"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
             COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.ini"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/fonts" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/fonts"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/rom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/rom"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.ini"
             
-            # Run macdeployqt on each app bundle with ad-hoc signing as the FINAL step
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Log Viewer.app" -always-overwrite -codesign=-
-            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite -codesign=-
+            # Copy shared icon to bundles that reference it
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.icns"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Screen Viewer.app/Contents/Resources/unreal.icns"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Log Viewer.app/Contents/Resources/unreal.icns"
+            COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/unreal-qt/install/macos/unreal.icns" "${SUITE_STAGING_DIR}/Video Wall.app/Contents/Resources/unreal.icns"
+
+            # Run macdeployqt to deploy Qt frameworks into each bundle
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/UnrealNG.app" -always-overwrite
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Screen Viewer.app" -always-overwrite
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Log Viewer.app" -always-overwrite
+            COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/Video Wall.app" -always-overwrite
+
+            # Sign each app with hardened runtime and entitlements
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/UnrealNG.app"
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Screen Viewer.app"
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Log Viewer.app"
+            COMMAND codesign --force --deep --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/Video Wall.app"
             
             # Create combined DMG from the correctly signed staging directory
             COMMAND hdiutil create -volname "UnrealNG Suite" -srcfolder "${SUITE_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite.dmg"
             
             DEPENDS unreal-qt unreal-screen-viewer unreal-log-viewer unreal-videowall
-            COMMENT "Creating combined macOS DMG with all applications"
+            COMMENT "Creating combined macOS DMG with all applications (signed with entitlements)"
         )
     endif()
     
@@ -384,11 +422,12 @@ if (BUILD_QT_APPS)
             COMMAND ${CMAKE_COMMAND} -E copy
                 "${CONFIG_FILE}" "${SUITE_STAGING_DIR}/unreal.ini"
             
-            # Create ZIP archive
-            COMMAND ${CMAKE_COMMAND} -E tar "cf"
-                "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
-                "--format=zip" "--" "${SUITE_STAGING_DIR}"
-            
+            # Create ZIP archive (change to parent dir to avoid nested paths)
+            COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                ${CMAKE_COMMAND} -E tar "cf"
+                "UnrealNG-Suite-Windows.zip"
+                "--format=zip" "--" "UnrealNG-Suite"
+
             DEPENDS unreal-qt unreal-screen-viewer unreal-log-viewer unreal-videowall
             COMMENT "Creating combined Windows ZIP with all applications and Qt dependencies"
         )
@@ -398,7 +437,7 @@ if (BUILD_QT_APPS)
             # Get MSYS2 bin path from compiler location
             get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
             message(STATUS "MinGW bin directory for packaging: ${MINGW_BIN_DIR}")
-            
+
             add_custom_target(package_mingw_runtime
                 # Copy MinGW runtime DLLs
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -410,7 +449,6 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libwinpthread-1.dll"
                     "${SUITE_STAGING_DIR}/"
-                    
                 # Copy OpenSSL DLLs (required for WebAPI/network features)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libcrypto-3-x64.dll"
@@ -418,10 +456,34 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${MINGW_BIN_DIR}/libssl-3-x64.dll"
                     "${SUITE_STAGING_DIR}/"
-                    
+                # Re-create ZIP with MinGW runtime DLLs included
+                COMMAND ${CMAKE_COMMAND} -E remove
+                    "${CMAKE_BINARY_DIR}/packages/UnrealNG-Suite-Windows.zip"
+                COMMAND ${CMAKE_COMMAND} -E chdir "${CMAKE_BINARY_DIR}/packages"
+                    ${CMAKE_COMMAND} -E tar "cf"
+                    "UnrealNG-Suite-Windows.zip"
+                    "--format=zip" "--" "UnrealNG-Suite"
+
                 DEPENDS package_suite_windows
-                COMMENT "Copying MinGW/MSYS2 runtime DLLs for packaging"
+                COMMENT "Copying MinGW/MSYS2 runtime DLLs and re-packaging ZIP"
             )
+
+            # Add Python DLLs copying only when Python automation is enabled
+            if(ENABLE_PYTHON_AUTOMATION)
+                add_custom_target(package_mingw_python
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython3.dll"
+                        "${SUITE_STAGING_DIR}/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
+                        "${SUITE_STAGING_DIR}/"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${PYTHON3_BIN_DIR}/libpython${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}.dll"
+                        "${SUITE_STAGING_DIR}/python${PYTHON3_VERSION_NODOT}.dll"
+                    DEPENDS package_mingw_runtime
+                    COMMENT "Copying Python DLLs for MinGW package"
+                )
+            endif()
         endif()
     endif()
     

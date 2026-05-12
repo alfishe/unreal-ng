@@ -133,6 +133,10 @@ set(SOURCES
     src/EmulatorList.cpp
     src/ScreenViewer.cpp
     src/ModeToolbar.cpp
+    src/crashhandler/crashhandler.cpp
+    $<$<PLATFORM_ID:Windows>:src/crashhandler/crashhandler_windows.cpp>
+    $<$<PLATFORM_ID:Darwin>:src/crashhandler/crashhandler_macos.cpp>
+    $<$<PLATFORM_ID:Linux>:src/crashhandler/crashhandler_linux.cpp>
 )
 
 # Put binary to /bin subfolder
@@ -175,6 +179,7 @@ elseif (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt6::Widgets
         Qt6::Network
+        dbghelp
     )
 endif ()
 
@@ -225,24 +230,36 @@ if(APPLE)
         # 2. Copy App Bundle (preserving symlinks)
         COMMAND cp -a "${CMAKE_BINARY_DIR}/bin/unreal-screen-viewer.app" "${SCREEN_VIEWER_STAGING_DIR}/Screen Viewer.app"
         
-        # 3. Deploy and Sign (LAST step before DMG creation)
-        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SCREEN_VIEWER_STAGING_DIR}/Screen Viewer.app" -always-overwrite -codesign=-
+        # 3. Deploy Qt frameworks
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${SCREEN_VIEWER_STAGING_DIR}/Screen Viewer.app" -always-overwrite
         
-        # 4. Create DMG from staging
+        # 4. Sign with hardened runtime and entitlements
+        COMMAND codesign --force --deep --options runtime --entitlements "${ROOT_DIR}/install/macos/entitlements.plist" --sign - "${SCREEN_VIEWER_STAGING_DIR}/Screen Viewer.app"
+        
+        # 5. Create DMG from staging
         COMMAND hdiutil create -volname "UnrealNG-ScreenViewer" -srcfolder "${SCREEN_VIEWER_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG-ScreenViewer.dmg"
         
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating individual macOS DMG package for Screen Viewer in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for Screen Viewer (signed with entitlements)"
     )
     
     # Create a macOS application bundle
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/Info.plist"
         MACOSX_BUNDLE_BUNDLE_NAME "UnrealNG Screen Viewer"
         MACOSX_BUNDLE_BUNDLE_VERSION "${PACKAGE_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PACKAGE_VERSION}"
+        MACOSX_BUNDLE_ICON_FILE "unreal.icns"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.unrealng.screen-viewer"
         MACOSX_BUNDLE_COPYRIGHT "Copyright © 2025 UnrealNG Team"
+    )
+    
+    # Copy the icon file to the bundle Resources
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy "${ROOT_DIR}/unreal-qt/install/macos/unreal.icns" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/../Resources/"
+        COMMENT "Copying icon to Screen Viewer app bundle"
     )
 endif()
 

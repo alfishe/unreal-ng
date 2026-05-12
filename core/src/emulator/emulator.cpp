@@ -1092,6 +1092,13 @@ bool Emulator::LoadTape(const std::string& path)
 
 bool Emulator::LoadDisk(const std::string& path)
 {
+    // Guard against operations during destruction (thread safety)
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("LoadDisk rejected - emulator is being destroyed");
+        return false;
+    }
+
     bool result = false;
 
     MLOGEMPTY();
@@ -1109,6 +1116,15 @@ bool Emulator::LoadDisk(const std::string& path)
 
     // Validate extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+
+    // Pause emulator while swapping disk image to prevent data race with emulator thread
+    bool wasRunning = false;
+    if (!IsPaused())
+    {
+        Pause();
+        wasRunning = true;
+    }
+
     if (ext == "trd")
     {
         LoaderTRD loaderTrd(_context, resolvedPath);
@@ -1193,6 +1209,11 @@ bool Emulator::LoadDisk(const std::string& path)
             
             result = true;  // Successfully loaded SCL disk
         }
+    }
+
+    if (wasRunning)
+    {
+        Resume();
     }
 
     return result;
