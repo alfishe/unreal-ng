@@ -1,9 +1,9 @@
 #include "registerswidget.h"
-#include "ui_registerswidget.h"
 
-#include <cstring>
 #include <QMetaObject>
-#include "debuggerwindow.h"
+
+#include "debugger/debuggerwindow.h"
+#include "ui_registerswidget.h"
 
 RegistersWidget::RegistersWidget(QWidget *parent) : QWidget(parent), ui(new Ui::RegistersWidget)
 {

@@ -1346,9 +1346,9 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 oss << StringHelper::Format("%02X      ", (int)ev.flags);
                 oss << StringHelper::Format("%04X    ", ev.sp);
                 // opcodes
-                for (auto b : ev.opcode_bytes)
-                    oss << StringHelper::Format("%02X ", (int)b);
-                oss << std::string(12 - ev.opcode_bytes.size() * 3, ' ');
+                for (uint8_t j = 0; j < ev.opcode_len; ++j)
+                    oss << StringHelper::Format("%02X ", (int)ev.opcode_bytes[j]);
+                oss << std::string(12 - static_cast<size_t>(ev.opcode_len) * 3, ' ');
                 oss << "   ";
 
                 // banks
@@ -1392,9 +1392,9 @@ void CLIProcessor::HandleCallTrace(const ClientSession& session, const std::vect
                 oss << StringHelper::Format("%04X    ", ev.sp);
 
                 // opcodes
-                for (auto b : ev.opcode_bytes)
-                    oss << StringHelper::Format("%02X ", (int)b);
-                oss << std::string(12 - ev.opcode_bytes.size() * 3, ' ');
+                for (uint8_t j = 0; j < ev.opcode_len; ++j)
+                    oss << StringHelper::Format("%02X ", (int)ev.opcode_bytes[j]);
+                oss << std::string(12 - static_cast<size_t>(ev.opcode_len) * 3, ' ');
                 oss << "   ";
                 // banks
                 for (int b = 0; b < 4; ++b)

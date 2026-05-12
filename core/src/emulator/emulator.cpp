@@ -750,6 +750,7 @@ void Emulator::Resume(bool broadcast)
 
     _stopRequested = false;
     _isPaused = false;
+    ResetLineStepAnchor();  // Full-speed run invalidates line-step anchor
     // MainLoop::Run() will detect this via Emulator::IsPaused() check and resume.
 
     // Note: Don't unconditionally set _isRunning = true here.
@@ -1077,6 +1078,13 @@ bool Emulator::LoadTape(const std::string& path)
 
 bool Emulator::LoadDisk(const std::string& path)
 {
+    // Guard against operations during destruction (thread safety)
+    if (_state == StateDestroying || _isReleased)
+    {
+        MLOGWARNING("LoadDisk rejected - emulator is being destroyed");
+        return false;
+    }
+
     bool result = false;
 
     MLOGEMPTY();
@@ -1094,6 +1102,15 @@ bool Emulator::LoadDisk(const std::string& path)
 
     // Validate extension
     std::string ext = StringHelper::ToLower(FileHelper::GetFileExtension(resolvedPath));
+
+    // Pause emulator while swapping disk image to prevent data race with emulator thread
+    bool wasRunning = false;
+    if (!IsPaused())
+    {
+        Pause();
+        wasRunning = true;
+    }
+
     if (ext == "trd")
     {
         LoaderTRD loaderTrd(_context, resolvedPath);
@@ -1180,6 +1197,11 @@ bool Emulator::LoadDisk(const std::string& path)
         }
     }
 
+    if (wasRunning)
+    {
+        Resume();
+    }
+
     return result;
 }
 
@@ -1213,42 +1235,105 @@ void Emulator::RunSingleCPUCycle(bool skipBreakpoints)
 {
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
 
-    [[maybe_unused]] const CONFIG& config = _context->config;
-    [[maybe_unused]] Z80& z80 = *_core->GetZ80();
-    [[maybe_unused]] Memory& memory = *_context->pMemory;
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
+    }
 
-    // TODO: synchronize with all timings within frame and I/O
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+    EmulatorState& state = _context->emulatorState;
 
+    // INT interrupt timing — must match Z80FrameCycle pattern
+    unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
+    unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+    uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;
+    bool int_occurred = false;
+    if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
+
+    z80.ProcessInterrupts(int_occurred, int_start, int_end);
     z80.Z80Step(skipBreakpoints);
     z80.OnCPUStep();
+
+    // Handle frame boundary — full processing to match MainLoop::RunFrame behavior
+    if (z80.t >= frameLimit)
+    {
+        _core->AdjustFrameCounters();
+
+        // Frame boundary processing: finalize old frame, initialize new frame
+        // Order matches MainLoop: CPUFrameCycle(AdjustFrameCounters) → OnFrameEnd → OnFrameStart
+        if (_mainloop)
+        {
+            _mainloop->OnFrameEnd();
+            _mainloop->OnFrameStart();
+        }
+
+        _context->pScreen->ResetPrevTstate();
+    }
 
     // Notify the debugger that a step has been performed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
-
-    // New frame to be started
-    if (z80.t >= config.frame)
-    {
-        _core->AdjustFrameCounters();
-        _context->pScreen->ResetPrevTstate();
-    }
 }
 
 void Emulator::RunNCPUCycles(unsigned cycles, bool skipBreakpoints)
 {
-    for (unsigned i = 0; i < cycles; i++)
-    {
-        RunSingleCPUCycle(skipBreakpoints);
+    CancelPendingStepOver();
+    _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
 
-        if (_stopRequested)
-            break;
+    // Pause emulator if running — step commands always leave emulator paused
+    if (IsRunning() && !IsPaused())
+    {
+        Pause();  // Broadcast pause so debugger UI updates
     }
+
+    const CONFIG& config = _context->config;
+    Z80& z80 = *_core->GetZ80();
+    EmulatorState& state = _context->emulatorState;
+
+    // INT interrupt timing — must match Z80FrameCycle pattern
+    unsigned int_start = config.intstart * state.current_z80_frequency_multiplier;
+    unsigned int_end = (config.intstart + config.intlen) * state.current_z80_frequency_multiplier;
+    uint32_t frameLimit = config.frame * state.current_z80_frequency_multiplier;
+    bool int_occurred = false;
+    if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
+
+    for (unsigned i = 0; i < cycles && !_stopRequested; i++)
+    {
+        z80.ProcessInterrupts(int_occurred, int_start, int_end);
+        z80.Z80Step(skipBreakpoints);
+        z80.OnCPUStep();
+
+        // Handle frame boundary — full processing to match MainLoop::RunFrame behavior
+        if (z80.t >= frameLimit)
+        {
+            _core->AdjustFrameCounters();
+
+            // Frame boundary processing: finalize old frame, initialize new frame
+            // Order matches MainLoop: CPUFrameCycle(AdjustFrameCounters) → OnFrameEnd → OnFrameStart
+            if (_mainloop)
+            {
+                _mainloop->OnFrameEnd();
+                _mainloop->OnFrameStart();
+            }
+
+            _context->pScreen->ResetPrevTstate();
+        }
+    }
+
+    // Notify the debugger that a step has been performed
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
 void Emulator::RunFrame(bool skipBreakpoints)
 {
     CancelPendingStepOver();
+    ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
     if (IsRunning() && !IsPaused())
@@ -1298,6 +1383,13 @@ void Emulator::RunFrame(bool skipBreakpoints)
         if (z80.t >= frameLimit)
         {
             _core->AdjustFrameCounters();
+
+            if (_mainloop)
+            {
+                _mainloop->OnFrameEnd();
+                _mainloop->OnFrameStart();
+            }
+
             _context->pScreen->ResetPrevTstate();
         }
     }
@@ -1323,6 +1415,13 @@ void Emulator::RunFrame(bool skipBreakpoints)
             if (z80.t >= frameLimit)
             {
                 _core->AdjustFrameCounters();
+
+                if (_mainloop)
+                {
+                    _mainloop->OnFrameEnd();
+                    _mainloop->OnFrameStart();
+                }
+
                 _context->pScreen->ResetPrevTstate();
                 break;  // Safety: don't cross another frame boundary
             }
@@ -1378,10 +1477,17 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
         unsigned stepT = z80.t >= prevT ? (z80.t - prevT) : z80.t;
         elapsed += stepT;
 
-        // Handle frame boundary
+        // Handle frame boundary — full processing to match MainLoop::RunFrame behavior
         if (z80.t >= frameLimit)
         {
             _core->AdjustFrameCounters();
+
+            if (_mainloop)
+            {
+                _mainloop->OnFrameEnd();
+                _mainloop->OnFrameStart();
+            }
+
             _context->pScreen->ResetPrevTstate();
 
             // Notify after each frame so debugger/visualizers can update
@@ -1394,6 +1500,7 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
 {
     CancelPendingStepOver();
     _hasFrameStepTarget = false;
+    ResetLineStepAnchor();
 
     // Pause emulator if running — step commands always leave emulator paused
     if (IsRunning() && !IsPaused())
@@ -1420,18 +1527,25 @@ void Emulator::RunTStates(unsigned tStates, bool skipBreakpoints)
         z80.Z80Step(skipBreakpoints);
         z80.OnCPUStep();
 
-        // Handle frame boundary
+        // Handle frame boundary — full processing to match MainLoop::RunFrame behavior
         if (z80.t >= frameLimit)
         {
             _core->AdjustFrameCounters();
+
+            if (_mainloop)
+            {
+                _mainloop->OnFrameEnd();
+                _mainloop->OnFrameStart();
+            }
+
             _context->pScreen->ResetPrevTstate();
+
             if (targetT >= frameLimit)
             {
                 targetT -= frameLimit;
             }
         }
     }
-
 
     // Notify debugger
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1522,17 +1636,39 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
     bool int_occurred = false;
     if (int_end >= frameLimit) { int_end -= frameLimit; z80.int_pending = true; int_occurred = true; }
 
-    // Anti-drift strategy: calculate absolute target t-state position
-    // Remember current position within scanline and advance by exactly N scanlines
-    unsigned posInScanline = z80.t % config.t_line;
-    unsigned targetT = z80.t + (count * config.t_line);
+    const unsigned t_line = config.t_line;
 
-    // Adjust target so we stop at the same position within the target scanline
-    unsigned targetPosInScanline = targetT % config.t_line;
-    if (targetPosInScanline > posInScanline)
+    // Anti-drift strategy: persistent anchor offset within scanline.
+    // On the first line-step, capture our horizontal position within the scanline.
+    // All subsequent steps target the same offset, so even though Z80 opcodes
+    // overshoot by 0–19 t-states, the TARGET never drifts — only the single-step
+    // landing jitters by at most one opcode width.
+    if (_lineStepAnchorOffset < 0)
     {
-        targetT -= (targetPosInScanline - posInScanline);
+        _lineStepAnchorOffset = static_cast<int>(z80.t % t_line);
     }
+
+    const unsigned anchor = static_cast<unsigned>(_lineStepAnchorOffset);
+
+    // Calculate the ideal target (where we'd land with infinite resolution)
+    unsigned idealT = z80.t + count * t_line;
+
+    // Find the two anchor-aligned positions that bracket idealT
+    unsigned anchorBefore = (idealT / t_line) * t_line + anchor;
+    if (anchorBefore > idealT)
+        anchorBefore -= t_line;
+    unsigned anchorAfter = anchorBefore + t_line;
+
+    // Pick whichever anchor point is closest to the ideal target
+    unsigned targetT;
+    if (idealT - anchorBefore <= anchorAfter - idealT)
+        targetT = anchorBefore;
+    else
+        targetT = anchorAfter;
+
+    // Safety: target must advance past current position
+    if (targetT <= z80.t)
+        targetT += t_line;
 
     while (z80.t < targetT && !_stopRequested)
     {
@@ -1558,6 +1694,11 @@ void Emulator::RunNScanlines(unsigned count, bool skipBreakpoints)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
     messageCenter.Post(NC_SCANLINE_BOUNDARY);
+}
+
+void Emulator::ResetLineStepAnchor()
+{
+    _lineStepAnchorOffset = -1;
 }
 
 void Emulator::RunUntilNextScreenPixel(bool skipBreakpoints)

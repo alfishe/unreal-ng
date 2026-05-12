@@ -2,22 +2,16 @@
 #ifndef DEBUGGERWINDOW_H
 #define DEBUGGERWINDOW_H
 
-#include <debugger/breakpointgroupdialog.h>
 #include <debugger/breakpoints/breakpointmanager.h>
-#include <debugger/labeldialog.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorbinding.h>
 
-#include <QAction>
-#include <QDebug>
 #include <QMenu>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
 
 #include "3rdparty/message-center/messagecenter.h"
-#include "QHexView/model/buffer/qmemorybuffer.h"
-#include "QHexView/qhexview.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui
@@ -136,6 +130,7 @@ protected:
     bool _inStepOutOperation = false;               // Flag indicating we're in a step-out operation
     bool _waitingForInterrupt = false;              // Flag indicating we're waiting for an interrupt
     bool _isClosing = false;                         // Flag indicating window is being destroyed
+    bool _speedControlActive = false;                // Speed widget is auto-stepping (set synchronously via signal)
     std::vector<uint16_t> _deactivatedBreakpoints;  // Stores IDs of temporarily deactivated breakpoints
 
     // UI fields

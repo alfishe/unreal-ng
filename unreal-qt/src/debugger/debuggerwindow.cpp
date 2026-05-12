@@ -11,15 +11,15 @@
 #include <QTimer>
 #include <Qt>
 
+#include "QHexView/model/buffer/qmemorybuffer.h"
 #include "debugger/breakpointdialog.h"
 #include "debugger/breakpointeditor.h"
-#include "debugger/breakpointgroupdialog.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labeleditor.h"
-#include "debugger/speedcontrolwidget.h"
 #include "debugvisualizationwindow.h"
 #include "emulator/emulator.h"
+#include "widgets/speedcontrolwidget.h"
 #include "ui_debuggerwindow.h"
 
 /// region <Constructor / destructors>
@@ -179,6 +179,25 @@ DebuggerWindow::DebuggerWindow(Emulator* emulator, QWidget* parent) : QWidget(pa
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
         emit screenRefreshRequested();
+    });
+
+    // Synchronize toolbar state when speed widget starts/stops auto-stepping
+    connect(m_speedControl, &SpeedControlWidget::runningChanged, this, [this](bool running) {
+        // Track speed control state synchronously — this runs BEFORE any queued
+        // stateChanged(StatePaused) events arrive via QueuedConnection, avoiding
+        // the race where onBindingStateChanged overwrites the toolbar state.
+        _speedControlActive = running;
+
+        if (running)
+        {
+            // Speed widget is auto-stepping: disable Continue/Step, enable Pause
+            updateToolbarActions(false, true, false, true, true, true);
+        }
+        else
+        {
+            // Speed widget stopped: emulator is paused, enable Continue/Step, disable Pause
+            updateToolbarActions(true, false, true, true, true, true);
+        }
     });
 
     // Set hex memory viewer to readonly mode
@@ -388,8 +407,20 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
     switch (state)
     {
         case StatePaused:
-            // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
-            updateToolbarActions(true, false, true, true, true, true);
+            if (_speedControlActive)
+            {
+                // Emulator is paused internally but speed widget is auto-stepping —
+                // treat as "running" so Pause remains available from the toolbar.
+                // Uses _speedControlActive (set synchronously via runningChanged signal)
+                // instead of m_speedControl->isRunning() to avoid race with
+                // QueuedConnection state changes that arrive before the timer starts.
+                updateToolbarActions(false, true, false, true, true, true);
+            }
+            else
+            {
+                // (Continue: ON, Pause: OFF, Step: ON, Reset: ON, Breakpoints: ON, Labels: ON)
+                updateToolbarActions(true, false, true, true, true, true);
+            }
             break;
         case StateRun:
         case StateResumed:  // StateResumed = running after pause, same as StateRun
@@ -910,6 +941,10 @@ void DebuggerWindow::pauseExecution()
 {
     qDebug() << "DebuggerWindow::pauseExecution()";
 
+    // Stop speed control auto-run when user manually pauses
+    if (m_speedControl)
+        m_speedControl->stop();
+
     if (_emulator && _emulator->IsRunning() && !_emulator->IsPaused())
     {
         _emulator->Pause();
@@ -948,6 +983,10 @@ void DebuggerWindow::stepOver()
     qDebug() << "DebuggerWindow::stepOver()";
 
     _breakpointTriggered = false;
+
+    // Stop speed control auto-run when user manually steps
+    if (m_speedControl)
+        m_speedControl->stop();
 
     if (!_emulator)
         return;
@@ -1032,6 +1071,10 @@ void DebuggerWindow::frameStep()
     qDebug() << "DebuggerWindow::frameStep()";
 
     _breakpointTriggered = false;
+
+    // Stop speed control auto-run when user manually frame-steps
+    if (m_speedControl)
+        m_speedControl->stop();
 
     if (_emulator)
     {

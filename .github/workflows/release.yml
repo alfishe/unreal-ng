@@ -1,0 +1,469 @@
+# ==============================================================================
+# Release Build Workflow
+# ==============================================================================
+#
+# This workflow supports TWO release modes:
+#
+# 1. ROLLING SNAPSHOT (Manual trigger via "Run workflow" button)
+#    - Creates/updates a single "continuous" pre-release tag
+#    - Each run REPLACES the previous snapshot (no tag accumulation)
+#    - Stable download URL: /releases/tag/continuous
+#    - Use this for alpha/development builds
+#
+# 2. MILESTONE RELEASE (Triggered by pushing a v* tag)
+#    - Creates a permanent versioned release (v1.0.0, v2.0.0, etc.)
+#    - Never deleted or overwritten
+#    - Use this when you want to preserve a specific build forever
+#
+# Examples:
+#   Rolling snapshot: Click "Run workflow" button in GitHub Actions UI
+#   Milestone release: git tag v1.0.0 && git push origin v1.0.0
+#
+# ==============================================================================
+
+name: Release Build
+
+on:
+  # Milestone releases: triggered by pushing version tags (v1.0.0, v2.0.0, etc.)
+  push:
+    tags:
+      - 'v*'
+
+  # Rolling snapshots: triggered manually via GitHub Actions UI
+  workflow_dispatch:
+
+# Prevent duplicate release builds
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Permissions required for creating releases and tags
+permissions:
+  contents: write
+
+env:
+  BUILD_TYPE: Release
+  QT_VERSION: '6.9.3'
+
+jobs:
+  # ========================================
+  # Linux Build (using Docker container)
+  # ========================================
+  build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/alfishe/unreal-ng:qt6.9.3
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DQT_INSTALL_PATH=/opt/qt/current
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_linux
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-Linux
+          path: build/packages/UnrealNG-Suite-Linux.tar.gz
+          retention-days: 7
+          compression-level: 0  # Already compressed, skip double-compression
+
+  # ========================================
+  # Windows MSVC Build
+  # ========================================
+  build-windows-msvc:
+    runs-on: windows-2022  # Pin to VS 2022 (windows-latest has VS 2025)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DBUILD_QT_APPS=ON `
+            -DTESTS=OFF `
+            -DBENCHMARKS=OFF `
+            -DENABLE_PYTHON_AUTOMATION=OFF `
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_windows
+
+      - name: Upload Windows MSVC artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-Windows-MSVC
+          path: build/packages/UnrealNG-Suite-Windows.zip
+          retention-days: 7
+          compression-level: 0  # Already compressed, skip double-compression
+
+  # ========================================
+  # Windows MinGW Build
+  # ========================================
+  build-windows-mingw:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true  # Cache MSYS2 packages between runs
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-python
+
+      - name: Verify Qt installation
+        shell: pwsh
+        run: |
+          Write-Host "QT_ROOT_DIR: $env:QT_ROOT_DIR"
+          Get-ChildItem "$env:QT_ROOT_DIR\lib\cmake" -Directory | Select-Object Name
+
+      - name: Configure CMake
+        shell: msys2 {0}
+        run: |
+          # Convert Windows path to MSYS2 path format
+          QT_PATH=$(cygpath -u "${{ env.QT_ROOT_DIR }}")
+          echo "Using Qt at: $QT_PATH"
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DENABLE_PYTHON_AUTOMATION=OFF \
+            -DQT_INSTALL_PATH="$QT_PATH"
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build --parallel
+
+      - name: Package
+        shell: msys2 {0}
+        run: |
+          cmake --build build --target package_suite_windows
+          cmake --build build --target package_mingw_runtime
+
+      - name: Rename artifact
+        shell: pwsh
+        run: |
+          Move-Item -Path "build/packages/UnrealNG-Suite-Windows.zip" -Destination "build/packages/UnrealNG-Suite-Windows-MinGW.zip" -Force
+
+      - name: Upload Windows MinGW artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-Windows-MinGW
+          path: build/packages/UnrealNG-Suite-Windows-MinGW.zip
+          retention-days: 7
+          compression-level: 0  # Already compressed, skip double-compression
+
+  # ========================================
+  # macOS Build (Intel x64) - DISABLED
+  # No macOS Intel runners available on GitHub Actions.
+  # Re-enable by removing `if: false` and adding back to release `needs`.
+  # ========================================
+  build-macos:
+    if: false
+    runs-on: macos-13  # Last Intel runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_macos
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-macOS
+          path: build/packages/UnrealNG-Suite.dmg
+          retention-days: 7
+          compression-level: 0  # DMG is already compressed
+
+  # ========================================
+  # macOS ARM64 Build (Apple Silicon)
+  # ========================================
+  build-macos-arm64:
+    runs-on: macos-14  # M1/M2 runner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          modules: 'qtmultimedia qt5compat'
+          cache: true
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DBUILD_QT_APPS=ON \
+            -DTESTS=OFF \
+            -DBENCHMARKS=OFF \
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package
+        run: cmake --build build --target package_suite_macos
+
+      - name: Rename artifact
+        run: mv build/packages/UnrealNG-Suite.dmg build/packages/UnrealNG-Suite-macOS-ARM64.dmg
+
+      - name: Upload macOS ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnrealNG-Suite-macOS-ARM64
+          path: build/packages/UnrealNG-Suite-macOS-ARM64.dmg
+          retention-days: 7
+          compression-level: 0  # DMG is already compressed
+
+  # ========================================
+  # Create GitHub Release
+  # ========================================
+  #
+  # This job handles both release modes:
+  # - workflow_dispatch → Rolling snapshot (replaces "continuous" tag)
+  # - tag push (v*)     → Milestone release (permanent, never deleted)
+  #
+  release:
+    needs: [build-linux, build-windows-msvc, build-windows-mingw, build-macos-arm64]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write
+
+    steps:
+      # Need full git history for git-describe to work
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/UnrealNG-Suite-Linux/UnrealNG-Suite-Linux.tar.gz release/
+          cp artifacts/UnrealNG-Suite-Windows-MSVC/UnrealNG-Suite-Windows.zip release/UnrealNG-Suite-Windows-MSVC.zip
+          cp artifacts/UnrealNG-Suite-Windows-MinGW/UnrealNG-Suite-Windows-MinGW.zip release/
+          cp artifacts/UnrealNG-Suite-macOS-ARM64/UnrealNG-Suite-macOS-ARM64.dmg release/
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # ----------------------------------------------------------------------
+      # ROLLING SNAPSHOT MODE (workflow_dispatch)
+      # ----------------------------------------------------------------------
+      # - Deletes existing "continuous" release and tag
+      # - Creates new "continuous" release pointing to current commit
+      # - Marked as pre-release
+      # - Version derived from git: 0.1.0-<commits>-g<hash>
+      # - Stable URL: https://github.com/alfishe/unreal-ng/releases/tag/continuous
+      #
+      - name: Create Rolling Snapshot
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Generate version string from git history
+          # Format: 0.1.0-123-gabcdef0 (base version + commit count + short hash)
+          VERSION=$(git describe --tags --long --always 2>/dev/null || \
+                    echo "0.1.0-$(git rev-list --count HEAD)-g$(git rev-parse --short HEAD)")
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          echo "Creating rolling snapshot: $VERSION"
+
+          # Delete existing continuous release and tag (if any)
+          # --cleanup-tag ensures the tag is also deleted, not just the release
+          gh release delete continuous --yes --cleanup-tag 2>/dev/null || true
+
+          # Create new rolling snapshot release
+          gh release create continuous \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Snapshot $VERSION" \
+            --notes "## Rolling Snapshot Build
+
+          **Version:** \`$VERSION\`
+          **Commit:** [\`$SHORT_SHA\`](https://github.com/${{ github.repository }}/commit/$GITHUB_SHA)
+          **Built:** $DATE
+
+          > ⚠️ **This is a development snapshot.** It may contain bugs and incomplete features.
+          > This release is automatically replaced on each new snapshot build.
+
+          ### Downloads
+
+          | Platform | File |
+          |----------|------|
+          | Linux (x64) | \`UnrealNG-Suite-Linux.tar.gz\` |
+          | Windows MSVC (x64) | \`UnrealNG-Suite-Windows-MSVC.zip\` |
+          | Windows MinGW (x64) | \`UnrealNG-Suite-Windows-MinGW.zip\` |
+          | macOS Apple Silicon (ARM64) | \`UnrealNG-Suite-macOS-ARM64.dmg\` |
+
+          ### Verify Downloads
+          \`\`\`bash
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`" \
+            release/*
+
+      # ----------------------------------------------------------------------
+      # MILESTONE RELEASE MODE (v* tag push)
+      # ----------------------------------------------------------------------
+      # - Creates permanent release with the pushed tag name (v1.0.0, etc.)
+      # - Never deleted or overwritten
+      # - Auto-generates release notes from commits since last tag
+      #
+      - name: Create Milestone Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: UnrealNG ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          generate_release_notes: true
+          files: |
+            release/UnrealNG-Suite-Linux.tar.gz
+            release/UnrealNG-Suite-Windows-MSVC.zip
+            release/UnrealNG-Suite-Windows-MinGW.zip
+            release/UnrealNG-Suite-macOS-ARM64.dmg
+            release/SHA256SUMS.txt
+          body: |
+            ## UnrealNG Suite ${{ github.ref_name }}
+
+            This release includes:
+            - **UnrealNG** - Main ZX Spectrum emulator
+            - **Screen Viewer** - Display viewer utility
+            - **Video Wall** - Multi-screen display application
+
+            ### Downloads
+
+            | Platform | File |
+            |----------|------|
+            | Linux (x64) | `UnrealNG-Suite-Linux.tar.gz` |
+            | Windows MSVC (x64) | `UnrealNG-Suite-Windows-MSVC.zip` |
+            | Windows MinGW (x64) | `UnrealNG-Suite-Windows-MinGW.zip` |
+            | macOS Apple Silicon (ARM64) | `UnrealNG-Suite-macOS-ARM64.dmg` |
+
+            ### Included Resources
+            - ROM files for various ZX Spectrum models
+            - Default configuration (Pentagon 512K)
+            - Console fonts
+
+            ### Verify Downloads
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```

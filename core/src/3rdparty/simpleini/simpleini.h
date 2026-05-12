@@ -2308,7 +2308,7 @@ void CSimpleIniTempl<SI_CHAR, SI_STRLESS, SI_CONVERTER>::GetAllSections(TNamesDe
 {
     a_names.clear();
     typename TSection::const_iterator i = m_data.begin();
-    for (int n = 0; i != m_data.end(); ++i, ++n)
+    for (; i != m_data.end(); ++i)
     {
         a_names.push_back(i->first);
     }
@@ -2334,7 +2334,7 @@ bool CSimpleIniTempl<SI_CHAR, SI_STRLESS, SI_CONVERTER>::GetAllKeys(const SI_CHA
     const TKeyVal& section = iSection->second;
     const SI_CHAR* pLastKey = NULL;
     typename TKeyVal::const_iterator iKeyVal = section.begin();
-    for (int n = 0; iKeyVal != section.end(); ++iKeyVal, ++n)
+    for (; iKeyVal != section.end(); ++iKeyVal)
     {
         if (!pLastKey || IsLess(pLastKey, iKeyVal->first.pItem))
         {
