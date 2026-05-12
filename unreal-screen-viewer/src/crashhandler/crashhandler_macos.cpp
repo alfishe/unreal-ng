@@ -2,11 +2,13 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <execinfo.h>
 #include <unistd.h>
 
 #include "crashhandler_macos.h"
+
 
 static const int WATCHED_SIGNALS[] = { SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE };
 static const int WATCHED_SIGNALS_COUNT = sizeof(WATCHED_SIGNALS) / sizeof(WATCHED_SIGNALS[0]);

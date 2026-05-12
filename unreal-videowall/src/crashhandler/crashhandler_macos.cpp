@@ -2,6 +2,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <execinfo.h>
 #include <unistd.h>
