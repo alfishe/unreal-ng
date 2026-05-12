@@ -1,17 +1,38 @@
+# ==============================================================================
+# Release Build Workflow
+# ==============================================================================
+#
+# This workflow supports TWO release modes:
+#
+# 1. ROLLING SNAPSHOT (Manual trigger via "Run workflow" button)
+#    - Creates/updates a single "continuous" pre-release tag
+#    - Each run REPLACES the previous snapshot (no tag accumulation)
+#    - Stable download URL: /releases/tag/continuous
+#    - Use this for alpha/development builds
+#
+# 2. MILESTONE RELEASE (Triggered by pushing a v* tag)
+#    - Creates a permanent versioned release (v1.0.0, v2.0.0, etc.)
+#    - Never deleted or overwritten
+#    - Use this when you want to preserve a specific build forever
+#
+# Examples:
+#   Rolling snapshot: Click "Run workflow" button in GitHub Actions UI
+#   Milestone release: git tag v1.0.0 && git push origin v1.0.0
+#
+# ==============================================================================
+
 name: Release Build
 
 on:
+  # Milestone releases: triggered by pushing version tags (v1.0.0, v2.0.0, etc.)
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v1.0.0)'
-        required: false
-        default: 'dev'
 
-# Prevent duplicate release builds for the same tag
+  # Rolling snapshots: triggered manually via GitHub Actions UI
+  workflow_dispatch:
+
+# Prevent duplicate release builds
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -292,6 +313,11 @@ jobs:
   # ========================================
   # Create GitHub Release
   # ========================================
+  #
+  # This job handles both release modes:
+  # - workflow_dispatch → Rolling snapshot (replaces "continuous" tag)
+  # - tag push (v*)     → Milestone release (permanent, never deleted)
+  #
   release:
     needs: [build-linux, build-windows-msvc, build-windows-mingw, build-macos-arm64]
     runs-on: ubuntu-latest
@@ -301,6 +327,12 @@ jobs:
       contents: write
 
     steps:
+      # Need full git history for git-describe to work
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -321,22 +353,77 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Determine version
-        id: version
+      # ----------------------------------------------------------------------
+      # ROLLING SNAPSHOT MODE (workflow_dispatch)
+      # ----------------------------------------------------------------------
+      # - Deletes existing "continuous" release and tag
+      # - Creates new "continuous" release pointing to current commit
+      # - Marked as pre-release
+      # - Version derived from git: 0.1.0-<commits>-g<hash>
+      # - Stable URL: https://github.com/alfishe/unreal-ng/releases/tag/continuous
+      #
+      - name: Create Rolling Snapshot
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
+          # Generate version string from git history
+          # Format: 0.1.0-123-gabcdef0 (base version + commit count + short hash)
+          VERSION=$(git describe --tags --long --always 2>/dev/null || \
+                    echo "0.1.0-$(git rev-list --count HEAD)-g$(git rev-parse --short HEAD)")
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+          SHORT_SHA=$(git rev-parse --short HEAD)
 
-      - name: Create Release
+          echo "Creating rolling snapshot: $VERSION"
+
+          # Delete existing continuous release and tag (if any)
+          # --cleanup-tag ensures the tag is also deleted, not just the release
+          gh release delete continuous --yes --cleanup-tag 2>/dev/null || true
+
+          # Create new rolling snapshot release
+          gh release create continuous \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Snapshot $VERSION" \
+            --notes "## Rolling Snapshot Build
+
+          **Version:** \`$VERSION\`
+          **Commit:** [\`$SHORT_SHA\`](https://github.com/${{ github.repository }}/commit/$GITHUB_SHA)
+          **Built:** $DATE
+
+          > ⚠️ **This is a development snapshot.** It may contain bugs and incomplete features.
+          > This release is automatically replaced on each new snapshot build.
+
+          ### Downloads
+
+          | Platform | File |
+          |----------|------|
+          | Linux (x64) | \`UnrealNG-Suite-Linux.tar.gz\` |
+          | Windows MSVC (x64) | \`UnrealNG-Suite-Windows-MSVC.zip\` |
+          | Windows MinGW (x64) | \`UnrealNG-Suite-Windows-MinGW.zip\` |
+          | macOS Apple Silicon (ARM64) | \`UnrealNG-Suite-macOS-ARM64.dmg\` |
+
+          ### Verify Downloads
+          \`\`\`bash
+          sha256sum -c SHA256SUMS.txt
+          \`\`\`" \
+            release/*
+
+      # ----------------------------------------------------------------------
+      # MILESTONE RELEASE MODE (v* tag push)
+      # ----------------------------------------------------------------------
+      # - Creates permanent release with the pushed tag name (v1.0.0, etc.)
+      # - Never deleted or overwritten
+      # - Auto-generates release notes from commits since last tag
+      #
+      - name: Create Milestone Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: UnrealNG ${{ steps.version.outputs.version }}
-          draft: ${{ github.event_name == 'workflow_dispatch' }}
-          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') || contains(steps.version.outputs.version, 'test') || contains(steps.version.outputs.version, 'dev') }}
+          tag_name: ${{ github.ref_name }}
+          name: UnrealNG ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           generate_release_notes: true
           files: |
             release/UnrealNG-Suite-Linux.tar.gz
@@ -345,7 +432,7 @@ jobs:
             release/UnrealNG-Suite-macOS-ARM64.dmg
             release/SHA256SUMS.txt
           body: |
-            ## UnrealNG Suite ${{ steps.version.outputs.version }}
+            ## UnrealNG Suite ${{ github.ref_name }}
 
             This release includes:
             - **UnrealNG** - Main ZX Spectrum emulator
