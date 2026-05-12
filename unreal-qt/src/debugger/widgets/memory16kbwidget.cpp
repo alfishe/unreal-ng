@@ -188,8 +188,16 @@ void Memory16KBWidget::updateMemoryImage()
     }
     else
     {
-        // Physical page mode: directly access RAM page
-        pageAddress = memory->RAMPageAddress(_physicalPageNumber);
+        // Physical page mode: absolute page index (RAM 0-255, ROM at FIRST_ROM_PAGE+)
+        constexpr int FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+        if (_physicalPageNumber >= FIRST_ROM_PAGE && _physicalPageNumber < FIRST_ROM_PAGE + MAX_ROM_PAGES)
+        {
+            pageAddress = memory->ROMPageHostAddress(_physicalPageNumber - FIRST_ROM_PAGE);
+        }
+        else if (_physicalPageNumber < MAX_RAM_PAGES)
+        {
+            pageAddress = memory->RAMPageAddress(_physicalPageNumber);
+        }
     }
 
     if (!pageAddress)
@@ -199,7 +207,7 @@ void Memory16KBWidget::updateMemoryImage()
         if (isZ80Mode)
             title = QString("Bank %1 (0x%2) - N/A").arg(_bankIndex).arg(baseAddress, 4, 16, QChar('0'));
         else
-            title = QString("RAM %1 - N/A").arg(_physicalPageNumber);
+            title = physicalPageTitle() + " - N/A";
         if (title != _lastTitle) { _titleLabel->setText(title); _lastTitle = title; }
         _imageLabel->setPixmap(QPixmap::fromImage(_memoryImage));
         return;
@@ -239,7 +247,22 @@ void Memory16KBWidget::updateMemoryImage()
     }
     else
     {
-        QString title = QString("RAM %1").arg(_physicalPageNumber);
+        QString title = physicalPageTitle();
+
+        // For ROM pages, try to get the ROM title
+        constexpr int FIRST_ROM_PAGE_IDX = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+        if (_physicalPageNumber >= FIRST_ROM_PAGE_IDX)
+        {
+            EmulatorContext* ctx = _emulator->GetContext();
+            ROM* rom = (ctx && ctx->pCore) ? ctx->pCore->GetROM() : nullptr;
+            if (rom)
+            {
+                std::string romTitle = rom->GetROMTitleByAddress(pageAddress);
+                if (!romTitle.empty())
+                    title += QString(" (%1)").arg(QString::fromStdString(romTitle));
+            }
+        }
+
         if (title != _lastTitle) { _titleLabel->setText(title); _lastTitle = title; }
     }
 
@@ -376,6 +399,14 @@ void Memory16KBWidget::updateCounterLabels()
 
     _countersLabel->setText(
         QString("R:%1 W:%2 X:%3").arg(formatCount(readCount)).arg(formatCount(writeCount)).arg(formatCount(execCount)));
+}
+
+QString Memory16KBWidget::physicalPageTitle() const
+{
+    constexpr int FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+    if (_physicalPageNumber >= FIRST_ROM_PAGE)
+        return QString("ROM %1").arg(_physicalPageNumber - FIRST_ROM_PAGE);
+    return QString("RAM %1").arg(_physicalPageNumber);
 }
 
 int Memory16KBWidget::mapMouseToOffset(const QPoint& pos) const

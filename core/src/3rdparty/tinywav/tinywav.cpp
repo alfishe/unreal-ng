@@ -158,8 +158,8 @@ int tinywav_read_f(TinyWav *tw, void *data, int len) {
           return valid_len;
         }
         case TW_SPLIT: { // channel buffer is split e.g. [[LLLL],[RRRR]]
-          for (int i = 0, pos = 0; i < tw->numChannels; i++) {
-            for (int j = 0; j < valid_len; j++, ++pos) {
+          for (int i = 0; i < tw->numChannels; i++) {
+            for (int j = 0; j < valid_len; j++) {
               ((float **) data)[i][j] = (float) interleaved_data[j*tw->numChannels + i] / INT16_MAX;
             }
           }
@@ -186,8 +186,8 @@ int tinywav_read_f(TinyWav *tw, void *data, int len) {
           return valid_len;
         }
         case TW_SPLIT: { // channel buffer is split e.g. [[LLLL],[RRRR]]
-          for (int i = 0, pos = 0; i < tw->numChannels; i++) {
-            for (int j = 0; j < valid_len; j++, ++pos) {
+          for (int i = 0; i < tw->numChannels; i++) {
+            for (int j = 0; j < valid_len; j++) {
               ((float **) data)[i][j] = interleaved_data[j*tw->numChannels + i];
             }
           }

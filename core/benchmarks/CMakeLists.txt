@@ -62,6 +62,10 @@ if (WIN32 AND MINGW)
 
     # Suppress benchmark deprecation messages
     set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations)
+
+    # Tell benchmark headers we're doing a static build (compiling sources directly)
+    # Without this, the headers apply __declspec(dllimport) on MinGW, causing errors
+    add_compile_definitions(BENCHMARK_STATIC_DEFINE)
 else (WIN32 AND MINGW)
     # Google benchmark folder
     set(BENCHMARK_ENABLE_TESTING OFF)   # Disable Google Benchmark self-testing

@@ -16,7 +16,7 @@ public:
     enum class DisplayMode
     {
         Z80Bank,       // Hard-mapped Z80 address space bank (0-3)
-        PhysicalPage   // Freely selected physical RAM page
+        PhysicalPage   // Freely selected physical page (RAM or ROM, by absolute page index)
     };
 
     explicit Memory16KBWidget(int bankIndex, QWidget* parent = nullptr);
@@ -49,6 +49,7 @@ protected:
 private:
     void updateMemoryImage();
     void updateCounterLabels();
+    QString physicalPageTitle() const;
     int mapMouseToOffset(const QPoint& pos) const;
     static void initColorLUT();
 
@@ -59,7 +60,7 @@ private:
     static bool s_colorLUTInitialized;
     DisplayMode _displayMode = DisplayMode::Z80Bank;
     int _bankIndex = 0;
-    int _physicalPageNumber = 0;  // Used in PhysicalPage mode
+    int _physicalPageNumber = 0;  // Absolute page index: RAM 0-255, ROM at FIRST_ROM_PAGE+
 
     QImage _memoryImage;
     QLabel* _titleLabel = nullptr;

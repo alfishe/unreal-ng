@@ -1032,6 +1032,122 @@ uint32_t MemoryAccessTracker::GetPageExecuteAccessCount(uint16_t page) const
     return _pageExecuteCounters[page];
 }
 
+bool MemoryAccessTracker::IsPageActive(uint16_t page, AccessType accessType) const
+{
+    if (page >= MAX_PAGES || _pageReadMarks.empty())
+        return false;
+
+    uint8_t byteIdx = page / 8;
+    uint8_t bitMask = 1u << (page % 8);
+
+    uint8_t typeFlags = static_cast<uint8_t>(accessType);
+    if ((typeFlags & static_cast<uint8_t>(AccessType::Read)) && (_pageReadMarks[byteIdx] & bitMask))
+        return true;
+    if ((typeFlags & static_cast<uint8_t>(AccessType::Write)) && (_pageWriteMarks[byteIdx] & bitMask))
+        return true;
+    if ((typeFlags & static_cast<uint8_t>(AccessType::Execute)) && (_pageExecuteMarks[byteIdx] & bitMask))
+        return true;
+
+    return false;
+}
+
+std::vector<uint16_t> MemoryAccessTracker::GetActivePages(AccessType accessType) const
+{
+    std::vector<uint16_t> result;
+
+    if (_pageReadMarks.empty())
+        return result;
+
+    result.reserve(32);
+    for (uint16_t page = 0; page < MAX_PAGES; page++)
+    {
+        if (IsPageActive(page, accessType))
+            result.push_back(page);
+    }
+
+    return result;
+}
+
+uint16_t MemoryAccessTracker::GetActivePageCount(AccessType accessType) const
+{
+    if (_pageReadMarks.empty())
+        return 0;
+
+    uint16_t count = 0;
+    for (uint16_t page = 0; page < MAX_PAGES; page++)
+    {
+        if (IsPageActive(page, accessType))
+            count++;
+    }
+
+    return count;
+}
+
+PageInfo MemoryAccessTracker::GetPageInfo(uint16_t absPage) const
+{
+    PageInfo info{};
+    info.absPageIndex = absPage;
+    info.mappedToBank = -1;
+    info.isCurrentlyMapped = false;
+
+    // Classify page type using platform constants
+    constexpr uint16_t FIRST_CACHE_PAGE = MAX_RAM_PAGES;
+    constexpr uint16_t FIRST_MISC_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES;
+    constexpr uint16_t FIRST_ROM_PAGE = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+
+    if (absPage < MAX_RAM_PAGES)
+    {
+        info.pageType = 0;  // RAM
+        info.logicalPageNum = static_cast<uint8_t>(absPage);
+    }
+    else if (absPage < FIRST_MISC_PAGE)
+    {
+        info.pageType = 2;  // CACHE
+        info.logicalPageNum = static_cast<uint8_t>(absPage - FIRST_CACHE_PAGE);
+    }
+    else if (absPage < FIRST_ROM_PAGE)
+    {
+        info.pageType = 3;  // MISC
+        info.logicalPageNum = 0;
+    }
+    else if (absPage < MAX_PAGES)
+    {
+        info.pageType = 1;  // ROM
+        info.logicalPageNum = static_cast<uint8_t>(absPage - FIRST_ROM_PAGE);
+    }
+
+    // Check if currently mapped to a Z80 bank
+    if (_memory)
+    {
+        for (uint8_t bank = 0; bank < 4; bank++)
+        {
+            uint16_t mappedPage = _memory->GetPageForBank(bank);
+            if (mappedPage == absPage)
+            {
+                info.isCurrentlyMapped = true;
+                info.mappedToBank = static_cast<int8_t>(bank);
+                break;
+            }
+        }
+    }
+
+    return info;
+}
+
+std::vector<PageInfo> MemoryAccessTracker::GetActivePageInfos(AccessType accessType) const
+{
+    std::vector<PageInfo> result;
+    std::vector<uint16_t> activePages = GetActivePages(accessType);
+
+    result.reserve(activePages.size());
+    for (uint16_t page : activePages)
+    {
+        result.push_back(GetPageInfo(page));
+    }
+
+    return result;
+}
+
 // Generate a report of all monitored regions and their statistics
 std::string MemoryAccessTracker::GenerateRegionReport() const
 {
@@ -1600,6 +1716,137 @@ std::string MemoryAccessTracker::GetBankPageName(uint8_t bank) const
     {
         return "RAM " + std::to_string(page);
     }
+}
+
+// =========================================================================
+// DumpVisualizationData — Compact binary snapshot for visualization PoC
+// =========================================================================
+// File format (UZVD v1):
+//   Header:
+//     - Magic: "UZVD" (4 bytes)
+//     - Version: uint32 = 1
+//     - BankMappings: 4 × { uint8 mode, uint8 page } = 8 bytes
+//   Data sections (in order):
+//     - Raw memory: 4 × 16384 bytes (bank 0–3)
+//     - Read counters: 65536 × uint32
+//     - Write counters: 65536 × uint32
+//     - Execute counters: 65536 × uint32
+//     - CF heatmap: 65536 × uint32 (aggregated from events)
+//     - CF sources: 65536 × uint32
+//     - CF targets: 65536 × uint32
+//     - CF dom type: 65536 × uint8 (Z80CFType enum value)
+
+bool MemoryAccessTracker::DumpVisualizationData(const std::string& filename)
+{
+    std::ofstream out(filename, std::ios::binary);
+    if (!out)
+        return false;
+
+    // --- Header ---
+    out.write("UZVD", 4);
+    uint32_t version = 1;
+    out.write(reinterpret_cast<const char*>(&version), sizeof(version));
+
+    // Bank mappings
+    for (int b = 0; b < 4; b++)
+    {
+        uint8_t mode = static_cast<uint8_t>(_memory->GetMemoryBankMode(b));
+        uint8_t page = static_cast<uint8_t>(_memory->GetPageForBank(b));
+        out.write(reinterpret_cast<const char*>(&mode), 1);
+        out.write(reinterpret_cast<const char*>(&page), 1);
+    }
+
+    // --- Raw memory: 4 banks × 16384 bytes ---
+    for (int b = 0; b < 4; b++)
+    {
+        uint8_t* bankPtr = _memory->GetPhysicalAddressForZ80Page(b);
+        if (bankPtr)
+        {
+            out.write(reinterpret_cast<const char*>(bankPtr), PAGE_SIZE);
+        }
+        else
+        {
+            // Fallback: read byte by byte
+            uint16_t base = b * PAGE_SIZE;
+            for (int i = 0; i < PAGE_SIZE; i++)
+            {
+                uint8_t val = _memory->DirectReadFromZ80Memory(base + i);
+                out.write(reinterpret_cast<const char*>(&val), 1);
+            }
+        }
+    }
+
+    // --- R/W/X counters: 65536 × uint32 each ---
+    constexpr size_t ADDR_SPACE = 65536;
+    if (!_z80ReadCounters.empty())
+    {
+        out.write(reinterpret_cast<const char*>(_z80ReadCounters.data()), ADDR_SPACE * sizeof(uint32_t));
+        out.write(reinterpret_cast<const char*>(_z80WriteCounters.data()), ADDR_SPACE * sizeof(uint32_t));
+        out.write(reinterpret_cast<const char*>(_z80ExecuteCounters.data()), ADDR_SPACE * sizeof(uint32_t));
+    }
+    else
+    {
+        // Counters not allocated — write zeroes
+        std::vector<uint32_t> zeroes(ADDR_SPACE, 0);
+        for (int i = 0; i < 3; i++)
+            out.write(reinterpret_cast<const char*>(zeroes.data()), ADDR_SPACE * sizeof(uint32_t));
+    }
+
+    // --- CF data: aggregate from CallTraceBuffer events ---
+    std::vector<uint32_t> cfHeatmap(ADDR_SPACE, 0);
+    std::vector<uint32_t> cfSources(ADDR_SPACE, 0);
+    std::vector<uint32_t> cfTargets(ADDR_SPACE, 0);
+    std::vector<uint8_t>  cfDomType(ADDR_SPACE, 0);  // 0 = NONE
+
+    if (_callTraceBuffer)
+    {
+        // Get all cold buffer events
+        auto events = _callTraceBuffer->GetAll();
+        for (const auto& ev : events)
+        {
+            uint32_t hits = std::max<uint32_t>(ev.loop_count, 1);
+            uint16_t src = ev.m1_pc;
+            uint16_t tgt = ev.target_addr;
+
+            cfHeatmap[src] += hits;
+            cfHeatmap[tgt] += hits;
+            cfSources[src] += hits;
+            cfTargets[tgt] += hits;
+
+            // Strongest type wins (by hit count)
+            uint8_t typeVal = static_cast<uint8_t>(ev.type);
+            if (cfHeatmap[src] > cfHeatmap[tgt])
+                cfDomType[src] = typeVal;
+            cfDomType[tgt] = typeVal;
+        }
+
+        // Also include hot buffer
+        auto hotEvents = _callTraceBuffer->GetLatestHot(1024);
+        for (const auto& hot : hotEvents)
+        {
+            const auto& ev = hot.event;
+            uint32_t hits = std::max<uint32_t>(hot.loop_count, 1);
+            uint16_t src = ev.m1_pc;
+            uint16_t tgt = ev.target_addr;
+
+            cfHeatmap[src] += hits;
+            cfHeatmap[tgt] += hits;
+            cfSources[src] += hits;
+            cfTargets[tgt] += hits;
+
+            uint8_t typeVal = static_cast<uint8_t>(ev.type);
+            cfDomType[src] = typeVal;
+            cfDomType[tgt] = typeVal;
+        }
+    }
+
+    out.write(reinterpret_cast<const char*>(cfHeatmap.data()), ADDR_SPACE * sizeof(uint32_t));
+    out.write(reinterpret_cast<const char*>(cfSources.data()), ADDR_SPACE * sizeof(uint32_t));
+    out.write(reinterpret_cast<const char*>(cfTargets.data()), ADDR_SPACE * sizeof(uint32_t));
+    out.write(reinterpret_cast<const char*>(cfDomType.data()), ADDR_SPACE * sizeof(uint8_t));
+
+    out.flush();
+    return out.good();
 }
 
 CallTraceBuffer* MemoryAccessTracker::GetCallTraceBuffer()

@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "crashhandler/crashhandler.h"
 
 #include <QApplication>
 #include <QFontDatabase>
@@ -70,6 +71,9 @@ void unregisterFonts()
 
 int main(int argc, char *argv[])
 {
+    auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
+    crashHandler->install();
+
     QApplication app(argc, argv);
 
     // Load non-system fonts before any GUI rendered

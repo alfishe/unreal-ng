@@ -1,8 +1,7 @@
 #include "memorypageswidget.h"
 
+#include "debugger/debuggerwindow.h"
 #include "ui_memorypageswidget.h"
-
-#include "debuggerwindow.h"
 
 /// region <Constructors / Destructors>
 

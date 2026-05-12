@@ -64,11 +64,6 @@ public:
     void createEmulatorsAsync(int total);
     void createNextBatch();
 
-    // Platform-specific fullscreen methods
-    void toggleFullscreenMacOS();
-    void toggleFullscreenWindows();
-    void toggleFullscreenLinux();
-
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
@@ -84,6 +79,16 @@ private:
     void createMenus();
     void createDefaultPresets();
     void initializeAfterEventLoopStart();
+
+    // Platform-specific shortcut installation (called from createMenus)
+    void setupShortcutsWindows();
+    void setupShortcutsMacOS();
+    void setupShortcutsLinux();
+
+    // Platform-specific fullscreen handlers (called from toggleFullscreenMode)
+    void toggleFullscreenWindows();
+    void toggleFullscreenMacOS();
+    void toggleFullscreenLinux();
 
     /// Bind audio device to the specified tile's emulator
     void bindAudioToTile(EmulatorTile* tile);
@@ -133,7 +138,6 @@ private:
 
     // Saved state for restoration when exiting auto-preset modes
     QRect _savedGeometry;
-    Qt::WindowFlags _savedWindowFlags;
     std::vector<std::string> _savedEmulatorIds;
 
     // Async batch creation state
