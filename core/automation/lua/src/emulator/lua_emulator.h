@@ -744,11 +744,10 @@ public:
             uint16_t currentOffset = static_cast<uint16_t>(off);
             int idx = 1;
             for (int i = 0; i < cnt && currentOffset < PAGE_SIZE; ++i) {
-                std::vector<uint8_t> buffer;
+                std::vector<uint8_t> buffer(4, 0);
                 for (int j = 0; j < 4 && (currentOffset + j) < PAGE_SIZE; ++j) {
-                    buffer.push_back(pageBase[currentOffset + j]);
+                    buffer[j] = pageBase[currentOffset + j];
                 }
-                if (buffer.size() < 4) buffer.resize(4, 0);
                 
                 uint8_t cmdLen = 0;
                 DecodedInstruction decoded;

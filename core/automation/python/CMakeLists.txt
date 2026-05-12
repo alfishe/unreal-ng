@@ -55,14 +55,20 @@ if(PYTHON_USE_STATIC)
         
     elseif(WIN32 AND MSVC)
         # ========================================
-        # MSVC: Use system Python (static from source not yet supported)
+        # MSVC: Use system Python (dynamic linking)
         # ========================================
         message(STATUS "[automation_python] MSVC: Using system Python (dynamic)")
         set(PYTHON_USE_STATIC OFF)
-        
-        set(PYBIND11_FINDPYTHON ON)
-        add_subdirectory(3rdparty/pybind11)
+
+        # Find Python FIRST, then configure pybind11 to use it
         find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+        message(STATUS "[automation_python] Found Python: ${Python3_EXECUTABLE} (${Python3_VERSION})")
+        message(STATUS "[automation_python] Python library: ${Python3_LIBRARIES}")
+
+        # Tell pybind11 to use FindPython (modern, avoids deprecated FindPythonLibsNew / CMP0148)
+        set(PYBIND11_FINDPYTHON ON)
+        set(PYBIND11_PYTHON_VERSION ${Python3_VERSION})
+        add_subdirectory(3rdparty/pybind11)
         
     else()
         # ========================================

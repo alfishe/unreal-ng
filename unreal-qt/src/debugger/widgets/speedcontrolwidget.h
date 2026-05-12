@@ -19,7 +19,9 @@ enum class StepType
 {
     FullSpeed,   // Resume normal execution
     Frame,       // Call RunFrame()
-    TStates      // Call RunTStates(N)
+    Opcodes,     // Call RunOpcodes(N)
+    TStates,     // Call RunTStates(N)
+    Scanlines    // Call RunNScanlines(N) — drift-free line stepping
 };
 
 /// @brief Per-preset configuration for the speed control slider

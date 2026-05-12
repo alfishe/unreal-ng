@@ -23,9 +23,9 @@ public:
 
 signals:
     /// @brief Emitted when a page label is clicked.
-    /// @param pageNumber The physical RAM page number clicked
+    /// @param absPageIndex Absolute page index (RAM 0-255, ROM at FIRST_ROM_PAGE+)
     /// @param viewerSlot 0 for left-click (top free viewer), 1 for right-click (bottom free viewer)
-    void pageClickedForFreeViewer(int pageNumber, int viewerSlot);
+    void pageClickedForFreeViewer(int absPageIndex, int viewerSlot);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -35,18 +35,26 @@ protected:
 private:
     void createUI();
     void updatePageDisplay();
-    QColor getColorForPage(int pageIndex, bool isAccessed);
-    
+    QColor getColorForPage(bool isROM, bool isAccessed, bool isMapped);
+
     Emulator* _emulator = nullptr;
     QGridLayout* _gridLayout = nullptr;   // Grid layout inside scrollable container
     QWidget* _gridWidget = nullptr;       // Container widget for the grid
     QScrollArea* _scrollArea = nullptr;
     QLabel* _titleLabel = nullptr;
-    
-    // Memory pages tracking
-    int _maxPages = 0;          // Maximum number of pages for current configuration
-    QVector<bool> _accessedPages; // Tracks which pages have been accessed since reset
-    QVector<QLabel*> _pageLabels; // Labels for each memory page
+
+    // Page entries: each label maps to an absolute page index
+    struct PageEntry
+    {
+        QLabel* label = nullptr;
+        int absPageIndex = 0;       // Absolute page index [0, MAX_PAGES)
+        bool isROM = false;
+    };
+    QVector<PageEntry> _pageEntries;
+
+    // Configuration
+    int _maxRamPages = 0;               // Number of RAM pages for current config
+    static constexpr int ROM_PAGES_SHOWN = 4;  // First 4 ROM pages always shown
 
     // Dirty-checking: skip redundant updates when nothing changed
     QVector<QString> _lastLabelTexts;

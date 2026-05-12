@@ -1,6 +1,8 @@
 #include "debugvisualizationwindow.h"
 
 #include <QDebug>
+#include <QFileDialog>
+#include <QMessageBox>
 #include <QMetaObject>
 #include <QTimer>
 
@@ -71,6 +73,20 @@ DebugVisualizationWindow::DebugVisualizationWindow(Emulator* emulator, QWidget* 
     if (ui->resetCountersButton)
         connect(ui->resetCountersButton, &QPushButton::clicked, this,
                 &DebugVisualizationWindow::onResetCountersClicked);
+
+    // Programmatically add "Dump Viz" button next to Reset
+    if (ui->resetCountersButton && ui->resetCountersButton->parentWidget())
+    {
+        auto* parentLayout = qobject_cast<QHBoxLayout*>(ui->resetCountersButton->parentWidget()->layout());
+        if (parentLayout)
+        {
+            auto* dumpBtn = new QPushButton("Dump Viz", ui->resetCountersButton->parentWidget());
+            dumpBtn->setMaximumWidth(80);
+            dumpBtn->setToolTip("Export memory + counters + call trace to a .uzvd file for the visualization PoC");
+            connect(dumpBtn, &QPushButton::clicked, this, &DebugVisualizationWindow::onDumpVizDataClicked);
+            parentLayout->addWidget(dumpBtn);
+        }
+    }
 
     syncFeatureCheckboxes();
 
@@ -399,4 +415,33 @@ void DebugVisualizationWindow::onResetCountersClicked()
     }
 
     updateWidgets();
+}
+
+void DebugVisualizationWindow::onDumpVizDataClicked()
+{
+    if (!_emulator)
+        return;
+
+    Memory* mem = _emulator->GetMemory();
+    if (!mem)
+        return;
+
+    QString path = QFileDialog::getSaveFileName(
+        this, "Save Visualization Data", "emulator_dump.uzvd",
+        "Unreal Viz Data (*.uzvd);;All Files (*)");
+
+    if (path.isEmpty())
+        return;
+
+    bool ok = mem->GetAccessTracker().DumpVisualizationData(path.toStdString());
+    if (ok)
+    {
+        QMessageBox::information(this, "Dump Saved",
+            QString("Visualization data saved to:\n%1").arg(path));
+    }
+    else
+    {
+        QMessageBox::warning(this, "Dump Failed",
+            "Failed to write visualization data file.");
+    }
 }

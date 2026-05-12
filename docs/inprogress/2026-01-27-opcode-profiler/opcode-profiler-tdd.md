@@ -12,9 +12,21 @@ Some opcodes fail z80test or cause software crashes, likely due to incorrect fla
 
 ### CallTraceBuffer (`calltrace.h/cpp`)
 - **Hot/Cold buffer segmentation** with LRU eviction
-- Tracks control flow events (JP, JR, CALL, RET, RST, DJNZ) only
-- Stores: `m1_pc`, `target_addr`, `opcode_bytes`, `flags`, bank mapping, stack state
+- Tracks control flow events (JP, JR, CALL, RET, RST, DJNZ, RETI) only
+- Stores: `m1_pc`, `target_addr`, `opcode_bytes` (`std::array<uint8_t, 4>` + `opcode_len`), `flags`, bank mapping, stack state
 - **Loop compression**: Repeated events increment `loop_count` instead of adding entries
+- Uses `Z80ControlFlowDecoder` (see below) for lightweight instruction decoding on the hot path
+- **Same-PC cache**: skips re-decoding when consecutive M1 addresses are identical (tight loop optimization)
+
+### Z80ControlFlowDecoder (`z80cfdecoder.h/cpp`)
+- **Zero-allocation** static decoder for Z80 control flow instructions
+- 256-entry lookup table (`s_cfOpcodeTable`) for O(1) opcode pre-filtering
+- Direct flag bitmask evaluation (no string parsing) — ~50-100x faster than full disassembler
+- Handles all variants: JP/JR/CALL/RET/RST/DJNZ/RETI/RETN, including DD/FD/ED prefixes
+- Undocumented opcodes: RETI (ED 5D/6D/7D), RETN (ED 55/65/75)
+- Returns `Z80ControlFlowResult`: type, target address, taken/not-taken, instruction length
+- **No dependencies** on EmulatorContext, DebugManager, or Z80Disassembler
+- Comprehensive unit tests: 79 test cases covering all opcodes, conditions, and edge cases
 
 ### MemoryAccessTracker (`memoryaccesstracker.h/cpp`)
 - **64KB Z80 address space counters**: `_z80ExecuteCounters[65536]`

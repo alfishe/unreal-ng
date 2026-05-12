@@ -12,7 +12,10 @@ set(ENABLE_PYTHON_AUTOMATION ON CACHE BOOL "Enable Python automation" FORCE)
 set(ENABLE_WEBAPI_AUTOMATION ON CACHE BOOL "Enable WebAPI automation" FORCE)
 set(ENABLE_CLI_AUTOMATION ON CACHE BOOL "Enable CLI automation" FORCE)
 
-# C++ standard is inherited from root CMakeLists.txt (C++20)
+# Set C++ standard (C++20 required)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 if (CMAKE_VERSION VERSION_LESS "3.7.0")
     set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -205,7 +208,7 @@ add_subdirectory("3rdparty/QHexView-5.0")
 if (NOT TARGET unrealng::core)
     add_subdirectory("${ROOT_DIR}/core/src" core)
 endif()
-if (NOT TARGET core-tests)
+if (TESTS AND NOT TARGET core-tests)
     add_subdirectory("${ROOT_DIR}/core/tests" tests)
 endif()
 
@@ -300,9 +303,9 @@ if (INCLUDE_AUTOMATION)
         Threads::Threads
     )
     
-    # Link Winsock on Windows for automation
+    # Link Winsock and crash handler deps on Windows
     if (WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
     # Link without automation
@@ -386,14 +389,17 @@ if(APPLE)
         COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/data/testrom" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/rom"
         COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/data/configs/pentagon512k/unreal.ini" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app/Contents/Resources/unreal.ini"
         
-        # 4. Deploy and Sign
-        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite -codesign=-
+        # 4. Deploy Qt frameworks
+        COMMAND "${MACDEPLOYQT_EXECUTABLE}" "${UNREAL_QT_STAGING_DIR}/UnrealNG.app" -always-overwrite
         
-        # 5. Create DMG from staging
+        # 5. Sign with hardened runtime and entitlements
+        COMMAND codesign --force --deep --options runtime --entitlements "${ROOT_DIR}/install/macos/entitlements.plist" --sign - "${UNREAL_QT_STAGING_DIR}/UnrealNG.app"
+        
+        # 6. Create DMG from staging
         COMMAND hdiutil create -volname "UnrealNG" -srcfolder "${UNREAL_QT_STAGING_DIR}" -ov -format UDZO "${CMAKE_BINARY_DIR}/packages/UnrealNG.dmg"
         
         DEPENDS ${PROJECT_NAME}
-        COMMENT "Creating individual macOS DMG package for UnrealNG in ${CMAKE_BINARY_DIR}/packages"
+        COMMENT "Creating individual macOS DMG package for UnrealNG (signed with entitlements)"
     )
     
     # Create a macOS application bundle

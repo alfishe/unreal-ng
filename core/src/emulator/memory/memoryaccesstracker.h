@@ -110,6 +110,16 @@ struct TrackingSegment
     std::unordered_map<std::string, AccessStats> portStats;    // port name -> stats
 };
 
+/// @brief Describes a physical memory page's identity and type
+struct PageInfo
+{
+    uint16_t absPageIndex;       // Absolute page index [0, MAX_PAGES)
+    uint8_t  pageType;           // 0=RAM, 1=ROM, 2=CACHE, 3=MISC
+    uint8_t  logicalPageNum;     // RAM 0-255, ROM 0-63, CACHE 0-1, MISC 0
+    bool     isCurrentlyMapped;  // True if this page is in one of the 4 Z80 banks right now
+    int8_t   mappedToBank;       // Which Z80 bank (0-3), or -1 if not mapped
+};
+
 class CallTraceBuffer;
 
 // Class to track memory and port accesses
@@ -391,6 +401,32 @@ public:
     // Get execute access count for a physical memory page
     uint32_t GetPageExecuteAccessCount(uint16_t page) const;
 
+    /// @brief Check if a physical memory page has had any access since last counter reset
+    /// @param page Absolute page index [0, MAX_PAGES)
+    /// @param accessType Which access types to check (default: All)
+    /// @return true if the page has been accessed
+    bool IsPageActive(uint16_t page, AccessType accessType = AccessType::All) const;
+
+    /// @brief Get list of all physical pages that have had any access since last counter reset
+    /// @param accessType Which access types to check (default: All)
+    /// @return Vector of absolute page indices [0, MAX_PAGES) that have activity
+    std::vector<uint16_t> GetActivePages(AccessType accessType = AccessType::All) const;
+
+    /// @brief Get count of physical pages with any access since last counter reset
+    /// @param accessType Which access types to check (default: All)
+    /// @return Number of active pages
+    uint16_t GetActivePageCount(AccessType accessType = AccessType::All) const;
+
+    /// @brief Get identity/type info for a physical page
+    /// @param absPage Absolute page index [0, MAX_PAGES)
+    /// @return PageInfo with type classification and current mapping status
+    PageInfo GetPageInfo(uint16_t absPage) const;
+
+    /// @brief Get PageInfo for all active pages (convenience method)
+    /// @param accessType Which access types to check (default: All)
+    /// @return Vector of PageInfo for pages with activity, sorted by absPageIndex
+    std::vector<PageInfo> GetActivePageInfos(AccessType accessType = AccessType::All) const;
+
     // Generate a report of all monitored regions and their statistics
     std::string GenerateRegionReport() const;
 
@@ -414,6 +450,15 @@ public:
     /// @return true if successful, false on error
     std::string SaveAccessData(const std::string& outputPath, const std::string& format = "yaml",
                                bool singleFile = false, const std::vector<std::string>& filterPages = {});
+
+    /// @brief Dump a compact binary snapshot of all visualization-relevant data.
+    /// @details Writes: memory banks (4×16KB), R/W/X counters (64K×uint32 each),
+    ///          aggregated CF heatmap/sources/targets (64K×uint32 each), CF types (64K×uint8).
+    ///          Format: "UZVD" magic, version 1, bank mappings, then data sections.
+    ///          Designed for fast loading by the Call Trace Visualization PoC.
+    /// @param filename Output file path (binary, .uzvd extension recommended)
+    /// @return true if successful, false otherwise
+    bool DumpVisualizationData(const std::string& filename);
 
     /// endregion </Statistics and Reporting>
 

@@ -1,10 +1,14 @@
 #include <QApplication>
 
 #include "MainWindow.h"
+#include "crashhandler/crashhandler.h"
 
 
 int main(int argc, char* argv[])
 {
+    auto crashHandler = std::unique_ptr<CrashHandler>(CrashHandler::create());
+    crashHandler->install();
+
     QApplication app(argc, argv);
 
     // Set application metadata

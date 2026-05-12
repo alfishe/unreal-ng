@@ -28,7 +28,7 @@ void BorderTimingWidget::createUI()
 {
     QVBoxLayout* layout = new QVBoxLayout(this);
 
-    _titleLabel = new QLabel("Border T-States", this);
+    _titleLabel = new QLabel("Frame T-States", this);
     _titleLabel->setAlignment(Qt::AlignCenter);
     layout->addWidget(_titleLabel);
 
