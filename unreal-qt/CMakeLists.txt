@@ -300,9 +300,9 @@ if (INCLUDE_AUTOMATION)
         Threads::Threads
     )
     
-    # Link Winsock on Windows for automation
+    # Link Winsock and crash handler deps on Windows
     if (WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 dbghelp)
     endif ()
 else ()
     # Link without automation
