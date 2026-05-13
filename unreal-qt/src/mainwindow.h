@@ -69,6 +69,7 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     void openFileDialog();
     void openSpecificFile(const QString& filepath);
+    void loadFile(const QString& filePath);
     void saveFileDialog();
     void saveFileDialogZ80();
     void saveDiskDialog();

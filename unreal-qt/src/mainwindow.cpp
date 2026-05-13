@@ -770,53 +770,8 @@ void MainWindow::dropEvent(QDropEvent* event)
         qDebug() << pathList.size() << "files dropped";
         qDebug() << pathList.join(",");
 
-        // Process the dropped file
-        QString filepath = pathList.first();
-        std::string file = filepath.toStdString();
-
-        // Save the directory for next time
-        QFileInfo fileInfo(filepath);
-        QString ext = fileInfo.suffix();
-
-        // Save directory to settings
-        saveLastDirectory(filepath);
-
-        // Determine file type
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepath);
-
-        // Auto-start emulator if not running (except for symbol files which don't need it)
-        if (!_emulator && category != FileSymbol && category != FileUnknown)
-        {
-            qDebug() << "Auto-starting emulator for dropped file";
-            handleStartButton();  // Create and start new emulator instance
-        }
-
-        // Now proceed with file loading
-        switch (category)
-        {
-            case FileROM:
-                break;
-            case FileSnapshot:
-                if (_emulator)
-                    _emulator->LoadSnapshot(file);
-                break;
-            case FileTape:
-                if (_emulator)
-                    _emulator->LoadTape(file);
-                break;
-            case FileDisk:
-                if (_emulator)
-                    _emulator->LoadDisk(file);
-                break;
-            case FileSymbol:
-                if (_emulator && _emulator->GetDebugManager())
-                {
-                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
-                }
-                break;
-            default:
-                break;
-        };
+        // Load the first dropped file
+        loadFile(pathList.first());
     }
 
     // Remove drop area highlight
@@ -1499,53 +1454,20 @@ void MainWindow::handleFileOpenRequest(int id, Message* message)
 
 void MainWindow::openSpecificFile(const QString& filepath)
 {
-    // Check if the file exists
     QFileInfo fileInfo(filepath);
     if (fileInfo.exists() && fileInfo.isFile())
     {
-        // Save directory to settings
-        saveLastDirectory(filepath);
-
-        // Process the file based on its extension
-        QString filepathCopy = filepath;  // Create a non-const copy for the method call
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filepathCopy);
-        std::string file = filepath.toStdString();
-
-        switch (category)
-        {
-            case FileROM:
-                break;
-            case FileSnapshot:
-                _emulator->LoadSnapshot(file);
-                break;
-            case FileTape:
-                _emulator->LoadTape(file);
-                break;
-            case FileDisk:
-                _emulator->LoadDisk(file);
-                break;
-            case FileSymbol:
-                if (_emulator && _emulator->GetDebugManager())
-                {
-                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
-                }
-                break;
-            default:
-                qDebug() << "Unsupported file type:" << filepath;
-                break;
-        };
+        loadFile(filepath);
     }
     else
     {
         qDebug() << "File does not exist or is not a regular file:" << filepath;
-        // If the specified file doesn't exist, fall back to the file dialog
         openFileDialog();
     }
 }
 
 void MainWindow::openFileDialog()
 {
-    // Show a file open dialog using the last directory
     QString filePath = QFileDialog::getOpenFileName(
         this, tr("Open File"), _lastDirectory,
         tr("All Supported Files (*.sna *.z80 *.tap *.tzx *.trd *.scl *.fdi *.td0 *.udi);;Snapshots (*.sna "
@@ -1553,38 +1475,53 @@ void MainWindow::openFileDialog()
 
     if (!filePath.isEmpty())
     {
-        // Save directory to settings
-        saveLastDirectory(filePath);
-
-        // Process the selected file
-        QString filePathCopy = filePath;  // Create a non-const copy for the method call
-        SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
-        std::string file = filePath.toStdString();
-
-        switch (category)
-        {
-            case FileROM:
-                break;
-            case FileSnapshot:
-                _emulator->LoadSnapshot(file);
-                break;
-            case FileTape:
-                _emulator->LoadTape(file);
-                break;
-            case FileDisk:
-                _emulator->LoadDisk(file);
-                break;
-            case FileSymbol:
-                if (_emulator && _emulator->GetDebugManager())
-                {
-                    _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
-                }
-                break;
-            default:
-                qDebug() << "Unsupported file type:" << filePath;
-                break;
-        };
+        loadFile(filePath);
     }
+}
+
+void MainWindow::loadFile(const QString& filePath)
+{
+    // Save directory to settings
+    saveLastDirectory(filePath);
+
+    // Determine file type
+    QString filePathCopy = filePath;
+    SupportedFileCategoriesEnum category = FileManager::determineFileCategoryByExtension(filePathCopy);
+    std::string file = filePath.toStdString();
+
+    // Auto-start emulator if not running (except for symbol files which don't need it)
+    if (!_emulator && category != FileSymbol && category != FileUnknown)
+    {
+        qDebug() << "Auto-starting emulator for file:" << filePath;
+        handleStartButton();
+    }
+
+    switch (category)
+    {
+        case FileROM:
+            break;
+        case FileSnapshot:
+            if (_emulator)
+                _emulator->LoadSnapshot(file);
+            break;
+        case FileTape:
+            if (_emulator)
+                _emulator->LoadTape(file);
+            break;
+        case FileDisk:
+            if (_emulator)
+                _emulator->LoadDisk(file);
+            break;
+        case FileSymbol:
+            if (_emulator && _emulator->GetDebugManager())
+            {
+                _emulator->GetDebugManager()->GetLabelManager()->LoadLabels(file);
+            }
+            break;
+        default:
+            qDebug() << "Unsupported file type:" << filePath;
+            break;
+    };
 }
 
 void MainWindow::saveFileDialog()
